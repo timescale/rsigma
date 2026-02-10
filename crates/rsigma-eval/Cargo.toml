@@ -13,3 +13,4 @@ regex = "1"
 base64 = "0.22"
 ipnet = "2"
 thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }

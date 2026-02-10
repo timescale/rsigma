@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use rsigma_eval::{Engine, Event};
-use rsigma_parser::{parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
+use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, Event};
+use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 
 #[derive(Parser)]
 #[command(name = "rsigma")]
@@ -166,8 +166,118 @@ fn cmd_stdin(pretty: bool) {
 }
 
 fn cmd_eval(rules_path: PathBuf, event_json: Option<String>, pretty: bool) {
-    // Load and compile rules
-    let engine = load_engine(&rules_path);
+    let collection = load_collection(&rules_path);
+    let has_correlations = !collection.correlations.is_empty();
+
+    if has_correlations {
+        cmd_eval_with_correlations(collection, &rules_path, event_json, pretty);
+    } else {
+        cmd_eval_detection_only(collection, &rules_path, event_json, pretty);
+    }
+}
+
+/// Evaluation with correlations (stateful).
+fn cmd_eval_with_correlations(
+    collection: SigmaCollection,
+    rules_path: &std::path::Path,
+    event_json: Option<String>,
+    pretty: bool,
+) {
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    if let Err(e) = engine.add_collection(&collection) {
+        eprintln!("Error compiling rules: {e}");
+        process::exit(1);
+    }
+
+    eprintln!(
+        "Loaded {} detection rules + {} correlation rules from {}",
+        engine.detection_rule_count(),
+        engine.correlation_rule_count(),
+        rules_path.display(),
+    );
+
+    if let Some(json_str) = event_json {
+        let value: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Invalid JSON event: {e}");
+                process::exit(1);
+            }
+        };
+
+        let event = Event::from_value(&value);
+        let result = engine.process_event(&event);
+
+        let total = result.detections.len() + result.correlations.len();
+        if total == 0 {
+            eprintln!("No matches.");
+        } else {
+            for m in &result.detections {
+                print_json(m, pretty);
+            }
+            for m in &result.correlations {
+                print_json(m, pretty);
+            }
+        }
+    } else {
+        let stdin = io::stdin();
+        let mut line_num = 0u64;
+        let mut det_count = 0u64;
+        let mut corr_count = 0u64;
+
+        for line in stdin.lock().lines() {
+            line_num += 1;
+            let line = match line {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("Error reading line {line_num}: {e}");
+                    continue;
+                }
+            };
+
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let value: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Invalid JSON on line {line_num}: {e}");
+                    continue;
+                }
+            };
+
+            let event = Event::from_value(&value);
+            let result = engine.process_event(&event);
+
+            for m in &result.detections {
+                det_count += 1;
+                print_json(m, pretty);
+            }
+            for m in &result.correlations {
+                corr_count += 1;
+                print_json(m, pretty);
+            }
+        }
+
+        eprintln!(
+            "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+        );
+    }
+}
+
+/// Evaluation without correlations (stateless, original behavior).
+fn cmd_eval_detection_only(
+    collection: SigmaCollection,
+    rules_path: &std::path::Path,
+    event_json: Option<String>,
+    pretty: bool,
+) {
+    let mut engine = Engine::new();
+    if let Err(e) = engine.add_collection(&collection) {
+        eprintln!("Error compiling rules: {e}");
+        process::exit(1);
+    }
 
     eprintln!(
         "Loaded {} rules from {}",
@@ -176,7 +286,6 @@ fn cmd_eval(rules_path: PathBuf, event_json: Option<String>, pretty: bool) {
     );
 
     if let Some(json_str) = event_json {
-        // Single event mode
         let value: serde_json::Value = match serde_json::from_str(&json_str) {
             Ok(v) => v,
             Err(e) => {
@@ -196,7 +305,6 @@ fn cmd_eval(rules_path: PathBuf, event_json: Option<String>, pretty: bool) {
             }
         }
     } else {
-        // NDJSON stdin mode
         let stdin = io::stdin();
         let mut line_num = 0u64;
         let mut match_count = 0u64;
@@ -240,9 +348,7 @@ fn cmd_eval(rules_path: PathBuf, event_json: Option<String>, pretty: bool) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn load_engine(path: &std::path::Path) -> Engine {
-    let mut engine = Engine::new();
-
+fn load_collection(path: &std::path::Path) -> SigmaCollection {
     let collection = if path.is_dir() {
         match parse_sigma_directory(path) {
             Ok(c) => c,
@@ -268,12 +374,7 @@ fn load_engine(path: &std::path::Path) -> Engine {
         );
     }
 
-    if let Err(e) = engine.add_collection(&collection) {
-        eprintln!("Error compiling rules: {e}");
-        process::exit(1);
-    }
-
-    engine
+    collection
 }
 
 fn print_warnings(errors: &[String]) {
