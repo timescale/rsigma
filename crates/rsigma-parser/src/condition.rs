@@ -91,11 +91,11 @@ fn merge_binary(
     // Check if the constructor matches by trying to merge same-type children.
     // We use a discriminant check approach.
     let is_same = |expr: &ConditionExpr| -> bool {
-        match (&ctor(vec![]), expr) {
-            (ConditionExpr::And(_), ConditionExpr::And(_)) => true,
-            (ConditionExpr::Or(_), ConditionExpr::Or(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (&ctor(vec![]), expr),
+            (ConditionExpr::And(_), ConditionExpr::And(_))
+                | (ConditionExpr::Or(_), ConditionExpr::Or(_))
+        )
     };
 
     let mut args = Vec::new();

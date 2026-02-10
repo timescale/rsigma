@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 
 use serde::Serialize;
 
@@ -28,15 +29,16 @@ pub enum Status {
     Unsupported,
 }
 
-impl Status {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for Status {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "stable" => Some(Status::Stable),
-            "test" => Some(Status::Test),
-            "experimental" => Some(Status::Experimental),
-            "deprecated" => Some(Status::Deprecated),
-            "unsupported" => Some(Status::Unsupported),
-            _ => None,
+            "stable" => Ok(Status::Stable),
+            "test" => Ok(Status::Test),
+            "experimental" => Ok(Status::Experimental),
+            "deprecated" => Ok(Status::Deprecated),
+            "unsupported" => Ok(Status::Unsupported),
+            _ => Err(()),
         }
     }
 }
@@ -52,15 +54,16 @@ pub enum Level {
     Critical,
 }
 
-impl Level {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for Level {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "informational" => Some(Level::Informational),
-            "low" => Some(Level::Low),
-            "medium" => Some(Level::Medium),
-            "high" => Some(Level::High),
-            "critical" => Some(Level::Critical),
-            _ => None,
+            "informational" => Ok(Level::Informational),
+            "low" => Ok(Level::Low),
+            "medium" => Ok(Level::Medium),
+            "high" => Ok(Level::High),
+            "critical" => Ok(Level::Critical),
+            _ => Err(()),
         }
     }
 }
@@ -76,15 +79,16 @@ pub enum RelationType {
     Similar,
 }
 
-impl RelationType {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for RelationType {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "derived" => Some(RelationType::Derived),
-            "obsolete" => Some(RelationType::Obsolete),
-            "merged" => Some(RelationType::Merged),
-            "renamed" => Some(RelationType::Renamed),
-            "similar" => Some(RelationType::Similar),
-            _ => None,
+            "derived" => Ok(RelationType::Derived),
+            "obsolete" => Ok(RelationType::Obsolete),
+            "merged" => Ok(RelationType::Merged),
+            "renamed" => Ok(RelationType::Renamed),
+            "similar" => Ok(RelationType::Similar),
+            _ => Err(()),
         }
     }
 }
@@ -152,40 +156,41 @@ pub enum Modifier {
     Year,
 }
 
-impl Modifier {
-    /// Parse a modifier identifier string.
-    ///
-    /// Reference: pySigma modifiers.py modifier_mapping
-    pub fn from_str(s: &str) -> Option<Self> {
+/// Parse a modifier identifier string.
+///
+/// Reference: pySigma modifiers.py modifier_mapping
+impl FromStr for Modifier {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "contains" => Some(Modifier::Contains),
-            "startswith" => Some(Modifier::StartsWith),
-            "endswith" => Some(Modifier::EndsWith),
-            "all" => Some(Modifier::All),
-            "base64" => Some(Modifier::Base64),
-            "base64offset" => Some(Modifier::Base64Offset),
-            "wide" => Some(Modifier::Wide),
-            "windash" => Some(Modifier::WindAsh),
-            "re" => Some(Modifier::Re),
-            "cidr" => Some(Modifier::Cidr),
-            "cased" => Some(Modifier::Cased),
-            "exists" => Some(Modifier::Exists),
-            "expand" => Some(Modifier::Expand),
-            "fieldref" => Some(Modifier::FieldRef),
-            "gt" => Some(Modifier::Gt),
-            "gte" => Some(Modifier::Gte),
-            "lt" => Some(Modifier::Lt),
-            "lte" => Some(Modifier::Lte),
-            "i" | "ignorecase" => Some(Modifier::IgnoreCase),
-            "m" | "multiline" => Some(Modifier::Multiline),
-            "s" | "dotall" => Some(Modifier::DotAll),
-            "minute" => Some(Modifier::Minute),
-            "hour" => Some(Modifier::Hour),
-            "day" => Some(Modifier::Day),
-            "week" => Some(Modifier::Week),
-            "month" => Some(Modifier::Month),
-            "year" => Some(Modifier::Year),
-            _ => None,
+            "contains" => Ok(Modifier::Contains),
+            "startswith" => Ok(Modifier::StartsWith),
+            "endswith" => Ok(Modifier::EndsWith),
+            "all" => Ok(Modifier::All),
+            "base64" => Ok(Modifier::Base64),
+            "base64offset" => Ok(Modifier::Base64Offset),
+            "wide" => Ok(Modifier::Wide),
+            "windash" => Ok(Modifier::WindAsh),
+            "re" => Ok(Modifier::Re),
+            "cidr" => Ok(Modifier::Cidr),
+            "cased" => Ok(Modifier::Cased),
+            "exists" => Ok(Modifier::Exists),
+            "expand" => Ok(Modifier::Expand),
+            "fieldref" => Ok(Modifier::FieldRef),
+            "gt" => Ok(Modifier::Gt),
+            "gte" => Ok(Modifier::Gte),
+            "lt" => Ok(Modifier::Lt),
+            "lte" => Ok(Modifier::Lte),
+            "i" | "ignorecase" => Ok(Modifier::IgnoreCase),
+            "m" | "multiline" => Ok(Modifier::Multiline),
+            "s" | "dotall" => Ok(Modifier::DotAll),
+            "minute" => Ok(Modifier::Minute),
+            "hour" => Ok(Modifier::Hour),
+            "day" => Ok(Modifier::Day),
+            "week" => Ok(Modifier::Week),
+            "month" => Ok(Modifier::Month),
+            "year" => Ok(Modifier::Year),
+            _ => Err(()),
         }
     }
 }
@@ -442,18 +447,19 @@ pub enum CorrelationType {
     ValueMedian,
 }
 
-impl CorrelationType {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for CorrelationType {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "event_count" => Some(CorrelationType::EventCount),
-            "value_count" => Some(CorrelationType::ValueCount),
-            "temporal" => Some(CorrelationType::Temporal),
-            "temporal_ordered" => Some(CorrelationType::TemporalOrdered),
-            "value_sum" => Some(CorrelationType::ValueSum),
-            "value_avg" => Some(CorrelationType::ValueAvg),
-            "value_percentile" => Some(CorrelationType::ValuePercentile),
-            "value_median" => Some(CorrelationType::ValueMedian),
-            _ => None,
+            "event_count" => Ok(CorrelationType::EventCount),
+            "value_count" => Ok(CorrelationType::ValueCount),
+            "temporal" => Ok(CorrelationType::Temporal),
+            "temporal_ordered" => Ok(CorrelationType::TemporalOrdered),
+            "value_sum" => Ok(CorrelationType::ValueSum),
+            "value_avg" => Ok(CorrelationType::ValueAvg),
+            "value_percentile" => Ok(CorrelationType::ValuePercentile),
+            "value_median" => Ok(CorrelationType::ValueMedian),
+            _ => Err(()),
         }
     }
 }
@@ -471,16 +477,17 @@ pub enum ConditionOperator {
     Neq,
 }
 
-impl ConditionOperator {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for ConditionOperator {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "lt" => Some(ConditionOperator::Lt),
-            "lte" => Some(ConditionOperator::Lte),
-            "gt" => Some(ConditionOperator::Gt),
-            "gte" => Some(ConditionOperator::Gte),
-            "eq" => Some(ConditionOperator::Eq),
-            "neq" => Some(ConditionOperator::Neq),
-            _ => None,
+            "lt" => Ok(ConditionOperator::Lt),
+            "lte" => Ok(ConditionOperator::Lte),
+            "gt" => Ok(ConditionOperator::Gt),
+            "gte" => Ok(ConditionOperator::Gte),
+            "eq" => Ok(ConditionOperator::Eq),
+            "neq" => Ok(ConditionOperator::Neq),
+            _ => Err(()),
         }
     }
 }

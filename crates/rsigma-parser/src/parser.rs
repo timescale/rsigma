@@ -52,13 +52,13 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
         };
 
         // Check for collection action
-        if let Some(action_val) = mapping.get(&Value::String("action".to_string())) {
+        if let Some(action_val) = mapping.get(Value::String("action".to_string())) {
             let action = action_val.as_str().unwrap_or("");
             match action {
                 "global" => {
                     let mut global_map = value.clone();
                     if let Some(m) = global_map.as_mapping_mut() {
-                        m.remove(&Value::String("action".to_string()));
+                        m.remove(Value::String("action".to_string()));
                     }
                     global = Some(global_map);
                     continue;
@@ -158,9 +158,9 @@ fn parse_document(value: &Value) -> Result<SigmaDocument> {
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Document is not a YAML mapping".into()))?;
 
-    if mapping.contains_key(&Value::String("correlation".into())) {
+    if mapping.contains_key(Value::String("correlation".into())) {
         parse_correlation_rule(value).map(SigmaDocument::Correlation)
-    } else if mapping.contains_key(&Value::String("filter".into())) {
+    } else if mapping.contains_key(Value::String("filter".into())) {
         parse_filter_rule(value).map(SigmaDocument::Filter)
     } else {
         parse_detection_rule(value).map(SigmaDocument::Rule)
@@ -184,12 +184,12 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         .to_string();
 
     let detection_val = m
-        .get(&val_key("detection"))
+        .get(val_key("detection"))
         .ok_or_else(|| SigmaParserError::MissingField("detection".into()))?;
     let detection = parse_detections(detection_val)?;
 
     let logsource = m
-        .get(&val_key("logsource"))
+        .get(val_key("logsource"))
         .map(parse_logsource)
         .transpose()?
         .unwrap_or_default();
@@ -200,9 +200,9 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         detection,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
-        related: parse_related(m.get(&val_key("related"))),
+        related: parse_related(m.get(val_key("related"))),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(Status::from_str),
+        status: get_str(m, "status").and_then(|s| s.parse().ok()),
         description: get_str(m, "description").map(|s| s.to_string()),
         license: get_str(m, "license").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
@@ -211,7 +211,7 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         modified: get_str(m, "modified").map(|s| s.to_string()),
         fields: get_str_list(m, "fields"),
         falsepositives: get_str_or_str_list(m, "falsepositives"),
-        level: get_str(m, "level").and_then(Level::from_str),
+        level: get_str(m, "level").and_then(|s| s.parse().ok()),
         tags: get_str_list(m, "tags"),
         scope: get_str_list(m, "scope"),
     })
@@ -236,7 +236,7 @@ fn parse_detections(value: &Value) -> Result<Detections> {
 
     // Extract condition (required)
     let condition_val = m
-        .get(&val_key("condition"))
+        .get(val_key("condition"))
         .ok_or_else(|| SigmaParserError::MissingField("condition".into()))?;
 
     let condition_strings = match condition_val {
@@ -308,7 +308,7 @@ fn parse_detection(value: &Value) -> Result<Detection> {
                 // Case 3: list of mappings → OR-linked sub-detections
                 let subs: Vec<Detection> = seq
                     .iter()
-                    .map(|v| parse_detection(v))
+                    .map(parse_detection)
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Detection::AnyOf(subs))
             }
@@ -341,11 +341,10 @@ fn parse_detection_item(key: &str, value: &Value) -> Result<DetectionItem> {
 ///
 /// When the `re` modifier is present, strings are treated as raw (no wildcard parsing).
 fn to_sigma_value(v: &Value, field: &FieldSpec) -> SigmaValue {
-    if field.has_modifier(Modifier::Re) {
-        if let Value::String(s) = v {
+    if field.has_modifier(Modifier::Re)
+        && let Value::String(s) = v {
             return SigmaValue::from_raw_string(s);
         }
-    }
     SigmaValue::from_yaml(v)
 }
 
@@ -367,8 +366,9 @@ pub fn parse_field_spec(key: &str) -> Result<FieldSpec> {
 
     let mut modifiers = Vec::new();
     for &mod_str in &parts[1..] {
-        let m = Modifier::from_str(mod_str)
-            .ok_or_else(|| SigmaParserError::UnknownModifier(mod_str.to_string()))?;
+        let m = mod_str
+            .parse::<Modifier>()
+            .map_err(|_| SigmaParserError::UnknownModifier(mod_str.to_string()))?;
         modifiers.push(m);
     }
 
@@ -389,11 +389,10 @@ fn parse_logsource(value: &Value) -> Result<LogSource> {
 
     for (k, v) in m {
         let key_str = k.as_str().unwrap_or("");
-        if !known_keys.contains(&key_str) {
-            if let Some(val_str) = v.as_str() {
+        if !known_keys.contains(&key_str)
+            && let Some(val_str) = v.as_str() {
                 custom.insert(key_str.to_string(), val_str.to_string());
             }
-        }
     }
 
     Ok(LogSource {
@@ -419,7 +418,7 @@ fn parse_related(value: Option<&Value>) -> Vec<Related> {
             let m = item.as_mapping()?;
             let id = get_str(m, "id")?.to_string();
             let type_str = get_str(m, "type")?;
-            let relation_type = RelationType::from_str(type_str)?;
+            let relation_type = type_str.parse().ok()?;
             Some(Related { id, relation_type })
         })
         .collect()
@@ -442,7 +441,7 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         .to_string();
 
     let corr_val = m
-        .get(&val_key("correlation"))
+        .get(val_key("correlation"))
         .ok_or_else(|| SigmaParserError::MissingField("correlation".into()))?;
     let corr = corr_val.as_mapping().ok_or_else(|| {
         SigmaParserError::InvalidCorrelation("correlation must be a mapping".into())
@@ -451,12 +450,12 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     // Correlation type (required)
     let type_str = get_str(corr, "type")
         .ok_or_else(|| SigmaParserError::InvalidCorrelation("Missing correlation type".into()))?;
-    let correlation_type = CorrelationType::from_str(type_str).ok_or_else(|| {
+    let correlation_type: CorrelationType = type_str.parse().map_err(|_| {
         SigmaParserError::InvalidCorrelation(format!("Unknown correlation type: {type_str}"))
     })?;
 
     // Rules references
-    let rules = match corr.get(&val_key("rules")) {
+    let rules = match corr.get(val_key("rules")) {
         Some(Value::Sequence(seq)) => seq
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -466,7 +465,7 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     };
 
     // Group-by
-    let group_by = match corr.get(&val_key("group-by")) {
+    let group_by = match corr.get(val_key("group-by")) {
         Some(Value::Sequence(seq)) => seq
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -482,7 +481,7 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
 
     // Generate flag
     let generate = corr
-        .get(&val_key("generate"))
+        .get(val_key("generate"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
@@ -496,14 +495,14 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         title,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(Status::from_str),
+        status: get_str(m, "status").and_then(|s| s.parse().ok()),
         description: get_str(m, "description").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
         references: get_str_list(m, "references"),
         tags: get_str_list(m, "tags"),
-        level: get_str(m, "level").and_then(Level::from_str),
+        level: get_str(m, "level").and_then(|s| s.parse().ok()),
         correlation_type,
         rules,
         group_by,
@@ -521,7 +520,7 @@ fn parse_correlation_condition(
     corr: &serde_yaml::Mapping,
     correlation_type: CorrelationType,
 ) -> Result<CorrelationCondition> {
-    let condition_val = corr.get(&val_key("condition"));
+    let condition_val = corr.get(val_key("condition"));
 
     match condition_val {
         Some(Value::Mapping(cm)) => {
@@ -531,8 +530,8 @@ fn parse_correlation_condition(
             let mut count = 0u64;
 
             for &op_str in &operators {
-                if let Some(val) = cm.get(&val_key(op_str)) {
-                    op = ConditionOperator::from_str(op_str);
+                if let Some(val) = cm.get(val_key(op_str)) {
+                    op = op_str.parse().ok();
                     count = val
                         .as_u64()
                         .or_else(|| val.as_i64().map(|i| i as u64))
@@ -580,7 +579,7 @@ fn parse_correlation_condition(
 
 /// Parse correlation field aliases.
 fn parse_correlation_aliases(corr: &serde_yaml::Mapping) -> Vec<FieldAlias> {
-    let Some(Value::Mapping(aliases_map)) = corr.get(&val_key("aliases")) else {
+    let Some(Value::Mapping(aliases_map)) = corr.get(val_key("aliases")) else {
         return Vec::new();
     };
 
@@ -611,9 +610,9 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
     let title = get_str(m, "title").unwrap_or("Untitled Filter").to_string();
 
     // Get filter section for rules list
-    let filter_val = m.get(&val_key("filter"));
+    let filter_val = m.get(val_key("filter"));
     let rules = match filter_val {
-        Some(Value::Mapping(fm)) => match fm.get(&val_key("rules")) {
+        Some(Value::Mapping(fm)) => match fm.get(val_key("rules")) {
             Some(Value::Sequence(seq)) => seq
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -626,13 +625,13 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
 
     // Parse detection section
     let detection = m
-        .get(&val_key("detection"))
+        .get(val_key("detection"))
         .map(parse_detections)
         .transpose()?
         .ok_or_else(|| SigmaParserError::MissingField("detection".into()))?;
 
     let logsource = m
-        .get(&val_key("logsource"))
+        .get(val_key("logsource"))
         .map(parse_logsource)
         .transpose()?;
 
@@ -640,7 +639,7 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
         title,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(Status::from_str),
+        status: get_str(m, "status").and_then(|s| s.parse().ok()),
         description: get_str(m, "description").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
@@ -660,15 +659,15 @@ fn val_key(s: &str) -> Value {
 }
 
 fn get_str<'a>(m: &'a serde_yaml::Mapping, key: &str) -> Option<&'a str> {
-    m.get(&val_key(key)).and_then(|v| v.as_str())
+    m.get(val_key(key)).and_then(|v| v.as_str())
 }
 
 fn get_str_from_mapping<'a>(m: &'a serde_yaml::Mapping, key: &str) -> Option<&'a str> {
-    m.get(&val_key(key)).and_then(|v| v.as_str())
+    m.get(val_key(key)).and_then(|v| v.as_str())
 }
 
 fn get_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
-    match m.get(&val_key(key)) {
+    match m.get(val_key(key)) {
         Some(Value::Sequence(seq)) => seq
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -678,7 +677,7 @@ fn get_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
 }
 
 fn get_str_or_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
-    match m.get(&val_key(key)) {
+    match m.get(val_key(key)) {
         Some(Value::String(s)) => vec![s.clone()],
         Some(Value::Sequence(seq)) => seq
             .iter()
