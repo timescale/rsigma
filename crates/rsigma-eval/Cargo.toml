@@ -1,0 +1,9 @@
+[package]
+name = "rsigma-eval"
+description = "Evaluator for Sigma detection rules — match rules against events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rsigma-parser = { path = "../rsigma-parser" }

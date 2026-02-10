@@ -1,0 +1,76 @@
+// =============================================================================
+// Sigma Condition Expression Grammar (PEG)
+// =============================================================================
+//
+// Parses Sigma detection condition expressions, e.g.:
+//   selection and not filter
+//   1 of selection_* and not 1 of filter_*
+//   all of them
+//   selection1 or (selection2 and not filter)
+//   selection_main and 1 of selection_dword_* and not 1 of filter_optional_*
+//
+// Operator precedence (highest to lowest):
+//   NOT (prefix) > AND (left-assoc) > OR (left-assoc)
+//
+// Reference: pySigma conditions.py (pyparsing infix_notation)
+// =============================================================================
+
+WHITESPACE = _{ " " | "\t" }
+
+// Entry point
+condition = { SOI ~ expr ~ EOI }
+
+// Expression: flat structure for Pratt-parser consumption
+// The PrattParser in Rust code reconstructs the AST with correct precedence
+expr = { prefix* ~ primary ~ (infix ~ prefix* ~ primary)* }
+
+infix  = _{ or_op | and_op }
+prefix = _{ not_op }
+
+primary = _{ selector | "(" ~ expr ~ ")" | ident }
+
+// ---------------------------------------------------------------------------
+// Selector: quantifier "of" pattern
+// Examples: 1 of selection_*, all of them, any of filter*
+// ---------------------------------------------------------------------------
+selector        = { quantifier ~ of_kw ~ selector_target }
+quantifier      = { all_kw | any_kw | uint }
+selector_target = { them_kw | ident_pattern }
+
+// ---------------------------------------------------------------------------
+// Identifiers
+// ---------------------------------------------------------------------------
+
+// Identifier with wildcards (for selector patterns: "selection_*", "*")
+ident_pattern = @{ (ident_char | "*")+ }
+
+// Plain identifier (for detection references: "selection", "filter_main")
+// Must not be a reserved keyword standing alone
+ident = @{ !(reserved ~ !ident_char) ~ ident_char+ }
+
+// Character class for identifiers (alphanumeric, underscore, hyphen)
+ident_char = _{ ASCII_ALPHANUMERIC | "_" | "-" }
+
+// Unsigned integer (for quantifier counts like "1 of ...", "3 of ...")
+uint = @{ ASCII_DIGIT+ }
+
+// ---------------------------------------------------------------------------
+// Operators (MUST be atomic to prevent implicit whitespace insertion
+// between the keyword text and the !ident_char lookahead)
+// The !ident_char ensures "and_filter" is an ident, not "and" + "_filter"
+// ---------------------------------------------------------------------------
+or_op  = @{ "or"  ~ !ident_char }
+and_op = @{ "and" ~ !ident_char }
+not_op = @{ "not" ~ !ident_char }
+
+// ---------------------------------------------------------------------------
+// Keywords (atomic for correct lookahead; of_kw uses helper for silence)
+// ---------------------------------------------------------------------------
+of_kw_inner = @{ "of"   ~ !ident_char }
+of_kw       = _{ of_kw_inner }
+all_kw      = @{ "all"  ~ !ident_char }
+any_kw      = @{ "any"  ~ !ident_char }
+them_kw     = @{ "them" ~ !ident_char }
+
+// Reserved words for identifier disambiguation
+reserved = _{ "and" | "or" | "not" | "all" | "any" | "of" | "them" }
