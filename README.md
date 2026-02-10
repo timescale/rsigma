@@ -71,6 +71,7 @@ Compiles Sigma rules into optimized in-memory matchers and evaluates them agains
 
 - **Detection engine**: compiled matchers for all modifier combinations, logsource routing, condition tree evaluation with short-circuit logic
 - **Correlation engine**: stateful processing with sliding time windows, group-by aggregation, field aliasing, correlation chaining, and all 8 correlation types
+- **Processing pipelines**: pySigma-compatible field mapping, logsource transformation, value replacement, placeholder expansion, conditional application, and multi-pipeline chaining — 14 transformation types, 3 condition levels
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions
 - **Special modifiers**: `|expand` (runtime placeholder expansion), `|neq` (not-equal), `|utf16be`/`|utf16` encoding, timestamp part extraction (`|hour`, `|day`, etc.)
 - **Event wrapper**: dot-notation field access, flat-key precedence, keyword search across all string values
@@ -90,6 +91,30 @@ engine.add_collection(&collection).unwrap();
 let event = Event::from_value(&json!({"CommandLine": "cmd /c whoami"}));
 let matches = engine.evaluate(&event);
 assert_eq!(matches[0].rule_title, "Detect Whoami");
+```
+
+With a processing pipeline:
+
+```rust
+use rsigma_eval::{Engine, Event, parse_pipeline};
+
+let pipeline = parse_pipeline(r#"
+name: ECS Mapping
+transformations:
+  - type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+    rule_conditions:
+      - type: logsource
+        product: windows
+"#).unwrap();
+
+let mut engine = Engine::new_with_pipeline(pipeline);
+engine.add_collection(&collection).unwrap();
+
+// Rule now expects ECS field names
+let event = Event::from_value(&json!({"process.command_line": "whoami"}));
+let matches = engine.evaluate(&event);
 ```
 
 For correlations:
@@ -114,6 +139,15 @@ rsigma validate path/to/sigma/rules/ -v
 
 # Evaluate events against rules
 rsigma eval -r path/to/rules/ -e '{"CommandLine": "whoami"}'
+
+# Evaluate with a processing pipeline
+rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
+
+# Multiple pipelines (applied in priority order)
+rsigma eval -r rules/ -p sysmon.yml -p custom.yml -e '...'
+
+# Validate with pipeline
+rsigma validate rules/ -p pipelines/ecs.yml -v
 
 # Stream NDJSON events
 cat events.ndjson | rsigma eval -r path/to/rules/
@@ -176,8 +210,8 @@ cargo bench --bench correlation      # correlations only
                     │  (YAML → AST)    │   (SigmaRule, CorrelationRule,
                     └──────────────────┘    FilterRule, SigmaCollection)
                              │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
+            ┌────────────────┼──────────────┐
+            ▼                ▼              ▼
      ┌────────────┐  ┌────────────┐  ┌────────────┐
      │ sigma.pest │  │  value.rs  │  │   ast.rs   │
      │  (PEG      │  │ (SigmaStr, │  │ (AST types │
@@ -187,10 +221,14 @@ cargo bench --bench correlation      # correlations only
      │  (Pratt    │
      │  parser)   │
      └────────────┘
-              │
-              ▼
+           │
+           ▼
      ┌──────────────────────────────────────────┐
      │              rsigma-eval                 │
+     │                                          │
+     │  pipeline/ ──> Pipeline (YAML parsing,   │
+     │    conditions, transformations, state)   │
+     │    ↓ transforms SigmaRule AST            │
      │                                          │
      │  compiler.rs ──> CompiledRule            │
      │  matcher.rs  ──> CompiledMatcher         │
