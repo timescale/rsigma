@@ -1051,4 +1051,128 @@ detection:
         assert_eq!(collection.errors.len(), 1);
         assert!(collection.errors[0].contains("without a previous document"));
     }
+
+    #[test]
+    fn test_action_repeat_multiple_repeats() {
+        // Base rule + two repeats producing three rules total
+        let yaml = r#"
+title: Base
+logsource:
+    product: windows
+    category: process_creation
+level: high
+detection:
+    selection:
+        CommandLine|contains: 'cmd'
+    condition: selection
+---
+action: repeat
+title: Repeat One
+detection:
+    selection:
+        CommandLine|contains: 'powershell'
+    condition: selection
+---
+action: repeat
+title: Repeat Two
+detection:
+    selection:
+        CommandLine|contains: 'wscript'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 3);
+        assert!(collection.errors.is_empty());
+        assert_eq!(collection.rules[0].title, "Base");
+        assert_eq!(collection.rules[1].title, "Repeat One");
+        assert_eq!(collection.rules[2].title, "Repeat Two");
+
+        // All three should inherit logsource and level from the base
+        for rule in &collection.rules {
+            assert_eq!(rule.logsource.product, Some("windows".to_string()));
+            assert_eq!(
+                rule.logsource.category,
+                Some("process_creation".to_string())
+            );
+            assert_eq!(rule.level, Some(crate::ast::Level::High));
+        }
+    }
+
+    #[test]
+    fn test_action_repeat_chained_inherits_from_last() {
+        // Repeat chains from the *last* document, not the original
+        let yaml = r#"
+title: First
+logsource:
+    product: linux
+level: low
+detection:
+    selection:
+        command|contains: 'ls'
+    condition: selection
+---
+action: repeat
+title: Second
+level: medium
+detection:
+    selection:
+        command|contains: 'cat'
+    condition: selection
+---
+action: repeat
+title: Third
+detection:
+    selection:
+        command|contains: 'grep'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 3);
+
+        // First: level low
+        assert_eq!(collection.rules[0].level, Some(crate::ast::Level::Low));
+        // Second: level overridden to medium
+        assert_eq!(collection.rules[1].level, Some(crate::ast::Level::Medium));
+        // Third: inherits from second (merged onto second), so level medium
+        assert_eq!(collection.rules[2].level, Some(crate::ast::Level::Medium));
+        // All should have linux product
+        for rule in &collection.rules {
+            assert_eq!(rule.logsource.product, Some("linux".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_action_repeat_with_global_template() {
+        let yaml = r#"
+action: global
+logsource:
+    product: windows
+level: medium
+---
+title: Rule A
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+action: repeat
+title: Rule B
+detection:
+    selection:
+        EventID: 2
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+        assert!(collection.errors.is_empty());
+
+        assert_eq!(collection.rules[0].title, "Rule A");
+        assert_eq!(collection.rules[1].title, "Rule B");
+
+        // Both should have the global logsource and level
+        for rule in &collection.rules {
+            assert_eq!(rule.logsource.product, Some("windows".to_string()));
+            assert_eq!(rule.level, Some(crate::ast::Level::Medium));
+        }
+    }
 }

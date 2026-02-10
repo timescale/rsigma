@@ -511,4 +511,365 @@ level: low
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].rule_title, "Rule A");
     }
+
+    // =========================================================================
+    // Filter rule edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_filter_by_rule_name() {
+        // Filter that references a rule by title (not ID)
+        let yaml = r#"
+title: Detect Mimikatz
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'mimikatz'
+    condition: selection
+level: critical
+---
+title: Exclude Admin Tools
+filter:
+    rules:
+        - Detect Mimikatz
+detection:
+    exclude:
+        ParentImage|endswith: '\admin_toolkit.exe'
+    condition: exclude
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        // Match: mimikatz not launched by admin toolkit
+        let ev = json!({"CommandLine": "mimikatz.exe", "ParentImage": "C:\\cmd.exe"});
+        let event = Event::from_value(&ev);
+        assert_eq!(engine.evaluate(&event).len(), 1);
+
+        // No match: mimikatz launched by admin toolkit (filtered)
+        let ev2 = json!({"CommandLine": "mimikatz.exe", "ParentImage": "C:\\admin_toolkit.exe"});
+        let event2 = Event::from_value(&ev2);
+        assert!(engine.evaluate(&event2).is_empty());
+    }
+
+    #[test]
+    fn test_filter_multiple_detections() {
+        // Filter with multiple detection items (AND)
+        let yaml = r#"
+title: Suspicious Network
+id: net-001
+logsource:
+    product: windows
+detection:
+    selection:
+        DestinationPort: 443
+    condition: selection
+level: medium
+---
+title: Exclude Trusted
+filter:
+    rules:
+        - net-001
+detection:
+    trusted_dst:
+        DestinationIp|startswith: '10.'
+    trusted_user:
+        User: 'svc_account'
+    condition: trusted_dst and trusted_user
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        // Match: port 443 to external IP
+        let ev = json!({"DestinationPort": 443, "DestinationIp": "8.8.8.8", "User": "admin"});
+        let event = Event::from_value(&ev);
+        assert_eq!(engine.evaluate(&event).len(), 1);
+
+        // Match: port 443 to internal IP but different user (filter needs both)
+        let ev2 = json!({"DestinationPort": 443, "DestinationIp": "10.0.0.1", "User": "admin"});
+        let event2 = Event::from_value(&ev2);
+        assert_eq!(engine.evaluate(&event2).len(), 1);
+
+        // No match: port 443 to internal IP by svc_account (both filter conditions met)
+        let ev3 =
+            json!({"DestinationPort": 443, "DestinationIp": "10.0.0.1", "User": "svc_account"});
+        let event3 = Event::from_value(&ev3);
+        assert!(engine.evaluate(&event3).is_empty());
+    }
+
+    #[test]
+    fn test_filter_applied_to_multiple_rules() {
+        // Filter with empty rules list applies to all rules
+        let yaml = r#"
+title: Rule One
+id: r1
+logsource:
+    product: windows
+detection:
+    sel:
+        EventID: 1
+    condition: sel
+---
+title: Rule Two
+id: r2
+logsource:
+    product: windows
+detection:
+    sel:
+        EventID: 2
+    condition: sel
+---
+title: Exclude Test
+filter:
+    rules: []
+detection:
+    exclude:
+        Environment: 'test'
+    condition: exclude
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        // In prod: both rules should fire
+        let ev1 = json!({"EventID": 1, "Environment": "prod"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev1)).len(), 1);
+        let ev2 = json!({"EventID": 2, "Environment": "prod"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev2)).len(), 1);
+
+        // In test: both filtered out
+        let ev3 = json!({"EventID": 1, "Environment": "test"});
+        assert!(engine.evaluate(&Event::from_value(&ev3)).is_empty());
+        let ev4 = json!({"EventID": 2, "Environment": "test"});
+        assert!(engine.evaluate(&Event::from_value(&ev4)).is_empty());
+    }
+
+    // =========================================================================
+    // Expand modifier end-to-end
+    // =========================================================================
+
+    #[test]
+    fn test_expand_modifier_yaml() {
+        let yaml = r#"
+title: User Profile Access
+logsource:
+    product: windows
+detection:
+    selection:
+        TargetFilename|expand: 'C:\Users\%username%\AppData\sensitive.dat'
+    condition: selection
+level: high
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // Match: path matches after expanding %username% from the event
+        let ev = json!({
+            "TargetFilename": "C:\\Users\\admin\\AppData\\sensitive.dat",
+            "username": "admin"
+        });
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // No match: different user
+        let ev2 = json!({
+            "TargetFilename": "C:\\Users\\admin\\AppData\\sensitive.dat",
+            "username": "guest"
+        });
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_expand_modifier_multiple_placeholders() {
+        let yaml = r#"
+title: Registry Path
+logsource:
+    product: windows
+detection:
+    selection:
+        RegistryKey|expand: 'HKLM\SOFTWARE\%vendor%\%product%'
+    condition: selection
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        let ev = json!({
+            "RegistryKey": "HKLM\\SOFTWARE\\Acme\\Widget",
+            "vendor": "Acme",
+            "product": "Widget"
+        });
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        let ev2 = json!({
+            "RegistryKey": "HKLM\\SOFTWARE\\Acme\\Widget",
+            "vendor": "Other",
+            "product": "Widget"
+        });
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    // =========================================================================
+    // Timestamp modifier end-to-end
+    // =========================================================================
+
+    #[test]
+    fn test_timestamp_hour_modifier_yaml() {
+        let yaml = r#"
+title: Off-Hours Login
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: 'login'
+    time_filter:
+        Timestamp|hour: 3
+    condition: selection and time_filter
+level: high
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // Match: login at 03:xx UTC
+        let ev = json!({"EventType": "login", "Timestamp": "2024-07-10T03:45:00Z"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // No match: login at 14:xx UTC
+        let ev2 = json!({"EventType": "login", "Timestamp": "2024-07-10T14:45:00Z"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_timestamp_day_modifier_yaml() {
+        let yaml = r#"
+title: Weekend Activity
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: 'access'
+    day_check:
+        CreatedAt|day: 25
+    condition: selection and day_check
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        let ev = json!({"EventType": "access", "CreatedAt": "2024-12-25T10:00:00Z"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        let ev2 = json!({"EventType": "access", "CreatedAt": "2024-12-26T10:00:00Z"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_timestamp_year_modifier_yaml() {
+        let yaml = r#"
+title: Legacy System
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: 'auth'
+    old_events:
+        EventTime|year: 2020
+    condition: selection and old_events
+level: low
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        let ev = json!({"EventType": "auth", "EventTime": "2020-06-15T10:00:00Z"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        let ev2 = json!({"EventType": "auth", "EventTime": "2024-06-15T10:00:00Z"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    // =========================================================================
+    // action: repeat through engine
+    // =========================================================================
+
+    #[test]
+    fn test_action_repeat_evaluates_correctly() {
+        // Two rules via repeat: same logsource, different detections
+        let yaml = r#"
+title: Detect Whoami
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+action: repeat
+title: Detect Ipconfig
+detection:
+    selection:
+        CommandLine|contains: 'ipconfig'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+        assert_eq!(engine.rule_count(), 2);
+
+        // First rule matches whoami
+        let ev1 = json!({"CommandLine": "whoami /all"});
+        let matches1 = engine.evaluate(&Event::from_value(&ev1));
+        assert_eq!(matches1.len(), 1);
+        assert_eq!(matches1[0].rule_title, "Detect Whoami");
+
+        // Second rule matches ipconfig (inherited logsource/level)
+        let ev2 = json!({"CommandLine": "ipconfig /all"});
+        let matches2 = engine.evaluate(&Event::from_value(&ev2));
+        assert_eq!(matches2.len(), 1);
+        assert_eq!(matches2[0].rule_title, "Detect Ipconfig");
+
+        // Neither matches dir
+        let ev3 = json!({"CommandLine": "dir"});
+        assert!(engine.evaluate(&Event::from_value(&ev3)).is_empty());
+    }
+
+    #[test]
+    fn test_action_repeat_with_global() {
+        // Global + repeat: global sets logsource, first doc sets detection,
+        // repeat overrides title and detection
+        let yaml = r#"
+action: global
+logsource:
+    product: windows
+    category: process_creation
+level: high
+---
+title: Detect Net User
+detection:
+    selection:
+        CommandLine|contains: 'net user'
+    condition: selection
+---
+action: repeat
+title: Detect Net Group
+detection:
+    selection:
+        CommandLine|contains: 'net group'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        let ev1 = json!({"CommandLine": "net user admin"});
+        let m1 = engine.evaluate(&Event::from_value(&ev1));
+        assert_eq!(m1.len(), 1);
+        assert_eq!(m1[0].rule_title, "Detect Net User");
+
+        let ev2 = json!({"CommandLine": "net group admins"});
+        let m2 = engine.evaluate(&Event::from_value(&ev2));
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2[0].rule_title, "Detect Net Group");
+    }
 }

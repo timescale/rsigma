@@ -1504,4 +1504,391 @@ level: medium
         // The median (30.0) should be <= 50, so condition fires
         // Note: percentile implementation is simplified for in-memory eval
     }
+
+    // =========================================================================
+    // Extended temporal conditions (end-to-end)
+    // =========================================================================
+
+    #[test]
+    fn test_extended_temporal_and_condition() {
+        // Temporal correlation with "rule_a and rule_b" extended condition
+        let yaml = r#"
+title: Login Attempt
+id: login-attempt
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_failure
+    condition: selection
+---
+title: Password Change
+id: password-change
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: password_change
+    condition: selection
+---
+title: Credential Attack
+correlation:
+    type: temporal
+    rules:
+        - login-attempt
+        - password-change
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-attempt and password-change
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ts = 1000i64;
+
+        // Login failure by alice
+        let ev1 = json!({"EventType": "login_failure", "User": "alice"});
+        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        assert!(r1.correlations.is_empty(), "only one rule fired so far");
+
+        // Password change by alice — both rules have now fired
+        let ev2 = json!({"EventType": "password_change", "User": "alice"});
+        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 10);
+        assert_eq!(
+            r2.correlations.len(),
+            1,
+            "temporal correlation should fire: both rules matched"
+        );
+        assert_eq!(r2.correlations[0].rule_title, "Credential Attack");
+    }
+
+    #[test]
+    fn test_extended_temporal_or_condition() {
+        // Temporal with "rule_a or rule_b" — should fire when either fires
+        let yaml = r#"
+title: SSH Login
+id: ssh-login
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: ssh_login
+    condition: selection
+---
+title: VPN Login
+id: vpn-login
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: vpn_login
+    condition: selection
+---
+title: Any Remote Access
+correlation:
+    type: temporal
+    rules:
+        - ssh-login
+        - vpn-login
+    group-by:
+        - User
+    timespan: 60s
+    condition: ssh-login or vpn-login
+level: medium
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        // Only SSH login by bob — "or" means this suffices
+        let ev = json!({"EventType": "ssh_login", "User": "bob"});
+        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        assert_eq!(r.correlations.len(), 1);
+        assert_eq!(r.correlations[0].rule_title, "Any Remote Access");
+    }
+
+    #[test]
+    fn test_extended_temporal_partial_and_no_fire() {
+        // Temporal "and" with only one rule firing should not trigger
+        let yaml = r#"
+title: Recon Step 1
+id: recon-1
+logsource:
+    category: process
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Recon Step 2
+id: recon-2
+logsource:
+    category: process
+detection:
+    selection:
+        CommandLine|contains: 'ipconfig'
+    condition: selection
+---
+title: Full Recon
+correlation:
+    type: temporal
+    rules:
+        - recon-1
+        - recon-2
+    group-by:
+        - Host
+    timespan: 120s
+    condition: recon-1 and recon-2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        // Only whoami (recon-1) — should not fire
+        let ev = json!({"CommandLine": "whoami", "Host": "srv01"});
+        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        assert!(r.correlations.is_empty(), "only one of two AND rules fired");
+
+        // Now ipconfig (recon-2) — should fire
+        let ev2 = json!({"CommandLine": "ipconfig /all", "Host": "srv01"});
+        let r2 = engine.process_event_at(&Event::from_value(&ev2), 1010);
+        assert_eq!(r2.correlations.len(), 1);
+        assert_eq!(r2.correlations[0].rule_title, "Full Recon");
+    }
+
+    // =========================================================================
+    // Filter rules with correlation engine
+    // =========================================================================
+
+    #[test]
+    fn test_filter_with_correlation() {
+        // Detection rule + filter + event_count correlation
+        let yaml = r#"
+title: Failed Auth
+id: failed-auth
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: auth_failure
+    condition: selection
+---
+title: Exclude Service Accounts
+filter:
+    rules:
+        - failed-auth
+detection:
+    svc:
+        User|startswith: 'svc_'
+    condition: svc
+---
+title: Brute Force
+correlation:
+    type: event_count
+    rules:
+        - failed-auth
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 3
+level: critical
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ts = 1000i64;
+
+        // Service account failures should be filtered — don't count
+        for i in 0..5 {
+            let ev = json!({"EventType": "auth_failure", "User": "svc_backup"});
+            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            assert!(
+                r.correlations.is_empty(),
+                "service account should be filtered, no correlation"
+            );
+        }
+
+        // Normal user failures should count
+        for i in 0..2 {
+            let ev = json!({"EventType": "auth_failure", "User": "alice"});
+            let r = engine.process_event_at(&Event::from_value(&ev), ts + 10 + i);
+            assert!(r.correlations.is_empty(), "not yet 3 events");
+        }
+
+        // Third failure triggers correlation
+        let ev = json!({"EventType": "auth_failure", "User": "alice"});
+        let r = engine.process_event_at(&Event::from_value(&ev), ts + 12);
+        assert_eq!(r.correlations.len(), 1);
+        assert_eq!(r.correlations[0].rule_title, "Brute Force");
+    }
+
+    // =========================================================================
+    // action: repeat with correlation engine
+    // =========================================================================
+
+    #[test]
+    fn test_repeat_rules_in_correlation() {
+        // Two detection rules via repeat, both feed into event_count
+        let yaml = r#"
+title: File Access A
+id: file-a
+logsource:
+    category: file_access
+detection:
+    selection:
+        FileName|endswith: '.docx'
+    condition: selection
+---
+action: repeat
+title: File Access B
+id: file-b
+detection:
+    selection:
+        FileName|endswith: '.xlsx'
+    condition: selection
+---
+title: Mass File Access
+correlation:
+    type: event_count
+    rules:
+        - file-a
+        - file-b
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+        assert_eq!(engine.detection_rule_count(), 2);
+
+        let ts = 1000i64;
+        // Mix of docx and xlsx accesses by same user
+        let ev1 = json!({"FileName": "report.docx", "User": "bob"});
+        engine.process_event_at(&Event::from_value(&ev1), ts);
+        let ev2 = json!({"FileName": "data.xlsx", "User": "bob"});
+        engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        let ev3 = json!({"FileName": "notes.docx", "User": "bob"});
+        let r = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+
+        assert_eq!(r.correlations.len(), 1);
+        assert_eq!(r.correlations[0].rule_title, "Mass File Access");
+    }
+
+    // =========================================================================
+    // Expand modifier with correlation engine
+    // =========================================================================
+
+    #[test]
+    fn test_expand_modifier_with_correlation() {
+        let yaml = r#"
+title: User Temp File
+id: user-temp
+logsource:
+    category: file_access
+detection:
+    selection:
+        FilePath|expand: 'C:\Users\%User%\Temp'
+    condition: selection
+---
+title: Excessive Temp Access
+correlation:
+    type: event_count
+    rules:
+        - user-temp
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: medium
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ts = 1000i64;
+        // Event where User field matches the placeholder
+        let ev1 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "alice"});
+        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        assert!(r1.correlations.is_empty());
+
+        let ev2 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "alice"});
+        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        assert_eq!(r2.correlations.len(), 1);
+        assert_eq!(r2.correlations[0].rule_title, "Excessive Temp Access");
+
+        // Different user — should NOT match (path says alice, user is bob)
+        let ev3 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "bob"});
+        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+        // Detection doesn't fire for this event since expand resolves to C:\Users\bob\Temp
+        assert_eq!(r3.detections.len(), 0);
+    }
+
+    // =========================================================================
+    // Timestamp modifier with correlation engine
+    // =========================================================================
+
+    #[test]
+    fn test_timestamp_modifier_with_correlation() {
+        let yaml = r#"
+title: Night Login
+id: night-login
+logsource:
+    category: auth
+detection:
+    login:
+        EventType: login
+    night:
+        Timestamp|hour: 3
+    condition: login and night
+---
+title: Frequent Night Logins
+correlation:
+    type: event_count
+    rules:
+        - night-login
+    group-by:
+        - User
+    timespan: 3600s
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ts = 1000i64;
+        // Login at 3AM
+        let ev1 =
+            json!({"EventType": "login", "User": "alice", "Timestamp": "2024-01-15T03:10:00Z"});
+        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        assert_eq!(r1.detections.len(), 1);
+        assert!(r1.correlations.is_empty());
+
+        let ev2 =
+            json!({"EventType": "login", "User": "alice", "Timestamp": "2024-01-15T03:45:00Z"});
+        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        assert_eq!(r2.correlations.len(), 1);
+        assert_eq!(r2.correlations[0].rule_title, "Frequent Night Logins");
+
+        // Login at noon — should NOT count
+        let ev3 = json!({"EventType": "login", "User": "bob", "Timestamp": "2024-01-15T12:00:00Z"});
+        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+        assert!(
+            r3.detections.is_empty(),
+            "noon login should not match night rule"
+        );
+    }
 }

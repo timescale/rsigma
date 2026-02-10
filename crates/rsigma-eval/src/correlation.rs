@@ -1015,4 +1015,126 @@ level: high
         let val = result.unwrap();
         assert!((val - 50.5).abs() < 1.0, "expected ~50.5, got {val}");
     }
+
+    #[test]
+    fn test_percentile_0th_and_100th() {
+        let values = &[5.0, 10.0, 15.0, 20.0];
+        assert!((percentile_linear_interp(values, 0.0) - 5.0).abs() < f64::EPSILON);
+        assert!((percentile_linear_interp(values, 100.0) - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_two_values() {
+        let values = &[10.0, 20.0];
+        // 50th percentile between 10 and 20 = 15
+        assert!((percentile_linear_interp(values, 50.0) - 15.0).abs() < f64::EPSILON);
+        // 25th percentile = 12.5
+        assert!((percentile_linear_interp(values, 25.0) - 12.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_clamps_out_of_range() {
+        let values = &[1.0, 2.0, 3.0];
+        // Negative percentile clamps to 0
+        assert!((percentile_linear_interp(values, -10.0) - 1.0).abs() < f64::EPSILON);
+        // > 100 clamps to 100
+        assert!((percentile_linear_interp(values, 150.0) - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_value_percentile_empty_window() {
+        let state = WindowState::new_for(CorrelationType::ValuePercentile);
+        let cond = CompiledCondition {
+            field: Some("latency".to_string()),
+            predicates: vec![(ConditionOperator::Lte, 50.0)],
+        };
+        // Empty window should return None
+        assert!(
+            state
+                .check_condition(&cond, CorrelationType::ValuePercentile, &[], None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_extended_temporal_or_single_rule() {
+        // "rule_a or rule_b" — only rule_a fired
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::from([1000]));
+
+        let expr = ConditionExpr::Or(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_extended_temporal_empty_hits() {
+        let rule_hits = HashMap::new();
+
+        // "rule_a and rule_b" — nothing fired
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(!eval_temporal_expr(&expr, &rule_hits));
+
+        // "rule_a or rule_b" — nothing fired
+        let expr_or = ConditionExpr::Or(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(!eval_temporal_expr(&expr_or, &rule_hits));
+    }
+
+    #[test]
+    fn test_extended_temporal_with_empty_deque() {
+        // Rule exists in map but with empty deque (all evicted)
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::new());
+        rule_hits.insert("rule_b".to_string(), VecDeque::from([1000]));
+
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        // rule_a has empty deque — should be treated as not fired
+        assert!(!eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_check_condition_temporal_no_extended_expr() {
+        // Standard temporal without extended expr: uses threshold count
+        let refs = vec![
+            "rule_a".to_string(),
+            "rule_b".to_string(),
+            "rule_c".to_string(),
+        ];
+        let mut state = WindowState::new_for(CorrelationType::Temporal);
+        state.push_temporal(1000, "rule_a");
+        state.push_temporal(1001, "rule_b");
+
+        // Threshold: at least 2 rules must fire
+        let cond = CompiledCondition {
+            field: None,
+            predicates: vec![(ConditionOperator::Gte, 2.0)],
+        };
+        // Without extended expr: 2 of 3 rules fired, meets gte 2
+        assert_eq!(
+            state.check_condition(&cond, CorrelationType::Temporal, &refs, None),
+            Some(2.0)
+        );
+
+        // With threshold 3: not enough
+        let cond3 = CompiledCondition {
+            field: None,
+            predicates: vec![(ConditionOperator::Gte, 3.0)],
+        };
+        assert!(
+            state
+                .check_condition(&cond3, CorrelationType::Temporal, &refs, None)
+                .is_none()
+        );
+    }
 }
