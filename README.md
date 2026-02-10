@@ -1,14 +1,14 @@
 # rsigma
 
-A Rust toolkit for [Sigma](https://github.com/SigmaHQ/sigma) detection rules - parsing, evaluation, and tooling.
+A Rust toolkit for [Sigma](https://github.com/SigmaHQ/sigma) detection rules — parsing, evaluation, and tooling.
 
 This is a Cargo workspace containing three crates:
 
-| Crate | Description | Status |
-|-------|-------------|--------|
-| [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST | Ready |
-| [`rsigma-eval`](crates/rsigma-eval/) | Evaluate compiled rules against events | Planned |
-| [`rsigma-cli`](crates/rsigma-cli/) | CLI for parsing, validating, and evaluating rules | Ready |
+| Crate | Description |
+|-------|-------------|
+| [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST | 
+| [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
+| [`rsigma-cli`](crates/rsigma-cli/) | CLI for parsing, validating, and evaluating rules |
 
 ## rsigma-parser
 
@@ -73,16 +73,48 @@ println!("{expr}");
 // (selection_main and 1 of selection_dword_* and not 1 of filter_*)
 ```
 
-## rsigma-eval (planned)
+## rsigma-eval
 
-Streaming evaluator for Sigma rules against JSON events. Planned features:
+Compiles Sigma rules into optimized in-memory matchers and evaluates them against JSON events using a **compile-then-evaluate** model. Rules are compiled once; each event is matched with zero allocation on the hot path.
 
-- Streaming rule evaluation against NDJSON events
-- Field matching with all Sigma modifiers
-- Boolean condition evaluation with short-circuit optimization
-- Compiled matchers for zero-allocation hot-path evaluation
-- Logsource routing (pre-filter rules by product/category/service)
-- Correlation engine (event_count, value_count, temporal windowing)
+### Features
+
+- **Compiled matchers** for all Sigma value-matching modifiers: `contains`, `startswith`, `endswith`, `re`, `cidr`, `base64offset`, `wide`, `windash`, `fieldref`, `exists`, numeric comparisons (`gt`, `gte`, `lt`, `lte`), wildcard patterns, null, and boolean equality
+- **Condition tree evaluation** with short-circuit logic, supporting `and`, `or`, `not`, identifiers, and quantified selectors (`1 of selection_*`, `all of them`)
+- **Logsource routing** — pre-filter rules by `product`, `category`, and `service` so only relevant rules are tested
+- **Modifier combinations** — handles stacked modifiers like `|contains|all`, `|base64offset|contains`, `|re|i|m|s`
+- **Event wrapper** with dot-notation field access (`process.name`), flat-key precedence, and keyword search across all string values
+- **Rich match output** — `MatchResult` includes rule title, ID, level, tags, matched selection names, and matched field/value pairs
+
+### Library Usage
+
+```rust
+use rsigma_parser::parse_sigma_yaml;
+use rsigma_eval::{Engine, Event};
+use serde_json::json;
+
+let yaml = r#"
+title: Detect Whoami
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+
+let collection = parse_sigma_yaml(yaml).unwrap();
+let mut engine = Engine::new();
+engine.add_collection(&collection).unwrap();
+
+let event_val = json!({"CommandLine": "cmd /c whoami"});
+let event = Event::from_value(&event_val);
+let matches = engine.evaluate(&event);
+assert_eq!(matches.len(), 1);
+assert_eq!(matches[0].rule_title, "Detect Whoami");
+```
 
 ## rsigma-cli
 
@@ -98,6 +130,12 @@ rsigma condition "selection and not 1 of filter_*"
 
 # Parse from stdin
 cat rule.yml | rsigma stdin
+
+# Evaluate a single event against rules
+rsigma eval --rules path/to/rules/ --event '{"CommandLine": "whoami"}'
+
+# Evaluate NDJSON events from stdin
+cat events.ndjson | rsigma eval --rules path/to/rules/
 ```
 
 ## Architecture
@@ -124,47 +162,29 @@ cat rule.yml | rsigma stdin
      │  (Pratt    │
      │  parser)   │
      └────────────┘
-```
-
-### Condition Expression Grammar
-
-The condition parser uses a PEG grammar with a Pratt parser for correct operator precedence:
-
-```
-Precedence (highest → lowest):
-  NOT  (prefix)
-  AND  (left-associative)
-  OR   (left-associative)
-```
-
-Keywords (`and`, `or`, `not`, `all`, `any`, `of`, `them`) use atomic rules with negative lookahead to distinguish from identifiers that contain keyword substrings (e.g., `selection_and_filter` is one identifier, not `selection` `and` `filter`).
-
-## Workspace Structure
-
-```
-rsigma/
-├── Cargo.toml                  # workspace root
-├── LICENSE
-├── README.md
-└── crates/
-    ├── rsigma-parser/          # parsing library
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       ├── ast.rs          # AST types
-    │       ├── condition.rs    # Condition parser (pest + Pratt)
-    │       ├── error.rs        # Error types
-    │       ├── parser.rs       # YAML → AST
-    │       ├── sigma.pest      # PEG grammar
-    │       └── value.rs        # SigmaString, SigmaValue, Timespan
-    ├── rsigma-eval/            # evaluator (planned)
-    │   ├── Cargo.toml
-    │   └── src/
-    │       └── lib.rs
-    └── rsigma-cli/             # CLI binary
-        ├── Cargo.toml
-        └── src/
-            └── main.rs
+              │
+              ▼
+     ┌──────────────────────────────────────────┐
+     │              rsigma-eval                 │
+     │                                          │
+     │  compiler.rs ──> CompiledRule            │
+     │    (AST → compiled matchers)             │
+     │                                          │
+     │  matcher.rs ──> CompiledMatcher          │
+     │    (Exact, Contains, Regex, Cidr, ...)   │
+     │                                          │
+     │  engine.rs ──> Engine                    │
+     │    (logsource routing, batch evaluation) │
+     │                                          │
+     │  event.rs ──> Event                      │
+     │    (field access, keyword search)        │
+     └──────────────────────────────────────────┘
+              │
+              ▼
+     ┌──────────────────┐
+     │  MatchResult     │──> rule title, id, level, tags,
+     │                  │    matched selections, field matches
+     └──────────────────┘
 ```
 
 ## Reference
