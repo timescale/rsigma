@@ -27,9 +27,10 @@ impl<'a> Event<'a> {
     pub fn get_field(&self, path: &str) -> Option<&'a Value> {
         // Flat key check first
         if let Some(obj) = self.inner.as_object()
-            && let Some(v) = obj.get(path) {
-                return Some(v);
-            }
+            && let Some(v) = obj.get(path)
+        {
+            return Some(v);
+        }
 
         // Dot-notation traversal
         if path.contains('.') {

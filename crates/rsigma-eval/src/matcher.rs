@@ -122,8 +122,7 @@ impl CompiledMatcher {
                 case_insensitive,
             } => match_str_value(value, |s| {
                 if *case_insensitive {
-                    s.len() >= prefix.len()
-                        && s[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)
                 } else {
                     s.starts_with(prefix.as_str())
                 }
@@ -149,7 +148,9 @@ impl CompiledMatcher {
             }),
 
             // -- Numeric --
-            CompiledMatcher::NumericEq(n) => match_numeric_value(value, |v| (v - n).abs() < f64::EPSILON),
+            CompiledMatcher::NumericEq(n) => {
+                match_numeric_value(value, |v| (v - n).abs() < f64::EPSILON)
+            }
             CompiledMatcher::NumericGt(n) => match_numeric_value(value, |v| v > *n),
             CompiledMatcher::NumericGte(n) => match_numeric_value(value, |v| v >= *n),
             CompiledMatcher::NumericLt(n) => match_numeric_value(value, |v| v < *n),
@@ -196,13 +197,9 @@ impl CompiledMatcher {
             },
 
             // -- Composite --
-            CompiledMatcher::AnyOf(matchers) => {
-                matchers.iter().any(|m| m.matches(value, event))
-            }
+            CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches(value, event)),
 
-            CompiledMatcher::AllOf(matchers) => {
-                matchers.iter().all(|m| m.matches(value, event))
-            }
+            CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches(value, event)),
         }
     }
 

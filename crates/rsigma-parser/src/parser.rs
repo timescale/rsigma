@@ -342,9 +342,10 @@ fn parse_detection_item(key: &str, value: &Value) -> Result<DetectionItem> {
 /// When the `re` modifier is present, strings are treated as raw (no wildcard parsing).
 fn to_sigma_value(v: &Value, field: &FieldSpec) -> SigmaValue {
     if field.has_modifier(Modifier::Re)
-        && let Value::String(s) = v {
-            return SigmaValue::from_raw_string(s);
-        }
+        && let Value::String(s) = v
+    {
+        return SigmaValue::from_raw_string(s);
+    }
     SigmaValue::from_yaml(v)
 }
 
@@ -390,9 +391,10 @@ fn parse_logsource(value: &Value) -> Result<LogSource> {
     for (k, v) in m {
         let key_str = k.as_str().unwrap_or("");
         if !known_keys.contains(&key_str)
-            && let Some(val_str) = v.as_str() {
-                custom.insert(key_str.to_string(), val_str.to_string());
-            }
+            && let Some(val_str) = v.as_str()
+        {
+            custom.insert(key_str.to_string(), val_str.to_string());
+        }
     }
 
     Ok(LogSource {

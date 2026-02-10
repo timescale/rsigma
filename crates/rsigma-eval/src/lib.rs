@@ -48,7 +48,9 @@ pub mod matcher;
 pub mod result;
 
 // Re-export the most commonly used types and functions at crate root
-pub use compiler::{compile_rule, evaluate_rule, CompiledDetection, CompiledDetectionItem, CompiledRule};
+pub use compiler::{
+    CompiledDetection, CompiledDetectionItem, CompiledRule, compile_rule, evaluate_rule,
+};
 pub use engine::Engine;
 pub use error::{EvalError, Result};
 pub use event::Event;

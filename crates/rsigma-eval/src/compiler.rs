@@ -13,11 +13,11 @@ use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use regex::Regex;
 
-use rsigma_parser::{
-    ConditionExpr, Detection, DetectionItem, Level, LogSource, Modifier,
-    Quantifier, SelectorPattern, SigmaRule, SigmaString, SigmaValue,
-};
 use rsigma_parser::value::{SpecialChar, StringPart};
+use rsigma_parser::{
+    ConditionExpr, Detection, DetectionItem, Level, LogSource, Modifier, Quantifier,
+    SelectorPattern, SigmaRule, SigmaString, SigmaValue,
+};
 
 use crate::error::{EvalError, Result};
 use crate::event::Event;
@@ -186,11 +186,8 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
         let mut matched_selections = Vec::new();
         if eval_condition(condition, &rule.detections, event, &mut matched_selections) {
             // Collect field matches from the matched selections
-            let matched_fields = collect_field_matches(
-                &matched_selections,
-                &rule.detections,
-                event,
-            );
+            let matched_fields =
+                collect_field_matches(&matched_selections, &rule.detections, event);
 
             return Some(MatchResult {
                 rule_title: rule.title.clone(),
@@ -242,13 +239,11 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
     if ctx.exists {
         let expect = match item.values.first() {
             Some(SigmaValue::Bool(b)) => *b,
-            Some(SigmaValue::String(s)) => {
-                match s.as_plain().as_deref() {
-                    Some("true") | Some("yes") => true,
-                    Some("false") | Some("no") => false,
-                    _ => true,
-                }
-            }
+            Some(SigmaValue::String(s)) => match s.as_plain().as_deref() {
+                Some("true") | Some("yes") => true,
+                Some("false") | Some("no") => false,
+                _ => true,
+            },
             _ => true,
         };
         return Ok(CompiledDetectionItem {
@@ -259,11 +254,8 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
     }
 
     // Compile each value into a matcher
-    let matchers: Result<Vec<CompiledMatcher>> = item
-        .values
-        .iter()
-        .map(|v| compile_value(v, &ctx))
-        .collect();
+    let matchers: Result<Vec<CompiledMatcher>> =
+        item.values.iter().map(|v| compile_value(v, &ctx)).collect();
     let matchers = matchers?;
 
     // Combine multiple values: |all → AND, default → OR
@@ -382,11 +374,7 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
             .map(|p| {
                 // base64offset implies contains matching
                 CompiledMatcher::Contains {
-                    value: if ci {
-                        p.to_ascii_lowercase()
-                    } else {
-                        p
-                    },
+                    value: if ci { p.to_ascii_lowercase() } else { p },
                     case_insensitive: ci,
                 }
             })
@@ -396,7 +384,9 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
 
     // |windash — expand `-` to `/` variants
     if ctx.windash {
-        let plain = sigma_str.as_plain().unwrap_or_else(|| sigma_str.original.clone());
+        let plain = sigma_str
+            .as_plain()
+            .unwrap_or_else(|| sigma_str.original.clone());
         let variants = expand_windash(&plain);
         let matchers: Result<Vec<CompiledMatcher>> = variants
             .into_iter()
@@ -540,21 +530,15 @@ pub fn eval_condition(
             }
         }
 
-        ConditionExpr::And(exprs) => {
-            exprs
-                .iter()
-                .all(|e| eval_condition(e, detections, event, matched_selections))
-        }
+        ConditionExpr::And(exprs) => exprs
+            .iter()
+            .all(|e| eval_condition(e, detections, event, matched_selections)),
 
-        ConditionExpr::Or(exprs) => {
-            exprs
-                .iter()
-                .any(|e| eval_condition(e, detections, event, matched_selections))
-        }
+        ConditionExpr::Or(exprs) => exprs
+            .iter()
+            .any(|e| eval_condition(e, detections, event, matched_selections)),
 
-        ConditionExpr::Not(inner) => {
-            !eval_condition(inner, detections, event, matched_selections)
-        }
+        ConditionExpr::Not(inner) => !eval_condition(inner, detections, event, matched_selections),
 
         ConditionExpr::Selector {
             quantifier,
@@ -562,21 +546,20 @@ pub fn eval_condition(
         } => {
             let matching_names: Vec<&String> = match pattern {
                 SelectorPattern::Them => detections.keys().collect(),
-                SelectorPattern::Pattern(pat) => {
-                    detections
-                        .keys()
-                        .filter(|name| pattern_matches(pat, name))
-                        .collect()
-                }
+                SelectorPattern::Pattern(pat) => detections
+                    .keys()
+                    .filter(|name| pattern_matches(pat, name))
+                    .collect(),
             };
 
             let mut match_count = 0u64;
             for name in &matching_names {
                 if let Some(det) = detections.get(*name)
-                    && eval_detection(det, event) {
-                        match_count += 1;
-                        matched_selections.push((*name).clone());
-                    }
+                    && eval_detection(det, event)
+                {
+                    match_count += 1;
+                    matched_selections.push((*name).clone());
+                }
             }
 
             match quantifier {
@@ -594,9 +577,7 @@ fn eval_detection(detection: &CompiledDetection, event: &Event) -> bool {
         CompiledDetection::AllOf(items) => {
             items.iter().all(|item| eval_detection_item(item, event))
         }
-        CompiledDetection::AnyOf(dets) => {
-            dets.iter().any(|d| eval_detection(d, event))
-        }
+        CompiledDetection::AnyOf(dets) => dets.iter().any(|d| eval_detection(d, event)),
         CompiledDetection::Keywords(matcher) => matcher.matches_keyword(event),
     }
 }
@@ -654,12 +635,13 @@ fn collect_detection_fields(
             for item in items {
                 if let Some(field_name) = &item.field
                     && let Some(value) = event.get_field(field_name)
-                        && item.matcher.matches(value, event) {
-                            out.push(FieldMatch {
-                                field: field_name.clone(),
-                                value: value.clone(),
-                            });
-                        }
+                    && item.matcher.matches(value, event)
+                {
+                    out.push(FieldMatch {
+                        field: field_name.clone(),
+                        value: value.clone(),
+                    });
+                }
             }
         }
         CompiledDetection::AnyOf(dets) => {
@@ -860,7 +842,11 @@ mod tests {
 
     #[test]
     fn test_compile_exact_match() {
-        let item = make_item("CommandLine", &[], vec![SigmaValue::String(SigmaString::new("whoami"))]);
+        let item = make_item(
+            "CommandLine",
+            &[],
+            vec![SigmaValue::String(SigmaString::new("whoami"))],
+        );
         let compiled = compile_detection_item(&item).unwrap();
         assert_eq!(compiled.field, Some("CommandLine".into()));
 
@@ -1000,11 +986,7 @@ mod tests {
 
     #[test]
     fn test_compile_numeric_comparison() {
-        let item = make_item(
-            "EventID",
-            &[Modifier::Gte],
-            vec![SigmaValue::Integer(4688)],
-        );
+        let item = make_item("EventID", &[Modifier::Gte], vec![SigmaValue::Integer(4688)]);
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"EventID": 4688});
@@ -1031,7 +1013,11 @@ mod tests {
         let patterns = base64_offset_patterns(b"Test");
         assert!(!patterns.is_empty());
         // The first pattern should be the normal base64 encoding of "Test"
-        assert!(patterns.iter().any(|p| p.contains("VGVzdA") || p.contains("Rlc3")));
+        assert!(
+            patterns
+                .iter()
+                .any(|p| p.contains("VGVzdA") || p.contains("Rlc3"))
+        );
     }
 
     #[test]

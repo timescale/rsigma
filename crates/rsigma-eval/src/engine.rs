@@ -6,7 +6,7 @@
 
 use rsigma_parser::{LogSource, SigmaCollection, SigmaRule};
 
-use crate::compiler::{compile_rule, evaluate_rule, CompiledRule};
+use crate::compiler::{CompiledRule, compile_rule, evaluate_rule};
 use crate::error::Result;
 use crate::event::Event;
 use crate::result::MatchResult;
@@ -102,9 +102,10 @@ impl Engine {
         let mut results = Vec::new();
         for rule in &self.rules {
             if logsource_matches(&rule.logsource, event_logsource)
-                && let Some(m) = evaluate_rule(rule, event) {
-                    results.push(m);
-                }
+                && let Some(m) = evaluate_rule(rule, event)
+            {
+                results.push(m);
+            }
         }
         results
     }
@@ -299,7 +300,11 @@ level: medium
             category: Some("process_creation".into()),
             ..Default::default()
         };
-        assert!(engine.evaluate_with_logsource(&event, &ls_nomatch).is_empty());
+        assert!(
+            engine
+                .evaluate_with_logsource(&event, &ls_nomatch)
+                .is_empty()
+        );
     }
 
     #[test]
