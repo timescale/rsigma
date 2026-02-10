@@ -4,7 +4,7 @@
 
 mod datagen;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, black_box};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rsigma_parser::parse_sigma_yaml;
 
 // ---------------------------------------------------------------------------
@@ -33,16 +33,12 @@ fn bench_parse_scaling(c: &mut Criterion) {
         let yaml = datagen::gen_n_rules(n);
         let yaml_len = yaml.len();
 
-        group.bench_with_input(
-            BenchmarkId::new("count", n),
-            &yaml,
-            |b, yaml| {
-                b.iter(|| {
-                    let result = parse_sigma_yaml(black_box(yaml)).unwrap();
-                    black_box(result);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("count", n), &yaml, |b, yaml| {
+            b.iter(|| {
+                let result = parse_sigma_yaml(black_box(yaml)).unwrap();
+                black_box(result);
+            });
+        });
 
         // Also report throughput in bytes
         group.throughput(criterion::Throughput::Bytes(yaml_len as u64));
@@ -76,16 +72,12 @@ fn bench_parse_wildcard_rules(c: &mut Criterion) {
     for n in [100, 500, 1000] {
         let yaml = datagen::gen_n_wildcard_rules(n);
 
-        group.bench_with_input(
-            BenchmarkId::new("count", n),
-            &yaml,
-            |b, yaml| {
-                b.iter(|| {
-                    let result = parse_sigma_yaml(black_box(yaml)).unwrap();
-                    black_box(result);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("count", n), &yaml, |b, yaml| {
+            b.iter(|| {
+                let result = parse_sigma_yaml(black_box(yaml)).unwrap();
+                black_box(result);
+            });
+        });
     }
 
     group.finish();
@@ -101,16 +93,12 @@ fn bench_parse_regex_rules(c: &mut Criterion) {
     for n in [100, 500, 1000] {
         let yaml = datagen::gen_n_regex_rules(n);
 
-        group.bench_with_input(
-            BenchmarkId::new("count", n),
-            &yaml,
-            |b, yaml| {
-                b.iter(|| {
-                    let result = parse_sigma_yaml(black_box(yaml)).unwrap();
-                    black_box(result);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("count", n), &yaml, |b, yaml| {
+            b.iter(|| {
+                let result = parse_sigma_yaml(black_box(yaml)).unwrap();
+                black_box(result);
+            });
+        });
     }
 
     group.finish();

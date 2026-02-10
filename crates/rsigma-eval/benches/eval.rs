@@ -5,7 +5,7 @@
 
 mod datagen;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, black_box};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rsigma_eval::{Engine, Event};
 use rsigma_parser::parse_sigma_yaml;
 
@@ -53,16 +53,12 @@ fn bench_eval_single_event(c: &mut Criterion) {
         let mut engine = Engine::new();
         engine.add_collection(&collection).unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::new("rules", n),
-            &engine,
-            |b, engine| {
-                b.iter(|| {
-                    let matches = engine.evaluate(black_box(&event));
-                    black_box(matches);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("rules", n), &engine, |b, engine| {
+            b.iter(|| {
+                let matches = engine.evaluate(black_box(&event));
+                black_box(matches);
+            });
+        });
     }
 
     group.finish();

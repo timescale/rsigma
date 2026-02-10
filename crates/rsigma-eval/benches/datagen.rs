@@ -93,8 +93,19 @@ const CATEGORIES: &[&str] = &[
 const LEVELS: &[&str] = &["low", "medium", "high", "critical"];
 
 const USER_NAMES: &[&str] = &[
-    "admin", "root", "SYSTEM", "alice", "bob", "carol", "dave", "eve",
-    "svc_account", "backup_user", "deploy", "jenkins", "www-data",
+    "admin",
+    "root",
+    "SYSTEM",
+    "alice",
+    "bob",
+    "carol",
+    "dave",
+    "eve",
+    "svc_account",
+    "backup_user",
+    "deploy",
+    "jenkins",
+    "www-data",
 ];
 
 pub const IMAGE_PATHS: &[&str] = &[

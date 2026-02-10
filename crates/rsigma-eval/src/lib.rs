@@ -94,6 +94,7 @@ pub mod engine;
 pub mod error;
 pub mod event;
 pub mod matcher;
+pub mod pipeline;
 pub mod result;
 
 // Re-export the most commonly used types and functions at crate root
@@ -110,4 +111,7 @@ pub use engine::Engine;
 pub use error::{EvalError, Result};
 pub use event::Event;
 pub use matcher::CompiledMatcher;
+pub use pipeline::{
+    Pipeline, apply_pipelines, merge_pipelines, parse_pipeline, parse_pipeline_file,
+};
 pub use result::{FieldMatch, MatchResult};

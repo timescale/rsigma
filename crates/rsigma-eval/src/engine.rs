@@ -9,6 +9,7 @@ use rsigma_parser::{ConditionExpr, FilterRule, LogSource, SigmaCollection, Sigma
 use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule};
 use crate::error::Result;
 use crate::event::Event;
+use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::MatchResult;
 
 /// The main rule evaluation engine.
@@ -47,17 +48,46 @@ use crate::result::MatchResult;
 /// ```
 pub struct Engine {
     rules: Vec<CompiledRule>,
+    pipelines: Vec<Pipeline>,
 }
 
 impl Engine {
     /// Create a new empty engine.
     pub fn new() -> Self {
-        Engine { rules: Vec::new() }
+        Engine {
+            rules: Vec::new(),
+            pipelines: Vec::new(),
+        }
+    }
+
+    /// Create a new engine with a pipeline.
+    pub fn new_with_pipeline(pipeline: Pipeline) -> Self {
+        Engine {
+            rules: Vec::new(),
+            pipelines: vec![pipeline],
+        }
+    }
+
+    /// Add a pipeline to the engine.
+    ///
+    /// Pipelines are applied to rules during `add_rule` / `add_collection`.
+    /// Only affects rules added **after** this call.
+    pub fn add_pipeline(&mut self, pipeline: Pipeline) {
+        self.pipelines.push(pipeline);
+        self.pipelines.sort_by_key(|p| p.priority);
     }
 
     /// Add a single parsed Sigma rule.
+    ///
+    /// If pipelines are set, the rule is cloned and transformed before compilation.
     pub fn add_rule(&mut self, rule: &SigmaRule) -> Result<()> {
-        let compiled = compile_rule(rule)?;
+        let compiled = if self.pipelines.is_empty() {
+            compile_rule(rule)?
+        } else {
+            let mut transformed = rule.clone();
+            apply_pipelines(&self.pipelines, &mut transformed)?;
+            compile_rule(&transformed)?
+        };
         self.rules.push(compiled);
         Ok(())
     }
@@ -75,6 +105,23 @@ impl Engine {
             self.apply_filter(filter)?;
         }
         Ok(())
+    }
+
+    /// Add all detection rules from a collection, applying the given pipelines.
+    ///
+    /// This is a convenience method that temporarily sets pipelines, adds the
+    /// collection, then clears them.
+    pub fn add_collection_with_pipelines(
+        &mut self,
+        collection: &SigmaCollection,
+        pipelines: &[Pipeline],
+    ) -> Result<()> {
+        let prev = std::mem::take(&mut self.pipelines);
+        self.pipelines = pipelines.to_vec();
+        self.pipelines.sort_by_key(|p| p.priority);
+        let result = self.add_collection(collection);
+        self.pipelines = prev;
+        result
     }
 
     /// Apply a filter rule to all referenced detection rules.
@@ -1046,6 +1093,375 @@ level: medium
         // "A" in UTF-16 with BOM: FF FE (BOM) + 41 00 (A in UTF-16LE)
         // base64 of [0xFF,0xFE,0x41,0x00] = "//5BAA=="
         let ev = json!({"Payload": "//5BAA=="});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    // =========================================================================
+    // Pipeline integration (end-to-end)
+    // =========================================================================
+
+    #[test]
+    fn test_pipeline_field_mapping_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Sysmon to ECS
+transformations:
+  - type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+    rule_conditions:
+      - type: logsource
+        product: windows
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Detect Whoami
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // After pipeline: field is renamed to process.command_line
+        // So the event must use the original Sigma field name — the pipeline
+        // maps rule fields, not event fields. Events still use their native schema.
+        // Actually, after pipeline transforms the rule's field names,
+        // the rule now looks for "process.command_line" in the event.
+        let ev = json!({"process.command_line": "cmd /c whoami"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // Old field name should no longer match
+        let ev2 = json!({"CommandLine": "cmd /c whoami"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_add_condition_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Add index condition
+transformations:
+  - type: add_condition
+    conditions:
+      source: windows
+    rule_conditions:
+      - type: logsource
+        product: windows
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Detect Cmd
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'cmd'
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // Must have both the original match AND source=windows
+        let ev = json!({"CommandLine": "cmd.exe", "source": "windows"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // Missing source field: should not match (pipeline added condition)
+        let ev2 = json!({"CommandLine": "cmd.exe"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_change_logsource_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Change logsource
+transformations:
+  - type: change_logsource
+    product: elastic
+    category: endpoint
+    rule_conditions:
+      - type: logsource
+        product: windows
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Test Rule
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        action: test
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // Rule still evaluates based on detection logic
+        let ev = json!({"action": "test"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // But with logsource routing, the original windows logsource no longer matches
+        let ls = LogSource {
+            product: Some("windows".to_string()),
+            category: Some("process_creation".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            engine
+                .evaluate_with_logsource(&Event::from_value(&ev), &ls)
+                .is_empty(),
+            "logsource was changed; windows/process_creation should not match"
+        );
+
+        let ls2 = LogSource {
+            product: Some("elastic".to_string()),
+            category: Some("endpoint".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            engine
+                .evaluate_with_logsource(&Event::from_value(&ev), &ls2)
+                .len(),
+            1,
+            "elastic/endpoint should match the transformed logsource"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_replace_string_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Replace backslash
+transformations:
+  - type: replace_string
+    regex: "\\\\"
+    replacement: "/"
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Path Detection
+logsource:
+    product: windows
+detection:
+    selection:
+        FilePath|contains: 'C:\Windows'
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // After replace: rule looks for "C:/Windows" instead of "C:\Windows"
+        let ev = json!({"FilePath": "C:/Windows/System32/cmd.exe"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    #[test]
+    fn test_pipeline_skips_non_matching_rules() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Windows Only
+transformations:
+  - type: field_name_prefix
+    prefix: "win."
+    rule_conditions:
+      - type: logsource
+        product: windows
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        // Two rules: one Windows, one Linux
+        let rule_yaml = r#"
+title: Windows Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: low
+---
+title: Linux Rule
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // Windows rule: field was prefixed to win.CommandLine
+        let ev_win = json!({"win.CommandLine": "whoami"});
+        let m = engine.evaluate(&Event::from_value(&ev_win));
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].rule_title, "Windows Rule");
+
+        // Linux rule: field was NOT prefixed (still CommandLine)
+        let ev_linux = json!({"CommandLine": "whoami"});
+        let m2 = engine.evaluate(&Event::from_value(&ev_linux));
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2[0].rule_title, "Linux Rule");
+    }
+
+    #[test]
+    fn test_multiple_pipelines_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let p1_yaml = r#"
+name: First Pipeline
+priority: 10
+transformations:
+  - type: field_name_mapping
+    mapping:
+      CommandLine: process.args
+"#;
+        let p2_yaml = r#"
+name: Second Pipeline
+priority: 20
+transformations:
+  - type: field_name_suffix
+    suffix: ".keyword"
+"#;
+        let p1 = parse_pipeline(p1_yaml).unwrap();
+        let p2 = parse_pipeline(p2_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Test
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'test'
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new();
+        engine.add_pipeline(p1);
+        engine.add_pipeline(p2);
+        engine.add_collection(&collection).unwrap();
+
+        // After p1: CommandLine -> process.args
+        // After p2: process.args -> process.args.keyword
+        let ev = json!({"process.args.keyword": "testing"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    #[test]
+    fn test_pipeline_drop_detection_item_e2e() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Drop EventID
+transformations:
+  - type: drop_detection_item
+    field_name_conditions:
+      - type: include_fields
+        fields:
+          - EventID
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Sysmon Process
+logsource:
+    product: windows
+detection:
+    selection:
+        EventID: 1
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // EventID detection item was dropped, so only CommandLine matters
+        let ev = json!({"CommandLine": "whoami"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // Without pipeline, EventID=1 would also be required
+        let mut engine2 = Engine::new();
+        engine2.add_collection(&collection).unwrap();
+        // Without EventID, should not match
+        assert!(engine2.evaluate(&Event::from_value(&ev)).is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_set_state_and_conditional() {
+        use crate::pipeline::parse_pipeline;
+
+        let pipeline_yaml = r#"
+name: Stateful Pipeline
+transformations:
+  - id: mark_windows
+    type: set_state
+    key: is_windows
+    value: "true"
+    rule_conditions:
+      - type: logsource
+        product: windows
+  - type: field_name_prefix
+    prefix: "winlog."
+    rule_conditions:
+      - type: processing_state
+        key: is_windows
+        val: "true"
+"#;
+        let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+        let rule_yaml = r#"
+title: Windows Detect
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'test'
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(rule_yaml).unwrap();
+
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+
+        // State was set → prefix was applied
+        let ev = json!({"winlog.CommandLine": "testing"});
         assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
     }
 }

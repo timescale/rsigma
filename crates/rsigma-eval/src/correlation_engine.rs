@@ -23,6 +23,7 @@ use crate::correlation::{CompiledCorrelation, GroupKey, WindowState, compile_cor
 use crate::engine::Engine;
 use crate::error::Result;
 use crate::event::Event;
+use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::MatchResult;
 
 // =============================================================================
@@ -117,6 +118,8 @@ pub struct CorrelationEngine {
     state: HashMap<(usize, GroupKey), WindowState>,
     /// Configuration.
     config: CorrelationConfig,
+    /// Processing pipelines applied to rules during add_rule.
+    pipelines: Vec<Pipeline>,
 }
 
 impl CorrelationEngine {
@@ -129,13 +132,36 @@ impl CorrelationEngine {
             rule_ids: Vec::new(),
             state: HashMap::new(),
             config,
+            pipelines: Vec::new(),
         }
     }
 
+    /// Add a pipeline to the engine.
+    ///
+    /// Pipelines are applied to rules during `add_rule` / `add_collection`.
+    pub fn add_pipeline(&mut self, pipeline: Pipeline) {
+        self.pipelines.push(pipeline);
+        self.pipelines.sort_by_key(|p| p.priority);
+    }
+
     /// Add a single detection rule.
+    ///
+    /// If pipelines are set, the rule is cloned and transformed before compilation.
+    /// The inner engine receives the already-transformed rule directly (not through
+    /// its own pipeline, to avoid double transformation).
     pub fn add_rule(&mut self, rule: &SigmaRule) -> Result<()> {
-        self.rule_ids.push((rule.id.clone(), rule.name.clone()));
-        self.engine.add_rule(rule)?;
+        if self.pipelines.is_empty() {
+            self.rule_ids.push((rule.id.clone(), rule.name.clone()));
+            self.engine.add_rule(rule)?;
+        } else {
+            let mut transformed = rule.clone();
+            apply_pipelines(&self.pipelines, &mut transformed)?;
+            self.rule_ids
+                .push((transformed.id.clone(), transformed.name.clone()));
+            // Use compile_rule + add_compiled_rule to bypass inner engine's pipelines
+            let compiled = crate::compiler::compile_rule(&transformed)?;
+            self.engine.add_compiled_rule(compiled);
+        }
         Ok(())
     }
 

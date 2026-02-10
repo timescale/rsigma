@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, Event};
+use rsigma_eval::{
+    CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline, parse_pipeline_file,
+};
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 
 #[derive(Parser)]
@@ -35,6 +37,10 @@ enum Commands {
         /// Show details for each file (not just summary)
         #[arg(short, long)]
         verbose: bool,
+
+        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        #[arg(short = 'p', long = "pipeline")]
+        pipelines: Vec<PathBuf>,
     },
 
     /// Parse a condition expression and print the AST
@@ -67,6 +73,10 @@ enum Commands {
         /// Pretty-print JSON output
         #[arg(short, long)]
         pretty: bool,
+
+        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        #[arg(short = 'p', long = "pipeline")]
+        pipelines: Vec<PathBuf>,
     },
 }
 
@@ -75,14 +85,19 @@ fn main() {
 
     match cli.command {
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
-        Commands::Validate { path, verbose } => cmd_validate(path, verbose),
+        Commands::Validate {
+            path,
+            verbose,
+            pipelines,
+        } => cmd_validate(path, verbose, pipelines),
         Commands::Condition { expr } => cmd_condition(expr),
         Commands::Stdin { pretty } => cmd_stdin(pretty),
         Commands::Eval {
             rules,
             event,
             pretty,
-        } => cmd_eval(rules, event, pretty),
+            pipelines,
+        } => cmd_eval(rules, event, pretty, pipelines),
     }
 }
 
@@ -103,7 +118,9 @@ fn cmd_parse(path: PathBuf, pretty: bool) {
     }
 }
 
-fn cmd_validate(path: PathBuf, verbose: bool) {
+fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
+    let pipelines = load_pipelines(&pipeline_paths);
+
     match parse_sigma_directory(&path) {
         Ok(collection) => {
             let total = collection.len();
@@ -117,6 +134,27 @@ fn cmd_validate(path: PathBuf, verbose: bool) {
             println!("  Correlation rules: {correlations}");
             println!("  Filter rules:      {filters}");
             println!("  Parse errors:      {errors}");
+
+            if !pipelines.is_empty() {
+                // Try compiling with pipelines to check for pipeline errors
+                let mut engine = Engine::new();
+                for p in &pipelines {
+                    engine.add_pipeline(p.clone());
+                }
+                match engine.add_collection(&collection) {
+                    Ok(()) => {
+                        println!(
+                            "  Pipeline applied:  {} pipeline(s), {} rules compiled OK",
+                            pipelines.len(),
+                            engine.rule_count()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Pipeline compilation error: {e}");
+                        process::exit(1);
+                    }
+                }
+            }
 
             if verbose && !collection.errors.is_empty() {
                 println!("\nErrors:");
@@ -165,14 +203,20 @@ fn cmd_stdin(pretty: bool) {
     }
 }
 
-fn cmd_eval(rules_path: PathBuf, event_json: Option<String>, pretty: bool) {
+fn cmd_eval(
+    rules_path: PathBuf,
+    event_json: Option<String>,
+    pretty: bool,
+    pipeline_paths: Vec<PathBuf>,
+) {
     let collection = load_collection(&rules_path);
+    let pipelines = load_pipelines(&pipeline_paths);
     let has_correlations = !collection.correlations.is_empty();
 
     if has_correlations {
-        cmd_eval_with_correlations(collection, &rules_path, event_json, pretty);
+        cmd_eval_with_correlations(collection, &rules_path, event_json, pretty, &pipelines);
     } else {
-        cmd_eval_detection_only(collection, &rules_path, event_json, pretty);
+        cmd_eval_detection_only(collection, &rules_path, event_json, pretty, &pipelines);
     }
 }
 
@@ -182,8 +226,12 @@ fn cmd_eval_with_correlations(
     rules_path: &std::path::Path,
     event_json: Option<String>,
     pretty: bool,
+    pipelines: &[Pipeline],
 ) {
     let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    for p in pipelines {
+        engine.add_pipeline(p.clone());
+    }
     if let Err(e) = engine.add_collection(&collection) {
         eprintln!("Error compiling rules: {e}");
         process::exit(1);
@@ -272,8 +320,12 @@ fn cmd_eval_detection_only(
     rules_path: &std::path::Path,
     event_json: Option<String>,
     pretty: bool,
+    pipelines: &[Pipeline],
 ) {
     let mut engine = Engine::new();
+    for p in pipelines {
+        engine.add_pipeline(p.clone());
+    }
     if let Err(e) = engine.add_collection(&collection) {
         eprintln!("Error compiling rules: {e}");
         process::exit(1);
@@ -347,6 +399,24 @@ fn cmd_eval_detection_only(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
+    let mut pipelines = Vec::new();
+    for path in paths {
+        match parse_pipeline_file(path) {
+            Ok(p) => {
+                eprintln!("Loaded pipeline: {} (priority {})", p.name, p.priority);
+                pipelines.push(p);
+            }
+            Err(e) => {
+                eprintln!("Error loading pipeline {}: {e}", path.display());
+                process::exit(1);
+            }
+        }
+    }
+    pipelines.sort_by_key(|p| p.priority);
+    pipelines
+}
 
 fn load_collection(path: &std::path::Path) -> SigmaCollection {
     let collection = if path.is_dir() {

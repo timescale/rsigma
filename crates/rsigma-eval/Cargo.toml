@@ -9,6 +9,7 @@ license.workspace = true
 rsigma-parser = { path = "../rsigma-parser" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 regex = "1"
 base64 = "0.22"
 ipnet = "2"

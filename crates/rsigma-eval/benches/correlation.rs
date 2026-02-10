@@ -6,7 +6,7 @@
 
 mod datagen;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, black_box};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
 use rsigma_eval::{CorrelationConfig, CorrelationEngine, Event};
 use rsigma_parser::parse_sigma_yaml;
@@ -44,10 +44,8 @@ fn bench_correlation_event_count(c: &mut Criterion) {
                     |mut engine| {
                         let base_ts = 1_000_000i64;
                         for (i, event) in events.iter().enumerate() {
-                            let result = engine.process_event_at(
-                                black_box(event),
-                                base_ts + i as i64,
-                            );
+                            let result =
+                                engine.process_event_at(black_box(event), base_ts + i as i64);
                             black_box(&result);
                         }
                     },
@@ -89,10 +87,8 @@ fn bench_correlation_temporal(c: &mut Criterion) {
                     |mut engine| {
                         let base_ts = 1_000_000i64;
                         for (i, event) in events.iter().enumerate() {
-                            let result = engine.process_event_at(
-                                black_box(event),
-                                base_ts + i as i64,
-                            );
+                            let result =
+                                engine.process_event_at(black_box(event), base_ts + i as i64);
                             black_box(&result);
                         }
                     },
@@ -136,10 +132,8 @@ fn bench_correlation_throughput(c: &mut Criterion) {
                         let mut det_total = 0usize;
                         let mut corr_total = 0usize;
                         for (i, event) in events.iter().enumerate() {
-                            let result = engine.process_event_at(
-                                black_box(event),
-                                base_ts + i as i64,
-                            );
+                            let result =
+                                engine.process_event_at(black_box(event), base_ts + i as i64);
                             det_total += result.detections.len();
                             corr_total += result.correlations.len();
                         }
@@ -219,10 +213,8 @@ level: high
                     |mut engine| {
                         let base_ts = 1_000_000i64;
                         for (i, event) in events.iter().enumerate() {
-                            let result = engine.process_event_at(
-                                black_box(event),
-                                base_ts + i as i64,
-                            );
+                            let result =
+                                engine.process_event_at(black_box(event), base_ts + i as i64);
                             black_box(&result);
                         }
                         black_box(engine.state_count());
