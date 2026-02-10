@@ -7,3 +7,9 @@ license.workspace = true
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+base64 = "0.22"
+ipnet = "2"
+thiserror = "2"
