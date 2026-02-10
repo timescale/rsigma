@@ -1891,4 +1891,70 @@ level: high
             "noon login should not match night rule"
         );
     }
+
+    // =========================================================================
+    // Correlation condition range (multiple predicates)
+    // =========================================================================
+
+    #[test]
+    fn test_event_count_range_condition() {
+        let yaml = r#"
+title: Login Attempt
+id: login-attempt-001
+name: login_attempt
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: login
+    condition: selection
+level: low
+---
+title: Login Count Range
+id: corr-range-001
+correlation:
+    type: event_count
+    rules:
+        - login-attempt-001
+    group-by:
+        - User
+    timespan: 3600s
+    condition:
+        gt: 2
+        lte: 5
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ts: i64 = 1_000_000;
+
+        // Send 2 events — gt:2 is false
+        for i in 0..2 {
+            let ev = json!({"EventType": "login", "User": "alice"});
+            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            assert!(r.correlations.is_empty(), "2 events should not fire (gt:2)");
+        }
+
+        // 3rd event — gt:2 is true, lte:5 is true → fires
+        let ev3 = json!({"EventType": "login", "User": "alice"});
+        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 3);
+        assert_eq!(r3.correlations.len(), 1, "3 events: gt:2 AND lte:5");
+
+        // Send events 4, 5 — still in range
+        for i in 4..=5 {
+            let ev = json!({"EventType": "login", "User": "alice"});
+            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            assert_eq!(r.correlations.len(), 1, "{i} events still in range");
+        }
+
+        // 6th event — lte:5 is false → no fire
+        let ev6 = json!({"EventType": "login", "User": "alice"});
+        let r6 = engine.process_event_at(&Event::from_value(&ev6), ts + 6);
+        assert!(
+            r6.correlations.is_empty(),
+            "6 events exceeds lte:5, should not fire"
+        );
+    }
 }

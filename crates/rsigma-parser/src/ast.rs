@@ -115,6 +115,8 @@ pub enum Modifier {
     Base64,
     Base64Offset,
     Wide,
+    Utf16be,
+    Utf16,
     WindAsh,
 
     // Pattern matching
@@ -133,11 +135,13 @@ pub enum Modifier {
     // Field reference
     FieldRef,
 
-    // Numeric comparison
+    // Numeric/value comparison
     Gt,
     Gte,
     Lt,
     Lte,
+    /// Not equal: field value must differ from the specified value.
+    Neq,
 
     // Regex flags
     #[serde(rename = "i")]
@@ -169,7 +173,9 @@ impl FromStr for Modifier {
             "all" => Ok(Modifier::All),
             "base64" => Ok(Modifier::Base64),
             "base64offset" => Ok(Modifier::Base64Offset),
-            "wide" => Ok(Modifier::Wide),
+            "wide" | "utf16le" => Ok(Modifier::Wide),
+            "utf16be" => Ok(Modifier::Utf16be),
+            "utf16" => Ok(Modifier::Utf16),
             "windash" => Ok(Modifier::WindAsh),
             "re" => Ok(Modifier::Re),
             "cidr" => Ok(Modifier::Cidr),
@@ -181,6 +187,7 @@ impl FromStr for Modifier {
             "gte" => Ok(Modifier::Gte),
             "lt" => Ok(Modifier::Lt),
             "lte" => Ok(Modifier::Lte),
+            "neq" => Ok(Modifier::Neq),
             "i" | "ignorecase" => Ok(Modifier::IgnoreCase),
             "m" | "multiline" => Ok(Modifier::Multiline),
             "s" | "dotall" => Ok(Modifier::DotAll),
@@ -497,10 +504,13 @@ impl FromStr for ConditionOperator {
 /// Reference: pySigma correlations.py SigmaCorrelationCondition
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum CorrelationCondition {
-    /// Simple threshold condition: `gte: 100`, `lt: 5`, etc.
+    /// Threshold condition with one or more predicates (supports ranges).
+    ///
+    /// Single: `gte: 100`
+    /// Range: `gt: 100` + `lte: 200`
     Threshold {
-        op: ConditionOperator,
-        count: u64,
+        /// One or more (operator, value) predicates. All must be satisfied.
+        predicates: Vec<(ConditionOperator, u64)>,
         /// Optional field reference (required for `value_count` type).
         field: Option<String>,
     },

@@ -69,6 +69,7 @@ pub struct CompiledDetectionItem {
 // =============================================================================
 
 /// Parsed modifier flags for a single field specification.
+#[derive(Clone, Copy)]
 struct ModCtx {
     contains: bool,
     startswith: bool,
@@ -77,6 +78,8 @@ struct ModCtx {
     base64: bool,
     base64offset: bool,
     wide: bool,
+    utf16be: bool,
+    utf16: bool,
     windash: bool,
     re: bool,
     cidr: bool,
@@ -87,6 +90,7 @@ struct ModCtx {
     gte: bool,
     lt: bool,
     lte: bool,
+    neq: bool,
     ignore_case: bool,
     multiline: bool,
     dotall: bool,
@@ -104,6 +108,8 @@ impl ModCtx {
             base64: false,
             base64offset: false,
             wide: false,
+            utf16be: false,
+            utf16: false,
             windash: false,
             re: false,
             cidr: false,
@@ -114,6 +120,7 @@ impl ModCtx {
             gte: false,
             lt: false,
             lte: false,
+            neq: false,
             ignore_case: false,
             multiline: false,
             dotall: false,
@@ -129,6 +136,8 @@ impl ModCtx {
                 Modifier::Base64 => ctx.base64 = true,
                 Modifier::Base64Offset => ctx.base64offset = true,
                 Modifier::Wide => ctx.wide = true,
+                Modifier::Utf16be => ctx.utf16be = true,
+                Modifier::Utf16 => ctx.utf16 = true,
                 Modifier::WindAsh => ctx.windash = true,
                 Modifier::Re => ctx.re = true,
                 Modifier::Cidr => ctx.cidr = true,
@@ -139,6 +148,7 @@ impl ModCtx {
                 Modifier::Gte => ctx.gte = true,
                 Modifier::Lt => ctx.lt = true,
                 Modifier::Lte => ctx.lte = true,
+                Modifier::Neq => ctx.neq = true,
                 Modifier::IgnoreCase => ctx.ignore_case = true,
                 Modifier::Multiline => ctx.multiline = true,
                 Modifier::DotAll => ctx.dotall = true,
@@ -163,6 +173,11 @@ impl ModCtx {
     /// Whether any numeric comparison modifier is present.
     fn has_numeric_comparison(&self) -> bool {
         self.gt || self.gte || self.lt || self.lte
+    }
+
+    /// Whether the neq modifier is present.
+    fn has_neq(&self) -> bool {
+        self.neq
     }
 }
 
@@ -373,6 +388,15 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
         }
     }
 
+    // |neq — not-equal: negate the normal equality match
+    if ctx.has_neq() {
+        // Compile the value as a normal matcher, then wrap in Not
+        let mut inner_ctx = ModCtx { ..*ctx };
+        inner_ctx.neq = false;
+        let inner = compile_value(value, &inner_ctx)?;
+        return Ok(CompiledMatcher::Not(Box::new(inner)));
+    }
+
     // For non-string values without string modifiers, use simple matchers
     match value {
         SigmaValue::Integer(n) => {
@@ -402,9 +426,19 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
     // Apply transformation chain: wide → base64/base64offset → windash → string match
     let mut bytes = sigma_string_to_bytes(sigma_str);
 
-    // |wide — UTF-16LE encoding
+    // |wide / |utf16le — UTF-16LE encoding
     if ctx.wide {
-        bytes = to_wide_bytes(&bytes);
+        bytes = to_utf16le_bytes(&bytes);
+    }
+
+    // |utf16be — UTF-16 big-endian encoding
+    if ctx.utf16be {
+        bytes = to_utf16be_bytes(&bytes);
+    }
+
+    // |utf16 — UTF-16 with BOM (little-endian)
+    if ctx.utf16 {
+        bytes = to_utf16_bom_bytes(&bytes);
     }
 
     // |base64 — base64 encode, then exact/contains match
@@ -592,7 +626,10 @@ pub fn eval_condition(
             pattern,
         } => {
             let matching_names: Vec<&String> = match pattern {
-                SelectorPattern::Them => detections.keys().collect(),
+                SelectorPattern::Them => detections
+                    .keys()
+                    .filter(|name| !name.starts_with('_'))
+                    .collect(),
                 SelectorPattern::Pattern(pat) => detections
                     .keys()
                     .filter(|name| pattern_matches(pat, name))
@@ -764,9 +801,8 @@ fn sigma_string_to_bytes(s: &SigmaString) -> Vec<u8> {
 // Encoding helpers
 // =============================================================================
 
-/// Convert bytes to UTF-16LE representation (wide string).
-fn to_wide_bytes(bytes: &[u8]) -> Vec<u8> {
-    // Treat input as UTF-8, encode each char as UTF-16LE
+/// Convert bytes to UTF-16LE representation (wide string / utf16le).
+fn to_utf16le_bytes(bytes: &[u8]) -> Vec<u8> {
     let s = String::from_utf8_lossy(bytes);
     let mut wide = Vec::with_capacity(s.len() * 2);
     for c in s.chars() {
@@ -777,6 +813,27 @@ fn to_wide_bytes(bytes: &[u8]) -> Vec<u8> {
         }
     }
     wide
+}
+
+/// Convert bytes to UTF-16BE representation.
+fn to_utf16be_bytes(bytes: &[u8]) -> Vec<u8> {
+    let s = String::from_utf8_lossy(bytes);
+    let mut wide = Vec::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        let mut buf = [0u16; 2];
+        let encoded = c.encode_utf16(&mut buf);
+        for u in encoded {
+            wide.extend_from_slice(&u.to_be_bytes());
+        }
+    }
+    wide
+}
+
+/// Convert bytes to UTF-16 with BOM (little-endian, BOM = FF FE).
+fn to_utf16_bom_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut result = vec![0xFF, 0xFE]; // UTF-16LE BOM
+    result.extend_from_slice(&to_utf16le_bytes(bytes));
+    result
 }
 
 /// Generate base64 offset patterns for a byte sequence.

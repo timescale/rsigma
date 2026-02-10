@@ -94,6 +94,10 @@ pub enum CompiledMatcher {
         inner: Box<CompiledMatcher>,
     },
 
+    // -- Negation --
+    /// Negated matcher: matches if the inner matcher does NOT match.
+    Not(Box<CompiledMatcher>),
+
     // -- Composite --
     /// Match if ANY child matches (OR).
     AnyOf(Vec<CompiledMatcher>),
@@ -259,6 +263,9 @@ impl CompiledMatcher {
                     None => false,
                 }
             }
+
+            // -- Negation --
+            CompiledMatcher::Not(inner) => !inner.matches(value, event),
 
             // -- Composite --
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches(value, event)),

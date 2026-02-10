@@ -540,10 +540,13 @@ fn compile_condition(
     corr_type: CorrelationType,
 ) -> Result<(CompiledCondition, Option<ConditionExpr>)> {
     match cond {
-        CorrelationCondition::Threshold { op, count, field } => Ok((
+        CorrelationCondition::Threshold { predicates, field } => Ok((
             CompiledCondition {
                 field: field.clone(),
-                predicates: vec![(*op, *count as f64)],
+                predicates: predicates
+                    .iter()
+                    .map(|(op, count)| (*op, *count as f64))
+                    .collect(),
             },
             None,
         )),

@@ -560,32 +560,32 @@ fn parse_correlation_condition(
 
     match condition_val {
         Some(Value::Mapping(cm)) => {
-            // Threshold condition: { gte: 100 } or { lt: 5, field: "username" }
+            // Threshold condition: { gte: 100 } or range { gt: 100, lte: 200, field: "username" }
             let operators = ["lt", "lte", "gt", "gte", "eq", "neq"];
-            let mut op = None;
-            let mut count = 0u64;
+            let mut predicates = Vec::new();
 
             for &op_str in &operators {
-                if let Some(val) = cm.get(val_key(op_str)) {
-                    op = op_str.parse().ok();
-                    count = val
+                if let Some(val) = cm.get(val_key(op_str))
+                    && let Ok(parsed_op) = op_str.parse::<ConditionOperator>()
+                {
+                    let count = val
                         .as_u64()
                         .or_else(|| val.as_i64().map(|i| i as u64))
                         .unwrap_or(0);
-                    break;
+                    predicates.push((parsed_op, count));
                 }
             }
 
-            let op = op.ok_or_else(|| {
-                SigmaParserError::InvalidCorrelation(
+            if predicates.is_empty() {
+                return Err(SigmaParserError::InvalidCorrelation(
                     "Correlation condition must have an operator (lt, lte, gt, gte, eq, neq)"
                         .into(),
-                )
-            })?;
+                ));
+            }
 
             let field = get_str_from_mapping(cm, "field").map(|s| s.to_string());
 
-            Ok(CorrelationCondition::Threshold { op, count, field })
+            Ok(CorrelationCondition::Threshold { predicates, field })
         }
         Some(Value::String(expr_str)) => {
             // Extended condition for temporal types: "rule_a and rule_b"
@@ -597,8 +597,7 @@ fn parse_correlation_condition(
             match correlation_type {
                 CorrelationType::Temporal | CorrelationType::TemporalOrdered => {
                     Ok(CorrelationCondition::Threshold {
-                        op: ConditionOperator::Gte,
-                        count: 1,
+                        predicates: vec![(ConditionOperator::Gte, 1)],
                         field: None,
                     })
                 }
@@ -895,9 +894,10 @@ level: high
         assert_eq!(corr.group_by, vec!["userIdentity.arn"]);
 
         match &corr.condition {
-            CorrelationCondition::Threshold { op, count, .. } => {
-                assert_eq!(*op, ConditionOperator::Gte);
-                assert_eq!(*count, 100);
+            CorrelationCondition::Threshold { predicates, .. } => {
+                assert_eq!(predicates.len(), 1);
+                assert_eq!(predicates[0].0, ConditionOperator::Gte);
+                assert_eq!(predicates[0].1, 100);
             }
             _ => panic!("Expected threshold condition"),
         }
@@ -1173,6 +1173,164 @@ detection:
         for rule in &collection.rules {
             assert_eq!(rule.logsource.product, Some("windows".to_string()));
             assert_eq!(rule.level, Some(crate::ast::Level::Medium));
+        }
+    }
+
+    #[test]
+    fn test_correlation_condition_range() {
+        let yaml = r#"
+title: Base Rule
+name: base_rule
+logsource:
+    product: windows
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+level: low
+---
+title: Range Correlation
+name: range_test
+correlation:
+    type: event_count
+    rules:
+        - base_rule
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gt: 10
+        lte: 100
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.correlations.len(), 1);
+        let corr = &collection.correlations[0];
+
+        match &corr.condition {
+            CorrelationCondition::Threshold { predicates, field } => {
+                assert_eq!(predicates.len(), 2);
+                // Check we got both operators (order doesn't matter, but they come from iteration)
+                let has_gt = predicates
+                    .iter()
+                    .any(|(op, v)| *op == ConditionOperator::Gt && *v == 10);
+                let has_lte = predicates
+                    .iter()
+                    .any(|(op, v)| *op == ConditionOperator::Lte && *v == 100);
+                assert!(has_gt, "Expected gt: 10 predicate");
+                assert!(has_lte, "Expected lte: 100 predicate");
+                assert!(field.is_none());
+            }
+            _ => panic!("Expected threshold condition"),
+        }
+    }
+
+    #[test]
+    fn test_correlation_condition_range_with_field() {
+        let yaml = r#"
+title: Base Rule
+name: base_rule
+logsource:
+    product: windows
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+level: low
+---
+title: Range With Field
+name: range_with_field
+correlation:
+    type: value_count
+    rules:
+        - base_rule
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 5
+        lt: 50
+        field: TargetUser
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let corr = &collection.correlations[0];
+
+        match &corr.condition {
+            CorrelationCondition::Threshold { predicates, field } => {
+                assert_eq!(predicates.len(), 2);
+                assert_eq!(field.as_deref(), Some("TargetUser"));
+            }
+            _ => panic!("Expected threshold condition"),
+        }
+    }
+
+    #[test]
+    fn test_parse_neq_modifier() {
+        let yaml = r#"
+title: Neq Modifier
+logsource:
+    product: windows
+detection:
+    selection:
+        Port|neq: 443
+    condition: selection
+level: medium
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let rule = &collection.rules[0];
+        let det = rule.detection.named.get("selection").unwrap();
+        match det {
+            crate::ast::Detection::AllOf(items) => {
+                assert!(items[0].field.modifiers.contains(&Modifier::Neq));
+            }
+            _ => panic!("Expected AllOf detection"),
+        }
+    }
+
+    #[test]
+    fn test_parse_utf16be_modifier() {
+        let yaml = r#"
+title: Utf16be Modifier
+logsource:
+    product: windows
+detection:
+    selection:
+        Payload|utf16be|base64: 'data'
+    condition: selection
+level: medium
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let rule = &collection.rules[0];
+        let det = rule.detection.named.get("selection").unwrap();
+        match det {
+            crate::ast::Detection::AllOf(items) => {
+                assert!(items[0].field.modifiers.contains(&Modifier::Utf16be));
+                assert!(items[0].field.modifiers.contains(&Modifier::Base64));
+            }
+            _ => panic!("Expected AllOf detection"),
+        }
+    }
+
+    #[test]
+    fn test_parse_utf16_modifier() {
+        let yaml = r#"
+title: Utf16 BOM Modifier
+logsource:
+    product: windows
+detection:
+    selection:
+        Payload|utf16|base64: 'data'
+    condition: selection
+level: medium
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let rule = &collection.rules[0];
+        let det = rule.detection.named.get("selection").unwrap();
+        match det {
+            crate::ast::Detection::AllOf(items) => {
+                assert!(items[0].field.modifiers.contains(&Modifier::Utf16));
+                assert!(items[0].field.modifiers.contains(&Modifier::Base64));
+            }
+            _ => panic!("Expected AllOf detection"),
         }
     }
 }

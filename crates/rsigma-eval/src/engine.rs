@@ -872,4 +872,180 @@ detection:
         assert_eq!(m2.len(), 1);
         assert_eq!(m2[0].rule_title, "Detect Net Group");
     }
+
+    // =========================================================================
+    // |neq modifier
+    // =========================================================================
+
+    #[test]
+    fn test_neq_modifier_yaml() {
+        let yaml = r#"
+title: Non-Standard Port
+logsource:
+    product: windows
+detection:
+    selection:
+        Protocol: TCP
+    filter:
+        DestinationPort|neq: 443
+    condition: selection and filter
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // Match: TCP on port 80 (neq 443 is true)
+        let ev = json!({"Protocol": "TCP", "DestinationPort": "80"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // No match: TCP on port 443 (neq 443 is false)
+        let ev2 = json!({"Protocol": "TCP", "DestinationPort": "443"});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    #[test]
+    fn test_neq_modifier_integer() {
+        let yaml = r#"
+title: Non-Standard Port Numeric
+logsource:
+    product: windows
+detection:
+    selection:
+        DestinationPort|neq: 443
+    condition: selection
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        let ev = json!({"DestinationPort": 80});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        let ev2 = json!({"DestinationPort": 443});
+        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    }
+
+    // =========================================================================
+    // 1 of them / all of them: underscore exclusion
+    // =========================================================================
+
+    #[test]
+    fn test_selector_them_excludes_underscore() {
+        // Sigma spec: `1 of them` / `all of them` excludes identifiers starting with _
+        let yaml = r#"
+title: Underscore Test
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    _helper:
+        User: 'SYSTEM'
+    condition: all of them
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // With `all of them` excluding `_helper`, only `selection` needs to match
+        let ev = json!({"CommandLine": "whoami", "User": "admin"});
+        assert_eq!(
+            engine.evaluate(&Event::from_value(&ev)).len(),
+            1,
+            "all of them should exclude _helper, so only selection is required"
+        );
+    }
+
+    #[test]
+    fn test_selector_them_includes_non_underscore() {
+        let yaml = r#"
+title: Multiple Selections
+logsource:
+    product: windows
+detection:
+    sel_cmd:
+        CommandLine|contains: 'cmd'
+    sel_ps:
+        CommandLine|contains: 'powershell'
+    _private:
+        User: 'admin'
+    condition: 1 of them
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // `1 of them` excludes `_private`, so only sel_cmd and sel_ps are considered
+        let ev = json!({"CommandLine": "cmd.exe", "User": "guest"});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+
+        // _private alone should not count
+        let ev2 = json!({"CommandLine": "notepad", "User": "admin"});
+        assert!(
+            engine.evaluate(&Event::from_value(&ev2)).is_empty(),
+            "_private should be excluded from 'them'"
+        );
+    }
+
+    // =========================================================================
+    // UTF-16 encoding modifiers
+    // =========================================================================
+
+    #[test]
+    fn test_utf16le_modifier_yaml() {
+        // |wide is an alias for |utf16le
+        let yaml = r#"
+title: Wide String
+logsource:
+    product: windows
+detection:
+    selection:
+        Payload|wide|base64: 'Test'
+    condition: selection
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // "Test" in UTF-16LE, then base64 encoded
+        // T=0x54,0x00 e=0x65,0x00 s=0x73,0x00 t=0x74,0x00
+        // base64 of [0x54,0x00,0x65,0x00,0x73,0x00,0x74,0x00] = "VABlAHMAdAA="
+        let ev = json!({"Payload": "VABlAHMAdAA="});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    #[test]
+    fn test_utf16be_modifier_yaml() {
+        let yaml = r#"
+title: UTF16BE String
+logsource:
+    product: windows
+detection:
+    selection:
+        Payload|utf16be|base64: 'AB'
+    condition: selection
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // "AB" in UTF-16BE: A=0x00,0x41 B=0x00,0x42
+        // base64 of [0x00,0x41,0x00,0x42] = "AEEAQg=="
+        let ev = json!({"Payload": "AEEAQg=="});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    #[test]
+    fn test_utf16_bom_modifier_yaml() {
+        let yaml = r#"
+title: UTF16 BOM String
+logsource:
+    product: windows
+detection:
+    selection:
+        Payload|utf16|base64: 'A'
+    condition: selection
+level: medium
+"#;
+        let engine = make_engine_with_rule(yaml);
+
+        // "A" in UTF-16 with BOM: FF FE (BOM) + 41 00 (A in UTF-16LE)
+        // base64 of [0xFF,0xFE,0x41,0x00] = "//5BAA=="
+        let ev = json!({"Payload": "//5BAA=="});
+        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
 }
