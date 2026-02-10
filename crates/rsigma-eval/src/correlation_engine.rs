@@ -164,6 +164,10 @@ impl CorrelationEngine {
         for rule in &collection.rules {
             self.add_rule(rule)?;
         }
+        // Apply filter rules to the inner engine's detection rules
+        for filter in &collection.filters {
+            self.engine.apply_filter(filter)?;
+        }
         for corr in &collection.correlations {
             self.add_correlation(corr)?;
         }
@@ -274,6 +278,7 @@ impl CorrelationEngine {
         let timespan = self.correlations[corr_idx].timespan_secs;
         let group_by = self.correlations[corr_idx].group_by.clone();
         let condition = self.correlations[corr_idx].condition.clone();
+        let extended_expr = self.correlations[corr_idx].extended_expr.clone();
         let rule_refs = self.correlations[corr_idx].rule_refs.clone();
         let title = self.correlations[corr_idx].title.clone();
         let corr_id = self.correlations[corr_idx].id.clone();
@@ -336,7 +341,9 @@ impl CorrelationEngine {
         }
 
         // Check condition
-        if let Some(agg_value) = state.check_condition(&condition, corr_type, &rule_refs) {
+        if let Some(agg_value) =
+            state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
+        {
             let result = CorrelationResult {
                 rule_title: title,
                 rule_id: corr_id,
@@ -388,6 +395,7 @@ impl CorrelationEngine {
                 let timespan = self.correlations[corr_idx].timespan_secs;
                 let group_by = self.correlations[corr_idx].group_by.clone();
                 let condition = self.correlations[corr_idx].condition.clone();
+                let extended_expr = self.correlations[corr_idx].extended_expr.clone();
                 let rule_refs = self.correlations[corr_idx].rule_refs.clone();
                 let title = self.correlations[corr_idx].title.clone();
                 let id = self.correlations[corr_idx].id.clone();
@@ -416,7 +424,9 @@ impl CorrelationEngine {
                     }
                 }
 
-                if let Some(agg_value) = state.check_condition(&condition, corr_type, &rule_refs) {
+                if let Some(agg_value) =
+                    state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
+                {
                     next_pending.push(CorrelationResult {
                         rule_title: title,
                         rule_id: id,

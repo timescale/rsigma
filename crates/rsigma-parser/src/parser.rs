@@ -34,6 +34,7 @@ use crate::value::{SigmaValue, Timespan};
 pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
     let mut collection = SigmaCollection::new();
     let mut global: Option<Value> = None;
+    let mut previous: Option<Value> = None;
 
     for doc in serde_yaml::Deserializer::from_str(yaml) {
         let value: Value = match Value::deserialize(doc) {
@@ -68,10 +69,40 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
                     continue;
                 }
                 "repeat" => {
-                    // repeat is handled as merge with previous, simplified here
-                    collection
-                        .errors
-                        .push("'action: repeat' is not fully supported yet".to_string());
+                    // Merge current document onto the previous document
+                    if let Some(ref prev) = previous {
+                        let mut repeat_val = value.clone();
+                        if let Some(m) = repeat_val.as_mapping_mut() {
+                            m.remove(Value::String("action".to_string()));
+                        }
+                        let merged_repeat = deep_merge(prev.clone(), repeat_val);
+
+                        // Apply global template if present
+                        let final_val = if let Some(ref global_val) = global {
+                            deep_merge(global_val.clone(), merged_repeat)
+                        } else {
+                            merged_repeat
+                        };
+
+                        previous = Some(final_val.clone());
+
+                        match parse_document(&final_val) {
+                            Ok(doc) => match doc {
+                                SigmaDocument::Rule(rule) => collection.rules.push(rule),
+                                SigmaDocument::Correlation(corr) => {
+                                    collection.correlations.push(corr)
+                                }
+                                SigmaDocument::Filter(filter) => collection.filters.push(filter),
+                            },
+                            Err(e) => {
+                                collection.errors.push(e.to_string());
+                            }
+                        }
+                    } else {
+                        collection
+                            .errors
+                            .push("'action: repeat' without a previous document".to_string());
+                    }
                     continue;
                 }
                 other => {
@@ -89,6 +120,9 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
         } else {
             value
         };
+
+        // Track previous document for `action: repeat`
+        previous = Some(merged.clone());
 
         // Determine document type and parse
         match parse_document(&merged) {
@@ -950,5 +984,71 @@ level: high
             Detection::Keywords(vals) => assert_eq!(vals.len(), 2),
             _ => panic!("Expected Keywords detection"),
         }
+    }
+
+    #[test]
+    fn test_action_repeat() {
+        let yaml = r#"
+title: Base Rule
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+action: repeat
+title: Repeated Rule
+detection:
+    selection:
+        CommandLine|contains: 'ipconfig'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 2);
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+
+        // First rule is the original
+        assert_eq!(collection.rules[0].title, "Base Rule");
+        assert_eq!(collection.rules[0].level, Some(crate::ast::Level::Medium));
+        assert_eq!(
+            collection.rules[0].logsource.product,
+            Some("windows".to_string())
+        );
+
+        // Second rule inherits from first, but overrides title and detection
+        assert_eq!(collection.rules[1].title, "Repeated Rule");
+        // Logsource and level are inherited from the previous document
+        assert_eq!(
+            collection.rules[1].logsource.product,
+            Some("windows".to_string())
+        );
+        assert_eq!(
+            collection.rules[1].logsource.category,
+            Some("process_creation".to_string())
+        );
+        assert_eq!(collection.rules[1].level, Some(crate::ast::Level::Medium));
+    }
+
+    #[test]
+    fn test_action_repeat_no_previous() {
+        let yaml = r#"
+action: repeat
+title: Orphan Rule
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 0);
+        assert_eq!(collection.errors.len(), 1);
+        assert!(collection.errors[0].contains("without a previous document"));
     }
 }

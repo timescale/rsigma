@@ -4,9 +4,9 @@
 //! against them. It supports optional logsource-based pre-filtering to
 //! reduce the number of rules evaluated per event.
 
-use rsigma_parser::{LogSource, SigmaCollection, SigmaRule};
+use rsigma_parser::{ConditionExpr, FilterRule, LogSource, SigmaCollection, SigmaRule};
 
-use crate::compiler::{CompiledRule, compile_rule, evaluate_rule};
+use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule};
 use crate::error::Result;
 use crate::event::Event;
 use crate::result::MatchResult;
@@ -62,13 +62,86 @@ impl Engine {
         Ok(())
     }
 
-    /// Add all detection rules from a parsed collection.
+    /// Add all detection rules from a parsed collection, then apply filters.
     ///
-    /// Correlation and filter rules are skipped (Phase 2).
+    /// Filter rules modify referenced detection rules by appending exclusion
+    /// conditions. Correlation rules are handled by `CorrelationEngine`.
     pub fn add_collection(&mut self, collection: &SigmaCollection) -> Result<()> {
         for rule in &collection.rules {
             self.add_rule(rule)?;
         }
+        // Apply filter rules after all detection rules are loaded
+        for filter in &collection.filters {
+            self.apply_filter(filter)?;
+        }
+        Ok(())
+    }
+
+    /// Apply a filter rule to all referenced detection rules.
+    ///
+    /// For each detection in the filter, compile it and inject it into matching
+    /// rules as `AND NOT filter_condition`.
+    pub fn apply_filter(&mut self, filter: &FilterRule) -> Result<()> {
+        // Compile filter detections
+        let mut filter_detections = Vec::new();
+        for (name, detection) in &filter.detection.named {
+            let compiled = compile_detection(detection)?;
+            filter_detections.push((name.clone(), compiled));
+        }
+
+        if filter_detections.is_empty() {
+            return Ok(());
+        }
+
+        // Build the filter condition expression: AND of all filter detections
+        let filter_cond = if filter_detections.len() == 1 {
+            ConditionExpr::Identifier(format!("__filter_{}", filter_detections[0].0))
+        } else {
+            ConditionExpr::And(
+                filter_detections
+                    .iter()
+                    .map(|(name, _)| ConditionExpr::Identifier(format!("__filter_{name}")))
+                    .collect(),
+            )
+        };
+
+        // Find and modify referenced rules
+        for rule in &mut self.rules {
+            let rule_matches = filter.rules.is_empty() // empty = applies to all
+                || filter.rules.iter().any(|r| {
+                    rule.id.as_deref() == Some(r.as_str())
+                        || rule.title == *r
+                });
+
+            // Also check logsource compatibility if the filter specifies one
+            if rule_matches {
+                if let Some(ref filter_ls) = filter.logsource
+                    && !logsource_matches(&rule.logsource, filter_ls)
+                    && !logsource_matches(filter_ls, &rule.logsource)
+                {
+                    continue;
+                }
+
+                // Inject filter detections into the rule
+                for (name, compiled) in &filter_detections {
+                    rule.detections
+                        .insert(format!("__filter_{name}"), compiled.clone());
+                }
+
+                // Wrap each existing condition: original AND NOT filter
+                rule.conditions = rule
+                    .conditions
+                    .iter()
+                    .map(|cond| {
+                        ConditionExpr::And(vec![
+                            cond.clone(),
+                            ConditionExpr::Not(Box::new(filter_cond.clone())),
+                        ])
+                    })
+                    .collect();
+            }
+        }
+
         Ok(())
     }
 
@@ -327,6 +400,82 @@ level: medium
         let ev = json!({"CommandLine": "powershell.exe -enc"});
         let event = Event::from_value(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_rule_application() {
+        // A filter rule that excludes SYSTEM user from the detection
+        let yaml = r#"
+title: Suspicious Process
+id: rule-001
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: high
+---
+title: Filter SYSTEM
+filter:
+    rules:
+        - rule-001
+detection:
+    filter_system:
+        User: 'SYSTEM'
+    condition: filter_system
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 1);
+        assert_eq!(collection.filters.len(), 1);
+
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        // Match: whoami by non-SYSTEM user
+        let ev = json!({"CommandLine": "whoami", "User": "admin"});
+        let event = Event::from_value(&ev);
+        assert_eq!(engine.evaluate(&event).len(), 1);
+
+        // No match: whoami by SYSTEM (filtered out)
+        let ev2 = json!({"CommandLine": "whoami", "User": "SYSTEM"});
+        let event2 = Event::from_value(&ev2);
+        assert!(engine.evaluate(&event2).is_empty());
+    }
+
+    #[test]
+    fn test_filter_rule_no_ref_applies_to_all() {
+        // A filter rule with empty `rules` applies to all rules
+        let yaml = r#"
+title: Detection A
+id: det-a
+logsource:
+    product: windows
+detection:
+    sel:
+        EventType: alert
+    condition: sel
+---
+title: Filter Out Test Env
+filter:
+    rules: []
+detection:
+    exclude:
+        Environment: 'test'
+    condition: exclude
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "alert", "Environment": "prod"});
+        let event = Event::from_value(&ev);
+        assert_eq!(engine.evaluate(&event).len(), 1);
+
+        let ev2 = json!({"EventType": "alert", "Environment": "test"});
+        let event2 = Event::from_value(&ev2);
+        assert!(engine.evaluate(&event2).is_empty());
     }
 
     #[test]

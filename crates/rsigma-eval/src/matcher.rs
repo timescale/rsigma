@@ -6,6 +6,7 @@
 
 use std::net::IpAddr;
 
+use chrono::{Datelike, Timelike};
 use ipnet::IpNet;
 use regex::Regex;
 use serde_json::Value;
@@ -79,12 +80,46 @@ pub enum CompiledMatcher {
     /// Boolean equality.
     BoolEq(bool),
 
+    // -- Expand --
+    /// Placeholder expansion: `%fieldname%` is resolved from the event at match time.
+    Expand {
+        template: Vec<ExpandPart>,
+        case_insensitive: bool,
+    },
+
+    // -- Timestamp --
+    /// Extract a time component from a timestamp field value and match it.
+    TimestampPart {
+        part: TimePart,
+        inner: Box<CompiledMatcher>,
+    },
+
     // -- Composite --
     /// Match if ANY child matches (OR).
     AnyOf(Vec<CompiledMatcher>),
 
     /// Match if ALL children match (AND).
     AllOf(Vec<CompiledMatcher>),
+}
+
+/// A part of an expand template.
+#[derive(Debug, Clone)]
+pub enum ExpandPart {
+    /// Literal text.
+    Literal(String),
+    /// A placeholder field name (between `%` delimiters).
+    Placeholder(String),
+}
+
+/// Which time component to extract from a timestamp.
+#[derive(Debug, Clone, Copy)]
+pub enum TimePart {
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
 }
 
 impl CompiledMatcher {
@@ -196,6 +231,35 @@ impl CompiledMatcher {
                 _ => false,
             },
 
+            // -- Expand --
+            CompiledMatcher::Expand {
+                template,
+                case_insensitive,
+            } => {
+                // Resolve all placeholders from the event
+                let expanded = expand_template(template, event);
+                match_str_value(value, |s| {
+                    if *case_insensitive {
+                        s.eq_ignore_ascii_case(&expanded)
+                    } else {
+                        s == expanded
+                    }
+                })
+            }
+
+            // -- Timestamp --
+            CompiledMatcher::TimestampPart { part, inner } => {
+                // Extract the time component from the value and match it
+                let component = extract_timestamp_part(value, *part);
+                match component {
+                    Some(n) => {
+                        let num_val = Value::Number(serde_json::Number::from(n));
+                        inner.matches(&num_val, event)
+                    }
+                    None => false,
+                }
+            }
+
             // -- Composite --
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches(value, event)),
 
@@ -293,6 +357,129 @@ pub fn sigma_string_to_regex(
     }
     pattern.push('$');
     pattern
+}
+
+// ---------------------------------------------------------------------------
+// Expand helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve all placeholders in an expand template from the event.
+fn expand_template(template: &[ExpandPart], event: &Event) -> String {
+    let mut result = String::new();
+    for part in template {
+        match part {
+            ExpandPart::Literal(s) => result.push_str(s),
+            ExpandPart::Placeholder(field) => {
+                if let Some(val) = event.get_field(field) {
+                    match val {
+                        Value::String(s) => result.push_str(s),
+                        Value::Number(n) => result.push_str(&n.to_string()),
+                        Value::Bool(b) => result.push_str(&b.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Parse an expand template string like `C:\Users\%user%\AppData` into parts.
+pub fn parse_expand_template(s: &str) -> Vec<ExpandPart> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_placeholder = false;
+    let mut placeholder = String::new();
+
+    for ch in s.chars() {
+        if ch == '%' {
+            if in_placeholder {
+                // End of placeholder
+                if !placeholder.is_empty() {
+                    parts.push(ExpandPart::Placeholder(placeholder.clone()));
+                    placeholder.clear();
+                }
+                in_placeholder = false;
+            } else {
+                // Start of placeholder — flush current literal
+                if !current.is_empty() {
+                    parts.push(ExpandPart::Literal(current.clone()));
+                    current.clear();
+                }
+                in_placeholder = true;
+            }
+        } else if in_placeholder {
+            placeholder.push(ch);
+        } else {
+            current.push(ch);
+        }
+    }
+
+    // Flush remaining
+    if in_placeholder && !placeholder.is_empty() {
+        // Unterminated placeholder — treat as literal
+        current.push('%');
+        current.push_str(&placeholder);
+    }
+    if !current.is_empty() {
+        parts.push(ExpandPart::Literal(current));
+    }
+
+    parts
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp part helpers
+// ---------------------------------------------------------------------------
+
+/// Extract a time component from a JSON value (timestamp string or number).
+fn extract_timestamp_part(value: &Value, part: TimePart) -> Option<i64> {
+    let ts_str = match value {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => {
+            // Interpret as epoch seconds and convert to DateTime
+            let secs = n.as_i64()?;
+            let secs = if secs > 1_000_000_000_000 {
+                secs / 1000
+            } else {
+                secs
+            };
+            let dt = chrono::DateTime::from_timestamp(secs, 0)?;
+            return Some(extract_part_from_datetime(&dt, part));
+        }
+        _ => return None,
+    };
+
+    // Try parsing as RFC 3339 / ISO 8601
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts_str) {
+        return Some(extract_part_from_datetime(&dt.to_utc(), part));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%dT%H:%M:%S") {
+        let dt = naive.and_utc();
+        return Some(extract_part_from_datetime(&dt, part));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S") {
+        let dt = naive.and_utc();
+        return Some(extract_part_from_datetime(&dt, part));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%dT%H:%M:%S%.f") {
+        let dt = naive.and_utc();
+        return Some(extract_part_from_datetime(&dt, part));
+    }
+
+    None
+}
+
+/// Extract a specific time component from a UTC DateTime.
+fn extract_part_from_datetime(dt: &chrono::DateTime<chrono::Utc>, part: TimePart) -> i64 {
+    match part {
+        TimePart::Minute => dt.minute() as i64,
+        TimePart::Hour => dt.hour() as i64,
+        TimePart::Day => dt.day() as i64,
+        TimePart::Week => dt.iso_week().week() as i64,
+        TimePart::Month => dt.month() as i64,
+        TimePart::Year => dt.year() as i64,
+    }
 }
 
 #[cfg(test)]
@@ -491,5 +678,125 @@ mod tests {
         let e = ev();
         let event = Event::from_value(&e);
         assert!(m.matches(&json!(42), &event));
+    }
+
+    // =========================================================================
+    // Expand modifier tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_expand_template() {
+        let parts = parse_expand_template("C:\\Users\\%user%\\AppData");
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], ExpandPart::Literal(s) if s == "C:\\Users\\"));
+        assert!(matches!(&parts[1], ExpandPart::Placeholder(s) if s == "user"));
+        assert!(matches!(&parts[2], ExpandPart::Literal(s) if s == "\\AppData"));
+    }
+
+    #[test]
+    fn test_parse_expand_template_no_placeholders() {
+        let parts = parse_expand_template("just a literal");
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(&parts[0], ExpandPart::Literal(s) if s == "just a literal"));
+    }
+
+    #[test]
+    fn test_parse_expand_template_multiple_placeholders() {
+        let parts = parse_expand_template("%a%:%b%");
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], ExpandPart::Placeholder(s) if s == "a"));
+        assert!(matches!(&parts[1], ExpandPart::Literal(s) if s == ":"));
+        assert!(matches!(&parts[2], ExpandPart::Placeholder(s) if s == "b"));
+    }
+
+    #[test]
+    fn test_expand_matcher() {
+        let template = parse_expand_template("C:\\Users\\%user%\\Downloads");
+        let m = CompiledMatcher::Expand {
+            template,
+            case_insensitive: true,
+        };
+        let e = json!({"user": "admin", "path": "C:\\Users\\admin\\Downloads"});
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("C:\\Users\\admin\\Downloads"), &event));
+        assert!(!m.matches(&json!("C:\\Users\\other\\Downloads"), &event));
+    }
+
+    #[test]
+    fn test_expand_matcher_missing_field() {
+        let template = parse_expand_template("%user%@%domain%");
+        let m = CompiledMatcher::Expand {
+            template,
+            case_insensitive: false,
+        };
+        // user is present but domain is not — should produce "admin@"
+        let e = json!({"user": "admin"});
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("admin@"), &event));
+    }
+
+    // =========================================================================
+    // Timestamp part tests
+    // =========================================================================
+
+    #[test]
+    fn test_timestamp_part_hour() {
+        let m = CompiledMatcher::TimestampPart {
+            part: TimePart::Hour,
+            inner: Box::new(CompiledMatcher::NumericEq(12.0)),
+        };
+        let e = json!({});
+        let event = Event::from_value(&e);
+        // 2024-07-10T12:30:00Z — hour should be 12
+        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
+        assert!(!m.matches(&json!("2024-07-10T15:30:00Z"), &event));
+    }
+
+    #[test]
+    fn test_timestamp_part_month() {
+        let m = CompiledMatcher::TimestampPart {
+            part: TimePart::Month,
+            inner: Box::new(CompiledMatcher::NumericEq(7.0)),
+        };
+        let e = json!({});
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
+        assert!(!m.matches(&json!("2024-08-10T12:30:00Z"), &event));
+    }
+
+    #[test]
+    fn test_timestamp_part_day() {
+        let m = CompiledMatcher::TimestampPart {
+            part: TimePart::Day,
+            inner: Box::new(CompiledMatcher::NumericEq(10.0)),
+        };
+        let e = json!({});
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
+        assert!(!m.matches(&json!("2024-07-15T12:30:00Z"), &event));
+    }
+
+    #[test]
+    fn test_timestamp_part_year() {
+        let m = CompiledMatcher::TimestampPart {
+            part: TimePart::Year,
+            inner: Box::new(CompiledMatcher::NumericEq(2024.0)),
+        };
+        let e = json!({});
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
+        assert!(!m.matches(&json!("2023-07-10T12:30:00Z"), &event));
+    }
+
+    #[test]
+    fn test_timestamp_part_from_epoch() {
+        let m = CompiledMatcher::TimestampPart {
+            part: TimePart::Hour,
+            inner: Box::new(CompiledMatcher::NumericEq(12.0)),
+        };
+        let e = json!({});
+        let event = Event::from_value(&e);
+        // 2024-07-10T12:30:00Z = 1720614600
+        assert!(m.matches(&json!(1720614600), &event));
     }
 }

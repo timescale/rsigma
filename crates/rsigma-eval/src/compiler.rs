@@ -90,6 +90,8 @@ struct ModCtx {
     ignore_case: bool,
     multiline: bool,
     dotall: bool,
+    expand: bool,
+    timestamp_part: Option<crate::matcher::TimePart>,
 }
 
 impl ModCtx {
@@ -115,6 +117,8 @@ impl ModCtx {
             ignore_case: false,
             multiline: false,
             dotall: false,
+            expand: false,
+            timestamp_part: None,
         };
         for m in modifiers {
             match m {
@@ -138,8 +142,13 @@ impl ModCtx {
                 Modifier::IgnoreCase => ctx.ignore_case = true,
                 Modifier::Multiline => ctx.multiline = true,
                 Modifier::DotAll => ctx.dotall = true,
-                // Timestamp modifiers, Expand — not implemented in eval yet
-                _ => {}
+                Modifier::Expand => ctx.expand = true,
+                Modifier::Hour => ctx.timestamp_part = Some(crate::matcher::TimePart::Hour),
+                Modifier::Day => ctx.timestamp_part = Some(crate::matcher::TimePart::Day),
+                Modifier::Week => ctx.timestamp_part = Some(crate::matcher::TimePart::Week),
+                Modifier::Month => ctx.timestamp_part = Some(crate::matcher::TimePart::Month),
+                Modifier::Year => ctx.timestamp_part = Some(crate::matcher::TimePart::Year),
+                Modifier::Minute => ctx.timestamp_part = Some(crate::matcher::TimePart::Minute),
             }
         }
         ctx
@@ -206,7 +215,7 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
 // Detection compilation
 // =============================================================================
 
-fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
+pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
     match detection {
         Detection::AllOf(items) => {
             let compiled: Result<Vec<_>> = items.iter().map(compile_detection_item).collect();
@@ -283,6 +292,44 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
     let ci = ctx.is_case_insensitive();
 
     // Handle special modifiers first
+
+    // |expand — runtime placeholder expansion
+    if ctx.expand {
+        let plain = value_to_plain_string(value)?;
+        let template = crate::matcher::parse_expand_template(&plain);
+        return Ok(CompiledMatcher::Expand {
+            template,
+            case_insensitive: ci,
+        });
+    }
+
+    // Timestamp part modifiers (|hour, |day, |month, etc.)
+    if let Some(part) = ctx.timestamp_part {
+        // The value is compared against the extracted time component.
+        // Compile the value as a numeric matcher, then wrap in TimestampPart.
+        let inner = match value {
+            SigmaValue::Integer(n) => CompiledMatcher::NumericEq(*n as f64),
+            SigmaValue::Float(n) => CompiledMatcher::NumericEq(*n),
+            SigmaValue::String(s) => {
+                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                let n: f64 = plain.parse().map_err(|_| {
+                    EvalError::IncompatibleValue(format!(
+                        "timestamp part modifier requires numeric value, got: {plain}"
+                    ))
+                })?;
+                CompiledMatcher::NumericEq(n)
+            }
+            _ => {
+                return Err(EvalError::IncompatibleValue(
+                    "timestamp part modifier requires numeric value".into(),
+                ));
+            }
+        };
+        return Ok(CompiledMatcher::TimestampPart {
+            part,
+            inner: Box::new(inner),
+        });
+    }
 
     // |fieldref — value is a field name to compare against
     if ctx.fieldref {
@@ -1065,6 +1112,95 @@ mod tests {
         assert!(eval_condition(&cond, &detections, &event, &mut matched));
 
         let ev2 = json!({"CommandLine": "whoami", "User": "SYSTEM"});
+        let event2 = Event::from_value(&ev2);
+        let mut matched2 = Vec::new();
+        assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
+    }
+
+    #[test]
+    fn test_compile_expand_modifier() {
+        let items = vec![make_item(
+            "path",
+            &[Modifier::Expand],
+            vec![SigmaValue::String(SigmaString::new(
+                "C:\\Users\\%username%\\Downloads",
+            ))],
+        )];
+        let detection = compile_detection(&Detection::AllOf(items)).unwrap();
+
+        let mut detections = HashMap::new();
+        detections.insert("selection".into(), detection);
+
+        let cond = ConditionExpr::Identifier("selection".into());
+
+        // Match: field matches after placeholder resolution
+        let ev = json!({
+            "path": "C:\\Users\\admin\\Downloads",
+            "username": "admin"
+        });
+        let event = Event::from_value(&ev);
+        let mut matched = Vec::new();
+        assert!(eval_condition(&cond, &detections, &event, &mut matched));
+
+        // No match: different user
+        let ev2 = json!({
+            "path": "C:\\Users\\admin\\Downloads",
+            "username": "guest"
+        });
+        let event2 = Event::from_value(&ev2);
+        let mut matched2 = Vec::new();
+        assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
+    }
+
+    #[test]
+    fn test_compile_timestamp_hour_modifier() {
+        let items = vec![make_item(
+            "timestamp",
+            &[Modifier::Hour],
+            vec![SigmaValue::Integer(3)],
+        )];
+        let detection = compile_detection(&Detection::AllOf(items)).unwrap();
+
+        let mut detections = HashMap::new();
+        detections.insert("selection".into(), detection);
+
+        let cond = ConditionExpr::Identifier("selection".into());
+
+        // Match: timestamp at 03:xx UTC
+        let ev = json!({"timestamp": "2024-07-10T03:30:00Z"});
+        let event = Event::from_value(&ev);
+        let mut matched = Vec::new();
+        assert!(eval_condition(&cond, &detections, &event, &mut matched));
+
+        // No match: timestamp at 12:xx UTC
+        let ev2 = json!({"timestamp": "2024-07-10T12:30:00Z"});
+        let event2 = Event::from_value(&ev2);
+        let mut matched2 = Vec::new();
+        assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
+    }
+
+    #[test]
+    fn test_compile_timestamp_month_modifier() {
+        let items = vec![make_item(
+            "created",
+            &[Modifier::Month],
+            vec![SigmaValue::Integer(12)],
+        )];
+        let detection = compile_detection(&Detection::AllOf(items)).unwrap();
+
+        let mut detections = HashMap::new();
+        detections.insert("selection".into(), detection);
+
+        let cond = ConditionExpr::Identifier("selection".into());
+
+        // Match: December
+        let ev = json!({"created": "2024-12-25T10:00:00Z"});
+        let event = Event::from_value(&ev);
+        let mut matched = Vec::new();
+        assert!(eval_condition(&cond, &detections, &event, &mut matched));
+
+        // No match: July
+        let ev2 = json!({"created": "2024-07-10T10:00:00Z"});
         let event2 = Event::from_value(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));

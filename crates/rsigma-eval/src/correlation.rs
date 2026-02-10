@@ -6,7 +6,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rsigma_parser::{
-    ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType, FieldAlias, Level,
+    ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType,
+    FieldAlias, Level,
 };
 
 use crate::error::{EvalError, Result};
@@ -33,6 +34,10 @@ pub struct CompiledCorrelation {
     pub timespan_secs: u64,
     /// Compiled threshold condition.
     pub condition: CompiledCondition,
+    /// Extended boolean condition expression for temporal correlations.
+    /// When set, evaluates this expression against fired rules instead of
+    /// a simple threshold count.
+    pub extended_expr: Option<ConditionExpr>,
     /// Whether referenced detection rules should also generate standalone matches.
     pub generate: bool,
 }
@@ -284,11 +289,15 @@ impl WindowState {
     ///
     /// Returns `Some(aggregated_value)` if the condition is satisfied,
     /// `None` otherwise.
+    ///
+    /// For temporal correlations with an extended expression, the expression
+    /// is evaluated against the set of rules that have fired in the window.
     pub fn check_condition(
         &self,
         condition: &CompiledCondition,
         corr_type: CorrelationType,
         rule_refs: &[String],
+        extended_expr: Option<&ConditionExpr>,
     ) -> Option<f64> {
         let value = match (self, corr_type) {
             (WindowState::EventCount { timestamps }, CorrelationType::EventCount) => {
@@ -300,7 +309,20 @@ impl WindowState {
                 distinct.len() as f64
             }
             (WindowState::Temporal { rule_hits }, CorrelationType::Temporal) => {
-                // Count how many distinct referenced rules have fired
+                // If an extended expression is provided, evaluate it
+                if let Some(expr) = extended_expr {
+                    if eval_temporal_expr(expr, rule_hits) {
+                        // Return the count of fired rules as the value
+                        let fired: usize = rule_refs
+                            .iter()
+                            .filter(|r| rule_hits.get(r.as_str()).is_some_and(|ts| !ts.is_empty()))
+                            .count();
+                        return Some(fired as f64);
+                    } else {
+                        return None;
+                    }
+                }
+                // Default: count how many distinct referenced rules have fired
                 let fired: usize = rule_refs
                     .iter()
                     .filter(|r| rule_hits.get(r.as_str()).is_some_and(|ts| !ts.is_empty()))
@@ -308,6 +330,12 @@ impl WindowState {
                 fired as f64
             }
             (WindowState::Temporal { rule_hits }, CorrelationType::TemporalOrdered) => {
+                // If an extended expression is provided, evaluate it first
+                if let Some(expr) = extended_expr
+                    && !eval_temporal_expr(expr, rule_hits)
+                {
+                    return None;
+                }
                 // Check if all referenced rules fired in order
                 if check_temporal_ordered(rule_refs, rule_hits) {
                     rule_refs.len() as f64
@@ -327,22 +355,22 @@ impl WindowState {
                 }
             }
             (WindowState::NumericAgg { entries }, CorrelationType::ValuePercentile) => {
-                // The condition value is a percentile threshold (e.g., lte: 1 means
-                // the value should be at or below the 1st percentile).
-                // We compute the percentile rank of each value in the distribution.
-                // For simplicity: return the count of distinct values as a proxy.
-                // In practice, percentile correlation is backend-specific.
-                // Here we return the percentile position of the condition field.
+                // Proper percentile calculation using linear interpolation.
+                // The condition threshold represents a percentile rank (0-100).
+                // We compute the value at that percentile from the window data.
                 if entries.is_empty() {
-                    0.0
-                } else {
-                    let mut values: Vec<f64> = entries.iter().map(|(_, v)| *v).collect();
-                    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                    // Return the median-ish value for percentile checking
-                    // The condition.check() will compare this against the threshold
-                    let idx = values.len() / 2;
-                    values[idx]
+                    return None;
                 }
+                let mut values: Vec<f64> = entries.iter().map(|(_, v)| *v).collect();
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                // Extract the percentile rank from the condition's first predicate
+                let percentile_rank = condition
+                    .predicates
+                    .first()
+                    .map(|(_, threshold)| *threshold)
+                    .unwrap_or(50.0);
+                let pval = percentile_linear_interp(&values, percentile_rank);
+                return Some(pval);
             }
             (WindowState::NumericAgg { entries }, CorrelationType::ValueMedian) => {
                 if entries.is_empty() {
@@ -414,6 +442,54 @@ fn check_temporal_ordered(
     find_ordered(rule_refs, rule_hits, 0, i64::MIN)
 }
 
+/// Evaluate a boolean condition expression against the set of rules that have
+/// fired within the temporal window.
+///
+/// Each `Identifier` in the expression is treated as a rule reference — it's
+/// `true` if that rule has at least one hit in `rule_hits`.
+fn eval_temporal_expr(expr: &ConditionExpr, rule_hits: &HashMap<String, VecDeque<i64>>) -> bool {
+    match expr {
+        ConditionExpr::Identifier(name) => rule_hits
+            .get(name.as_str())
+            .is_some_and(|ts| !ts.is_empty()),
+        ConditionExpr::And(children) => children.iter().all(|c| eval_temporal_expr(c, rule_hits)),
+        ConditionExpr::Or(children) => children.iter().any(|c| eval_temporal_expr(c, rule_hits)),
+        ConditionExpr::Not(child) => !eval_temporal_expr(child, rule_hits),
+        ConditionExpr::Selector { .. } => {
+            // Selectors are not meaningful for temporal condition evaluation
+            false
+        }
+    }
+}
+
+/// Compute the value at a given percentile rank using linear interpolation.
+///
+/// `values` must be sorted in ascending order.
+/// `percentile` is from 0.0 to 100.0.
+fn percentile_linear_interp(values: &[f64], percentile: f64) -> f64 {
+    assert!(!values.is_empty(), "values must not be empty");
+    let n = values.len();
+    if n == 1 {
+        return values[0];
+    }
+
+    // Clamp percentile to [0, 100]
+    let p = percentile.clamp(0.0, 100.0) / 100.0;
+
+    // Use the "C = 1" interpolation method (most common in statistics)
+    // rank = p * (n - 1)
+    let rank = p * (n - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    let fraction = rank - lower as f64;
+
+    if lower == upper || upper >= n {
+        values[lower.min(n - 1)]
+    } else {
+        values[lower] + fraction * (values[upper] - values[lower])
+    }
+}
+
 // =============================================================================
 // Compilation
 // =============================================================================
@@ -440,7 +516,7 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         .collect();
 
     // Compile condition
-    let condition = compile_condition(&rule.condition, rule.correlation_type)?;
+    let (condition, extended_expr) = compile_condition(&rule.condition, rule.correlation_type)?;
 
     Ok(CompiledCorrelation {
         id: rule.id.clone(),
@@ -453,31 +529,36 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         group_by,
         timespan_secs: rule.timespan.seconds,
         condition,
+        extended_expr,
         generate: rule.generate,
     })
 }
 
-/// Compile a `CorrelationCondition` into a `CompiledCondition`.
+/// Compile a `CorrelationCondition` into a `CompiledCondition` and optional expression.
 fn compile_condition(
     cond: &CorrelationCondition,
     corr_type: CorrelationType,
-) -> Result<CompiledCondition> {
+) -> Result<(CompiledCondition, Option<ConditionExpr>)> {
     match cond {
-        CorrelationCondition::Threshold { op, count, field } => Ok(CompiledCondition {
-            field: field.clone(),
-            predicates: vec![(*op, *count as f64)],
-        }),
-        CorrelationCondition::Extended(_expr) => {
-            // For temporal types with an extended boolean condition,
-            // default to: all referenced rules must fire (gte: rule_count).
-            // The actual boolean expression evaluation would require a more
-            // complex implementation. For now, treat it as "all must fire".
+        CorrelationCondition::Threshold { op, count, field } => Ok((
+            CompiledCondition {
+                field: field.clone(),
+                predicates: vec![(*op, *count as f64)],
+            },
+            None,
+        )),
+        CorrelationCondition::Extended(expr) => {
             match corr_type {
                 CorrelationType::Temporal | CorrelationType::TemporalOrdered => {
-                    Ok(CompiledCondition {
-                        field: None,
-                        predicates: vec![(ConditionOperator::Gte, 1.0)],
-                    })
+                    // For extended conditions, the threshold is a dummy (gte: 1)
+                    // since the actual evaluation is done via the expression tree.
+                    Ok((
+                        CompiledCondition {
+                            field: None,
+                            predicates: vec![(ConditionOperator::Gte, 1.0)],
+                        },
+                        Some(expr.clone()),
+                    ))
                 }
                 _ => Err(EvalError::CorrelationError(
                     "Extended conditions are only supported for temporal correlation types"
@@ -572,7 +653,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gte, 5.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::EventCount, &[]),
+            state.check_condition(&cond, CorrelationType::EventCount, &[], None),
             Some(5.0)
         );
     }
@@ -590,7 +671,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gte, 5.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::EventCount, &[]),
+            state.check_condition(&cond, CorrelationType::EventCount, &[], None),
             Some(5.0)
         );
     }
@@ -608,7 +689,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gte, 3.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::ValueCount, &[]),
+            state.check_condition(&cond, CorrelationType::ValueCount, &[], None),
             Some(3.0)
         );
     }
@@ -625,14 +706,14 @@ mod tests {
         };
         assert!(
             state
-                .check_condition(&cond, CorrelationType::Temporal, &refs)
+                .check_condition(&cond, CorrelationType::Temporal, &refs, None)
                 .is_none()
         );
 
         // Now rule_b fires too
         state.push_temporal(1001, "rule_b");
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::Temporal, &refs),
+            state.check_condition(&cond, CorrelationType::Temporal, &refs, None),
             Some(2.0)
         );
     }
@@ -656,7 +737,7 @@ mod tests {
         };
         assert!(
             state
-                .check_condition(&cond, CorrelationType::TemporalOrdered, &refs)
+                .check_condition(&cond, CorrelationType::TemporalOrdered, &refs, None)
                 .is_some()
         );
     }
@@ -675,7 +756,7 @@ mod tests {
         };
         assert!(
             state
-                .check_condition(&cond, CorrelationType::TemporalOrdered, &refs)
+                .check_condition(&cond, CorrelationType::TemporalOrdered, &refs, None)
                 .is_none()
         );
     }
@@ -691,7 +772,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gt, 1000.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::ValueSum, &[]),
+            state.check_condition(&cond, CorrelationType::ValueSum, &[], None),
             Some(1100.0)
         );
     }
@@ -708,7 +789,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gte, 200.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::ValueAvg, &[]),
+            state.check_condition(&cond, CorrelationType::ValueAvg, &[], None),
             Some(200.0)
         );
     }
@@ -725,7 +806,7 @@ mod tests {
             predicates: vec![(ConditionOperator::Gte, 20.0)],
         };
         assert_eq!(
-            state.check_condition(&cond, CorrelationType::ValueMedian, &[]),
+            state.check_condition(&cond, CorrelationType::ValueMedian, &[], None),
             Some(20.0)
         );
     }
@@ -770,5 +851,168 @@ level: high
         assert_eq!(compiled.group_by.len(), 1);
         assert!(compiled.condition.check(100.0));
         assert!(!compiled.condition.check(99.0));
+    }
+
+    // =========================================================================
+    // Extended temporal condition tests
+    // =========================================================================
+
+    #[test]
+    fn test_eval_temporal_expr_and() {
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::from([1000]));
+        rule_hits.insert("rule_b".to_string(), VecDeque::from([1001]));
+
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_eval_temporal_expr_and_incomplete() {
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::from([1000]));
+        // rule_b not fired
+
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(!eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_eval_temporal_expr_or() {
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::from([1000]));
+
+        let expr = ConditionExpr::Or(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+        assert!(eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_eval_temporal_expr_not() {
+        let rule_hits = HashMap::new();
+
+        let expr = ConditionExpr::Not(Box::new(ConditionExpr::Identifier("rule_a".to_string())));
+        assert!(eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_eval_temporal_expr_complex() {
+        let mut rule_hits = HashMap::new();
+        rule_hits.insert("rule_a".to_string(), VecDeque::from([1000]));
+        rule_hits.insert("rule_b".to_string(), VecDeque::from([1001]));
+        // rule_c NOT fired
+
+        // (rule_a and rule_b) and not rule_c
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::And(vec![
+                ConditionExpr::Identifier("rule_a".to_string()),
+                ConditionExpr::Identifier("rule_b".to_string()),
+            ]),
+            ConditionExpr::Not(Box::new(ConditionExpr::Identifier("rule_c".to_string()))),
+        ]);
+        assert!(eval_temporal_expr(&expr, &rule_hits));
+    }
+
+    #[test]
+    fn test_check_condition_with_extended_expr() {
+        let refs = vec!["rule_a".to_string(), "rule_b".to_string()];
+        let mut state = WindowState::new_for(CorrelationType::Temporal);
+        state.push_temporal(1000, "rule_a");
+        state.push_temporal(1001, "rule_b");
+
+        let cond = CompiledCondition {
+            field: None,
+            predicates: vec![(ConditionOperator::Gte, 1.0)],
+        };
+        let expr = ConditionExpr::And(vec![
+            ConditionExpr::Identifier("rule_a".to_string()),
+            ConditionExpr::Identifier("rule_b".to_string()),
+        ]);
+
+        // With expression: should match (both rules fired)
+        assert!(
+            state
+                .check_condition(&cond, CorrelationType::Temporal, &refs, Some(&expr))
+                .is_some()
+        );
+
+        // Now test with only rule_a: expression should fail
+        let mut state2 = WindowState::new_for(CorrelationType::Temporal);
+        state2.push_temporal(1000, "rule_a");
+        assert!(
+            state2
+                .check_condition(&cond, CorrelationType::Temporal, &refs, Some(&expr))
+                .is_none()
+        );
+    }
+
+    // =========================================================================
+    // Percentile linear interpolation tests
+    // =========================================================================
+
+    #[test]
+    fn test_percentile_linear_interp_single() {
+        assert!((percentile_linear_interp(&[42.0], 50.0) - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_linear_interp_basic() {
+        // Values: [1, 2, 3, 4, 5]
+        let values = &[1.0, 2.0, 3.0, 4.0, 5.0];
+        // 0th percentile = 1.0
+        assert!((percentile_linear_interp(values, 0.0) - 1.0).abs() < f64::EPSILON);
+        // 25th percentile = 2.0
+        assert!((percentile_linear_interp(values, 25.0) - 2.0).abs() < f64::EPSILON);
+        // 50th percentile = 3.0
+        assert!((percentile_linear_interp(values, 50.0) - 3.0).abs() < f64::EPSILON);
+        // 75th percentile = 4.0
+        assert!((percentile_linear_interp(values, 75.0) - 4.0).abs() < f64::EPSILON);
+        // 100th percentile = 5.0
+        assert!((percentile_linear_interp(values, 100.0) - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_linear_interp_interpolation() {
+        // Values: [10, 20, 30, 40]
+        let values = &[10.0, 20.0, 30.0, 40.0];
+        // 50th percentile: rank = 0.5 * 3 = 1.5, interp between 20 and 30 = 25
+        assert!((percentile_linear_interp(values, 50.0) - 25.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_linear_interp_1st_percentile() {
+        // Values: [1, 2, 3, ..., 100]
+        let values: Vec<f64> = (1..=100).map(|x| x as f64).collect();
+        // 1st percentile = 1.0 + 0.01 * 99 * (2.0 - 1.0) ~ 1.99
+        let p1 = percentile_linear_interp(&values, 1.0);
+        assert!((p1 - 1.99).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_value_percentile_check_condition() {
+        let mut state = WindowState::new_for(CorrelationType::ValuePercentile);
+        // Push 100 values: 1.0, 2.0, ..., 100.0
+        for i in 1..=100 {
+            state.push_numeric(1000 + i, i as f64);
+        }
+
+        let cond = CompiledCondition {
+            field: Some("latency".to_string()),
+            // The condition threshold is used as the percentile rank
+            predicates: vec![(ConditionOperator::Lte, 50.0)],
+        };
+        // 50th percentile of 1..100 should be ~50.5
+        let result = state.check_condition(&cond, CorrelationType::ValuePercentile, &[], None);
+        assert!(result.is_some());
+        let val = result.unwrap();
+        assert!((val - 50.5).abs() < 1.0, "expected ~50.5, got {val}");
     }
 }
