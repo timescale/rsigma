@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - run: cargo check --workspace --all-targets
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - run: cargo test --workspace
