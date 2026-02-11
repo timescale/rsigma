@@ -107,6 +107,11 @@ enum Commands {
         /// referenced by correlations (where generate=false).
         #[arg(long = "no-detections")]
         no_detections: bool,
+
+        /// Include the full event JSON in each detection match output.
+        /// Equivalent to the `rsigma.include_event` custom attribute.
+        #[arg(long = "include-event")]
+        include_event: bool,
     },
 }
 
@@ -132,6 +137,7 @@ fn main() {
             suppress,
             action,
             no_detections,
+            include_event,
         } => cmd_eval(
             rules,
             event,
@@ -142,6 +148,7 @@ fn main() {
             suppress,
             action,
             no_detections,
+            include_event,
         ),
     }
 }
@@ -259,10 +266,19 @@ fn cmd_eval(
     suppress: Option<String>,
     action: Option<String>,
     no_detections: bool,
+    include_event: bool,
 ) {
-    let collection = load_collection(&rules_path);
+    let mut collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
     let has_correlations = !collection.correlations.is_empty();
+
+    // If --include-event is set globally, inject the custom attribute on all rules.
+    if include_event {
+        for rule in &mut collection.rules {
+            rule.custom_attributes
+                .insert("rsigma.include_event".to_string(), "true".to_string());
+        }
+    }
 
     // Compile the event filter once up front
     let event_filter = build_event_filter(jq, jsonpath);

@@ -40,6 +40,9 @@ pub struct CompiledRule {
     pub detections: HashMap<String, CompiledDetection>,
     /// Condition expression trees (usually one, but can be multiple).
     pub conditions: Vec<ConditionExpr>,
+    /// Whether to include the full event JSON in the match result.
+    /// Controlled by the `rsigma.include_event` custom attribute.
+    pub include_event: bool,
 }
 
 /// A compiled detection definition.
@@ -192,6 +195,11 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
         detections.insert(name.clone(), compile_detection(detection)?);
     }
 
+    let include_event = rule
+        .custom_attributes
+        .get("rsigma.include_event")
+        .is_some_and(|v| v == "true");
+
     Ok(CompiledRule {
         title: rule.title.clone(),
         id: rule.id.clone(),
@@ -200,6 +208,7 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
         logsource: rule.logsource.clone(),
         detections,
         conditions: rule.detection.conditions.clone(),
+        include_event,
     })
 }
 
@@ -213,6 +222,12 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
             let matched_fields =
                 collect_field_matches(&matched_selections, &rule.detections, event);
 
+            let event_data = if rule.include_event {
+                Some(event.as_value().clone())
+            } else {
+                None
+            };
+
             return Some(MatchResult {
                 rule_title: rule.title.clone(),
                 rule_id: rule.id.clone(),
@@ -220,6 +235,7 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
                 tags: rule.tags.clone(),
                 matched_selections,
                 matched_fields,
+                event: event_data,
             });
         }
     }
@@ -1261,5 +1277,82 @@ mod tests {
         let event2 = Event::from_value(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
+    }
+
+    fn make_test_sigma_rule(title: &str, custom_attributes: HashMap<String, String>) -> SigmaRule {
+        use rsigma_parser::{Detections, LogSource};
+        SigmaRule {
+            title: title.to_string(),
+            id: Some("test-id".to_string()),
+            name: None,
+            related: vec![],
+            taxonomy: None,
+            status: None,
+            level: Some(Level::Medium),
+            description: None,
+            license: None,
+            author: None,
+            references: vec![],
+            date: None,
+            modified: None,
+            tags: vec![],
+            scope: vec![],
+            logsource: LogSource {
+                category: Some("test".to_string()),
+                product: None,
+                service: None,
+                definition: None,
+                custom: HashMap::new(),
+            },
+            detection: Detections {
+                named: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "selection".to_string(),
+                        Detection::AllOf(vec![make_item(
+                            "action",
+                            &[],
+                            vec![SigmaValue::String(SigmaString::new("login"))],
+                        )]),
+                    );
+                    m
+                },
+                conditions: vec![ConditionExpr::Identifier("selection".to_string())],
+                condition_strings: vec!["selection".to_string()],
+                timeframe: None,
+            },
+            fields: vec![],
+            falsepositives: vec![],
+            custom_attributes,
+        }
+    }
+
+    #[test]
+    fn test_include_event_custom_attribute() {
+        let mut attrs = HashMap::new();
+        attrs.insert("rsigma.include_event".to_string(), "true".to_string());
+        let rule = make_test_sigma_rule("Include Event Test", attrs);
+
+        let compiled = compile_rule(&rule).unwrap();
+        assert!(compiled.include_event);
+
+        let ev = json!({"action": "login", "user": "alice"});
+        let event = Event::from_value(&ev);
+        let result = evaluate_rule(&compiled, &event).unwrap();
+        assert!(result.event.is_some());
+        assert_eq!(result.event.unwrap(), ev);
+    }
+
+    #[test]
+    fn test_no_include_event_by_default() {
+        let rule = make_test_sigma_rule("No Include Event Test", HashMap::new());
+
+        let compiled = compile_rule(&rule).unwrap();
+        assert!(!compiled.include_event);
+
+        let ev = json!({"action": "login", "user": "alice"});
+        let event = Event::from_value(&ev);
+        let result = evaluate_rule(&compiled, &event).unwrap();
+        assert!(result.event.is_none());
     }
 }

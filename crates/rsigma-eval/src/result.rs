@@ -21,6 +21,10 @@ pub struct MatchResult {
     pub matched_selections: Vec<String>,
     /// Specific field matches that triggered the detection.
     pub matched_fields: Vec<FieldMatch>,
+    /// The full event that triggered the match, included when the
+    /// `rsigma.include_event` custom attribute is set to `"true"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<serde_json::Value>,
 }
 
 /// A specific field match within a detection.
