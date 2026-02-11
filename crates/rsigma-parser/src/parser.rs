@@ -88,7 +88,7 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
 
                         match parse_document(&final_val) {
                             Ok(doc) => match doc {
-                                SigmaDocument::Rule(rule) => collection.rules.push(rule),
+                                SigmaDocument::Rule(rule) => collection.rules.push(*rule),
                                 SigmaDocument::Correlation(corr) => {
                                     collection.correlations.push(corr)
                                 }
@@ -127,7 +127,7 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
         // Determine document type and parse
         match parse_document(&merged) {
             Ok(doc) => match doc {
-                SigmaDocument::Rule(rule) => collection.rules.push(rule),
+                SigmaDocument::Rule(rule) => collection.rules.push(*rule),
                 SigmaDocument::Correlation(corr) => collection.correlations.push(corr),
                 SigmaDocument::Filter(filter) => collection.filters.push(filter),
             },
@@ -197,7 +197,7 @@ fn parse_document(value: &Value) -> Result<SigmaDocument> {
     } else if mapping.contains_key(Value::String("filter".into())) {
         parse_filter_rule(value).map(SigmaDocument::Filter)
     } else {
-        parse_detection_rule(value).map(SigmaDocument::Rule)
+        parse_detection_rule(value).map(|r| SigmaDocument::Rule(Box::new(r)))
     }
 }
 
@@ -248,6 +248,7 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         level: get_str(m, "level").and_then(|s| s.parse().ok()),
         tags: get_str_list(m, "tags"),
         scope: get_str_list(m, "scope"),
+        custom_attributes: HashMap::new(),
     })
 }
 

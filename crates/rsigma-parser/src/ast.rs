@@ -432,6 +432,13 @@ pub struct SigmaRule {
     pub level: Option<Level>,
     pub tags: Vec<String>,
     pub scope: Vec<String>,
+
+    /// Custom attributes set by pipeline transformations (e.g. `SetCustomAttribute`).
+    ///
+    /// Backends / engines can read these to modify behavior per-rule.
+    /// This mirrors pySigma's `SigmaRule.custom_attributes` dict.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub custom_attributes: HashMap<String, String>,
 }
 
 // =============================================================================
@@ -594,7 +601,7 @@ pub struct FilterRule {
 /// Each document is either a detection rule, correlation rule, filter, or action.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum SigmaDocument {
-    Rule(SigmaRule),
+    Rule(Box<SigmaRule>),
     Correlation(CorrelationRule),
     Filter(FilterRule),
 }

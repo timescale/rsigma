@@ -116,8 +116,12 @@ pub enum Transformation {
     /// Set (replace) the rule's output `fields` list.
     SetField { fields: Vec<String> },
 
-    /// Set a custom attribute on the rule (stored in tags for lack of a custom map).
-    /// No-op for eval but preserved for pipeline YAML compatibility.
+    /// Set a custom attribute on the rule.
+    ///
+    /// Stores the key-value pair in `SigmaRule.custom_attributes`.
+    /// Backends / engines can read these to modify per-rule behavior
+    /// (e.g. `rsigma.suppress`, `rsigma.action`).
+    /// Mirrors pySigma's `SetCustomAttributeTransformation`.
     SetCustomAttribute { attribute: String, value: String },
 
     /// Apply a case transformation to string values.
@@ -378,10 +382,10 @@ impl Transformation {
                 Ok(true)
             }
 
-            Transformation::SetCustomAttribute { .. } => {
-                // No-op for eval mode. SigmaRule doesn't carry a custom
-                // attributes map, so we acknowledge & skip. Kept for YAML compat.
-                Ok(false)
+            Transformation::SetCustomAttribute { attribute, value } => {
+                rule.custom_attributes
+                    .insert(attribute.clone(), value.clone());
+                Ok(true)
             }
 
             Transformation::CaseTransformation { case_type } => {
@@ -1401,6 +1405,7 @@ mod tests {
             level: Some(rsigma_parser::Level::Medium),
             tags: vec![],
             scope: vec![],
+            custom_attributes: HashMap::new(),
         }
     }
 
@@ -1652,6 +1657,7 @@ mod tests {
             level: None,
             tags: vec![],
             scope: vec![],
+            custom_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::default();
@@ -1968,7 +1974,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_custom_attribute_noop() {
+    fn test_set_custom_attribute() {
         let mut rule = make_test_rule();
         let mut state = PipelineState::default();
         let t = Transformation::SetCustomAttribute {
@@ -1976,7 +1982,11 @@ mod tests {
             value: "custom_value".to_string(),
         };
         let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
-        assert!(!result); // no-op returns false
+        assert!(result);
+        assert_eq!(
+            rule.custom_attributes.get("custom.key"),
+            Some(&"custom_value".to_string())
+        );
     }
 
     #[test]

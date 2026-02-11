@@ -1060,6 +1060,7 @@ transformations:
             level: None,
             tags: vec![],
             scope: vec![],
+            custom_attributes: std::collections::HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1132,6 +1133,7 @@ transformations:
             level: None,
             tags: vec![],
             scope: vec![],
+            custom_attributes: std::collections::HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());

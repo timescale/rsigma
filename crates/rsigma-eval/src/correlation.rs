@@ -40,6 +40,12 @@ pub struct CompiledCorrelation {
     pub extended_expr: Option<ConditionExpr>,
     /// Whether referenced detection rules should also generate standalone matches.
     pub generate: bool,
+    /// Per-correlation suppression window in seconds, resolved from the
+    /// `rsigma.suppress` custom attribute. `None` means use engine default.
+    pub suppress_secs: Option<u64>,
+    /// Per-correlation action on match, resolved from the `rsigma.action`
+    /// custom attribute. `None` means use engine default.
+    pub action: Option<crate::correlation_engine::CorrelationAction>,
 }
 
 /// A group-by field, potentially aliased per referenced rule.
@@ -251,6 +257,16 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.is_empty(),
             WindowState::Temporal { rule_hits } => rule_hits.is_empty(),
             WindowState::NumericAgg { entries } => entries.is_empty(),
+        }
+    }
+
+    /// Clear all entries from the window state (used by `CorrelationAction::Reset`).
+    pub fn clear(&mut self) {
+        match self {
+            WindowState::EventCount { timestamps } => timestamps.clear(),
+            WindowState::ValueCount { entries } => entries.clear(),
+            WindowState::Temporal { rule_hits } => rule_hits.clear(),
+            WindowState::NumericAgg { entries } => entries.clear(),
         }
     }
 
@@ -531,6 +547,10 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         condition,
         extended_expr,
         generate: rule.generate,
+        // Per-correlation overrides default to None; the engine resolves
+        // against CorrelationConfig defaults at runtime.
+        suppress_secs: None,
+        action: None,
     })
 }
 

@@ -105,7 +105,7 @@ pub use correlation::{
     CompiledCondition, CompiledCorrelation, GroupByField, GroupKey, WindowState,
 };
 pub use correlation_engine::{
-    CorrelationConfig, CorrelationEngine, CorrelationResult, ProcessResult,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationResult, ProcessResult,
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};

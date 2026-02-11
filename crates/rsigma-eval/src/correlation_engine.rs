@@ -30,7 +30,40 @@ use crate::result::MatchResult;
 // Configuration
 // =============================================================================
 
+/// What to do with window state after a correlation fires.
+///
+/// This is an engine-level default that can be overridden per-correlation
+/// via the `rsigma.action` custom attribute set in processing pipelines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationAction {
+    /// Keep window state as-is after firing (current / default behavior).
+    /// Subsequent events that still satisfy the condition will re-fire.
+    #[default]
+    Alert,
+    /// Clear the window state for the firing group key after emitting the alert.
+    /// The threshold must be met again from scratch before the next alert.
+    Reset,
+}
+
+impl std::str::FromStr for CorrelationAction {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "alert" => Ok(CorrelationAction::Alert),
+            "reset" => Ok(CorrelationAction::Reset),
+            _ => Err(format!(
+                "Unknown correlation action: {s} (expected 'alert' or 'reset')"
+            )),
+        }
+    }
+}
+
 /// Configuration for the correlation engine.
+///
+/// Provides engine-level defaults that mirror pySigma backend optional arguments.
+/// Per-correlation overrides can be set via `SetCustomAttribute` pipeline
+/// transformations using the `rsigma.*` attribute namespace.
 #[derive(Debug, Clone)]
 pub struct CorrelationConfig {
     /// Field names to try for timestamp extraction, in order of priority.
@@ -44,6 +77,27 @@ pub struct CorrelationConfig {
     ///
     /// Default: 100_000.
     pub max_state_entries: usize,
+
+    /// Default suppression window in seconds.
+    ///
+    /// After a correlation fires for a `(correlation, group_key)`, suppress
+    /// re-alerts for this duration. `None` means no suppression (every
+    /// condition-satisfying event produces an alert).
+    ///
+    /// Can be overridden per-correlation via the `rsigma.suppress` custom attribute.
+    pub suppress: Option<u64>,
+
+    /// Default action to take after a correlation fires.
+    ///
+    /// Can be overridden per-correlation via the `rsigma.action` custom attribute.
+    pub action_on_match: CorrelationAction,
+
+    /// Whether to emit detection-level matches for rules that are only
+    /// referenced by correlations (where `generate: false`).
+    ///
+    /// Default: `true` (emit all detection matches).
+    /// Set to `false` to suppress detection output for correlation-only rules.
+    pub emit_detections: bool,
 }
 
 impl Default for CorrelationConfig {
@@ -57,6 +111,9 @@ impl Default for CorrelationConfig {
                 "eventTime".to_string(),
             ],
             max_state_entries: 100_000,
+            suppress: None,
+            action_on_match: CorrelationAction::default(),
+            emit_detections: true,
         }
     }
 }
@@ -116,6 +173,12 @@ pub struct CorrelationEngine {
     rule_ids: Vec<(Option<String>, Option<String>)>,
     /// Per-(correlation_index, group_key) window state.
     state: HashMap<(usize, GroupKey), WindowState>,
+    /// Last alert timestamp per (correlation_index, group_key) for suppression.
+    last_alert: HashMap<(usize, GroupKey), i64>,
+    /// Set of detection rule IDs/names that are "correlation-only"
+    /// (referenced by correlations where `generate == false`).
+    /// Used to filter detection output when `config.emit_detections == false`.
+    correlation_only_rules: std::collections::HashSet<String>,
     /// Configuration.
     config: CorrelationConfig,
     /// Processing pipelines applied to rules during add_rule.
@@ -131,6 +194,8 @@ impl CorrelationEngine {
             rule_index: HashMap::new(),
             rule_ids: Vec::new(),
             state: HashMap::new(),
+            last_alert: HashMap::new(),
+            correlation_only_rules: std::collections::HashSet::new(),
             config,
             pipelines: Vec::new(),
         }
@@ -178,6 +243,13 @@ impl CorrelationEngine {
                 .push(idx);
         }
 
+        // Track correlation-only rules (generate == false is the default)
+        if !compiled.generate {
+            for rule_ref in &compiled.rule_refs {
+                self.correlation_only_rules.insert(rule_ref.clone());
+            }
+        }
+
         self.correlations.push(compiled);
         Ok(())
     }
@@ -211,11 +283,11 @@ impl CorrelationEngine {
     /// Process an event with an explicit Unix epoch timestamp (seconds).
     pub fn process_event_at(&mut self, event: &Event, timestamp_secs: i64) -> ProcessResult {
         // Step 1: Run stateless detection
-        let detections = self.engine.evaluate(event);
+        let all_detections = self.engine.evaluate(event);
 
         // Step 2: Feed detection matches into correlations
         let mut correlations = Vec::new();
-        self.feed_detections(event, &detections, timestamp_secs, &mut correlations);
+        self.feed_detections(event, &all_detections, timestamp_secs, &mut correlations);
 
         // Step 3: Chain — correlation results may trigger higher-level correlations
         self.chain_correlations(&correlations, timestamp_secs);
@@ -224,6 +296,24 @@ impl CorrelationEngine {
         if self.state.len() > self.config.max_state_entries {
             self.evict_all(timestamp_secs);
         }
+
+        // Step 5: Filter detections by generate flag
+        let detections = if !self.config.emit_detections && !self.correlation_only_rules.is_empty()
+        {
+            all_detections
+                .into_iter()
+                .filter(|m| {
+                    // Keep detection if its rule_id is NOT correlation-only
+                    let id_match = m
+                        .rule_id
+                        .as_ref()
+                        .is_some_and(|id| self.correlation_only_rules.contains(id));
+                    !id_match
+                })
+                .collect()
+        } else {
+            all_detections
+        };
 
         ProcessResult {
             detections,
@@ -311,6 +401,13 @@ impl CorrelationEngine {
         let level = self.correlations[corr_idx].level;
         let tags = self.correlations[corr_idx].tags.clone();
         let cond_field = condition.field.clone();
+        // Per-correlation overrides (from custom attributes), falling back to config
+        let suppress_secs = self.correlations[corr_idx]
+            .suppress_secs
+            .or(self.config.suppress);
+        let action = self.correlations[corr_idx]
+            .action
+            .unwrap_or(self.config.action_on_match);
 
         // Determine the rule_ref strings for alias resolution and temporal tracking.
         // We collect both ID and name so that alias mappings can use either.
@@ -370,17 +467,42 @@ impl CorrelationEngine {
         if let Some(agg_value) =
             state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
         {
-            let result = CorrelationResult {
-                rule_title: title,
-                rule_id: corr_id,
-                level,
-                tags,
-                correlation_type: corr_type,
-                group_key: group_key.to_pairs(&group_by),
-                aggregated_value: agg_value,
-                timespan_secs: timespan,
+            let alert_key = (corr_idx, group_key.clone());
+
+            // Suppression check: skip if we've already alerted within the suppress window
+            let suppressed = if let Some(suppress) = suppress_secs {
+                if let Some(&last_ts) = self.last_alert.get(&alert_key) {
+                    (ts - last_ts) < suppress as i64
+                } else {
+                    false
+                }
+            } else {
+                false
             };
-            out.push(result);
+
+            if !suppressed {
+                let result = CorrelationResult {
+                    rule_title: title,
+                    rule_id: corr_id,
+                    level,
+                    tags,
+                    correlation_type: corr_type,
+                    group_key: group_key.to_pairs(&group_by),
+                    aggregated_value: agg_value,
+                    timespan_secs: timespan,
+                };
+                out.push(result);
+
+                // Record alert time for suppression
+                self.last_alert.insert(alert_key.clone(), ts);
+
+                // Action on match
+                if action == CorrelationAction::Reset
+                    && let Some(state) = self.state.get_mut(&alert_key)
+                {
+                    state.clear();
+                }
+            }
         }
     }
 
@@ -512,6 +634,20 @@ impl CorrelationEngine {
                 state.evict(cutoff);
             }
             !state.is_empty()
+        });
+
+        // Evict stale last_alert entries: remove if the suppress window has passed
+        // or if the corresponding window state no longer exists.
+        self.last_alert.retain(|key, &mut alert_ts| {
+            let suppress = if key.0 < self.correlations.len() {
+                self.correlations[key.0]
+                    .suppress_secs
+                    .or(self.config.suppress)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            (now_secs - alert_ts) < suppress as i64
         });
     }
 
@@ -673,6 +809,7 @@ mod tests {
         let config = CorrelationConfig {
             timestamp_fields: vec!["@timestamp".to_string()],
             max_state_entries: 100_000,
+            ..Default::default()
         };
         let engine = CorrelationEngine::new(config);
 
@@ -691,6 +828,7 @@ mod tests {
                 "EventTime".to_string(),
             ],
             max_state_entries: 100_000,
+            ..Default::default()
         };
         let engine = CorrelationEngine::new(config);
 
@@ -1982,5 +2120,308 @@ level: high
             r6.correlations.is_empty(),
             "6 events exceeds lte:5, should not fire"
         );
+    }
+
+    // =========================================================================
+    // Suppression
+    // =========================================================================
+
+    fn suppression_yaml() -> &'static str {
+        r#"
+title: Login
+id: login-base
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-base
+    group-by:
+        - User
+    timeframe: 60s
+    condition:
+        gte: 3
+level: high
+"#
+    }
+
+    #[test]
+    fn test_suppression_window() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let config = CorrelationConfig {
+            suppress: Some(10), // suppress for 10 seconds
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let ts = 1000;
+
+        // Fire 3 events to hit threshold
+        engine.process_event_at(&Event::from_value(&ev), ts);
+        engine.process_event_at(&Event::from_value(&ev), ts + 1);
+        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        assert_eq!(r3.correlations.len(), 1, "should fire on 3rd event");
+
+        // 4th event within suppress window → suppressed
+        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        assert!(
+            r4.correlations.is_empty(),
+            "should be suppressed within 10s window"
+        );
+
+        // 5th event still within suppress window → suppressed
+        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 9);
+        assert!(
+            r5.correlations.is_empty(),
+            "should be suppressed at ts+9 (< ts+2+10)"
+        );
+
+        // Event after suppress window expires → fires again
+        let r6 = engine.process_event_at(&Event::from_value(&ev), ts + 13);
+        assert_eq!(
+            r6.correlations.len(),
+            1,
+            "should fire again after suppress window expires"
+        );
+    }
+
+    #[test]
+    fn test_suppression_per_group_key() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let config = CorrelationConfig {
+            suppress: Some(60),
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ts = 1000;
+
+        // Alice hits threshold
+        let ev_a = json!({"EventType": "login", "User": "alice"});
+        engine.process_event_at(&Event::from_value(&ev_a), ts);
+        engine.process_event_at(&Event::from_value(&ev_a), ts + 1);
+        let r = engine.process_event_at(&Event::from_value(&ev_a), ts + 2);
+        assert_eq!(r.correlations.len(), 1, "alice should fire");
+
+        // Bob hits threshold — different group key, not suppressed
+        let ev_b = json!({"EventType": "login", "User": "bob"});
+        engine.process_event_at(&Event::from_value(&ev_b), ts + 3);
+        engine.process_event_at(&Event::from_value(&ev_b), ts + 4);
+        let r = engine.process_event_at(&Event::from_value(&ev_b), ts + 5);
+        assert_eq!(r.correlations.len(), 1, "bob should fire independently");
+
+        // Alice is still suppressed
+        let r = engine.process_event_at(&Event::from_value(&ev_a), ts + 6);
+        assert!(r.correlations.is_empty(), "alice still suppressed");
+    }
+
+    // =========================================================================
+    // Action on match: Reset
+    // =========================================================================
+
+    #[test]
+    fn test_action_reset() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let config = CorrelationConfig {
+            action_on_match: CorrelationAction::Reset,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let ts = 1000;
+
+        // Hit threshold: 3 events
+        engine.process_event_at(&Event::from_value(&ev), ts);
+        engine.process_event_at(&Event::from_value(&ev), ts + 1);
+        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        assert_eq!(r3.correlations.len(), 1, "should fire on 3rd event");
+
+        // State was reset, so 4th and 5th events should NOT fire
+        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        assert!(r4.correlations.is_empty(), "reset: need 3 more events");
+
+        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 4);
+        assert!(r5.correlations.is_empty(), "reset: still only 2");
+
+        // 6th event (3rd after reset) should fire again
+        let r6 = engine.process_event_at(&Event::from_value(&ev), ts + 5);
+        assert_eq!(
+            r6.correlations.len(),
+            1,
+            "should fire again after 3 events post-reset"
+        );
+    }
+
+    // =========================================================================
+    // Generate flag / emit_detections
+    // =========================================================================
+
+    #[test]
+    fn test_emit_detections_true_by_default() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        assert_eq!(r.detections.len(), 1, "by default detections are emitted");
+    }
+
+    #[test]
+    fn test_emit_detections_false_suppresses() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let config = CorrelationConfig {
+            emit_detections: false,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        assert!(
+            r.detections.is_empty(),
+            "detection matches should be suppressed when emit_detections=false"
+        );
+    }
+
+    #[test]
+    fn test_generate_true_keeps_detections() {
+        // When generate: true, detections should be emitted even with emit_detections=false
+        let yaml = r#"
+title: Login
+id: login-gen
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-gen
+    group-by:
+        - User
+    timeframe: 60s
+    condition:
+        gte: 3
+    generate: true
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let config = CorrelationConfig {
+            emit_detections: false,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        // generate: true means this rule is NOT correlation-only
+        assert_eq!(
+            r.detections.len(),
+            1,
+            "generate:true keeps detection output"
+        );
+    }
+
+    // =========================================================================
+    // Suppression + Reset combined
+    // =========================================================================
+
+    #[test]
+    fn test_suppress_and_reset_combined() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let config = CorrelationConfig {
+            suppress: Some(5),
+            action_on_match: CorrelationAction::Reset,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let ts = 1000;
+
+        // Hit threshold: fires and resets
+        engine.process_event_at(&Event::from_value(&ev), ts);
+        engine.process_event_at(&Event::from_value(&ev), ts + 1);
+        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        assert_eq!(r3.correlations.len(), 1, "fires on 3rd event");
+
+        // Push 3 more events quickly (state was reset, so new count → 3)
+        // but suppress window hasn't expired (ts+2 + 5 = ts+7)
+        engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        engine.process_event_at(&Event::from_value(&ev), ts + 4);
+        let r = engine.process_event_at(&Event::from_value(&ev), ts + 5);
+        assert!(
+            r.correlations.is_empty(),
+            "threshold met again but still suppressed"
+        );
+
+        // After suppress expires (at ts+8, which is ts+2+6 > suppress=5),
+        // the accumulated events from step 2 (ts+3,4,5) still satisfy gte:3,
+        // so the first event after expiry fires immediately and resets.
+        let r = engine.process_event_at(&Event::from_value(&ev), ts + 8);
+        assert_eq!(
+            r.correlations.len(),
+            1,
+            "fires after suppress expires (accumulated events + new one)"
+        );
+
+        // State was reset again at ts+8, suppress window now ts+8..ts+13.
+        // Need 3 new events to fire, and suppress must expire.
+        engine.process_event_at(&Event::from_value(&ev), ts + 9);
+        engine.process_event_at(&Event::from_value(&ev), ts + 10);
+        let r = engine.process_event_at(&Event::from_value(&ev), ts + 11);
+        assert!(
+            r.correlations.is_empty(),
+            "threshold met but suppress window hasn't expired (ts+11 - ts+8 = 3 < 5)"
+        );
+    }
+
+    // =========================================================================
+    // No suppression (default behavior preserved)
+    // =========================================================================
+
+    #[test]
+    fn test_no_suppression_fires_every_event() {
+        let collection = parse_sigma_yaml(suppression_yaml()).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        let ev = json!({"EventType": "login", "User": "alice"});
+        let ts = 1000;
+
+        engine.process_event_at(&Event::from_value(&ev), ts);
+        engine.process_event_at(&Event::from_value(&ev), ts + 1);
+        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        assert_eq!(r3.correlations.len(), 1);
+
+        // Without suppression, 4th event should also fire
+        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        assert_eq!(
+            r4.correlations.len(),
+            1,
+            "no suppression: fires on every event after threshold"
+        );
+
+        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 4);
+        assert_eq!(r5.correlations.len(), 1, "still fires");
     }
 }

@@ -5,7 +5,8 @@ use std::process;
 use clap::{Parser, Subcommand};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
-    CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline, parse_pipeline_file,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline,
+    parse_pipeline_file,
 };
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 use serde_json_path::JsonPath;
@@ -89,6 +90,23 @@ enum Commands {
         /// Example: --jsonpath '$.event' or --jsonpath '$.records[*]'
         #[arg(long = "jsonpath", conflicts_with = "jq")]
         jsonpath: Option<String>,
+
+        /// Suppression window for correlation alerts.
+        /// After a correlation fires for a group key, suppress re-alerts
+        /// for this duration. Examples: 5m, 1h, 30s.
+        #[arg(long = "suppress")]
+        suppress: Option<String>,
+
+        /// Action to take after a correlation fires.
+        /// 'alert' (default): keep state, re-alert on next match.
+        /// 'reset': clear window state, require threshold from scratch.
+        #[arg(long = "action", value_parser = ["alert", "reset"])]
+        action: Option<String>,
+
+        /// Suppress detection-level output for rules that are only
+        /// referenced by correlations (where generate=false).
+        #[arg(long = "no-detections")]
+        no_detections: bool,
     },
 }
 
@@ -111,7 +129,20 @@ fn main() {
             pipelines,
             jq,
             jsonpath,
-        } => cmd_eval(rules, event, pretty, pipelines, jq, jsonpath),
+            suppress,
+            action,
+            no_detections,
+        } => cmd_eval(
+            rules,
+            event,
+            pretty,
+            pipelines,
+            jq,
+            jsonpath,
+            suppress,
+            action,
+            no_detections,
+        ),
     }
 }
 
@@ -217,6 +248,7 @@ fn cmd_stdin(pretty: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_eval(
     rules_path: PathBuf,
     event_json: Option<String>,
@@ -224,6 +256,9 @@ fn cmd_eval(
     pipeline_paths: Vec<PathBuf>,
     jq: Option<String>,
     jsonpath: Option<String>,
+    suppress: Option<String>,
+    action: Option<String>,
+    no_detections: bool,
 ) {
     let collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
@@ -231,6 +266,9 @@ fn cmd_eval(
 
     // Compile the event filter once up front
     let event_filter = build_event_filter(jq, jsonpath);
+
+    // Build correlation config from CLI flags
+    let corr_config = build_correlation_config(suppress, action, no_detections);
 
     if has_correlations {
         cmd_eval_with_correlations(
@@ -240,6 +278,7 @@ fn cmd_eval(
             pretty,
             &pipelines,
             &event_filter,
+            corr_config,
         );
     } else {
         cmd_eval_detection_only(
@@ -261,8 +300,9 @@ fn cmd_eval_with_correlations(
     pretty: bool,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
+    config: CorrelationConfig,
 ) {
-    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    let mut engine = CorrelationEngine::new(config);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -549,6 +589,37 @@ fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -> EventFilt
         }
     } else {
         EventFilter::None
+    }
+}
+
+/// Build a `CorrelationConfig` from CLI arguments. Exits on parse errors.
+fn build_correlation_config(
+    suppress: Option<String>,
+    action: Option<String>,
+    no_detections: bool,
+) -> CorrelationConfig {
+    let suppress_secs = suppress.map(|s| match rsigma_parser::Timespan::parse(&s) {
+        Ok(ts) => ts.seconds,
+        Err(e) => {
+            eprintln!("Invalid suppress duration '{s}': {e}");
+            process::exit(1);
+        }
+    });
+
+    let action_on_match = action
+        .map(|s| {
+            s.parse::<CorrelationAction>().unwrap_or_else(|e| {
+                eprintln!("{e}");
+                process::exit(1);
+            })
+        })
+        .unwrap_or_default();
+
+    CorrelationConfig {
+        suppress: suppress_secs,
+        action_on_match,
+        emit_detections: !no_detections,
+        ..Default::default()
     }
 }
 
