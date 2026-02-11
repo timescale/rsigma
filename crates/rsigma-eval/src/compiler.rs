@@ -293,6 +293,13 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
         });
     }
 
+    // Sigma spec: "Single item values are not allowed to have the all modifier."
+    if ctx.all && item.values.len() <= 1 {
+        return Err(EvalError::InvalidModifiers(
+            "|all modifier requires more than one value".to_string(),
+        ));
+    }
+
     // Compile each value into a matcher
     let matchers: Result<Vec<CompiledMatcher>> =
         item.values.iter().map(|v| compile_value(v, &ctx)).collect();
@@ -1054,6 +1061,40 @@ mod tests {
         let ev2 = json!({"CommandLine": "net localgroup"});
         let event2 = Event::from_value(&ev2);
         assert!(!eval_detection_item(&compiled, &event2)); // missing "user"
+    }
+
+    #[test]
+    fn test_all_modifier_single_value_rejected() {
+        let item = make_item(
+            "CommandLine",
+            &[Modifier::Contains, Modifier::All],
+            vec![SigmaValue::String(SigmaString::new("net"))],
+        );
+        let result = compile_detection_item(&item);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("|all modifier requires more than one value"));
+    }
+
+    #[test]
+    fn test_all_modifier_empty_values_rejected() {
+        let item = make_item("CommandLine", &[Modifier::Contains, Modifier::All], vec![]);
+        let result = compile_detection_item(&item);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_all_modifier_multiple_values_accepted() {
+        // Two values with |all is valid
+        let item = make_item(
+            "CommandLine",
+            &[Modifier::Contains, Modifier::All],
+            vec![
+                SigmaValue::String(SigmaString::new("net")),
+                SigmaValue::String(SigmaString::new("user")),
+            ],
+        );
+        assert!(compile_detection_item(&item).is_ok());
     }
 
     #[test]
