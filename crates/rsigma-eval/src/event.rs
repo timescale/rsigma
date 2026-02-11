@@ -23,7 +23,8 @@ impl<'a> Event<'a> {
     /// Get a field value by name, supporting dot-notation for nested access.
     ///
     /// Checks for a flat key first (exact match), then falls back to
-    /// dot-separated traversal.
+    /// dot-separated traversal. When a path segment yields an array,
+    /// each element is tried and the first match is returned (OR semantics).
     pub fn get_field(&self, path: &str) -> Option<&'a Value> {
         // Flat key check first
         if let Some(obj) = self.inner.as_object()
@@ -34,16 +35,8 @@ impl<'a> Event<'a> {
 
         // Dot-notation traversal
         if path.contains('.') {
-            let mut current = self.inner;
-            for part in path.split('.') {
-                match current {
-                    Value::Object(map) => {
-                        current = map.get(part)?;
-                    }
-                    _ => return None,
-                }
-            }
-            return Some(current);
+            let parts: Vec<&str> = path.split('.').collect();
+            return traverse(self.inner, &parts);
         }
 
         None
@@ -62,6 +55,35 @@ impl<'a> Event<'a> {
     /// Access the underlying JSON value.
     pub fn as_value(&self) -> &'a Value {
         self.inner
+    }
+}
+
+/// Recursively traverse a JSON value following dot-notation path segments.
+///
+/// When a segment resolves to an array, each element is tried and the first
+/// match for the remaining path is returned.
+fn traverse<'a>(current: &'a Value, parts: &[&str]) -> Option<&'a Value> {
+    if parts.is_empty() {
+        return Some(current);
+    }
+
+    let (head, rest) = (parts[0], &parts[1..]);
+
+    match current {
+        Value::Object(map) => {
+            let next = map.get(head)?;
+            traverse(next, rest)
+        }
+        Value::Array(arr) => {
+            // Try each element — return first that resolves the remaining path
+            for item in arr {
+                if let Some(v) = traverse(item, parts) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 
@@ -123,6 +145,75 @@ mod tests {
         let v = json!({"foo": "bar"});
         let event = Event::from_value(&v);
         assert_eq!(event.get_field("missing"), None);
+    }
+
+    #[test]
+    fn test_array_traversal() {
+        // a.b is an array of objects; a.b.c should find the first match
+        let v = json!({"a": {"b": [{"c": "found"}, {"c": "other"}]}});
+        let event = Event::from_value(&v);
+        assert_eq!(
+            event.get_field("a.b.c"),
+            Some(&Value::String("found".into()))
+        );
+    }
+
+    #[test]
+    fn test_array_traversal_no_match() {
+        // Array elements don't have the requested key
+        let v = json!({"a": {"b": [{"x": 1}, {"y": 2}]}});
+        let event = Event::from_value(&v);
+        assert_eq!(event.get_field("a.b.c"), None);
+    }
+
+    #[test]
+    fn test_array_traversal_deep() {
+        // Two levels of arrays: events[].actors[].name
+        let v = json!({
+            "events": [
+                {"actors": [{"name": "alice"}, {"name": "bob"}]},
+                {"actors": [{"name": "charlie"}]}
+            ]
+        });
+        let event = Event::from_value(&v);
+        // Should return first match through the nested arrays
+        assert_eq!(
+            event.get_field("events.actors.name"),
+            Some(&Value::String("alice".into()))
+        );
+    }
+
+    #[test]
+    fn test_array_at_root_level() {
+        // Top-level field is an array of objects
+        let v = json!({"process": [{"command_line": "whoami"}, {"command_line": "id"}]});
+        let event = Event::from_value(&v);
+        assert_eq!(
+            event.get_field("process.command_line"),
+            Some(&Value::String("whoami".into()))
+        );
+    }
+
+    #[test]
+    fn test_array_returns_array_value() {
+        // Path resolves to an array (not traversing into it)
+        let v = json!({"a": {"tags": ["t1", "t2"]}});
+        let event = Event::from_value(&v);
+        assert_eq!(
+            event.get_field("a.tags"),
+            Some(&json!(["t1", "t2"]))
+        );
+    }
+
+    #[test]
+    fn test_flat_key_still_wins_over_array_traversal() {
+        // Flat key "a.b.c" takes precedence over nested array traversal
+        let v = json!({"a.b.c": "flat", "a": {"b": [{"c": "nested"}]}});
+        let event = Event::from_value(&v);
+        assert_eq!(
+            event.get_field("a.b.c"),
+            Some(&Value::String("flat".into()))
+        );
     }
 
     #[test]
