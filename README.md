@@ -1,6 +1,6 @@
 # rsigma
 
-A Rust toolkit for [Sigma](https://github.com/SigmaHQ/sigma) detection rules — parsing, evaluation, correlation, and tooling.
+A Rust implementation of the [Sigma](https://github.com/SigmaHQ/sigma) detection standard — parser, evaluation engine, and CLI. rsigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them directly against JSON log events in real time. Unlike a pure parser or transpiler, rsigma acts as a **backend**: it runs detection and correlation logic in-process, supports processing pipelines for field mapping and backend-specific configuration, and streams results from NDJSON input — no external SIEM required.
 
 ## Crates
 
@@ -71,11 +71,15 @@ Compiles Sigma rules into optimized in-memory matchers and evaluates them agains
 
 - **Detection engine**: compiled matchers for all modifier combinations, logsource routing, condition tree evaluation with short-circuit logic
 - **Correlation engine**: stateful processing with sliding time windows, group-by aggregation, field aliasing, correlation chaining, and all 8 correlation types
+- **Alert suppression**: per-correlation or global suppression windows to prevent alert floods during sustained activity
+- **Action-on-fire**: configurable post-fire behavior — `alert` (keep state, re-fire) or `reset` (clear window, require fresh threshold)
+- **Generate flag**: Sigma-standard `generate` support — suppress detection output for correlation-only rules via `--no-detections`
 - **Processing pipelines**: pySigma-compatible field mapping, logsource transformation, value replacement, placeholder expansion, conditional application, and multi-pipeline chaining — 26 transformation types, 3 condition levels
+- **Custom attributes**: `SetCustomAttribute` pipeline transformation stores key-value pairs on rules (mirrors pySigma's `SigmaRule.custom_attributes`). The `rsigma.*` namespace configures engine behavior from pipelines — the same pattern used by backends like [pySigma-backend-loki](https://github.com/grafana/pySigma-backend-loki)
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions
 - **Special modifiers**: `|expand` (runtime placeholder expansion), `|neq` (not-equal), `|utf16be`/`|utf16` encoding, timestamp part extraction (`|hour`, `|day`, etc.)
 - **Event wrapper**: dot-notation field access, flat-key precedence, keyword search across all string values
-- **Rich output**: `MatchResult` / `CorrelationResult` with rule metadata, matched selections, field/value pairs, and aggregated values
+- **Rich output**: `MatchResult` with optional embedded event JSON / `CorrelationResult` with rule metadata, matched selections, field/value pairs, and aggregated values
 
 ### Usage
 
@@ -120,12 +124,42 @@ let matches = engine.evaluate(&event);
 For correlations:
 
 ```rust
-use rsigma_eval::{CorrelationEngine, CorrelationConfig};
+use rsigma_eval::{CorrelationEngine, CorrelationConfig, CorrelationAction};
 
-let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+let config = CorrelationConfig {
+    suppress: Some(300),                         // 5-minute suppression window
+    action_on_match: CorrelationAction::Reset,   // clear state after firing
+    emit_detections: false,                      // only emit correlation alerts
+    ..Default::default()
+};
+
+let mut engine = CorrelationEngine::new(config);
 engine.add_collection(&collection).unwrap();
 let result = engine.process_event_at(&event, timestamp_secs);
 // result.detections + result.correlations
+```
+
+### Custom Attributes (`rsigma.*`)
+
+Pipeline transformations can configure engine behavior via `SetCustomAttribute`, following the same pattern as pySigma backends:
+
+| Attribute | Effect | CLI equivalent |
+|-----------|--------|----------------|
+| `rsigma.timestamp_field` | Prepends a field name to the timestamp extraction priority list | `--timestamp-field` |
+| `rsigma.suppress` | Sets the default suppression window (e.g. `5m`) | `--suppress` |
+| `rsigma.action` | Sets the post-fire action (`alert` or `reset`) | `--action` |
+| `rsigma.include_event` | Embeds the full event JSON in detection output | `--include-event` |
+
+CLI flags always take precedence over pipeline attributes. Example pipeline:
+
+```yaml
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.timestamp_field
+    value: time
+  - type: set_custom_attribute
+    attribute: rsigma.suppress
+    value: 5m
 ```
 
 ## rsigma-cli
@@ -157,6 +191,21 @@ hel run | rsigma eval -r rules/ -p ecs.yml --jq '.event'
 
 # Array-wrapped events: .records[] yields one event per array element
 rsigma eval -r rules/ --jq '.records[]' -e '{"records":[{"CommandLine":"whoami"},{"CommandLine":"id"}]}'
+
+# Include matched event JSON in detection output
+rsigma eval -r rules/ --include-event -e '{"CommandLine": "whoami"}'
+
+# Alert suppression — suppress duplicate correlation alerts within a window
+rsigma eval -r rules/ --suppress 5m -e @events.ndjson
+
+# Action on fire — reset correlation state after alert (default: alert)
+rsigma eval -r rules/ --suppress 5m --action reset -e @events.ndjson
+
+# Suppress detection output (only show correlation alerts)
+rsigma eval -r rules/ --no-detections -e @events.ndjson
+
+# Specify the event timestamp field for correlation windowing
+rsigma eval -r rules/ --timestamp-field time -e @events.ndjson
 
 # Validate with pipeline
 rsigma validate rules/ -p pipelines/ecs.yml -v
@@ -248,14 +297,18 @@ cargo bench --bench correlation      # correlations only
      │                                          │
      │  correlation.rs ──> CompiledCorrelation  │
      │  correlation_engine.rs ──> (stateful)    │
-     │    sliding windows, group-by, chaining   │
+     │    sliding windows, group-by, chaining,  │
+     │    alert suppression, action-on-fire     │
+     │                                          │
+     │  rsigma.* custom attributes ─────────>   │
+     │    engine config from pipelines          │
      └──────────────────────────────────────────┘
               │
               ▼
      ┌────────────────────┐
      │  MatchResult       │──> rule title, id, level, tags,
-     │  CorrelationResult │   matched selections, aggregated values
-     └────────────────────┘
+     │  CorrelationResult │   matched selections, aggregated
+     └────────────────────┘   values, optional event JSON
 ```
 
 ## Reference
