@@ -909,10 +909,14 @@ fn build_regex(
     Regex::new(&full_pattern).map_err(EvalError::InvalidRegex)
 }
 
-/// Expand windash variants: for each `-` in the string, generate variants
-/// with `-` replaced by `/`.
+/// Replacement characters for the `windash` modifier per Sigma spec:
+/// `-`, `/`, `–` (en dash U+2013), `—` (em dash U+2014), `―` (horizontal bar U+2015).
+const WINDASH_CHARS: [char; 5] = ['-', '/', '\u{2013}', '\u{2014}', '\u{2015}'];
+
+/// Expand windash variants: for each `-` in the string, generate all
+/// permutations by substituting with `-`, `/`, `–`, `—`, and `―`.
 fn expand_windash(input: &str) -> Vec<String> {
-    // Find positions of '-' characters
+    // Find byte positions of '-' characters
     let dash_positions: Vec<usize> = input
         .char_indices()
         .filter(|(_, c)| *c == '-')
@@ -923,17 +927,19 @@ fn expand_windash(input: &str) -> Vec<String> {
         return vec![input.to_string()];
     }
 
-    // Generate all 2^n combinations of -/\/ replacements
+    // Generate all 5^n combinations
     let n = dash_positions.len();
-    let mut variants = Vec::with_capacity(1 << n);
+    let total = WINDASH_CHARS.len().pow(n as u32);
+    let mut variants = Vec::with_capacity(total);
 
-    for mask in 0..(1u32 << n) {
+    for combo in 0..total {
         let mut variant = input.to_string();
-        // Replace from back to front to preserve indices
-        for (bit, &pos) in dash_positions.iter().enumerate().rev() {
-            if mask & (1 << bit) != 0 {
-                variant.replace_range(pos..pos + 1, "/");
-            }
+        let mut idx = combo;
+        // Replace from back to front to preserve byte positions
+        for &pos in dash_positions.iter().rev() {
+            let replacement = WINDASH_CHARS[idx % WINDASH_CHARS.len()];
+            variant.replace_range(pos..pos + 1, &replacement.to_string());
+            idx /= WINDASH_CHARS.len();
         }
         variants.push(variant);
     }
@@ -1162,12 +1168,41 @@ mod tests {
 
     #[test]
     fn test_windash_expansion() {
+        // Two dashes → 5^2 = 25 variants
         let variants = expand_windash("-param -value");
-        assert_eq!(variants.len(), 4);
+        assert_eq!(variants.len(), 25);
+        // Original and slash variants
         assert!(variants.contains(&"-param -value".to_string()));
         assert!(variants.contains(&"/param -value".to_string()));
         assert!(variants.contains(&"-param /value".to_string()));
         assert!(variants.contains(&"/param /value".to_string()));
+        // En dash (U+2013)
+        assert!(variants.contains(&"\u{2013}param \u{2013}value".to_string()));
+        // Em dash (U+2014)
+        assert!(variants.contains(&"\u{2014}param \u{2014}value".to_string()));
+        // Horizontal bar (U+2015)
+        assert!(variants.contains(&"\u{2015}param \u{2015}value".to_string()));
+        // Mixed: slash + en dash
+        assert!(variants.contains(&"/param \u{2013}value".to_string()));
+    }
+
+    #[test]
+    fn test_windash_no_dash() {
+        let variants = expand_windash("nodash");
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0], "nodash");
+    }
+
+    #[test]
+    fn test_windash_single_dash() {
+        // One dash → 5 variants
+        let variants = expand_windash("-v");
+        assert_eq!(variants.len(), 5);
+        assert!(variants.contains(&"-v".to_string()));
+        assert!(variants.contains(&"/v".to_string()));
+        assert!(variants.contains(&"\u{2013}v".to_string()));
+        assert!(variants.contains(&"\u{2014}v".to_string()));
+        assert!(variants.contains(&"\u{2015}v".to_string()));
     }
 
     #[test]
