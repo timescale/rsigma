@@ -59,6 +59,18 @@ impl std::str::FromStr for CorrelationAction {
     }
 }
 
+/// Behavior when no timestamp field is found or parseable in an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimestampFallback {
+    /// Use wall-clock time (`Utc::now()`). Good for real-time streaming.
+    #[default]
+    WallClock,
+    /// Skip the event from correlation processing. Detections still fire,
+    /// but the event does not update any correlation state. Recommended for
+    /// batch/replay of historical logs where wall-clock time is meaningless.
+    Skip,
+}
+
 /// Configuration for the correlation engine.
 ///
 /// Provides engine-level defaults that mirror pySigma backend optional arguments.
@@ -69,8 +81,13 @@ pub struct CorrelationConfig {
     /// Field names to try for timestamp extraction, in order of priority.
     ///
     /// The engine will try each field until one yields a parseable timestamp.
-    /// If none succeed, falls back to `Utc::now()`.
+    /// If none succeed, the `timestamp_fallback` policy applies.
     pub timestamp_fields: Vec<String>,
+
+    /// What to do when no timestamp can be extracted from an event.
+    ///
+    /// Default: `WallClock` (use `Utc::now()`).
+    pub timestamp_fallback: TimestampFallback,
 
     /// Maximum number of state entries (across all correlations and groups)
     /// before aggressive eviction is triggered. Prevents unbounded memory growth.
@@ -110,6 +127,7 @@ impl Default for CorrelationConfig {
                 "TimeCreated".to_string(),
                 "eventTime".to_string(),
             ],
+            timestamp_fallback: TimestampFallback::default(),
             max_state_entries: 100_000,
             suppress: None,
             action_on_match: CorrelationAction::default(),
@@ -314,9 +332,25 @@ impl CorrelationEngine {
 
     /// Process an event, extracting the timestamp from configured event fields.
     ///
-    /// Falls back to `Utc::now()` if no timestamp field is found or parseable.
+    /// When no timestamp field is found, the `timestamp_fallback` policy applies:
+    /// - `WallClock`: use `Utc::now()` (good for real-time streaming)
+    /// - `Skip`: return detections only, skip correlation state updates
     pub fn process_event(&mut self, event: &Event) -> ProcessResult {
-        let ts = self.extract_timestamp(event);
+        let ts = match self.extract_event_timestamp(event) {
+            Some(ts) => ts,
+            None => match self.config.timestamp_fallback {
+                TimestampFallback::WallClock => Utc::now().timestamp(),
+                TimestampFallback::Skip => {
+                    // Still run detection (stateless), but skip correlation
+                    let all_detections = self.engine.evaluate(event);
+                    let detections = self.filter_detections(all_detections);
+                    return ProcessResult {
+                        detections,
+                        correlations: Vec::new(),
+                    };
+                }
+            },
+        };
         self.process_event_at(event, ts)
     }
 
@@ -338,12 +372,23 @@ impl CorrelationEngine {
         }
 
         // Step 5: Filter detections by generate flag
-        let detections = if !self.config.emit_detections && !self.correlation_only_rules.is_empty()
-        {
+        let detections = self.filter_detections(all_detections);
+
+        ProcessResult {
+            detections,
+            correlations,
+        }
+    }
+
+    /// Filter detections by the `generate` flag / `emit_detections` config.
+    ///
+    /// If `emit_detections` is false and some rules are correlation-only,
+    /// their detection output is suppressed.
+    fn filter_detections(&self, all_detections: Vec<MatchResult>) -> Vec<MatchResult> {
+        if !self.config.emit_detections && !self.correlation_only_rules.is_empty() {
             all_detections
                 .into_iter()
                 .filter(|m| {
-                    // Keep detection if its rule_id is NOT correlation-only
                     let id_match = m
                         .rule_id
                         .as_ref()
@@ -353,11 +398,6 @@ impl CorrelationEngine {
                 .collect()
         } else {
             all_detections
-        };
-
-        ProcessResult {
-            detections,
-            correlations,
         }
     }
 
@@ -642,16 +682,16 @@ impl CorrelationEngine {
     /// - Numeric values (epoch seconds, or epoch millis if > 1e12)
     /// - ISO 8601 strings (e.g., "2024-07-10T12:30:00Z")
     ///
-    /// Falls back to `Utc::now()` if no field yields a valid timestamp.
-    fn extract_timestamp(&self, event: &Event) -> i64 {
+    /// Returns `None` if no field yields a valid timestamp.
+    fn extract_event_timestamp(&self, event: &Event) -> Option<i64> {
         for field_name in &self.config.timestamp_fields {
             if let Some(val) = event.get_field(field_name)
                 && let Some(ts) = parse_timestamp_value(val)
             {
-                return ts;
+                return Some(ts);
             }
         }
-        Utc::now().timestamp()
+        None
     }
 
     // =========================================================================
@@ -855,8 +895,8 @@ mod tests {
 
         let v = json!({"@timestamp": "2024-07-10T12:30:00Z", "data": "test"});
         let event = Event::from_value(&v);
-        let ts = engine.extract_timestamp(&event);
-        assert_eq!(ts, 1720614600);
+        let ts = engine.extract_event_timestamp(&event);
+        assert_eq!(ts, Some(1720614600));
     }
 
     #[test]
@@ -875,8 +915,119 @@ mod tests {
         // First field missing, second field present
         let v = json!({"timestamp": 1720613400, "data": "test"});
         let event = Event::from_value(&v);
-        let ts = engine.extract_timestamp(&event);
-        assert_eq!(ts, 1720613400);
+        let ts = engine.extract_event_timestamp(&event);
+        assert_eq!(ts, Some(1720613400));
+    }
+
+    #[test]
+    fn test_extract_timestamp_returns_none_when_missing() {
+        let config = CorrelationConfig {
+            timestamp_fields: vec!["@timestamp".to_string()],
+            ..Default::default()
+        };
+        let engine = CorrelationEngine::new(config);
+
+        let v = json!({"data": "no timestamp here"});
+        let event = Event::from_value(&v);
+        assert_eq!(engine.extract_event_timestamp(&event), None);
+    }
+
+    #[test]
+    fn test_timestamp_fallback_skip() {
+        let yaml = r#"
+title: test rule
+id: ts-skip-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: test correlation
+correlation:
+    type: event_count
+    rules:
+        - ts-skip-rule
+    group-by:
+        - User
+    timespan: 10s
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig {
+            timestamp_fallback: TimestampFallback::Skip,
+            ..Default::default()
+        });
+        engine.add_collection(&collection).unwrap();
+        assert_eq!(engine.correlation_rule_count(), 1);
+
+        // Events with no timestamp field — should NOT update correlation state
+        let v = json!({"action": "click", "User": "alice"});
+        let event = Event::from_value(&v);
+
+        let r1 = engine.process_event(&event);
+        assert!(!r1.detections.is_empty(), "detection should still fire");
+
+        let r2 = engine.process_event(&event);
+        assert!(!r2.detections.is_empty(), "detection should still fire");
+
+        let r3 = engine.process_event(&event);
+        assert!(!r3.detections.is_empty(), "detection should still fire");
+
+        // No correlations should fire because events were skipped
+        assert!(r1.correlations.is_empty());
+        assert!(r2.correlations.is_empty());
+        assert!(r3.correlations.is_empty());
+    }
+
+    #[test]
+    fn test_timestamp_fallback_wallclock_default() {
+        let yaml = r#"
+title: test rule
+id: ts-wc-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: test correlation
+correlation:
+    type: event_count
+    rules:
+        - ts-wc-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+        assert_eq!(engine.correlation_rule_count(), 1);
+
+        // Events with no timestamp — WallClock fallback means they get Utc::now()
+        // and should be close enough to correlate (generous 60s window)
+        let v = json!({"action": "click", "User": "alice"});
+        let event = Event::from_value(&v);
+
+        let _r1 = engine.process_event(&event);
+        let _r2 = engine.process_event(&event);
+        let r3 = engine.process_event(&event);
+
+        // With WallClock, all events get near-identical timestamps and should correlate
+        assert!(
+            !r3.correlations.is_empty(),
+            "WallClock fallback should allow correlation"
+        );
     }
 
     // =========================================================================
@@ -2592,7 +2743,9 @@ level: high
         // The key test: ensure the engine extracted the event timestamp, not Utc::now.
         // If it used Utc::now, the test would still pass but the timestamp would be
         // wildly different. We verify by checking the extracted value directly.
-        let ts = engine.extract_timestamp(&Event::from_value(&ev));
+        let ts = engine
+            .extract_event_timestamp(&Event::from_value(&ev))
+            .expect("should extract timestamp");
         assert!(
             ts > 1_700_000_000 && ts < 1_800_000_000,
             "timestamp should be ~2026 epoch, got {ts}"
