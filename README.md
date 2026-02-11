@@ -71,7 +71,7 @@ Compiles Sigma rules into optimized in-memory matchers and evaluates them agains
 
 - **Detection engine**: compiled matchers for all modifier combinations, logsource routing, condition tree evaluation with short-circuit logic
 - **Correlation engine**: stateful processing with sliding time windows, group-by aggregation, field aliasing, correlation chaining, and all 8 correlation types
-- **Processing pipelines**: pySigma-compatible field mapping, logsource transformation, value replacement, placeholder expansion, conditional application, and multi-pipeline chaining — 14 transformation types, 3 condition levels
+- **Processing pipelines**: pySigma-compatible field mapping, logsource transformation, value replacement, placeholder expansion, conditional application, and multi-pipeline chaining — 26 transformation types, 3 condition levels
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions
 - **Special modifiers**: `|expand` (runtime placeholder expansion), `|neq` (not-equal), `|utf16be`/`|utf16` encoding, timestamp part extraction (`|hour`, `|day`, etc.)
 - **Event wrapper**: dot-notation field access, flat-key precedence, keyword search across all string values

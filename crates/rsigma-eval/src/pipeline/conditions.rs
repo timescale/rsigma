@@ -95,6 +95,15 @@ impl RuleCondition {
     }
 }
 
+/// Check if all rule conditions match for a rule.
+pub fn all_rule_conditions_match(
+    conditions: &[RuleCondition],
+    rule: &SigmaRule,
+    state: &PipelineState,
+) -> bool {
+    conditions.iter().all(|c| c.matches_rule(rule, state))
+}
+
 // =============================================================================
 // Detection Item Conditions
 // =============================================================================

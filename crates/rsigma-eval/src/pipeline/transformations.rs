@@ -1,6 +1,6 @@
 //! Pipeline transformations that mutate `SigmaRule` AST nodes.
 //!
-//! All 14 pySigma transformation types are implemented as variants of the
+//! All 26 pySigma transformation types are implemented as variants of the
 //! [`Transformation`] enum. Each variant carries its configuration parameters
 //! and is applied via the [`Transformation::apply`] method.
 
@@ -72,6 +72,63 @@ pub enum Transformation {
 
     /// Fail if detection item conditions match.
     DetectionItemFailure { message: String },
+
+    /// Apply a named function to field names (lowercase, uppercase, etc.).
+    /// In pySigma this takes a Python callable; we support named functions.
+    FieldNameTransform {
+        /// One of: "lower", "upper", "title", "snake_case"
+        transform_func: String,
+        /// Explicit overrides: field → new_name (applied instead of the function).
+        mapping: HashMap<String, String>,
+    },
+
+    /// Decompose the `Hashes` field into per-algorithm fields.
+    ///
+    /// `Hashes: "SHA1=abc,MD5=def"` → `FileSHA1: abc` + `FileMD5: def`
+    HashesFields {
+        /// Allowed hash algorithms (e.g. `["MD5", "SHA1", "SHA256"]`).
+        valid_hash_algos: Vec<String>,
+        /// Prefix for generated field names (e.g. `"File"` → `FileMD5`).
+        field_prefix: String,
+        /// If true, omit algo name from field (use just prefix).
+        drop_algo_prefix: bool,
+    },
+
+    /// Map string values via a lookup table.
+    MapString { mapping: HashMap<String, String> },
+
+    /// Set all values of matching detection items to a fixed value.
+    SetValue { value: SigmaValue },
+
+    /// Convert detection item values to a different type.
+    /// Supported: "str", "int", "float", "bool".
+    ConvertType { target_type: String },
+
+    /// Convert plain string values to regex patterns.
+    Regex,
+
+    /// Add a field name to the rule's output `fields` list.
+    AddField { field: String },
+
+    /// Remove a field name from the rule's output `fields` list.
+    RemoveField { field: String },
+
+    /// Set (replace) the rule's output `fields` list.
+    SetField { fields: Vec<String> },
+
+    /// Set a custom attribute on the rule (stored in tags for lack of a custom map).
+    /// No-op for eval but preserved for pipeline YAML compatibility.
+    SetCustomAttribute { attribute: String, value: String },
+
+    /// Apply a case transformation to string values.
+    /// Supported: "lower", "upper".
+    CaseTransformation { case_type: String },
+
+    /// Nested sub-pipeline: apply a list of transformations as a group.
+    /// The inner items share the same conditions as the outer item.
+    Nest {
+        items: Vec<super::TransformationItem>,
+    },
 }
 
 // =============================================================================
@@ -229,6 +286,152 @@ impl Transformation {
                 } else {
                     Ok(false)
                 }
+            }
+
+            Transformation::FieldNameTransform {
+                transform_func,
+                mapping,
+            } => {
+                let func = transform_func.clone();
+                let map = mapping.clone();
+                apply_field_name_transform(
+                    rule,
+                    state,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    |name| {
+                        if let Some(mapped) = map.get(name) {
+                            return Some(mapped.clone());
+                        }
+                        Some(apply_named_string_fn(&func, name))
+                    },
+                );
+                Ok(true)
+            }
+
+            Transformation::HashesFields {
+                valid_hash_algos,
+                field_prefix,
+                drop_algo_prefix,
+            } => {
+                decompose_hashes_field(rule, valid_hash_algos, field_prefix, *drop_algo_prefix);
+                Ok(true)
+            }
+
+            Transformation::MapString { mapping } => {
+                map_string_values(
+                    rule,
+                    state,
+                    detection_item_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    mapping,
+                );
+                Ok(true)
+            }
+
+            Transformation::SetValue { value } => {
+                set_detection_item_values(
+                    rule,
+                    state,
+                    detection_item_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    value,
+                );
+                Ok(true)
+            }
+
+            Transformation::ConvertType { target_type } => {
+                convert_detection_item_types(
+                    rule,
+                    state,
+                    detection_item_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    target_type,
+                );
+                Ok(true)
+            }
+
+            Transformation::Regex => {
+                // No-op: marking that plain strings should be treated as regex.
+                // In eval mode all matching goes through our compiled matchers,
+                // so there is nothing to mutate. Kept for YAML compat.
+                Ok(false)
+            }
+
+            Transformation::AddField { field } => {
+                if !rule.fields.contains(field) {
+                    rule.fields.push(field.clone());
+                }
+                Ok(true)
+            }
+
+            Transformation::RemoveField { field } => {
+                rule.fields.retain(|f| f != field);
+                Ok(true)
+            }
+
+            Transformation::SetField { fields } => {
+                rule.fields = fields.clone();
+                Ok(true)
+            }
+
+            Transformation::SetCustomAttribute { .. } => {
+                // No-op for eval mode. SigmaRule doesn't carry a custom
+                // attributes map, so we acknowledge & skip. Kept for YAML compat.
+                Ok(false)
+            }
+
+            Transformation::CaseTransformation { case_type } => {
+                apply_case_transformation(
+                    rule,
+                    state,
+                    detection_item_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    case_type,
+                );
+                Ok(true)
+            }
+
+            Transformation::Nest { items } => {
+                for item in items {
+                    // Merge conditions: item's own + parent's
+                    let mut merged_det_conds: Vec<DetectionItemCondition> =
+                        detection_item_conditions.to_vec();
+                    merged_det_conds.extend(item.detection_item_conditions.clone());
+
+                    let mut merged_field_conds: Vec<FieldNameCondition> =
+                        field_name_conditions.to_vec();
+                    merged_field_conds.extend(item.field_name_conditions.clone());
+
+                    // Evaluate rule conditions
+                    let rule_ok = if item.rule_conditions.is_empty() {
+                        true
+                    } else {
+                        super::conditions::all_rule_conditions_match(
+                            &item.rule_conditions,
+                            rule,
+                            state,
+                        )
+                    };
+
+                    if rule_ok {
+                        item.transformation.apply(
+                            rule,
+                            state,
+                            &merged_det_conds,
+                            &merged_field_conds,
+                            item.field_name_cond_not || field_name_cond_not,
+                        )?;
+                        if let Some(ref id) = item.id {
+                            state.mark_applied(id);
+                        }
+                    }
+                }
+                Ok(true)
             }
         }
     }
@@ -621,6 +824,493 @@ fn expand_placeholder_string(s: &str, state: &PipelineState, wildcard: bool) -> 
 }
 
 // =============================================================================
+// Named string function helper (for FieldNameTransform)
+// =============================================================================
+
+fn apply_named_string_fn(func: &str, s: &str) -> String {
+    match func {
+        "lower" | "lowercase" => s.to_lowercase(),
+        "upper" | "uppercase" => s.to_uppercase(),
+        "title" => {
+            // Capitalize first letter of each word
+            s.split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => {
+                            f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("_")
+        }
+        "snake_case" => {
+            // Simple camelCase / PascalCase → snake_case
+            let mut out = String::new();
+            for (i, ch) in s.chars().enumerate() {
+                if ch.is_uppercase() && i > 0 {
+                    out.push('_');
+                }
+                out.push(ch.to_lowercase().next().unwrap_or(ch));
+            }
+            out
+        }
+        _ => s.to_string(), // unknown function → identity
+    }
+}
+
+// =============================================================================
+// Hashes field decomposition
+// =============================================================================
+
+fn decompose_hashes_field(
+    rule: &mut SigmaRule,
+    valid_algos: &[String],
+    field_prefix: &str,
+    drop_algo_prefix: bool,
+) {
+    for detection in rule.detection.named.values_mut() {
+        decompose_hashes_in_detection(detection, valid_algos, field_prefix, drop_algo_prefix);
+    }
+}
+
+fn decompose_hashes_in_detection(
+    detection: &mut Detection,
+    valid_algos: &[String],
+    field_prefix: &str,
+    drop_algo_prefix: bool,
+) {
+    match detection {
+        Detection::AllOf(items) => {
+            let mut new_items: Vec<DetectionItem> = Vec::new();
+            let mut i = 0;
+            while i < items.len() {
+                let item = &items[i];
+                let is_hashes = item
+                    .field
+                    .name
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case("hashes"))
+                    .unwrap_or(false);
+
+                if is_hashes {
+                    // Decompose each value "ALGO=HASH"
+                    for val in &item.values {
+                        if let SigmaValue::String(s) = val {
+                            let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                            for pair in plain.split(',') {
+                                let pair = pair.trim();
+                                if let Some((algo, hash)) = pair.split_once('=') {
+                                    let algo_upper = algo.trim().to_uppercase();
+                                    if valid_algos.is_empty()
+                                        || valid_algos
+                                            .iter()
+                                            .any(|a| a.eq_ignore_ascii_case(&algo_upper))
+                                    {
+                                        let field_name = if drop_algo_prefix {
+                                            field_prefix.to_string()
+                                        } else {
+                                            format!("{field_prefix}{}", algo.trim())
+                                        };
+                                        new_items.push(DetectionItem {
+                                            field: FieldSpec::new(
+                                                Some(field_name),
+                                                item.field.modifiers.clone(),
+                                            ),
+                                            values: vec![SigmaValue::String(SigmaString::new(
+                                                hash.trim(),
+                                            ))],
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    new_items.push(items[i].clone());
+                }
+                i += 1;
+            }
+            *items = new_items;
+        }
+        Detection::AnyOf(subs) => {
+            for sub in subs.iter_mut() {
+                decompose_hashes_in_detection(sub, valid_algos, field_prefix, drop_algo_prefix);
+            }
+        }
+        Detection::Keywords(_) => {}
+    }
+}
+
+// =============================================================================
+// Map string values
+// =============================================================================
+
+fn map_string_values(
+    rule: &mut SigmaRule,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    mapping: &HashMap<String, String>,
+) {
+    for detection in rule.detection.named.values_mut() {
+        map_strings_in_detection(
+            detection,
+            state,
+            detection_conditions,
+            field_name_conditions,
+            field_name_cond_not,
+            mapping,
+        );
+    }
+}
+
+fn map_strings_in_detection(
+    detection: &mut Detection,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    mapping: &HashMap<String, String>,
+) {
+    match detection {
+        Detection::AllOf(items) => {
+            for item in items.iter_mut() {
+                if item_conditions_match(
+                    item,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                ) {
+                    for val in item.values.iter_mut() {
+                        if let SigmaValue::String(s) = val {
+                            let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                            if let Some(replacement) = mapping.get(&plain) {
+                                *s = SigmaString::new(replacement);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Detection::AnyOf(subs) => {
+            for sub in subs.iter_mut() {
+                map_strings_in_detection(
+                    sub,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    mapping,
+                );
+            }
+        }
+        Detection::Keywords(values) => {
+            for val in values.iter_mut() {
+                if let SigmaValue::String(s) = val {
+                    let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                    if let Some(replacement) = mapping.get(&plain) {
+                        *s = SigmaString::new(replacement);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Set value
+// =============================================================================
+
+fn set_detection_item_values(
+    rule: &mut SigmaRule,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    value: &SigmaValue,
+) {
+    for detection in rule.detection.named.values_mut() {
+        set_values_in_detection(
+            detection,
+            state,
+            detection_conditions,
+            field_name_conditions,
+            field_name_cond_not,
+            value,
+        );
+    }
+}
+
+fn set_values_in_detection(
+    detection: &mut Detection,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    value: &SigmaValue,
+) {
+    match detection {
+        Detection::AllOf(items) => {
+            for item in items.iter_mut() {
+                if item_conditions_match(
+                    item,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                ) {
+                    item.values = vec![value.clone()];
+                }
+            }
+        }
+        Detection::AnyOf(subs) => {
+            for sub in subs.iter_mut() {
+                set_values_in_detection(
+                    sub,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    value,
+                );
+            }
+        }
+        Detection::Keywords(_) => {}
+    }
+}
+
+// =============================================================================
+// Convert type
+// =============================================================================
+
+fn convert_detection_item_types(
+    rule: &mut SigmaRule,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    target_type: &str,
+) {
+    for detection in rule.detection.named.values_mut() {
+        convert_types_in_detection(
+            detection,
+            state,
+            detection_conditions,
+            field_name_conditions,
+            field_name_cond_not,
+            target_type,
+        );
+    }
+}
+
+fn convert_types_in_detection(
+    detection: &mut Detection,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    target_type: &str,
+) {
+    match detection {
+        Detection::AllOf(items) => {
+            for item in items.iter_mut() {
+                if item_conditions_match(
+                    item,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                ) {
+                    for val in item.values.iter_mut() {
+                        *val = convert_value(val, target_type);
+                    }
+                }
+            }
+        }
+        Detection::AnyOf(subs) => {
+            for sub in subs.iter_mut() {
+                convert_types_in_detection(
+                    sub,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    target_type,
+                );
+            }
+        }
+        Detection::Keywords(_) => {}
+    }
+}
+
+fn convert_value(val: &SigmaValue, target: &str) -> SigmaValue {
+    match target {
+        "str" | "string" => match val {
+            SigmaValue::String(_) => val.clone(),
+            SigmaValue::Integer(n) => SigmaValue::String(SigmaString::new(&n.to_string())),
+            SigmaValue::Float(f) => SigmaValue::String(SigmaString::new(&f.to_string())),
+            SigmaValue::Bool(b) => SigmaValue::String(SigmaString::new(&b.to_string())),
+            SigmaValue::Null => SigmaValue::String(SigmaString::new("null")),
+        },
+        "int" | "integer" => match val {
+            SigmaValue::String(s) => {
+                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                plain
+                    .parse::<i64>()
+                    .map(SigmaValue::Integer)
+                    .unwrap_or_else(|_| val.clone())
+            }
+            SigmaValue::Float(f) => SigmaValue::Integer(*f as i64),
+            SigmaValue::Bool(b) => SigmaValue::Integer(if *b { 1 } else { 0 }),
+            _ => val.clone(),
+        },
+        "float" => match val {
+            SigmaValue::String(s) => {
+                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                plain
+                    .parse::<f64>()
+                    .map(SigmaValue::Float)
+                    .unwrap_or_else(|_| val.clone())
+            }
+            SigmaValue::Integer(n) => SigmaValue::Float(*n as f64),
+            SigmaValue::Bool(b) => SigmaValue::Float(if *b { 1.0 } else { 0.0 }),
+            _ => val.clone(),
+        },
+        "bool" | "boolean" => match val {
+            SigmaValue::String(s) => {
+                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+                match plain.to_lowercase().as_str() {
+                    "true" | "1" | "yes" => SigmaValue::Bool(true),
+                    "false" | "0" | "no" => SigmaValue::Bool(false),
+                    _ => val.clone(),
+                }
+            }
+            SigmaValue::Integer(n) => SigmaValue::Bool(*n != 0),
+            SigmaValue::Float(f) => SigmaValue::Bool(*f != 0.0),
+            _ => val.clone(),
+        },
+        _ => val.clone(),
+    }
+}
+
+// =============================================================================
+// Case transformation
+// =============================================================================
+
+fn apply_case_transformation(
+    rule: &mut SigmaRule,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    case_type: &str,
+) {
+    for detection in rule.detection.named.values_mut() {
+        apply_case_in_detection(
+            detection,
+            state,
+            detection_conditions,
+            field_name_conditions,
+            field_name_cond_not,
+            case_type,
+        );
+    }
+}
+
+fn apply_case_in_detection(
+    detection: &mut Detection,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+    case_type: &str,
+) {
+    match detection {
+        Detection::AllOf(items) => {
+            for item in items.iter_mut() {
+                if item_conditions_match(
+                    item,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                ) {
+                    for val in item.values.iter_mut() {
+                        if let SigmaValue::String(s) = val {
+                            let transformed = match case_type {
+                                "lower" | "lowercase" => s.original.to_lowercase(),
+                                "upper" | "uppercase" => s.original.to_uppercase(),
+                                _ => continue,
+                            };
+                            if transformed != s.original {
+                                *s = SigmaString::new(&transformed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Detection::AnyOf(subs) => {
+            for sub in subs.iter_mut() {
+                apply_case_in_detection(
+                    sub,
+                    state,
+                    detection_conditions,
+                    field_name_conditions,
+                    field_name_cond_not,
+                    case_type,
+                );
+            }
+        }
+        Detection::Keywords(values) => {
+            for val in values.iter_mut() {
+                if let SigmaValue::String(s) = val {
+                    let transformed = match case_type {
+                        "lower" | "lowercase" => s.original.to_lowercase(),
+                        "upper" | "uppercase" => s.original.to_uppercase(),
+                        _ => continue,
+                    };
+                    if transformed != s.original {
+                        *s = SigmaString::new(&transformed);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Shared helper: check if a detection item matches both sets of conditions
+// =============================================================================
+
+fn item_conditions_match(
+    item: &DetectionItem,
+    state: &PipelineState,
+    detection_conditions: &[DetectionItemCondition],
+    field_name_conditions: &[FieldNameCondition],
+    field_name_cond_not: bool,
+) -> bool {
+    let det_match = detection_conditions.is_empty()
+        || detection_conditions
+            .iter()
+            .all(|c| c.matches_item(item, state));
+
+    let field_match = if let Some(ref name) = item.field.name {
+        field_conditions_match(name, state, field_name_conditions, field_name_cond_not)
+    } else {
+        field_name_conditions.is_empty()
+    };
+
+    det_match && field_match
+}
+
+// =============================================================================
 // Helper: check if rule has any item matching conditions
 // =============================================================================
 
@@ -980,5 +1670,407 @@ mod tests {
         } else {
             panic!("Expected AllOf");
         }
+    }
+
+    #[test]
+    fn test_field_name_transform_lowercase() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::FieldNameTransform {
+            transform_func: "lower".to_string(),
+            mapping: HashMap::new(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items[0].field.name, Some("commandline".to_string()));
+            assert_eq!(items[1].field.name, Some("parentimage".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_field_name_transform_with_mapping_override() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("CommandLine".to_string(), "cmd_line".to_string());
+        let t = Transformation::FieldNameTransform {
+            transform_func: "lower".to_string(),
+            mapping,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // CommandLine → override from mapping
+            assert_eq!(items[0].field.name, Some("cmd_line".to_string()));
+            // ParentImage → lowercase (no override)
+            assert_eq!(items[1].field.name, Some("parentimage".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_field_name_transform_snake_case() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::FieldNameTransform {
+            transform_func: "snake_case".to_string(),
+            mapping: HashMap::new(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items[0].field.name, Some("command_line".to_string()));
+            assert_eq!(items[1].field.name, Some("parent_image".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_hashes_fields_decomposition() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("Hashes".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new(
+                    "SHA1=abc123,MD5=def456",
+                ))],
+            }]),
+        );
+
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+
+        let mut state = PipelineState::default();
+        let t = Transformation::HashesFields {
+            valid_hash_algos: vec!["SHA1".to_string(), "MD5".to_string()],
+            field_prefix: "File".to_string(),
+            drop_algo_prefix: false,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].field.name, Some("FileSHA1".to_string()));
+            assert_eq!(items[1].field.name, Some("FileMD5".to_string()));
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "abc123");
+            }
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "def456");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_map_string() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("whoami".to_string(), "who_am_i".to_string());
+        let t = Transformation::MapString { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "who_am_i");
+            } else {
+                panic!("Expected String value");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_map_string_no_match() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("nonexistent".to_string(), "replaced".to_string());
+        let t = Transformation::MapString { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        // Values should be unchanged
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "whoami");
+            }
+        }
+    }
+
+    #[test]
+    fn test_set_value() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::SetValue {
+            value: SigmaValue::String(SigmaString::new("FIXED")),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            for item in items {
+                assert_eq!(item.values.len(), 1);
+                if let SigmaValue::String(s) = &item.values[0] {
+                    assert_eq!(s.original, "FIXED");
+                }
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_convert_type_string_to_int() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("EventID".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new("4688"))],
+            }]),
+        );
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+
+        let mut state = PipelineState::default();
+        let t = Transformation::ConvertType {
+            target_type: "int".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert!(matches!(items[0].values[0], SigmaValue::Integer(4688)));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_convert_type_int_to_string() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("EventID".to_string()), vec![]),
+                values: vec![SigmaValue::Integer(4688)],
+            }]),
+        );
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+
+        let mut state = PipelineState::default();
+        let t = Transformation::ConvertType {
+            target_type: "str".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "4688");
+            } else {
+                panic!("Expected String");
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_type_to_bool() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("Enabled".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new("true"))],
+            }]),
+        );
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+
+        let mut state = PipelineState::default();
+        let t = Transformation::ConvertType {
+            target_type: "bool".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert!(matches!(items[0].values[0], SigmaValue::Bool(true)));
+        }
+    }
+
+    #[test]
+    fn test_regex_noop() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::Regex;
+        let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert!(!result); // no-op returns false
+    }
+
+    #[test]
+    fn test_add_field() {
+        let mut rule = make_test_rule();
+        assert!(rule.fields.is_empty());
+
+        let mut state = PipelineState::default();
+        let t = Transformation::AddField {
+            field: "EventID".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert_eq!(rule.fields, vec!["EventID".to_string()]);
+
+        // Adding again should not duplicate
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert_eq!(rule.fields, vec!["EventID".to_string()]);
+    }
+
+    #[test]
+    fn test_remove_field() {
+        let mut rule = make_test_rule();
+        rule.fields = vec!["EventID".to_string(), "CommandLine".to_string()];
+
+        let mut state = PipelineState::default();
+        let t = Transformation::RemoveField {
+            field: "EventID".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert_eq!(rule.fields, vec!["CommandLine".to_string()]);
+    }
+
+    #[test]
+    fn test_set_field() {
+        let mut rule = make_test_rule();
+        rule.fields = vec!["old".to_string()];
+
+        let mut state = PipelineState::default();
+        let t = Transformation::SetField {
+            fields: vec!["new1".to_string(), "new2".to_string()],
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert_eq!(rule.fields, vec!["new1".to_string(), "new2".to_string()]);
+    }
+
+    #[test]
+    fn test_set_custom_attribute_noop() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::SetCustomAttribute {
+            attribute: "custom.key".to_string(),
+            value: "custom_value".to_string(),
+        };
+        let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert!(!result); // no-op returns false
+    }
+
+    #[test]
+    fn test_case_transformation_lower() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::CaseTransformation {
+            case_type: "lower".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // "whoami" is already lowercase
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "whoami");
+            }
+            // "\\cmd.exe" stays the same
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "\\cmd.exe");
+            }
+        }
+    }
+
+    #[test]
+    fn test_case_transformation_upper() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::CaseTransformation {
+            case_type: "upper".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "WHOAMI");
+            }
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "\\CMD.EXE");
+            }
+        }
+    }
+
+    #[test]
+    fn test_nest_transformation() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Create a nested pipeline: prefix + suffix in one nest
+        let items = vec![
+            super::super::TransformationItem {
+                id: Some("inner_prefix".to_string()),
+                transformation: Transformation::FieldNamePrefix {
+                    prefix: "winlog.".to_string(),
+                },
+                rule_conditions: vec![],
+                rule_cond_expr: None,
+                detection_item_conditions: vec![],
+                field_name_conditions: vec![],
+                field_name_cond_not: false,
+            },
+            super::super::TransformationItem {
+                id: Some("inner_suffix".to_string()),
+                transformation: Transformation::FieldNameSuffix {
+                    suffix: ".keyword".to_string(),
+                },
+                rule_conditions: vec![],
+                rule_cond_expr: None,
+                detection_item_conditions: vec![],
+                field_name_conditions: vec![],
+                field_name_cond_not: false,
+            },
+        ];
+
+        let t = Transformation::Nest { items };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(
+                items[0].field.name,
+                Some("winlog.CommandLine.keyword".to_string())
+            );
+            assert_eq!(
+                items[1].field.name,
+                Some("winlog.ParentImage.keyword".to_string())
+            );
+        } else {
+            panic!("Expected AllOf");
+        }
+
+        // Check inner items were tracked
+        assert!(state.was_applied("inner_prefix"));
+        assert!(state.was_applied("inner_suffix"));
     }
 }

@@ -445,6 +445,124 @@ fn parse_transformation(obj: &serde_yaml::Mapping) -> Result<Transformation> {
             Ok(Transformation::DetectionItemFailure { message })
         }
 
+        "field_name_transform" => {
+            let transform_func = obj
+                .get(ykey("transform_func"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("lower")
+                .to_string();
+            let mapping = parse_string_mapping(obj.get(ykey("mapping"))).unwrap_or_default();
+            Ok(Transformation::FieldNameTransform {
+                transform_func,
+                mapping,
+            })
+        }
+
+        "hashes_fields" => {
+            let valid_hash_algos = parse_string_list(obj.get(ykey("valid_hash_algos")));
+            let field_prefix = obj
+                .get(ykey("field_prefix"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("File")
+                .to_string();
+            let drop_algo_prefix = obj
+                .get(ykey("drop_algo_prefix"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(Transformation::HashesFields {
+                valid_hash_algos,
+                field_prefix,
+                drop_algo_prefix,
+            })
+        }
+
+        "map_string" => {
+            let mapping = parse_string_mapping(obj.get(ykey("mapping")))?;
+            Ok(Transformation::MapString { mapping })
+        }
+
+        "set_value" => {
+            let value = obj
+                .get(ykey("value"))
+                .map(SigmaValue::from_yaml)
+                .unwrap_or(SigmaValue::Null);
+            Ok(Transformation::SetValue { value })
+        }
+
+        "convert_type" => {
+            let target_type = obj
+                .get(ykey("target_type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("str")
+                .to_string();
+            Ok(Transformation::ConvertType { target_type })
+        }
+
+        "regex" => Ok(Transformation::Regex),
+
+        "add_field" => {
+            let field = obj
+                .get(ykey("field"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(Transformation::AddField { field })
+        }
+
+        "remove_field" => {
+            let field = obj
+                .get(ykey("field"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(Transformation::RemoveField { field })
+        }
+
+        "set_field" => {
+            let fields = parse_string_list(obj.get(ykey("fields")));
+            Ok(Transformation::SetField { fields })
+        }
+
+        "set_custom_attribute" => {
+            let attribute = obj
+                .get(ykey("attribute"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let value = obj
+                .get(ykey("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(Transformation::SetCustomAttribute { attribute, value })
+        }
+
+        "case_transformation" | "case" => {
+            let case_type = obj
+                .get(ykey("case_type"))
+                .or_else(|| obj.get(ykey("case")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("lower")
+                .to_string();
+            Ok(Transformation::CaseTransformation { case_type })
+        }
+
+        "nest" => {
+            let items_yaml = obj
+                .get(ykey("items"))
+                .or_else(|| obj.get(ykey("transformations")));
+            let items = if let Some(serde_yaml::Value::Sequence(seq)) = items_yaml {
+                let mut parsed = Vec::new();
+                for entry in seq {
+                    parsed.push(parse_transformation_item(entry)?);
+                }
+                parsed
+            } else {
+                Vec::new()
+            };
+            Ok(Transformation::Nest { items })
+        }
+
         other => Err(EvalError::InvalidModifiers(format!(
             "unknown transformation type: {other}"
         ))),
@@ -1096,9 +1214,41 @@ transformations:
     message: fail
   - type: detection_item_failure
     message: fail
+  - type: field_name_transform
+    transform_func: lower
+  - type: hashes_fields
+    valid_hash_algos:
+      - MD5
+      - SHA1
+    field_prefix: File
+  - type: map_string
+    mapping:
+      old_val: new_val
+  - type: set_value
+    value: fixed
+  - type: convert_type
+    target_type: int
+  - type: regex
+  - type: add_field
+    field: EventID
+  - type: remove_field
+    field: OldField
+  - type: set_field
+    fields:
+      - field1
+      - field2
+  - type: set_custom_attribute
+    attribute: backend
+    value: splunk
+  - type: case_transformation
+    case_type: lower
+  - type: nest
+    items:
+      - type: field_name_prefix
+        prefix: "inner."
 "#;
         let pipeline = parse_pipeline(yaml).unwrap();
-        assert_eq!(pipeline.transformations.len(), 14);
+        assert_eq!(pipeline.transformations.len(), 26);
     }
 
     #[test]
