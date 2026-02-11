@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::{Parser, Subcommand};
+use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline, parse_pipeline_file,
 };
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
+use serde_json_path::JsonPath;
 
 #[derive(Parser)]
 #[command(name = "rsigma")]
@@ -71,12 +73,22 @@ enum Commands {
         event: Option<String>,
 
         /// Pretty-print JSON output
-        #[arg(short, long)]
+        #[arg(long)]
         pretty: bool,
 
         /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
+
+        /// jq filter to extract the event payload from each JSON object.
+        /// Example: --jq '.event' or --jq '.records[]'
+        #[arg(long = "jq", conflicts_with = "jsonpath")]
+        jq: Option<String>,
+
+        /// JSONPath (RFC 9535) query to extract the event payload.
+        /// Example: --jsonpath '$.event' or --jsonpath '$.records[*]'
+        #[arg(long = "jsonpath", conflicts_with = "jq")]
+        jsonpath: Option<String>,
     },
 }
 
@@ -97,7 +109,9 @@ fn main() {
             event,
             pretty,
             pipelines,
-        } => cmd_eval(rules, event, pretty, pipelines),
+            jq,
+            jsonpath,
+        } => cmd_eval(rules, event, pretty, pipelines, jq, jsonpath),
     }
 }
 
@@ -208,15 +222,34 @@ fn cmd_eval(
     event_json: Option<String>,
     pretty: bool,
     pipeline_paths: Vec<PathBuf>,
+    jq: Option<String>,
+    jsonpath: Option<String>,
 ) {
     let collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
     let has_correlations = !collection.correlations.is_empty();
 
+    // Compile the event filter once up front
+    let event_filter = build_event_filter(jq, jsonpath);
+
     if has_correlations {
-        cmd_eval_with_correlations(collection, &rules_path, event_json, pretty, &pipelines);
+        cmd_eval_with_correlations(
+            collection,
+            &rules_path,
+            event_json,
+            pretty,
+            &pipelines,
+            &event_filter,
+        );
     } else {
-        cmd_eval_detection_only(collection, &rules_path, event_json, pretty, &pipelines);
+        cmd_eval_detection_only(
+            collection,
+            &rules_path,
+            event_json,
+            pretty,
+            &pipelines,
+            &event_filter,
+        );
     }
 }
 
@@ -227,6 +260,7 @@ fn cmd_eval_with_correlations(
     event_json: Option<String>,
     pretty: bool,
     pipelines: &[Pipeline],
+    event_filter: &EventFilter,
 ) {
     let mut engine = CorrelationEngine::new(CorrelationConfig::default());
     for p in pipelines {
@@ -253,18 +287,20 @@ fn cmd_eval_with_correlations(
             }
         };
 
-        let event = Event::from_value(&value);
-        let result = engine.process_event(&event);
+        for payload in apply_event_filter(&value, event_filter) {
+            let event = Event::from_value(&payload);
+            let result = engine.process_event(&event);
 
-        let total = result.detections.len() + result.correlations.len();
-        if total == 0 {
-            eprintln!("No matches.");
-        } else {
-            for m in &result.detections {
-                print_json(m, pretty);
-            }
-            for m in &result.correlations {
-                print_json(m, pretty);
+            let total = result.detections.len() + result.correlations.len();
+            if total == 0 {
+                eprintln!("No matches.");
+            } else {
+                for m in &result.detections {
+                    print_json(m, pretty);
+                }
+                for m in &result.correlations {
+                    print_json(m, pretty);
+                }
             }
         }
     } else {
@@ -295,16 +331,18 @@ fn cmd_eval_with_correlations(
                 }
             };
 
-            let event = Event::from_value(&value);
-            let result = engine.process_event(&event);
+            for payload in apply_event_filter(&value, event_filter) {
+                let event = Event::from_value(&payload);
+                let result = engine.process_event(&event);
 
-            for m in &result.detections {
-                det_count += 1;
-                print_json(m, pretty);
-            }
-            for m in &result.correlations {
-                corr_count += 1;
-                print_json(m, pretty);
+                for m in &result.detections {
+                    det_count += 1;
+                    print_json(m, pretty);
+                }
+                for m in &result.correlations {
+                    corr_count += 1;
+                    print_json(m, pretty);
+                }
             }
         }
 
@@ -321,6 +359,7 @@ fn cmd_eval_detection_only(
     event_json: Option<String>,
     pretty: bool,
     pipelines: &[Pipeline],
+    event_filter: &EventFilter,
 ) {
     let mut engine = Engine::new();
     for p in pipelines {
@@ -346,14 +385,21 @@ fn cmd_eval_detection_only(
             }
         };
 
-        let event = Event::from_value(&value);
-        let matches = engine.evaluate(&event);
-
-        if matches.is_empty() {
+        let payloads = apply_event_filter(&value, event_filter);
+        if payloads.is_empty() {
             eprintln!("No matches.");
         } else {
-            for m in &matches {
-                print_json(m, pretty);
+            for payload in &payloads {
+                let event = Event::from_value(payload);
+                let matches = engine.evaluate(&event);
+
+                if matches.is_empty() {
+                    eprintln!("No matches.");
+                } else {
+                    for m in &matches {
+                        print_json(m, pretty);
+                    }
+                }
             }
         }
     } else {
@@ -383,12 +429,14 @@ fn cmd_eval_detection_only(
                 }
             };
 
-            let event = Event::from_value(&value);
-            let matches = engine.evaluate(&event);
+            for payload in apply_event_filter(&value, event_filter) {
+                let event = Event::from_value(&payload);
+                let matches = engine.evaluate(&event);
 
-            for m in &matches {
-                match_count += 1;
-                print_json(m, pretty);
+                for m in &matches {
+                    match_count += 1;
+                    print_json(m, pretty);
+                }
             }
         }
 
@@ -452,6 +500,117 @@ fn print_warnings(errors: &[String]) {
         eprintln!("Warnings:");
         for err in errors {
             eprintln!("  - {err}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event filtering (jq / JSONPath)
+// ---------------------------------------------------------------------------
+
+/// Pre-compiled event filter — either a jq filter or a JSONPath query.
+enum EventFilter {
+    /// No filter — pass through the entire event.
+    None,
+    /// A compiled jq filter.
+    Jq(jaq_interpret::Filter),
+    /// A compiled JSONPath query.
+    JsonPath(JsonPath),
+}
+
+/// Build an `EventFilter` from CLI arguments. Exits on parse errors.
+fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -> EventFilter {
+    if let Some(jq_expr) = jq {
+        eprintln!("Event filter: jq '{jq_expr}'");
+        let mut defs = ParseCtx::new(Vec::new());
+        let (parsed, errs) = jaq_parse::parse(&jq_expr, jaq_parse::main());
+        if !errs.is_empty() {
+            eprintln!("Invalid jq filter: {:?}", errs);
+            process::exit(1);
+        }
+        let Some(parsed) = parsed else {
+            eprintln!("Invalid jq filter: failed to parse '{jq_expr}'");
+            process::exit(1);
+        };
+        let filter = defs.compile(parsed);
+        if !defs.errs.is_empty() {
+            eprintln!("jq compilation errors ({} error(s))", defs.errs.len());
+            process::exit(1);
+        }
+        EventFilter::Jq(filter)
+    } else if let Some(jp_expr) = jsonpath {
+        eprintln!("Event filter: jsonpath '{jp_expr}'");
+        match JsonPath::parse(&jp_expr) {
+            Ok(path) => EventFilter::JsonPath(path),
+            Err(e) => {
+                eprintln!("Invalid JSONPath: {e}");
+                process::exit(1);
+            }
+        }
+    } else {
+        EventFilter::None
+    }
+}
+
+/// Apply the event filter, returning one or more extracted JSON values.
+///
+/// - `EventFilter::None`: returns the input as-is (single element).
+/// - `EventFilter::Jq`: runs the jq filter, which may yield multiple values
+///   (e.g., `.records[]`).
+/// - `EventFilter::JsonPath`: queries the input, returning all matched nodes.
+fn apply_event_filter(value: &serde_json::Value, filter: &EventFilter) -> Vec<serde_json::Value> {
+    match filter {
+        EventFilter::None => vec![value.clone()],
+
+        EventFilter::Jq(f) => {
+            let inputs = RcIter::new(core::iter::empty());
+            let out = f.run((Ctx::new([], &inputs), Val::from(value.clone())));
+            out.filter_map(|r| match r {
+                Ok(val) => val_to_json(val),
+                Err(e) => {
+                    eprintln!("jq runtime error: {e}");
+                    None
+                }
+            })
+            .collect()
+        }
+
+        EventFilter::JsonPath(path) => {
+            let nodes = path.query(value);
+            nodes.all().into_iter().cloned().collect()
+        }
+    }
+}
+
+/// Convert a jaq `Val` to a `serde_json::Value`.
+fn val_to_json(val: Val) -> Option<serde_json::Value> {
+    match val {
+        Val::Null => Some(serde_json::Value::Null),
+        Val::Bool(b) => Some(serde_json::Value::Bool(b)),
+        Val::Int(n) => Some(serde_json::Value::Number(n.into())),
+        Val::Float(f) => serde_json::Number::from_f64(f).map(serde_json::Value::Number),
+        Val::Num(n) => {
+            // Num is a string-encoded number
+            if let Ok(i) = n.parse::<i64>() {
+                Some(serde_json::Value::Number(i.into()))
+            } else if let Ok(f) = n.parse::<f64>() {
+                serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+            } else {
+                Some(serde_json::Value::String(n.to_string()))
+            }
+        }
+        Val::Str(s) => Some(serde_json::Value::String(s.to_string())),
+        Val::Arr(arr) => {
+            let items: Vec<serde_json::Value> =
+                arr.iter().filter_map(|v| val_to_json(v.clone())).collect();
+            Some(serde_json::Value::Array(items))
+        }
+        Val::Obj(obj) => {
+            let map: serde_json::Map<String, serde_json::Value> = obj
+                .iter()
+                .filter_map(|(k, v)| val_to_json(v.clone()).map(|jv| (k.to_string(), jv)))
+                .collect();
+            Some(serde_json::Value::Object(map))
         }
     }
 }

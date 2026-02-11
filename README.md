@@ -146,6 +146,18 @@ rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"
 # Multiple pipelines (applied in priority order)
 rsigma eval -r rules/ -p sysmon.yml -p custom.yml -e '...'
 
+# Unwrap nested event payloads with jq syntax
+rsigma eval -r rules/ --jq '.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
+
+# Or use JSONPath (RFC 9535)
+rsigma eval -r rules/ --jsonpath '$.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
+
+# Stream wrapped NDJSON — jq can yield multiple events per line
+hel run | rsigma eval -r rules/ -p ecs.yml --jq '.event'
+
+# Array-wrapped events: .records[] yields one event per array element
+rsigma eval -r rules/ --jq '.records[]' -e '{"records":[{"CommandLine":"whoami"},{"CommandLine":"id"}]}'
+
 # Validate with pipeline
 rsigma validate rules/ -p pipelines/ecs.yml -v
 
