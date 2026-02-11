@@ -262,10 +262,9 @@ pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
                 .iter()
                 .map(|v| compile_value_default(v, ci))
                 .collect::<Result<Vec<_>>>()?;
-            let matcher = if matchers.len() == 1 {
-                matchers.into_iter().next().unwrap()
-            } else {
-                CompiledMatcher::AnyOf(matchers)
+            let matcher = match matchers.len() {
+                1 => matchers.into_iter().next().expect("checked len == 1"),
+                _ => CompiledMatcher::AnyOf(matchers),
             };
             Ok(CompiledDetection::Keywords(matcher))
         }
@@ -306,12 +305,10 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
     let matchers = matchers?;
 
     // Combine multiple values: |all → AND, default → OR
-    let combined = if matchers.len() == 1 {
-        matchers.into_iter().next().unwrap()
-    } else if ctx.all {
-        CompiledMatcher::AllOf(matchers)
-    } else {
-        CompiledMatcher::AnyOf(matchers)
+    let combined = match matchers.len() {
+        1 => matchers.into_iter().next().expect("checked len == 1"),
+        _ if ctx.all => CompiledMatcher::AllOf(matchers),
+        _ => CompiledMatcher::AnyOf(matchers),
     };
 
     Ok(CompiledDetectionItem {

@@ -777,17 +777,13 @@ fn expand_placeholder_string(s: &str, state: &PipelineState, wildcard: bool) -> 
 
     // Simple regex-free pattern matching for %name%
     loop {
-        let start = result.find('%');
-        if start.is_none() {
+        let Some(start) = result.find('%') else {
             break;
-        }
-        let start = start.unwrap();
+        };
         let rest = &result[start + 1..];
-        let end = rest.find('%');
-        if end.is_none() {
+        let Some(end) = rest.find('%') else {
             break;
-        }
-        let end = end.unwrap();
+        };
         let placeholder = &rest[..end];
 
         if let Some(values) = state.vars.get(placeholder) {
