@@ -112,6 +112,13 @@ enum Commands {
         /// Equivalent to the `rsigma.include_event` custom attribute.
         #[arg(long = "include-event")]
         include_event: bool,
+
+        /// Event field name(s) to use for timestamp extraction in correlations.
+        /// Can be specified multiple times; tried in order before built-in
+        /// defaults (@timestamp, timestamp, EventTime, …).
+        /// Equivalent to the `rsigma.timestamp_field` custom attribute.
+        #[arg(long = "timestamp-field")]
+        timestamp_fields: Vec<String>,
     },
 }
 
@@ -138,6 +145,7 @@ fn main() {
             action,
             no_detections,
             include_event,
+            timestamp_fields,
         } => cmd_eval(
             rules,
             event,
@@ -149,6 +157,7 @@ fn main() {
             action,
             no_detections,
             include_event,
+            timestamp_fields,
         ),
     }
 }
@@ -267,6 +276,7 @@ fn cmd_eval(
     action: Option<String>,
     no_detections: bool,
     include_event: bool,
+    timestamp_fields: Vec<String>,
 ) {
     let mut collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
@@ -284,7 +294,7 @@ fn cmd_eval(
     let event_filter = build_event_filter(jq, jsonpath);
 
     // Build correlation config from CLI flags
-    let corr_config = build_correlation_config(suppress, action, no_detections);
+    let corr_config = build_correlation_config(suppress, action, no_detections, timestamp_fields);
 
     if has_correlations {
         cmd_eval_with_correlations(
@@ -613,6 +623,7 @@ fn build_correlation_config(
     suppress: Option<String>,
     action: Option<String>,
     no_detections: bool,
+    extra_timestamp_fields: Vec<String>,
 ) -> CorrelationConfig {
     let suppress_secs = suppress.map(|s| match rsigma_parser::Timespan::parse(&s) {
         Ok(ts) => ts.seconds,
@@ -631,12 +642,21 @@ fn build_correlation_config(
         })
         .unwrap_or_default();
 
-    CorrelationConfig {
+    let mut config = CorrelationConfig {
         suppress: suppress_secs,
         action_on_match,
         emit_detections: !no_detections,
         ..Default::default()
+    };
+
+    // Prepend CLI --timestamp-field values so they take priority over defaults
+    if !extra_timestamp_fields.is_empty() {
+        let mut fields = extra_timestamp_fields;
+        fields.extend(config.timestamp_fields);
+        config.timestamp_fields = fields;
     }
+
+    config
 }
 
 /// Apply the event filter, returning one or more extracted JSON values.
