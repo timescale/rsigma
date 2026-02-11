@@ -1811,10 +1811,10 @@ mod tests {
 
         // Values should be unchanged
         let det = &rule.detection.named["selection"];
-        if let Detection::AllOf(items) = det {
-            if let SigmaValue::String(s) = &items[0].values[0] {
-                assert_eq!(s.original, "whoami");
-            }
+        if let Detection::AllOf(items) = det
+            && let SigmaValue::String(s) = &items[0].values[0]
+        {
+            assert_eq!(s.original, "whoami");
         }
     }
 

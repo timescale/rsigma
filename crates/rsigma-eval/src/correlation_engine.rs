@@ -2521,8 +2521,10 @@ level: high
 
     #[test]
     fn test_custom_attr_suppress_does_not_override_cli() {
-        let mut config = CorrelationConfig::default();
-        config.suppress = Some(60); // CLI set to 60s
+        let config = CorrelationConfig {
+            suppress: Some(60), // CLI set to 60s
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
 
         let mut attrs = std::collections::HashMap::new();
@@ -2550,8 +2552,10 @@ level: high
 
     #[test]
     fn test_custom_attr_action_does_not_override_cli() {
-        let mut config = CorrelationConfig::default();
-        config.action_on_match = CorrelationAction::Reset; // CLI set to reset
+        let config = CorrelationConfig {
+            action_on_match: CorrelationAction::Reset, // CLI set to reset
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
 
         let mut attrs = std::collections::HashMap::new();
