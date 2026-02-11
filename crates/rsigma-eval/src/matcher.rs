@@ -16,8 +16,8 @@ use crate::event::Event;
 /// A pre-compiled matcher for a single value comparison.
 ///
 /// All string matchers store their values in the form needed for comparison
-/// (lowercased for case-insensitive). The `case_insensitive` flag controls
-/// whether the input is lowercased before comparison.
+/// (Unicode-lowercased for case-insensitive). The `case_insensitive` flag
+/// controls whether the input is lowercased before comparison.
 #[derive(Debug, Clone)]
 pub enum CompiledMatcher {
     // -- String matchers --
@@ -139,7 +139,7 @@ impl CompiledMatcher {
                 case_insensitive,
             } => match_str_value(value, |s| {
                 if *case_insensitive {
-                    s.eq_ignore_ascii_case(expected)
+                    s.to_lowercase() == *expected
                 } else {
                     s == expected
                 }
@@ -150,7 +150,7 @@ impl CompiledMatcher {
                 case_insensitive,
             } => match_str_value(value, |s| {
                 if *case_insensitive {
-                    s.to_ascii_lowercase().contains(needle.as_str())
+                    s.to_lowercase().contains(needle.as_str())
                 } else {
                     s.contains(needle.as_str())
                 }
@@ -161,7 +161,7 @@ impl CompiledMatcher {
                 case_insensitive,
             } => match_str_value(value, |s| {
                 if *case_insensitive {
-                    s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    s.to_lowercase().starts_with(prefix.as_str())
                 } else {
                     s.starts_with(prefix.as_str())
                 }
@@ -172,8 +172,7 @@ impl CompiledMatcher {
                 case_insensitive,
             } => match_str_value(value, |s| {
                 if *case_insensitive {
-                    s.len() >= suffix.len()
-                        && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+                    s.to_lowercase().ends_with(suffix.as_str())
                 } else {
                     s.ends_with(suffix.as_str())
                 }
@@ -211,7 +210,7 @@ impl CompiledMatcher {
                 if let Some(ref_value) = event.get_field(ref_field) {
                     if *case_insensitive {
                         match (value_to_str(value), value_to_str(ref_value)) {
-                            (Some(a), Some(b)) => a.eq_ignore_ascii_case(&b),
+                            (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
                             _ => value == ref_value,
                         }
                     } else {
@@ -227,7 +226,7 @@ impl CompiledMatcher {
             CompiledMatcher::BoolEq(expected) => match value {
                 Value::Bool(b) => b == expected,
                 // Also accept string representations
-                Value::String(s) => match s.to_ascii_lowercase().as_str() {
+                Value::String(s) => match s.to_lowercase().as_str() {
                     "true" | "1" | "yes" => *expected,
                     "false" | "0" | "no" => !*expected,
                     _ => false,
@@ -244,7 +243,7 @@ impl CompiledMatcher {
                 let expanded = expand_template(template, event);
                 match_str_value(value, |s| {
                     if *case_insensitive {
-                        s.eq_ignore_ascii_case(&expanded)
+                        s.to_lowercase() == expanded.to_lowercase()
                     } else {
                         s == expanded
                     }
@@ -527,7 +526,7 @@ mod tests {
     #[test]
     fn test_contains() {
         let m = CompiledMatcher::Contains {
-            value: "admin".to_ascii_lowercase(),
+            value: "admin".to_lowercase(),
             case_insensitive: true,
         };
         let e = ev();
@@ -685,6 +684,74 @@ mod tests {
         let e = ev();
         let event = Event::from_value(&e);
         assert!(m.matches(&json!(42), &event));
+    }
+
+    // =========================================================================
+    // Unicode case folding tests
+    // =========================================================================
+
+    #[test]
+    fn test_exact_unicode_case_insensitive() {
+        // German uppercase Ä should match lowercase ä
+        let m = CompiledMatcher::Exact {
+            value: "ärzte".to_lowercase(),
+            case_insensitive: true,
+        };
+        let e = ev();
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("ÄRZTE"), &event));
+        assert!(m.matches(&json!("Ärzte"), &event));
+        assert!(m.matches(&json!("ärzte"), &event));
+    }
+
+    #[test]
+    fn test_contains_unicode_case_insensitive() {
+        let m = CompiledMatcher::Contains {
+            value: "ñ".to_lowercase(),
+            case_insensitive: true,
+        };
+        let e = ev();
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("España"), &event));
+        assert!(m.matches(&json!("ESPAÑA"), &event));
+    }
+
+    #[test]
+    fn test_startswith_unicode_case_insensitive() {
+        let m = CompiledMatcher::StartsWith {
+            value: "über".to_lowercase(),
+            case_insensitive: true,
+        };
+        let e = ev();
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("Übersicht"), &event));
+        assert!(m.matches(&json!("ÜBERSICHT"), &event));
+        assert!(!m.matches(&json!("not-uber"), &event));
+    }
+
+    #[test]
+    fn test_endswith_unicode_case_insensitive() {
+        let m = CompiledMatcher::EndsWith {
+            value: "ção".to_lowercase(),
+            case_insensitive: true,
+        };
+        let e = ev();
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("Aplicação"), &event));
+        assert!(m.matches(&json!("APLICAÇÃO"), &event));
+        assert!(!m.matches(&json!("Aplicacao"), &event));
+    }
+
+    #[test]
+    fn test_greek_case_insensitive() {
+        let m = CompiledMatcher::Exact {
+            value: "σίγμα".to_lowercase(),
+            case_insensitive: true,
+        };
+        let e = ev();
+        let event = Event::from_value(&e);
+        assert!(m.matches(&json!("ΣΊΓΜΑ"), &event));
+        assert!(m.matches(&json!("σίγμα"), &event));
     }
 
     // =========================================================================

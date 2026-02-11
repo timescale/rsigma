@@ -199,10 +199,7 @@ mod tests {
         // Path resolves to an array (not traversing into it)
         let v = json!({"a": {"tags": ["t1", "t2"]}});
         let event = Event::from_value(&v);
-        assert_eq!(
-            event.get_field("a.tags"),
-            Some(&json!(["t1", "t2"]))
-        );
+        assert_eq!(event.get_field("a.tags"), Some(&json!(["t1", "t2"])));
     }
 
     #[test]

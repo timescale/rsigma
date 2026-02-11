@@ -473,7 +473,7 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
             .map(|p| {
                 // base64offset implies contains matching
                 CompiledMatcher::Contains {
-                    value: if ci { p.to_ascii_lowercase() } else { p },
+                    value: if ci { p.to_lowercase() } else { p },
                     case_insensitive: ci,
                 }
             })
@@ -550,7 +550,7 @@ fn compile_string_value(plain: &str, ctx: &ModCtx) -> Result<CompiledMatcher> {
     if ctx.contains {
         Ok(CompiledMatcher::Contains {
             value: if ci {
-                plain.to_ascii_lowercase()
+                plain.to_lowercase()
             } else {
                 plain.to_string()
             },
@@ -558,17 +558,29 @@ fn compile_string_value(plain: &str, ctx: &ModCtx) -> Result<CompiledMatcher> {
         })
     } else if ctx.startswith {
         Ok(CompiledMatcher::StartsWith {
-            value: plain.to_string(),
+            value: if ci {
+                plain.to_lowercase()
+            } else {
+                plain.to_string()
+            },
             case_insensitive: ci,
         })
     } else if ctx.endswith {
         Ok(CompiledMatcher::EndsWith {
-            value: plain.to_string(),
+            value: if ci {
+                plain.to_lowercase()
+            } else {
+                plain.to_string()
+            },
             case_insensitive: ci,
         })
     } else {
         Ok(CompiledMatcher::Exact {
-            value: plain.to_string(),
+            value: if ci {
+                plain.to_lowercase()
+            } else {
+                plain.to_string()
+            },
             case_insensitive: ci,
         })
     }
@@ -582,7 +594,7 @@ fn compile_value_default(value: &SigmaValue, case_insensitive: bool) -> Result<C
                 let plain = s.as_plain().unwrap_or_default();
                 Ok(CompiledMatcher::Contains {
                     value: if case_insensitive {
-                        plain.to_ascii_lowercase()
+                        plain.to_lowercase()
                     } else {
                         plain
                     },
@@ -1069,7 +1081,10 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev_match = json!({"User": "Admin"});
-        assert!(eval_detection_item(&compiled, &Event::from_value(&ev_match)));
+        assert!(eval_detection_item(
+            &compiled,
+            &Event::from_value(&ev_match)
+        ));
 
         let ev_no_match = json!({"User": "admin"});
         assert!(!eval_detection_item(
@@ -1089,7 +1104,10 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev_exact = json!({"User": "Admin"});
-        assert!(eval_detection_item(&compiled, &Event::from_value(&ev_exact)));
+        assert!(eval_detection_item(
+            &compiled,
+            &Event::from_value(&ev_exact)
+        ));
 
         let ev_lower = json!({"User": "admin"});
         assert!(eval_detection_item(
