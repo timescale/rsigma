@@ -222,32 +222,32 @@ Criterion.rs benchmarks with synthetic rules and events (Apple M-series, single-
 
 | Scenario | Time |
 |----------|------|
-| 1 rule | 12 µs |
-| 100 rules | 1.2 ms |
-| 1,000 rules | 12 ms |
-| Complex condition (8 selections, nested booleans) | 24 µs |
+| 1 rule | 11.7 µs |
+| 100 rules | 1.1 ms |
+| 1,000 rules | 11.1 ms |
+| Complex condition (8 selections, nested booleans) | 23.2 µs |
 
 ### Detection Evaluation
 
 | Scenario | Time | Throughput |
 |----------|------|------------|
-| Compile 1,000 rules | 676 µs | — |
-| Compile 5,000 rules | 3.5 ms | — |
-| 1 event vs 100 rules | 5 µs | — |
-| 1 event vs 1,000 rules | 67 µs | — |
-| 1 event vs 5,000 rules | 371 µs | — |
-| 100K events vs 100 rules | 493 ms | **203K events/sec** |
-| Wildcard-heavy (1,000 rules, 100 events) | 6.9 ms | — |
-| Regex-heavy (1,000 rules, 100 events) | 8.1 ms | — |
+| Compile 1,000 rules | 669 µs | — |
+| Compile 5,000 rules | 3.4 ms | — |
+| 1 event vs 100 rules | 4.8 µs | — |
+| 1 event vs 1,000 rules | 65 µs | — |
+| 1 event vs 5,000 rules | 336 µs | — |
+| 100K events vs 100 rules | 458 ms | **218K events/sec** |
+| Wildcard-heavy (1,000 rules, 100 events) | 5.9 ms | — |
+| Regex-heavy (1,000 rules, 100 events) | 7.3 ms | — |
 
 ### Correlation Engine
 
 | Scenario | Time | Throughput |
 |----------|------|------------|
-| 1K events, 20 event_count correlations | 737 µs | **1.36M events/sec** |
-| 1K events, 10 temporal correlations | 415 µs | **2.41M events/sec** |
-| 100K events, 50 detection + 10 correlation rules | 223 ms | **449K events/sec** |
-| 50K unique group keys (state pressure) | 39 ms | **1.26M events/sec** |
+| 1K events, 20 event_count correlations | 727 µs | **1.37M events/sec** |
+| 1K events, 10 temporal correlations | 411 µs | **2.43M events/sec** |
+| 100K events, 50 detection + 10 correlation rules | 217 ms | **462K events/sec** |
+| 50K unique group keys (state pressure) | 35.8 ms | **1.40M events/sec** |
 
 Run benchmarks:
 
