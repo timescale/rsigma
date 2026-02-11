@@ -372,9 +372,11 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
     }
 
     // |re — value is a regex pattern
+    // Sigma spec: "Regex is matched case-sensitive by default."
+    // Only the explicit |i sub-modifier enables case-insensitive matching.
     if ctx.re {
         let pattern = value_to_plain_string(value)?;
-        let regex = build_regex(&pattern, ci || ctx.ignore_case, ctx.multiline, ctx.dotall)?;
+        let regex = build_regex(&pattern, ctx.ignore_case, ctx.multiline, ctx.dotall)?;
         return Ok(CompiledMatcher::Regex(regex));
     }
 
@@ -1048,6 +1050,46 @@ mod tests {
         let ev = json!({"CommandLine": "cmd.exe /c whoami"});
         let event = Event::from_value(&ev);
         assert!(eval_detection_item(&compiled, &event));
+    }
+
+    #[test]
+    fn test_regex_case_sensitive_by_default() {
+        // Sigma spec: "|re" is case-sensitive by default
+        let item = make_item(
+            "User",
+            &[Modifier::Re],
+            vec![SigmaValue::String(SigmaString::from_raw("Admin"))],
+        );
+        let compiled = compile_detection_item(&item).unwrap();
+
+        let ev_match = json!({"User": "Admin"});
+        assert!(eval_detection_item(&compiled, &Event::from_value(&ev_match)));
+
+        let ev_no_match = json!({"User": "admin"});
+        assert!(!eval_detection_item(
+            &compiled,
+            &Event::from_value(&ev_no_match)
+        ));
+    }
+
+    #[test]
+    fn test_regex_case_insensitive_with_i_modifier() {
+        // |re|i enables case-insensitive matching
+        let item = make_item(
+            "User",
+            &[Modifier::Re, Modifier::IgnoreCase],
+            vec![SigmaValue::String(SigmaString::from_raw("Admin"))],
+        );
+        let compiled = compile_detection_item(&item).unwrap();
+
+        let ev_exact = json!({"User": "Admin"});
+        assert!(eval_detection_item(&compiled, &Event::from_value(&ev_exact)));
+
+        let ev_lower = json!({"User": "admin"});
+        assert!(eval_detection_item(
+            &compiled,
+            &Event::from_value(&ev_lower)
+        ));
     }
 
     #[test]
