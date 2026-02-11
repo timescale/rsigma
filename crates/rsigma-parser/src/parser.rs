@@ -510,9 +510,10 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         _ => Vec::new(),
     };
 
-    // Timespan (required)
-    let timespan_str = get_str(corr, "timespan")
-        .ok_or_else(|| SigmaParserError::InvalidCorrelation("Missing timespan".into()))?;
+    // Timespan (required) — accept both "timeframe" (Sigma standard) and "timespan"
+    let timespan_str = get_str(corr, "timeframe")
+        .or_else(|| get_str(corr, "timespan"))
+        .ok_or_else(|| SigmaParserError::InvalidCorrelation("Missing timeframe".into()))?;
     let timespan = Timespan::parse(timespan_str)?;
 
     // Generate flag
