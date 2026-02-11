@@ -48,6 +48,10 @@ pub enum EvalError {
     /// A rule referenced by a correlation was not found.
     #[error("unknown rule reference: {0}")]
     UnknownRuleRef(String),
+
+    /// A cycle was detected in correlation rule references.
+    #[error("correlation cycle detected: {0}")]
+    CorrelationCycle(String),
 }
 
 /// Convenience result type.

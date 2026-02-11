@@ -15,6 +15,7 @@ base64 = "0.22"
 ipnet = "2"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
 
 [dev-dependencies]
 criterion = "0.5"

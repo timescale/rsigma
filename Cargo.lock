@@ -823,6 +823,7 @@ dependencies = [
  "chrono",
  "criterion",
  "ipnet",
+ "log",
  "rand",
  "regex",
  "rsigma-parser",

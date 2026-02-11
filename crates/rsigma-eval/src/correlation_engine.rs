@@ -327,7 +327,96 @@ impl CorrelationEngine {
         for corr in &collection.correlations {
             self.add_correlation(corr)?;
         }
+        // Validate no cycles exist in the correlation reference graph
+        self.detect_correlation_cycles()?;
         Ok(())
+    }
+
+    /// Detect cycles in the correlation reference graph.
+    ///
+    /// Builds a directed graph where each correlation (identified by its id/name)
+    /// has edges to the correlations it references via `rule_refs`. Uses DFS with
+    /// a "gray/black" coloring scheme to detect back-edges (cycles).
+    ///
+    /// Returns `Err(EvalError::CorrelationCycle)` if a cycle is found.
+    fn detect_correlation_cycles(&self) -> Result<()> {
+        // Build a set of all correlation identifiers (id and/or name)
+        let mut corr_identifiers: HashMap<&str, usize> = HashMap::new();
+        for (idx, corr) in self.correlations.iter().enumerate() {
+            if let Some(ref id) = corr.id {
+                corr_identifiers.insert(id.as_str(), idx);
+            }
+            if let Some(ref name) = corr.name {
+                corr_identifiers.insert(name.as_str(), idx);
+            }
+        }
+
+        // Build adjacency list: corr index → set of corr indices it references
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); self.correlations.len()];
+        for (idx, corr) in self.correlations.iter().enumerate() {
+            for rule_ref in &corr.rule_refs {
+                if let Some(&target_idx) = corr_identifiers.get(rule_ref.as_str()) {
+                    adj[idx].push(target_idx);
+                }
+            }
+        }
+
+        // DFS cycle detection with three states: white (unvisited), gray (in stack), black (done)
+        let mut state = vec![0u8; self.correlations.len()]; // 0=white, 1=gray, 2=black
+        let mut path: Vec<usize> = Vec::new();
+
+        for start in 0..self.correlations.len() {
+            if state[start] == 0
+                && let Some(cycle) = Self::dfs_find_cycle(start, &adj, &mut state, &mut path)
+            {
+                let names: Vec<String> = cycle
+                    .iter()
+                    .map(|&i| {
+                        self.correlations[i]
+                            .id
+                            .as_deref()
+                            .or(self.correlations[i].name.as_deref())
+                            .unwrap_or(&self.correlations[i].title)
+                            .to_string()
+                    })
+                    .collect();
+                return Err(crate::error::EvalError::CorrelationCycle(
+                    names.join(" -> "),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// DFS helper that returns the cycle path if a back-edge is found.
+    fn dfs_find_cycle(
+        node: usize,
+        adj: &[Vec<usize>],
+        state: &mut [u8],
+        path: &mut Vec<usize>,
+    ) -> Option<Vec<usize>> {
+        state[node] = 1; // gray
+        path.push(node);
+
+        for &next in &adj[node] {
+            if state[next] == 1 {
+                // Back-edge found — extract cycle from path
+                if let Some(pos) = path.iter().position(|&n| n == next) {
+                    let mut cycle = path[pos..].to_vec();
+                    cycle.push(next); // close the cycle
+                    return Some(cycle);
+                }
+            }
+            if state[next] == 0
+                && let Some(cycle) = Self::dfs_find_cycle(next, adj, state, path)
+            {
+                return Some(cycle);
+            }
+        }
+
+        path.pop();
+        state[node] = 2; // black
+        None
     }
 
     /// Process an event, extracting the timestamp from configured event fields.
@@ -669,6 +758,15 @@ impl CorrelationEngine {
             }
 
             pending = next_pending;
+        }
+
+        if !pending.is_empty() {
+            log::warn!(
+                "Correlation chain depth limit reached ({MAX_CHAIN_DEPTH}); \
+                 {} pending result(s) were not propagated further. \
+                 This may indicate a cycle in correlation references.",
+                pending.len()
+            );
         }
     }
 
@@ -2750,5 +2848,210 @@ level: high
             ts > 1_700_000_000 && ts < 1_800_000_000,
             "timestamp should be ~2026 epoch, got {ts}"
         );
+    }
+
+    // =========================================================================
+    // Cycle detection
+    // =========================================================================
+
+    #[test]
+    fn test_correlation_cycle_direct() {
+        // Two correlations that reference each other: A -> B -> A
+        let yaml = r#"
+title: detection rule
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - corr-b
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let result = engine.add_collection(&collection);
+        assert!(result.is_err(), "should detect direct cycle");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cycle"), "error should mention cycle: {err}");
+        assert!(
+            err.contains("corr-a") && err.contains("corr-b"),
+            "error should name both correlations: {err}"
+        );
+    }
+
+    #[test]
+    fn test_correlation_cycle_self() {
+        // A correlation that references itself
+        let yaml = r#"
+title: detection rule
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: self-ref correlation
+id: self-corr
+correlation:
+    type: event_count
+    rules:
+        - self-corr
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let result = engine.add_collection(&collection);
+        assert!(result.is_err(), "should detect self-referencing cycle");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cycle"), "error should mention cycle: {err}");
+        assert!(
+            err.contains("self-corr"),
+            "error should name the correlation: {err}"
+        );
+    }
+
+    #[test]
+    fn test_correlation_no_cycle_valid_chain() {
+        // Valid chain: detection -> corr-A -> corr-B (no cycle)
+        let yaml = r#"
+title: detection rule
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let result = engine.add_collection(&collection);
+        assert!(
+            result.is_ok(),
+            "valid chain should not be rejected: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_correlation_cycle_transitive() {
+        // Transitive cycle: A -> B -> C -> A
+        let yaml = r#"
+title: detection rule
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - corr-c
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation C
+id: corr-c
+correlation:
+    type: event_count
+    rules:
+        - corr-b
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let result = engine.add_collection(&collection);
+        assert!(result.is_err(), "should detect transitive cycle");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cycle"), "error should mention cycle: {err}");
     }
 }
