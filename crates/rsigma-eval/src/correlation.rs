@@ -260,6 +260,18 @@ impl WindowState {
         }
     }
 
+    /// Returns the most recent timestamp in this window, or `None` if empty.
+    pub fn latest_timestamp(&self) -> Option<i64> {
+        match self {
+            WindowState::EventCount { timestamps } => timestamps.back().copied(),
+            WindowState::ValueCount { entries } => entries.back().map(|(t, _)| *t),
+            WindowState::Temporal { rule_hits } => {
+                rule_hits.values().filter_map(|ts| ts.back().copied()).max()
+            }
+            WindowState::NumericAgg { entries } => entries.back().map(|(t, _)| *t),
+        }
+    }
+
     /// Clear all entries from the window state (used by `CorrelationAction::Reset`).
     pub fn clear(&mut self) {
         match self {

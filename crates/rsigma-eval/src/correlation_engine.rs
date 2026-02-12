@@ -800,7 +800,7 @@ impl CorrelationEngine {
 
     /// Evict expired entries and remove empty states.
     fn evict_all(&mut self, now_secs: i64) {
-        // For each state entry, evict based on its correlation's timespan
+        // Phase 1: Time-based eviction — remove entries outside their correlation window
         let timespans: Vec<u64> = self.correlations.iter().map(|c| c.timespan_secs).collect();
 
         self.state.retain(|&(corr_idx, _), state| {
@@ -811,8 +811,30 @@ impl CorrelationEngine {
             !state.is_empty()
         });
 
-        // Evict stale last_alert entries: remove if the suppress window has passed
-        // or if the corresponding window state no longer exists.
+        // Phase 2: Hard cap — if still over limit after time-based eviction (e.g.
+        // high-cardinality traffic with long windows), drop the stalest entries
+        // until we're at 90% capacity to avoid evicting on every single event.
+        if self.state.len() >= self.config.max_state_entries {
+            let target = self.config.max_state_entries * 9 / 10;
+            let excess = self.state.len() - target;
+
+            // Collect keys with their latest timestamp, sort by oldest first
+            let mut by_staleness: Vec<_> = self
+                .state
+                .iter()
+                .map(|(k, v)| (k.clone(), v.latest_timestamp().unwrap_or(i64::MIN)))
+                .collect();
+            by_staleness.sort_unstable_by_key(|&(_, ts)| ts);
+
+            // Drop the oldest entries
+            for (key, _) in by_staleness.into_iter().take(excess) {
+                self.state.remove(&key);
+                self.last_alert.remove(&key);
+            }
+        }
+
+        // Phase 3: Evict stale last_alert entries — remove if the suppress window
+        // has passed or if the corresponding window state no longer exists.
         self.last_alert.retain(|key, &mut alert_ts| {
             let suppress = if key.0 < self.correlations.len() {
                 self.correlations[key.0]
