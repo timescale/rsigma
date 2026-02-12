@@ -1,4 +1,4 @@
-# rsigma
+# RSigma
 
 A Rust implementation of the [Sigma](https://github.com/SigmaHQ/sigma) detection standard — parser, evaluation engine, and CLI. rsigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them directly against JSON log events in real time. Unlike a pure parser or transpiler, rsigma acts as a **backend**: it runs detection and correlation logic in-process, supports processing pipelines for field mapping and backend-specific configuration, and streams results from NDJSON input — no external SIEM required.
 
