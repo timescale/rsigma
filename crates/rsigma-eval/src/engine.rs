@@ -164,8 +164,7 @@ impl Engine {
             // Also check logsource compatibility if the filter specifies one
             if rule_matches {
                 if let Some(ref filter_ls) = filter.logsource
-                    && !logsource_matches(&rule.logsource, filter_ls)
-                    && !logsource_matches(filter_ls, &rule.logsource)
+                    && !logsource_compatible(&rule.logsource, filter_ls)
                 {
                     continue;
                 }
@@ -262,6 +261,25 @@ impl Default for Engine {
 /// The rule matches if every non-`None` field in the rule's logsource has
 /// the same value in the event's logsource. Fields the rule doesn't specify
 /// are ignored (wildcard).
+/// Symmetric compatibility check: two logsources are compatible if every field
+/// that *both* specify has the same value (case-insensitive). Fields that only
+/// one side specifies are ignored — e.g. a filter with `product: windows` is
+/// compatible with a rule that has `category: process_creation, product: windows`.
+fn logsource_compatible(a: &LogSource, b: &LogSource) -> bool {
+    fn field_compatible(a: &Option<String>, b: &Option<String>) -> bool {
+        match (a, b) {
+            (Some(va), Some(vb)) => va.eq_ignore_ascii_case(vb),
+            _ => true, // one or both unspecified — no conflict
+        }
+    }
+
+    field_compatible(&a.category, &b.category)
+        && field_compatible(&a.product, &b.product)
+        && field_compatible(&a.service, &b.service)
+}
+
+/// Asymmetric check: every field specified in `rule_ls` must be present and
+/// match in `event_ls`. Used for routing events to rules by logsource.
 fn logsource_matches(rule_ls: &LogSource, event_ls: &LogSource) -> bool {
     if let Some(ref cat) = rule_ls.category {
         match &event_ls.category {
