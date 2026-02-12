@@ -670,7 +670,9 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Expected a YAML mapping".into()))?;
 
-    let title = get_str(m, "title").unwrap_or("Untitled Filter").to_string();
+    let title = get_str(m, "title")
+        .ok_or_else(|| SigmaParserError::MissingField("title".into()))?
+        .to_string();
 
     // Get filter section for rules list
     let filter_val = m.get(val_key("filter"));
