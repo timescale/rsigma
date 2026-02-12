@@ -53,6 +53,14 @@ impl<'a> Event<'a> {
         values
     }
 
+    /// Check if any string value in the event satisfies a predicate.
+    ///
+    /// Short-circuits on the first match, avoiding the allocation of
+    /// collecting all string values into a `Vec`.
+    pub fn any_string_value(&self, pred: &dyn Fn(&str) -> bool) -> bool {
+        any_string_value_rec(self.inner, pred, MAX_NESTING_DEPTH)
+    }
+
     /// Access the underlying JSON value.
     pub fn as_value(&self) -> &'a Value {
         self.inner
@@ -90,6 +98,22 @@ fn traverse<'a>(current: &'a Value, parts: &[&str]) -> Option<&'a Value> {
 
 /// Maximum nesting depth for recursive JSON traversal.
 const MAX_NESTING_DEPTH: usize = 64;
+
+fn any_string_value_rec(v: &Value, pred: &dyn Fn(&str) -> bool, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    match v {
+        Value::String(s) => pred(s.as_str()),
+        Value::Object(map) => map
+            .values()
+            .any(|val| any_string_value_rec(val, pred, depth - 1)),
+        Value::Array(arr) => arr
+            .iter()
+            .any(|val| any_string_value_rec(val, pred, depth - 1)),
+        _ => false,
+    }
+}
 
 fn collect_string_values<'a>(v: &'a Value, out: &mut Vec<&'a str>, depth: usize) {
     if depth == 0 {

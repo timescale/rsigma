@@ -273,14 +273,69 @@ impl CompiledMatcher {
         }
     }
 
-    /// Check if this matcher matches any of the given keyword strings.
+    /// Check if this matcher matches any string value in the event.
     /// Used for keyword detection (field-less matching).
+    ///
+    /// Avoids allocating a `Vec` of all strings and a `String` per value by
+    /// using `matches_str` with a short-circuiting traversal.
     pub fn matches_keyword(&self, event: &Event) -> bool {
-        let strings = event.all_string_values();
-        strings.iter().any(|s| {
-            let v = Value::String((*s).to_string());
-            self.matches(&v, event)
-        })
+        event.any_string_value(&|s| self.matches_str(s))
+    }
+
+    /// Check if this matcher matches a plain `&str` value.
+    ///
+    /// Handles the string-matching subset of `CompiledMatcher`. Matchers that
+    /// require a full `Value` (numeric comparisons, field refs, etc.) return
+    /// `false` — those are never used in keyword detection.
+    fn matches_str(&self, s: &str) -> bool {
+        match self {
+            CompiledMatcher::Exact {
+                value: expected,
+                case_insensitive,
+            } => {
+                if *case_insensitive {
+                    s.to_lowercase() == *expected
+                } else {
+                    s == expected
+                }
+            }
+            CompiledMatcher::Contains {
+                value: needle,
+                case_insensitive,
+            } => {
+                if *case_insensitive {
+                    s.to_lowercase().contains(needle.as_str())
+                } else {
+                    s.contains(needle.as_str())
+                }
+            }
+            CompiledMatcher::StartsWith {
+                value: prefix,
+                case_insensitive,
+            } => {
+                if *case_insensitive {
+                    s.to_lowercase().starts_with(prefix.as_str())
+                } else {
+                    s.starts_with(prefix.as_str())
+                }
+            }
+            CompiledMatcher::EndsWith {
+                value: suffix,
+                case_insensitive,
+            } => {
+                if *case_insensitive {
+                    s.to_lowercase().ends_with(suffix.as_str())
+                } else {
+                    s.ends_with(suffix.as_str())
+                }
+            }
+            CompiledMatcher::Regex(re) => re.is_match(s),
+            CompiledMatcher::Not(inner) => !inner.matches_str(s),
+            CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches_str(s)),
+            CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches_str(s)),
+            // Non-string matchers are irrelevant for keyword search
+            _ => false,
+        }
     }
 }
 
