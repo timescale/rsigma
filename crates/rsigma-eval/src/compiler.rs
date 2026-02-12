@@ -1489,3 +1489,119 @@ mod tests {
         assert!(result.event.is_none());
     }
 }
+
+// =============================================================================
+// Property-based tests
+// =============================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // -------------------------------------------------------------------------
+    // 1. Windash expansion: count is always 5^n for n dashes
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn windash_count_is_5_pow_n(
+            // Generate a string with 0-3 dashes embedded in alphabetic text
+            prefix in "[a-z]{0,5}",
+            dashes in prop::collection::vec(Just('-'), 0..=3),
+            suffix in "[a-z]{0,5}",
+        ) {
+            let mut input = prefix;
+            for d in &dashes {
+                input.push(*d);
+            }
+            input.push_str(&suffix);
+
+            let n = input.chars().filter(|c| *c == '-').count();
+            let variants = expand_windash(&input);
+            let expected = 5usize.pow(n as u32);
+            prop_assert_eq!(variants.len(), expected,
+                "expand_windash({:?}) should produce {} variants, got {}",
+                input, expected, variants.len());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Windash expansion: no duplicates
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn windash_no_duplicates(
+            prefix in "[a-z]{0,4}",
+            dashes in prop::collection::vec(Just('-'), 0..=2),
+            suffix in "[a-z]{0,4}",
+        ) {
+            let mut input = prefix;
+            for d in &dashes {
+                input.push(*d);
+            }
+            input.push_str(&suffix);
+
+            let variants = expand_windash(&input);
+            let unique: std::collections::HashSet<&String> = variants.iter().collect();
+            prop_assert_eq!(variants.len(), unique.len(),
+                "expand_windash({:?}) produced duplicates", input);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Windash expansion: original string is always in the output
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn windash_contains_original(
+            prefix in "[a-z]{0,5}",
+            dashes in prop::collection::vec(Just('-'), 0..=3),
+            suffix in "[a-z]{0,5}",
+        ) {
+            let mut input = prefix;
+            for d in &dashes {
+                input.push(*d);
+            }
+            input.push_str(&suffix);
+
+            let variants = expand_windash(&input);
+            prop_assert!(variants.contains(&input),
+                "expand_windash({:?}) should contain the original", input);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Windash expansion: all variants have same length minus multi-byte diffs
+    //    (each dash position gets replaced by a char, non-dash parts stay the same)
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn windash_variants_preserve_non_dash_chars(
+            prefix in "[a-z]{1,5}",
+            suffix in "[a-z]{1,5}",
+        ) {
+            let input = format!("{prefix}-{suffix}");
+            let variants = expand_windash(&input);
+            for variant in &variants {
+                // The prefix and suffix parts should be preserved
+                prop_assert!(variant.starts_with(&prefix),
+                    "variant {:?} should start with {:?}", variant, prefix);
+                prop_assert!(variant.ends_with(&suffix),
+                    "variant {:?} should end with {:?}", variant, suffix);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Windash with no dashes: returns single-element vec with original
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn windash_no_dashes_passthrough(text in "[a-zA-Z0-9]{1,20}") {
+            prop_assume!(!text.contains('-'));
+            let variants = expand_windash(&text);
+            prop_assert_eq!(variants.len(), 1);
+            prop_assert_eq!(&variants[0], &text);
+        }
+    }
+}

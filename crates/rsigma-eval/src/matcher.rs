@@ -874,3 +874,238 @@ mod tests {
         assert!(m.matches(&json!(1720614600), &event));
     }
 }
+
+// =============================================================================
+// Property-based tests
+// =============================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use rsigma_parser::value::{SpecialChar, StringPart};
+    use serde_json::json;
+
+    /// Strategy to generate a random sequence of StringParts (plain text + wildcards).
+    fn arb_string_parts() -> impl Strategy<Value = Vec<StringPart>> {
+        prop::collection::vec(
+            prop_oneof![
+                // Plain text: ASCII printable, including regex metacharacters
+                "[[:print:]]{0,20}".prop_map(StringPart::Plain),
+                Just(StringPart::Special(SpecialChar::WildcardMulti)),
+                Just(StringPart::Special(SpecialChar::WildcardSingle)),
+            ],
+            0..8,
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. Wildcard → regex compilation never panics and always produces valid regex
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn wildcard_regex_always_valid(parts in arb_string_parts(), ci in any::<bool>()) {
+            let pattern = sigma_string_to_regex(&parts, ci);
+            // Must compile without error
+            prop_assert!(regex::Regex::new(&pattern).is_ok(),
+                "sigma_string_to_regex produced invalid regex: {}", pattern);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Plain text roundtrip: a plain-only SigmaString matches its own text
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn plain_text_matches_itself(text in "[[:print:]]{1,30}") {
+            let parts = vec![StringPart::Plain(text.clone())];
+            let pattern = sigma_string_to_regex(&parts, false);
+            let re = regex::Regex::new(&pattern).unwrap();
+            prop_assert!(re.is_match(&text),
+                "plain text should match itself: text={:?}, pattern={}", text, pattern);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Plain text never accidentally matches unrelated strings via regex injection
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn plain_text_rejects_different_string(
+            text in "[a-zA-Z0-9]{1,10}",
+            other in "[a-zA-Z0-9]{1,10}",
+        ) {
+            prop_assume!(text != other);
+            let parts = vec![StringPart::Plain(text.clone())];
+            let pattern = sigma_string_to_regex(&parts, false);
+            let re = regex::Regex::new(&pattern).unwrap();
+            prop_assert!(!re.is_match(&other),
+                "plain {:?} should not match {:?}", text, other);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Case-insensitive Exact matcher: symmetric under case change
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn exact_ci_symmetric(s in "[[:alpha:]]{1,20}") {
+            let m = CompiledMatcher::Exact {
+                value: s.to_lowercase(),
+                case_insensitive: true,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let upper = json!(s.to_uppercase());
+            let lower = json!(s.to_lowercase());
+            prop_assert!(m.matches(&upper, &event),
+                "CI exact should match uppercase: {:?}", s.to_uppercase());
+            prop_assert!(m.matches(&lower, &event),
+                "CI exact should match lowercase: {:?}", s.to_lowercase());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Contains matcher agrees with str::contains
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn contains_agrees_with_stdlib(
+            haystack in "[[:print:]]{0,30}",
+            needle in "[[:print:]]{1,10}",
+        ) {
+            let expected = haystack.contains(&needle);
+            let m = CompiledMatcher::Contains {
+                value: needle.clone(),
+                case_insensitive: false,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "Contains({:?}) on {:?}", needle, haystack);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. StartsWith matcher agrees with str::starts_with
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn startswith_agrees_with_stdlib(
+            haystack in "[[:print:]]{0,30}",
+            prefix in "[[:print:]]{1,10}",
+        ) {
+            let expected = haystack.starts_with(&prefix);
+            let m = CompiledMatcher::StartsWith {
+                value: prefix.clone(),
+                case_insensitive: false,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "StartsWith({:?}) on {:?}", prefix, haystack);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. EndsWith matcher agrees with str::ends_with
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn endswith_agrees_with_stdlib(
+            haystack in "[[:print:]]{0,30}",
+            suffix in "[[:print:]]{1,10}",
+        ) {
+            let expected = haystack.ends_with(&suffix);
+            let m = CompiledMatcher::EndsWith {
+                value: suffix.clone(),
+                case_insensitive: false,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "EndsWith({:?}) on {:?}", suffix, haystack);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. CI Contains/StartsWith/EndsWith agree with lowercased stdlib equivalents
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn ci_contains_agrees_with_lowercased(
+            haystack in "[[:alpha:]]{0,20}",
+            needle in "[[:alpha:]]{1,8}",
+        ) {
+            let expected = haystack.to_lowercase().contains(&needle.to_lowercase());
+            let m = CompiledMatcher::Contains {
+                value: needle.to_lowercase(),
+                case_insensitive: true,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "CI Contains({:?}) on {:?}", needle, haystack);
+        }
+
+        #[test]
+        fn ci_startswith_agrees_with_lowercased(
+            haystack in "[[:alpha:]]{0,20}",
+            prefix in "[[:alpha:]]{1,8}",
+        ) {
+            let expected = haystack.to_lowercase().starts_with(&prefix.to_lowercase());
+            let m = CompiledMatcher::StartsWith {
+                value: prefix.to_lowercase(),
+                case_insensitive: true,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "CI StartsWith({:?}) on {:?}", prefix, haystack);
+        }
+
+        #[test]
+        fn ci_endswith_agrees_with_lowercased(
+            haystack in "[[:alpha:]]{0,20}",
+            suffix in "[[:alpha:]]{1,8}",
+        ) {
+            let expected = haystack.to_lowercase().ends_with(&suffix.to_lowercase());
+            let m = CompiledMatcher::EndsWith {
+                value: suffix.to_lowercase(),
+                case_insensitive: true,
+            };
+            let e = json!({});
+            let event = Event::from_value(&e);
+            let val = json!(haystack);
+            prop_assert_eq!(m.matches(&val, &event), expected,
+                "CI EndsWith({:?}) on {:?}", suffix, haystack);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 9. Wildcard * matches any string, ? matches any single char
+    // -------------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn wildcard_star_matches_anything(s in "[[:print:]]{0,30}") {
+            let parts = vec![StringPart::Special(SpecialChar::WildcardMulti)];
+            let pattern = sigma_string_to_regex(&parts, false);
+            let re = regex::Regex::new(&pattern).unwrap();
+            prop_assert!(re.is_match(&s), "* should match any string: {:?}", s);
+        }
+
+        #[test]
+        fn wildcard_question_matches_single_char(c in proptest::char::range('!', '~')) {
+            let parts = vec![StringPart::Special(SpecialChar::WildcardSingle)];
+            let pattern = sigma_string_to_regex(&parts, false);
+            let re = regex::Regex::new(&pattern).unwrap();
+            let s = c.to_string();
+            prop_assert!(re.is_match(&s), "? should match single char: {:?}", s);
+        }
+    }
+}

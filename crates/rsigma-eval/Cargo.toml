@@ -19,6 +19,7 @@ log = "0.4"
 
 [dev-dependencies]
 criterion = "0.5"
+proptest = "1.10.0"
 rand = "0.9"
 
 [[bench]]
