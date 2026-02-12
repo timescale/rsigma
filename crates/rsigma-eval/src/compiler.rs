@@ -262,9 +262,14 @@ pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
                 .iter()
                 .map(|v| compile_value_default(v, ci))
                 .collect::<Result<Vec<_>>>()?;
-            let matcher = match matchers.len() {
-                1 => matchers.into_iter().next().expect("checked len == 1"),
-                _ => CompiledMatcher::AnyOf(matchers),
+            let matcher = if matchers.len() == 1 {
+                // SAFETY: length checked above
+                matchers
+                    .into_iter()
+                    .next()
+                    .unwrap_or(CompiledMatcher::AnyOf(vec![]))
+            } else {
+                CompiledMatcher::AnyOf(matchers)
             };
             Ok(CompiledDetection::Keywords(matcher))
         }
@@ -305,10 +310,16 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
     let matchers = matchers?;
 
     // Combine multiple values: |all → AND, default → OR
-    let combined = match matchers.len() {
-        1 => matchers.into_iter().next().expect("checked len == 1"),
-        _ if ctx.all => CompiledMatcher::AllOf(matchers),
-        _ => CompiledMatcher::AnyOf(matchers),
+    let combined = if matchers.len() == 1 {
+        // SAFETY: length checked above
+        matchers
+            .into_iter()
+            .next()
+            .unwrap_or(CompiledMatcher::AnyOf(vec![]))
+    } else if ctx.all {
+        CompiledMatcher::AllOf(matchers)
+    } else {
+        CompiledMatcher::AnyOf(matchers)
     };
 
     Ok(CompiledDetectionItem {
@@ -490,7 +501,7 @@ fn compile_value(value: &SigmaValue, ctx: &ModCtx) -> Result<CompiledMatcher> {
         let plain = sigma_str
             .as_plain()
             .unwrap_or_else(|| sigma_str.original.clone());
-        let variants = expand_windash(&plain);
+        let variants = expand_windash(&plain)?;
         let matchers: Result<Vec<CompiledMatcher>> = variants
             .into_iter()
             .map(|v| compile_string_value(&v, ctx))
@@ -929,9 +940,13 @@ fn build_regex(
 /// `-`, `/`, `–` (en dash U+2013), `—` (em dash U+2014), `―` (horizontal bar U+2015).
 const WINDASH_CHARS: [char; 5] = ['-', '/', '\u{2013}', '\u{2014}', '\u{2015}'];
 
+/// Maximum number of dashes allowed in windash expansion.
+/// 5^8 = 390,625 variants — beyond this the expansion is too large.
+const MAX_WINDASH_DASHES: usize = 8;
+
 /// Expand windash variants: for each `-` in the string, generate all
 /// permutations by substituting with `-`, `/`, `–`, `—`, and `―`.
-fn expand_windash(input: &str) -> Vec<String> {
+fn expand_windash(input: &str) -> Result<Vec<String>> {
     // Find byte positions of '-' characters
     let dash_positions: Vec<usize> = input
         .char_indices()
@@ -940,11 +955,19 @@ fn expand_windash(input: &str) -> Vec<String> {
         .collect();
 
     if dash_positions.is_empty() {
-        return vec![input.to_string()];
+        return Ok(vec![input.to_string()]);
+    }
+
+    let n = dash_positions.len();
+    if n > MAX_WINDASH_DASHES {
+        return Err(EvalError::InvalidModifiers(format!(
+            "windash modifier: value contains {n} dashes, max is {MAX_WINDASH_DASHES} \
+             (would generate {} variants)",
+            5u64.saturating_pow(n as u32)
+        )));
     }
 
     // Generate all 5^n combinations
-    let n = dash_positions.len();
     let total = WINDASH_CHARS.len().pow(n as u32);
     let mut variants = Vec::with_capacity(total);
 
@@ -960,7 +983,7 @@ fn expand_windash(input: &str) -> Vec<String> {
         variants.push(variant);
     }
 
-    variants
+    Ok(variants)
 }
 
 // =============================================================================
@@ -1225,7 +1248,7 @@ mod tests {
     #[test]
     fn test_windash_expansion() {
         // Two dashes → 5^2 = 25 variants
-        let variants = expand_windash("-param -value");
+        let variants = expand_windash("-param -value").unwrap();
         assert_eq!(variants.len(), 25);
         // Original and slash variants
         assert!(variants.contains(&"-param -value".to_string()));
@@ -1244,7 +1267,7 @@ mod tests {
 
     #[test]
     fn test_windash_no_dash() {
-        let variants = expand_windash("nodash");
+        let variants = expand_windash("nodash").unwrap();
         assert_eq!(variants.len(), 1);
         assert_eq!(variants[0], "nodash");
     }
@@ -1252,7 +1275,7 @@ mod tests {
     #[test]
     fn test_windash_single_dash() {
         // One dash → 5 variants
-        let variants = expand_windash("-v");
+        let variants = expand_windash("-v").unwrap();
         assert_eq!(variants.len(), 5);
         assert!(variants.contains(&"-v".to_string()));
         assert!(variants.contains(&"/v".to_string()));
@@ -1517,7 +1540,7 @@ mod proptests {
             input.push_str(&suffix);
 
             let n = input.chars().filter(|c| *c == '-').count();
-            let variants = expand_windash(&input);
+            let variants = expand_windash(&input).unwrap();
             let expected = 5usize.pow(n as u32);
             prop_assert_eq!(variants.len(), expected,
                 "expand_windash({:?}) should produce {} variants, got {}",
@@ -1541,7 +1564,7 @@ mod proptests {
             }
             input.push_str(&suffix);
 
-            let variants = expand_windash(&input);
+            let variants = expand_windash(&input).unwrap();
             let unique: std::collections::HashSet<&String> = variants.iter().collect();
             prop_assert_eq!(variants.len(), unique.len(),
                 "expand_windash({:?}) produced duplicates", input);
@@ -1564,7 +1587,7 @@ mod proptests {
             }
             input.push_str(&suffix);
 
-            let variants = expand_windash(&input);
+            let variants = expand_windash(&input).unwrap();
             prop_assert!(variants.contains(&input),
                 "expand_windash({:?}) should contain the original", input);
         }
@@ -1581,7 +1604,7 @@ mod proptests {
             suffix in "[a-z]{1,5}",
         ) {
             let input = format!("{prefix}-{suffix}");
-            let variants = expand_windash(&input);
+            let variants = expand_windash(&input).unwrap();
             for variant in &variants {
                 // The prefix and suffix parts should be preserved
                 prop_assert!(variant.starts_with(&prefix),
@@ -1599,7 +1622,7 @@ mod proptests {
         #[test]
         fn windash_no_dashes_passthrough(text in "[a-zA-Z0-9]{1,20}") {
             prop_assume!(!text.contains('-'));
-            let variants = expand_windash(&text);
+            let variants = expand_windash(&text).unwrap();
             prop_assert_eq!(variants.len(), 1);
             prop_assert_eq!(&variants[0], &text);
         }

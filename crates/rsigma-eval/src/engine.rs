@@ -153,6 +153,7 @@ impl Engine {
         };
 
         // Find and modify referenced rules
+        let mut matched_any = false;
         for rule in &mut self.rules {
             let rule_matches = filter.rules.is_empty() // empty = applies to all
                 || filter.rules.iter().any(|r| {
@@ -186,7 +187,16 @@ impl Engine {
                         ])
                     })
                     .collect();
+                matched_any = true;
             }
+        }
+
+        if !filter.rules.is_empty() && !matched_any {
+            log::warn!(
+                "filter '{}' references rules {:?} but none matched any loaded rule",
+                filter.title,
+                filter.rules
+            );
         }
 
         Ok(())

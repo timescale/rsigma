@@ -445,20 +445,20 @@ impl CorrelationEngine {
 
     /// Process an event with an explicit Unix epoch timestamp (seconds).
     pub fn process_event_at(&mut self, event: &Event, timestamp_secs: i64) -> ProcessResult {
-        // Step 1: Run stateless detection
+        // Step 1: Memory management — evict before adding new state to enforce limit
+        if self.state.len() >= self.config.max_state_entries {
+            self.evict_all(timestamp_secs);
+        }
+
+        // Step 2: Run stateless detection
         let all_detections = self.engine.evaluate(event);
 
-        // Step 2: Feed detection matches into correlations
+        // Step 3: Feed detection matches into correlations
         let mut correlations = Vec::new();
         self.feed_detections(event, &all_detections, timestamp_secs, &mut correlations);
 
-        // Step 3: Chain — correlation results may trigger higher-level correlations
+        // Step 4: Chain — correlation results may trigger higher-level correlations
         self.chain_correlations(&correlations, timestamp_secs);
-
-        // Step 4: Memory management — evict if over limit
-        if self.state.len() > self.config.max_state_entries {
-            self.evict_all(timestamp_secs);
-        }
 
         // Step 5: Filter detections by generate flag
         let detections = self.filter_detections(all_detections);
@@ -557,26 +557,24 @@ impl CorrelationEngine {
         rule_name: &Option<String>,
         out: &mut Vec<CorrelationResult>,
     ) {
-        // Read all needed data from the correlation upfront to release the
-        // immutable borrow on self.correlations before mutating self.state.
+        // Copy cheap scalars; defer cloning of Strings/Vecs until we need
+        // to build a CorrelationResult (i.e., only when the condition fires).
         let corr_type = self.correlations[corr_idx].correlation_type;
         let timespan = self.correlations[corr_idx].timespan_secs;
-        let group_by = self.correlations[corr_idx].group_by.clone();
-        let condition = self.correlations[corr_idx].condition.clone();
-        let extended_expr = self.correlations[corr_idx].extended_expr.clone();
-        let rule_refs = self.correlations[corr_idx].rule_refs.clone();
-        let title = self.correlations[corr_idx].title.clone();
-        let corr_id = self.correlations[corr_idx].id.clone();
         let level = self.correlations[corr_idx].level;
-        let tags = self.correlations[corr_idx].tags.clone();
-        let cond_field = condition.field.clone();
-        // Per-correlation overrides (from custom attributes), falling back to config
         let suppress_secs = self.correlations[corr_idx]
             .suppress_secs
             .or(self.config.suppress);
         let action = self.correlations[corr_idx]
             .action
             .unwrap_or(self.config.action_on_match);
+        // Clone group_by + condition — needed for key extraction and state check.
+        // These are shared structures, so their clone cost is amortised.
+        let group_by = self.correlations[corr_idx].group_by.clone();
+        let condition = self.correlations[corr_idx].condition.clone();
+        let extended_expr = self.correlations[corr_idx].extended_expr.clone();
+        let rule_refs = self.correlations[corr_idx].rule_refs.clone();
+        let cond_field = condition.field.clone();
 
         // Determine the rule_ref strings for alias resolution and temporal tracking.
         // We collect both ID and name so that alias mappings can use either.
@@ -650,11 +648,12 @@ impl CorrelationEngine {
             };
 
             if !suppressed {
+                // Only clone title/id/tags when we actually produce output
                 let result = CorrelationResult {
-                    rule_title: title,
-                    rule_id: corr_id,
+                    rule_title: self.correlations[corr_idx].title.clone(),
+                    rule_id: self.correlations[corr_idx].id.clone(),
                     level,
-                    tags,
+                    tags: self.correlations[corr_idx].tags.clone(),
                     correlation_type: corr_type,
                     group_key: group_key.to_pairs(&group_by),
                     aggregated_value: agg_value,
@@ -707,17 +706,14 @@ impl CorrelationEngine {
 
             let mut next_pending = Vec::new();
             for (corr_idx, group_key_pairs, fired_ref) in work {
-                // Read correlation metadata (immutable borrow released before mutable)
+                // Copy cheap scalars; clone group_by/condition for state ops.
                 let corr_type = self.correlations[corr_idx].correlation_type;
                 let timespan = self.correlations[corr_idx].timespan_secs;
+                let level = self.correlations[corr_idx].level;
                 let group_by = self.correlations[corr_idx].group_by.clone();
                 let condition = self.correlations[corr_idx].condition.clone();
                 let extended_expr = self.correlations[corr_idx].extended_expr.clone();
                 let rule_refs = self.correlations[corr_idx].rule_refs.clone();
-                let title = self.correlations[corr_idx].title.clone();
-                let id = self.correlations[corr_idx].id.clone();
-                let level = self.correlations[corr_idx].level;
-                let tags = self.correlations[corr_idx].tags.clone();
 
                 let group_key = GroupKey::from_pairs(&group_key_pairs, &group_by);
                 let state_key = (corr_idx, group_key.clone());
@@ -744,11 +740,12 @@ impl CorrelationEngine {
                 if let Some(agg_value) =
                     state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
                 {
+                    // Only clone title/id/tags when producing output
                     next_pending.push(CorrelationResult {
-                        rule_title: title,
-                        rule_id: id,
+                        rule_title: self.correlations[corr_idx].title.clone(),
+                        rule_id: self.correlations[corr_idx].id.clone(),
                         level,
-                        tags,
+                        tags: self.correlations[corr_idx].tags.clone(),
                         correlation_type: corr_type,
                         group_key: group_key.to_pairs(&group_by),
                         aggregated_value: agg_value,

@@ -48,37 +48,75 @@ pub fn parse_condition(input: &str) -> Result<ConditionExpr> {
         .op(Op::prefix(Rule::not_op));
 
     // condition = { SOI ~ expr ~ EOI }
-    let condition_pair = pairs.into_iter().next().unwrap();
+    let condition_pair = pairs
+        .into_iter()
+        .next()
+        .ok_or_else(|| SigmaParserError::Condition("empty condition expression".into()))?;
     let expr_pair = condition_pair
         .into_inner()
         .find(|p| p.as_rule() == Rule::expr)
-        .unwrap();
+        .ok_or_else(|| SigmaParserError::Condition("missing expr in condition".into()))?;
 
-    Ok(parse_expr(expr_pair, &pratt))
+    parse_expr(expr_pair, &pratt)
 }
 
 // ---------------------------------------------------------------------------
 // Internal parsing helpers
 // ---------------------------------------------------------------------------
 
-fn parse_expr(pair: Pair<'_, Rule>, pratt: &PrattParser<Rule>) -> ConditionExpr {
-    pratt
+fn parse_expr(pair: Pair<'_, Rule>, pratt: &PrattParser<Rule>) -> Result<ConditionExpr> {
+    // The Pratt parser closures cannot return Result, so we capture the first
+    // error in a shared RefCell and propagate it after parsing completes.
+    let error: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+
+    let result = pratt
         .map_primary(|primary| match primary.as_rule() {
             Rule::ident => ConditionExpr::Identifier(primary.as_str().to_string()),
-            Rule::selector => parse_selector(primary),
-            Rule::expr => parse_expr(primary, pratt),
-            other => unreachable!("unexpected primary rule: {other:?}"),
+            Rule::selector => parse_selector(primary).unwrap_or_else(|e| {
+                if error.borrow().is_none() {
+                    *error.borrow_mut() = Some(e.to_string());
+                }
+                ConditionExpr::Identifier(String::new())
+            }),
+            Rule::expr => parse_expr(primary, pratt).unwrap_or_else(|e| {
+                if error.borrow().is_none() {
+                    *error.borrow_mut() = Some(e.to_string());
+                }
+                ConditionExpr::Identifier(String::new())
+            }),
+            other => {
+                if error.borrow().is_none() {
+                    *error.borrow_mut() = Some(format!("unexpected primary rule: {other:?}"));
+                }
+                ConditionExpr::Identifier(String::new())
+            }
         })
         .map_prefix(|op, rhs| match op.as_rule() {
             Rule::not_op => ConditionExpr::Not(Box::new(rhs)),
-            other => unreachable!("unexpected prefix rule: {other:?}"),
+            other => {
+                if error.borrow().is_none() {
+                    *error.borrow_mut() = Some(format!("unexpected prefix rule: {other:?}"));
+                }
+                rhs
+            }
         })
         .map_infix(|lhs, op, rhs| match op.as_rule() {
             Rule::and_op => merge_binary(ConditionExpr::And, lhs, rhs),
             Rule::or_op => merge_binary(ConditionExpr::Or, lhs, rhs),
-            other => unreachable!("unexpected infix rule: {other:?}"),
+            other => {
+                if error.borrow().is_none() {
+                    *error.borrow_mut() = Some(format!("unexpected infix rule: {other:?}"));
+                }
+                lhs
+            }
         })
-        .parse(pair.into_inner())
+        .parse(pair.into_inner());
+
+    if let Some(msg) = error.into_inner() {
+        return Err(SigmaParserError::Condition(msg));
+    }
+
+    Ok(result)
 }
 
 /// Flatten nested binary operators of the same kind.
@@ -125,7 +163,7 @@ fn merge_binary(
     ctor(args)
 }
 
-fn parse_selector(pair: Pair<'_, Rule>) -> ConditionExpr {
+fn parse_selector(pair: Pair<'_, Rule>) -> Result<ConditionExpr> {
     // Iterate children, skipping the of_kw_inner pair (atomic rules can't be silent
     // in pest, so of_kw_inner leaks into the parse tree)
     let mut quantifier_pair = None;
@@ -139,41 +177,55 @@ fn parse_selector(pair: Pair<'_, Rule>) -> ConditionExpr {
         }
     }
 
-    let quantifier = parse_quantifier(quantifier_pair.expect("selector must have quantifier"));
-    let pattern = parse_selector_target(target_pair.expect("selector must have target"));
+    let quantifier = parse_quantifier(
+        quantifier_pair
+            .ok_or_else(|| SigmaParserError::Condition("selector missing quantifier".into()))?,
+    )?;
+    let pattern = parse_selector_target(
+        target_pair.ok_or_else(|| SigmaParserError::Condition("selector missing target".into()))?,
+    )?;
 
-    ConditionExpr::Selector {
+    Ok(ConditionExpr::Selector {
         quantifier,
         pattern,
-    }
+    })
 }
 
-fn parse_quantifier(pair: Pair<'_, Rule>) -> Quantifier {
+fn parse_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier> {
     let inner = pair
         .into_inner()
         .next()
-        .expect("quantifier must have child");
+        .ok_or_else(|| SigmaParserError::Condition("quantifier missing child".into()))?;
     match inner.as_rule() {
-        Rule::all_kw => Quantifier::All,
-        Rule::any_kw => Quantifier::Any,
+        Rule::all_kw => Ok(Quantifier::All),
+        Rule::any_kw => Ok(Quantifier::Any),
         Rule::uint => {
-            let n: u64 = inner.as_str().parse().unwrap();
+            let n: u64 = inner.as_str().parse().map_err(|e| {
+                SigmaParserError::Condition(format!("invalid quantifier number: {e}"))
+            })?;
             if n == 1 {
-                Quantifier::Any
+                Ok(Quantifier::Any)
             } else {
-                Quantifier::Count(n)
+                Ok(Quantifier::Count(n))
             }
         }
-        other => unreachable!("unexpected quantifier rule: {other:?}"),
+        other => Err(SigmaParserError::Condition(format!(
+            "unexpected quantifier rule: {other:?}"
+        ))),
     }
 }
 
-fn parse_selector_target(pair: Pair<'_, Rule>) -> SelectorPattern {
-    let inner = pair.into_inner().next().expect("target must have child");
+fn parse_selector_target(pair: Pair<'_, Rule>) -> Result<SelectorPattern> {
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| SigmaParserError::Condition("selector target missing child".into()))?;
     match inner.as_rule() {
-        Rule::them_kw => SelectorPattern::Them,
-        Rule::ident_pattern => SelectorPattern::Pattern(inner.as_str().to_string()),
-        other => unreachable!("unexpected selector target rule: {other:?}"),
+        Rule::them_kw => Ok(SelectorPattern::Them),
+        Rule::ident_pattern => Ok(SelectorPattern::Pattern(inner.as_str().to_string())),
+        other => Err(SigmaParserError::Condition(format!(
+            "unexpected selector target rule: {other:?}"
+        ))),
     }
 }
 

@@ -276,10 +276,20 @@ fn parse_detections(value: &Value) -> Result<Detections> {
 
     let condition_strings = match condition_val {
         Value::String(s) => vec![s.clone()],
-        Value::Sequence(seq) => seq
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
+        Value::Sequence(seq) => {
+            let mut strings = Vec::with_capacity(seq.len());
+            for v in seq {
+                match v.as_str() {
+                    Some(s) => strings.push(s.to_string()),
+                    None => {
+                        return Err(SigmaParserError::InvalidDetection(format!(
+                            "condition list items must be strings, got: {v:?}"
+                        )));
+                    }
+                }
+            }
+            strings
+        }
         _ => {
             return Err(SigmaParserError::InvalidDetection(
                 "condition must be a string or list of strings".into(),
@@ -573,7 +583,11 @@ fn parse_correlation_condition(
                     let count = val
                         .as_u64()
                         .or_else(|| val.as_i64().map(|i| i as u64))
-                        .unwrap_or(0);
+                        .ok_or_else(|| {
+                            SigmaParserError::InvalidCorrelation(format!(
+                                "correlation condition operator '{op_str}' requires a numeric value, got: {val:?}"
+                            ))
+                        })?;
                     predicates.push((parsed_op, count));
                 }
             }
@@ -585,7 +599,7 @@ fn parse_correlation_condition(
                 ));
             }
 
-            let field = get_str_from_mapping(cm, "field").map(|s| s.to_string());
+            let field = get_str(cm, "field").map(|s| s.to_string());
 
             Ok(CorrelationCondition::Threshold { predicates, field })
         }
@@ -696,10 +710,6 @@ fn val_key(s: &str) -> Value {
 }
 
 fn get_str<'a>(m: &'a serde_yaml::Mapping, key: &str) -> Option<&'a str> {
-    m.get(val_key(key)).and_then(|v| v.as_str())
-}
-
-fn get_str_from_mapping<'a>(m: &'a serde_yaml::Mapping, key: &str) -> Option<&'a str> {
     m.get(val_key(key)).and_then(|v| v.as_str())
 }
 

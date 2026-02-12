@@ -377,8 +377,15 @@ impl WindowState {
                 if entries.is_empty() {
                     return None;
                 }
-                let mut values: Vec<f64> = entries.iter().map(|(_, v)| *v).collect();
-                values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let mut values: Vec<f64> = entries
+                    .iter()
+                    .map(|(_, v)| *v)
+                    .filter(|v| v.is_finite())
+                    .collect();
+                if values.is_empty() {
+                    return None;
+                }
+                values.sort_by(|a, b| a.partial_cmp(b).expect("NaN filtered"));
                 // Extract the percentile rank from the condition's first predicate
                 let percentile_rank = condition
                     .predicates
@@ -392,8 +399,15 @@ impl WindowState {
                 if entries.is_empty() {
                     0.0
                 } else {
-                    let mut values: Vec<f64> = entries.iter().map(|(_, v)| *v).collect();
-                    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let mut values: Vec<f64> = entries
+                        .iter()
+                        .map(|(_, v)| *v)
+                        .filter(|v| v.is_finite())
+                        .collect();
+                    if values.is_empty() {
+                        return None;
+                    }
+                    values.sort_by(|a, b| a.partial_cmp(b).expect("NaN filtered"));
                     let mid = values.len() / 2;
                     if values.len().is_multiple_of(2) && values.len() >= 2 {
                         (values[mid - 1] + values[mid]) / 2.0
@@ -480,10 +494,13 @@ fn eval_temporal_expr(expr: &ConditionExpr, rule_hits: &HashMap<String, VecDeque
 
 /// Compute the value at a given percentile rank using linear interpolation.
 ///
+/// Returns 0.0 if `values` is empty.
 /// `values` must be sorted in ascending order.
 /// `percentile` is from 0.0 to 100.0.
 fn percentile_linear_interp(values: &[f64], percentile: f64) -> f64 {
-    assert!(!values.is_empty(), "values must not be empty");
+    if values.is_empty() {
+        return 0.0;
+    }
     let n = values.len();
     if n == 1 {
         return values[0];

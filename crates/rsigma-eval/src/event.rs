@@ -45,10 +45,11 @@ impl<'a> Event<'a> {
     /// Iterate over all string values in the event (for keyword detection).
     ///
     /// Recursively walks the entire event object and yields every string
-    /// value found, including inside nested objects and arrays.
+    /// value found, including inside nested objects and arrays. Traversal
+    /// is capped at 64 levels of nesting to prevent stack overflow.
     pub fn all_string_values(&self) -> Vec<&'a str> {
         let mut values = Vec::new();
-        collect_string_values(self.inner, &mut values);
+        collect_string_values(self.inner, &mut values, MAX_NESTING_DEPTH);
         values
     }
 
@@ -87,17 +88,23 @@ fn traverse<'a>(current: &'a Value, parts: &[&str]) -> Option<&'a Value> {
     }
 }
 
-fn collect_string_values<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+/// Maximum nesting depth for recursive JSON traversal.
+const MAX_NESTING_DEPTH: usize = 64;
+
+fn collect_string_values<'a>(v: &'a Value, out: &mut Vec<&'a str>, depth: usize) {
+    if depth == 0 {
+        return;
+    }
     match v {
         Value::String(s) => out.push(s.as_str()),
         Value::Object(map) => {
             for val in map.values() {
-                collect_string_values(val, out);
+                collect_string_values(val, out, depth - 1);
             }
         }
         Value::Array(arr) => {
             for val in arr {
-                collect_string_values(val, out);
+                collect_string_values(val, out, depth - 1);
             }
         }
         _ => {}
