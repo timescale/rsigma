@@ -126,38 +126,16 @@ fn merge_binary(
     lhs: ConditionExpr,
     rhs: ConditionExpr,
 ) -> ConditionExpr {
-    // Check if the constructor matches by trying to merge same-type children.
-    // We use a discriminant check approach.
-    let is_same = |expr: &ConditionExpr| -> bool {
-        matches!(
-            (&ctor(vec![]), expr),
-            (ConditionExpr::And(_), ConditionExpr::And(_))
-                | (ConditionExpr::Or(_), ConditionExpr::Or(_))
-        )
-    };
+    // Flatten same-type children to avoid unnecessary nesting: And(And(a, b), c) → And(a, b, c)
+    let is_and = matches!(ctor(vec![]), ConditionExpr::And(_));
 
     let mut args = Vec::new();
-
-    if is_same(&lhs) {
-        match lhs {
-            ConditionExpr::And(children) | ConditionExpr::Or(children) => {
-                args.extend(children);
-            }
-            _ => unreachable!(),
+    for expr in [lhs, rhs] {
+        match expr {
+            ConditionExpr::And(children) if is_and => args.extend(children),
+            ConditionExpr::Or(children) if !is_and => args.extend(children),
+            other => args.push(other),
         }
-    } else {
-        args.push(lhs);
-    }
-
-    if is_same(&rhs) {
-        match rhs {
-            ConditionExpr::And(children) | ConditionExpr::Or(children) => {
-                args.extend(children);
-            }
-            _ => unreachable!(),
-        }
-    } else {
-        args.push(rhs);
     }
 
     ctor(args)
