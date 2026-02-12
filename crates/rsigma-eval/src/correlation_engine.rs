@@ -557,27 +557,17 @@ impl CorrelationEngine {
         rule_name: &Option<String>,
         out: &mut Vec<CorrelationResult>,
     ) {
-        // Copy cheap scalars; defer cloning of Strings/Vecs until we need
-        // to build a CorrelationResult (i.e., only when the condition fires).
-        let corr_type = self.correlations[corr_idx].correlation_type;
-        let timespan = self.correlations[corr_idx].timespan_secs;
-        let level = self.correlations[corr_idx].level;
-        let suppress_secs = self.correlations[corr_idx]
-            .suppress_secs
-            .or(self.config.suppress);
-        let action = self.correlations[corr_idx]
-            .action
-            .unwrap_or(self.config.action_on_match);
-        // Clone group_by + condition — needed for key extraction and state check.
-        // These are shared structures, so their clone cost is amortised.
-        let group_by = self.correlations[corr_idx].group_by.clone();
-        let condition = self.correlations[corr_idx].condition.clone();
-        let extended_expr = self.correlations[corr_idx].extended_expr.clone();
-        let rule_refs = self.correlations[corr_idx].rule_refs.clone();
-        let cond_field = condition.field.clone();
+        // Borrow the correlation by reference — no cloning needed.  Rust allows
+        // simultaneous &self.correlations and &mut self.state / &mut self.last_alert
+        // because they are disjoint struct fields.
+        let corr = &self.correlations[corr_idx];
+        let corr_type = corr.correlation_type;
+        let timespan = corr.timespan_secs;
+        let level = corr.level;
+        let suppress_secs = corr.suppress_secs.or(self.config.suppress);
+        let action = corr.action.unwrap_or(self.config.action_on_match);
 
         // Determine the rule_ref strings for alias resolution and temporal tracking.
-        // We collect both ID and name so that alias mappings can use either.
         let mut ref_strs: Vec<&str> = Vec::new();
         if let Some(id) = rule_id.as_deref() {
             ref_strs.push(id);
@@ -588,7 +578,7 @@ impl CorrelationEngine {
         let rule_ref = rule_id.as_deref().or(rule_name.as_deref()).unwrap_or("");
 
         // Extract group key
-        let group_key = GroupKey::extract(event, &group_by, &ref_strs);
+        let group_key = GroupKey::extract(event, &corr.group_by, &ref_strs);
 
         // Get or create window state
         let state_key = (corr_idx, group_key.clone());
@@ -607,7 +597,7 @@ impl CorrelationEngine {
                 state.push_event_count(ts);
             }
             CorrelationType::ValueCount => {
-                if let Some(ref field_name) = cond_field
+                if let Some(ref field_name) = corr.condition.field
                     && let Some(val) = event.get_field(field_name)
                     && let Some(s) = value_to_string_for_count(val)
                 {
@@ -621,7 +611,7 @@ impl CorrelationEngine {
             | CorrelationType::ValueAvg
             | CorrelationType::ValuePercentile
             | CorrelationType::ValueMedian => {
-                if let Some(ref field_name) = cond_field
+                if let Some(ref field_name) = corr.condition.field
                     && let Some(val) = event.get_field(field_name)
                     && let Some(n) = value_to_f64(val)
                 {
@@ -630,10 +620,15 @@ impl CorrelationEngine {
             }
         }
 
-        // Check condition
-        if let Some(agg_value) =
-            state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
-        {
+        // Check condition — after this, `state` is no longer used (NLL drops the borrow).
+        let fired = state.check_condition(
+            &corr.condition,
+            corr_type,
+            &corr.rule_refs,
+            corr.extended_expr.as_ref(),
+        );
+
+        if let Some(agg_value) = fired {
             let alert_key = (corr_idx, group_key.clone());
 
             // Suppression check: skip if we've already alerted within the suppress window
@@ -649,13 +644,14 @@ impl CorrelationEngine {
 
             if !suppressed {
                 // Only clone title/id/tags when we actually produce output
+                let corr = &self.correlations[corr_idx];
                 let result = CorrelationResult {
-                    rule_title: self.correlations[corr_idx].title.clone(),
-                    rule_id: self.correlations[corr_idx].id.clone(),
+                    rule_title: corr.title.clone(),
+                    rule_id: corr.id.clone(),
                     level,
-                    tags: self.correlations[corr_idx].tags.clone(),
+                    tags: corr.tags.clone(),
                     correlation_type: corr_type,
-                    group_key: group_key.to_pairs(&group_by),
+                    group_key: group_key.to_pairs(&corr.group_by),
                     aggregated_value: agg_value,
                     timespan_secs: timespan,
                 };
@@ -706,16 +702,12 @@ impl CorrelationEngine {
 
             let mut next_pending = Vec::new();
             for (corr_idx, group_key_pairs, fired_ref) in work {
-                // Copy cheap scalars; clone group_by/condition for state ops.
-                let corr_type = self.correlations[corr_idx].correlation_type;
-                let timespan = self.correlations[corr_idx].timespan_secs;
-                let level = self.correlations[corr_idx].level;
-                let group_by = self.correlations[corr_idx].group_by.clone();
-                let condition = self.correlations[corr_idx].condition.clone();
-                let extended_expr = self.correlations[corr_idx].extended_expr.clone();
-                let rule_refs = self.correlations[corr_idx].rule_refs.clone();
+                let corr = &self.correlations[corr_idx];
+                let corr_type = corr.correlation_type;
+                let timespan = corr.timespan_secs;
+                let level = corr.level;
 
-                let group_key = GroupKey::from_pairs(&group_key_pairs, &group_by);
+                let group_key = GroupKey::from_pairs(&group_key_pairs, &corr.group_by);
                 let state_key = (corr_idx, group_key.clone());
                 let state = self
                     .state
@@ -737,17 +729,22 @@ impl CorrelationEngine {
                     }
                 }
 
-                if let Some(agg_value) =
-                    state.check_condition(&condition, corr_type, &rule_refs, extended_expr.as_ref())
-                {
-                    // Only clone title/id/tags when producing output
+                let fired = state.check_condition(
+                    &corr.condition,
+                    corr_type,
+                    &corr.rule_refs,
+                    corr.extended_expr.as_ref(),
+                );
+
+                if let Some(agg_value) = fired {
+                    let corr = &self.correlations[corr_idx];
                     next_pending.push(CorrelationResult {
-                        rule_title: self.correlations[corr_idx].title.clone(),
-                        rule_id: self.correlations[corr_idx].id.clone(),
+                        rule_title: corr.title.clone(),
+                        rule_id: corr.id.clone(),
                         level,
-                        tags: self.correlations[corr_idx].tags.clone(),
+                        tags: corr.tags.clone(),
                         correlation_type: corr_type,
-                        group_key: group_key.to_pairs(&group_by),
+                        group_key: group_key.to_pairs(&corr.group_by),
                         aggregated_value: agg_value,
                         timespan_secs: timespan,
                     });
