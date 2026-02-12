@@ -246,6 +246,10 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
 // Detection compilation
 // =============================================================================
 
+/// Compile a parsed detection tree into a [`CompiledDetection`].
+///
+/// Recursively compiles `AllOf`, `AnyOf`, and `Keywords` variants.
+/// Returns an error if the detection tree is empty or contains invalid items.
 pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
     match detection {
         Detection::AllOf(items) => {
