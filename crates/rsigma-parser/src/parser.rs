@@ -249,7 +249,7 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
         fields: get_str_list(m, "fields"),
-        falsepositives: get_str_or_str_list(m, "falsepositives"),
+        falsepositives: get_str_list(m, "falsepositives"),
         level: get_str(m, "level").and_then(|s| s.parse().ok()),
         tags: get_str_list(m, "tags"),
         scope: get_str_list(m, "scope"),
@@ -728,16 +728,6 @@ fn get_str<'a>(m: &'a serde_yaml::Mapping, key: &str) -> Option<&'a str> {
 }
 
 fn get_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
-    match m.get(val_key(key)) {
-        Some(Value::Sequence(seq)) => seq
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn get_str_or_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
     match m.get(val_key(key)) {
         Some(Value::String(s)) => vec![s.clone()],
         Some(Value::Sequence(seq)) => seq
