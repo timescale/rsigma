@@ -54,7 +54,12 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
 
         // Check for collection action
         if let Some(action_val) = mapping.get(Value::String("action".to_string())) {
-            let action = action_val.as_str().unwrap_or("");
+            let Some(action) = action_val.as_str() else {
+                collection.errors.push(format!(
+                    "collection 'action' must be a string, got: {action_val:?}"
+                ));
+                continue;
+            };
             match action {
                 "global" => {
                     let mut global_map = value.clone();
