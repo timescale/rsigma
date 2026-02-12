@@ -449,7 +449,12 @@ impl CorrelationEngine {
     }
 
     /// Process an event with an explicit Unix epoch timestamp (seconds).
+    ///
+    /// The timestamp is clamped to `[0, i64::MAX / 2]` to prevent overflow
+    /// when adding timespan durations internally.
     pub fn process_event_at(&mut self, event: &Event, timestamp_secs: i64) -> ProcessResult {
+        let timestamp_secs = timestamp_secs.clamp(0, i64::MAX / 2);
+
         // Step 1: Memory management — evict before adding new state to enforce limit
         if self.state.len() >= self.config.max_state_entries {
             self.evict_all(timestamp_secs);
