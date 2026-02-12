@@ -249,10 +249,20 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
 pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
     match detection {
         Detection::AllOf(items) => {
+            if items.is_empty() {
+                return Err(EvalError::InvalidModifiers(
+                    "AllOf detection must not be empty (vacuous truth)".into(),
+                ));
+            }
             let compiled: Result<Vec<_>> = items.iter().map(compile_detection_item).collect();
             Ok(CompiledDetection::AllOf(compiled?))
         }
         Detection::AnyOf(dets) => {
+            if dets.is_empty() {
+                return Err(EvalError::InvalidModifiers(
+                    "AnyOf detection must not be empty (would never match)".into(),
+                ));
+            }
             let compiled: Result<Vec<_>> = dets.iter().map(compile_detection).collect();
             Ok(CompiledDetection::AnyOf(compiled?))
         }
