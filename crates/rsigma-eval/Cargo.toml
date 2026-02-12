@@ -3,6 +3,7 @@ name = "rsigma-eval"
 description = "Evaluator for Sigma detection rules — match rules against events"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -3,6 +3,7 @@ name = "rsigma-cli"
 description = "CLI for parsing, validating, and evaluating Sigma detection rules"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
