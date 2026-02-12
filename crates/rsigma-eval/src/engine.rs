@@ -49,6 +49,9 @@ use crate::result::MatchResult;
 pub struct Engine {
     rules: Vec<CompiledRule>,
     pipelines: Vec<Pipeline>,
+    /// Global override: include the full event JSON in all match results.
+    /// When `true`, overrides per-rule `rsigma.include_event` custom attributes.
+    include_event: bool,
 }
 
 impl Engine {
@@ -57,6 +60,7 @@ impl Engine {
         Engine {
             rules: Vec::new(),
             pipelines: Vec::new(),
+            include_event: false,
         }
     }
 
@@ -65,7 +69,14 @@ impl Engine {
         Engine {
             rules: Vec::new(),
             pipelines: vec![pipeline],
+            include_event: false,
         }
+    }
+
+    /// Set global `include_event` — when `true`, all match results include
+    /// the full event JSON regardless of per-rule custom attributes.
+    pub fn set_include_event(&mut self, include: bool) {
+        self.include_event = include;
     }
 
     /// Add a pipeline to the engine.
@@ -210,7 +221,10 @@ impl Engine {
     pub fn evaluate(&self, event: &Event) -> Vec<MatchResult> {
         let mut results = Vec::new();
         for rule in &self.rules {
-            if let Some(m) = evaluate_rule(rule, event) {
+            if let Some(mut m) = evaluate_rule(rule, event) {
+                if self.include_event && m.event.is_none() {
+                    m.event = Some(event.as_value().clone());
+                }
                 results.push(m);
             }
         }
@@ -231,8 +245,11 @@ impl Engine {
         let mut results = Vec::new();
         for rule in &self.rules {
             if logsource_matches(&rule.logsource, event_logsource)
-                && let Some(m) = evaluate_rule(rule, event)
+                && let Some(mut m) = evaluate_rule(rule, event)
             {
+                if self.include_event && m.event.is_none() {
+                    m.event = Some(event.as_value().clone());
+                }
                 results.push(m);
             }
         }

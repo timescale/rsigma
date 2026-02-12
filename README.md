@@ -134,6 +134,7 @@ let config = CorrelationConfig {
 };
 
 let mut engine = CorrelationEngine::new(config);
+engine.set_include_event(true);                  // embed event JSON in all match results
 engine.add_collection(&collection).unwrap();
 let result = engine.process_event_at(&event, timestamp_secs);
 // result.detections + result.correlations
@@ -148,9 +149,9 @@ Pipeline transformations can configure engine behavior via `SetCustomAttribute`,
 | `rsigma.timestamp_field` | Prepends a field name to the timestamp extraction priority list | `--timestamp-field` |
 | `rsigma.suppress` | Sets the default suppression window (e.g. `5m`) | `--suppress` |
 | `rsigma.action` | Sets the post-fire action (`alert` or `reset`) | `--action` |
-| `rsigma.include_event` | Embeds the full event JSON in detection output | `--include-event` |
+| `rsigma.include_event` | Embeds the full event JSON in detection output (per-rule) | `--include-event` |
 
-CLI flags always take precedence over pipeline attributes. Example pipeline:
+CLI flags and the library API (`engine.set_include_event(true)`) always take precedence over pipeline attributes. Example pipeline:
 
 ```yaml
 transformations:

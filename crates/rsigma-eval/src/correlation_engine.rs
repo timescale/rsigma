@@ -227,6 +227,11 @@ impl CorrelationEngine {
         self.pipelines.sort_by_key(|p| p.priority);
     }
 
+    /// Set global `include_event` on the inner detection engine.
+    pub fn set_include_event(&mut self, include: bool) {
+        self.engine.set_include_event(include);
+    }
+
     /// Add a single detection rule.
     ///
     /// If pipelines are set, the rule is cloned and transformed before compilation.

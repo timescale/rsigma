@@ -289,17 +289,9 @@ fn cmd_eval(
     include_event: bool,
     timestamp_fields: Vec<String>,
 ) {
-    let mut collection = load_collection(&rules_path);
+    let collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
     let has_correlations = !collection.correlations.is_empty();
-
-    // If --include-event is set globally, inject the custom attribute on all rules.
-    if include_event {
-        for rule in &mut collection.rules {
-            rule.custom_attributes
-                .insert("rsigma.include_event".to_string(), "true".to_string());
-        }
-    }
 
     // Compile the event filter once up front
     let event_filter = build_event_filter(jq, jsonpath);
@@ -316,6 +308,7 @@ fn cmd_eval(
             &pipelines,
             &event_filter,
             corr_config,
+            include_event,
         );
     } else {
         cmd_eval_detection_only(
@@ -325,11 +318,13 @@ fn cmd_eval(
             pretty,
             &pipelines,
             &event_filter,
+            include_event,
         );
     }
 }
 
 /// Evaluation with correlations (stateful).
+#[allow(clippy::too_many_arguments)]
 fn cmd_eval_with_correlations(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
@@ -338,8 +333,10 @@ fn cmd_eval_with_correlations(
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     config: CorrelationConfig,
+    include_event: bool,
 ) {
     let mut engine = CorrelationEngine::new(config);
+    engine.set_include_event(include_event);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -437,8 +434,10 @@ fn cmd_eval_detection_only(
     pretty: bool,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
+    include_event: bool,
 ) {
     let mut engine = Engine::new();
+    engine.set_include_event(include_event);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
