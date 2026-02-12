@@ -443,7 +443,12 @@ fn extract_timestamp_part(value: &Value, part: TimePart) -> Option<i64> {
     let ts_str = match value {
         Value::String(s) => s.clone(),
         Value::Number(n) => {
-            // Interpret as epoch seconds and convert to DateTime
+            // Interpret numeric timestamps as epoch seconds.
+            // Values above 1e12 (i.e. 1_000_000_000_000, ~= Sep 2001 in millis)
+            // are assumed to be **milliseconds** and divided by 1000.  This
+            // heuristic mirrors the approach used by pySigma and covers all
+            // real-world epoch-second timestamps (the threshold won't be
+            // reached in seconds until the year ~33658).
             let secs = n.as_i64()?;
             let secs = if secs > 1_000_000_000_000 {
                 secs / 1000
