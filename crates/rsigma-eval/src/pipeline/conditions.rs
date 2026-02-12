@@ -111,8 +111,8 @@ pub fn all_rule_conditions_match(
 /// A condition evaluated against individual detection item values.
 #[derive(Debug, Clone)]
 pub enum DetectionItemCondition {
-    /// String value matches a regex pattern.
-    MatchString { pattern: String, negate: bool },
+    /// String value matches a pre-compiled regex pattern.
+    MatchString { regex: Regex, negate: bool },
 
     /// Detection item value is null.
     IsNull { negate: bool },
@@ -128,15 +128,11 @@ impl DetectionItemCondition {
     /// Check if this condition matches a detection item's values.
     pub fn matches_item(&self, item: &DetectionItem, state: &PipelineState) -> bool {
         match self {
-            DetectionItemCondition::MatchString { pattern, negate } => {
-                let re = match Regex::new(pattern) {
-                    Ok(r) => r,
-                    Err(_) => return false,
-                };
+            DetectionItemCondition::MatchString { regex, negate } => {
                 let has_match = item.values.iter().any(|v| match v {
                     SigmaValue::String(s) => {
                         let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                        re.is_match(&plain)
+                        regex.is_match(&plain)
                     }
                     _ => false,
                 });
@@ -161,7 +157,16 @@ impl DetectionItemCondition {
 // Field Name Conditions
 // =============================================================================
 
-/// Match type for field name lists.
+/// Pre-compiled field match list — either plain strings or compiled regexes.
+#[derive(Debug, Clone)]
+pub enum FieldMatcher {
+    /// Exact string comparison.
+    Plain(Vec<String>),
+    /// Pre-compiled regex patterns.
+    Regex(Vec<regex::Regex>),
+}
+
+/// Legacy enum kept for pipeline parsing compatibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldMatchType {
     /// Exact string comparison.
@@ -174,16 +179,10 @@ pub enum FieldMatchType {
 #[derive(Debug, Clone)]
 pub enum FieldNameCondition {
     /// Field name must be in the include list.
-    IncludeFields {
-        fields: Vec<String>,
-        match_type: FieldMatchType,
-    },
+    IncludeFields { matcher: FieldMatcher },
 
     /// Field name must NOT be in the exclude list.
-    ExcludeFields {
-        fields: Vec<String>,
-        match_type: FieldMatchType,
-    },
+    ExcludeFields { matcher: FieldMatcher },
 
     /// A specific processing item was applied.
     ProcessingItemApplied { processing_item_id: String },
@@ -196,13 +195,9 @@ impl FieldNameCondition {
     /// Check if this condition matches a field name.
     pub fn matches_field_name(&self, field_name: &str, state: &PipelineState) -> bool {
         match self {
-            FieldNameCondition::IncludeFields { fields, match_type } => {
-                field_in_list(field_name, fields, match_type)
-            }
+            FieldNameCondition::IncludeFields { matcher } => field_matches(field_name, matcher),
 
-            FieldNameCondition::ExcludeFields { fields, match_type } => {
-                !field_in_list(field_name, fields, match_type)
-            }
+            FieldNameCondition::ExcludeFields { matcher } => !field_matches(field_name, matcher),
 
             FieldNameCondition::ProcessingItemApplied { processing_item_id } => {
                 state.was_applied(processing_item_id)
@@ -403,14 +398,10 @@ fn rule_attribute_matches(rule: &SigmaRule, attribute: &str, value: &str) -> boo
     }
 }
 
-fn field_in_list(field_name: &str, fields: &[String], match_type: &FieldMatchType) -> bool {
-    match match_type {
-        FieldMatchType::Plain => fields.iter().any(|f| f == field_name),
-        FieldMatchType::Regex => fields.iter().any(|pattern| {
-            Regex::new(pattern)
-                .map(|re| re.is_match(field_name))
-                .unwrap_or(false)
-        }),
+fn field_matches(field_name: &str, matcher: &FieldMatcher) -> bool {
+    match matcher {
+        FieldMatcher::Plain(fields) => fields.iter().any(|f| f == field_name),
+        FieldMatcher::Regex(regexes) => regexes.iter().any(|re| re.is_match(field_name)),
     }
 }
 
@@ -568,8 +559,10 @@ mod tests {
     fn test_field_name_include() {
         let state = PipelineState::default();
         let cond = FieldNameCondition::IncludeFields {
-            fields: vec!["CommandLine".to_string(), "ParentImage".to_string()],
-            match_type: FieldMatchType::Plain,
+            matcher: FieldMatcher::Plain(vec![
+                "CommandLine".to_string(),
+                "ParentImage".to_string(),
+            ]),
         };
         assert!(cond.matches_field_name("CommandLine", &state));
         assert!(!cond.matches_field_name("User", &state));
@@ -579,8 +572,7 @@ mod tests {
     fn test_field_name_exclude() {
         let state = PipelineState::default();
         let cond = FieldNameCondition::ExcludeFields {
-            fields: vec!["Hostname".to_string()],
-            match_type: FieldMatchType::Plain,
+            matcher: FieldMatcher::Plain(vec!["Hostname".to_string()]),
         };
         assert!(cond.matches_field_name("CommandLine", &state));
         assert!(!cond.matches_field_name("Hostname", &state));
@@ -590,8 +582,7 @@ mod tests {
     fn test_field_name_regex() {
         let state = PipelineState::default();
         let cond = FieldNameCondition::IncludeFields {
-            fields: vec!["Event.*".to_string()],
-            match_type: FieldMatchType::Regex,
+            matcher: FieldMatcher::Regex(vec![Regex::new("Event.*").unwrap()]),
         };
         assert!(cond.matches_field_name("EventType", &state));
         assert!(cond.matches_field_name("EventID", &state));

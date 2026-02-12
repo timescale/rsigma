@@ -45,10 +45,12 @@ use std::path::Path;
 
 use rsigma_parser::{SigmaCollection, SigmaRule, SigmaString, SigmaValue};
 
+use regex::Regex;
+
 use crate::error::{EvalError, Result};
 
 pub use conditions::{
-    DetectionItemCondition, FieldMatchType, FieldNameCondition, RuleCondition, eval_condition_expr,
+    DetectionItemCondition, FieldNameCondition, RuleCondition, eval_condition_expr,
 };
 pub use finalizers::Finalizer;
 pub use state::PipelineState;
@@ -719,7 +721,10 @@ fn parse_detection_item_condition(value: &serde_yaml::Value) -> Result<Detection
                 .get(ykey("negate"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            Ok(DetectionItemCondition::MatchString { pattern, negate })
+            let regex = Regex::new(&pattern).map_err(|e| {
+                EvalError::InvalidModifiers(format!("invalid match_string regex '{pattern}': {e}"))
+            })?;
+            Ok(DetectionItemCondition::MatchString { regex, negate })
         }
 
         "is_null" => {
@@ -786,20 +791,19 @@ fn parse_field_name_condition(value: &serde_yaml::Value) -> Result<FieldNameCond
         .and_then(|v| v.as_str())
         .unwrap_or("plain");
 
-    let match_type = match match_type_str {
-        "regex" | "re" => FieldMatchType::Regex,
-        _ => FieldMatchType::Plain,
-    };
+    let is_regex = matches!(match_type_str, "regex" | "re");
 
     match type_str {
         "include_fields" => {
             let fields = parse_string_list(obj.get(ykey("fields")));
-            Ok(FieldNameCondition::IncludeFields { fields, match_type })
+            let matcher = build_field_matcher(fields, is_regex)?;
+            Ok(FieldNameCondition::IncludeFields { matcher })
         }
 
         "exclude_fields" => {
             let fields = parse_string_list(obj.get(ykey("fields")));
-            Ok(FieldNameCondition::ExcludeFields { fields, match_type })
+            let matcher = build_field_matcher(fields, is_regex)?;
+            Ok(FieldNameCondition::ExcludeFields { matcher })
         }
 
         "processing_item_applied" => {
@@ -874,6 +878,22 @@ fn parse_value_mapping(value: Option<&serde_yaml::Value>) -> Result<HashMap<Stri
         }
     }
     Ok(map)
+}
+
+fn build_field_matcher(fields: Vec<String>, is_regex: bool) -> Result<conditions::FieldMatcher> {
+    if is_regex {
+        let regexes = fields
+            .iter()
+            .map(|p| {
+                Regex::new(p).map_err(|e| {
+                    EvalError::InvalidModifiers(format!("invalid field regex '{p}': {e}"))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(conditions::FieldMatcher::Regex(regexes))
+    } else {
+        Ok(conditions::FieldMatcher::Plain(fields))
+    }
 }
 
 fn parse_string_list(value: Option<&serde_yaml::Value>) -> Vec<String> {

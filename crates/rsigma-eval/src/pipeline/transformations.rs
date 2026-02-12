@@ -1560,8 +1560,7 @@ mod tests {
         let mut state = PipelineState::default();
 
         let field_conds = vec![FieldNameCondition::IncludeFields {
-            fields: vec!["ParentImage".to_string()],
-            match_type: super::super::conditions::FieldMatchType::Plain,
+            matcher: super::super::conditions::FieldMatcher::Plain(vec!["ParentImage".to_string()]),
         }];
 
         let t = Transformation::DropDetectionItem;
@@ -1584,8 +1583,7 @@ mod tests {
 
         // Only map CommandLine, not ParentImage
         let field_conds = vec![FieldNameCondition::IncludeFields {
-            fields: vec!["CommandLine".to_string()],
-            match_type: super::super::conditions::FieldMatchType::Plain,
+            matcher: super::super::conditions::FieldMatcher::Plain(vec!["CommandLine".to_string()]),
         }];
 
         let mut mapping = HashMap::new();
