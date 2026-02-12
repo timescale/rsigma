@@ -188,43 +188,54 @@ fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
             let rules = collection.rules.len();
             let correlations = collection.correlations.len();
             let filters = collection.filters.len();
-            let errors = collection.errors.len();
+            let parse_errors = collection.errors.len();
 
             println!("Parsed {total} documents from {}", path.display());
             println!("  Detection rules:   {rules}");
             println!("  Correlation rules: {correlations}");
             println!("  Filter rules:      {filters}");
-            println!("  Parse errors:      {errors}");
+            println!("  Parse errors:      {parse_errors}");
+
+            // Always compile rules to catch compiler regressions
+            let mut engine = Engine::new();
+            for p in &pipelines {
+                engine.add_pipeline(p.clone());
+            }
+
+            let mut compile_ok = 0usize;
+            let mut compile_errors: Vec<String> = Vec::new();
+            for rule in &collection.rules {
+                match engine.add_rule(rule) {
+                    Ok(()) => compile_ok += 1,
+                    Err(e) => {
+                        let id = rule.id.as_deref().unwrap_or(&rule.title);
+                        compile_errors.push(format!("{id}: {e}"));
+                    }
+                }
+            }
 
             if !pipelines.is_empty() {
-                // Try compiling with pipelines to check for pipeline errors
-                let mut engine = Engine::new();
-                for p in &pipelines {
-                    engine.add_pipeline(p.clone());
-                }
-                match engine.add_collection(&collection) {
-                    Ok(()) => {
-                        println!(
-                            "  Pipeline applied:  {} pipeline(s), {} rules compiled OK",
-                            pipelines.len(),
-                            engine.rule_count()
-                        );
+                println!("  Pipeline applied:  {} pipeline(s)", pipelines.len(),);
+            }
+            println!("  Compiled OK:       {compile_ok}");
+            println!("  Compile errors:    {}", compile_errors.len());
+
+            if verbose {
+                if !collection.errors.is_empty() {
+                    println!("\nParse errors:");
+                    for err in &collection.errors {
+                        println!("  - {err}");
                     }
-                    Err(e) => {
-                        eprintln!("Pipeline compilation error: {e}");
-                        process::exit(1);
+                }
+                if !compile_errors.is_empty() {
+                    println!("\nCompile errors:");
+                    for err in &compile_errors {
+                        println!("  - {err}");
                     }
                 }
             }
 
-            if verbose && !collection.errors.is_empty() {
-                println!("\nErrors:");
-                for err in &collection.errors {
-                    println!("  - {err}");
-                }
-            }
-
-            if errors > 0 {
+            if parse_errors > 0 || !compile_errors.is_empty() {
                 process::exit(1);
             }
         }
