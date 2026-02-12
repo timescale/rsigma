@@ -34,6 +34,22 @@ pub enum StringPart {
 /// wildcards unless escaped with `\`. This type preserves the structure so
 /// downstream consumers (evaluators, converters) can handle wildcards
 /// appropriately.
+///
+/// ## Escape semantics
+///
+/// Backslash (`\`) is the escape character. Its behavior depends on what follows:
+///
+/// | Input | Parsed as | Rationale |
+/// |-------|-----------|-----------|
+/// | `\*`  | literal `*` | Escapes the wildcard — backslash consumed |
+/// | `\?`  | literal `?` | Escapes the wildcard — backslash consumed |
+/// | `\\`  | literal `\` | Escapes itself — backslash consumed |
+/// | `\W`  | literal `\W` (both kept) | Non-special char — backslash preserved |
+///
+/// This matches the pySigma `SigmaString` behavior: backslash only consumes
+/// itself when followed by a Sigma-special character (`*`, `?`, `\`).
+/// Before non-special characters it is treated as a literal backslash,
+/// which is important for patterns like `\Windows\` in file paths.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SigmaString {
     pub parts: Vec<StringPart>,
