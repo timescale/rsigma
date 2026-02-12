@@ -435,10 +435,17 @@ fn parse_logsource(value: &Value) -> Result<LogSource> {
 
     for (k, v) in m {
         let key_str = k.as_str().unwrap_or("");
-        if !known_keys.contains(&key_str)
-            && let Some(val_str) = v.as_str()
-        {
-            custom.insert(key_str.to_string(), val_str.to_string());
+        if !known_keys.contains(&key_str) && !key_str.is_empty() {
+            match v.as_str() {
+                Some(val_str) => {
+                    custom.insert(key_str.to_string(), val_str.to_string());
+                }
+                None => {
+                    log::warn!(
+                        "logsource custom field '{key_str}' has non-string value ({v:?}), skipping"
+                    );
+                }
+            }
         }
     }
 
