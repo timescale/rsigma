@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Read};
 use std::path::PathBuf;
 use std::process;
+use std::time::SystemTime;
 
 use clap::{Parser, Subcommand};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
@@ -8,6 +9,8 @@ use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline,
     parse_pipeline_file,
 };
+use rsigma_parser::lint::{self, FileLintResult};
+use serde::Deserialize;
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 use serde_json_path::JsonPath;
 
@@ -57,6 +60,26 @@ enum Commands {
         /// Pretty-print JSON output
         #[arg(short, long, default_value_t = true)]
         pretty: bool,
+    },
+
+    /// Lint Sigma rules against the specification
+    ///
+    /// Runs built-in lint checks derived from the Sigma v2.1.0 specification.
+    /// Optionally also validates against a JSON schema (use --schema default
+    /// to download the official schema, or --schema <path> for a local file).
+    Lint {
+        /// Path to a Sigma rule file or directory of rules
+        path: PathBuf,
+
+        /// JSON schema for additional validation.
+        /// Use "default" to download the official Sigma schema (cached for 7 days),
+        /// or provide a path to a local schema file.
+        #[arg(short, long)]
+        schema: Option<String>,
+
+        /// Show details for all files, including those that pass
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Evaluate events against Sigma rules
@@ -132,6 +155,11 @@ fn main() {
             verbose,
             pipelines,
         } => cmd_validate(path, verbose, pipelines),
+        Commands::Lint {
+            path,
+            schema,
+            verbose,
+        } => cmd_lint(path, schema, verbose),
         Commands::Condition { expr } => cmd_condition(expr),
         Commands::Stdin { pretty } => cmd_stdin(pretty),
         Commands::Eval {
@@ -242,6 +270,296 @@ fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
         Err(e) => {
             eprintln!("Error: {e}");
             process::exit(1);
+        }
+    }
+}
+
+fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool) {
+    // 1. Run built-in lint checks
+    let results: Vec<FileLintResult> = if path.is_dir() {
+        match lint::lint_yaml_directory(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+    } else {
+        match lint::lint_yaml_file(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+    };
+
+    // 2. Optionally run JSON schema validation
+    let schema_results = schema.map(|schema_arg| run_schema_validation(&path, &schema_arg));
+
+    // 3. Merge schema warnings into results
+    let mut all_results = results;
+    if let Some(sr) = schema_results {
+        merge_schema_results(&mut all_results, sr);
+    }
+
+    // 4. Print results
+    let mut total_files = 0usize;
+    let mut failed_files = 0usize;
+    let mut total_errors = 0usize;
+    let mut total_warnings = 0usize;
+
+    for result in &all_results {
+        total_files += 1;
+        let errors = result.error_count();
+        let warnings = result.warning_count();
+        total_errors += errors;
+        total_warnings += warnings;
+
+        if result.warnings.is_empty() {
+            if verbose {
+                println!("{}: OK", result.path.display());
+            }
+        } else {
+            failed_files += 1;
+            println!("{}:", result.path.display());
+            for w in &result.warnings {
+                println!("  {w}");
+            }
+        }
+    }
+
+    let passed = total_files - failed_files;
+    println!(
+        "\nSummary: {passed} passed, {failed_files} failed ({total_errors} error(s), {total_warnings} warning(s))"
+    );
+
+    if total_errors > 0 {
+        process::exit(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JSON Schema validation
+// ---------------------------------------------------------------------------
+
+/// Official Sigma detection rule schema URL.
+const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/SigmaHQ/sigma-specification/main/json-schema/sigma-detection-rule-schema.json";
+
+/// Cache freshness duration: 7 days in seconds.
+const CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// Resolve the schema JSON string from the `--schema` argument.
+///
+/// - `"default"`: download from GitHub and cache in XDG cache dir.
+/// - anything else: treat as a local file path.
+fn resolve_schema(schema_arg: &str) -> String {
+    if schema_arg == "default" {
+        resolve_default_schema()
+    } else {
+        match std::fs::read_to_string(schema_arg) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading schema file '{schema_arg}': {e}");
+                process::exit(1);
+            }
+        }
+    }
+}
+
+fn resolve_default_schema() -> String {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from(".cache"))
+        .join("rsigma");
+    let cache_path = cache_dir.join("sigma-schema.json");
+
+    // Check if cached copy is fresh
+    if let Ok(meta) = std::fs::metadata(&cache_path)
+        && let Ok(modified) = meta.modified() {
+            let age = SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or_default();
+            if age.as_secs() < CACHE_MAX_AGE_SECS
+                && let Ok(content) = std::fs::read_to_string(&cache_path) {
+                    eprintln!("Using cached schema: {}", cache_path.display());
+                    return content;
+                }
+        }
+
+    // Download
+    eprintln!("Downloading schema from {SCHEMA_URL}...");
+    match ureq::get(SCHEMA_URL).call() {
+        Ok(response) => {
+            let body = response
+                .into_body()
+                .read_to_string()
+                .unwrap_or_else(|e| {
+                    eprintln!("Error reading schema response: {e}");
+                    process::exit(1);
+                });
+
+            // Cache it
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                eprintln!("Warning: could not create cache dir: {e}");
+            } else if let Err(e) = std::fs::write(&cache_path, &body) {
+                eprintln!("Warning: could not cache schema: {e}");
+            } else {
+                eprintln!("Cached schema at {}", cache_path.display());
+            }
+
+            body
+        }
+        Err(e) => {
+            // Offline fallback: use stale cache if available
+            if let Ok(content) = std::fs::read_to_string(&cache_path) {
+                eprintln!(
+                    "Warning: schema download failed ({e}), using stale cache"
+                );
+                content
+            } else {
+                eprintln!("Error downloading schema: {e}");
+                process::exit(1);
+            }
+        }
+    }
+}
+
+/// Run JSON schema validation on all YAML files at `path`.
+fn run_schema_validation(path: &std::path::Path, schema_arg: &str) -> Vec<FileLintResult> {
+    let schema_json_str = resolve_schema(schema_arg);
+    let schema_value: serde_json::Value = match serde_json::from_str(&schema_json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error parsing schema JSON: {e}");
+            process::exit(1);
+        }
+    };
+
+    let validator = jsonschema::validator_for(&schema_value)
+        .unwrap_or_else(|e| {
+            eprintln!("Error compiling JSON schema: {e}");
+            process::exit(1);
+        });
+
+    let mut results = Vec::new();
+
+    if path.is_dir() {
+        fn walk_schema(
+            dir: &std::path::Path,
+            validator: &jsonschema::Validator,
+            results: &mut Vec<FileLintResult>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk_schema(&p, validator, results);
+                } else if matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("yml" | "yaml")
+                ) {
+                    results.push(validate_file_against_schema(&p, validator));
+                }
+            }
+        }
+        walk_schema(path, &validator, &mut results);
+    } else {
+        results.push(validate_file_against_schema(path, &validator));
+    }
+
+    results
+}
+
+fn validate_file_against_schema(
+    path: &std::path::Path,
+    validator: &jsonschema::Validator,
+) -> FileLintResult {
+    let mut warnings = Vec::new();
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            warnings.push(lint::LintWarning {
+                rule: lint::LintRule::MissingTitle,
+                severity: lint::Severity::Error,
+                message: format!("error reading file: {e}"),
+                path: "/".to_string(),
+            });
+            return FileLintResult {
+                path: path.to_path_buf(),
+                warnings,
+            };
+        }
+    };
+
+    for doc in serde_yaml::Deserializer::from_str(&content) {
+        let yaml_value: serde_yaml::Value = match serde_yaml::Value::deserialize(doc) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Skip action fragments
+        if let Some(m) = yaml_value.as_mapping()
+            && let Some(action) = m
+                .get(serde_yaml::Value::String("action".into()))
+                .and_then(|v| v.as_str())
+                && matches!(action, "global" | "reset" | "repeat") {
+                    continue;
+                }
+
+        // Convert YAML to JSON for schema validation
+        let json_str = match serde_json::to_string(&yaml_value) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let json_value: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Validate
+        for error in validator.iter_errors(&json_value) {
+            warnings.push(lint::LintWarning {
+                rule: lint::LintRule::InvalidStatus, // generic schema error
+                severity: lint::Severity::Error,
+                message: format!("schema: {error}"),
+                path: error.instance_path.to_string(),
+            });
+        }
+    }
+
+    FileLintResult {
+        path: path.to_path_buf(),
+        warnings,
+    }
+}
+
+/// Merge schema validation results into the main lint results.
+///
+/// For files already in `main_results`, append schema warnings.
+/// For files only in `schema_results`, add them as new entries.
+fn merge_schema_results(
+    main_results: &mut Vec<FileLintResult>,
+    schema_results: Vec<FileLintResult>,
+) {
+    use std::collections::HashMap;
+
+    let mut index: HashMap<PathBuf, usize> = main_results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.path.clone(), i))
+        .collect();
+
+    for sr in schema_results {
+        if let Some(&idx) = index.get(&sr.path) {
+            main_results[idx].warnings.extend(sr.warnings);
+        } else {
+            let idx = main_results.len();
+            index.insert(sr.path.clone(), idx);
+            main_results.push(sr);
         }
     }
 }
