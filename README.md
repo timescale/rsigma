@@ -9,6 +9,7 @@ A Rust implementation of the [Sigma](https://github.com/SigmaHQ/sigma) detection
 | [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST | 
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
 | [`rsigma-cli`](crates/rsigma-cli/) | CLI for parsing, validating, and evaluating rules |
+| [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 
 ## rsigma-parser
 
@@ -231,6 +232,62 @@ rsigma validate rules/ -p pipelines/ecs.yml -v
 cat events.ndjson | rsigma eval -r path/to/rules/
 ```
 
+## rsigma-lsp
+
+A Language Server Protocol (LSP) server that brings real-time Sigma rule development support to any editor — VSCode, Neovim, Helix, Zed, Emacs, and more. Built on the same parser, linter, and compiler as the CLI.
+
+### Features
+
+- **Diagnostics**: real-time validation from three layers — 44 lint rules (Sigma spec v2.1.0), parser errors (YAML and condition expressions), and compiler errors (unknown selections, invalid modifier combos)
+- **Completions**: context-aware suggestions for field modifiers (`|contains`, `|base64`, etc.), status/level enums, logsource category/product/service values, MITRE ATT&CK tags, condition keywords, and selection names from the current rule
+- **Hover**: documentation for all 23 field modifiers and MITRE ATT&CK tactics/techniques with links
+- **Document symbols**: navigable outline of rule structure (title, logsource, detection selections, condition)
+
+### Installation
+
+```bash
+# Build and install the LSP binary
+cargo install --path crates/rsigma-lsp
+```
+
+### Editor Setup
+
+**Neovim** (native LSP):
+
+```lua
+vim.api.nvim_create_autocmd('FileType', {
+  pattern = 'yaml',
+  callback = function()
+    vim.lsp.start({
+      name = 'rsigma-lsp',
+      cmd = { 'rsigma-lsp' },
+    })
+  end,
+})
+```
+
+**VSCode**: A thin extension wrapper is provided in [`editors/vscode/`](editors/vscode/). To use it:
+
+```bash
+cd editors/vscode
+npm install
+npx vsce package
+# Install the .vsix file via: code --install-extension rsigma-*.vsix
+```
+
+The extension launches `rsigma-lsp` from your `$PATH` by default. Override via the `rsigma.serverPath` setting.
+
+**Helix** (`~/.config/helix/languages.toml`):
+
+```toml
+[language-server.rsigma-lsp]
+command = "rsigma-lsp"
+
+[[language]]
+name = "yaml"
+language-servers = ["yaml-language-server", "rsigma-lsp"]
+```
+
 ## Benchmarks
 
 Criterion.rs benchmarks with synthetic rules and events (Apple M-series, single-threaded):
@@ -300,25 +357,27 @@ cargo bench --bench correlation      # correlations only
      │  parser)   │
      └────────────┘
            │
-           ▼
-     ┌──────────────────────────────────────────┐
-     │              rsigma-eval                 │
-     │                                          │
-     │  pipeline/ ──> Pipeline (YAML parsing,   │
-     │    conditions, transformations, state)   │
-     │    ↓ transforms SigmaRule AST            │
-     │                                          │
-     │  compiler.rs ──> CompiledRule            │
-     │  matcher.rs  ──> CompiledMatcher         │
-     │  engine.rs   ──> Engine (stateless)      │
-     │                                          │
-     │  correlation.rs ──> CompiledCorrelation  │
-     │  correlation_engine.rs ──> (stateful)    │
-     │    sliding windows, group-by, chaining,  │
-     │    alert suppression, action-on-fire     │
-     │                                          │
-     │  rsigma.* custom attributes ─────────>   │
-     │    engine config from pipelines          │
+     ┌─────┴──────────────────────────────────────────────┐
+     │                                                     │
+     ▼                                                     ▼
+     ┌──────────────────────────────────────────┐   ┌────────────────────┐
+     │              rsigma-eval                 │   │    rsigma-lsp      │
+     │                                          │   │                    │
+     │  pipeline/ ──> Pipeline (YAML parsing,   │   │  LSP server over   │
+     │    conditions, transformations, state)   │   │  stdio (tower-lsp) │
+     │    ↓ transforms SigmaRule AST            │   │                    │
+     │                                          │   │  • diagnostics     │
+     │  compiler.rs ──> CompiledRule            │   │    (lint + parse   │
+     │  matcher.rs  ──> CompiledMatcher         │   │     + compile)     │
+     │  engine.rs   ──> Engine (stateless)      │   │  • completions     │
+     │                                          │   │  • hover           │
+     │  correlation.rs ──> CompiledCorrelation  │   │  • document        │
+     │  correlation_engine.rs ──> (stateful)    │   │    symbols         │
+     │    sliding windows, group-by, chaining,  │   │                    │
+     │    alert suppression, action-on-fire     │   │  Editors:          │
+     │                                          │   │  VSCode, Neovim,   │
+     │  rsigma.* custom attributes ─────────>   │   │  Helix, Zed, ...  │
+     │    engine config from pipelines          │   └────────────────────┘
      └──────────────────────────────────────────┘
               │
               ▼
