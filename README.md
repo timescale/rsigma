@@ -266,13 +266,14 @@ vim.api.nvim_create_autocmd('FileType', {
 })
 ```
 
-**VSCode**: A thin extension wrapper is provided in [`editors/vscode/`](editors/vscode/). To use it:
+**VSCode / Cursor**: A thin extension wrapper is provided in [`editors/vscode/`](editors/vscode/). To use it:
 
 ```bash
 cd editors/vscode
 npm install
-npx vsce package
-# Install the .vsix file via: code --install-extension rsigma-*.vsix
+npm run package              # builds with esbuild + creates .vsix
+code --install-extension rsigma-0.1.0.vsix    # VSCode
+cursor --install-extension rsigma-0.1.0.vsix  # Cursor
 ```
 
 The extension launches `rsigma-lsp` from your `$PATH` by default. Override via the `rsigma.serverPath` setting.
