@@ -172,6 +172,23 @@ impl fmt::Display for LintRule {
     }
 }
 
+/// A source span (line/column, both 0-indexed).
+///
+/// Used by the LSP layer to avoid re-resolving JSON-pointer paths to
+/// source positions. When the lint is produced from raw `serde_yaml::Value`
+/// (which has no source positions), `span` will be `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    /// 0-indexed start line.
+    pub start_line: u32,
+    /// 0-indexed start column.
+    pub start_col: u32,
+    /// 0-indexed end line.
+    pub end_line: u32,
+    /// 0-indexed end column.
+    pub end_col: u32,
+}
+
 /// A single lint finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintWarning {
@@ -183,6 +200,10 @@ pub struct LintWarning {
     pub message: String,
     /// JSON-pointer-style location, e.g. `"/status"`, `"/tags/2"`.
     pub path: String,
+    /// Optional source span. `None` when linting `serde_yaml::Value` (no
+    /// source positions available). Populated by `lint_yaml_str` which
+    /// can resolve paths against the raw text.
+    pub span: Option<Span>,
 }
 
 impl fmt::Display for LintWarning {
@@ -253,6 +274,7 @@ fn warn(
         severity,
         message: message.into(),
         path: path.into(),
+        span: None,
     }
 }
 
@@ -1152,6 +1174,158 @@ pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
     }
 
     warnings
+}
+
+/// Lint a raw YAML string, returning warnings with resolved source spans.
+///
+/// Unlike [`lint_yaml_value`], this function takes the raw text and resolves
+/// JSON-pointer paths to `(line, col)` spans. This is the preferred entry
+/// point for the LSP server.
+pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
+    let mut all_warnings = Vec::new();
+
+    for doc in serde_yaml::Deserializer::from_str(text) {
+        let value: Value = match Value::deserialize(doc) {
+            Ok(v) => v,
+            Err(e) => {
+                let mut w = err(
+                    LintRule::MissingTitle,
+                    format!("YAML parse error: {e}"),
+                    "/",
+                );
+                // serde_yaml can give us a location
+                if let Some(loc) = e.location() {
+                    w.span = Some(Span {
+                        start_line: loc.line().saturating_sub(1) as u32,
+                        start_col: loc.column() as u32,
+                        end_line: loc.line().saturating_sub(1) as u32,
+                        end_col: loc.column() as u32 + 1,
+                    });
+                }
+                all_warnings.push(w);
+                continue;
+            }
+        };
+
+        let warnings = lint_yaml_value(&value);
+        // Resolve spans for each warning
+        for mut w in warnings {
+            w.span = resolve_path_to_span(text, &w.path);
+            all_warnings.push(w);
+        }
+    }
+
+    all_warnings
+}
+
+/// Resolve a JSON-pointer path to a `Span` by scanning the YAML text.
+///
+/// Returns `None` if the path cannot be resolved.
+fn resolve_path_to_span(text: &str, path: &str) -> Option<Span> {
+    if path == "/" || path.is_empty() {
+        // Root — first non-empty line
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') && trimmed != "---" {
+                return Some(Span {
+                    start_line: i as u32,
+                    start_col: 0,
+                    end_line: i as u32,
+                    end_col: line.len() as u32,
+                });
+            }
+        }
+        return None;
+    }
+
+    let segments: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut current_indent: i32 = -1;
+    let mut search_start = 0usize;
+    let mut last_matched_line: Option<usize> = None;
+
+    for segment in &segments {
+        let array_index: Option<usize> = segment.parse().ok();
+        let mut found = false;
+
+        let mut line_num = search_start;
+        while line_num < lines.len() {
+            let line = lines[line_num];
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                line_num += 1;
+                continue;
+            }
+
+            let indent = (line.len() - trimmed.len()) as i32;
+
+            if indent <= current_indent && found {
+                break;
+            }
+            if indent <= current_indent {
+                line_num += 1;
+                continue;
+            }
+
+            if let Some(idx) = array_index {
+                if trimmed.starts_with("- ") && indent > current_indent {
+                    let mut count = 0usize;
+                    for (offset, sl) in lines[search_start..].iter().enumerate() {
+                        let scan = search_start + offset;
+                        let st = sl.trim();
+                        if st.is_empty() || st.starts_with('#') {
+                            continue;
+                        }
+                        let si = (sl.len() - st.len()) as i32;
+                        if si == indent && st.starts_with("- ") {
+                            if count == idx {
+                                last_matched_line = Some(scan);
+                                search_start = scan + 1;
+                                current_indent = indent;
+                                found = true;
+                                break;
+                            }
+                            count += 1;
+                        }
+                        if si < indent && count > 0 {
+                            break;
+                        }
+                    }
+                    break;
+                }
+            } else {
+                let key_pattern = format!("{segment}:");
+                if trimmed.starts_with(&key_pattern) || trimmed == *segment {
+                    last_matched_line = Some(line_num);
+                    search_start = line_num + 1;
+                    current_indent = indent;
+                    found = true;
+                    break;
+                }
+            }
+
+            line_num += 1;
+        }
+
+        if !found && last_matched_line.is_none() {
+            break;
+        }
+    }
+
+    last_matched_line.map(|line_num| {
+        let line = lines[line_num];
+        Span {
+            start_line: line_num as u32,
+            start_col: 0,
+            end_line: line_num as u32,
+            end_col: line.len() as u32,
+        }
+    })
 }
 
 /// Lint all YAML documents in a file.

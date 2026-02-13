@@ -1,0 +1,71 @@
+{
+  "name": "rsigma",
+  "displayName": "rsigma — Sigma Detection Rules",
+  "description": "Language support for Sigma detection rules: diagnostics, completions, hover, and document symbols powered by rsigma-lsp.",
+  "version": "0.1.0",
+  "publisher": "rsigma",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rsigma/rsigma"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "sigma",
+    "siem",
+    "detection",
+    "security",
+    "yaml",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "workspaceContains:**/*.yml",
+    "workspaceContains:**/*.yaml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "rsigma",
+      "properties": {
+        "rsigma.serverPath": {
+          "type": "string",
+          "default": "rsigma-lsp",
+          "description": "Path to the rsigma-lsp binary. If not an absolute path, it will be looked up in $PATH."
+        },
+        "rsigma.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code and the rsigma language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

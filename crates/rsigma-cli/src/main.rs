@@ -532,6 +532,7 @@ fn validate_file_against_schema(
                 severity: lint::Severity::Error,
                 message: format!("error reading file: {e}"),
                 path: "/".to_string(),
+                span: None,
             });
             return FileLintResult {
                 path: path.to_path_buf(),
@@ -573,6 +574,7 @@ fn validate_file_against_schema(
                 severity: lint::Severity::Error,
                 message: format!("schema: {error}"),
                 path: error.instance_path.to_string(),
+                span: None,
             });
         }
     }

@@ -4,6 +4,7 @@ members = [
     "crates/rsigma-parser",
     "crates/rsigma-eval",
     "crates/rsigma-cli",
+    "crates/rsigma-lsp",
 ]
 
 [workspace.package]

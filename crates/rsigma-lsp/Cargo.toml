@@ -1,0 +1,22 @@
+[package]
+name = "rsigma-lsp"
+description = "Language Server Protocol (LSP) server for Sigma detection rules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rsigma-lsp"
+path = "src/main.rs"
+
+[dependencies]
+rsigma-parser = { path = "../rsigma-parser" }
+rsigma-eval = { path = "../rsigma-eval" }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+log = "0.4"
+env_logger = "0.11"
