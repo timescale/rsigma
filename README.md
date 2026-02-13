@@ -16,6 +16,7 @@ Parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specific
 
 ### Features
 
+- **Linter**: 44 built-in rules derived from the Sigma v2.1.0 specification — validates metadata fields (title, id, status, level, date, tags), detection logic, correlation rules, and filter rules. Operates on raw YAML values to catch issues the parser silently ignores.
 - **PEG grammar** (pest) for condition expressions with correct operator precedence
 - **All field modifiers**: `contains`, `endswith`, `startswith`, `re`, `cidr`, `base64`, `base64offset`, `wide`/`utf16le`, `utf16be`, `utf16`, `windash`, `all`, `cased`, `exists`, `fieldref`, `expand`, `neq`, comparison operators (`gt`, `gte`, `lt`, `lte`), regex flags (`i`, `m`, `s`), timestamp parts (`minute`, `hour`, `day`, `week`, `month`, `year`)
 - **Condition expressions**: `and`, `or`, `not`, `1 of`, `all of`, `any of`, `N of`, parenthesized groups, wildcard patterns — `them` excludes `_`-prefixed identifiers per spec
@@ -207,6 +208,21 @@ rsigma eval -r rules/ --no-detections -e @events.ndjson
 
 # Specify the event timestamp field for correlation windowing
 rsigma eval -r rules/ --timestamp-field time -e @events.ndjson
+
+# Lint rules against the Sigma specification
+rsigma lint path/to/rules/
+
+# Lint with verbose output (show passing files)
+rsigma lint path/to/rules/ -v
+
+# Lint with optional JSON schema validation (downloads and caches official schema)
+rsigma lint path/to/rules/ --schema default
+
+# Lint with a local JSON schema file
+rsigma lint rule.yml --schema my-schema.json
+
+# Force colored output (auto-detected by default, respects NO_COLOR)
+rsigma lint path/to/rules/ --color always
 
 # Validate with pipeline
 rsigma validate rules/ -p pipelines/ecs.yml -v
