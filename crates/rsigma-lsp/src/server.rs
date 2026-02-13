@@ -2,25 +2,33 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::completion;
+use crate::data;
 use crate::diagnostics;
 
-/// In-memory document state: we keep the latest text for each open file.
+/// Debounce delay for diagnostics on text changes (milliseconds).
+const DIAGNOSTICS_DEBOUNCE_MS: u64 = 150;
+
+/// In-memory document state: latest text and version for each open file.
 #[derive(Debug, Clone)]
 struct DocumentState {
     text: String,
+    version: i32,
 }
 
 /// The Sigma Language Server.
 pub struct SigmaLanguageServer {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
+    /// Abort handles for pending debounced diagnostic tasks.
+    pending_diagnostics: Arc<Mutex<HashMap<Url, tokio::task::AbortHandle>>>,
 }
 
 impl SigmaLanguageServer {
@@ -28,24 +36,74 @@ impl SigmaLanguageServer {
         Self {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
+            pending_diagnostics: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Re-lint a document and publish diagnostics.
-    async fn publish_diagnostics(&self, uri: &Url, text: &str) {
+    /// Run diagnostics immediately on a blocking thread and publish results.
+    async fn publish_diagnostics_now(&self, uri: &Url, text: &str, version: i32) {
         let text = text.to_string();
-        let diags = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            diagnostics::diagnose(&text)
-        })) {
-            Ok(d) => d,
-            Err(_) => {
+        let diags = match tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                diagnostics::diagnose(&text)
+            }))
+        })
+        .await
+        {
+            Ok(Ok(d)) => d,
+            Ok(Err(_)) => {
                 log::error!("panic in diagnostics::diagnose");
+                vec![]
+            }
+            Err(e) => {
+                log::error!("diagnostics task error: {e}");
                 vec![]
             }
         };
         self.client
-            .publish_diagnostics(uri.clone(), diags, None)
+            .publish_diagnostics(uri.clone(), diags, Some(version))
             .await;
+    }
+
+    /// Schedule diagnostics with debounce. Cancels any pending run for this URI.
+    async fn schedule_diagnostics(&self, uri: Url, text: String, version: i32) {
+        let client = self.client.clone();
+        let pending = self.pending_diagnostics.clone();
+        let uri_for_task = uri.clone();
+
+        // Abort any existing pending task, then spawn the new one while holding
+        // the lock so no concurrent call can slip in between.
+        let mut guard = self.pending_diagnostics.lock().await;
+        if let Some(handle) = guard.remove(&uri) {
+            handle.abort();
+        }
+
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(DIAGNOSTICS_DEBOUNCE_MS)).await;
+
+            let diags = match tokio::task::spawn_blocking(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    diagnostics::diagnose(&text)
+                }))
+            })
+            .await
+            {
+                Ok(Ok(d)) => d,
+                Ok(Err(_)) => {
+                    log::error!("panic in diagnostics::diagnose");
+                    vec![]
+                }
+                Err(_) => return, // task was cancelled
+            };
+
+            client
+                .publish_diagnostics(uri_for_task.clone(), diags, Some(version))
+                .await;
+
+            pending.lock().await.remove(&uri_for_task);
+        });
+
+        guard.insert(uri, task.abort_handle());
     }
 
     /// Check if a URI looks like a Sigma YAML file.
@@ -96,32 +154,35 @@ impl LanguageServer for SigmaLanguageServer {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
+        let version = params.text_document.version;
 
         if Self::is_sigma_file(&uri) {
-            self.publish_diagnostics(&uri, &text).await;
+            self.publish_diagnostics_now(&uri, &text, version).await;
         }
 
         self.documents
             .write()
             .await
-            .insert(uri, DocumentState { text });
+            .insert(uri, DocumentState { text, version });
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
+        let version = params.text_document.version;
 
         // FULL sync: the last content change has the full text.
         if let Some(change) = params.content_changes.into_iter().last() {
             let text = change.text;
 
             if Self::is_sigma_file(&uri) {
-                self.publish_diagnostics(&uri, &text).await;
+                self.schedule_diagnostics(uri.clone(), text.clone(), version)
+                    .await;
             }
 
             self.documents
                 .write()
                 .await
-                .insert(uri, DocumentState { text });
+                .insert(uri, DocumentState { text, version });
         }
     }
 
@@ -132,13 +193,23 @@ impl LanguageServer for SigmaLanguageServer {
         if Self::is_sigma_file(&uri) {
             let docs = self.documents.read().await;
             if let Some(doc) = docs.get(&uri) {
-                self.publish_diagnostics(&uri, &doc.text).await;
+                self.publish_diagnostics_now(&uri, &doc.text, doc.version)
+                    .await;
             }
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
+
+        // Cancel any pending diagnostics for this file.
+        {
+            let mut pending = self.pending_diagnostics.lock().await;
+            if let Some(handle) = pending.remove(&uri) {
+                handle.abort();
+            }
+        }
+
         self.documents.write().await.remove(&uri);
 
         // Clear diagnostics for the closed file.
@@ -211,9 +282,8 @@ impl LanguageServer for SigmaLanguageServer {
         };
 
         let text = doc.text.clone();
-        let doc_uri = uri.clone();
         let symbols = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            document_symbols(&text, &doc_uri)
+            document_symbols(&text)
         })) {
             Ok(s) => s,
             Err(_) => {
@@ -224,7 +294,7 @@ impl LanguageServer for SigmaLanguageServer {
         if symbols.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(DocumentSymbolResponse::Flat(symbols)))
+            Ok(Some(DocumentSymbolResponse::Nested(symbols)))
         }
     }
 }
@@ -319,174 +389,236 @@ fn mitre_hover(word: &str) -> Option<String> {
         ));
     }
 
-    // Tactic hover
-    let tactics: &[(&str, &str)] = &[
-        ("attack.initial_access", "Initial Access (TA0001)"),
-        ("attack.execution", "Execution (TA0002)"),
-        ("attack.persistence", "Persistence (TA0003)"),
-        (
-            "attack.privilege_escalation",
-            "Privilege Escalation (TA0004)",
-        ),
-        ("attack.defense_evasion", "Defense Evasion (TA0005)"),
-        ("attack.credential_access", "Credential Access (TA0006)"),
-        ("attack.discovery", "Discovery (TA0007)"),
-        ("attack.lateral_movement", "Lateral Movement (TA0008)"),
-        ("attack.collection", "Collection (TA0009)"),
-        ("attack.exfiltration", "Exfiltration (TA0010)"),
-        ("attack.command_and_control", "Command and Control (TA0011)"),
-        ("attack.impact", "Impact (TA0040)"),
-        (
-            "attack.resource_development",
-            "Resource Development (TA0042)",
-        ),
-        ("attack.reconnaissance", "Reconnaissance (TA0043)"),
-    ];
-
-    for (tag, description) in tactics {
-        if lower == *tag {
-            return Some(format!("**MITRE ATT&CK Tactic**\n\n{description}"));
-        }
-    }
-
-    None
+    // Tactic hover from shared data
+    data::MITRE_TACTICS
+        .iter()
+        .find(|(tag, _)| lower == *tag)
+        .map(|(_, description)| format!("**MITRE ATT&CK Tactic**\n\n{description}"))
 }
 
 fn modifier_hover(word: &str) -> Option<String> {
-    let info = match word {
-        "contains" => "**`contains`** — Match substring anywhere in the field value.",
-        "startswith" => "**`startswith`** — Match prefix of the field value.",
-        "endswith" => "**`endswith`** — Match suffix of the field value.",
-        "all" => "**`all`** — All values in the list must match (AND logic instead of OR).",
-        "base64" => "**`base64`** — Match the base64-encoded form of the value.",
-        "base64offset" => "**`base64offset`** — Match any of the three base64 offset variants.",
-        "wide" | "utf16le" => "**`wide`** / **`utf16le`** — Match the UTF-16LE encoded form.",
-        "utf16be" => "**`utf16be`** — Match the UTF-16BE encoded form.",
-        "utf16" => "**`utf16`** — Match both UTF-16LE and UTF-16BE encoded forms.",
-        "windash" => "**`windash`** — Expand `-` to `- /` dash variants for Windows CLI.",
-        "re" => "**`re`** — Treat the value as a regular expression.",
-        "cidr" => "**`cidr`** — Match IP addresses against a CIDR range.",
-        "cased" => "**`cased`** — Case-sensitive matching (default is case-insensitive).",
-        "exists" => "**`exists`** — Check if the field exists (`true`) or is absent (`false`).",
-        "expand" => "**`expand`** — Expand placeholders in the value.",
-        "fieldref" => "**`fieldref`** — Value references another field name.",
-        "gt" => "**`gt`** — Field value must be greater than the specified value.",
-        "gte" => "**`gte`** — Field value must be greater than or equal.",
-        "lt" => "**`lt`** — Field value must be less than the specified value.",
-        "lte" => "**`lte`** — Field value must be less than or equal.",
-        "neq" => "**`neq`** — Field value must not equal the specified value.",
-        _ => return None,
-    };
-    Some(info.to_string())
+    data::MODIFIERS
+        .iter()
+        .find(|(name, _)| *name == word)
+        .map(|(name, desc)| format!("**`{name}`** \u{2014} {desc}"))
 }
 
 // =============================================================================
-// Document symbols
+// Document symbols (hierarchical DocumentSymbol tree)
 // =============================================================================
 
-#[allow(deprecated)] // SymbolInformation::deprecated is itself deprecated
-fn document_symbols(text: &str, uri: &Url) -> Vec<SymbolInformation> {
-    let mut symbols = Vec::new();
+/// Build a hierarchical document symbol tree from the Sigma YAML text.
+#[allow(deprecated)] // DocumentSymbol::deprecated field is itself deprecated
+fn document_symbols(text: &str) -> Vec<DocumentSymbol> {
     let lines: Vec<&str> = text.lines().collect();
+    let mut symbols = Vec::new();
+    let sections = find_top_level_sections(&lines);
 
-    let make_loc = |i: usize, line: &str| {
-        let pos = Position::new(i as u32, 0);
-        let end_col = line.len().min(u32::MAX as usize) as u32;
-        let range = Range::new(pos, Position::new(i as u32, end_col));
-        Location::new(uri.clone(), range)
-    };
-
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-
-        // Top-level keys that are interesting for navigation
-        if let Some(value) = trimmed.strip_prefix("title:") {
-            let title = value.trim();
-            // LSP clients reject empty symbol names
-            if !title.is_empty() {
-                symbols.push(SymbolInformation {
-                    name: title.to_string(),
-                    kind: SymbolKind::STRING,
+    for (key, value, start, end) in &sections {
+        match key.as_str() {
+            "title" => {
+                let title = value.trim();
+                if !title.is_empty() {
+                    let sel = symbol_line_range(*start, lines[*start]);
+                    symbols.push(DocumentSymbol {
+                        name: title.to_string(),
+                        detail: Some("title".to_string()),
+                        kind: SymbolKind::STRING,
+                        tags: None,
+                        deprecated: None,
+                        range: sel,
+                        selection_range: sel,
+                        children: None,
+                    });
+                }
+            }
+            "logsource" | "correlation" => {
+                let sel = symbol_line_range(*start, lines[*start]);
+                let full = symbol_section_range(*start, *end, &lines);
+                symbols.push(DocumentSymbol {
+                    name: key.clone(),
+                    detail: None,
+                    kind: SymbolKind::NAMESPACE,
                     tags: None,
                     deprecated: None,
-                    location: make_loc(i, line),
-                    container_name: None,
+                    range: full,
+                    selection_range: sel,
+                    children: None,
                 });
             }
-        } else if trimmed == "detection:" {
-            symbols.push(SymbolInformation {
-                name: "detection".to_string(),
-                kind: SymbolKind::NAMESPACE,
-                tags: None,
-                deprecated: None,
-                location: make_loc(i, line),
-                container_name: None,
-            });
-        } else if trimmed == "logsource:" {
-            symbols.push(SymbolInformation {
-                name: "logsource".to_string(),
-                kind: SymbolKind::NAMESPACE,
-                tags: None,
-                deprecated: None,
-                location: make_loc(i, line),
-                container_name: None,
-            });
-        } else if trimmed == "correlation:" {
-            symbols.push(SymbolInformation {
-                name: "correlation".to_string(),
-                kind: SymbolKind::NAMESPACE,
-                tags: None,
-                deprecated: None,
-                location: make_loc(i, line),
-                container_name: None,
-            });
-        } else if trimmed == "filter:" {
-            symbols.push(SymbolInformation {
-                name: "filter".to_string(),
-                kind: SymbolKind::NAMESPACE,
-                tags: None,
-                deprecated: None,
-                location: make_loc(i, line),
-                container_name: None,
-            });
-        } else if trimmed.starts_with("condition:") {
-            // Could be under detection or at top-level for correlations
-            let indent = line.len() - trimmed.len();
-            if indent > 0 {
-                symbols.push(SymbolInformation {
-                    name: "condition".to_string(),
-                    kind: SymbolKind::BOOLEAN,
+            "detection" => {
+                let sel = symbol_line_range(*start, lines[*start]);
+                let full = symbol_section_range(*start, *end, &lines);
+                let children = detection_children(&lines, *start, *end);
+                symbols.push(DocumentSymbol {
+                    name: "detection".to_string(),
+                    detail: None,
+                    kind: SymbolKind::NAMESPACE,
                     tags: None,
                     deprecated: None,
-                    location: make_loc(i, line),
-                    container_name: Some("detection".to_string()),
+                    range: full,
+                    selection_range: sel,
+                    children: if children.is_empty() {
+                        None
+                    } else {
+                        Some(children)
+                    },
                 });
             }
-        }
-
-        // Detection selection identifiers (indented keys under detection:)
-        // Look for lines like "    selection:" or "    filter_foo:" under detection
-        if trimmed.ends_with(':') && !trimmed.starts_with('#') && !trimmed.starts_with('-') {
-            let indent = line.len() - trimmed.len();
-            let key = &trimmed[..trimmed.len() - 1];
-            if indent == 4
-                && !key.is_empty()
-                && key != "condition"
-                && (key.starts_with("selection")
-                    || key.starts_with("filter")
-                    || key.starts_with("keyword"))
-            {
-                symbols.push(SymbolInformation {
-                    name: key.to_string(),
-                    kind: SymbolKind::FIELD,
-                    tags: None,
-                    deprecated: None,
-                    location: make_loc(i, line),
-                    container_name: Some("detection".to_string()),
-                });
-            }
+            _ => {}
         }
     }
 
     symbols
+}
+
+/// Find top-level YAML sections: `(key, value_after_colon, start_line, end_line)`.
+fn find_top_level_sections(lines: &[&str]) -> Vec<(String, String, usize, usize)> {
+    let mut sections = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+            i += 1;
+            continue;
+        }
+
+        let indent = line.len() - trimmed.len();
+        if indent == 0
+            && let Some(colon_pos) = trimmed.find(':')
+        {
+            let key = trimmed[..colon_pos].to_string();
+            let value = trimmed[colon_pos + 1..].to_string();
+            let start_line = i;
+
+            // Find end of section: next top-level key or EOF
+            let mut end_line = i;
+            let mut j = i + 1;
+            while j < lines.len() {
+                let jline = lines[j];
+                let jtrimmed = jline.trim();
+                if jtrimmed.is_empty() || jtrimmed.starts_with('#') {
+                    j += 1;
+                    continue;
+                }
+                let jindent = jline.len() - jtrimmed.len();
+                if jindent == 0 && jtrimmed.contains(':') {
+                    break;
+                }
+                end_line = j;
+                j += 1;
+            }
+
+            sections.push((key, value, start_line, end_line));
+            i = j;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    sections
+}
+
+/// Build child symbols for the detection block, dynamically detecting indent.
+#[allow(deprecated)]
+fn detection_children(
+    lines: &[&str],
+    section_start: usize,
+    section_end: usize,
+) -> Vec<DocumentSymbol> {
+    let mut children = Vec::new();
+    let mut detection_indent: Option<usize> = None;
+
+    let mut i = section_start + 1;
+    while i <= section_end {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            i += 1;
+            continue;
+        }
+
+        let indent = line.len() - trimmed.len();
+
+        // First indented line with a colon sets the detection indent level
+        if detection_indent.is_none() && indent > 0 && trimmed.contains(':') {
+            detection_indent = Some(indent);
+        }
+
+        if let Some(det_indent) = detection_indent
+            && indent == det_indent
+            && let Some(colon_pos) = trimmed.find(':')
+        {
+            let key = trimmed[..colon_pos].trim();
+            if key.is_empty() {
+                i += 1;
+                continue;
+            }
+
+            // Find the end of this child section
+            let child_start = i;
+            let mut child_end = i;
+            let mut j = i + 1;
+            while j <= section_end {
+                let jline = lines[j];
+                let jtrimmed = jline.trim();
+                if jtrimmed.is_empty() || jtrimmed.starts_with('#') {
+                    j += 1;
+                    continue;
+                }
+                let jindent = jline.len() - jtrimmed.len();
+                if jindent <= det_indent {
+                    break;
+                }
+                child_end = j;
+                j += 1;
+            }
+
+            let kind = if key == "condition" {
+                SymbolKind::BOOLEAN
+            } else {
+                SymbolKind::FIELD
+            };
+
+            let sel = symbol_line_range(child_start, lines[child_start]);
+            let full = symbol_section_range(child_start, child_end, lines);
+
+            children.push(DocumentSymbol {
+                name: key.to_string(),
+                detail: None,
+                kind,
+                tags: None,
+                deprecated: None,
+                range: full,
+                selection_range: sel,
+                children: None,
+            });
+
+            i = j;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    children
+}
+
+/// Range covering a single line.
+fn symbol_line_range(line_idx: usize, line: &str) -> Range {
+    let start = Position::new(line_idx as u32, 0);
+    let end_col = line.len().min(u32::MAX as usize) as u32;
+    Range::new(start, Position::new(line_idx as u32, end_col))
+}
+
+/// Range covering from `start_line` to `end_line` (inclusive).
+fn symbol_section_range(start_line: usize, end_line: usize, lines: &[&str]) -> Range {
+    let start = Position::new(start_line as u32, 0);
+    let end_col = lines[end_line].len().min(u32::MAX as usize) as u32;
+    Range::new(start, Position::new(end_line as u32, end_col))
 }

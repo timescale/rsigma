@@ -85,8 +85,12 @@ fn parse_error_to_diagnostic(message: &str, text: &str, index: &LineIndex) -> Di
 }
 
 /// Convert a compile error string to an LSP `Diagnostic`.
+///
+/// Attempts to resolve a more precise location when the error message contains
+/// enough information (e.g. highlighting the unknown identifier within the
+/// condition line for "unknown detection identifier" errors).
 fn compile_error_to_diagnostic(message: &str, text: &str, index: &LineIndex) -> Diagnostic {
-    let range = resolve_path(text, index, "/detection/condition");
+    let range = resolve_compile_error_range(message, text, index);
 
     Diagnostic {
         range,
@@ -98,6 +102,32 @@ fn compile_error_to_diagnostic(message: &str, text: &str, index: &LineIndex) -> 
     }
 }
 
+/// Resolve a more precise location for compile errors when possible.
+fn resolve_compile_error_range(message: &str, text: &str, index: &LineIndex) -> Range {
+    // "unknown detection identifier: X" — highlight X in the condition line
+    if let Some(name) = message.strip_prefix("unknown detection identifier: ") {
+        let name = name.trim();
+        if !name.is_empty() {
+            for (i, line) in text.lines().enumerate() {
+                let trimmed = line.trim();
+                let indent = line.len() - trimmed.len();
+                if indent > 0
+                    && trimmed.starts_with("condition:")
+                    && let Some(offset) = line.find(name)
+                {
+                    return Range::new(
+                        Position::new(i as u32, offset as u32),
+                        Position::new(i as u32, (offset + name.len()) as u32),
+                    );
+                }
+            }
+        }
+    }
+
+    // Default: point to the condition line
+    resolve_path(text, index, "/detection/condition")
+}
+
 /// Try to extract line/column from error messages like "at line 5 column 3".
 fn extract_range_from_error(message: &str, index: &LineIndex) -> Option<Range> {
     let line_idx = message.find("line ")?;
@@ -106,7 +136,7 @@ fn extract_range_from_error(message: &str, index: &LineIndex) -> Option<Range> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(after_line.len());
     let line: u32 = after_line[..line_end].parse().ok()?;
-    let line = line.saturating_sub(1); // 1-indexed → 0-indexed
+    let line = line.saturating_sub(1); // 1-indexed -> 0-indexed
 
     let col = if let Some(col_idx) = message.find("column ") {
         let after_col = &message[col_idx + 7..];
@@ -123,4 +153,74 @@ fn extract_range_from_error(message: &str, index: &LineIndex) -> Option<Range> {
         Position::new(line, col),
         index.position_of(line_end_offset),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_range_from_yaml_error() {
+        // serde_yaml typical error format
+        let msg = "invalid type: string \"foo\", expected a mapping at line 5 column 3";
+        let text = "title: Test\nstatus: test\nlevel: high\nlogsource:\n  foo\n";
+        let index = LineIndex::new(text);
+        let range = extract_range_from_error(msg, &index).unwrap();
+        assert_eq!(range.start.line, 4); // line 5 -> 0-indexed line 4
+        assert_eq!(range.start.character, 3);
+    }
+
+    #[test]
+    fn extract_range_line_only() {
+        let msg = "unexpected character at line 2";
+        let text = "title: Test\nbad\n";
+        let index = LineIndex::new(text);
+        let range = extract_range_from_error(msg, &index).unwrap();
+        assert_eq!(range.start.line, 1); // line 2 -> 0-indexed line 1
+        assert_eq!(range.start.character, 0); // no column
+    }
+
+    #[test]
+    fn extract_range_no_match() {
+        let msg = "something went wrong";
+        let text = "title: Test\n";
+        let index = LineIndex::new(text);
+        assert!(extract_range_from_error(msg, &index).is_none());
+    }
+
+    #[test]
+    fn compile_error_unknown_detection_highlights_name() {
+        let text = "\
+title: Test
+detection:
+    selection:
+        User: admin
+    condition: selecton
+";
+        let index = LineIndex::new(text);
+        let range =
+            resolve_compile_error_range("unknown detection identifier: selecton", text, &index);
+        // Should point to "selecton" in the condition line (line 4)
+        assert_eq!(range.start.line, 4);
+        let line = text.lines().nth(4).unwrap();
+        let offset = line.find("selecton").unwrap();
+        assert_eq!(range.start.character, offset as u32);
+        assert_eq!(range.end.character, (offset + "selecton".len()) as u32);
+    }
+
+    #[test]
+    fn compile_error_fallback_to_condition_line() {
+        let text = "\
+title: Test
+detection:
+    selection:
+        User: admin
+    condition: selection
+";
+        let index = LineIndex::new(text);
+        let range =
+            resolve_compile_error_range("invalid modifier combination: something", text, &index);
+        // Should point to the condition line (line 4)
+        assert_eq!(range.start.line, 4);
+    }
 }

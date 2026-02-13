@@ -5,6 +5,7 @@
 //! and rsigma-eval compiler.
 
 mod completion;
+mod data;
 mod diagnostics;
 mod position;
 mod server;

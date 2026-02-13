@@ -1,13 +1,13 @@
 //! Resolve JSON-pointer-style paths (e.g. `/status`, `/tags/2`,
 //! `/detection/selection/CommandLine|contains`) to line ranges in raw YAML text.
 //!
-//! This is intentionally heuristic: `serde_yaml::Value` does not carry source
-//! positions, so we scan the text for key occurrences using indentation-aware
-//! matching. When a path cannot be resolved, we fall back to line 0.
+//! This is intentionally heuristic: we scan the text for key occurrences using
+//! indentation-aware matching. When a path cannot be resolved, we fall back to
+//! line 0.
 
 use tower_lsp::lsp_types::{Position, Range};
 
-/// A pre-computed line index for fast offset → line/col lookups.
+/// A pre-computed line index for fast offset -> line/col lookups.
 pub struct LineIndex {
     /// Byte offset of the start of each line.
     line_starts: Vec<usize>,
@@ -43,12 +43,6 @@ impl LineIndex {
             .map(|&s| s.saturating_sub(1))
             .unwrap_or(start);
         (start, end)
-    }
-
-    /// Total number of lines.
-    #[allow(dead_code)]
-    pub fn line_count(&self) -> usize {
-        self.line_starts.len()
     }
 }
 
@@ -143,16 +137,6 @@ pub fn resolve_path(text: &str, index: &LineIndex, path: &str) -> Range {
                 // Match a key: `segment:` at the start of the trimmed line
                 let key_pattern = format!("{segment}:");
                 if trimmed.starts_with(&key_pattern) || trimmed == *segment {
-                    last_matched_line = Some(line_num);
-                    search_start_line = line_num + 1;
-                    current_indent = indent;
-                    found = true;
-                    break;
-                }
-
-                // Also try matching YAML keys that contain `|` (field modifiers)
-                // e.g. `CommandLine|contains:` matches segment `CommandLine|contains`
-                if trimmed.contains('|') && trimmed.starts_with(&key_pattern) {
                     last_matched_line = Some(line_num);
                     search_start_line = line_num + 1;
                     current_indent = indent;

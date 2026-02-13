@@ -14,9 +14,6 @@ path = "src/main.rs"
 rsigma-parser = { path = "../rsigma-parser" }
 rsigma-eval = { path = "../rsigma-eval" }
 tower-lsp = "0.20"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "time", "sync"] }
 log = "0.4"
 env_logger = "0.11"

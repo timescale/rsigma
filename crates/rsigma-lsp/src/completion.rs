@@ -3,12 +3,14 @@
 //! Provides context-aware completions for:
 //! - Field modifiers (`|contains`, `|endswith`, etc.)
 //! - Top-level keys (`title:`, `status:`, `level:`, etc.)
-//! - Enum values (`status:` → stable/test/experimental/...)
+//! - Enum values (`status:` -> stable/test/experimental/...)
 //! - Logsource keys and common values
 //! - MITRE ATT&CK tags
 //! - Selection names in condition expressions
 
 use tower_lsp::lsp_types::*;
+
+use crate::data;
 
 /// Produce completions for the given cursor position.
 pub fn complete(text: &str, position: Position) -> Vec<CompletionItem> {
@@ -43,13 +45,13 @@ pub fn complete(text: &str, position: Position) -> Vec<CompletionItem> {
     }
 
     // 2. Tag completions — inside `tags:` section
-    if is_in_section(text, line_idx, "tags") && trimmed.starts_with("- ") {
+    if is_in_section(&lines, line_idx, "tags") && trimmed.starts_with("- ") {
         let tag_prefix = trimmed.strip_prefix("- ").unwrap_or("");
         return tag_completions(tag_prefix);
     }
 
     // 3. Condition completions — inside `condition:` value
-    if trimmed.starts_with("condition:") || is_in_section(text, line_idx, "condition") {
+    if trimmed.starts_with("condition:") || is_in_section(&lines, line_idx, "condition") {
         let cond_text = trimmed
             .strip_prefix("condition:")
             .unwrap_or(trimmed)
@@ -72,12 +74,12 @@ pub fn complete(text: &str, position: Position) -> Vec<CompletionItem> {
     }
 
     // 6. Logsource sub-key completions
-    if indent > 0 && is_in_section(text, line_idx, "logsource") && !trimmed.contains(':') {
+    if indent > 0 && is_in_section(&lines, line_idx, "logsource") && !trimmed.contains(':') {
         return logsource_key_completions(trimmed);
     }
 
     // 7. Detection sub-key completions
-    if indent > 0 && is_in_section(text, line_idx, "detection") && !trimmed.contains(':') {
+    if indent > 0 && is_in_section(&lines, line_idx, "detection") && !trimmed.contains(':') {
         return detection_key_completions(trimmed);
     }
 
@@ -85,10 +87,11 @@ pub fn complete(text: &str, position: Position) -> Vec<CompletionItem> {
 }
 
 /// Check if the current line is inside a given top-level section.
-fn is_in_section(text: &str, current_line: usize, section: &str) -> bool {
+///
+/// Accepts pre-split lines to avoid redundant re-splitting.
+fn is_in_section(lines: &[&str], current_line: usize, section: &str) -> bool {
     let pattern = format!("{section}:");
-    let lines: Vec<&str> = text.lines().take(current_line).collect();
-    for line in lines.into_iter().rev() {
+    for line in lines[..current_line].iter().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -114,34 +117,7 @@ fn is_in_section(text: &str, current_line: usize, section: &str) -> bool {
 // =============================================================================
 
 fn modifier_completions(prefix: &str) -> Vec<CompletionItem> {
-    let modifiers: &[(&str, &str)] = &[
-        ("contains", "Match substring anywhere in value"),
-        ("startswith", "Match prefix of value"),
-        ("endswith", "Match suffix of value"),
-        ("all", "All values must match (AND)"),
-        ("base64", "Match base64-encoded form"),
-        ("base64offset", "Match any base64 offset variant"),
-        ("wide", "Match UTF-16LE encoded form"),
-        ("utf16be", "Match UTF-16BE encoded form"),
-        ("utf16", "Match UTF-16LE and UTF-16BE forms"),
-        ("windash", "Expand dash variants for Windows CLI"),
-        ("re", "Regular expression match"),
-        ("cidr", "CIDR IP range match"),
-        ("cased", "Case-sensitive matching"),
-        ("exists", "Check field existence"),
-        ("expand", "Expand placeholders"),
-        ("fieldref", "Value references another field"),
-        ("gt", "Greater than"),
-        ("gte", "Greater than or equal"),
-        ("lt", "Less than"),
-        ("lte", "Less than or equal"),
-        ("neq", "Not equal"),
-        ("i", "Regex flag: case insensitive"),
-        ("m", "Regex flag: multiline"),
-        ("s", "Regex flag: dot matches all"),
-    ];
-
-    modifiers
+    data::MODIFIERS
         .iter()
         .filter(|(name, _)| name.starts_with(prefix))
         .map(|(name, doc)| CompletionItem {
@@ -155,42 +131,25 @@ fn modifier_completions(prefix: &str) -> Vec<CompletionItem> {
 }
 
 // =============================================================================
-// Tag completions (MITRE ATT&CK tactics)
+// Tag completions (MITRE ATT&CK tactics + common tags)
 // =============================================================================
 
 fn tag_completions(prefix: &str) -> Vec<CompletionItem> {
-    let tags: &[(&str, &str)] = &[
-        ("attack.initial_access", "Initial Access (TA0001)"),
-        ("attack.execution", "Execution (TA0002)"),
-        ("attack.persistence", "Persistence (TA0003)"),
-        (
-            "attack.privilege_escalation",
-            "Privilege Escalation (TA0004)",
-        ),
-        ("attack.defense_evasion", "Defense Evasion (TA0005)"),
-        ("attack.credential_access", "Credential Access (TA0006)"),
-        ("attack.discovery", "Discovery (TA0007)"),
-        ("attack.lateral_movement", "Lateral Movement (TA0008)"),
-        ("attack.collection", "Collection (TA0009)"),
-        ("attack.exfiltration", "Exfiltration (TA0010)"),
-        ("attack.command_and_control", "Command and Control (TA0011)"),
-        ("attack.impact", "Impact (TA0040)"),
-        (
-            "attack.resource_development",
-            "Resource Development (TA0042)",
-        ),
-        ("attack.reconnaissance", "Reconnaissance (TA0043)"),
+    /// Non-MITRE tags for completion.
+    const EXTRA_TAGS: &[(&str, &str)] = &[
         ("cve.", "CVE identifier (e.g. cve.2024.1234)"),
         ("detection.dfir", "DFIR detection"),
         ("detection.emerging_threats", "Emerging threats detection"),
         ("detection.threat_hunting", "Threat hunting detection"),
-        ("tlp.white", "TLP:WHITE — Unlimited disclosure"),
-        ("tlp.green", "TLP:GREEN — Community-wide"),
-        ("tlp.amber", "TLP:AMBER — Limited disclosure"),
-        ("tlp.red", "TLP:RED — Named recipients only"),
+        ("tlp.white", "TLP:WHITE \u{2014} Unlimited disclosure"),
+        ("tlp.green", "TLP:GREEN \u{2014} Community-wide"),
+        ("tlp.amber", "TLP:AMBER \u{2014} Limited disclosure"),
+        ("tlp.red", "TLP:RED \u{2014} Named recipients only"),
     ];
 
-    tags.iter()
+    data::MITRE_TACTICS
+        .iter()
+        .chain(EXTRA_TAGS.iter())
         .filter(|(tag, _)| tag.starts_with(prefix))
         .map(|(tag, doc)| CompletionItem {
             label: tag.to_string(),
@@ -400,50 +359,58 @@ fn value_completions(key: &str, prefix: &str) -> Option<Vec<CompletionItem>> {
 }
 
 // =============================================================================
-// Top-level key completions
+// Top-level key completions (with snippet placeholders)
 // =============================================================================
 
 fn top_level_key_completions(prefix: &str) -> Vec<CompletionItem> {
     let keys: &[(&str, &str, &str)] = &[
-        ("title", "title: ", "Rule title (required)"),
-        ("id", "id: ", "Unique UUID identifier"),
+        ("title", "title: $0", "Rule title (required)"),
+        ("id", "id: $0", "Unique UUID identifier"),
         (
             "related",
-            "related:\n    - id: \n      type: ",
+            "related:\n    - id: $1\n      type: $0",
             "Related rules",
         ),
-        ("status", "status: ", "Rule maturity status"),
-        ("description", "description: ", "Detailed description"),
-        ("references", "references:\n    - ", "External references"),
-        ("author", "author: ", "Rule author"),
-        ("date", "date: ", "Creation date (YYYY-MM-DD)"),
-        ("modified", "modified: ", "Last modified date (YYYY-MM-DD)"),
-        ("tags", "tags:\n    - ", "Classification tags"),
+        ("status", "status: $0", "Rule maturity status"),
+        ("description", "description: $0", "Detailed description"),
+        ("references", "references:\n    - $0", "External references"),
+        ("author", "author: $0", "Rule author"),
+        ("date", "date: $0", "Creation date (YYYY-MM-DD)"),
+        (
+            "modified",
+            "modified: $0",
+            "Last modified date (YYYY-MM-DD)",
+        ),
+        ("tags", "tags:\n    - $0", "Classification tags"),
         (
             "logsource",
-            "logsource:\n    category: \n    product: ",
+            "logsource:\n    category: $1\n    product: $0",
             "Log source definition",
         ),
         (
             "detection",
-            "detection:\n    selection:\n        : \n    condition: selection",
+            "detection:\n    ${1:selection}:\n        ${2:FieldName}: ${3:value}\n    condition: ${1:selection}$0",
             "Detection logic",
         ),
         (
             "falsepositives",
-            "falsepositives:\n    - ",
+            "falsepositives:\n    - $0",
             "Known false positives",
         ),
-        ("level", "level: ", "Severity level"),
-        ("fields", "fields:\n    - ", "Interesting fields to extract"),
+        ("level", "level: $0", "Severity level"),
+        (
+            "fields",
+            "fields:\n    - $0",
+            "Interesting fields to extract",
+        ),
         (
             "correlation",
-            "correlation:\n    type: \n    rules:\n        - \n    group-by:\n        - \n    timespan: \n    condition:\n        gte: ",
+            "correlation:\n    type: $1\n    rules:\n        - $2\n    group-by:\n        - $3\n    timespan: $4\n    condition:\n        gte: $0",
             "Correlation rule",
         ),
         (
             "filter",
-            "filter:\n    rules:\n        - \n    selection:\n        : \n    condition: selection",
+            "filter:\n    rules:\n        - $1\n    ${2:selection}:\n        ${3:FieldName}: ${4:value}\n    condition: ${2:selection}$0",
             "Filter rule",
         ),
     ];
@@ -455,7 +422,7 @@ fn top_level_key_completions(prefix: &str) -> Vec<CompletionItem> {
             kind: Some(CompletionItemKind::PROPERTY),
             detail: Some(doc.to_string()),
             insert_text: Some(snippet.to_string()),
-            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..Default::default()
         })
         .collect()
