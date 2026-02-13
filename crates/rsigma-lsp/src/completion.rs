@@ -20,12 +20,17 @@ pub fn complete(text: &str, position: Position) -> Vec<CompletionItem> {
     }
 
     let line = lines[line_idx];
-    let col = position.character as usize;
-    let prefix = if col <= line.len() {
-        &line[..col]
+    let col = (position.character as usize).min(line.len());
+    // Snap to char boundary to avoid panics on multi-byte UTF-8
+    let col = if line.is_char_boundary(col) {
+        col
     } else {
-        line
+        (0..col)
+            .rev()
+            .find(|&i| line.is_char_boundary(i))
+            .unwrap_or(0)
     };
+    let prefix = &line[..col];
 
     // Determine completion context
     let trimmed = prefix.trim_start();

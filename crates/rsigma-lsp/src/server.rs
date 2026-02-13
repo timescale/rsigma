@@ -33,7 +33,16 @@ impl SigmaLanguageServer {
 
     /// Re-lint a document and publish diagnostics.
     async fn publish_diagnostics(&self, uri: &Url, text: &str) {
-        let diags = diagnostics::diagnose(text);
+        let text = text.to_string();
+        let diags = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            diagnostics::diagnose(&text)
+        })) {
+            Ok(d) => d,
+            Err(_) => {
+                log::error!("panic in diagnostics::diagnose");
+                vec![]
+            }
+        };
         self.client
             .publish_diagnostics(uri.clone(), diags, None)
             .await;
@@ -147,7 +156,16 @@ impl LanguageServer for SigmaLanguageServer {
             return Ok(None);
         };
 
-        let items = completion::complete(&doc.text, position);
+        let text = doc.text.clone();
+        let items = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            completion::complete(&text, position)
+        })) {
+            Ok(items) => items,
+            Err(_) => {
+                log::error!("panic in completion::complete");
+                vec![]
+            }
+        };
         if items.is_empty() {
             Ok(None)
         } else {
@@ -166,7 +184,17 @@ impl LanguageServer for SigmaLanguageServer {
             return Ok(None);
         };
 
-        Ok(hover_at(&doc.text, position))
+        let text = doc.text.clone();
+        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            hover_at(&text, position)
+        })) {
+            Ok(r) => r,
+            Err(_) => {
+                log::error!("panic in hover_at");
+                None
+            }
+        };
+        Ok(result)
     }
 
     // ── Document symbols ────────────────────────────────────────────────
@@ -182,7 +210,17 @@ impl LanguageServer for SigmaLanguageServer {
             return Ok(None);
         };
 
-        let symbols = document_symbols(&doc.text);
+        let text = doc.text.clone();
+        let doc_uri = uri.clone();
+        let symbols = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            document_symbols(&text, &doc_uri)
+        })) {
+            Ok(s) => s,
+            Err(_) => {
+                log::error!("panic in document_symbols");
+                vec![]
+            }
+        };
         if symbols.is_empty() {
             Ok(None)
         } else {
@@ -224,22 +262,34 @@ fn hover_at(text: &str, position: Position) -> Option<Hover> {
     None
 }
 
-/// Extract the word at a given column position.
+/// Extract the word at a given column position (UTF-8 safe).
 fn word_at(line: &str, col: usize) -> Option<&str> {
-    if col > line.len() {
-        return None;
-    }
+    // LSP columns are UTF-16 offsets; approximate as byte offset but clamp
+    // to the nearest char boundary to avoid panics.
+    let col = col.min(line.len());
+
+    // Snap to nearest char boundary
+    let col = if line.is_char_boundary(col) {
+        col
+    } else {
+        // Walk backward to find a valid boundary
+        (0..col)
+            .rev()
+            .find(|&i| line.is_char_boundary(i))
+            .unwrap_or(0)
+    };
+
+    let is_word_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-';
 
     let bytes = line.as_bytes();
-    let is_word_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-';
 
     let mut start = col;
-    while start > 0 && is_word_char(bytes[start - 1]) {
+    while start > 0 && start <= bytes.len() && is_word_byte(bytes[start - 1]) {
         start -= 1;
     }
 
     let mut end = col;
-    while end < bytes.len() && is_word_char(bytes[end]) {
+    while end < bytes.len() && is_word_byte(bytes[end]) {
         end += 1;
     }
 
@@ -247,7 +297,12 @@ fn word_at(line: &str, col: usize) -> Option<&str> {
         return None;
     }
 
-    Some(&line[start..end])
+    // Final boundary check
+    if line.is_char_boundary(start) && line.is_char_boundary(end) {
+        Some(&line[start..end])
+    } else {
+        None
+    }
 }
 
 fn mitre_hover(word: &str) -> Option<String> {
@@ -330,14 +385,15 @@ fn modifier_hover(word: &str) -> Option<String> {
 // =============================================================================
 
 #[allow(deprecated)] // SymbolInformation::deprecated is itself deprecated
-fn document_symbols(text: &str) -> Vec<SymbolInformation> {
+fn document_symbols(text: &str, uri: &Url) -> Vec<SymbolInformation> {
     let mut symbols = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
 
     let make_loc = |i: usize, line: &str| {
         let pos = Position::new(i as u32, 0);
-        let range = Range::new(pos, Position::new(i as u32, line.len() as u32));
-        Location::new(Url::parse("file:///unknown").unwrap(), range)
+        let end_col = line.len().min(u32::MAX as usize) as u32;
+        let range = Range::new(pos, Position::new(i as u32, end_col));
+        Location::new(uri.clone(), range)
     };
 
     for (i, line) in lines.iter().enumerate() {
