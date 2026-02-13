@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, IsTerminal, Read};
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
@@ -10,8 +10,8 @@ use rsigma_eval::{
     parse_pipeline_file,
 };
 use rsigma_parser::lint::{self, FileLintResult};
-use serde::Deserialize;
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
+use serde::Deserialize;
 use serde_json_path::JsonPath;
 
 #[derive(Parser)]
@@ -80,6 +80,10 @@ enum Commands {
         /// Show details for all files, including those that pass
         #[arg(short, long)]
         verbose: bool,
+
+        /// Color output: auto (default), always, never
+        #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
+        color: String,
     },
 
     /// Evaluate events against Sigma rules
@@ -159,7 +163,8 @@ fn main() {
             path,
             schema,
             verbose,
-        } => cmd_lint(path, schema, verbose),
+            color,
+        } => cmd_lint(path, schema, verbose, &color),
         Commands::Condition { expr } => cmd_condition(expr),
         Commands::Stdin { pretty } => cmd_stdin(pretty),
         Commands::Eval {
@@ -274,7 +279,9 @@ fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
     }
 }
 
-fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool) {
+fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
+    let p = Painter::new(color);
+
     // 1. Run built-in lint checks
     let results: Vec<FileLintResult> = if path.is_dir() {
         match lint::lint_yaml_directory(&path) {
@@ -303,7 +310,7 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool) {
         merge_schema_results(&mut all_results, sr);
     }
 
-    // 4. Print results
+    // 4. Render results
     let mut total_files = 0usize;
     let mut failed_files = 0usize;
     let mut total_errors = 0usize;
@@ -318,20 +325,57 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool) {
 
         if result.warnings.is_empty() {
             if verbose {
-                println!("{}: OK", result.path.display());
+                println!(
+                    "{} {}",
+                    p.bold(&result.path.display().to_string()),
+                    p.green("OK"),
+                );
             }
         } else {
             failed_files += 1;
-            println!("{}:", result.path.display());
+            // File header
+            println!("{}", p.bold(&result.path.display().to_string()));
             for w in &result.warnings {
-                println!("  {w}");
+                render_lint_warning(w, &p);
             }
+            println!(); // blank line between file blocks
         }
     }
 
+    // 5. Summary
     let passed = total_files - failed_files;
+    let separator = "─".repeat(60);
+    println!("{}", p.dim(&separator));
+
+    let passed_str = format!("{passed} passed");
+    let failed_str = format!("{failed_files} failed");
+    let errors_str = format!("{total_errors} error(s)");
+    let warnings_str = format!("{total_warnings} warning(s)");
+
+    let passed_colored = if passed > 0 {
+        p.green_bold(&passed_str)
+    } else {
+        p.dim(&passed_str)
+    };
+    let failed_colored = if failed_files > 0 {
+        p.red_bold(&failed_str)
+    } else {
+        p.dim(&failed_str)
+    };
+    let errors_colored = if total_errors > 0 {
+        p.red(&errors_str)
+    } else {
+        p.dim(&errors_str)
+    };
+    let warnings_colored = if total_warnings > 0 {
+        p.yellow(&warnings_str)
+    } else {
+        p.dim(&warnings_str)
+    };
+
     println!(
-        "\nSummary: {passed} passed, {failed_files} failed ({total_errors} error(s), {total_warnings} warning(s))"
+        "Checked {} file(s): {}, {} ({}, {})",
+        total_files, passed_colored, failed_colored, errors_colored, warnings_colored,
     );
 
     if total_errors > 0 {
@@ -339,13 +383,21 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool) {
     }
 }
 
+fn render_lint_warning(w: &lint::LintWarning, p: &Painter) {
+    let (severity_label, rule_bracket) = match w.severity {
+        lint::Severity::Error => (p.red_bold("error"), p.red(&format!("[{}]", w.rule))),
+        lint::Severity::Warning => (p.yellow_bold("warning"), p.yellow(&format!("[{}]", w.rule))),
+    };
+    println!("  {}{}: {}", severity_label, rule_bracket, w.message,);
+    println!("    {} {}", p.cyan("-->"), p.cyan(&w.path));
+}
+
 // ---------------------------------------------------------------------------
 // JSON Schema validation
 // ---------------------------------------------------------------------------
 
 /// Official Sigma detection rule schema URL.
-const SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/SigmaHQ/sigma-specification/main/json-schema/sigma-detection-rule-schema.json";
+const SCHEMA_URL: &str = "https://raw.githubusercontent.com/SigmaHQ/sigma-specification/main/json-schema/sigma-detection-rule-schema.json";
 
 /// Cache freshness duration: 7 days in seconds.
 const CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
@@ -376,28 +428,27 @@ fn resolve_default_schema() -> String {
 
     // Check if cached copy is fresh
     if let Ok(meta) = std::fs::metadata(&cache_path)
-        && let Ok(modified) = meta.modified() {
-            let age = SystemTime::now()
-                .duration_since(modified)
-                .unwrap_or_default();
-            if age.as_secs() < CACHE_MAX_AGE_SECS
-                && let Ok(content) = std::fs::read_to_string(&cache_path) {
-                    eprintln!("Using cached schema: {}", cache_path.display());
-                    return content;
-                }
+        && let Ok(modified) = meta.modified()
+    {
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default();
+        if age.as_secs() < CACHE_MAX_AGE_SECS
+            && let Ok(content) = std::fs::read_to_string(&cache_path)
+        {
+            eprintln!("Using cached schema: {}", cache_path.display());
+            return content;
         }
+    }
 
     // Download
     eprintln!("Downloading schema from {SCHEMA_URL}...");
     match ureq::get(SCHEMA_URL).call() {
         Ok(response) => {
-            let body = response
-                .into_body()
-                .read_to_string()
-                .unwrap_or_else(|e| {
-                    eprintln!("Error reading schema response: {e}");
-                    process::exit(1);
-                });
+            let body = response.into_body().read_to_string().unwrap_or_else(|e| {
+                eprintln!("Error reading schema response: {e}");
+                process::exit(1);
+            });
 
             // Cache it
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
@@ -413,9 +464,7 @@ fn resolve_default_schema() -> String {
         Err(e) => {
             // Offline fallback: use stale cache if available
             if let Ok(content) = std::fs::read_to_string(&cache_path) {
-                eprintln!(
-                    "Warning: schema download failed ({e}), using stale cache"
-                );
+                eprintln!("Warning: schema download failed ({e}), using stale cache");
                 content
             } else {
                 eprintln!("Error downloading schema: {e}");
@@ -436,11 +485,10 @@ fn run_schema_validation(path: &std::path::Path, schema_arg: &str) -> Vec<FileLi
         }
     };
 
-    let validator = jsonschema::validator_for(&schema_value)
-        .unwrap_or_else(|e| {
-            eprintln!("Error compiling JSON schema: {e}");
-            process::exit(1);
-        });
+    let validator = jsonschema::validator_for(&schema_value).unwrap_or_else(|e| {
+        eprintln!("Error compiling JSON schema: {e}");
+        process::exit(1);
+    });
 
     let mut results = Vec::new();
 
@@ -457,10 +505,7 @@ fn run_schema_validation(path: &std::path::Path, schema_arg: &str) -> Vec<FileLi
                 let p = entry.path();
                 if p.is_dir() {
                     walk_schema(&p, validator, results);
-                } else if matches!(
-                    p.extension().and_then(|e| e.to_str()),
-                    Some("yml" | "yaml")
-                ) {
+                } else if matches!(p.extension().and_then(|e| e.to_str()), Some("yml" | "yaml")) {
                     results.push(validate_file_against_schema(&p, validator));
                 }
             }
@@ -506,9 +551,10 @@ fn validate_file_against_schema(
             && let Some(action) = m
                 .get(serde_yaml::Value::String("action".into()))
                 .and_then(|v| v.as_str())
-                && matches!(action, "global" | "reset" | "repeat") {
-                    continue;
-                }
+            && matches!(action, "global" | "reset" | "repeat")
+        {
+            continue;
+        }
 
         // Convert YAML to JSON for schema validation
         let json_str = match serde_json::to_string(&yaml_value) {
@@ -1047,6 +1093,70 @@ fn val_to_json(val: Val) -> Option<serde_json::Value> {
                 .collect();
             Some(serde_json::Value::Object(map))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terminal color support
+// ---------------------------------------------------------------------------
+
+/// ANSI color painter that respects `--color`, `NO_COLOR`, and tty detection.
+struct Painter {
+    enabled: bool,
+}
+
+impl Painter {
+    fn new(color_arg: &str) -> Self {
+        let enabled = match color_arg {
+            "always" => true,
+            "never" => false,
+            _ => io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        };
+        Painter { enabled }
+    }
+
+    fn paint(&self, code: &str, text: &str) -> String {
+        if self.enabled {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn bold(&self, s: &str) -> String {
+        self.paint("1", s)
+    }
+
+    fn dim(&self, s: &str) -> String {
+        self.paint("2", s)
+    }
+
+    fn red(&self, s: &str) -> String {
+        self.paint("31", s)
+    }
+
+    fn red_bold(&self, s: &str) -> String {
+        self.paint("1;31", s)
+    }
+
+    fn green(&self, s: &str) -> String {
+        self.paint("32", s)
+    }
+
+    fn green_bold(&self, s: &str) -> String {
+        self.paint("1;32", s)
+    }
+
+    fn yellow(&self, s: &str) -> String {
+        self.paint("33", s)
+    }
+
+    fn yellow_bold(&self, s: &str) -> String {
+        self.paint("1;33", s)
+    }
+
+    fn cyan(&self, s: &str) -> String {
+        self.paint("36", s)
     }
 }
 

@@ -242,7 +242,12 @@ fn get_seq<'a>(m: &'a serde_yaml::Mapping, k: &str) -> Option<&'a serde_yaml::Se
     m.get(key(k)).and_then(|v| v.as_sequence())
 }
 
-fn warn(rule: LintRule, severity: Severity, message: impl Into<String>, path: impl Into<String>) -> LintWarning {
+fn warn(
+    rule: LintRule,
+    severity: Severity,
+    message: impl Into<String>,
+    path: impl Into<String>,
+) -> LintWarning {
     LintWarning {
         rule,
         severity,
@@ -284,23 +289,32 @@ fn is_valid_uuid(s: &str) -> bool {
         return false;
     }
     let expected_lens = [8, 4, 4, 4, 12];
-    parts.iter().zip(expected_lens.iter()).all(|(part, &len)| {
-        part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
-    })
+    parts
+        .iter()
+        .zip(expected_lens.iter())
+        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Check if a logsource value is lowercase with valid chars.
 fn is_valid_logsource_value(s: &str) -> bool {
     !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' || c == '-')
+        && s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' || c == '-'
+        })
 }
 
 /// Known tag namespaces from the spec.
-const KNOWN_TAG_NAMESPACES: &[&str] = &["attack", "car", "cve", "d3fend", "detection", "stp", "tlp"];
+const KNOWN_TAG_NAMESPACES: &[&str] =
+    &["attack", "car", "cve", "d3fend", "detection", "stp", "tlp"];
 
 /// Valid status values.
-const VALID_STATUSES: &[&str] = &["stable", "test", "experimental", "deprecated", "unsupported"];
+const VALID_STATUSES: &[&str] = &[
+    "stable",
+    "test",
+    "experimental",
+    "deprecated",
+    "unsupported",
+];
 
 /// Valid level values.
 const VALID_LEVELS: &[&str] = &["informational", "low", "medium", "high", "critical"];
@@ -332,12 +346,8 @@ const TYPES_REQUIRING_CONDITION: &[&str] = &[
 ];
 
 /// Correlation types that require condition.field.
-const TYPES_REQUIRING_FIELD: &[&str] = &[
-    "value_count",
-    "value_sum",
-    "value_avg",
-    "value_percentile",
-];
+const TYPES_REQUIRING_FIELD: &[&str] =
+    &["value_count", "value_sum", "value_avg", "value_percentile"];
 
 /// Tag pattern: `^[a-z0-9_-]+\.[a-z0-9._-]+$`
 fn is_valid_tag(s: &str) -> bool {
@@ -350,9 +360,9 @@ fn is_valid_tag(s: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
     let rest_ok = !parts[1].is_empty()
-        && parts[1]
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-');
+        && parts[1].chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
+        });
     ns_ok && rest_ok
 }
 
@@ -391,7 +401,11 @@ fn is_action_fragment(m: &serde_yaml::Mapping) -> bool {
 fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     // ── title ────────────────────────────────────────────────────────────
     match get_str(m, "title") {
-        None => warnings.push(err(LintRule::MissingTitle, "missing required field 'title'", "/title")),
+        None => warnings.push(err(
+            LintRule::MissingTitle,
+            "missing required field 'title'",
+            "/title",
+        )),
         Some(t) if t.len() > 256 => {
             warnings.push(warning(
                 LintRule::TitleTooLong,
@@ -404,125 +418,140 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 
     // ── id ───────────────────────────────────────────────────────────────
     if let Some(id) = get_str(m, "id")
-        && !is_valid_uuid(id) {
-            warnings.push(warning(
-                LintRule::InvalidId,
-                format!("id \"{id}\" is not a valid UUID"),
-                "/id",
-            ));
-        }
+        && !is_valid_uuid(id)
+    {
+        warnings.push(warning(
+            LintRule::InvalidId,
+            format!("id \"{id}\" is not a valid UUID"),
+            "/id",
+        ));
+    }
 
     // ── status ───────────────────────────────────────────────────────────
     if let Some(status) = get_str(m, "status")
-        && !VALID_STATUSES.contains(&status) {
-            warnings.push(err(
-                LintRule::InvalidStatus,
-                format!(
-                    "invalid status \"{status}\", expected one of: {}",
-                    VALID_STATUSES.join(", ")
-                ),
-                "/status",
-            ));
-        }
+        && !VALID_STATUSES.contains(&status)
+    {
+        warnings.push(err(
+            LintRule::InvalidStatus,
+            format!(
+                "invalid status \"{status}\", expected one of: {}",
+                VALID_STATUSES.join(", ")
+            ),
+            "/status",
+        ));
+    }
 
     // ── level ────────────────────────────────────────────────────────────
     if let Some(level) = get_str(m, "level")
-        && !VALID_LEVELS.contains(&level) {
-            warnings.push(err(
-                LintRule::InvalidLevel,
-                format!(
-                    "invalid level \"{level}\", expected one of: {}",
-                    VALID_LEVELS.join(", ")
-                ),
-                "/level",
-            ));
-        }
+        && !VALID_LEVELS.contains(&level)
+    {
+        warnings.push(err(
+            LintRule::InvalidLevel,
+            format!(
+                "invalid level \"{level}\", expected one of: {}",
+                VALID_LEVELS.join(", ")
+            ),
+            "/level",
+        ));
+    }
 
     // ── date ─────────────────────────────────────────────────────────────
     if let Some(raw) = m.get(key("date")) {
         // serde_yaml may parse dates as dates, coerce to string
         let date_str = raw.as_str().map(|s| s.to_string()).or_else(|| {
             // serde_yaml sometimes deserialises YYYY-MM-DD as a tagged string
-            serde_yaml::to_string(raw).ok().map(|s| s.trim().to_string())
+            serde_yaml::to_string(raw)
+                .ok()
+                .map(|s| s.trim().to_string())
         });
         if let Some(d) = date_str
-            && !is_valid_date(&d) {
-                warnings.push(err(
-                    LintRule::InvalidDate,
-                    format!("invalid date \"{d}\", expected YYYY-MM-DD"),
-                    "/date",
-                ));
-            }
+            && !is_valid_date(&d)
+        {
+            warnings.push(err(
+                LintRule::InvalidDate,
+                format!("invalid date \"{d}\", expected YYYY-MM-DD"),
+                "/date",
+            ));
+        }
     }
 
     // ── modified ─────────────────────────────────────────────────────────
     if let Some(raw) = m.get(key("modified")) {
         let mod_str = raw.as_str().map(|s| s.to_string()).or_else(|| {
-            serde_yaml::to_string(raw).ok().map(|s| s.trim().to_string())
+            serde_yaml::to_string(raw)
+                .ok()
+                .map(|s| s.trim().to_string())
         });
         if let Some(d) = mod_str
-            && !is_valid_date(&d) {
-                warnings.push(err(
-                    LintRule::InvalidModified,
-                    format!("invalid modified date \"{d}\", expected YYYY-MM-DD"),
-                    "/modified",
-                ));
-            }
+            && !is_valid_date(&d)
+        {
+            warnings.push(err(
+                LintRule::InvalidModified,
+                format!("invalid modified date \"{d}\", expected YYYY-MM-DD"),
+                "/modified",
+            ));
+        }
     }
 
     // ── modified >= date ─────────────────────────────────────────────────
     if let (Some(date_val), Some(mod_val)) = (
         m.get(key("date")).and_then(|v| v.as_str()),
         m.get(key("modified")).and_then(|v| v.as_str()),
-    )
-        && is_valid_date(date_val) && is_valid_date(mod_val) && mod_val < date_val {
-            warnings.push(warning(
-                LintRule::ModifiedBeforeDate,
-                format!("modified date \"{mod_val}\" is before creation date \"{date_val}\""),
-                "/modified",
-            ));
-        }
+    ) && is_valid_date(date_val)
+        && is_valid_date(mod_val)
+        && mod_val < date_val
+    {
+        warnings.push(warning(
+            LintRule::ModifiedBeforeDate,
+            format!("modified date \"{mod_val}\" is before creation date \"{date_val}\""),
+            "/modified",
+        ));
+    }
 
     // ── description ──────────────────────────────────────────────────────
     if let Some(desc) = get_str(m, "description")
-        && desc.len() > 65535 {
-            warnings.push(warning(
-                LintRule::DescriptionTooLong,
-                format!("description is {} characters, maximum is 65535", desc.len()),
-                "/description",
-            ));
-        }
+        && desc.len() > 65535
+    {
+        warnings.push(warning(
+            LintRule::DescriptionTooLong,
+            format!("description is {} characters, maximum is 65535", desc.len()),
+            "/description",
+        ));
+    }
 
     // ── name ─────────────────────────────────────────────────────────────
     if let Some(name) = get_str(m, "name")
-        && name.len() > 256 {
-            warnings.push(warning(
-                LintRule::NameTooLong,
-                format!("name is {} characters, maximum is 256", name.len()),
-                "/name",
-            ));
-        }
+        && name.len() > 256
+    {
+        warnings.push(warning(
+            LintRule::NameTooLong,
+            format!("name is {} characters, maximum is 256", name.len()),
+            "/name",
+        ));
+    }
 
     // ── taxonomy ─────────────────────────────────────────────────────────
     if let Some(tax) = get_str(m, "taxonomy")
-        && tax.len() > 256 {
-            warnings.push(warning(
-                LintRule::TaxonomyTooLong,
-                format!("taxonomy is {} characters, maximum is 256", tax.len()),
-                "/taxonomy",
-            ));
-        }
+        && tax.len() > 256
+    {
+        warnings.push(warning(
+            LintRule::TaxonomyTooLong,
+            format!("taxonomy is {} characters, maximum is 256", tax.len()),
+            "/taxonomy",
+        ));
+    }
 
     // ── lowercase keys ───────────────────────────────────────────────────
     for k in m.keys() {
         if let Some(ks) = k.as_str()
-            && ks != ks.to_ascii_lowercase() {
-                warnings.push(warning(
-                    LintRule::NonLowercaseKey,
-                    format!("key \"{ks}\" should be lowercase"),
-                    format!("/{ks}"),
-                ));
-            }
+            && ks != ks.to_ascii_lowercase()
+        {
+            warnings.push(warning(
+                LintRule::NonLowercaseKey,
+                format!("key \"{ks}\" should be lowercase"),
+                format!("/{ks}"),
+            ));
+        }
     }
 }
 
@@ -597,25 +626,27 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
                 }
 
                 if let Some(id) = get_str(item_map, "id")
-                    && !is_valid_uuid(id) {
-                        warnings.push(warning(
-                            LintRule::InvalidRelatedId,
-                            format!("related id \"{id}\" is not a valid UUID"),
-                            format!("{path_prefix}/id"),
-                        ));
-                    }
+                    && !is_valid_uuid(id)
+                {
+                    warnings.push(warning(
+                        LintRule::InvalidRelatedId,
+                        format!("related id \"{id}\" is not a valid UUID"),
+                        format!("{path_prefix}/id"),
+                    ));
+                }
 
                 if let Some(type_val) = get_str(item_map, "type")
-                    && !VALID_RELATED_TYPES.contains(&type_val) {
-                        warnings.push(err(
-                            LintRule::InvalidRelatedType,
-                            format!(
-                                "invalid related type \"{type_val}\", expected one of: {}",
-                                VALID_RELATED_TYPES.join(", ")
-                            ),
-                            format!("{path_prefix}/type"),
-                        ));
-                    }
+                    && !VALID_RELATED_TYPES.contains(&type_val)
+                {
+                    warnings.push(err(
+                        LintRule::InvalidRelatedType,
+                        format!(
+                            "invalid related type \"{type_val}\", expected one of: {}",
+                            VALID_RELATED_TYPES.join(", ")
+                        ),
+                        format!("{path_prefix}/type"),
+                    ));
+                }
             }
         }
     }
@@ -650,16 +681,17 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
                 } else {
                     // Check known namespace
                     if let Some(ns) = tag.split('.').next()
-                        && !KNOWN_TAG_NAMESPACES.contains(&ns) {
-                            warnings.push(warning(
-                                LintRule::UnknownTagNamespace,
-                                format!(
-                                    "unknown tag namespace \"{ns}\", known namespaces: {}",
-                                    KNOWN_TAG_NAMESPACES.join(", ")
-                                ),
-                                format!("/tags/{i}"),
-                            ));
-                        }
+                        && !KNOWN_TAG_NAMESPACES.contains(&ns)
+                    {
+                        warnings.push(warning(
+                            LintRule::UnknownTagNamespace,
+                            format!(
+                                "unknown tag namespace \"{ns}\", known namespaces: {}",
+                                KNOWN_TAG_NAMESPACES.join(", ")
+                            ),
+                            format!("/tags/{i}"),
+                        ));
+                    }
                 }
 
                 if !seen_tags.insert(tag.to_string()) {
@@ -678,13 +710,14 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
         let mut seen: HashSet<String> = HashSet::new();
         for (i, r) in refs.iter().enumerate() {
             if let Some(s) = r.as_str()
-                && !seen.insert(s.to_string()) {
-                    warnings.push(warning(
-                        LintRule::DuplicateReferences,
-                        format!("duplicate reference \"{s}\""),
-                        format!("/references/{i}"),
-                    ));
-                }
+                && !seen.insert(s.to_string())
+            {
+                warnings.push(warning(
+                    LintRule::DuplicateReferences,
+                    format!("duplicate reference \"{s}\""),
+                    format!("/references/{i}"),
+                ));
+            }
         }
     }
 
@@ -693,13 +726,14 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
         let mut seen: HashSet<String> = HashSet::new();
         for (i, f) in fields.iter().enumerate() {
             if let Some(s) = f.as_str()
-                && !seen.insert(s.to_string()) {
-                    warnings.push(warning(
-                        LintRule::DuplicateFields,
-                        format!("duplicate field \"{s}\""),
-                        format!("/fields/{i}"),
-                    ));
-                }
+                && !seen.insert(s.to_string())
+            {
+                warnings.push(warning(
+                    LintRule::DuplicateFields,
+                    format!("duplicate field \"{s}\""),
+                    format!("/fields/{i}"),
+                ));
+            }
         }
     }
 
@@ -707,13 +741,14 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
     if let Some(fps) = get_seq(m, "falsepositives") {
         for (i, fp) in fps.iter().enumerate() {
             if let Some(s) = fp.as_str()
-                && s.len() < 2 {
-                    warnings.push(warning(
-                        LintRule::FalsepositiveTooShort,
-                        format!("falsepositive entry \"{s}\" must be at least 2 characters"),
-                        format!("/falsepositives/{i}"),
-                    ));
-                }
+                && s.len() < 2
+            {
+                warnings.push(warning(
+                    LintRule::FalsepositiveTooShort,
+                    format!("falsepositive entry \"{s}\" must be at least 2 characters"),
+                    format!("/falsepositives/{i}"),
+                ));
+            }
         }
     }
 
@@ -721,13 +756,14 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
     if let Some(scope) = get_seq(m, "scope") {
         for (i, s_val) in scope.iter().enumerate() {
             if let Some(s) = s_val.as_str()
-                && s.len() < 2 {
-                    warnings.push(warning(
-                        LintRule::ScopeTooShort,
-                        format!("scope entry \"{s}\" must be at least 2 characters"),
-                        format!("/scope/{i}"),
-                    ));
-                }
+                && s.len() < 2
+            {
+                warnings.push(warning(
+                    LintRule::ScopeTooShort,
+                    format!("scope entry \"{s}\" must be at least 2 characters"),
+                    format!("/scope/{i}"),
+                ));
+            }
         }
     }
 }
@@ -736,15 +772,14 @@ fn lint_logsource(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     if let Some(ls) = get_mapping(m, "logsource") {
         for field in &["category", "product", "service"] {
             if let Some(val) = get_str(ls, field)
-                && !is_valid_logsource_value(val) {
-                    warnings.push(warning(
-                        LintRule::LogsourceValueNotLowercase,
-                        format!(
-                            "logsource {field} \"{val}\" should be lowercase (a-z, 0-9, _, ., -)"
-                        ),
-                        format!("/logsource/{field}"),
-                    ));
-                }
+                && !is_valid_logsource_value(val)
+            {
+                warnings.push(warning(
+                    LintRule::LogsourceValueNotLowercase,
+                    format!("logsource {field} \"{val}\" should be lowercase (a-z, 0-9, _, ., -)"),
+                    format!("/logsource/{field}"),
+                ));
+            }
         }
     }
 }
@@ -869,13 +904,14 @@ fn lint_correlation_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning
     // ── rules ────────────────────────────────────────────────────────────
     if let Some(rules) = corr.get(key("rules")) {
         if let Some(seq) = rules.as_sequence()
-            && seq.is_empty() {
-                warnings.push(warning(
-                    LintRule::EmptyCorrelationRules,
-                    "correlation.rules should not be empty",
-                    "/correlation/rules",
-                ));
-            }
+            && seq.is_empty()
+        {
+            warnings.push(warning(
+                LintRule::EmptyCorrelationRules,
+                "correlation.rules should not be empty",
+                "/correlation/rules",
+            ));
+        }
     } else {
         warnings.push(err(
             LintRule::MissingCorrelationRules,
@@ -930,13 +966,14 @@ fn lint_correlation_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning
 
     // ── generate ─────────────────────────────────────────────────────────
     if let Some(gen_val) = corr.get(key("generate"))
-        && !gen_val.is_bool() {
-            warnings.push(err(
-                LintRule::GenerateNotBoolean,
-                "'generate' must be a boolean (true/false)",
-                "/correlation/generate",
-            ));
-        }
+        && !gen_val.is_bool()
+    {
+        warnings.push(err(
+            LintRule::GenerateNotBoolean,
+            "'generate' must be a boolean (true/false)",
+            "/correlation/generate",
+        ));
+    }
 }
 
 fn lint_correlation_condition(
@@ -1017,13 +1054,14 @@ fn lint_filter_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     // ── filter.rules ─────────────────────────────────────────────────────
     if let Some(rules_val) = filter.get(key("rules")) {
         if let Some(seq) = rules_val.as_sequence()
-            && seq.is_empty() {
-                warnings.push(warning(
-                    LintRule::EmptyFilterRules,
-                    "filter.rules should have at least one entry",
-                    "/filter/rules",
-                ));
-            }
+            && seq.is_empty()
+        {
+            warnings.push(warning(
+                LintRule::EmptyFilterRules,
+                "filter.rules should have at least one entry",
+                "/filter/rules",
+            ));
+        }
     } else {
         warnings.push(err(
             LintRule::MissingFilterRules,
