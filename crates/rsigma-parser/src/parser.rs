@@ -41,7 +41,10 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
             Ok(v) => v,
             Err(e) => {
                 collection.errors.push(format!("YAML parse error: {e}"));
-                continue;
+                // A parse error leaves the YAML stream in an undefined state;
+                // the deserializer iterator may never terminate on malformed
+                // input, so we must stop iterating.
+                break;
             }
         };
 

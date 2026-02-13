@@ -19,11 +19,12 @@
 //! }
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
+use std::sync::LazyLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 // =============================================================================
@@ -31,7 +32,7 @@ use serde_yaml::Value;
 // =============================================================================
 
 /// Severity of a lint finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Severity {
     /// Spec violation — the rule is invalid.
     Error,
@@ -49,13 +50,21 @@ impl fmt::Display for Severity {
 }
 
 /// Identifies which lint rule fired.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum LintRule {
+    // ── Infrastructure / parse errors ────────────────────────────────────
+    YamlParseError,
+    NotAMapping,
+    FileReadError,
+    SchemaViolation,
+
     // ── Shared (all document types) ──────────────────────────────────────
     MissingTitle,
+    EmptyTitle,
     TitleTooLong,
     InvalidId,
     InvalidStatus,
+    MissingLevel,
     InvalidLevel,
     InvalidDate,
     InvalidModified,
@@ -82,6 +91,7 @@ pub enum LintRule {
     FalsepositiveTooShort,
     ScopeTooShort,
     LogsourceValueNotLowercase,
+    ConditionReferencesUnknown,
 
     // ── Correlation rules ────────────────────────────────────────────────
     MissingCorrelation,
@@ -111,15 +121,24 @@ pub enum LintRule {
     // ── Detection logic (cross-cutting) ──────────────────────────────────
     NullInValueList,
     SingleValueAllModifier,
+    EmptyValueList,
+    WildcardOnlyValue,
+    UnknownKey,
 }
 
 impl fmt::Display for LintRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
+            LintRule::YamlParseError => "yaml_parse_error",
+            LintRule::NotAMapping => "not_a_mapping",
+            LintRule::FileReadError => "file_read_error",
+            LintRule::SchemaViolation => "schema_violation",
             LintRule::MissingTitle => "missing_title",
+            LintRule::EmptyTitle => "empty_title",
             LintRule::TitleTooLong => "title_too_long",
             LintRule::InvalidId => "invalid_id",
             LintRule::InvalidStatus => "invalid_status",
+            LintRule::MissingLevel => "missing_level",
             LintRule::InvalidLevel => "invalid_level",
             LintRule::InvalidDate => "invalid_date",
             LintRule::InvalidModified => "invalid_modified",
@@ -144,6 +163,7 @@ impl fmt::Display for LintRule {
             LintRule::FalsepositiveTooShort => "falsepositive_too_short",
             LintRule::ScopeTooShort => "scope_too_short",
             LintRule::LogsourceValueNotLowercase => "logsource_value_not_lowercase",
+            LintRule::ConditionReferencesUnknown => "condition_references_unknown",
             LintRule::MissingCorrelation => "missing_correlation",
             LintRule::MissingCorrelationType => "missing_correlation_type",
             LintRule::InvalidCorrelationType => "invalid_correlation_type",
@@ -167,6 +187,9 @@ impl fmt::Display for LintRule {
             LintRule::MissingFilterLogsource => "missing_filter_logsource",
             LintRule::NullInValueList => "null_in_value_list",
             LintRule::SingleValueAllModifier => "single_value_all_modifier",
+            LintRule::EmptyValueList => "empty_value_list",
+            LintRule::WildcardOnlyValue => "wildcard_only_value",
+            LintRule::UnknownKey => "unknown_key",
         };
         write!(f, "{s}")
     }
@@ -177,7 +200,7 @@ impl fmt::Display for LintRule {
 /// Used by the LSP layer to avoid re-resolving JSON-pointer paths to
 /// source positions. When the lint is produced from raw `serde_yaml::Value`
 /// (which has no source positions), `span` will be `None`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Span {
     /// 0-indexed start line.
     pub start_line: u32,
@@ -190,7 +213,7 @@ pub struct Span {
 }
 
 /// A single lint finding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LintWarning {
     /// Which lint rule fired.
     pub rule: LintRule,
@@ -217,7 +240,7 @@ impl fmt::Display for LintWarning {
 }
 
 /// Result of linting a single file (may contain multiple YAML documents).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FileLintResult {
     pub path: std::path::PathBuf,
     pub warnings: Vec<LintWarning>,
@@ -247,8 +270,52 @@ impl FileLintResult {
 // Helpers
 // =============================================================================
 
-fn key(s: &str) -> Value {
-    Value::String(s.to_string())
+/// Pre-cached `Value::String` keys to avoid per-call allocations when
+/// looking up fields in `serde_yaml::Mapping`.
+static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
+    [
+        "action",
+        "category",
+        "condition",
+        "correlation",
+        "date",
+        "description",
+        "detection",
+        "falsepositives",
+        "field",
+        "fields",
+        "filter",
+        "generate",
+        "group-by",
+        "id",
+        "level",
+        "logsource",
+        "modified",
+        "name",
+        "product",
+        "references",
+        "related",
+        "rules",
+        "scope",
+        "selection",
+        "service",
+        "status",
+        "tags",
+        "taxonomy",
+        "timeframe",
+        "timespan",
+        "title",
+        "type",
+    ]
+    .into_iter()
+    .map(|n| (n, Value::String(n.into())))
+    .collect()
+});
+
+fn key(s: &str) -> &'static Value {
+    KEY_CACHE
+        .get(s)
+        .unwrap_or_else(|| panic!("lint key not pre-cached: \"{s}\" — add it to KEY_CACHE"))
 }
 
 fn get_str<'a>(m: &'a serde_yaml::Mapping, k: &str) -> Option<&'a str> {
@@ -286,7 +353,7 @@ fn warning(rule: LintRule, message: impl Into<String>, path: impl Into<String>) 
     warn(rule, Severity::Warning, message, path)
 }
 
-/// Validate a date string matches YYYY-MM-DD.
+/// Validate a date string matches YYYY-MM-DD with correct day-of-month.
 fn is_valid_date(s: &str) -> bool {
     if s.len() != 10 {
         return false;
@@ -296,9 +363,38 @@ fn is_valid_date(s: &str) -> bool {
         return false;
     }
     let year_ok = bytes[0..4].iter().all(|b| b.is_ascii_digit());
+    let year: u16 = s[0..4].parse().unwrap_or(0);
     let month: u8 = s[5..7].parse().unwrap_or(0);
     let day: u8 = s[8..10].parse().unwrap_or(0);
-    year_ok && (1..=12).contains(&month) && (1..=31).contains(&day)
+    if !year_ok || !(1..=12).contains(&month) || day == 0 {
+        return false;
+    }
+    let is_leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return false,
+    };
+    day <= max_day
+}
+
+/// Extract a date string from a YAML value, handling serde_yaml auto-parsing.
+///
+/// `serde_yaml` sometimes deserialises `YYYY-MM-DD` as a tagged/non-string
+/// type. This helper coerces such values back to a trimmed string.
+fn extract_date_string(raw: &Value) -> Option<String> {
+    raw.as_str().map(|s| s.to_string()).or_else(|| {
+        serde_yaml::to_string(raw)
+            .ok()
+            .map(|s| s.trim().to_string())
+    })
 }
 
 /// Validate a UUID string (any version, hyphenated form).
@@ -371,6 +467,40 @@ const TYPES_REQUIRING_CONDITION: &[&str] = &[
 const TYPES_REQUIRING_FIELD: &[&str] =
     &["value_count", "value_sum", "value_avg", "value_percentile"];
 
+/// Known top-level keys shared across all Sigma document types.
+const KNOWN_KEYS_SHARED: &[&str] = &[
+    "title",
+    "id",
+    "name",
+    "status",
+    "description",
+    "author",
+    "date",
+    "modified",
+    "related",
+    "taxonomy",
+    "action",
+    "license",
+    "references",
+    "tags",
+];
+
+/// Extra top-level keys valid for detection rules.
+const KNOWN_KEYS_DETECTION: &[&str] = &[
+    "logsource",
+    "detection",
+    "fields",
+    "falsepositives",
+    "level",
+    "scope",
+];
+
+/// Extra top-level keys valid for correlation rules.
+const KNOWN_KEYS_CORRELATION: &[&str] = &["correlation", "level", "generate"];
+
+/// Extra top-level keys valid for filter rules.
+const KNOWN_KEYS_FILTER: &[&str] = &["logsource", "filter"];
+
 /// Tag pattern: `^[a-z0-9_-]+\.[a-z0-9._-]+$`
 fn is_valid_tag(s: &str) -> bool {
     let parts: Vec<&str> = s.splitn(2, '.').collect();
@@ -397,6 +527,16 @@ enum DocType {
     Detection,
     Correlation,
     Filter,
+}
+
+impl DocType {
+    fn known_keys(&self) -> &'static [&'static str] {
+        match self {
+            DocType::Detection => KNOWN_KEYS_DETECTION,
+            DocType::Correlation => KNOWN_KEYS_CORRELATION,
+            DocType::Filter => KNOWN_KEYS_FILTER,
+        }
+    }
 }
 
 fn detect_doc_type(m: &serde_yaml::Mapping) -> DocType {
@@ -428,6 +568,13 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
             "missing required field 'title'",
             "/title",
         )),
+        Some(t) if t.trim().is_empty() => {
+            warnings.push(err(
+                LintRule::EmptyTitle,
+                "title must not be empty",
+                "/title",
+            ));
+        }
         Some(t) if t.len() > 256 => {
             warnings.push(warning(
                 LintRule::TitleTooLong,
@@ -478,50 +625,34 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     }
 
     // ── date ─────────────────────────────────────────────────────────────
-    if let Some(raw) = m.get(key("date")) {
-        // serde_yaml may parse dates as dates, coerce to string
-        let date_str = raw.as_str().map(|s| s.to_string()).or_else(|| {
-            // serde_yaml sometimes deserialises YYYY-MM-DD as a tagged string
-            serde_yaml::to_string(raw)
-                .ok()
-                .map(|s| s.trim().to_string())
-        });
-        if let Some(d) = date_str
-            && !is_valid_date(&d)
-        {
-            warnings.push(err(
-                LintRule::InvalidDate,
-                format!("invalid date \"{d}\", expected YYYY-MM-DD"),
-                "/date",
-            ));
-        }
+    let date_string = m.get(key("date")).and_then(extract_date_string);
+    if let Some(d) = &date_string
+        && !is_valid_date(d)
+    {
+        warnings.push(err(
+            LintRule::InvalidDate,
+            format!("invalid date \"{d}\", expected YYYY-MM-DD"),
+            "/date",
+        ));
     }
 
     // ── modified ─────────────────────────────────────────────────────────
-    if let Some(raw) = m.get(key("modified")) {
-        let mod_str = raw.as_str().map(|s| s.to_string()).or_else(|| {
-            serde_yaml::to_string(raw)
-                .ok()
-                .map(|s| s.trim().to_string())
-        });
-        if let Some(d) = mod_str
-            && !is_valid_date(&d)
-        {
-            warnings.push(err(
-                LintRule::InvalidModified,
-                format!("invalid modified date \"{d}\", expected YYYY-MM-DD"),
-                "/modified",
-            ));
-        }
+    let modified_string = m.get(key("modified")).and_then(extract_date_string);
+    if let Some(d) = &modified_string
+        && !is_valid_date(d)
+    {
+        warnings.push(err(
+            LintRule::InvalidModified,
+            format!("invalid modified date \"{d}\", expected YYYY-MM-DD"),
+            "/modified",
+        ));
     }
 
     // ── modified >= date ─────────────────────────────────────────────────
-    if let (Some(date_val), Some(mod_val)) = (
-        m.get(key("date")).and_then(|v| v.as_str()),
-        m.get(key("modified")).and_then(|v| v.as_str()),
-    ) && is_valid_date(date_val)
+    if let (Some(date_val), Some(mod_val)) = (&date_string, &modified_string)
+        && is_valid_date(date_val)
         && is_valid_date(mod_val)
-        && mod_val < date_val
+        && mod_val.as_str() < date_val.as_str()
     {
         warnings.push(warning(
             LintRule::ModifiedBeforeDate,
@@ -582,6 +713,15 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 // =============================================================================
 
 fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
+    // ── level ─────────────────────────────────────────────────────────────
+    if !m.contains_key(key("level")) {
+        warnings.push(warning(
+            LintRule::MissingLevel,
+            "missing recommended field 'level'",
+            "/level",
+        ));
+    }
+
     // ── logsource ────────────────────────────────────────────────────────
     if !m.contains_key(key("logsource")) {
         warnings.push(err(
@@ -596,23 +736,35 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
     // ── detection ────────────────────────────────────────────────────────
     if let Some(det_val) = m.get(key("detection")) {
         if let Some(det) = det_val.as_mapping() {
+            // Collect detection identifier names (excluding condition/timeframe)
+            let det_keys: HashSet<&str> = det
+                .keys()
+                .filter_map(|k| k.as_str())
+                .filter(|k| *k != "condition" && *k != "timeframe")
+                .collect();
+
             if !det.contains_key(key("condition")) {
                 warnings.push(err(
                     LintRule::MissingCondition,
                     "detection section is missing required 'condition'",
                     "/detection/condition",
                 ));
+            } else if let Some(cond_str) = get_str(det, "condition") {
+                // Check that condition references existing identifiers
+                for ident in extract_condition_identifiers(cond_str) {
+                    if !det_keys.contains(ident.as_str()) {
+                        warnings.push(err(
+                            LintRule::ConditionReferencesUnknown,
+                            format!(
+                                "condition references '{ident}' but no such detection identifier exists"
+                            ),
+                            "/detection/condition",
+                        ));
+                    }
+                }
             }
 
-            // Check for at least one named identifier besides condition/timeframe
-            let named_count = det
-                .keys()
-                .filter(|k| {
-                    let ks = k.as_str().unwrap_or("");
-                    ks != "condition" && ks != "timeframe"
-                })
-                .count();
-            if named_count == 0 {
+            if det_keys.is_empty() {
                 warnings.push(warning(
                     LintRule::EmptyDetection,
                     "detection section has no named search identifiers",
@@ -806,7 +958,21 @@ fn lint_logsource(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     }
 }
 
-/// Checks detection logic: null in value lists, single-value |all.
+/// Extract bare identifiers from a condition expression (excluding keywords
+/// and wildcard patterns) so we can check they exist in the detection section.
+fn extract_condition_identifiers(condition: &str) -> Vec<String> {
+    const KEYWORDS: &[&str] = &["and", "or", "not", "of", "all", "them"];
+    condition
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '*')
+        .filter(|s| !s.is_empty())
+        .filter(|s| !KEYWORDS.contains(s))
+        .filter(|s| !s.chars().all(|c| c.is_ascii_digit()))
+        .filter(|s| !s.contains('*'))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Checks detection logic: null in value lists, single-value |all, empty value lists.
 fn lint_detection_logic(det: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     for (det_key, det_val) in det {
         let det_key_str = det_key.as_str().unwrap_or("");
@@ -849,19 +1015,45 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                     }
                 }
 
-                // Check null in value list
+                // Check null in value list and empty value list
                 if let Value::Sequence(seq) = field_val {
-                    let has_null = seq.iter().any(|v| v.is_null());
-                    let has_non_null = seq.iter().any(|v| !v.is_null());
-                    if has_null && has_non_null {
+                    if seq.is_empty() {
                         warnings.push(warning(
-                            LintRule::NullInValueList,
-                            format!(
-                                "'{field_key_str}' in '{det_name}' mixes null with other values; null should be in its own selection"
-                            ),
+                            LintRule::EmptyValueList,
+                            format!("'{field_key_str}' in '{det_name}' has an empty value list"),
                             format!("/detection/{det_name}/{field_key_str}"),
                         ));
+                    } else {
+                        let has_null = seq.iter().any(|v| v.is_null());
+                        let has_non_null = seq.iter().any(|v| !v.is_null());
+                        if has_null && has_non_null {
+                            warnings.push(warning(
+                                LintRule::NullInValueList,
+                                format!(
+                                    "'{field_key_str}' in '{det_name}' mixes null with other values; null should be in its own selection"
+                                ),
+                                format!("/detection/{det_name}/{field_key_str}"),
+                            ));
+                        }
                     }
+                }
+
+                // Check wildcard-only value: field: '*' usually means field|exists
+                let base_field = field_key_str.split('|').next().unwrap_or(field_key_str);
+                let is_wildcard_only = match field_val {
+                    Value::String(s) => s == "*",
+                    Value::Sequence(seq) => seq.len() == 1 && seq[0].as_str() == Some("*"),
+                    _ => false,
+                };
+                if is_wildcard_only && !field_key_str.contains("|re") {
+                    warnings.push(warning(
+                        LintRule::WildcardOnlyValue,
+                        format!(
+                            "'{field_key_str}' in '{det_name}' uses a lone wildcard '*'; \
+                             consider '{base_field}|exists: true' instead"
+                        ),
+                        format!("/detection/{det_name}/{field_key_str}"),
+                    ));
                 }
             }
         }
@@ -1143,6 +1335,23 @@ fn lint_filter_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 // Public API
 // =============================================================================
 
+/// Check for unknown top-level keys that may be typos.
+fn lint_unknown_keys(m: &serde_yaml::Mapping, doc_type: DocType, warnings: &mut Vec<LintWarning>) {
+    let type_keys = doc_type.known_keys();
+    for k in m.keys() {
+        if let Some(ks) = k.as_str()
+            && !KNOWN_KEYS_SHARED.contains(&ks)
+            && !type_keys.contains(&ks)
+        {
+            warnings.push(warning(
+                LintRule::UnknownKey,
+                format!("unknown top-level key \"{ks}\""),
+                format!("/{ks}"),
+            ));
+        }
+    }
+}
+
 /// Lint a single YAML document value.
 ///
 /// Auto-detects document type (detection / correlation / filter) and runs
@@ -1150,7 +1359,7 @@ fn lint_filter_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
     let Some(m) = value.as_mapping() else {
         return vec![err(
-            LintRule::MissingTitle,
+            LintRule::NotAMapping,
             "document is not a YAML mapping",
             "/",
         )];
@@ -1167,11 +1376,15 @@ pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
     lint_shared(m, &mut warnings);
 
     // Run type-specific checks
-    match detect_doc_type(m) {
+    let doc_type = detect_doc_type(m);
+    match doc_type {
         DocType::Detection => lint_detection_rule(m, &mut warnings),
         DocType::Correlation => lint_correlation_rule(m, &mut warnings),
         DocType::Filter => lint_filter_rule(m, &mut warnings),
     }
+
+    // Check for unknown top-level keys
+    lint_unknown_keys(m, doc_type, &mut warnings);
 
     warnings
 }
@@ -1189,7 +1402,7 @@ pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
             Ok(v) => v,
             Err(e) => {
                 let mut w = err(
-                    LintRule::MissingTitle,
+                    LintRule::YamlParseError,
                     format!("YAML parse error: {e}"),
                     "/",
                 );
@@ -1203,7 +1416,11 @@ pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
                     });
                 }
                 all_warnings.push(w);
-                continue;
+                // A parse error leaves the YAML stream in an undefined state;
+                // the deserializer iterator may never terminate on malformed
+                // input, so we must stop iterating to avoid infinite loops and
+                // unbounded memory growth.
+                break;
             }
         };
 
@@ -1331,54 +1548,67 @@ fn resolve_path_to_span(text: &str, path: &str) -> Option<Span> {
 /// Lint all YAML documents in a file.
 ///
 /// Handles multi-document YAML (separated by `---`). Collection action
-/// fragments (`action: global/reset/repeat`) are skipped.
-pub fn lint_yaml_file(path: &Path) -> crate::error::Result<Vec<FileLintResult>> {
+/// fragments (`action: global/reset/repeat`) are skipped. Warnings include
+/// resolved source spans (delegates to [`lint_yaml_str`]).
+pub fn lint_yaml_file(path: &Path) -> crate::error::Result<FileLintResult> {
     let content = std::fs::read_to_string(path)?;
-    let mut all_warnings = Vec::new();
-
-    for doc in serde_yaml::Deserializer::from_str(&content) {
-        let value: Value = match Value::deserialize(doc) {
-            Ok(v) => v,
-            Err(e) => {
-                all_warnings.push(err(
-                    LintRule::MissingTitle,
-                    format!("YAML parse error: {e}"),
-                    "/",
-                ));
-                continue;
-            }
-        };
-
-        all_warnings.extend(lint_yaml_value(&value));
-    }
-
-    Ok(vec![FileLintResult {
+    let warnings = lint_yaml_str(&content);
+    Ok(FileLintResult {
         path: path.to_path_buf(),
-        warnings: all_warnings,
-    }])
+        warnings,
+    })
 }
 
 /// Lint all `.yml`/`.yaml` files in a directory recursively.
+///
+/// Skips hidden directories (starting with `.`) and tracks visited
+/// canonical paths to avoid infinite loops from symlink cycles.
 pub fn lint_yaml_directory(dir: &Path) -> crate::error::Result<Vec<FileLintResult>> {
     let mut results = Vec::new();
+    let mut visited = HashSet::new();
 
-    fn walk(dir: &Path, results: &mut Vec<FileLintResult>) -> crate::error::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
+    fn walk(
+        dir: &Path,
+        results: &mut Vec<FileLintResult>,
+        visited: &mut HashSet<std::path::PathBuf>,
+    ) -> crate::error::Result<()> {
+        // Resolve symlinks and canonicalize for cycle detection
+        let canonical = match dir.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        if !visited.insert(canonical) {
+            // Already visited this directory — symlink cycle
+            return Ok(());
+        }
+
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
             let path = entry.path();
+
+            // Skip hidden directories (e.g. .git)
             if path.is_dir() {
-                walk(&path, results)?;
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with('.'))
+                {
+                    continue;
+                }
+                walk(&path, results, visited)?;
             } else if matches!(
                 path.extension().and_then(|e| e.to_str()),
                 Some("yml" | "yaml")
             ) {
                 match crate::lint::lint_yaml_file(&path) {
-                    Ok(file_results) => results.extend(file_results),
+                    Ok(file_result) => results.push(file_result),
                     Err(e) => {
                         results.push(FileLintResult {
                             path: path.clone(),
                             warnings: vec![err(
-                                LintRule::MissingTitle,
+                                LintRule::FileReadError,
                                 format!("error reading file: {e}"),
                                 "/",
                             )],
@@ -1390,7 +1620,7 @@ pub fn lint_yaml_directory(dir: &Path) -> crate::error::Result<Vec<FileLintResul
         Ok(())
     }
 
-    walk(dir, &mut results)?;
+    walk(dir, &mut results, &mut visited)?;
     Ok(results)
 }
 
@@ -2116,5 +2346,510 @@ action: reset
 "#,
         );
         assert!(w.is_empty());
+    }
+
+    // ── New checks ──────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_title() {
+        let w = lint(
+            r#"
+title: ''
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::EmptyTitle));
+    }
+
+    #[test]
+    fn missing_level() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+"#,
+        );
+        assert!(has_rule(&w, LintRule::MissingLevel));
+    }
+
+    #[test]
+    fn valid_level_no_missing_warning() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::MissingLevel));
+    }
+
+    #[test]
+    fn invalid_date_feb_30() {
+        assert!(!is_valid_date("2025-02-30"));
+    }
+
+    #[test]
+    fn invalid_date_apr_31() {
+        assert!(!is_valid_date("2025-04-31"));
+    }
+
+    #[test]
+    fn valid_date_feb_28() {
+        assert!(is_valid_date("2025-02-28"));
+    }
+
+    #[test]
+    fn valid_date_leap_year_feb_29() {
+        assert!(is_valid_date("2024-02-29"));
+    }
+
+    #[test]
+    fn invalid_date_non_leap_feb_29() {
+        assert!(!is_valid_date("2025-02-29"));
+    }
+
+    #[test]
+    fn condition_references_unknown() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: sel_main
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ConditionReferencesUnknown));
+    }
+
+    #[test]
+    fn condition_references_valid() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::ConditionReferencesUnknown));
+    }
+
+    #[test]
+    fn condition_references_complex_valid() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel_main:
+        field: value
+    filter_fp:
+        User: admin
+    condition: sel_main and not filter_fp
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::ConditionReferencesUnknown));
+    }
+
+    #[test]
+    fn empty_value_list() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: []
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::EmptyValueList));
+    }
+
+    #[test]
+    fn not_a_mapping() {
+        let v: serde_yaml::Value = serde_yaml::from_str("- item1\n- item2").unwrap();
+        let w = lint_yaml_value(&v);
+        assert!(has_rule(&w, LintRule::NotAMapping));
+    }
+
+    #[test]
+    fn lint_yaml_str_produces_spans() {
+        let text = r#"title: Test
+status: invalid_status
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#;
+        let warnings = lint_yaml_str(text);
+        // InvalidStatus points to /status which exists in the text
+        let invalid_status = warnings.iter().find(|w| w.rule == LintRule::InvalidStatus);
+        assert!(invalid_status.is_some(), "expected InvalidStatus warning");
+        let span = invalid_status.unwrap().span;
+        assert!(span.is_some(), "expected span to be resolved");
+        // "status:" is on line 1 (0-indexed)
+        assert_eq!(span.unwrap().start_line, 1);
+    }
+
+    #[test]
+    fn yaml_parse_error_uses_correct_rule() {
+        let text = "title: [unclosed";
+        let warnings = lint_yaml_str(text);
+        assert!(has_rule(&warnings, LintRule::YamlParseError));
+        assert!(has_no_rule(&warnings, LintRule::MissingTitle));
+    }
+
+    // ── Unknown top-level keys ───────────────────────────────────────────
+
+    #[test]
+    fn unknown_top_level_key_detection() {
+        let w = lint(
+            r#"
+title: Test
+desciption: Typo field
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::UnknownKey));
+        let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
+        assert!(unk.message.contains("desciption"));
+    }
+
+    #[test]
+    fn known_keys_no_unknown_warning() {
+        let w = lint(
+            r#"
+title: Test Rule
+id: 929a690e-bef0-4204-a928-ef5e620d6fcc
+status: test
+description: A valid description
+author: tester
+date: '2025-01-01'
+modified: '2025-06-01'
+license: MIT
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+tags:
+    - attack.execution
+references:
+    - https://example.com
+fields:
+    - CommandLine
+falsepositives:
+    - Legitimate admin
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::UnknownKey));
+    }
+
+    #[test]
+    fn unknown_top_level_key_correlation() {
+        let w = lint(
+            r#"
+title: Correlation Test
+name: test_correlation
+correlation:
+    type: event_count
+    rules:
+        - rule1
+    group-by:
+        - src_ip
+    timespan: 5m
+    condition:
+        gte: 10
+level: high
+typo_field: oops
+"#,
+        );
+        assert!(has_rule(&w, LintRule::UnknownKey));
+        let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
+        assert!(unk.message.contains("typo_field"));
+    }
+
+    #[test]
+    fn unknown_top_level_key_filter() {
+        let w = lint(
+            r#"
+title: Filter Test
+logsource:
+    category: test
+filter:
+    rules:
+        - rule1
+    selection:
+        User: admin
+    condition: selection
+badkey: foo
+"#,
+        );
+        assert!(has_rule(&w, LintRule::UnknownKey));
+        let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
+        assert!(unk.message.contains("badkey"));
+    }
+
+    // ── Wildcard-only value ──────────────────────────────────────────────
+
+    #[test]
+    fn wildcard_only_value_string() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        TargetFilename: '*'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::WildcardOnlyValue));
+    }
+
+    #[test]
+    fn wildcard_only_value_list() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        TargetFilename:
+            - '*'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::WildcardOnlyValue));
+    }
+
+    #[test]
+    fn wildcard_with_other_values_no_warning() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        TargetFilename:
+            - '*temp*'
+            - '*cache*'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::WildcardOnlyValue));
+    }
+
+    #[test]
+    fn wildcard_regex_no_warning() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        TargetFilename|re: '*'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::WildcardOnlyValue));
+    }
+
+    // ── resolve_path_to_span tests ───────────────────────────────────────
+
+    #[test]
+    fn resolve_path_to_span_root() {
+        let text = "title: Test\nstatus: test\n";
+        let span = resolve_path_to_span(text, "/");
+        assert!(span.is_some());
+        assert_eq!(span.unwrap().start_line, 0);
+    }
+
+    #[test]
+    fn resolve_path_to_span_top_level_key() {
+        let text = "title: Test\nstatus: test\nlevel: high\n";
+        let span = resolve_path_to_span(text, "/status");
+        assert!(span.is_some());
+        assert_eq!(span.unwrap().start_line, 1);
+    }
+
+    #[test]
+    fn resolve_path_to_span_nested_key() {
+        let text = "title: Test\nlogsource:\n    category: test\n    product: windows\n";
+        let span = resolve_path_to_span(text, "/logsource/product");
+        assert!(span.is_some());
+        assert_eq!(span.unwrap().start_line, 3);
+    }
+
+    #[test]
+    fn resolve_path_to_span_missing_key() {
+        let text = "title: Test\nstatus: test\n";
+        let span = resolve_path_to_span(text, "/nonexistent");
+        assert!(span.is_none());
+    }
+
+    // ── Multi-document YAML ──────────────────────────────────────────────
+
+    #[test]
+    fn multi_doc_yaml_lints_all_documents() {
+        let text = r#"title: Rule 1
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+---
+title: Rule 2
+status: bad_status
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#;
+        let warnings = lint_yaml_str(text);
+        // Second doc has InvalidStatus
+        assert!(has_rule(&warnings, LintRule::InvalidStatus));
+    }
+
+    // ── is_valid_timespan edge cases ─────────────────────────────────────
+
+    #[test]
+    fn timespan_zero_seconds() {
+        assert!(is_valid_timespan("0s"));
+    }
+
+    #[test]
+    fn timespan_no_digits() {
+        assert!(!is_valid_timespan("s"));
+    }
+
+    #[test]
+    fn timespan_no_unit() {
+        assert!(!is_valid_timespan("123"));
+    }
+
+    #[test]
+    fn timespan_invalid_unit() {
+        assert!(!is_valid_timespan("5x"));
+    }
+
+    #[test]
+    fn timespan_valid_variants() {
+        assert!(is_valid_timespan("30s"));
+        assert!(is_valid_timespan("5m"));
+        assert!(is_valid_timespan("1h"));
+        assert!(is_valid_timespan("7d"));
+    }
+
+    // ── FileLintResult methods ───────────────────────────────────────────
+
+    #[test]
+    fn file_lint_result_has_errors() {
+        let result = FileLintResult {
+            path: std::path::PathBuf::from("test.yml"),
+            warnings: vec![
+                warning(LintRule::TitleTooLong, "too long", "/title"),
+                err(
+                    LintRule::MissingCondition,
+                    "missing",
+                    "/detection/condition",
+                ),
+            ],
+        };
+        assert!(result.has_errors());
+        assert_eq!(result.error_count(), 1);
+        assert_eq!(result.warning_count(), 1);
+    }
+
+    #[test]
+    fn file_lint_result_no_errors() {
+        let result = FileLintResult {
+            path: std::path::PathBuf::from("test.yml"),
+            warnings: vec![warning(LintRule::TitleTooLong, "too long", "/title")],
+        };
+        assert!(!result.has_errors());
+        assert_eq!(result.error_count(), 0);
+        assert_eq!(result.warning_count(), 1);
+    }
+
+    #[test]
+    fn file_lint_result_empty() {
+        let result = FileLintResult {
+            path: std::path::PathBuf::from("test.yml"),
+            warnings: vec![],
+        };
+        assert!(!result.has_errors());
+        assert_eq!(result.error_count(), 0);
+        assert_eq!(result.warning_count(), 0);
+    }
+
+    // ── LintWarning Display impl ─────────────────────────────────────────
+
+    #[test]
+    fn lint_warning_display() {
+        let w = err(
+            LintRule::MissingTitle,
+            "missing required field 'title'",
+            "/title",
+        );
+        let display = format!("{w}");
+        assert!(display.contains("error"));
+        assert!(display.contains("missing_title"));
+        assert!(display.contains("/title"));
     }
 }

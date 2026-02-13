@@ -293,7 +293,7 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
         }
     } else {
         match lint::lint_yaml_file(&path) {
-            Ok(r) => r,
+            Ok(r) => vec![r],
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
@@ -388,8 +388,13 @@ fn render_lint_warning(w: &lint::LintWarning, p: &Painter) {
         lint::Severity::Error => (p.red_bold("error"), p.red(&format!("[{}]", w.rule))),
         lint::Severity::Warning => (p.yellow_bold("warning"), p.yellow(&format!("[{}]", w.rule))),
     };
-    println!("  {}{}: {}", severity_label, rule_bracket, w.message,);
-    println!("    {} {}", p.cyan("-->"), p.cyan(&w.path));
+    println!("  {}{}: {}", severity_label, rule_bracket, w.message);
+    let location = if let Some(span) = &w.span {
+        format!("{} (line {})", w.path, span.start_line + 1)
+    } else {
+        w.path.clone()
+    };
+    println!("    {} {}", p.cyan("-->"), p.cyan(&location));
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +533,7 @@ fn validate_file_against_schema(
         Ok(c) => c,
         Err(e) => {
             warnings.push(lint::LintWarning {
-                rule: lint::LintRule::MissingTitle,
+                rule: lint::LintRule::FileReadError,
                 severity: lint::Severity::Error,
                 message: format!("error reading file: {e}"),
                 path: "/".to_string(),
@@ -570,7 +575,7 @@ fn validate_file_against_schema(
         // Validate
         for error in validator.iter_errors(&json_value) {
             warnings.push(lint::LintWarning {
-                rule: lint::LintRule::InvalidStatus, // generic schema error
+                rule: lint::LintRule::SchemaViolation,
                 severity: lint::Severity::Error,
                 message: format!("schema: {error}"),
                 path: error.instance_path.to_string(),
