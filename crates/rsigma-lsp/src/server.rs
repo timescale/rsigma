@@ -345,14 +345,18 @@ fn document_symbols(text: &str) -> Vec<SymbolInformation> {
 
         // Top-level keys that are interesting for navigation
         if let Some(value) = trimmed.strip_prefix("title:") {
-            symbols.push(SymbolInformation {
-                name: value.trim().to_string(),
-                kind: SymbolKind::STRING,
-                tags: None,
-                deprecated: None,
-                location: make_loc(i, line),
-                container_name: None,
-            });
+            let title = value.trim();
+            // LSP clients reject empty symbol names
+            if !title.is_empty() {
+                symbols.push(SymbolInformation {
+                    name: title.to_string(),
+                    kind: SymbolKind::STRING,
+                    tags: None,
+                    deprecated: None,
+                    location: make_loc(i, line),
+                    container_name: None,
+                });
+            }
         } else if trimmed == "detection:" {
             symbols.push(SymbolInformation {
                 name: "detection".to_string(),
@@ -410,6 +414,7 @@ fn document_symbols(text: &str) -> Vec<SymbolInformation> {
             let indent = line.len() - trimmed.len();
             let key = &trimmed[..trimmed.len() - 1];
             if indent == 4
+                && !key.is_empty()
                 && key != "condition"
                 && (key.starts_with("selection")
                     || key.starts_with("filter")
