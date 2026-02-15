@@ -229,8 +229,8 @@ pySigma-compatible pipeline system for field mapping, logsource transformation, 
 | `drop_detection_item` | Remove matching detection items |
 | `add_condition` | Inject additional detection conditions (with optional negation) |
 | `change_logsource` | Modify logsource category/product/service |
-| `replace_string` | Regex-based string replacement in values |
-| `map_string` | Map specific string values to replacements |
+| `replace_string` | Regex-based string replacement in values (`skip_special` preserves wildcards) |
+| `map_string` | Map string values to replacements (supports one-to-many) |
 | `set_value` | Replace detection item values |
 | `convert_type` | Convert values to str, int, float, or bool |
 | `value_placeholders` | Expand `%placeholder%` in values |
@@ -244,7 +244,7 @@ pySigma-compatible pipeline system for field mapping, logsource transformation, 
 | `remove_field` | Remove a field from detection items |
 | `set_field` | Rename the field of a detection item |
 | `set_custom_attribute` | Set key-value attributes on rules |
-| `case_transformation` | Transform case of field values: lower, upper |
+| `case_transformation` | Transform case of field values: lower, upper, snake_case |
 | `nest` | Apply a group of transformations conditionally |
 | `regex` | Regex transformation (no-op in eval) |
 
