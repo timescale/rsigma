@@ -22,8 +22,6 @@ cargo install --path crates/rsigma-cli
 cargo install --path crates/rsigma-lsp
 ```
 
-Requires **Rust 1.88.0+** (edition 2024).
-
 ## Quick Start
 
 Evaluate events against Sigma rules from the command line:
@@ -485,7 +483,7 @@ The extension launches `rsigma-lsp` from your `$PATH` by default. Override via t
 command = "rsigma-lsp"
 
 [[language]]
-name = "yaml"
+ame = "yaml"
 language-servers = ["yaml-language-server", "rsigma-lsp"]
 ```
 
@@ -563,27 +561,27 @@ cargo bench --bench correlation      # correlations only
      ┌─────┴──────────────────────────────────────────────┐
      │                                                     │
      ▼                                                     ▼
-     ┌──────────────────────────────────────────┐   ┌────────────────────┐
-     │              rsigma-eval                 │   │    rsigma-lsp      │
-     │                                          │   │                    │
-     │  pipeline/ ──> Pipeline (YAML parsing,   │   │  LSP server over   │
-     │    conditions, transformations, state)   │   │  stdio (tower-lsp) │
-     │    ↓ transforms SigmaRule AST            │   │                    │
-     │                                          │   │  • diagnostics     │
-     │  compiler.rs ──> CompiledRule            │   │    (lint + parse   │
-     │  matcher.rs  ──> CompiledMatcher         │   │     + compile)     │
-     │  engine.rs   ──> Engine (stateless)      │   │  • completions     │
-     │                                          │   │  • hover           │
-     │  correlation.rs ──> CompiledCorrelation  │   │  • document        │
-     │    + EventBuffer (deflate-compressed)    │   │    symbols         │
-     │  correlation_engine.rs ──> (stateful)    │   │                    │
-     │    sliding windows, group-by, chaining,  │   │  Editors:          │
-     │    alert suppression, action-on-fire,    │   │  VSCode, Neovim,   │
-     │    memory management, event inclusion    │   │  Helix, Zed, ...  │
-     │                                          │   └────────────────────┘
-     │  rsigma.* custom attributes ─────────>   │
-     │    engine config from pipelines          │
-     └──────────────────────────────────────────┘
+    ┌──────────────────────────────────────────┐   ┌────────────────────┐
+    │              rsigma-eval                 │   │    rsigma-lsp      │
+    │                                          │   │                    │
+    │  pipeline/ ──> Pipeline (YAML parsing,   │   │  LSP server over   │
+    │    conditions, transformations, state)   │   │  stdio (tower-lsp) │
+    │    ↓ transforms SigmaRule AST            │   │                    │
+    │                                          │   │  • diagnostics     │
+    │  compiler.rs ──> CompiledRule            │   │    (lint + parse   │
+    │  matcher.rs  ──> CompiledMatcher         │   │     + compile)     │
+    │  engine.rs   ──> Engine (stateless)      │   │  • completions     │
+    │                                          │   │  • hover           │
+    │  correlation.rs ──> CompiledCorrelation  │   │  • document        │
+    │    + EventBuffer (deflate-compressed)    │   │    symbols         │
+    │  correlation_engine.rs ──> (stateful)    │   │                    │
+    │    sliding windows, group-by, chaining,  │   │  Editors:          │
+    │    alert suppression, action-on-fire,    │   │  VSCode, Neovim,   │
+    │    memory management, event inclusion    │   │  Helix, Zed, ...   │
+    │                                          │   └────────────────────┘
+    │  rsigma.* custom attributes ─────────>   │
+    │    engine config from pipelines          │
+    └──────────────────────────────────────────┘
               │
               ▼
      ┌────────────────────┐
