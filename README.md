@@ -27,8 +27,11 @@ cargo install --path crates/rsigma-lsp
 Evaluate events against Sigma rules from the command line:
 
 ```bash
-# Single event
+# Single event (inline JSON)
 rsigma eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
+
+# Read events from a file (@file syntax)
+rsigma eval -r path/to/rules/ -e @events.ndjson
 
 # Stream NDJSON from stdin
 cat events.ndjson | rsigma eval -r path/to/rules/
