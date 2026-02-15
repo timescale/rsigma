@@ -1,6 +1,7 @@
 [package]
 name = "rsigma-eval"
-description = "Evaluator for Sigma detection rules — match rules against events"
+description = "Evaluator for Sigma detection and correlation rules — match rules against events"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

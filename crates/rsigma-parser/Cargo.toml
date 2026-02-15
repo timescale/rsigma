@@ -1,6 +1,7 @@
 [package]
 name = "rsigma-parser"
 description = "Parser for Sigma detection rules, correlations, and filters"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

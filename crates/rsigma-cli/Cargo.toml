@@ -1,6 +1,7 @@
 [package]
 name = "rsigma-cli"
-description = "CLI for parsing, validating, and evaluating Sigma detection rules"
+description = "CLI for parsing, validating, linting and evaluating Sigma detection rules"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
