@@ -480,6 +480,7 @@ const VALID_CORRELATION_TYPES: &[&str] = &[
     "value_sum",
     "value_avg",
     "value_percentile",
+    "value_median",
 ];
 
 /// Valid condition operators.
@@ -1201,7 +1202,9 @@ fn lint_correlation_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning
         if !is_valid_timespan(ts) {
             warnings.push(err(
                 LintRule::InvalidTimespanFormat,
-                format!("invalid timespan \"{ts}\", expected format like 5m, 1h, 30s, 7d"),
+                format!(
+                    "invalid timespan \"{ts}\", expected format like 5m, 1h, 30s, 7d, 1w, 1M, 1y"
+                ),
                 "/correlation/timespan",
             ));
         }
@@ -1296,7 +1299,8 @@ fn is_valid_timespan(s: &str) -> bool {
         return false;
     }
     let last = s.as_bytes()[s.len() - 1];
-    if !matches!(last, b's' | b'm' | b'h' | b'd') {
+    // s=second, m=minute, h=hour, d=day, w=week, M=month, y=year
+    if !matches!(last, b's' | b'm' | b'h' | b'd' | b'w' | b'M' | b'y') {
         return false;
     }
     let num_part = &s[..s.len() - 1];
@@ -3191,6 +3195,9 @@ level: medium
         assert!(is_valid_timespan("5m"));
         assert!(is_valid_timespan("1h"));
         assert!(is_valid_timespan("7d"));
+        assert!(is_valid_timespan("1w"));
+        assert!(is_valid_timespan("1M"));
+        assert!(is_valid_timespan("1y"));
     }
 
     // ── FileLintResult methods ───────────────────────────────────────────
