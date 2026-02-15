@@ -9,7 +9,7 @@ use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, Engine, Event,
     Pipeline, parse_pipeline_file,
 };
-use rsigma_parser::lint::{self, FileLintResult};
+use rsigma_parser::lint::{self, FileLintResult, LintConfig};
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 use serde::Deserialize;
 use serde_json_path::JsonPath;
@@ -84,6 +84,16 @@ enum Commands {
         /// Color output: auto (default), always, never
         #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
         color: String,
+
+        /// Disable specific lint rules (comma-separated).
+        /// Example: --disable missing_description,missing_author
+        #[arg(long, value_delimiter = ',')]
+        disable: Vec<String>,
+
+        /// Path to a .rsigma-lint.yml config file.
+        /// If omitted, searches for .rsigma-lint.yml in ancestor directories.
+        #[arg(long = "config")]
+        lint_config: Option<PathBuf>,
     },
 
     /// Evaluate events against Sigma rules
@@ -178,7 +188,9 @@ fn main() {
             schema,
             verbose,
             color,
-        } => cmd_lint(path, schema, verbose, &color),
+            disable,
+            lint_config,
+        } => cmd_lint(path, schema, verbose, &color, disable, lint_config),
         Commands::Condition { expr } => cmd_condition(expr),
         Commands::Stdin { pretty } => cmd_stdin(pretty),
         Commands::Eval {
@@ -297,12 +309,22 @@ fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
     }
 }
 
-fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
+fn cmd_lint(
+    path: PathBuf,
+    schema: Option<String>,
+    verbose: bool,
+    color: &str,
+    disable: Vec<String>,
+    lint_config_path: Option<PathBuf>,
+) {
     let p = Painter::new(color);
 
-    // 1. Run built-in lint checks
+    // 0. Build lint config from file + CLI flags
+    let config = build_lint_config(&path, disable, lint_config_path);
+
+    // 1. Run built-in lint checks (with suppression)
     let results: Vec<FileLintResult> = if path.is_dir() {
-        match lint::lint_yaml_directory(&path) {
+        match lint::lint_yaml_directory_with_config(&path, &config) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -310,7 +332,7 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
             }
         }
     } else {
-        match lint::lint_yaml_file(&path) {
+        match lint::lint_yaml_file_with_config(&path, &config) {
             Ok(r) => vec![r],
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -333,13 +355,21 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
     let mut failed_files = 0usize;
     let mut total_errors = 0usize;
     let mut total_warnings = 0usize;
+    let mut total_infos = 0usize;
 
     for result in &all_results {
         total_files += 1;
         let errors = result.error_count();
         let warnings = result.warning_count();
+        let infos = result.info_count();
         total_errors += errors;
         total_warnings += warnings;
+        total_infos += infos;
+
+        let has_failures = result
+            .warnings
+            .iter()
+            .any(|w| matches!(w.severity, lint::Severity::Error | lint::Severity::Warning));
 
         if result.warnings.is_empty() {
             if verbose {
@@ -349,7 +379,7 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
                     p.green("OK"),
                 );
             }
-        } else {
+        } else if has_failures {
             failed_files += 1;
             // File header
             println!("{}", p.bold(&result.path.display().to_string()));
@@ -357,6 +387,15 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
                 render_lint_warning(w, &p);
             }
             println!(); // blank line between file blocks
+        } else {
+            // Only info/hint — show if verbose
+            if verbose {
+                println!("{}", p.bold(&result.path.display().to_string()));
+                for w in &result.warnings {
+                    render_lint_warning(w, &p);
+                }
+                println!();
+            }
         }
     }
 
@@ -369,6 +408,7 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
     let failed_str = format!("{failed_files} failed");
     let errors_str = format!("{total_errors} error(s)");
     let warnings_str = format!("{total_warnings} warning(s)");
+    let infos_str = format!("{total_infos} info(s)");
 
     let passed_colored = if passed > 0 {
         p.green_bold(&passed_str)
@@ -390,10 +430,20 @@ fn cmd_lint(path: PathBuf, schema: Option<String>, verbose: bool, color: &str) {
     } else {
         p.dim(&warnings_str)
     };
+    let infos_colored = if total_infos > 0 {
+        p.blue(&infos_str)
+    } else {
+        p.dim(&infos_str)
+    };
 
     println!(
-        "Checked {} file(s): {}, {} ({}, {})",
-        total_files, passed_colored, failed_colored, errors_colored, warnings_colored,
+        "Checked {} file(s): {}, {} ({}, {}, {})",
+        total_files,
+        passed_colored,
+        failed_colored,
+        errors_colored,
+        warnings_colored,
+        infos_colored,
     );
 
     if total_errors > 0 {
@@ -405,6 +455,8 @@ fn render_lint_warning(w: &lint::LintWarning, p: &Painter) {
     let (severity_label, rule_bracket) = match w.severity {
         lint::Severity::Error => (p.red_bold("error"), p.red(&format!("[{}]", w.rule))),
         lint::Severity::Warning => (p.yellow_bold("warning"), p.yellow(&format!("[{}]", w.rule))),
+        lint::Severity::Info => (p.blue("info"), p.blue(&format!("[{}]", w.rule))),
+        lint::Severity::Hint => (p.dim("hint"), p.dim(&format!("[{}]", w.rule))),
     };
     println!("  {}{}: {}", severity_label, rule_bracket, w.message);
     let location = if let Some(span) = &w.span {
@@ -922,6 +974,54 @@ fn cmd_eval_detection_only(
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Build a `LintConfig` from a config file (auto-discovered or explicit) + CLI `--disable` flags.
+fn build_lint_config(
+    path: &std::path::Path,
+    disable: Vec<String>,
+    lint_config_path: Option<PathBuf>,
+) -> LintConfig {
+    // Load config file
+    let mut config = if let Some(explicit) = lint_config_path {
+        match LintConfig::load(&explicit) {
+            Ok(c) => {
+                eprintln!("Loaded lint config: {}", explicit.display());
+                c
+            }
+            Err(e) => {
+                eprintln!("Error loading lint config '{}': {e}", explicit.display());
+                process::exit(1);
+            }
+        }
+    } else if let Some(found) = LintConfig::find_in_ancestors(path) {
+        match LintConfig::load(&found) {
+            Ok(c) => {
+                eprintln!("Loaded lint config: {}", found.display());
+                c
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: found .rsigma-lint.yml at {} but failed to load: {e}",
+                    found.display()
+                );
+                LintConfig::default()
+            }
+        }
+    } else {
+        LintConfig::default()
+    };
+
+    // Merge --disable CLI flags
+    if !disable.is_empty() {
+        let cli_config = LintConfig {
+            disabled_rules: disable.into_iter().collect(),
+            ..Default::default()
+        };
+        config.merge(&cli_config);
+    }
+
+    config
+}
+
 fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
     let mut pipelines = Vec::new();
     for path in paths {
@@ -1198,6 +1298,10 @@ impl Painter {
 
     fn yellow_bold(&self, s: &str) -> String {
         self.paint("1;33", s)
+    }
+
+    fn blue(&self, s: &str) -> String {
+        self.paint("34", s)
     }
 
     fn cyan(&self, s: &str) -> String {

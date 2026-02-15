@@ -69,8 +69,10 @@ pub use ast::{
 pub use condition::parse_condition;
 pub use error::{Result, SigmaParserError};
 pub use lint::{
-    FileLintResult, LintRule, LintWarning, Severity, Span, lint_yaml_directory, lint_yaml_file,
-    lint_yaml_str, lint_yaml_value,
+    FileLintResult, InlineSuppressions, LintConfig, LintRule, LintWarning, Severity, Span,
+    apply_suppressions, lint_yaml_directory, lint_yaml_directory_with_config, lint_yaml_file,
+    lint_yaml_file_with_config, lint_yaml_str, lint_yaml_str_with_config, lint_yaml_value,
+    parse_inline_suppressions,
 };
 pub use parser::{parse_field_spec, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 pub use value::{SigmaString, SigmaValue, SpecialChar, StringPart, Timespan};

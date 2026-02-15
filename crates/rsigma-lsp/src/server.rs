@@ -9,6 +9,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use rsigma_parser::lint::LintConfig;
+
 use crate::completion;
 use crate::data;
 use crate::diagnostics;
@@ -40,12 +42,24 @@ impl SigmaLanguageServer {
         }
     }
 
+    /// Load lint config for a document by walking ancestors from the file URI.
+    fn load_lint_config(uri: &Url) -> LintConfig {
+        if let Ok(path) = uri.to_file_path()
+            && let Some(config_path) = LintConfig::find_in_ancestors(&path)
+            && let Ok(config) = LintConfig::load(&config_path)
+        {
+            return config;
+        }
+        LintConfig::default()
+    }
+
     /// Run diagnostics immediately on a blocking thread and publish results.
     async fn publish_diagnostics_now(&self, uri: &Url, text: &str, version: i32) {
         let text = text.to_string();
+        let config = Self::load_lint_config(uri);
         let diags = match tokio::task::spawn_blocking(move || {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                diagnostics::diagnose(&text)
+                diagnostics::diagnose_with_config(&text, &config)
             }))
         })
         .await
@@ -70,6 +84,7 @@ impl SigmaLanguageServer {
         let client = self.client.clone();
         let pending = self.pending_diagnostics.clone();
         let uri_for_task = uri.clone();
+        let config = Self::load_lint_config(&uri);
 
         // Abort any existing pending task, then spawn the new one while holding
         // the lock so no concurrent call can slip in between.
@@ -83,7 +98,7 @@ impl SigmaLanguageServer {
 
             let diags = match tokio::task::spawn_blocking(move || {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    diagnostics::diagnose(&text)
+                    diagnostics::diagnose_with_config(&text, &config)
                 }))
             })
             .await

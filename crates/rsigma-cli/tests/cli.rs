@@ -748,6 +748,8 @@ const LINT_VALID_RULE: &str = r#"
 title: Valid Rule
 id: 929a690e-bef0-4204-a928-ef5e620d6fcc
 status: test
+description: A valid detection rule for testing
+author: tester
 logsource:
     category: process_creation
     product: windows
@@ -829,6 +831,8 @@ detection:
 
 const LINT_VALID_CORRELATION: &str = r#"
 title: Brute Force
+description: Correlation for brute force detection
+author: tester
 correlation:
     type: event_count
     rules:
@@ -852,6 +856,8 @@ correlation:
 
 const LINT_VALID_FILTER: &str = r#"
 title: Filter Admin
+description: Filter for admin users
+author: tester
 logsource:
     category: process_creation
     product: windows

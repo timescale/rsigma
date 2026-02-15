@@ -1,6 +1,6 @@
 # RSigma
 
-A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard — parser, evaluation engine, linter, CLI, and LSP. rsigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them directly against JSON log events in real time. It runs detection and stateful correlation logic in-process with memory-efficient compressed event storage, supports pySigma-compatible processing pipelines for field mapping and backend configuration, and streams results from NDJSON input — no external SIEM required. A built-in linter validates rules against 61 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, and hover documentation in any editor.
+A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard — parser, evaluation engine, linter, CLI, and LSP. rsigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them directly against JSON log events in real time. It runs detection and stateful correlation logic in-process with memory-efficient compressed event storage, supports pySigma-compatible processing pipelines for field mapping and backend configuration, and streams results from NDJSON input — no external SIEM required. A built-in linter validates rules against 64 checks derived from the Sigma v2.1.0 specification with four severity levels and a full suppression system, and an LSP server provides real-time diagnostics, completions, and hover documentation in any editor.
 
 | Crate | Description |
 |-------|-------------|
@@ -114,20 +114,37 @@ Supports threshold conditions with range predicates (e.g. `gt: 10, lte: 100`), e
 
 Filter rules inject `AND NOT` conditions into referenced detection rules — enables centralized exclusion management without modifying original rule files. References by rule ID or title, with optional logsource compatibility checks.
 
-### Linter (61 rules)
+### Linter (64 rules)
 
-61 built-in lint rules derived from the Sigma v2.1.0 specification, organized by scope:
+64 built-in lint rules derived from the Sigma v2.1.0 specification, organized by scope:
 
 | Scope | Count | Examples |
 |-------|-------|---------|
 | Infrastructure | 4 | YAML parse errors, non-mapping documents, schema violations |
-| Shared metadata | 14 | Missing/empty title, invalid UUID, invalid status/level/dates, non-lowercase keys |
+| Shared metadata | 16 | Missing/empty title, missing description/author (Info), invalid UUID, invalid status/level/dates, non-lowercase keys |
 | Detection rules | 17 | Missing logsource/detection/condition, invalid tags, unknown condition references |
 | Correlation rules | 13 | Missing type/rules/timespan, invalid operators, non-numeric condition values |
 | Filter rules | 8 | Missing filter section, filters with level/status, missing logsource |
-| Detection logic | 5 | Null in value lists, single-value `\|all`, wildcard-only values |
+| Detection logic | 6 | Null in value lists, single-value `\|all`, `\|all`+`\|re` conflict, wildcard-only values |
+
+Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 Operates on raw YAML values to catch issues the parser silently ignores. Optionally validates against the official Sigma JSON schema (downloaded and cached for 7 days, with offline fallback to stale cache).
+
+**Rule suppression** — three-tier system to disable or override lint rules:
+
+- **CLI**: `--disable rule1,rule2` suppresses specific rules globally
+- **Config file**: `.rsigma-lint.yml` with `disabled_rules` and `severity_overrides`, auto-discovered by walking ancestor directories
+- **Inline comments**: `# rsigma-disable`, `# rsigma-disable rule1, rule2`, `# rsigma-disable-next-line`
+
+```yaml
+# .rsigma-lint.yml
+disabled_rules:
+  - missing_description
+  - missing_author
+severity_overrides:
+  title_too_long: info
+```
 
 ### Compatibility
 
@@ -360,10 +377,12 @@ rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
 
 ```bash
 rsigma lint path/to/rules/                     # lint all rules
-rsigma lint path/to/rules/ -v                  # verbose (show passing files)
+rsigma lint path/to/rules/ -v                  # verbose (show passing files + info-only)
 rsigma lint path/to/rules/ --schema default    # + JSON schema validation (downloads + caches)
 rsigma lint rule.yml --schema my-schema.json   # local JSON schema
 rsigma lint path/to/rules/ --color always      # force color (respects NO_COLOR)
+rsigma lint rules/ --disable missing_description,missing_author  # suppress specific rules
+rsigma lint rules/ --config my-lint.yml        # explicit config file
 ```
 
 ### `eval` — Evaluate events against rules
@@ -449,7 +468,7 @@ A Language Server Protocol (LSP) server that brings real-time Sigma rule develop
 
 ### Features
 
-- **Diagnostics**: real-time validation from three layers — 61 lint rules (Sigma spec v2.1.0), parser errors (YAML and condition expressions), and compiler errors (unknown selections, invalid modifier combos). Debounced at 150ms for responsive editing
+- **Diagnostics**: real-time validation from three layers — 64 lint rules (Sigma spec v2.1.0) with four severity levels (Error/Warning/Info/Hint), parser errors (YAML and condition expressions), and compiler errors (unknown selections, invalid modifier combos). Loads `.rsigma-lint.yml` config and respects inline `# rsigma-disable` comments. Debounced at 150ms for responsive editing
 - **Completions**: context-aware suggestions for field modifiers (`|contains`, `|base64`, etc.), top-level keys, status/level enums, logsource category/product/service values, detection keys, MITRE ATT&CK tags, condition keywords, and selection names from the current rule. Triggers on `|`, `:`, ` `, and newline
 - **Hover**: documentation for all 27 field modifiers and MITRE ATT&CK tactics/techniques with links
 - **Document symbols**: navigable outline of rule structure (title, logsource, correlation, detection with child selections)

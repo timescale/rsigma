@@ -1,23 +1,28 @@
 //! Convert rsigma-parser lint warnings and parse/compile errors into LSP
 //! `Diagnostic` objects with resolved source positions.
 
-use rsigma_parser::lint::{LintWarning, Severity as LintSeverity, lint_yaml_str};
+use rsigma_parser::lint::{
+    LintConfig, LintWarning, Severity as LintSeverity, lint_yaml_str_with_config,
+};
 use tower_lsp::lsp_types::*;
 
 use crate::position::{LineIndex, resolve_path};
 
-/// Produce LSP diagnostics for a Sigma YAML document.
+/// Produce LSP diagnostics for a Sigma YAML document (default config).
 ///
-/// This runs three layers of validation:
-/// 1. Lint warnings with resolved spans (from `rsigma_parser::lint::lint_yaml_str`)
-/// 2. AST parse errors (from `rsigma_parser::parse_sigma_yaml`)
-/// 3. Compile errors (from `rsigma_eval::compile_rule`)
+/// Convenience wrapper around [`diagnose_with_config`] with no suppression.
+#[allow(dead_code)]
 pub fn diagnose(text: &str) -> Vec<Diagnostic> {
+    diagnose_with_config(text, &LintConfig::default())
+}
+
+/// Produce LSP diagnostics with lint config suppression.
+pub fn diagnose_with_config(text: &str, config: &LintConfig) -> Vec<Diagnostic> {
     let index = LineIndex::new(text);
     let mut diagnostics = Vec::new();
 
     // ── Layer 1: Lint (includes YAML parse errors) ──────────────────────
-    let warnings = lint_yaml_str(text);
+    let warnings = lint_yaml_str_with_config(text, config);
     for w in &warnings {
         diagnostics.push(lint_warning_to_diagnostic(w, text, &index));
     }
@@ -57,6 +62,8 @@ fn lint_warning_to_diagnostic(warning: &LintWarning, text: &str, index: &LineInd
     let severity = match warning.severity {
         LintSeverity::Error => DiagnosticSeverity::ERROR,
         LintSeverity::Warning => DiagnosticSeverity::WARNING,
+        LintSeverity::Info => DiagnosticSeverity::INFORMATION,
+        LintSeverity::Hint => DiagnosticSeverity::HINT,
     };
 
     Diagnostic {
