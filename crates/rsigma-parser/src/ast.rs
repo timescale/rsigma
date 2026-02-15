@@ -563,6 +563,10 @@ pub struct CorrelationRule {
     pub condition: CorrelationCondition,
     pub aliases: Vec<FieldAlias>,
     pub generate: bool,
+    /// Custom key-value attributes (e.g. `rsigma.correlation_event_mode`).
+    /// Parsed from the top-level `custom_attributes` mapping in the YAML or set
+    /// programmatically. Mirrors `SigmaRule.custom_attributes`.
+    pub custom_attributes: HashMap<String, String>,
 }
 
 // =============================================================================

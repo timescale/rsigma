@@ -195,10 +195,12 @@ Stateful processing with sliding time windows, group-by aggregation, and all 8 c
 - **Action-on-fire**: `alert` (keep state, re-fire on next match) or `reset` (clear window state, require fresh threshold)
 - **Generate flag**: Sigma-standard `generate` support — suppress detection output for correlation-only rules
 
-**Event inclusion:**
-- **Compressed storage**: contributing events stored as individually deflate-compressed blobs (3-5x memory savings on typical JSON)
+**Event inclusion** (`correlation_event_mode`):
+- **Full mode**: contributing events stored as individually deflate-compressed blobs (3-5x memory savings on typical JSON)
+- **Refs mode**: lightweight references (timestamp + optional event ID) at ~40 bytes per event
 - **Configurable cap**: `max_correlation_events` (default: 10) bounds memory per `(correlation, group_key)` window
-- **Zero cost when disabled**: event buffers are not allocated unless `include_correlation_events` is enabled
+- **Zero cost when disabled**: buffers are not allocated unless mode is `Full` or `Refs`
+- **Per-correlation override**: set `rsigma.correlation_event_mode` via `custom_attributes` in YAML
 
 **Memory management:**
 - **Max state entries**: configurable hard cap (default: 100,000) across all correlations and group keys
@@ -321,8 +323,8 @@ let config = CorrelationConfig {
     suppress: Some(300),                         // 5-minute suppression window
     action_on_match: CorrelationAction::Reset,   // clear state after firing
     emit_detections: false,                      // only emit correlation alerts
-    include_correlation_events: true,            // include contributing events in output
-    max_correlation_events: 20,                  // keep last 20 events per window (compressed)
+    correlation_event_mode: CorrelationEventMode::Full, // include full events (or Refs for lightweight)
+    max_correlation_events: 20,                        // keep last 20 events per window
     ..Default::default()
 };
 
@@ -332,7 +334,8 @@ engine.add_collection(&collection).unwrap();
 let result = engine.process_event_at(&event, timestamp_secs);
 // result.detections: Vec<MatchResult>
 // result.correlations: Vec<CorrelationResult>
-// result.correlations[0].events: Option<Vec<serde_json::Value>>
+// result.correlations[0].events: Option<Vec<serde_json::Value>>     (Full mode)
+// result.correlations[0].event_refs: Option<Vec<EventRef>>          (Refs mode)
 ```
 
 ---
@@ -410,11 +413,14 @@ rsigma eval -r rules/ --suppress 5m -e @events.ndjson
 # Action on fire — reset state after alert (default: alert)
 rsigma eval -r rules/ --suppress 5m --action reset -e @events.ndjson
 
-# Include contributing events in correlation output (compressed in memory)
-rsigma eval -r rules/ --include-correlation-events -e @events.ndjson
+# Include full contributing events in correlation output (compressed in memory)
+rsigma eval -r rules/ --correlation-event-mode full -e @events.ndjson
+
+# Include lightweight event references (timestamp + ID) instead
+rsigma eval -r rules/ --correlation-event-mode refs -e @events.ndjson
 
 # Cap stored events per correlation window (default: 10)
-rsigma eval -r rules/ --include-correlation-events --max-correlation-events 20 -e @events.ndjson
+rsigma eval -r rules/ --correlation-event-mode full --max-correlation-events 20 -e @events.ndjson
 
 # Suppress detection output (only show correlation alerts)
 rsigma eval -r rules/ --no-detections -e @events.ndjson

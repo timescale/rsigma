@@ -102,11 +102,12 @@ pub use compiler::{
     CompiledDetection, CompiledDetectionItem, CompiledRule, compile_rule, evaluate_rule,
 };
 pub use correlation::{
-    CompiledCondition, CompiledCorrelation, EventBuffer, GroupByField, GroupKey, WindowState,
+    CompiledCondition, CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupByField,
+    GroupKey, WindowState,
 };
 pub use correlation_engine::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationResult, ProcessResult,
-    TimestampFallback,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode,
+    CorrelationResult, ProcessResult, TimestampFallback,
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};

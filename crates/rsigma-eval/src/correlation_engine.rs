@@ -20,7 +20,8 @@ use serde::Serialize;
 use rsigma_parser::{CorrelationRule, CorrelationType, Level, SigmaCollection, SigmaRule};
 
 use crate::correlation::{
-    CompiledCorrelation, EventBuffer, GroupKey, WindowState, compile_correlation,
+    CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, WindowState,
+    compile_correlation,
 };
 use crate::engine::Engine;
 use crate::error::Result;
@@ -57,6 +58,48 @@ impl std::str::FromStr for CorrelationAction {
             _ => Err(format!(
                 "Unknown correlation action: {s} (expected 'alert' or 'reset')"
             )),
+        }
+    }
+}
+
+/// How to include events in correlation results.
+///
+/// Can be overridden per-correlation via the `rsigma.correlation_event_mode`
+/// custom attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationEventMode {
+    /// Don't include events (default). Zero memory overhead.
+    #[default]
+    None,
+    /// Include full event bodies, individually compressed with deflate.
+    /// Typical cost: 100–1000 bytes per event.
+    Full,
+    /// Include only event references (timestamp + optional ID).
+    /// Minimal memory: ~40 bytes per event.
+    Refs,
+}
+
+impl std::str::FromStr for CorrelationEventMode {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "none" | "off" | "false" => Ok(CorrelationEventMode::None),
+            "full" | "true" => Ok(CorrelationEventMode::Full),
+            "refs" | "references" => Ok(CorrelationEventMode::Refs),
+            _ => Err(format!(
+                "Unknown correlation event mode: {s} (expected 'none', 'full', or 'refs')"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for CorrelationEventMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorrelationEventMode::None => write!(f, "none"),
+            CorrelationEventMode::Full => write!(f, "full"),
+            CorrelationEventMode::Refs => write!(f, "refs"),
         }
     }
 }
@@ -118,19 +161,19 @@ pub struct CorrelationConfig {
     /// Set to `false` to suppress detection output for correlation-only rules.
     pub emit_detections: bool,
 
-    /// Whether to include contributing events in correlation results.
+    /// How to include contributing events in correlation results.
     ///
-    /// When enabled, events are compressed (deflate) and stored alongside
-    /// the window state. On correlation fire, stored events are decompressed
-    /// and included in the `CorrelationResult`.
+    /// - `None` (default): no event storage, zero overhead.
+    /// - `Full`: events are deflate-compressed and decompressed on output.
+    /// - `Refs`: only timestamps + event IDs are stored (minimal memory).
     ///
-    /// Default: `false`.
-    pub include_correlation_events: bool,
+    /// Can be overridden per-correlation via `rsigma.correlation_event_mode`.
+    pub correlation_event_mode: CorrelationEventMode,
 
     /// Maximum number of events to store per (correlation, group_key) window
-    /// when `include_correlation_events` is enabled.
+    /// when `correlation_event_mode` is not `None`.
     ///
-    /// Bounds memory at: `max_correlation_events × avg_compressed_size × active_groups`.
+    /// Bounds memory at: `max_correlation_events × cost_per_event × active_groups`.
     /// Default: 10.
     pub max_correlation_events: usize,
 }
@@ -150,7 +193,7 @@ impl Default for CorrelationConfig {
             suppress: None,
             action_on_match: CorrelationAction::default(),
             emit_detections: true,
-            include_correlation_events: false,
+            correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
         }
     }
@@ -188,14 +231,17 @@ pub struct CorrelationResult {
     pub aggregated_value: f64,
     /// The time window in seconds.
     pub timespan_secs: u64,
-    /// Events that contributed to this correlation firing, included when
-    /// `include_correlation_events` is enabled.
+    /// Full event bodies, included when `correlation_event_mode` is `Full`.
     ///
-    /// Contains up to `max_correlation_events` recently stored window events
-    /// plus the triggering event (last element). Events are decompressed from
-    /// deflate storage on output.
+    /// Contains up to `max_correlation_events` recently stored window events.
+    /// Events are decompressed from deflate storage on output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<serde_json::Value>>,
+    /// Lightweight event references, included when `correlation_event_mode` is `Refs`.
+    ///
+    /// Contains up to `max_correlation_events` timestamp + optional ID pairs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_refs: Option<Vec<EventRef>>,
 }
 
 // =============================================================================
@@ -221,9 +267,10 @@ pub struct CorrelationEngine {
     state: HashMap<(usize, GroupKey), WindowState>,
     /// Last alert timestamp per (correlation_index, group_key) for suppression.
     last_alert: HashMap<(usize, GroupKey), i64>,
-    /// Per-(correlation_index, group_key) compressed event buffer.
-    /// Only populated for correlations where event inclusion is enabled.
+    /// Per-(correlation_index, group_key) compressed event buffer (`Full` mode).
     event_buffers: HashMap<(usize, GroupKey), EventBuffer>,
+    /// Per-(correlation_index, group_key) event reference buffer (`Refs` mode).
+    event_ref_buffers: HashMap<(usize, GroupKey), EventRefBuffer>,
     /// Set of detection rule IDs/names that are "correlation-only"
     /// (referenced by correlations where `generate == false`).
     /// Used to filter detection output when `config.emit_detections == false`.
@@ -245,6 +292,7 @@ impl CorrelationEngine {
             state: HashMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
+            event_ref_buffers: HashMap::new(),
             correlation_only_rules: std::collections::HashSet::new(),
             config,
             pipelines: Vec::new(),
@@ -264,15 +312,17 @@ impl CorrelationEngine {
         self.engine.set_include_event(include);
     }
 
-    /// Set global `include_correlation_events` — when `true`, correlation
-    /// results include the contributing events (compressed in memory,
-    /// decompressed on output).
-    pub fn set_include_correlation_events(&mut self, include: bool) {
-        self.config.include_correlation_events = include;
+    /// Set the global correlation event mode.
+    ///
+    /// - `None`: no event storage (default)
+    /// - `Full`: compressed event bodies
+    /// - `Refs`: lightweight timestamp + ID references
+    pub fn set_correlation_event_mode(&mut self, mode: CorrelationEventMode) {
+        self.config.correlation_event_mode = mode;
     }
 
     /// Set the maximum number of events to store per correlation window group.
-    /// Only meaningful when `include_correlation_events` is enabled.
+    /// Only meaningful when `correlation_event_mode` is not `None`.
     pub fn set_max_correlation_events(&mut self, max: usize) {
         self.config.max_correlation_events = max;
     }
@@ -340,6 +390,10 @@ impl CorrelationEngine {
 
     /// Add a single correlation rule.
     pub fn add_correlation(&mut self, corr: &CorrelationRule) -> Result<()> {
+        // Apply engine-level custom attributes from the correlation rule
+        // (e.g. rsigma.timestamp_field).
+        self.apply_custom_attributes(&corr.custom_attributes);
+
         let compiled = compile_correlation(corr)?;
         let idx = self.correlations.len();
 
@@ -602,11 +656,11 @@ impl CorrelationEngine {
         (det.rule_id.clone(), None)
     }
 
-    /// Resolve whether event inclusion is enabled for a given correlation.
-    fn should_include_events(&self, corr_idx: usize) -> bool {
+    /// Resolve the event mode for a given correlation.
+    fn resolve_event_mode(&self, corr_idx: usize) -> CorrelationEventMode {
         let corr = &self.correlations[corr_idx];
-        corr.include_events
-            .unwrap_or(self.config.include_correlation_events)
+        corr.event_mode
+            .unwrap_or(self.config.correlation_event_mode)
     }
 
     /// Resolve the max events cap for a given correlation.
@@ -635,7 +689,7 @@ impl CorrelationEngine {
         let level = corr.level;
         let suppress_secs = corr.suppress_secs.or(self.config.suppress);
         let action = corr.action.unwrap_or(self.config.action_on_match);
-        let include_events = self.should_include_events(corr_idx);
+        let event_mode = self.resolve_event_mode(corr_idx);
         let max_events = self.resolve_max_events(corr_idx);
 
         // Determine the rule_ref strings for alias resolution and temporal tracking.
@@ -691,14 +745,25 @@ impl CorrelationEngine {
             }
         }
 
-        // Push compressed event into buffer (if event inclusion is enabled)
-        if include_events {
-            let buf = self
-                .event_buffers
-                .entry(state_key.clone())
-                .or_insert_with(|| EventBuffer::new(max_events));
-            buf.evict(cutoff);
-            buf.push(ts, event.as_value());
+        // Push event into buffer based on event mode
+        match event_mode {
+            CorrelationEventMode::Full => {
+                let buf = self
+                    .event_buffers
+                    .entry(state_key.clone())
+                    .or_insert_with(|| EventBuffer::new(max_events));
+                buf.evict(cutoff);
+                buf.push(ts, event.as_value());
+            }
+            CorrelationEventMode::Refs => {
+                let buf = self
+                    .event_ref_buffers
+                    .entry(state_key.clone())
+                    .or_insert_with(|| EventRefBuffer::new(max_events));
+                buf.evict(cutoff);
+                buf.push(ts, event.as_value());
+            }
+            CorrelationEventMode::None => {}
         }
 
         // Check condition — after this, `state` is no longer used (NLL drops the borrow).
@@ -724,16 +789,25 @@ impl CorrelationEngine {
             };
 
             if !suppressed {
-                // Decompress stored events if inclusion is enabled
-                let events = if include_events {
-                    let stored = self
-                        .event_buffers
-                        .get(&alert_key)
-                        .map(|buf| buf.decompress_all())
-                        .unwrap_or_default();
-                    Some(stored)
-                } else {
-                    None
+                // Retrieve stored events / refs based on mode
+                let (events, event_refs) = match event_mode {
+                    CorrelationEventMode::Full => {
+                        let stored = self
+                            .event_buffers
+                            .get(&alert_key)
+                            .map(|buf| buf.decompress_all())
+                            .unwrap_or_default();
+                        (Some(stored), None)
+                    }
+                    CorrelationEventMode::Refs => {
+                        let stored = self
+                            .event_ref_buffers
+                            .get(&alert_key)
+                            .map(|buf| buf.refs())
+                            .unwrap_or_default();
+                        (None, Some(stored))
+                    }
+                    CorrelationEventMode::None => (None, None),
                 };
 
                 // Only clone title/id/tags when we actually produce output
@@ -748,6 +822,7 @@ impl CorrelationEngine {
                     aggregated_value: agg_value,
                     timespan_secs: timespan,
                     events,
+                    event_refs,
                 };
                 out.push(result);
 
@@ -760,6 +835,9 @@ impl CorrelationEngine {
                         state.clear();
                     }
                     if let Some(buf) = self.event_buffers.get_mut(&alert_key) {
+                        buf.clear();
+                    }
+                    if let Some(buf) = self.event_ref_buffers.get_mut(&alert_key) {
                         buf.clear();
                     }
                 }
@@ -847,6 +925,7 @@ impl CorrelationEngine {
                         // Chained correlations don't include events (they aggregate
                         // over correlation results, not raw events)
                         events: None,
+                        event_refs: None,
                     });
                 }
             }
@@ -916,6 +995,13 @@ impl CorrelationEngine {
             }
             !buf.is_empty()
         });
+        self.event_ref_buffers.retain(|&(corr_idx, _), buf| {
+            if corr_idx < timespans.len() {
+                let cutoff = now_secs - timespans[corr_idx] as i64;
+                buf.evict(cutoff);
+            }
+            !buf.is_empty()
+        });
 
         // Phase 2: Hard cap — if still over limit after time-based eviction (e.g.
         // high-cardinality traffic with long windows), drop the stalest entries
@@ -937,6 +1023,7 @@ impl CorrelationEngine {
                 self.state.remove(&key);
                 self.last_alert.remove(&key);
                 self.event_buffers.remove(&key);
+                self.event_ref_buffers.remove(&key);
             }
         }
 
@@ -981,6 +1068,11 @@ impl CorrelationEngine {
             .values()
             .map(|b| b.compressed_bytes())
             .sum()
+    }
+
+    /// Number of active event ref buffers — `Refs` mode (for monitoring).
+    pub fn event_ref_buffer_count(&self) -> usize {
+        self.event_ref_buffers.len()
     }
 
     /// Access the inner stateless engine.
@@ -3264,7 +3356,7 @@ level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let config = CorrelationConfig {
-            include_correlation_events: true,
+            correlation_event_mode: CorrelationEventMode::Full,
             max_correlation_events: 10,
             ..Default::default()
         };
@@ -3329,7 +3421,7 @@ level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let config = CorrelationConfig {
-            include_correlation_events: true,
+            correlation_event_mode: CorrelationEventMode::Full,
             max_correlation_events: 3, // only keep last 3
             ..Default::default()
         };
@@ -3385,7 +3477,7 @@ level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let config = CorrelationConfig {
-            include_correlation_events: true,
+            correlation_event_mode: CorrelationEventMode::Full,
             action_on_match: CorrelationAction::Reset,
             ..Default::default()
         };
@@ -3454,7 +3546,7 @@ level: high
         engine.add_collection(&collection).unwrap();
 
         // Enable via setter
-        engine.set_include_correlation_events(true);
+        engine.set_correlation_event_mode(CorrelationEventMode::Full);
 
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "admin"});
@@ -3494,7 +3586,7 @@ level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let config = CorrelationConfig {
-            include_correlation_events: true,
+            correlation_event_mode: CorrelationEventMode::Full,
             max_correlation_events: 100,
             ..Default::default()
         };
@@ -3562,7 +3654,7 @@ level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let config = CorrelationConfig {
-            include_correlation_events: true,
+            correlation_event_mode: CorrelationEventMode::Full,
             ..Default::default()
         };
         let mut engine = CorrelationEngine::new(config);
@@ -3580,5 +3672,206 @@ level: high
 
         assert_eq!(engine.event_buffer_count(), 1); // one group key
         assert!(engine.event_buffer_bytes() > 0);
+    }
+
+    #[test]
+    fn test_correlation_refs_mode_basic() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let config = CorrelationConfig {
+            correlation_event_mode: CorrelationEventMode::Refs,
+            max_correlation_events: 10,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let mut corr_result = None;
+        for i in 0..3 {
+            let v = json!({"EventType": "login", "User": "admin", "id": format!("evt-{i}"), "@timestamp": 1000 + i});
+            let event = Event::from_value(&v);
+            let result = engine.process_event_at(&event, 1000 + i);
+            if !result.correlations.is_empty() {
+                corr_result = Some(result.correlations[0].clone());
+            }
+        }
+
+        let result = corr_result.expect("correlation should have fired");
+        // In refs mode: events should be None, event_refs should be Some
+        assert!(
+            result.events.is_none(),
+            "Full events should not be included in refs mode"
+        );
+        let refs = result
+            .event_refs
+            .expect("event_refs should be present in refs mode");
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].timestamp, 1000);
+        assert_eq!(refs[0].id, Some("evt-0".to_string()));
+        assert_eq!(refs[1].id, Some("evt-1".to_string()));
+        assert_eq!(refs[2].id, Some("evt-2".to_string()));
+    }
+
+    #[test]
+    fn test_correlation_refs_mode_no_id_field() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let config = CorrelationConfig {
+            correlation_event_mode: CorrelationEventMode::Refs,
+            ..Default::default()
+        };
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let mut corr_result = None;
+        for i in 0..2 {
+            let v = json!({"EventType": "login", "User": "admin"});
+            let event = Event::from_value(&v);
+            let result = engine.process_event_at(&event, 1000 + i);
+            if !result.correlations.is_empty() {
+                corr_result = Some(result.correlations[0].clone());
+            }
+        }
+
+        let result = corr_result.expect("correlation should have fired");
+        let refs = result.event_refs.expect("event_refs should be present");
+        // No ID field in events → id should be None
+        for r in &refs {
+            assert_eq!(r.id, None);
+        }
+    }
+
+    #[test]
+    fn test_per_correlation_custom_attributes_from_yaml() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+custom_attributes:
+    rsigma.correlation_event_mode: refs
+    rsigma.max_correlation_events: "5"
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        // Engine mode is None (default), but per-correlation should override to Refs
+        let config = CorrelationConfig::default();
+        let mut engine = CorrelationEngine::new(config);
+        engine.add_collection(&collection).unwrap();
+
+        let mut corr_result = None;
+        for i in 0..3 {
+            let v = json!({"EventType": "login", "User": "admin", "id": format!("e{i}")});
+            let event = Event::from_value(&v);
+            let result = engine.process_event_at(&event, 1000 + i);
+            if !result.correlations.is_empty() {
+                corr_result = Some(result.correlations[0].clone());
+            }
+        }
+
+        let result = corr_result.expect("correlation should fire with per-correlation refs mode");
+        // Per-correlation override should enable refs mode even though engine default is None
+        assert!(result.events.is_none());
+        let refs = result
+            .event_refs
+            .expect("event_refs via per-correlation override");
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].id, Some("e0".to_string()));
+    }
+
+    #[test]
+    fn test_per_correlation_custom_attr_suppress_and_action() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+custom_attributes:
+    rsigma.suppress: 10s
+    rsigma.action: reset
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+
+        // Verify the compiled correlation has per-rule overrides
+        assert_eq!(engine.correlations[0].suppress_secs, Some(10));
+        assert_eq!(
+            engine.correlations[0].action,
+            Some(CorrelationAction::Reset)
+        );
     }
 }

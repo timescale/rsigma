@@ -6,8 +6,8 @@ use std::time::SystemTime;
 use clap::{Parser, Subcommand};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline,
-    parse_pipeline_file,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, Engine, Event,
+    Pipeline, parse_pipeline_file,
 };
 use rsigma_parser::lint::{self, FileLintResult};
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
@@ -140,14 +140,16 @@ enum Commands {
         #[arg(long = "include-event")]
         include_event: bool,
 
-        /// Include contributing events in correlation results.
-        /// Events are compressed (deflate) in memory and decompressed on output.
+        /// Correlation event inclusion mode:
+        ///   none  — don't include events (default, zero overhead)
+        ///   full  — include full event bodies (deflate compressed in memory)
+        ///   refs  — include lightweight references (timestamp + event ID)
         /// Use --max-correlation-events to cap storage per window.
-        #[arg(long = "include-correlation-events")]
-        include_correlation_events: bool,
+        #[arg(long = "correlation-event-mode", default_value = "none")]
+        correlation_event_mode: String,
 
         /// Maximum events to store per correlation window group when
-        /// --include-correlation-events is enabled. Oldest events are
+        /// --correlation-event-mode is not 'none'. Oldest events are
         /// evicted when the cap is reached.
         #[arg(long = "max-correlation-events", default_value = "10")]
         max_correlation_events: usize,
@@ -190,7 +192,7 @@ fn main() {
             action,
             no_detections,
             include_event,
-            include_correlation_events,
+            correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
         } => cmd_eval(
@@ -204,7 +206,7 @@ fn main() {
             action,
             no_detections,
             include_event,
-            include_correlation_events,
+            correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
         ),
@@ -674,7 +676,7 @@ fn cmd_eval(
     action: Option<String>,
     no_detections: bool,
     include_event: bool,
-    include_correlation_events: bool,
+    correlation_event_mode: String,
     max_correlation_events: usize,
     timestamp_fields: Vec<String>,
 ) {
@@ -690,7 +692,7 @@ fn cmd_eval(
         suppress,
         action,
         no_detections,
-        include_correlation_events,
+        correlation_event_mode,
         max_correlation_events,
         timestamp_fields,
     );
@@ -1029,7 +1031,7 @@ fn build_correlation_config(
     suppress: Option<String>,
     action: Option<String>,
     no_detections: bool,
-    include_correlation_events: bool,
+    correlation_event_mode: String,
     max_correlation_events: usize,
     extra_timestamp_fields: Vec<String>,
 ) -> CorrelationConfig {
@@ -1050,11 +1052,18 @@ fn build_correlation_config(
         })
         .unwrap_or_default();
 
+    let event_mode = correlation_event_mode
+        .parse::<CorrelationEventMode>()
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            process::exit(1);
+        });
+
     let mut config = CorrelationConfig {
         suppress: suppress_secs,
         action_on_match,
         emit_detections: !no_detections,
-        include_correlation_events,
+        correlation_event_mode: event_mode,
         max_correlation_events,
         ..Default::default()
     };

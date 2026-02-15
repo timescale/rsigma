@@ -554,6 +554,17 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     // Aliases
     let aliases = parse_correlation_aliases(corr);
 
+    // Custom attributes (rsigma.* extension keys)
+    let custom_attributes = if let Some(Value::Mapping(attrs)) = m.get(val_key("custom_attributes"))
+    {
+        attrs
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     Ok(CorrelationRule {
         title,
         id: get_str(m, "id").map(|s| s.to_string()),
@@ -573,6 +584,7 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         condition,
         aliases,
         generate,
+        custom_attributes,
     })
 }
 
@@ -920,6 +932,86 @@ level: high
             }
             _ => panic!("Expected threshold condition"),
         }
+    }
+
+    #[test]
+    fn test_parse_correlation_rule_custom_attributes() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+custom_attributes:
+    rsigma.correlation_event_mode: refs
+    rsigma.suppress: 5m
+    rsigma.action: reset
+    rsigma.max_correlation_events: "25"
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.correlations.len(), 1);
+
+        let corr = &collection.correlations[0];
+        assert_eq!(
+            corr.custom_attributes.get("rsigma.correlation_event_mode"),
+            Some(&"refs".to_string())
+        );
+        assert_eq!(
+            corr.custom_attributes.get("rsigma.suppress"),
+            Some(&"5m".to_string())
+        );
+        assert_eq!(
+            corr.custom_attributes.get("rsigma.action"),
+            Some(&"reset".to_string())
+        );
+        assert_eq!(
+            corr.custom_attributes.get("rsigma.max_correlation_events"),
+            Some(&"25".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_correlation_rule_no_custom_attributes() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let corr = &collection.correlations[0];
+        assert!(corr.custom_attributes.is_empty());
     }
 
     #[test]

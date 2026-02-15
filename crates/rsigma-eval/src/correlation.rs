@@ -9,6 +9,8 @@ use std::io::{Read as IoRead, Write as IoWrite};
 use flate2::Compression;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
+use serde::Serialize;
+
 use rsigma_parser::{
     ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType,
     FieldAlias, Level,
@@ -50,9 +52,9 @@ pub struct CompiledCorrelation {
     /// Per-correlation action on match, resolved from the `rsigma.action`
     /// custom attribute. `None` means use engine default.
     pub action: Option<crate::correlation_engine::CorrelationAction>,
-    /// Whether to include events in the correlation result.
-    /// `None` means use the engine default (`CorrelationConfig.include_correlation_events`).
-    pub include_events: Option<bool>,
+    /// Event inclusion mode for this correlation.
+    /// `None` means use the engine default (`CorrelationConfig.correlation_event_mode`).
+    pub event_mode: Option<crate::correlation_engine::CorrelationEventMode>,
     /// Maximum events to store per window group for event inclusion.
     /// `None` means use the engine default (`CorrelationConfig.max_correlation_events`).
     pub max_events: Option<usize>,
@@ -287,6 +289,101 @@ fn decompress_event(compressed: &[u8]) -> Option<serde_json::Value> {
     let mut json_bytes = Vec::new();
     decoder.read_to_end(&mut json_bytes).ok()?;
     serde_json::from_slice(&json_bytes).ok()
+}
+
+// =============================================================================
+// Event Reference (lightweight mode)
+// =============================================================================
+
+/// A lightweight event reference: timestamp plus optional event ID.
+///
+/// Used in `Refs` mode for memory-efficient correlation event tracking.
+/// Each ref costs ~40 bytes (vs. 100–1000+ bytes for compressed events),
+/// making this mode suitable for high-volume correlations where only
+/// traceability is needed.
+#[derive(Debug, Clone, Serialize)]
+pub struct EventRef {
+    /// Event timestamp (epoch seconds).
+    pub timestamp: i64,
+    /// Event ID extracted from common fields (`id`, `_id`, `event_id`, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// Lightweight event reference buffer for `Refs` mode.
+///
+/// Stores only timestamps and optional event IDs — no event payload,
+/// no compression. This is the minimal-memory alternative to `EventBuffer`.
+#[derive(Debug, Clone)]
+pub struct EventRefBuffer {
+    /// Event references, ordered by timestamp.
+    entries: VecDeque<EventRef>,
+    /// Maximum number of refs to retain.
+    max_events: usize,
+}
+
+impl EventRefBuffer {
+    /// Create a new ref buffer with the given capacity cap.
+    pub fn new(max_events: usize) -> Self {
+        EventRefBuffer {
+            entries: VecDeque::with_capacity(max_events.min(64)),
+            max_events,
+        }
+    }
+
+    /// Store a reference to an event. Evicts the oldest ref if at capacity.
+    pub fn push(&mut self, ts: i64, event: &serde_json::Value) {
+        if self.entries.len() >= self.max_events {
+            self.entries.pop_front();
+        }
+        let id = extract_event_id(event);
+        self.entries.push_back(EventRef { timestamp: ts, id });
+    }
+
+    /// Remove all refs older than the cutoff timestamp.
+    pub fn evict(&mut self, cutoff: i64) {
+        while self.entries.front().is_some_and(|r| r.timestamp < cutoff) {
+            self.entries.pop_front();
+        }
+    }
+
+    /// Return cloned refs.
+    pub fn refs(&self) -> Vec<EventRef> {
+        self.entries.iter().cloned().collect()
+    }
+
+    /// Returns true if there are no stored refs.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Clear all stored refs.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Number of stored refs.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// Try to extract an event ID from common fields.
+///
+/// Checks (in order): `id`, `_id`, `event_id`, `EventRecordID`, `event.id`.
+/// Returns the first found value as a string.
+fn extract_event_id(event: &serde_json::Value) -> Option<String> {
+    const ID_FIELDS: &[&str] = &["id", "_id", "event_id", "EventRecordID", "event.id"];
+    for field in ID_FIELDS {
+        if let Some(val) = event.get(field) {
+            return match val {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 // =============================================================================
@@ -676,6 +773,33 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
     // Compile condition
     let (condition, extended_expr) = compile_condition(&rule.condition, rule.correlation_type)?;
 
+    // Resolve per-correlation overrides from custom attributes.
+    // These mirror the engine-level `rsigma.*` attributes but apply only
+    // to this correlation rule, taking precedence over engine defaults.
+    let suppress_secs = rule
+        .custom_attributes
+        .get("rsigma.suppress")
+        .and_then(|v| rsigma_parser::Timespan::parse(v).ok())
+        .map(|ts| ts.seconds);
+
+    let action = rule.custom_attributes.get("rsigma.action").and_then(|v| {
+        v.parse::<crate::correlation_engine::CorrelationAction>()
+            .ok()
+    });
+
+    let event_mode = rule
+        .custom_attributes
+        .get("rsigma.correlation_event_mode")
+        .and_then(|v| {
+            v.parse::<crate::correlation_engine::CorrelationEventMode>()
+                .ok()
+        });
+
+    let max_events = rule
+        .custom_attributes
+        .get("rsigma.max_correlation_events")
+        .and_then(|v| v.parse::<usize>().ok());
+
     Ok(CompiledCorrelation {
         id: rule.id.clone(),
         name: rule.name.clone(),
@@ -689,12 +813,10 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         condition,
         extended_expr,
         generate: rule.generate,
-        // Per-correlation overrides default to None; the engine resolves
-        // against CorrelationConfig defaults at runtime.
-        suppress_secs: None,
-        action: None,
-        include_events: None,
-        max_events: None,
+        suppress_secs,
+        action,
+        event_mode,
+        max_events,
     })
 }
 
@@ -1416,5 +1538,141 @@ level: high
             let decompressed = decompress_event(&compressed).unwrap();
             assert_eq!(decompressed, val, "Roundtrip failed for {val}");
         }
+    }
+
+    // =========================================================================
+    // EventRefBuffer tests
+    // =========================================================================
+
+    #[test]
+    fn test_event_ref_buffer_push_and_refs() {
+        let mut buf = EventRefBuffer::new(10);
+        buf.push(1000, &json!({"id": "evt-1", "data": "hello"}));
+        buf.push(1001, &json!({"_id": 42, "data": "world"}));
+        buf.push(1002, &json!({"data": "no-id"}));
+
+        assert_eq!(buf.len(), 3);
+        let refs = buf.refs();
+        assert_eq!(refs[0].timestamp, 1000);
+        assert_eq!(refs[0].id, Some("evt-1".to_string()));
+        assert_eq!(refs[1].timestamp, 1001);
+        assert_eq!(refs[1].id, Some("42".to_string()));
+        assert_eq!(refs[2].timestamp, 1002);
+        assert_eq!(refs[2].id, None);
+    }
+
+    #[test]
+    fn test_event_ref_buffer_max_cap() {
+        let mut buf = EventRefBuffer::new(3);
+        for i in 0..5 {
+            buf.push(1000 + i, &json!({"id": format!("e-{i}")}));
+        }
+        assert_eq!(buf.len(), 3);
+        let refs = buf.refs();
+        assert_eq!(refs[0].id, Some("e-2".to_string()));
+        assert_eq!(refs[1].id, Some("e-3".to_string()));
+        assert_eq!(refs[2].id, Some("e-4".to_string()));
+    }
+
+    #[test]
+    fn test_event_ref_buffer_eviction() {
+        let mut buf = EventRefBuffer::new(10);
+        for i in 0..5 {
+            buf.push(1000 + i, &json!({"id": format!("e-{i}")}));
+        }
+        buf.evict(1003);
+        assert_eq!(buf.len(), 2);
+        let refs = buf.refs();
+        assert_eq!(refs[0].timestamp, 1003);
+        assert_eq!(refs[1].timestamp, 1004);
+    }
+
+    #[test]
+    fn test_event_ref_buffer_clear() {
+        let mut buf = EventRefBuffer::new(10);
+        buf.push(1000, &json!({"id": "a"}));
+        buf.push(1001, &json!({"id": "b"}));
+        assert_eq!(buf.len(), 2);
+
+        buf.clear();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_event_id_common_fields() {
+        assert_eq!(
+            extract_event_id(&json!({"id": "abc"})),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            extract_event_id(&json!({"_id": 123})),
+            Some("123".to_string())
+        );
+        assert_eq!(
+            extract_event_id(&json!({"event_id": "x-1"})),
+            Some("x-1".to_string())
+        );
+        assert_eq!(
+            extract_event_id(&json!({"EventRecordID": 999})),
+            Some("999".to_string())
+        );
+        assert_eq!(extract_event_id(&json!({"no_id_field": true})), None);
+    }
+
+    #[test]
+    fn test_compile_correlation_with_custom_attributes() {
+        use rsigma_parser::*;
+
+        let mut custom_attributes = std::collections::HashMap::new();
+        custom_attributes.insert(
+            "rsigma.correlation_event_mode".to_string(),
+            "refs".to_string(),
+        );
+        custom_attributes.insert(
+            "rsigma.max_correlation_events".to_string(),
+            "25".to_string(),
+        );
+        custom_attributes.insert("rsigma.suppress".to_string(), "5m".to_string());
+        custom_attributes.insert("rsigma.action".to_string(), "reset".to_string());
+
+        let rule = CorrelationRule {
+            title: "Test Corr".to_string(),
+            id: Some("corr-1".to_string()),
+            name: None,
+            status: None,
+            description: None,
+            author: None,
+            date: None,
+            modified: None,
+            references: vec![],
+            tags: vec![],
+            level: Some(Level::High),
+            correlation_type: CorrelationType::EventCount,
+            rules: vec!["rule-1".to_string()],
+            group_by: vec!["User".to_string()],
+            timespan: Timespan::parse("60s").unwrap(),
+            condition: CorrelationCondition::Threshold {
+                predicates: vec![(ConditionOperator::Gte, 5)],
+                field: None,
+            },
+            aliases: vec![],
+            generate: false,
+            custom_attributes,
+        };
+
+        let compiled = compile_correlation(&rule).unwrap();
+
+        // Per-correlation overrides should be resolved from custom_attributes
+        assert_eq!(
+            compiled.event_mode,
+            Some(crate::correlation_engine::CorrelationEventMode::Refs)
+        );
+        assert_eq!(compiled.max_events, Some(25));
+        assert_eq!(compiled.suppress_secs, Some(300)); // 5m = 300s
+        assert_eq!(
+            compiled.action,
+            Some(crate::correlation_engine::CorrelationAction::Reset)
+        );
     }
 }
