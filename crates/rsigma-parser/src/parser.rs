@@ -691,8 +691,9 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
 
     // Get filter section for rules list
     let filter_val = m.get(val_key("filter"));
-    let rules = match filter_val {
-        Some(Value::Mapping(fm)) => match fm.get(val_key("rules")) {
+    let filter_mapping = filter_val.and_then(|v| v.as_mapping());
+    let rules = match filter_mapping {
+        Some(fm) => match fm.get(val_key("rules")) {
             Some(Value::Sequence(seq)) => seq
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -703,12 +704,23 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
         _ => Vec::new(),
     };
 
-    // Parse detection section
-    let detection = m
-        .get(val_key("detection"))
-        .map(parse_detections)
-        .transpose()?
-        .ok_or_else(|| SigmaParserError::MissingField("detection".into()))?;
+    // Parse detection from filter.selection + filter.condition
+    // (Sigma filter spec: selection/condition live inside the filter section).
+    let detection = if let Some(fm) = filter_mapping {
+        let mut det_map = serde_yaml::Mapping::new();
+        for (k, v) in fm.iter() {
+            let key_str = k.as_str().unwrap_or("");
+            if key_str != "rules" {
+                det_map.insert(k.clone(), v.clone());
+            }
+        }
+        if det_map.is_empty() {
+            return Err(SigmaParserError::MissingField("filter.selection".into()));
+        }
+        parse_detections(&Value::Mapping(det_map))?
+    } else {
+        return Err(SigmaParserError::MissingField("filter".into()));
+    };
 
     let logsource = m
         .get(val_key("logsource"))

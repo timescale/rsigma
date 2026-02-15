@@ -513,10 +513,9 @@ title: Filter SYSTEM
 filter:
     rules:
         - rule-001
-detection:
-    filter_system:
+    selection:
         User: 'SYSTEM'
-    condition: filter_system
+    condition: selection
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         assert_eq!(collection.rules.len(), 1);
@@ -552,10 +551,9 @@ detection:
 title: Filter Out Test Env
 filter:
     rules: []
-detection:
-    exclude:
+    selection:
         Environment: 'test'
-    condition: exclude
+    condition: selection
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let mut engine = Engine::new();
@@ -625,10 +623,9 @@ title: Exclude Admin Tools
 filter:
     rules:
         - Detect Mimikatz
-detection:
-    exclude:
+    selection:
         ParentImage|endswith: '\admin_toolkit.exe'
-    condition: exclude
+    condition: selection
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let mut engine = Engine::new();
@@ -663,7 +660,6 @@ title: Exclude Trusted
 filter:
     rules:
         - net-001
-detection:
     trusted_dst:
         DestinationIp|startswith: '10.'
     trusted_user:
@@ -716,10 +712,9 @@ detection:
 title: Exclude Test
 filter:
     rules: []
-detection:
-    exclude:
+    selection:
         Environment: 'test'
-    condition: exclude
+    condition: selection
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let mut engine = Engine::new();

@@ -2365,10 +2365,9 @@ title: Exclude Service Accounts
 filter:
     rules:
         - failed-auth
-detection:
-    svc:
+    selection:
         User|startswith: 'svc_'
-    condition: svc
+    condition: selection
 ---
 title: Brute Force
 correlation:
