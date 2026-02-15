@@ -1,4 +1,5 @@
-use std::io::{self, BufRead, IsTerminal, Read};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, IsTerminal, Read};
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
@@ -106,7 +107,8 @@ enum Commands {
         #[arg(short, long)]
         rules: PathBuf,
 
-        /// A single event as a JSON string (if omitted, reads NDJSON from stdin)
+        /// A single event as a JSON string, or @path to read NDJSON from a file.
+        /// If omitted, reads NDJSON from stdin.
         #[arg(short, long)]
         event: Option<String>,
 
@@ -716,6 +718,33 @@ fn cmd_stdin(pretty: bool) {
     }
 }
 
+/// Resolved event source from the `--event` flag.
+enum EventSource {
+    /// Inline JSON string (e.g. `-e '{"key":"value"}'`).
+    SingleJson(String),
+    /// NDJSON from a file (e.g. `-e @events.ndjson`).
+    NdjsonFile(PathBuf),
+    /// NDJSON from stdin (no `--event` flag).
+    Stdin,
+}
+
+/// Resolve the `--event` argument into an `EventSource`.
+/// Detects `@path` prefix for file-based input.
+fn resolve_event_source(event_json: Option<String>) -> EventSource {
+    match event_json {
+        Some(s) if s.starts_with('@') => {
+            let path = PathBuf::from(&s[1..]);
+            if !path.exists() {
+                eprintln!("Event file not found: {}", path.display());
+                process::exit(1);
+            }
+            EventSource::NdjsonFile(path)
+        }
+        Some(s) => EventSource::SingleJson(s),
+        None => EventSource::Stdin,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval(
     rules_path: PathBuf,
@@ -739,6 +768,9 @@ fn cmd_eval(
     // Compile the event filter once up front
     let event_filter = build_event_filter(jq, jsonpath);
 
+    // Resolve @file syntax
+    let event_source = resolve_event_source(event_json);
+
     // Build correlation config from CLI flags
     let corr_config = build_correlation_config(
         suppress,
@@ -753,7 +785,7 @@ fn cmd_eval(
         cmd_eval_with_correlations(
             collection,
             &rules_path,
-            event_json,
+            event_source,
             pretty,
             &pipelines,
             &event_filter,
@@ -764,7 +796,7 @@ fn cmd_eval(
         cmd_eval_detection_only(
             collection,
             &rules_path,
-            event_json,
+            event_source,
             pretty,
             &pipelines,
             &event_filter,
@@ -778,7 +810,7 @@ fn cmd_eval(
 fn cmd_eval_with_correlations(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
-    event_json: Option<String>,
+    event_source: EventSource,
     pretty: bool,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
@@ -802,56 +834,13 @@ fn cmd_eval_with_correlations(
         rules_path.display(),
     );
 
-    if let Some(json_str) = event_json {
-        let value: serde_json::Value = match serde_json::from_str(&json_str) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Invalid JSON event: {e}");
-                process::exit(1);
-            }
-        };
-
-        for payload in apply_event_filter(&value, event_filter) {
-            let event = Event::from_value(&payload);
-            let result = engine.process_event(&event);
-
-            let total = result.detections.len() + result.correlations.len();
-            if total == 0 {
-                eprintln!("No matches.");
-            } else {
-                for m in &result.detections {
-                    print_json(m, pretty);
-                }
-                for m in &result.correlations {
-                    print_json(m, pretty);
-                }
-            }
-        }
-    } else {
-        let stdin = io::stdin();
-        let mut line_num = 0u64;
-        let mut det_count = 0u64;
-        let mut corr_count = 0u64;
-
-        for line in stdin.lock().lines() {
-            line_num += 1;
-            let line = match line {
-                Ok(l) => l,
-                Err(e) => {
-                    eprintln!("Error reading line {line_num}: {e}");
-                    continue;
-                }
-            };
-
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let value: serde_json::Value = match serde_json::from_str(&line) {
+    match event_source {
+        EventSource::SingleJson(json_str) => {
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("Invalid JSON on line {line_num}: {e}");
-                    continue;
+                    eprintln!("Invalid JSON event: {e}");
+                    process::exit(1);
                 }
             };
 
@@ -859,28 +848,98 @@ fn cmd_eval_with_correlations(
                 let event = Event::from_value(&payload);
                 let result = engine.process_event(&event);
 
-                for m in &result.detections {
-                    det_count += 1;
-                    print_json(m, pretty);
-                }
-                for m in &result.correlations {
-                    corr_count += 1;
-                    print_json(m, pretty);
+                let total = result.detections.len() + result.correlations.len();
+                if total == 0 {
+                    eprintln!("No matches.");
+                } else {
+                    for m in &result.detections {
+                        print_json(m, pretty);
+                    }
+                    for m in &result.correlations {
+                        print_json(m, pretty);
+                    }
                 }
             }
         }
-
-        eprintln!(
-            "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
-        );
+        EventSource::NdjsonFile(path) => {
+            let file = File::open(&path).unwrap_or_else(|e| {
+                eprintln!("Error opening event file '{}': {e}", path.display());
+                process::exit(1);
+            });
+            let reader = BufReader::new(file);
+            let (det_count, corr_count, line_num) =
+                eval_ndjson_corr(&mut engine, reader, event_filter, pretty);
+            eprintln!(
+                "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+            );
+        }
+        EventSource::Stdin => {
+            let stdin = io::stdin();
+            let (det_count, corr_count, line_num) =
+                eval_ndjson_corr(&mut engine, stdin.lock(), event_filter, pretty);
+            eprintln!(
+                "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+            );
+        }
     }
+}
+
+/// Stream NDJSON through the correlation engine. Returns (det_count, corr_count, line_count).
+fn eval_ndjson_corr(
+    engine: &mut CorrelationEngine,
+    reader: impl BufRead,
+    event_filter: &EventFilter,
+    pretty: bool,
+) -> (u64, u64, u64) {
+    let mut line_num = 0u64;
+    let mut det_count = 0u64;
+    let mut corr_count = 0u64;
+
+    for line in reader.lines() {
+        line_num += 1;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Error reading line {line_num}: {e}");
+                continue;
+            }
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Invalid JSON on line {line_num}: {e}");
+                continue;
+            }
+        };
+
+        for payload in apply_event_filter(&value, event_filter) {
+            let event = Event::from_value(&payload);
+            let result = engine.process_event(&event);
+
+            for m in &result.detections {
+                det_count += 1;
+                print_json(m, pretty);
+            }
+            for m in &result.correlations {
+                corr_count += 1;
+                print_json(m, pretty);
+            }
+        }
+    }
+
+    (det_count, corr_count, line_num)
 }
 
 /// Evaluation without correlations (stateless, original behavior).
 fn cmd_eval_detection_only(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
-    event_json: Option<String>,
+    event_source: EventSource,
     pretty: bool,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
@@ -902,72 +961,96 @@ fn cmd_eval_detection_only(
         rules_path.display()
     );
 
-    if let Some(json_str) = event_json {
-        let value: serde_json::Value = match serde_json::from_str(&json_str) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Invalid JSON event: {e}");
-                process::exit(1);
-            }
-        };
+    match event_source {
+        EventSource::SingleJson(json_str) => {
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Invalid JSON event: {e}");
+                    process::exit(1);
+                }
+            };
 
-        let payloads = apply_event_filter(&value, event_filter);
-        if payloads.is_empty() {
-            eprintln!("No matches.");
-        } else {
-            for payload in &payloads {
-                let event = Event::from_value(payload);
-                let matches = engine.evaluate(&event);
+            let payloads = apply_event_filter(&value, event_filter);
+            if payloads.is_empty() {
+                eprintln!("No matches.");
+            } else {
+                for payload in &payloads {
+                    let event = Event::from_value(payload);
+                    let matches = engine.evaluate(&event);
 
-                if matches.is_empty() {
-                    eprintln!("No matches.");
-                } else {
-                    for m in &matches {
-                        print_json(m, pretty);
+                    if matches.is_empty() {
+                        eprintln!("No matches.");
+                    } else {
+                        for m in &matches {
+                            print_json(m, pretty);
+                        }
                     }
                 }
             }
         }
-    } else {
-        let stdin = io::stdin();
-        let mut line_num = 0u64;
-        let mut match_count = 0u64;
+        EventSource::NdjsonFile(path) => {
+            let file = File::open(&path).unwrap_or_else(|e| {
+                eprintln!("Error opening event file '{}': {e}", path.display());
+                process::exit(1);
+            });
+            let reader = BufReader::new(file);
+            let (match_count, line_num) = eval_ndjson_detect(&engine, reader, event_filter, pretty);
+            eprintln!("Processed {line_num} events, {match_count} matches.");
+        }
+        EventSource::Stdin => {
+            let stdin = io::stdin();
+            let (match_count, line_num) =
+                eval_ndjson_detect(&engine, stdin.lock(), event_filter, pretty);
+            eprintln!("Processed {line_num} events, {match_count} matches.");
+        }
+    }
+}
 
-        for line in stdin.lock().lines() {
-            line_num += 1;
-            let line = match line {
-                Ok(l) => l,
-                Err(e) => {
-                    eprintln!("Error reading line {line_num}: {e}");
-                    continue;
-                }
-            };
+/// Stream NDJSON through the detection engine. Returns (match_count, line_count).
+fn eval_ndjson_detect(
+    engine: &Engine,
+    reader: impl BufRead,
+    event_filter: &EventFilter,
+    pretty: bool,
+) -> (u64, u64) {
+    let mut line_num = 0u64;
+    let mut match_count = 0u64;
 
-            if line.trim().is_empty() {
+    for line in reader.lines() {
+        line_num += 1;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Error reading line {line_num}: {e}");
                 continue;
             }
+        };
 
-            let value: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("Invalid JSON on line {line_num}: {e}");
-                    continue;
-                }
-            };
-
-            for payload in apply_event_filter(&value, event_filter) {
-                let event = Event::from_value(&payload);
-                let matches = engine.evaluate(&event);
-
-                for m in &matches {
-                    match_count += 1;
-                    print_json(m, pretty);
-                }
-            }
+        if line.trim().is_empty() {
+            continue;
         }
 
-        eprintln!("Processed {line_num} events, {match_count} matches.");
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Invalid JSON on line {line_num}: {e}");
+                continue;
+            }
+        };
+
+        for payload in apply_event_filter(&value, event_filter) {
+            let event = Event::from_value(&payload);
+            let matches = engine.evaluate(&event);
+
+            for m in &matches {
+                match_count += 1;
+                print_json(m, pretty);
+            }
+        }
     }
+
+    (match_count, line_num)
 }
 
 // ---------------------------------------------------------------------------

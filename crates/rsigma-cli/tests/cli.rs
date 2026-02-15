@@ -102,16 +102,15 @@ detection:
 level: medium
 ---
 title: Filter FP
-filter:
-    rules:
-        - 00000000-0000-0000-0000-000000000020
 logsource:
     category: test
     product: test
-detection:
-    filter_trusted:
+filter:
+    rules:
+        - 00000000-0000-0000-0000-000000000020
+    selection:
         TargetFilename|endswith: "\\trusted.exe"
-    condition: not filter_trusted
+    condition: selection
 "#;
 
 const PIPELINE_YAML: &str = r#"
@@ -357,6 +356,65 @@ fn eval_ndjson_skips_blank_lines() {
         .assert()
         .success()
         .stderr(predicate::str::contains("Processed"));
+}
+
+#[test]
+fn eval_at_file_single_event() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let events = temp_file(".json", r#"{"CommandLine": "download malware.exe"}"#);
+    let at_path = format!("@{}", events.path().to_str().unwrap());
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            &at_path,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Test Rule"))
+        .stderr(predicate::str::contains("1 events"));
+}
+
+#[test]
+fn eval_at_file_ndjson() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let events = temp_file(
+        ".ndjson",
+        r#"{"CommandLine": "run malware.exe"}
+{"CommandLine": "notepad.exe"}
+{"CommandLine": "inject malware payload"}
+"#,
+    );
+    let at_path = format!("@{}", events.path().to_str().unwrap());
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            &at_path,
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("2 matches"));
+}
+
+#[test]
+fn eval_at_file_not_found() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            "@/tmp/nonexistent_rsigma_events.json",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Event file not found"));
 }
 
 #[test]
