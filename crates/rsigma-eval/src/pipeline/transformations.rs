@@ -2077,4 +2077,657 @@ mod tests {
         assert!(state.was_applied("inner_prefix"));
         assert!(state.was_applied("inner_suffix"));
     }
+
+    // =========================================================================
+    // Untested transformation types
+    // =========================================================================
+
+    #[test]
+    fn test_field_name_prefix_mapping() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("Command".to_string(), "process.".to_string());
+        mapping.insert("Parent".to_string(), "process.parent.".to_string());
+
+        let t = Transformation::FieldNamePrefixMapping { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // "CommandLine" starts with "Command" → "process." + "Line"
+            assert_eq!(items[0].field.name, Some("process.Line".to_string()));
+            // "ParentImage" starts with "Parent" → "process.parent." + "Image"
+            assert_eq!(
+                items[1].field.name,
+                Some("process.parent.Image".to_string())
+            );
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_field_name_prefix_mapping_no_match() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("NoMatch".to_string(), "replaced.".to_string());
+
+        let t = Transformation::FieldNamePrefixMapping { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        // Fields should be unchanged — no prefix matched
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items[0].field.name, Some("CommandLine".to_string()));
+            assert_eq!(items[1].field.name, Some("ParentImage".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_wildcard_placeholders_replaces_unresolved() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("User".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new("%unknown_var%"))],
+            }]),
+        );
+
+        let mut rule = SigmaRule {
+            title: "Test".to_string(),
+            logsource: LogSource::default(),
+            detection: Detections {
+                named,
+                conditions: vec![ConditionExpr::Identifier("selection".to_string())],
+                condition_strings: vec!["selection".to_string()],
+                timeframe: None,
+            },
+            id: None,
+            name: None,
+            related: vec![],
+            taxonomy: None,
+            status: None,
+            description: None,
+            license: None,
+            author: None,
+            references: vec![],
+            date: None,
+            modified: None,
+            fields: vec![],
+            falsepositives: vec![],
+            level: None,
+            tags: vec![],
+            scope: vec![],
+            custom_attributes: HashMap::new(),
+        };
+
+        let mut state = PipelineState::default();
+        // No vars set — placeholder should be replaced with wildcard
+        let t = Transformation::WildcardPlaceholders;
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "*", "unresolved placeholder should become *");
+            } else {
+                panic!("Expected String value");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_wildcard_placeholders_with_known_var() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("User".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new("%admin%"))],
+            }]),
+        );
+
+        let mut rule = SigmaRule {
+            title: "Test".to_string(),
+            logsource: LogSource::default(),
+            detection: Detections {
+                named,
+                conditions: vec![ConditionExpr::Identifier("selection".to_string())],
+                condition_strings: vec!["selection".to_string()],
+                timeframe: None,
+            },
+            id: None,
+            name: None,
+            related: vec![],
+            taxonomy: None,
+            status: None,
+            description: None,
+            license: None,
+            author: None,
+            references: vec![],
+            date: None,
+            modified: None,
+            fields: vec![],
+            falsepositives: vec![],
+            level: None,
+            tags: vec![],
+            scope: vec![],
+            custom_attributes: HashMap::new(),
+        };
+
+        let mut state = PipelineState::default();
+        state
+            .vars
+            .insert("admin".to_string(), vec!["root".to_string()]);
+
+        // WildcardPlaceholders should still expand known vars
+        let t = Transformation::WildcardPlaceholders;
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "root");
+            } else {
+                panic!("Expected String value");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_detection_item_failure_fires_on_match() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Condition that matches the "whoami" value in CommandLine
+        let det_conds = vec![DetectionItemCondition::MatchString {
+            regex: regex::Regex::new("whoami").unwrap(),
+            negate: false,
+        }];
+
+        let t = Transformation::DetectionItemFailure {
+            message: "Unsupported detection item".to_string(),
+        };
+        let result = t.apply(&mut rule, &mut state, &det_conds, &[], false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unsupported detection item"));
+    }
+
+    #[test]
+    fn test_detection_item_failure_skips_on_no_match() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Condition that does NOT match any value
+        let det_conds = vec![DetectionItemCondition::MatchString {
+            regex: regex::Regex::new("nonexistent_value").unwrap(),
+            negate: false,
+        }];
+
+        let t = Transformation::DetectionItemFailure {
+            message: "Should not fire".to_string(),
+        };
+        let result = t.apply(&mut rule, &mut state, &det_conds, &[], false);
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // returns false (not applied)
+    }
+
+    #[test]
+    fn test_query_expression_placeholders_noop() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::QueryExpressionPlaceholders {
+            expression: "{field}={value}".to_string(),
+        };
+        let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        assert!(!result); // no-op returns false
+    }
+
+    // =========================================================================
+    // Edge cases: add_condition negated
+    // =========================================================================
+
+    #[test]
+    fn test_add_condition_negated() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut conds = HashMap::new();
+        conds.insert(
+            "User".to_string(),
+            SigmaValue::String(SigmaString::new("SYSTEM")),
+        );
+        let t = Transformation::AddCondition {
+            conditions: conds,
+            negated: true,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        // The condition should be AND NOT (negated)
+        assert_eq!(rule.detection.conditions.len(), 1);
+        if let ConditionExpr::And(parts) = &rule.detection.conditions[0] {
+            assert_eq!(parts.len(), 2);
+            // Second part should be Not(...)
+            assert!(
+                matches!(&parts[1], ConditionExpr::Not(_)),
+                "Expected negated condition, got: {:?}",
+                parts[1]
+            );
+        } else {
+            panic!("Expected And condition");
+        }
+    }
+
+    // =========================================================================
+    // Edge cases: detection_item_conditions with transformations
+    // =========================================================================
+
+    #[test]
+    fn test_replace_string_with_detection_item_condition() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Only replace in items where value matches "whoami"
+        let det_conds = vec![DetectionItemCondition::MatchString {
+            regex: regex::Regex::new("whoami").unwrap(),
+            negate: false,
+        }];
+
+        let t = Transformation::ReplaceString {
+            regex: r"whoami".to_string(),
+            replacement: "REPLACED".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &det_conds, &[], false)
+            .unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // CommandLine value matches → replaced
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "REPLACED");
+            }
+            // ParentImage value "\\cmd.exe" does NOT match → unchanged
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "\\cmd.exe");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_set_value_with_is_null_condition() {
+        // Create a rule with a null value
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![
+                DetectionItem {
+                    field: FieldSpec::new(Some("FieldA".to_string()), vec![]),
+                    values: vec![SigmaValue::Null],
+                },
+                DetectionItem {
+                    field: FieldSpec::new(Some("FieldB".to_string()), vec![]),
+                    values: vec![SigmaValue::String(SigmaString::new("value"))],
+                },
+            ]),
+        );
+
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+        let mut state = PipelineState::default();
+
+        // Only apply set_value to items with null values
+        let det_conds = vec![DetectionItemCondition::IsNull { negate: false }];
+
+        let t = Transformation::SetValue {
+            value: SigmaValue::String(SigmaString::new("DEFAULT")),
+        };
+        t.apply(&mut rule, &mut state, &det_conds, &[], false)
+            .unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // FieldA had null → should be replaced
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "DEFAULT");
+            } else {
+                panic!("Expected String after set_value on null");
+            }
+            // FieldB had "value" → should be unchanged
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "value");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_drop_detection_item_with_match_string_condition() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Drop items where values match "whoami"
+        let det_conds = vec![DetectionItemCondition::MatchString {
+            regex: regex::Regex::new("whoami").unwrap(),
+            negate: false,
+        }];
+
+        let t = Transformation::DropDetectionItem;
+        t.apply(&mut rule, &mut state, &det_conds, &[], false)
+            .unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items.len(), 1);
+            // Only ParentImage should remain
+            assert_eq!(items[0].field.name, Some("ParentImage".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    // =========================================================================
+    // Edge case: field_name_cond_not (negated field name conditions)
+    // =========================================================================
+
+    #[test]
+    fn test_field_name_mapping_with_cond_not() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // IncludeFields for CommandLine, but negated → apply to everything EXCEPT CommandLine
+        let field_conds = vec![FieldNameCondition::IncludeFields {
+            matcher: super::super::conditions::FieldMatcher::Plain(vec!["CommandLine".to_string()]),
+        }];
+
+        let mut mapping = HashMap::new();
+        mapping.insert("CommandLine".to_string(), "cmd".to_string());
+        mapping.insert("ParentImage".to_string(), "parent".to_string());
+
+        let t = Transformation::FieldNameMapping { mapping };
+        // field_name_cond_not = true → negate the field condition
+        t.apply(&mut rule, &mut state, &[], &field_conds, true)
+            .unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // CommandLine should NOT be mapped (negated: included fields are excluded)
+            assert_eq!(items[0].field.name, Some("CommandLine".to_string()));
+            // ParentImage SHOULD be mapped (not in include list, negated = applies)
+            assert_eq!(items[1].field.name, Some("parent".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    // =========================================================================
+    // Edge cases: empty inputs
+    // =========================================================================
+
+    #[test]
+    fn test_field_name_mapping_empty() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::FieldNameMapping {
+            mapping: HashMap::new(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        // Fields should be unchanged
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items[0].field.name, Some("CommandLine".to_string()));
+            assert_eq!(items[1].field.name, Some("ParentImage".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_field_name_prefix_mapping_empty() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::FieldNamePrefixMapping {
+            mapping: HashMap::new(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items[0].field.name, Some("CommandLine".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_map_string_empty_mapping() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::MapString {
+            mapping: HashMap::new(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "whoami");
+            }
+        }
+    }
+
+    #[test]
+    fn test_hashes_fields_empty_algos() {
+        // When valid_hash_algos is empty, all algorithms should be accepted
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("Hashes".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new(
+                    "SHA256=abc123,IMPHASH=def456",
+                ))],
+            }]),
+        );
+
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+
+        let mut state = PipelineState::default();
+        let t = Transformation::HashesFields {
+            valid_hash_algos: vec![], // empty = accept all
+            field_prefix: "File".to_string(),
+            drop_algo_prefix: false,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].field.name, Some("FileSHA256".to_string()));
+            assert_eq!(items[1].field.name, Some("FileIMPHASH".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_hashes_fields_drop_algo_prefix() {
+        let mut named = HashMap::new();
+        named.insert(
+            "selection".to_string(),
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some("Hashes".to_string()), vec![]),
+                values: vec![SigmaValue::String(SigmaString::new("MD5=abc123"))],
+            }]),
+        );
+
+        let mut rule = make_test_rule();
+        rule.detection.named = named;
+        let mut state = PipelineState::default();
+
+        let t = Transformation::HashesFields {
+            valid_hash_algos: vec!["MD5".to_string()],
+            field_prefix: "Hash".to_string(),
+            drop_algo_prefix: true,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            assert_eq!(items.len(), 1);
+            // drop_algo_prefix = true → field name is just the prefix
+            assert_eq!(items[0].field.name, Some("Hash".to_string()));
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    // =========================================================================
+    // Edge case: invalid regex in replace_string
+    // =========================================================================
+
+    #[test]
+    fn test_replace_string_invalid_regex() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::ReplaceString {
+            regex: r"[invalid".to_string(), // unclosed bracket
+            replacement: "x".to_string(),
+        };
+        let result = t.apply(&mut rule, &mut state, &[], &[], false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("bad regex"),
+            "error should mention regex: {err}"
+        );
+    }
+
+    // =========================================================================
+    // Edge case: detection_item_conditions with negate
+    // =========================================================================
+
+    #[test]
+    fn test_case_transformation_with_negated_match_string() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+
+        // Negate: transform items that do NOT match "whoami"
+        let det_conds = vec![DetectionItemCondition::MatchString {
+            regex: regex::Regex::new("whoami").unwrap(),
+            negate: true,
+        }];
+
+        let t = Transformation::CaseTransformation {
+            case_type: "upper".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &det_conds, &[], false)
+            .unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // CommandLine has "whoami" → negate means NOT matched → unchanged
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "whoami");
+            }
+            // ParentImage has "\\cmd.exe" → negate means matched → uppercased
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "\\CMD.EXE");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    // =========================================================================
+    // Integration: multi-transformation chaining pipeline (YAML)
+    // =========================================================================
+
+    #[test]
+    fn test_multi_transformation_chaining_pipeline() {
+        use crate::pipeline::parse_pipeline;
+
+        let yaml = r#"
+name: Multi-step Pipeline
+transformations:
+  - id: step1_map
+    type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+      ParentImage: process.parent.executable
+  - id: step2_prefix
+    type: field_name_prefix
+    prefix: "winlog."
+    rule_conditions:
+      - type: logsource
+        product: windows
+  - id: step3_case
+    type: case_transformation
+    case_type: upper
+    field_name_conditions:
+      - type: include_fields
+        fields:
+          - winlog.process.command_line
+  - id: step4_attr
+    type: set_custom_attribute
+    attribute: rsigma.processed
+    value: "true"
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+
+        let mut rule = make_test_rule(); // Windows process_creation rule
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline.apply(&mut rule, &mut state).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // step1: CommandLine → process.command_line
+            // step2: process.command_line → winlog.process.command_line
+            assert_eq!(
+                items[0].field.name,
+                Some("winlog.process.command_line".to_string())
+            );
+            // step3: case upper only on winlog.process.command_line
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "WHOAMI");
+            }
+
+            // ParentImage → process.parent.executable → winlog.process.parent.executable
+            assert_eq!(
+                items[1].field.name,
+                Some("winlog.process.parent.executable".to_string())
+            );
+            // step3 does NOT apply to this field → value unchanged
+            if let SigmaValue::String(s) = &items[1].values[0] {
+                assert_eq!(s.original, "\\cmd.exe");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+
+        // step4: custom attribute was set
+        assert_eq!(
+            rule.custom_attributes.get("rsigma.processed"),
+            Some(&"true".to_string())
+        );
+
+        // All steps should be tracked
+        assert!(state.was_applied("step1_map"));
+        assert!(state.was_applied("step2_prefix"));
+        assert!(state.was_applied("step3_case"));
+        assert!(state.was_applied("step4_attr"));
+    }
 }
