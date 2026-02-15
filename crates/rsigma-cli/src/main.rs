@@ -140,6 +140,18 @@ enum Commands {
         #[arg(long = "include-event")]
         include_event: bool,
 
+        /// Include contributing events in correlation results.
+        /// Events are compressed (deflate) in memory and decompressed on output.
+        /// Use --max-correlation-events to cap storage per window.
+        #[arg(long = "include-correlation-events")]
+        include_correlation_events: bool,
+
+        /// Maximum events to store per correlation window group when
+        /// --include-correlation-events is enabled. Oldest events are
+        /// evicted when the cap is reached.
+        #[arg(long = "max-correlation-events", default_value = "10")]
+        max_correlation_events: usize,
+
         /// Event field name(s) to use for timestamp extraction in correlations.
         /// Can be specified multiple times; tried in order before built-in
         /// defaults (@timestamp, timestamp, EventTime, …).
@@ -178,6 +190,8 @@ fn main() {
             action,
             no_detections,
             include_event,
+            include_correlation_events,
+            max_correlation_events,
             timestamp_fields,
         } => cmd_eval(
             rules,
@@ -190,6 +204,8 @@ fn main() {
             action,
             no_detections,
             include_event,
+            include_correlation_events,
+            max_correlation_events,
             timestamp_fields,
         ),
     }
@@ -658,6 +674,8 @@ fn cmd_eval(
     action: Option<String>,
     no_detections: bool,
     include_event: bool,
+    include_correlation_events: bool,
+    max_correlation_events: usize,
     timestamp_fields: Vec<String>,
 ) {
     let collection = load_collection(&rules_path);
@@ -668,7 +686,14 @@ fn cmd_eval(
     let event_filter = build_event_filter(jq, jsonpath);
 
     // Build correlation config from CLI flags
-    let corr_config = build_correlation_config(suppress, action, no_detections, timestamp_fields);
+    let corr_config = build_correlation_config(
+        suppress,
+        action,
+        no_detections,
+        include_correlation_events,
+        max_correlation_events,
+        timestamp_fields,
+    );
 
     if has_correlations {
         cmd_eval_with_correlations(
@@ -1004,6 +1029,8 @@ fn build_correlation_config(
     suppress: Option<String>,
     action: Option<String>,
     no_detections: bool,
+    include_correlation_events: bool,
+    max_correlation_events: usize,
     extra_timestamp_fields: Vec<String>,
 ) -> CorrelationConfig {
     let suppress_secs = suppress.map(|s| match rsigma_parser::Timespan::parse(&s) {
@@ -1027,6 +1054,8 @@ fn build_correlation_config(
         suppress: suppress_secs,
         action_on_match,
         emit_detections: !no_detections,
+        include_correlation_events,
+        max_correlation_events,
         ..Default::default()
     };
 

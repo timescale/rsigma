@@ -4,7 +4,11 @@
 //! `CompiledCorrelation` with associated `WindowState` for stateful evaluation.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{Read as IoRead, Write as IoWrite};
 
+use flate2::Compression;
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
 use rsigma_parser::{
     ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType,
     FieldAlias, Level,
@@ -46,6 +50,12 @@ pub struct CompiledCorrelation {
     /// Per-correlation action on match, resolved from the `rsigma.action`
     /// custom attribute. `None` means use engine default.
     pub action: Option<crate::correlation_engine::CorrelationAction>,
+    /// Whether to include events in the correlation result.
+    /// `None` means use the engine default (`CorrelationConfig.include_correlation_events`).
+    pub include_events: Option<bool>,
+    /// Maximum events to store per window group for event inclusion.
+    /// `None` means use the engine default (`CorrelationConfig.max_correlation_events`).
+    pub max_events: Option<usize>,
 }
 
 /// A group-by field, potentially aliased per referenced rule.
@@ -174,6 +184,109 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
+}
+
+// =============================================================================
+// Compressed Event Buffer
+// =============================================================================
+
+/// Default compression level — fast compression (level 1) for minimal latency.
+/// Deflate level 1 still achieves ~2-3x compression on JSON while being very fast.
+const COMPRESSION_LEVEL: Compression = Compression::fast();
+
+/// Compressed event storage for correlation event inclusion.
+///
+/// Stores event JSON payloads as individually deflate-compressed blobs alongside
+/// their timestamps. This enables per-event eviction (matching `WindowState`
+/// eviction) while keeping memory usage low.
+///
+/// # Memory Model
+///
+/// Each stored event costs approximately `compressed_size + 24` bytes
+/// (8 for timestamp, 16 for Vec overhead). Typical JSON events (500B–5KB)
+/// compress to 100B–1KB with deflate, giving 3–5x memory savings.
+///
+/// The buffer enforces a hard cap (`max_events`) so memory is bounded at:
+///   `max_events × (avg_compressed_size + 24)` bytes per group key.
+#[derive(Debug, Clone)]
+pub struct EventBuffer {
+    /// (timestamp, deflate-compressed event JSON) pairs, ordered by timestamp.
+    entries: VecDeque<(i64, Vec<u8>)>,
+    /// Maximum number of events to retain. When exceeded, the oldest event is
+    /// evicted regardless of the time window.
+    max_events: usize,
+}
+
+impl EventBuffer {
+    /// Create a new event buffer with the given capacity cap.
+    pub fn new(max_events: usize) -> Self {
+        EventBuffer {
+            entries: VecDeque::with_capacity(max_events.min(64)),
+            max_events,
+        }
+    }
+
+    /// Compress and store an event. Evicts the oldest entry if at capacity.
+    pub fn push(&mut self, ts: i64, event: &serde_json::Value) {
+        // Compress the event JSON with deflate
+        if let Some(compressed) = compress_event(event) {
+            if self.entries.len() >= self.max_events {
+                self.entries.pop_front();
+            }
+            self.entries.push_back((ts, compressed));
+        }
+    }
+
+    /// Remove all entries older than the cutoff timestamp.
+    pub fn evict(&mut self, cutoff: i64) {
+        while self.entries.front().is_some_and(|(t, _)| *t < cutoff) {
+            self.entries.pop_front();
+        }
+    }
+
+    /// Decompress and return all stored events.
+    pub fn decompress_all(&self) -> Vec<serde_json::Value> {
+        self.entries
+            .iter()
+            .filter_map(|(_, compressed)| decompress_event(compressed))
+            .collect()
+    }
+
+    /// Returns true if there are no stored events.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Clear all stored events.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Total compressed bytes stored (for monitoring/diagnostics).
+    pub fn compressed_bytes(&self) -> usize {
+        self.entries.iter().map(|(_, data)| data.len()).sum()
+    }
+
+    /// Number of stored events.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// Compress an event JSON value using deflate.
+fn compress_event(event: &serde_json::Value) -> Option<Vec<u8>> {
+    let json_bytes = serde_json::to_vec(event).ok()?;
+    let mut encoder = DeflateEncoder::new(Vec::new(), COMPRESSION_LEVEL);
+    encoder.write_all(&json_bytes).ok()?;
+    encoder.finish().ok()
+}
+
+/// Decompress a deflate-compressed event back to a JSON value.
+fn decompress_event(compressed: &[u8]) -> Option<serde_json::Value> {
+    let mut decoder = DeflateDecoder::new(compressed);
+    let mut json_bytes = Vec::new();
+    decoder.read_to_end(&mut json_bytes).ok()?;
+    serde_json::from_slice(&json_bytes).ok()
 }
 
 // =============================================================================
@@ -580,6 +693,8 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         // against CorrelationConfig defaults at runtime.
         suppress_secs: None,
         action: None,
+        include_events: None,
+        max_events: None,
     })
 }
 
@@ -1188,5 +1303,118 @@ level: high
                 .check_condition(&cond3, CorrelationType::Temporal, &refs, None)
                 .is_none()
         );
+    }
+
+    // =========================================================================
+    // EventBuffer tests
+    // =========================================================================
+
+    #[test]
+    fn test_event_buffer_push_and_decompress() {
+        let mut buf = EventBuffer::new(10);
+        let event = json!({"User": "admin", "action": "login", "src_ip": "10.0.0.1"});
+        buf.push(1000, &event);
+
+        assert_eq!(buf.len(), 1);
+        assert!(!buf.is_empty());
+
+        let events = buf.decompress_all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event);
+    }
+
+    #[test]
+    fn test_event_buffer_compression_saves_memory() {
+        let mut buf = EventBuffer::new(100);
+        // Push a realistic-sized event (~500 bytes JSON)
+        let event = json!({
+            "User": "admin",
+            "action": "login",
+            "src_ip": "192.168.1.100",
+            "dst_ip": "10.0.0.1",
+            "EventTime": "2024-07-10T12:30:00Z",
+            "process": "sshd",
+            "host": "production-server-01.example.com",
+            "message": "Accepted password for admin from 192.168.1.100 port 22 ssh2",
+            "severity": "info",
+            "tags": ["authentication", "network", "linux"]
+        });
+
+        let raw_size = serde_json::to_vec(&event).unwrap().len();
+        buf.push(1000, &event);
+        let compressed_size = buf.compressed_bytes();
+
+        // Compressed should be notably smaller than raw
+        assert!(
+            compressed_size < raw_size,
+            "Compressed {compressed_size}B should be less than raw {raw_size}B"
+        );
+
+        // Verify roundtrip
+        let events = buf.decompress_all();
+        assert_eq!(events[0], event);
+    }
+
+    #[test]
+    fn test_event_buffer_max_events_cap() {
+        let mut buf = EventBuffer::new(3);
+
+        for i in 0..5 {
+            buf.push(1000 + i, &json!({"idx": i}));
+        }
+
+        // Only the last 3 should remain
+        assert_eq!(buf.len(), 3);
+        let events = buf.decompress_all();
+        assert_eq!(events[0], json!({"idx": 2}));
+        assert_eq!(events[1], json!({"idx": 3}));
+        assert_eq!(events[2], json!({"idx": 4}));
+    }
+
+    #[test]
+    fn test_event_buffer_eviction() {
+        let mut buf = EventBuffer::new(10);
+        for i in 0..5 {
+            buf.push(1000 + i, &json!({"idx": i}));
+        }
+        assert_eq!(buf.len(), 5);
+
+        // Evict everything before ts 1003
+        buf.evict(1003);
+        assert_eq!(buf.len(), 2);
+
+        let events = buf.decompress_all();
+        assert_eq!(events[0], json!({"idx": 3}));
+        assert_eq!(events[1], json!({"idx": 4}));
+    }
+
+    #[test]
+    fn test_event_buffer_clear() {
+        let mut buf = EventBuffer::new(10);
+        buf.push(1000, &json!({"a": 1}));
+        buf.push(1001, &json!({"b": 2}));
+        assert_eq!(buf.len(), 2);
+
+        buf.clear();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.compressed_bytes(), 0);
+    }
+
+    #[test]
+    fn test_compress_decompress_roundtrip() {
+        // Test various JSON shapes
+        let values = vec![
+            json!(null),
+            json!(42),
+            json!("hello world"),
+            json!({"nested": {"deep": [1, 2, 3]}}),
+            json!([1, "two", null, true, {"five": 5}]),
+        ];
+        for val in values {
+            let compressed = compress_event(&val).unwrap();
+            let decompressed = decompress_event(&compressed).unwrap();
+            assert_eq!(decompressed, val, "Roundtrip failed for {val}");
+        }
     }
 }

@@ -81,7 +81,8 @@ Compiles Sigma rules into optimized in-memory matchers and evaluates them agains
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions
 - **Special modifiers**: `|expand` (runtime placeholder expansion), `|neq` (not-equal), `|utf16be`/`|utf16` encoding, timestamp part extraction (`|hour`, `|day`, etc.)
 - **Event wrapper**: dot-notation field access, flat-key precedence, keyword search across all string values
-- **Rich output**: `MatchResult` with optional embedded event JSON / `CorrelationResult` with rule metadata, matched selections, field/value pairs, and aggregated values
+- **Correlation event inclusion**: optionally store contributing events in compressed form (deflate, 3–5x savings) alongside correlation window state; configurable cap per window group; zero memory overhead when disabled
+- **Rich output**: `MatchResult` with optional embedded event JSON / `CorrelationResult` with rule metadata, matched selections, field/value pairs, aggregated values, and optional contributing events
 
 ### Usage
 
@@ -132,6 +133,8 @@ let config = CorrelationConfig {
     suppress: Some(300),                         // 5-minute suppression window
     action_on_match: CorrelationAction::Reset,   // clear state after firing
     emit_detections: false,                      // only emit correlation alerts
+    include_correlation_events: true,            // include contributing events in output
+    max_correlation_events: 20,                  // keep last 20 events per window (compressed)
     ..Default::default()
 };
 
@@ -139,7 +142,7 @@ let mut engine = CorrelationEngine::new(config);
 engine.set_include_event(true);                  // embed event JSON in all match results
 engine.add_collection(&collection).unwrap();
 let result = engine.process_event_at(&event, timestamp_secs);
-// result.detections + result.correlations
+// result.correlations[0].events — Option<Vec<serde_json::Value>>
 ```
 
 ### Custom Attributes (`rsigma.*`)
@@ -203,6 +206,12 @@ rsigma eval -r rules/ --suppress 5m -e @events.ndjson
 
 # Action on fire — reset correlation state after alert (default: alert)
 rsigma eval -r rules/ --suppress 5m --action reset -e @events.ndjson
+
+# Include contributing events in correlation output (compressed in memory)
+rsigma eval -r rules/ --include-correlation-events -e @events.ndjson
+
+# Cap stored events per correlation window (default: 10)
+rsigma eval -r rules/ --include-correlation-events --max-correlation-events 20 -e @events.ndjson
 
 # Suppress detection output (only show correlation alerts)
 rsigma eval -r rules/ --no-detections -e @events.ndjson

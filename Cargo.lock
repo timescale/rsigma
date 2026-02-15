@@ -1851,6 +1851,7 @@ dependencies = [
  "base64",
  "chrono",
  "criterion",
+ "flate2",
  "ipnet",
  "log",
  "proptest",

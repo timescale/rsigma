@@ -102,7 +102,7 @@ pub use compiler::{
     CompiledDetection, CompiledDetectionItem, CompiledRule, compile_rule, evaluate_rule,
 };
 pub use correlation::{
-    CompiledCondition, CompiledCorrelation, GroupByField, GroupKey, WindowState,
+    CompiledCondition, CompiledCorrelation, EventBuffer, GroupByField, GroupKey, WindowState,
 };
 pub use correlation_engine::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationResult, ProcessResult,
