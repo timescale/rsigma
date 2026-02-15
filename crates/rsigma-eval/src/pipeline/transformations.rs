@@ -10,6 +10,7 @@ use regex::Regex;
 
 use rsigma_parser::{
     ConditionExpr, Detection, DetectionItem, FieldSpec, SigmaRule, SigmaString, SigmaValue,
+    SpecialChar, StringPart,
 };
 
 use super::conditions::{DetectionItemCondition, FieldNameCondition};
@@ -53,7 +54,15 @@ pub enum Transformation {
     },
 
     /// Regex replacement in string values.
-    ReplaceString { regex: String, replacement: String },
+    ///
+    /// When `skip_special` is true, replacement is applied only to the plain
+    /// (non-wildcard) segments of `SigmaString`, preserving `*` and `?` wildcards.
+    /// Mirrors pySigma's `ReplaceStringTransformation.skip_special`.
+    ReplaceString {
+        regex: String,
+        replacement: String,
+        skip_special: bool,
+    },
 
     /// Expand `%name%` placeholders with pipeline variables.
     ValuePlaceholders,
@@ -95,7 +104,13 @@ pub enum Transformation {
     },
 
     /// Map string values via a lookup table.
-    MapString { mapping: HashMap<String, String> },
+    ///
+    /// Supports one-to-many mapping: a single value can map to multiple
+    /// alternatives (pySigma compat). When one-to-many is used, the detection
+    /// item's values list is expanded in place.
+    MapString {
+        mapping: HashMap<String, Vec<String>>,
+    },
 
     /// Set all values of matching detection items to a fixed value.
     SetValue { value: SigmaValue },
@@ -125,7 +140,7 @@ pub enum Transformation {
     SetCustomAttribute { attribute: String, value: String },
 
     /// Apply a case transformation to string values.
-    /// Supported: "lower", "upper".
+    /// Supported: "lower", "upper", "snake_case".
     CaseTransformation { case_type: String },
 
     /// Nested sub-pipeline: apply a list of transformations as a group.
@@ -239,7 +254,11 @@ impl Transformation {
                 Ok(true)
             }
 
-            Transformation::ReplaceString { regex, replacement } => {
+            Transformation::ReplaceString {
+                regex,
+                replacement,
+                skip_special,
+            } => {
                 let re = Regex::new(regex)
                     .map_err(|e| EvalError::InvalidModifiers(format!("bad regex: {e}")))?;
                 replace_strings_in_rule(
@@ -250,6 +269,7 @@ impl Transformation {
                     field_name_cond_not,
                     &re,
                     replacement,
+                    *skip_special,
                 );
                 Ok(true)
             }
@@ -638,6 +658,7 @@ fn add_conditions(rule: &mut SigmaRule, conditions: &HashMap<String, SigmaValue>
 // Replace strings
 // =============================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn replace_strings_in_rule(
     rule: &mut SigmaRule,
     state: &PipelineState,
@@ -646,6 +667,7 @@ fn replace_strings_in_rule(
     field_name_cond_not: bool,
     re: &Regex,
     replacement: &str,
+    skip_special: bool,
 ) {
     for detection in rule.detection.named.values_mut() {
         replace_strings_in_detection(
@@ -656,10 +678,12 @@ fn replace_strings_in_rule(
             field_name_cond_not,
             re,
             replacement,
+            skip_special,
         );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn replace_strings_in_detection(
     detection: &mut Detection,
     state: &PipelineState,
@@ -668,6 +692,7 @@ fn replace_strings_in_detection(
     field_name_cond_not: bool,
     re: &Regex,
     replacement: &str,
+    skip_special: bool,
 ) {
     match detection {
         Detection::AllOf(items) => {
@@ -683,7 +708,7 @@ fn replace_strings_in_detection(
                 };
 
                 if det_match && field_match {
-                    replace_strings_in_values(&mut item.values, re, replacement);
+                    replace_strings_in_values(&mut item.values, re, replacement, skip_special);
                 }
             }
         }
@@ -697,24 +722,72 @@ fn replace_strings_in_detection(
                     field_name_cond_not,
                     re,
                     replacement,
+                    skip_special,
                 );
             }
         }
         Detection::Keywords(values) => {
-            replace_strings_in_values(values, re, replacement);
+            replace_strings_in_values(values, re, replacement, skip_special);
         }
     }
 }
 
-fn replace_strings_in_values(values: &mut [SigmaValue], re: &Regex, replacement: &str) {
+fn replace_strings_in_values(
+    values: &mut [SigmaValue],
+    re: &Regex,
+    replacement: &str,
+    skip_special: bool,
+) {
     for value in values.iter_mut() {
         if let SigmaValue::String(s) = value {
-            let replaced = re.replace_all(&s.original, replacement);
-            if replaced != s.original {
-                *s = SigmaString::new(&replaced);
+            if skip_special && s.contains_wildcards() {
+                // Replace only in plain segments, preserving wildcards
+                let new_parts: Vec<StringPart> = s
+                    .parts
+                    .iter()
+                    .map(|part| match part {
+                        StringPart::Plain(text) => {
+                            let replaced = re.replace_all(text, replacement);
+                            StringPart::Plain(replaced.into_owned())
+                        }
+                        special => special.clone(),
+                    })
+                    .collect();
+                if new_parts != s.parts {
+                    // Rebuild original string from the new parts
+                    let new_original = parts_to_original(&new_parts);
+                    s.parts = new_parts;
+                    s.original = new_original;
+                }
+            } else {
+                let replaced = re.replace_all(&s.original, replacement);
+                if replaced != s.original {
+                    *s = SigmaString::new(&replaced);
+                }
             }
         }
     }
+}
+
+/// Reconstruct the `original` string from parts, re-escaping wildcards.
+fn parts_to_original(parts: &[StringPart]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        match part {
+            StringPart::Plain(text) => {
+                // Escape special chars so round-trip through SigmaString::new works
+                for c in text.chars() {
+                    if c == '*' || c == '?' || c == '\\' {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                }
+            }
+            StringPart::Special(SpecialChar::WildcardMulti) => out.push('*'),
+            StringPart::Special(SpecialChar::WildcardSingle) => out.push('?'),
+        }
+    }
+    out
 }
 
 // =============================================================================
@@ -955,7 +1028,7 @@ fn map_string_values(
     detection_conditions: &[DetectionItemCondition],
     field_name_conditions: &[FieldNameCondition],
     field_name_cond_not: bool,
-    mapping: &HashMap<String, String>,
+    mapping: &HashMap<String, Vec<String>>,
 ) {
     for detection in rule.detection.named.values_mut() {
         map_strings_in_detection(
@@ -975,7 +1048,7 @@ fn map_strings_in_detection(
     detection_conditions: &[DetectionItemCondition],
     field_name_conditions: &[FieldNameCondition],
     field_name_cond_not: bool,
-    mapping: &HashMap<String, String>,
+    mapping: &HashMap<String, Vec<String>>,
 ) {
     match detection {
         Detection::AllOf(items) => {
@@ -987,14 +1060,7 @@ fn map_strings_in_detection(
                     field_name_conditions,
                     field_name_cond_not,
                 ) {
-                    for val in item.values.iter_mut() {
-                        if let SigmaValue::String(s) = val {
-                            let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                            if let Some(replacement) = mapping.get(&plain) {
-                                *s = SigmaString::new(replacement);
-                            }
-                        }
-                    }
+                    map_string_expand_values(&mut item.values, mapping);
                 }
             }
         }
@@ -1011,14 +1077,43 @@ fn map_strings_in_detection(
             }
         }
         Detection::Keywords(values) => {
-            for val in values.iter_mut() {
-                if let SigmaValue::String(s) = val {
-                    let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                    if let Some(replacement) = mapping.get(&plain) {
-                        *s = SigmaString::new(replacement);
-                    }
+            map_string_expand_values(values, mapping);
+        }
+    }
+}
+
+/// Map string values with one-to-many support.
+///
+/// When a mapping entry has multiple replacements (e.g. `"foo": ["bar", "baz"]`),
+/// the original value is replaced with the first alternative and additional
+/// alternatives are appended to the values list. This expands the detection
+/// item's value list, matching pySigma's `MapStringTransformation` behavior.
+fn map_string_expand_values(values: &mut Vec<SigmaValue>, mapping: &HashMap<String, Vec<String>>) {
+    let mut extra: Vec<(usize, Vec<SigmaValue>)> = Vec::new();
+
+    for (i, val) in values.iter_mut().enumerate() {
+        if let SigmaValue::String(s) = val {
+            let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
+            if let Some(replacements) = mapping.get(&plain) {
+                if let Some(first) = replacements.first() {
+                    *s = SigmaString::new(first);
+                }
+                // Collect extra alternatives (2nd, 3rd, …) for later insertion
+                if replacements.len() > 1 {
+                    let extras: Vec<SigmaValue> = replacements[1..]
+                        .iter()
+                        .map(|r| SigmaValue::String(SigmaString::new(r)))
+                        .collect();
+                    extra.push((i, extras));
                 }
             }
+        }
+    }
+
+    // Insert extra values in reverse order so indices remain valid
+    for (idx, extras) in extra.into_iter().rev() {
+        for (j, v) in extras.into_iter().enumerate() {
+            values.insert(idx + 1 + j, v);
         }
     }
 }
@@ -1242,16 +1337,7 @@ fn apply_case_in_detection(
                     field_name_cond_not,
                 ) {
                     for val in item.values.iter_mut() {
-                        if let SigmaValue::String(s) = val {
-                            let transformed = match case_type {
-                                "lower" | "lowercase" => s.original.to_lowercase(),
-                                "upper" | "uppercase" => s.original.to_uppercase(),
-                                _ => continue,
-                            };
-                            if transformed != s.original {
-                                *s = SigmaString::new(&transformed);
-                            }
-                        }
+                        apply_case_to_value(val, case_type);
                     }
                 }
             }
@@ -1270,17 +1356,22 @@ fn apply_case_in_detection(
         }
         Detection::Keywords(values) => {
             for val in values.iter_mut() {
-                if let SigmaValue::String(s) = val {
-                    let transformed = match case_type {
-                        "lower" | "lowercase" => s.original.to_lowercase(),
-                        "upper" | "uppercase" => s.original.to_uppercase(),
-                        _ => continue,
-                    };
-                    if transformed != s.original {
-                        *s = SigmaString::new(&transformed);
-                    }
-                }
+                apply_case_to_value(val, case_type);
             }
+        }
+    }
+}
+
+fn apply_case_to_value(val: &mut SigmaValue, case_type: &str) {
+    if let SigmaValue::String(s) = val {
+        let transformed = match case_type {
+            "lower" | "lowercase" => s.original.to_lowercase(),
+            "upper" | "uppercase" => s.original.to_uppercase(),
+            "snake_case" => apply_named_string_fn("snake_case", &s.original),
+            _ => return,
+        };
+        if transformed != s.original {
+            *s = SigmaString::new(&transformed);
         }
     }
 }
@@ -1496,6 +1587,7 @@ mod tests {
         let t = Transformation::ReplaceString {
             regex: r"whoami".to_string(),
             replacement: "REPLACED".to_string(),
+            skip_special: false,
         };
         t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
 
@@ -1778,7 +1870,7 @@ mod tests {
         let mut rule = make_test_rule();
         let mut state = PipelineState::default();
         let mut mapping = HashMap::new();
-        mapping.insert("whoami".to_string(), "who_am_i".to_string());
+        mapping.insert("whoami".to_string(), vec!["who_am_i".to_string()]);
         let t = Transformation::MapString { mapping };
         t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
 
@@ -1799,7 +1891,7 @@ mod tests {
         let mut rule = make_test_rule();
         let mut state = PipelineState::default();
         let mut mapping = HashMap::new();
-        mapping.insert("nonexistent".to_string(), "replaced".to_string());
+        mapping.insert("nonexistent".to_string(), vec!["replaced".to_string()]);
         let t = Transformation::MapString { mapping };
         t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
 
@@ -2345,6 +2437,7 @@ mod tests {
         let t = Transformation::ReplaceString {
             regex: r"whoami".to_string(),
             replacement: "REPLACED".to_string(),
+            skip_special: false,
         };
         t.apply(&mut rule, &mut state, &det_conds, &[], false)
             .unwrap();
@@ -2606,6 +2699,7 @@ mod tests {
         let t = Transformation::ReplaceString {
             regex: r"[invalid".to_string(), // unclosed bracket
             replacement: "x".to_string(),
+            skip_special: false,
         };
         let result = t.apply(&mut rule, &mut state, &[], &[], false);
         assert!(result.is_err());
@@ -2729,5 +2823,246 @@ transformations:
         assert!(state.was_applied("step2_prefix"));
         assert!(state.was_applied("step3_case"));
         assert!(state.was_applied("step4_attr"));
+    }
+
+    // =========================================================================
+    // MapString one-to-many tests
+    // =========================================================================
+
+    #[test]
+    fn test_map_string_one_to_many() {
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "whoami".to_string(),
+            vec!["who".to_string(), "am_i".to_string(), "test".to_string()],
+        );
+        let t = Transformation::MapString { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // Original single value should expand to 3 values
+            assert_eq!(items[0].values.len(), 3);
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "who");
+            }
+            if let SigmaValue::String(s) = &items[0].values[1] {
+                assert_eq!(s.original, "am_i");
+            }
+            if let SigmaValue::String(s) = &items[0].values[2] {
+                assert_eq!(s.original, "test");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_map_string_one_to_many_mixed() {
+        // Test that non-matching values remain and only matching ones expand
+        let yaml = r#"
+title: Test Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine:
+            - whoami
+            - ipconfig
+    condition: selection
+level: medium
+"#;
+        let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+        let mut rule = collection.rules[0].clone();
+        let mut state = PipelineState::default();
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "whoami".to_string(),
+            vec!["who".to_string(), "am_i".to_string()],
+        );
+        // ipconfig is not in the mapping, should remain unchanged
+        let t = Transformation::MapString { mapping };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            // "whoami" expanded to 2 + "ipconfig" stays = 3 total
+            assert_eq!(items[0].values.len(), 3);
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "who");
+            }
+            if let SigmaValue::String(s) = &items[0].values[1] {
+                assert_eq!(s.original, "am_i");
+            }
+            if let SigmaValue::String(s) = &items[0].values[2] {
+                assert_eq!(s.original, "ipconfig");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    // =========================================================================
+    // ReplaceString skip_special tests
+    // =========================================================================
+
+    #[test]
+    fn test_replace_string_skip_special_preserves_wildcards() {
+        // Value with wildcards written directly in YAML: "*whoami*"
+        let yaml = r#"
+title: Test Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine: '*whoami*'
+    condition: selection
+level: medium
+"#;
+        let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+        let mut rule = collection.rules[0].clone();
+        let mut state = PipelineState::default();
+        let t = Transformation::ReplaceString {
+            regex: r"whoami".to_string(),
+            replacement: "REPLACED".to_string(),
+            skip_special: true,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            let s = match &items[0].values[0] {
+                SigmaValue::String(s) => s,
+                _ => panic!("Expected String"),
+            };
+            // Wildcards should be preserved, plain part replaced
+            assert!(s.contains_wildcards(), "Wildcards should be preserved");
+            assert!(
+                s.original.contains("REPLACED"),
+                "Plain part should be replaced, got: {}",
+                s.original
+            );
+            assert!(
+                !s.original.contains("whoami"),
+                "Original text should be gone"
+            );
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_replace_string_skip_special_false_replaces_whole() {
+        // Without skip_special, the entire original is replaced (wildcards treated as text)
+        let yaml = r#"
+title: Test Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine: '*whoami*'
+    condition: selection
+level: medium
+"#;
+        let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+        let mut rule = collection.rules[0].clone();
+        let mut state = PipelineState::default();
+        let t = Transformation::ReplaceString {
+            regex: r"\*".to_string(),
+            replacement: "STAR".to_string(),
+            skip_special: false,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            let s = match &items[0].values[0] {
+                SigmaValue::String(s) => s,
+                _ => panic!("Expected String"),
+            };
+            // skip_special=false replaces on the original string (which has literal * chars)
+            assert!(
+                s.original.contains("STAR"),
+                "Wildcards in original should be replaced as text, got: {}",
+                s.original
+            );
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_replace_string_skip_special_plain_string() {
+        // Plain string (no wildcards) with skip_special=true → should still replace
+        let mut rule = make_test_rule();
+        let mut state = PipelineState::default();
+        let t = Transformation::ReplaceString {
+            regex: r"whoami".to_string(),
+            replacement: "REPLACED".to_string(),
+            skip_special: true,
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det
+            && let SigmaValue::String(s) = &items[0].values[0]
+        {
+            assert_eq!(s.original, "REPLACED");
+        }
+    }
+
+    // =========================================================================
+    // CaseTransformation snake_case tests
+    // =========================================================================
+
+    #[test]
+    fn test_case_transformation_snake_case() {
+        let yaml = r#"
+title: Test Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine: CommandAndControl
+    condition: selection
+level: medium
+"#;
+        let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+        let mut rule = collection.rules[0].clone();
+        let mut state = PipelineState::default();
+        let t = Transformation::CaseTransformation {
+            case_type: "snake_case".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det {
+            if let SigmaValue::String(s) = &items[0].values[0] {
+                assert_eq!(s.original, "command_and_control");
+            } else {
+                panic!("Expected String");
+            }
+        } else {
+            panic!("Expected AllOf");
+        }
+    }
+
+    #[test]
+    fn test_case_transformation_snake_case_already_lowercase() {
+        let mut rule = make_test_rule(); // "whoami" is already lowercase
+        let mut state = PipelineState::default();
+        let t = Transformation::CaseTransformation {
+            case_type: "snake_case".to_string(),
+        };
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+        let det = &rule.detection.named["selection"];
+        if let Detection::AllOf(items) = det
+            && let SigmaValue::String(s) = &items[0].values[0]
+        {
+            assert_eq!(s.original, "whoami"); // unchanged
+        }
     }
 }

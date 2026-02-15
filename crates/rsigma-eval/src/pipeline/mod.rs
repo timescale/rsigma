@@ -399,7 +399,15 @@ fn parse_transformation(obj: &serde_yaml::Mapping) -> Result<Transformation> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            Ok(Transformation::ReplaceString { regex, replacement })
+            let skip_special = obj
+                .get(ykey("skip_special"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(Transformation::ReplaceString {
+                regex,
+                replacement,
+                skip_special,
+            })
         }
 
         "value_placeholders" => Ok(Transformation::ValuePlaceholders),
@@ -479,7 +487,7 @@ fn parse_transformation(obj: &serde_yaml::Mapping) -> Result<Transformation> {
         }
 
         "map_string" => {
-            let mapping = parse_string_mapping(obj.get(ykey("mapping")))?;
+            let mapping = parse_string_or_list_mapping(obj.get(ykey("mapping")))?;
             Ok(Transformation::MapString { mapping })
         }
 
@@ -847,6 +855,40 @@ fn parse_string_mapping(value: Option<&serde_yaml::Value>) -> Result<HashMap<Str
         for (k, v) in m {
             if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
                 map.insert(key.to_string(), val.to_string());
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Parse a mapping where values can be either a single string or a list of strings.
+///
+/// Supports pySigma-compatible one-to-many mapping:
+/// ```yaml
+/// mapping:
+///   foo: bar          # 1:1
+///   baz:              # 1:many
+///     - qux
+///     - quux
+/// ```
+fn parse_string_or_list_mapping(
+    value: Option<&serde_yaml::Value>,
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut map = HashMap::new();
+    if let Some(serde_yaml::Value::Mapping(m)) = value {
+        for (k, v) in m {
+            if let Some(key) = k.as_str() {
+                let values = match v {
+                    serde_yaml::Value::String(s) => vec![s.clone()],
+                    serde_yaml::Value::Sequence(seq) => seq
+                        .iter()
+                        .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                        .collect(),
+                    _ => continue,
+                };
+                if !values.is_empty() {
+                    map.insert(key.to_string(), values);
+                }
             }
         }
     }

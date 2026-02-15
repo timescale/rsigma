@@ -73,4 +73,4 @@ pub use lint::{
     lint_yaml_str, lint_yaml_value,
 };
 pub use parser::{parse_field_spec, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
-pub use value::{SigmaString, SigmaValue, Timespan};
+pub use value::{SigmaString, SigmaValue, SpecialChar, StringPart, Timespan};
