@@ -3263,9 +3263,11 @@ correlation:
 level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
-        let mut config = CorrelationConfig::default();
-        config.include_correlation_events = true;
-        config.max_correlation_events = 10;
+        let config = CorrelationConfig {
+            include_correlation_events: true,
+            max_correlation_events: 10,
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
         engine.add_collection(&collection).unwrap();
 
@@ -3326,9 +3328,11 @@ correlation:
 level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
-        let mut config = CorrelationConfig::default();
-        config.include_correlation_events = true;
-        config.max_correlation_events = 3; // only keep last 3
+        let config = CorrelationConfig {
+            include_correlation_events: true,
+            max_correlation_events: 3, // only keep last 3
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
         engine.add_collection(&collection).unwrap();
 
@@ -3380,9 +3384,11 @@ correlation:
 level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
-        let mut config = CorrelationConfig::default();
-        config.include_correlation_events = true;
-        config.action_on_match = CorrelationAction::Reset;
+        let config = CorrelationConfig {
+            include_correlation_events: true,
+            action_on_match: CorrelationAction::Reset,
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
         engine.add_collection(&collection).unwrap();
 
@@ -3487,9 +3493,11 @@ correlation:
 level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
-        let mut config = CorrelationConfig::default();
-        config.include_correlation_events = true;
-        config.max_correlation_events = 100;
+        let config = CorrelationConfig {
+            include_correlation_events: true,
+            max_correlation_events: 100,
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
         engine.add_collection(&collection).unwrap();
 
@@ -3553,8 +3561,10 @@ correlation:
 level: high
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
-        let mut config = CorrelationConfig::default();
-        config.include_correlation_events = true;
+        let config = CorrelationConfig {
+            include_correlation_events: true,
+            ..Default::default()
+        };
         let mut engine = CorrelationEngine::new(config);
         engine.add_collection(&collection).unwrap();
 
