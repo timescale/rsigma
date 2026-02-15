@@ -6,14 +6,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "rsigma-lsp"
 path = "src/main.rs"
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser" }
-rsigma-eval = { path = "../rsigma-eval" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.1.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.1.0" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "time", "sync"] }
 log = "0.4"

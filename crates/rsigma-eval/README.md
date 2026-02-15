@@ -236,4 +236,4 @@ cargo bench --bench correlation
 
 MIT License.
 
-[rsigma]: https://github.com/mostafa/rsigma
+[rsigma]: https://github.com/timescale/rsigma

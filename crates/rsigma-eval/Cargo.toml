@@ -6,9 +6,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

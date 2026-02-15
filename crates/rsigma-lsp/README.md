@@ -1,6 +1,6 @@
 # rsigma-lsp
 
-[![CI](https://github.com/mostafa/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/mostafa/rsigma/actions/workflows/ci.yml)
+[![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
 `rsigma-lsp` is a [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) (LSP) server that brings real-time [Sigma](https://github.com/SigmaHQ/sigma) rule development support to any editor — VSCode, Neovim, Helix, Zed, Emacs, and more. Built on the same parser, linter, and compiler as the CLI.
 
@@ -64,4 +64,4 @@ language-servers = ["yaml-language-server", "rsigma-lsp"]
 
 MIT License.
 
-[rsigma]: https://github.com/mostafa/rsigma
+[rsigma]: https://github.com/timescale/rsigma
