@@ -304,7 +304,7 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `all_with_re` | Warning | `\|all` and `\|re` combined |
 | `empty_value_list` | Warning | Empty value list |
 | `wildcard_only_value` | Warning | Lone `*` value (suggests `\|exists: true` instead) |
-| `unknown_key` | Warning | Unrecognized top-level key |
+| `unknown_key` | Info | Top-level key likely a typo of a known key (edit distance ≤ 2); custom fields are allowed per the Sigma spec |
 
 ### Rule Suppression
 

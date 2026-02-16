@@ -1401,17 +1401,63 @@ fn lint_filter_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 // Public API
 // =============================================================================
 
-/// Check for unknown top-level keys that may be typos.
+/// Levenshtein edit distance between two strings.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a_len, b_len) = (a.len(), b.len());
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+    let mut prev: Vec<usize> = (0..=b_len).collect();
+    let mut curr = vec![0; b_len + 1];
+    for (i, ca) in a.bytes().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.bytes().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j] + cost)
+                .min(prev[j + 1] + 1)
+                .min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_len]
+}
+
+/// Maximum edit distance to consider an unknown key a likely typo of a known key.
+const TYPO_MAX_EDIT_DISTANCE: usize = 2;
+
+/// Check for unknown top-level keys that are likely typos of known keys.
+///
+/// The Sigma specification v2.1.0 explicitly allows arbitrary custom top-level
+/// fields, so unknown keys are not errors. However, when an unknown key is
+/// within a small edit distance of a known key it is likely a typo and we
+/// surface an informational hint.
 fn lint_unknown_keys(m: &serde_yaml::Mapping, doc_type: DocType, warnings: &mut Vec<LintWarning>) {
     let type_keys = doc_type.known_keys();
+    let all_known: Vec<&str> = KNOWN_KEYS_SHARED
+        .iter()
+        .chain(type_keys.iter())
+        .copied()
+        .collect();
+
     for k in m.keys() {
-        if let Some(ks) = k.as_str()
-            && !KNOWN_KEYS_SHARED.contains(&ks)
-            && !type_keys.contains(&ks)
+        let Some(ks) = k.as_str() else { continue };
+        if KNOWN_KEYS_SHARED.contains(&ks) || type_keys.contains(&ks) {
+            continue;
+        }
+        // Only warn when the key looks like a typo of a known key.
+        if let Some(closest) = all_known
+            .iter()
+            .filter(|known| edit_distance(ks, known) <= TYPO_MAX_EDIT_DISTANCE)
+            .min_by_key(|known| edit_distance(ks, known))
         {
-            warnings.push(warning(
+            warnings.push(info(
                 LintRule::UnknownKey,
-                format!("unknown top-level key \"{ks}\""),
+                format!(
+                    "unknown top-level key \"{ks}\"; did you mean \"{closest}\"?"
+                ),
                 format!("/{ks}"),
             ));
         }
@@ -2936,7 +2982,7 @@ level: medium
     // ── Unknown top-level keys ───────────────────────────────────────────
 
     #[test]
-    fn unknown_top_level_key_detection() {
+    fn unknown_key_typo_detected() {
         let w = lint(
             r#"
 title: Test
@@ -2953,6 +2999,8 @@ level: medium
         assert!(has_rule(&w, LintRule::UnknownKey));
         let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
         assert!(unk.message.contains("desciption"));
+        assert!(unk.message.contains("description"));
+        assert_eq!(unk.severity, Severity::Info);
     }
 
     #[test]
@@ -2989,7 +3037,32 @@ falsepositives:
     }
 
     #[test]
-    fn unknown_top_level_key_correlation() {
+    fn custom_fields_allowed_by_spec() {
+        // The Sigma spec v2.1.0 explicitly allows arbitrary custom top-level
+        // fields, so keys like "simulation" and "regression_tests_path" that
+        // are not close to any known key should NOT produce warnings.
+        let w = lint(
+            r#"
+title: Test Rule
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+simulation:
+    action: scan
+regression_tests_path: tests/
+custom_metadata: hello
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::UnknownKey));
+    }
+
+    #[test]
+    fn unknown_key_typo_correlation() {
+        // "lvel" is edit-distance 1 from "level"
         let w = lint(
             r#"
 title: Correlation Test
@@ -3003,17 +3076,18 @@ correlation:
     timespan: 5m
     condition:
         gte: 10
-level: high
-typo_field: oops
+lvel: high
 "#,
         );
         assert!(has_rule(&w, LintRule::UnknownKey));
         let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
-        assert!(unk.message.contains("typo_field"));
+        assert!(unk.message.contains("lvel"));
+        assert!(unk.message.contains("level"));
     }
 
     #[test]
-    fn unknown_top_level_key_filter() {
+    fn unknown_key_custom_field_filter() {
+        // "badkey" is not close to any known key — no warning.
         let w = lint(
             r#"
 title: Filter Test
@@ -3028,9 +3102,7 @@ filter:
 badkey: foo
 "#,
         );
-        assert!(has_rule(&w, LintRule::UnknownKey));
-        let unk = w.iter().find(|w| w.rule == LintRule::UnknownKey).unwrap();
-        assert!(unk.message.contains("badkey"));
+        assert!(has_no_rule(&w, LintRule::UnknownKey));
     }
 
     // ── Wildcard-only value ──────────────────────────────────────────────
