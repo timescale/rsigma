@@ -1416,9 +1416,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
         curr[0] = i + 1;
         for (j, cb) in b.bytes().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = (prev[j] + cost)
-                .min(prev[j + 1] + 1)
-                .min(curr[j] + 1);
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -1455,9 +1453,7 @@ fn lint_unknown_keys(m: &serde_yaml::Mapping, doc_type: DocType, warnings: &mut 
         {
             warnings.push(info(
                 LintRule::UnknownKey,
-                format!(
-                    "unknown top-level key \"{ks}\"; did you mean \"{closest}\"?"
-                ),
+                format!("unknown top-level key \"{ks}\"; did you mean \"{closest}\"?"),
                 format!("/{ks}"),
             ));
         }
