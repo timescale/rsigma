@@ -1,15 +1,15 @@
-# rsigma-cli
+# rsigma
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma-cli` is a command-line interface for parsing, validating, linting, and evaluating [Sigma](https://github.com/SigmaHQ/sigma) detection rules.
+`rsigma` is a command-line interface for parsing, validating, linting, and evaluating [Sigma](https://github.com/SigmaHQ/sigma) detection rules.
 
-This binary is part of [rsigma].
+This binary is part of the [rsigma workspace].
 
 ## Installation
 
 ```bash
-cargo install --path crates/rsigma-cli
+cargo install rsigma
 ```
 
 ## Quick Start
@@ -301,4 +301,4 @@ The `event` field is present only when `--include-event` is set.
 
 MIT License.
 
-[rsigma]: https://github.com/timescale/rsigma
+[rsigma workspace]: https://github.com/timescale/rsigma

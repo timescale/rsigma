@@ -1824,7 +1824,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsigma-cli"
+name = "rsigma"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",

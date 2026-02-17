@@ -6,7 +6,7 @@ A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detect
 |-------|-------------|
 | [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST |
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
-| [`rsigma-cli`](crates/rsigma-cli/) | CLI for parsing, validating, linting, and evaluating rules |
+| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, and evaluating rules |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 
 ## Installation
@@ -16,7 +16,7 @@ A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detect
 cargo build --release
 
 # Install the CLI
-cargo install --path crates/rsigma-cli
+cargo install rsigma
 
 # Install the LSP server
 cargo install --path crates/rsigma-lsp
@@ -157,7 +157,7 @@ To recover, publish the remaining crates manually in order:
 ```bash
 # Skip crates that were already published successfully
 cargo publish -p rsigma-eval && sleep 30
-cargo publish -p rsigma-cli
+cargo publish -p rsigma
 cargo publish -p rsigma-lsp
 ```
 

@@ -54,10 +54,10 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
-      - name: Publish rsigma-cli
+      - name: Publish rsigma
         run: |
-          echo "::notice::Publishing rsigma-cli (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-cli
+          echo "::notice::Publishing rsigma (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}

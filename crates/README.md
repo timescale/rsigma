@@ -6,7 +6,7 @@ This directory contains `rsigma`'s various crates.
 |-------|-------------|
 | [`rsigma-parser`][rsigma-parser-dir] | Parser for Sigma detection rules, correlations, and filters. |
 | [`rsigma-eval`][rsigma-eval-dir] | Evaluator for Sigma detection rules — match rules against events. |
-| [`rsigma-cli`][rsigma-cli-dir] | CLI for parsing, validating, and evaluating Sigma detection rules. |
+| [`rsigma`][rsigma-cli-dir] | CLI for parsing, validating, and evaluating Sigma detection rules. |
 | [`rsigma-lsp`][rsigma-lsp-dir] | Language Server Protocol (LSP) server for Sigma detection rules. |
 
 [rsigma-parser-dir]: ./rsigma-parser

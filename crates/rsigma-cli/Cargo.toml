@@ -1,5 +1,5 @@
 [package]
-name = "rsigma-cli"
+name = "rsigma"
 description = "CLI for parsing, validating, linting and evaluating Sigma detection rules"
 readme = "README.md"
 version.workspace = true

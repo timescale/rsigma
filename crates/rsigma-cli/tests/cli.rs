@@ -1,4 +1,4 @@
-//! Integration tests for the `rsigma-cli` binary.
+//! Integration tests for the `rsigma` binary.
 //!
 //! Each test launches the binary via `assert_cmd`, writes any required
 //! fixture files to a temp directory, and asserts on exit code + output.
@@ -15,7 +15,7 @@ use tempfile::NamedTempFile;
 
 #[allow(deprecated)]
 fn rsigma() -> Command {
-    Command::cargo_bin("rsigma-cli").expect("binary not found")
+    Command::cargo_bin("rsigma").expect("binary not found")
 }
 
 /// Write `contents` to a temporary file with the given suffix and return it.

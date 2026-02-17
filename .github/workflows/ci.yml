@@ -84,8 +84,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
       - name: Build rsigma
-        run: cargo build --release -p rsigma-cli
+        run: cargo build --release -p rsigma
       - name: Clone SigmaHQ rules
         run: git clone --depth 1 https://github.com/SigmaHQ/sigma.git /tmp/sigma
       - name: Validate and compile all Sigma rules
-        run: ./target/release/rsigma-cli validate /tmp/sigma/rules/ --verbose
+        run: ./target/release/rsigma validate /tmp/sigma/rules/ --verbose

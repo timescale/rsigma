@@ -4,3 +4,10 @@
 editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/*.vsix
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+.cargo/credentials.toml
