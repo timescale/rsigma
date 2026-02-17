@@ -132,6 +132,35 @@ assert_eq!(matches[0].rule_title, "Detect Whoami");
 - [sigma-rust](https://github.com/jopohl/sigma-rust) — Pratt parsing approach
 - [sigmars](https://github.com/crowdalert/sigmars) — correlation support patterns
 
+## Releasing
+
+All four crates share a single version (set in the workspace `Cargo.toml`) and are published together.
+
+### Publishing a new version
+
+1. Bump the version in the root `Cargo.toml`.
+2. Commit, push to `main`.
+3. Create a GitHub Release (e.g. tag `v0.2.0`). The `publish.yml` workflow triggers
+   automatically and publishes all crates in dependency order.
+
+### Dry run
+
+Trigger the workflow manually via **Actions → Publish to crates.io → Run workflow**.
+Manual runs automatically pass `--dry-run` to every `cargo publish` invocation.
+
+### Recovering from a partial failure
+
+If the workflow fails midway (e.g. `rsigma-parser` was published but `rsigma-eval`
+failed), re-running the workflow will fail at the already-published crate.
+To recover, publish the remaining crates manually in order:
+
+```bash
+# Skip crates that were already published successfully
+cargo publish -p rsigma-eval && sleep 30
+cargo publish -p rsigma-cli
+cargo publish -p rsigma-lsp
+```
+
 ## License
 
 MIT

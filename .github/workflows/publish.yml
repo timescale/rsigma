@@ -1,0 +1,71 @@
+name: Publish to crates.io
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+
+    environment:
+      name: crates.io
+      url: https://crates.io/crates/rsigma-parser
+
+    permissions:
+      id-token: write # for trusted publishing to crates.io
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
+        id: auth
+
+      - name: Publish rsigma-parser
+        run: |
+          echo "::notice::Publishing rsigma-parser (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma-parser
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
+
+      - name: Wait for crates.io index update
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
+      - name: Publish rsigma-eval
+        run: |
+          echo "::notice::Publishing rsigma-eval (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma-eval
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
+
+      - name: Wait for crates.io index update
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
+      - name: Publish rsigma-cli
+        run: |
+          echo "::notice::Publishing rsigma-cli (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
+
+      - name: Publish rsigma-lsp
+        run: |
+          echo "::notice::Publishing rsigma-lsp (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma-lsp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
