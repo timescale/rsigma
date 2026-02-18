@@ -1920,6 +1920,7 @@ name = "rsigma-lsp"
 version = "0.2.0"
 dependencies = [
  "env_logger",
+ "insta",
  "log",
  "rsigma-eval",
  "rsigma-parser",

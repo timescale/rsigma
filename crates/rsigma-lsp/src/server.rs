@@ -11,6 +11,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use rsigma_parser::lint::LintConfig;
 
+use crate::code_action;
 use crate::completion;
 use crate::data;
 use crate::diagnostics;
@@ -143,6 +144,8 @@ impl LanguageServer for SigmaLanguageServer {
                     resolve_provider: Some(false),
                     ..Default::default()
                 }),
+                // Code actions (quick-fixes from lint)
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 // Hover
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Document symbols
@@ -229,6 +232,51 @@ impl LanguageServer for SigmaLanguageServer {
 
         // Clear diagnostics for the closed file.
         self.client.publish_diagnostics(uri, vec![], None).await;
+    }
+
+    // ── Code actions (quick-fixes) ────────────────────────────────────
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(uri) else {
+            return Ok(None);
+        };
+
+        let text = doc.text.clone();
+        let config = Self::load_lint_config(uri);
+        let range = params.range;
+        let uri_owned = uri.clone();
+
+        let actions = match tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                code_action::code_actions(&uri_owned, &text, &range, &config)
+            }))
+        })
+        .await
+        {
+            Ok(Ok(a)) => a,
+            Ok(Err(_)) => {
+                log::error!("panic in code_action::code_actions");
+                vec![]
+            }
+            Err(e) => {
+                log::error!("code action task error: {e}");
+                vec![]
+            }
+        };
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(
+                actions
+                    .into_iter()
+                    .map(CodeActionOrCommand::CodeAction)
+                    .collect(),
+            ))
+        }
     }
 
     // ── Completions ─────────────────────────────────────────────────────

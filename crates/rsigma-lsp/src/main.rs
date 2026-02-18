@@ -4,6 +4,7 @@
 //! for `.yml`/`.yaml` Sigma files by leveraging the rsigma-parser linter
 //! and rsigma-eval compiler.
 
+mod code_action;
 mod completion;
 mod data;
 mod diagnostics;
