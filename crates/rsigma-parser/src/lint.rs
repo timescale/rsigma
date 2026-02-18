@@ -437,6 +437,23 @@ fn info(rule: LintRule, message: impl Into<String>, path: impl Into<String>) -> 
     warn(rule, Severity::Info, message, path)
 }
 
+fn safe_fix(title: impl Into<String>, patches: Vec<FixPatch>) -> Option<Fix> {
+    Some(Fix {
+        title: title.into(),
+        disposition: FixDisposition::Safe,
+        patches,
+    })
+}
+
+/// Find the closest match for `input` among `candidates` using edit distance.
+fn closest_match<'a>(input: &str, candidates: &[&'a str], max_distance: usize) -> Option<&'a str> {
+    candidates
+        .iter()
+        .filter(|c| edit_distance(input, c) <= max_distance)
+        .min_by_key(|c| edit_distance(input, c))
+        .copied()
+}
+
 /// Validate a date string matches YYYY-MM-DD with correct day-of-month.
 fn is_valid_date(s: &str) -> bool {
     if s.len() != 10 {
@@ -685,28 +702,50 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
     if let Some(status) = get_str(m, "status")
         && !VALID_STATUSES.contains(&status)
     {
-        warnings.push(err(
-            LintRule::InvalidStatus,
-            format!(
+        let fix = closest_match(status, VALID_STATUSES, 3).map(|closest| Fix {
+            title: format!("replace '{status}' with '{closest}'"),
+            disposition: FixDisposition::Safe,
+            patches: vec![FixPatch::ReplaceValue {
+                path: "/status".into(),
+                new_value: closest.into(),
+            }],
+        });
+        warnings.push(LintWarning {
+            rule: LintRule::InvalidStatus,
+            severity: Severity::Error,
+            message: format!(
                 "invalid status \"{status}\", expected one of: {}",
                 VALID_STATUSES.join(", ")
             ),
-            "/status",
-        ));
+            path: "/status".into(),
+            span: None,
+            fix,
+        });
     }
 
     // ── level ────────────────────────────────────────────────────────────
     if let Some(level) = get_str(m, "level")
         && !VALID_LEVELS.contains(&level)
     {
-        warnings.push(err(
-            LintRule::InvalidLevel,
-            format!(
+        let fix = closest_match(level, VALID_LEVELS, 3).map(|closest| Fix {
+            title: format!("replace '{level}' with '{closest}'"),
+            disposition: FixDisposition::Safe,
+            patches: vec![FixPatch::ReplaceValue {
+                path: "/level".into(),
+                new_value: closest.into(),
+            }],
+        });
+        warnings.push(LintWarning {
+            rule: LintRule::InvalidLevel,
+            severity: Severity::Error,
+            message: format!(
                 "invalid level \"{level}\", expected one of: {}",
                 VALID_LEVELS.join(", ")
             ),
-            "/level",
-        ));
+            path: "/level".into(),
+            span: None,
+            fix,
+        });
     }
 
     // ── date ─────────────────────────────────────────────────────────────
@@ -802,11 +841,20 @@ fn lint_shared(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
         if let Some(ks) = k.as_str()
             && ks != ks.to_ascii_lowercase()
         {
-            warnings.push(warning(
+            let lower = ks.to_ascii_lowercase();
+            let mut w = warning(
                 LintRule::NonLowercaseKey,
                 format!("key \"{ks}\" should be lowercase"),
                 format!("/{ks}"),
-            ));
+            );
+            w.fix = safe_fix(
+                format!("rename '{ks}' to '{lower}'"),
+                vec![FixPatch::ReplaceKey {
+                    path: format!("/{ks}"),
+                    new_key: lower,
+                }],
+            );
+            warnings.push(w);
         }
     }
 }
@@ -972,11 +1020,18 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
                 }
 
                 if !seen_tags.insert(tag.to_string()) {
-                    warnings.push(warning(
+                    let mut w = warning(
                         LintRule::DuplicateTags,
                         format!("duplicate tag \"{tag}\""),
                         format!("/tags/{i}"),
-                    ));
+                    );
+                    w.fix = safe_fix(
+                        format!("remove duplicate tag '{tag}'"),
+                        vec![FixPatch::Remove {
+                            path: format!("/tags/{i}"),
+                        }],
+                    );
+                    warnings.push(w);
                 }
             }
         }
@@ -989,11 +1044,18 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
             if let Some(s) = r.as_str()
                 && !seen.insert(s.to_string())
             {
-                warnings.push(warning(
+                let mut w = warning(
                     LintRule::DuplicateReferences,
                     format!("duplicate reference \"{s}\""),
                     format!("/references/{i}"),
-                ));
+                );
+                w.fix = safe_fix(
+                    "remove duplicate reference",
+                    vec![FixPatch::Remove {
+                        path: format!("/references/{i}"),
+                    }],
+                );
+                warnings.push(w);
             }
         }
     }
@@ -1005,11 +1067,18 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
             if let Some(s) = f.as_str()
                 && !seen.insert(s.to_string())
             {
-                warnings.push(warning(
+                let mut w = warning(
                     LintRule::DuplicateFields,
                     format!("duplicate field \"{s}\""),
                     format!("/fields/{i}"),
-                ));
+                );
+                w.fix = safe_fix(
+                    "remove duplicate field",
+                    vec![FixPatch::Remove {
+                        path: format!("/fields/{i}"),
+                    }],
+                );
+                warnings.push(w);
             }
         }
     }
@@ -1051,11 +1120,20 @@ fn lint_logsource(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
             if let Some(val) = get_str(ls, field)
                 && !is_valid_logsource_value(val)
             {
-                warnings.push(warning(
+                let lower = val.to_ascii_lowercase();
+                let mut w = warning(
                     LintRule::LogsourceValueNotLowercase,
                     format!("logsource {field} \"{val}\" should be lowercase (a-z, 0-9, _, ., -)"),
                     format!("/logsource/{field}"),
-                ));
+                );
+                w.fix = safe_fix(
+                    format!("lowercase '{val}' to '{lower}'"),
+                    vec![FixPatch::ReplaceValue {
+                        path: format!("/logsource/{field}"),
+                        new_value: lower,
+                    }],
+                );
+                warnings.push(w);
             }
         }
     }
@@ -1095,7 +1173,8 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
 
                 // Check |all combined with |re (regex alternation makes |all misleading)
                 if field_key_str.contains("|all") && field_key_str.contains("|re") {
-                    warnings.push(warning(
+                    let new_key = field_key_str.replace("|all", "");
+                    let mut w = warning(
                         LintRule::AllWithRe,
                         format!(
                             "'{field_key_str}' in '{det_name}' combines |all with |re; \
@@ -1103,31 +1182,46 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                              |all is redundant or misleading here"
                         ),
                         format!("/detection/{det_name}/{field_key_str}"),
-                    ));
+                    );
+                    w.fix = safe_fix(
+                        format!("remove |all from '{field_key_str}'"),
+                        vec![FixPatch::ReplaceKey {
+                            path: format!("/detection/{det_name}/{field_key_str}"),
+                            new_key,
+                        }],
+                    );
+                    warnings.push(w);
                 }
 
                 // Check |all with single value
                 if field_key_str.contains("|all") {
-                    if let Value::Sequence(seq) = field_val {
-                        if seq.len() <= 1 {
-                            warnings.push(warning(
-                                LintRule::SingleValueAllModifier,
-                                format!(
-                                    "'{field_key_str}' in '{det_name}' uses |all modifier with {} value(s); |all requires multiple values",
-                                    seq.len()
-                                ),
-                                format!("/detection/{det_name}/{field_key_str}"),
-                            ));
-                        }
+                    let needs_fix = if let Value::Sequence(seq) = field_val {
+                        seq.len() <= 1
                     } else {
-                        // single value with |all
-                        warnings.push(warning(
+                        true
+                    };
+                    if needs_fix {
+                        let new_key = field_key_str.replace("|all", "");
+                        let count = if let Value::Sequence(seq) = field_val {
+                            seq.len().to_string()
+                        } else {
+                            "a single".into()
+                        };
+                        let mut w = warning(
                             LintRule::SingleValueAllModifier,
                             format!(
-                                "'{field_key_str}' in '{det_name}' uses |all modifier with a single value; |all requires multiple values"
+                                "'{field_key_str}' in '{det_name}' uses |all modifier with {count} value(s); |all requires multiple values"
                             ),
                             format!("/detection/{det_name}/{field_key_str}"),
-                        ));
+                        );
+                        w.fix = safe_fix(
+                            format!("remove |all from '{field_key_str}'"),
+                            vec![FixPatch::ReplaceKey {
+                                path: format!("/detection/{det_name}/{field_key_str}"),
+                                new_key,
+                            }],
+                        );
+                        warnings.push(w);
                     }
                 }
 
@@ -1171,14 +1265,29 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                     _ => false,
                 };
                 if is_wildcard_only && !field_key_str.contains("|re") {
-                    warnings.push(warning(
+                    let new_key = format!("{base_field}|exists");
+                    let mut w = warning(
                         LintRule::WildcardOnlyValue,
                         format!(
                             "'{field_key_str}' in '{det_name}' uses a lone wildcard '*'; \
                              consider '{base_field}|exists: true' instead"
                         ),
                         format!("/detection/{det_name}/{field_key_str}"),
-                    ));
+                    );
+                    w.fix = safe_fix(
+                        format!("replace with '{new_key}: true'"),
+                        vec![
+                            FixPatch::ReplaceKey {
+                                path: format!("/detection/{det_name}/{field_key_str}"),
+                                new_key,
+                            },
+                            FixPatch::ReplaceValue {
+                                path: format!("/detection/{det_name}/{base_field}|exists"),
+                                new_value: "true".into(),
+                            },
+                        ],
+                    );
+                    warnings.push(w);
                 }
             }
         }
@@ -1530,19 +1639,33 @@ fn lint_filter_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>) {
 
     // ── Filters should NOT have level or status ──────────────────────────
     if m.contains_key(key("level")) {
-        warnings.push(warning(
+        let mut w = warning(
             LintRule::FilterHasLevel,
             "filter rules should not have a 'level' field",
             "/level",
-        ));
+        );
+        w.fix = safe_fix(
+            "remove 'level' from filter rule",
+            vec![FixPatch::Remove {
+                path: "/level".into(),
+            }],
+        );
+        warnings.push(w);
     }
 
     if m.contains_key(key("status")) {
-        warnings.push(warning(
+        let mut w = warning(
             LintRule::FilterHasStatus,
             "filter rules should not have a 'status' field",
             "/status",
-        ));
+        );
+        w.fix = safe_fix(
+            "remove 'status' from filter rule",
+            vec![FixPatch::Remove {
+                path: "/status".into(),
+            }],
+        );
+        warnings.push(w);
     }
 }
 
@@ -1600,11 +1723,19 @@ fn lint_unknown_keys(m: &serde_yaml::Mapping, doc_type: DocType, warnings: &mut 
             .filter(|known| edit_distance(ks, known) <= TYPO_MAX_EDIT_DISTANCE)
             .min_by_key(|known| edit_distance(ks, known))
         {
-            warnings.push(info(
+            let mut w = info(
                 LintRule::UnknownKey,
                 format!("unknown top-level key \"{ks}\"; did you mean \"{closest}\"?"),
                 format!("/{ks}"),
-            ));
+            );
+            w.fix = safe_fix(
+                format!("rename '{ks}' to '{closest}'"),
+                vec![FixPatch::ReplaceKey {
+                    path: format!("/{ks}"),
+                    new_key: closest.to_string(),
+                }],
+            );
+            warnings.push(w);
         }
     }
 }
