@@ -1,3 +1,5 @@
+mod fix;
+
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read};
 use std::path::PathBuf;
@@ -95,6 +97,11 @@ enum Commands {
         /// If omitted, searches for .rsigma-lint.yml in ancestor directories.
         #[arg(long = "config")]
         lint_config: Option<PathBuf>,
+
+        /// Auto-fix safe lint issues in-place.
+        /// Applies format-preserving fixes to files on disk.
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Evaluate events against Sigma rules
@@ -192,7 +199,16 @@ fn main() {
             color,
             disable,
             lint_config,
-        } => cmd_lint(path, schema, verbose, &color, disable, lint_config),
+            fix: apply_fix,
+        } => cmd_lint(
+            path,
+            schema,
+            verbose,
+            &color,
+            disable,
+            lint_config,
+            apply_fix,
+        ),
         Commands::Condition { expr } => cmd_condition(expr),
         Commands::Stdin { pretty } => cmd_stdin(pretty),
         Commands::Eval {
@@ -318,6 +334,7 @@ fn cmd_lint(
     color: &str,
     disable: Vec<String>,
     lint_config_path: Option<PathBuf>,
+    apply_fix: bool,
 ) {
     let p = Painter::new(color);
 
@@ -447,6 +464,41 @@ fn cmd_lint(
         warnings_colored,
         infos_colored,
     );
+
+    // 6. Apply fixes if requested
+    if apply_fix {
+        let fixable: usize = all_results
+            .iter()
+            .flat_map(|r| &r.warnings)
+            .filter(|w| {
+                w.fix
+                    .as_ref()
+                    .is_some_and(|f| f.disposition == lint::FixDisposition::Safe)
+            })
+            .count();
+
+        if fixable == 0 {
+            println!("{}", p.dim("No auto-fixable issues found."));
+        } else {
+            let result = fix::apply_fixes(&all_results);
+            println!(
+                "\n{}",
+                p.green_bold(&format!(
+                    "Applied {} fix(es) across {} file(s).",
+                    result.applied, result.files_modified,
+                ))
+            );
+            if result.failed > 0 {
+                println!(
+                    "{}",
+                    p.yellow(&format!(
+                        "{} fix(es) could not be applied (conflicts).",
+                        result.failed,
+                    ))
+                );
+            }
+        }
+    }
 
     if total_errors > 0 {
         process::exit(1);
