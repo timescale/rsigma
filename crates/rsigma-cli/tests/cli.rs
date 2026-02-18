@@ -1150,3 +1150,161 @@ detection:
         .failure()
         .stdout(predicate::str::contains("schema:"));
 }
+
+// =========================================================================
+// lint --fix
+// =========================================================================
+
+#[test]
+fn lint_fix_corrects_invalid_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rule.yml");
+    std::fs::write(
+        &path,
+        r#"title: Test
+status: expreimental
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+    )
+    .unwrap();
+
+    rsigma()
+        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .assert()
+        .stdout(predicate::str::contains("Applied"));
+
+    let fixed = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        fixed.contains("status: experimental"),
+        "file should have corrected status, got:\n{fixed}"
+    );
+    assert!(!fixed.contains("expreimental"), "old value should be gone");
+}
+
+#[test]
+fn lint_fix_renames_uppercase_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rule.yml");
+    std::fs::write(
+        &path,
+        r#"title: Test
+Status: test
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+    )
+    .unwrap();
+
+    rsigma()
+        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .assert()
+        .stdout(predicate::str::contains("Applied"));
+
+    let fixed = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        fixed.contains("status: test"),
+        "key should be lowercased, got:\n{fixed}"
+    );
+}
+
+#[test]
+fn lint_fix_removes_duplicate_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rule.yml");
+    std::fs::write(
+        &path,
+        r#"title: Test
+status: test
+tags:
+    - attack.execution
+    - attack.execution
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+    )
+    .unwrap();
+
+    rsigma()
+        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .assert()
+        .stdout(predicate::str::contains("Applied"));
+
+    let fixed = std::fs::read_to_string(&path).unwrap();
+    let count = fixed.matches("attack.execution").count();
+    assert_eq!(count, 1, "duplicate tag should be removed, got:\n{fixed}");
+}
+
+#[test]
+fn lint_fix_no_changes_on_clean_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rule.yml");
+    let original = r#"title: Test
+status: test
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#;
+    std::fs::write(&path, original).unwrap();
+
+    rsigma()
+        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .assert()
+        .success();
+
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(original, after, "clean file should not be modified");
+}
+
+#[test]
+fn lint_fix_multiple_issues() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rule.yml");
+    std::fs::write(
+        &path,
+        r#"title: Test
+status: expreimental
+tags:
+    - attack.execution
+    - attack.execution
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+    )
+    .unwrap();
+
+    rsigma()
+        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .assert()
+        .stdout(predicate::str::contains("Applied"));
+
+    let fixed = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        fixed.contains("status: experimental"),
+        "status should be fixed"
+    );
+    assert_eq!(
+        fixed.matches("attack.execution").count(),
+        1,
+        "duplicate tag should be removed"
+    );
+}

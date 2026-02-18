@@ -73,6 +73,7 @@ Run 65 built-in lint rules with optional JSON schema validation.
 | `--color` | string | `"auto"` | `auto`, `always`, or `never` |
 | `--disable` | string | `""` | Comma-separated lint rule IDs to suppress |
 | `--config` | path | none | Explicit path to `.rsigma-lint.yml` (otherwise auto-discovered by walking ancestor directories) |
+| `--fix` | flag | `false` | Automatically apply safe fixes (lowercase keys, correct typos, remove duplicates, etc.) |
 
 ```bash
 rsigma lint path/to/rules/                     # lint all rules
@@ -82,6 +83,7 @@ rsigma lint rule.yml --schema my-schema.json   # local JSON schema
 rsigma lint path/to/rules/ --color always      # force color
 rsigma lint rules/ --disable missing_description,missing_author  # suppress specific rules
 rsigma lint rules/ --config my-lint.yml        # explicit config file
+rsigma lint rules/ --fix                       # auto-fix safe issues
 ```
 
 **Lint output summary format:**

@@ -4255,4 +4255,366 @@ detection:
         assert_eq!(find_yaml_comment("key: \"value # not comment\""), None);
         assert_eq!(find_yaml_comment("key: value"), None);
     }
+
+    // ── Fix generation tests ─────────────────────────────────────────────
+
+    fn find_fix(warnings: &[LintWarning], rule: LintRule) -> Option<&Fix> {
+        warnings
+            .iter()
+            .find(|w| w.rule == rule)
+            .and_then(|w| w.fix.as_ref())
+    }
+
+    fn fix_summary(fix: &Fix) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        writeln!(s, "title: {}", fix.title).unwrap();
+        writeln!(s, "disposition: {:?}", fix.disposition).unwrap();
+        for (i, p) in fix.patches.iter().enumerate() {
+            match p {
+                FixPatch::ReplaceValue { path, new_value } => {
+                    writeln!(s, "patch[{i}]: ReplaceValue {path} -> {new_value}").unwrap();
+                }
+                FixPatch::ReplaceKey { path, new_key } => {
+                    writeln!(s, "patch[{i}]: ReplaceKey {path} -> {new_key}").unwrap();
+                }
+                FixPatch::Remove { path } => {
+                    writeln!(s, "patch[{i}]: Remove {path}").unwrap();
+                }
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn fix_invalid_status() {
+        let w = lint(
+            r#"
+title: Test
+status: expreimental
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::InvalidStatus).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: replace 'expreimental' with 'experimental'
+        disposition: Safe
+        patch[0]: ReplaceValue /status -> experimental
+        ");
+    }
+
+    #[test]
+    fn fix_invalid_level() {
+        let w = lint(
+            r#"
+title: Test
+level: hgih
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::InvalidLevel).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: replace 'hgih' with 'high'
+        disposition: Safe
+        patch[0]: ReplaceValue /level -> high
+        ");
+    }
+
+    #[test]
+    fn fix_non_lowercase_key() {
+        let w = lint(
+            r#"
+title: Test
+Status: test
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::NonLowercaseKey).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: rename 'Status' to 'status'
+        disposition: Safe
+        patch[0]: ReplaceKey /Status -> status
+        ");
+    }
+
+    #[test]
+    fn fix_logsource_value_not_lowercase() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: Test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::LogsourceValueNotLowercase).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: lowercase 'Test' to 'test'
+        disposition: Safe
+        patch[0]: ReplaceValue /logsource/category -> test
+        ");
+    }
+
+    #[test]
+    fn fix_unknown_key_typo() {
+        let w = lint(
+            r#"
+title: Test
+desciption: Typo field
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+level: medium
+"#,
+        );
+        let fix = find_fix(&w, LintRule::UnknownKey).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: rename 'desciption' to 'description'
+        disposition: Safe
+        patch[0]: ReplaceKey /desciption -> description
+        ");
+    }
+
+    #[test]
+    fn fix_duplicate_tags() {
+        let w = lint(
+            r#"
+title: Test
+status: test
+tags:
+    - attack.execution
+    - attack.execution
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::DuplicateTags).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove duplicate tag 'attack.execution'
+        disposition: Safe
+        patch[0]: Remove /tags/1
+        ");
+    }
+
+    #[test]
+    fn fix_duplicate_references() {
+        let w = lint(
+            r#"
+title: Test
+references:
+    - https://example.com
+    - https://example.com
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::DuplicateReferences).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove duplicate reference
+        disposition: Safe
+        patch[0]: Remove /references/1
+        ");
+    }
+
+    #[test]
+    fn fix_duplicate_fields() {
+        let w = lint(
+            r#"
+title: Test
+fields:
+    - CommandLine
+    - CommandLine
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::DuplicateFields).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove duplicate field
+        disposition: Safe
+        patch[0]: Remove /fields/1
+        ");
+    }
+
+    #[test]
+    fn fix_all_with_re() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        Cmd|all|re:
+            - foo.*
+            - bar.*
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::AllWithRe).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove |all from 'Cmd|all|re'
+        disposition: Safe
+        patch[0]: ReplaceKey /detection/sel/Cmd|all|re -> Cmd|re
+        ");
+    }
+
+    #[test]
+    fn fix_single_value_all_modifier() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        Cmd|all|contains:
+            - only_one
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::SingleValueAllModifier).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove |all from 'Cmd|all|contains'
+        disposition: Safe
+        patch[0]: ReplaceKey /detection/sel/Cmd|all|contains -> Cmd|contains
+        ");
+    }
+
+    #[test]
+    fn fix_wildcard_only_value() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        CommandLine: '*'
+    condition: sel
+"#,
+        );
+        let fix = find_fix(&w, LintRule::WildcardOnlyValue).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: replace with 'CommandLine|exists: true'
+        disposition: Safe
+        patch[0]: ReplaceKey /detection/sel/CommandLine -> CommandLine|exists
+        patch[1]: ReplaceValue /detection/sel/CommandLine|exists -> true
+        ");
+    }
+
+    #[test]
+    fn fix_filter_has_level() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+level: high
+filter:
+    rules:
+        - rule1
+    selection:
+        User: admin
+    condition: selection
+"#,
+        );
+        let fix = find_fix(&w, LintRule::FilterHasLevel).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove 'level' from filter rule
+        disposition: Safe
+        patch[0]: Remove /level
+        ");
+    }
+
+    #[test]
+    fn fix_filter_has_status() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+status: test
+filter:
+    rules:
+        - rule1
+    selection:
+        User: admin
+    condition: selection
+"#,
+        );
+        let fix = find_fix(&w, LintRule::FilterHasStatus).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove 'status' from filter rule
+        disposition: Safe
+        patch[0]: Remove /status
+        ");
+    }
+
+    #[test]
+    fn no_fix_for_unfixable_rule() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+"#,
+        );
+        assert!(has_rule(&w, LintRule::MissingDetection));
+        assert!(find_fix(&w, LintRule::MissingDetection).is_none());
+    }
+
+    #[test]
+    fn no_fix_for_far_invalid_status() {
+        let w = lint(
+            r#"
+title: Test
+status: totallyinvalidxyz
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+"#,
+        );
+        assert!(has_rule(&w, LintRule::InvalidStatus));
+        assert!(
+            find_fix(&w, LintRule::InvalidStatus).is_none(),
+            "no fix when edit distance is too large"
+        );
+    }
 }

@@ -32,6 +32,18 @@ This library is part of [rsigma].
 | `parse_inline_suppressions(text: &str)` | Parse `# rsigma-disable` comments from YAML text |
 | `apply_suppressions(warnings, config, inline)` | Filter and override warnings using config and inline suppressions |
 
+### Auto-Fix Types
+
+Each `LintWarning` can carry an optional `Fix` describing how to automatically correct the issue.
+
+| Type | Description |
+|------|-------------|
+| `Fix` | A suggested fix: title, disposition (`Safe`/`Unsafe`), and ordered patches |
+| `FixDisposition` | `Safe` (no semantic change) or `Unsafe` (may change meaning) |
+| `FixPatch` | A single edit: `ReplaceValue`, `ReplaceKey`, or `Remove` with a JSON-pointer path |
+
+Fix types are yamlpath/yamlpatch-agnostic (all owned data, no external dependencies). Consumers (CLI, LSP) convert `FixPatch` to concrete patch operations at apply time.
+
 ### Value Types
 
 | Type/Function | Description |
@@ -214,98 +226,98 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 
 ### Infrastructure (4)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `yaml_parse_error` | Error | YAML parse failure |
-| `not_a_mapping` | Error | Document is not a YAML mapping |
-| `file_read_error` | Error | Cannot read file |
-| `schema_violation` | Error | JSON schema validation failure (optional) |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `yaml_parse_error` | Error | | YAML parse failure |
+| `not_a_mapping` | Error | | Document is not a YAML mapping |
+| `file_read_error` | Error | | Cannot read file |
+| `schema_violation` | Error | | JSON schema validation failure (optional) |
 
 ### Shared Metadata (16)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `missing_title` | Error | No `title` field |
-| `empty_title` | Error | `title` is empty or whitespace |
-| `title_too_long` | Warning | `title` exceeds 256 characters |
-| `missing_description` | Info | No `description` |
-| `missing_author` | Info | No `author` |
-| `invalid_id` | Warning | `id` not a valid UUID (8-4-4-4-12 hex) |
-| `invalid_status` | Error | `status` not in `stable`/`test`/`experimental`/`deprecated`/`unsupported` |
-| `missing_level` | Warning | No `level` (detection rules) |
-| `invalid_level` | Error | `level` not in `informational`/`low`/`medium`/`high`/`critical` |
-| `invalid_date` | Error | `date` not `YYYY-MM-DD` with valid day-of-month |
-| `invalid_modified` | Error | `modified` not `YYYY-MM-DD` |
-| `modified_before_date` | Warning | `modified` is earlier than `date` |
-| `description_too_long` | Warning | `description` exceeds 65,535 characters |
-| `name_too_long` | Warning | `name` exceeds 256 characters |
-| `taxonomy_too_long` | Warning | `taxonomy` exceeds 256 characters |
-| `non_lowercase_key` | Warning | Top-level key is not lowercase |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `missing_title` | Error | | No `title` field |
+| `empty_title` | Error | | `title` is empty or whitespace |
+| `title_too_long` | Warning | | `title` exceeds 256 characters |
+| `missing_description` | Info | | No `description` |
+| `missing_author` | Info | | No `author` |
+| `invalid_id` | Warning | | `id` not a valid UUID (8-4-4-4-12 hex) |
+| `invalid_status` | Error | Yes | `status` not in `stable`/`test`/`experimental`/`deprecated`/`unsupported` |
+| `missing_level` | Warning | | No `level` (detection rules) |
+| `invalid_level` | Error | Yes | `level` not in `informational`/`low`/`medium`/`high`/`critical` |
+| `invalid_date` | Error | | `date` not `YYYY-MM-DD` with valid day-of-month |
+| `invalid_modified` | Error | | `modified` not `YYYY-MM-DD` |
+| `modified_before_date` | Warning | | `modified` is earlier than `date` |
+| `description_too_long` | Warning | | `description` exceeds 65,535 characters |
+| `name_too_long` | Warning | | `name` exceeds 256 characters |
+| `taxonomy_too_long` | Warning | | `taxonomy` exceeds 256 characters |
+| `non_lowercase_key` | Warning | Yes | Top-level key is not lowercase |
 
 ### Detection Rules (17)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `missing_logsource` | Error | No `logsource` |
-| `missing_detection` | Error | No `detection` |
-| `missing_condition` | Error | No `condition` in detection |
-| `empty_detection` | Warning | No named search identifiers |
-| `invalid_related_type` | Error | `related[].type` not in `derived`/`obsolete`/`merged`/`renamed`/`similar` |
-| `invalid_related_id` | Warning | `related[].id` not a valid UUID |
-| `related_missing_required` | Error | `related[]` missing `id` or `type` |
-| `deprecated_without_related` | Warning | `status: deprecated` but no `related` |
-| `invalid_tag` | Warning | Tag doesn't match `^[a-z0-9_-]+\.[a-z0-9._-]+$` |
-| `unknown_tag_namespace` | Warning | Tag namespace not in `attack`/`car`/`cve`/`d3fend`/`detection`/`stp`/`tlp` |
-| `duplicate_tags` | Warning | Duplicate tag |
-| `duplicate_references` | Warning | Duplicate reference URL |
-| `duplicate_fields` | Warning | Duplicate field name |
-| `falsepositive_too_short` | Warning | `falsepositives` entry under 2 characters |
-| `scope_too_short` | Warning | `scope` entry under 2 characters |
-| `logsource_value_not_lowercase` | Warning | Logsource `category`/`product`/`service` not lowercase |
-| `condition_references_unknown` | Error | Condition references non-existent detection identifier |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `missing_logsource` | Error | | No `logsource` |
+| `missing_detection` | Error | | No `detection` |
+| `missing_condition` | Error | | No `condition` in detection |
+| `empty_detection` | Warning | | No named search identifiers |
+| `invalid_related_type` | Error | | `related[].type` not in `derived`/`obsolete`/`merged`/`renamed`/`similar` |
+| `invalid_related_id` | Warning | | `related[].id` not a valid UUID |
+| `related_missing_required` | Error | | `related[]` missing `id` or `type` |
+| `deprecated_without_related` | Warning | | `status: deprecated` but no `related` |
+| `invalid_tag` | Warning | | Tag doesn't match `^[a-z0-9_-]+\.[a-z0-9._-]+$` |
+| `unknown_tag_namespace` | Warning | | Tag namespace not in `attack`/`car`/`cve`/`d3fend`/`detection`/`stp`/`tlp` |
+| `duplicate_tags` | Warning | Yes | Duplicate tag |
+| `duplicate_references` | Warning | Yes | Duplicate reference URL |
+| `duplicate_fields` | Warning | Yes | Duplicate field name |
+| `falsepositive_too_short` | Warning | | `falsepositives` entry under 2 characters |
+| `scope_too_short` | Warning | | `scope` entry under 2 characters |
+| `logsource_value_not_lowercase` | Warning | Yes | Logsource `category`/`product`/`service` not lowercase |
+| `condition_references_unknown` | Error | | Condition references non-existent detection identifier |
 
 ### Correlation Rules (13)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `missing_correlation` | Error | No `correlation` or not a mapping |
-| `missing_correlation_type` | Error | No `correlation.type` |
-| `invalid_correlation_type` | Error | Type not a recognized correlation type |
-| `missing_correlation_rules` | Error | No `correlation.rules` |
-| `empty_correlation_rules` | Warning | `correlation.rules` is empty |
-| `missing_correlation_timespan` | Error | No `correlation.timespan` or `correlation.timeframe` |
-| `invalid_timespan_format` | Error | Timespan format invalid |
-| `missing_group_by` | Error | No `correlation.group-by` |
-| `missing_correlation_condition` | Error | Non-temporal type without condition |
-| `missing_condition_field` | Error | `value_count`/`value_sum`/`value_avg`/`value_percentile` without `condition.field` |
-| `invalid_condition_operator` | Error | Operator not in `gt`/`gte`/`lt`/`lte`/`eq`/`neq` |
-| `condition_value_not_numeric` | Error | Condition value not numeric |
-| `generate_not_boolean` | Error | `generate` is not a boolean |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `missing_correlation` | Error | | No `correlation` or not a mapping |
+| `missing_correlation_type` | Error | | No `correlation.type` |
+| `invalid_correlation_type` | Error | | Type not a recognized correlation type |
+| `missing_correlation_rules` | Error | | No `correlation.rules` |
+| `empty_correlation_rules` | Warning | | `correlation.rules` is empty |
+| `missing_correlation_timespan` | Error | | No `correlation.timespan` or `correlation.timeframe` |
+| `invalid_timespan_format` | Error | | Timespan format invalid |
+| `missing_group_by` | Error | | No `correlation.group-by` |
+| `missing_correlation_condition` | Error | | Non-temporal type without condition |
+| `missing_condition_field` | Error | | `value_count`/`value_sum`/`value_avg`/`value_percentile` without `condition.field` |
+| `invalid_condition_operator` | Error | | Operator not in `gt`/`gte`/`lt`/`lte`/`eq`/`neq` |
+| `condition_value_not_numeric` | Error | | Condition value not numeric |
+| `generate_not_boolean` | Error | | `generate` is not a boolean |
 
 ### Filter Rules (8)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `missing_filter` | Error | No `filter` or not a mapping |
-| `missing_filter_rules` | Error | No `filter.rules` |
-| `empty_filter_rules` | Warning | `filter.rules` is empty |
-| `missing_filter_selection` | Error | No `filter.selection` |
-| `missing_filter_condition` | Error | No `filter.condition` |
-| `filter_has_level` | Warning | Filter has `level` (not applicable) |
-| `filter_has_status` | Warning | Filter has `status` (not applicable) |
-| `missing_filter_logsource` | Warning | No `logsource` |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `missing_filter` | Error | | No `filter` or not a mapping |
+| `missing_filter_rules` | Error | | No `filter.rules` |
+| `empty_filter_rules` | Warning | | `filter.rules` is empty |
+| `missing_filter_selection` | Error | | No `filter.selection` |
+| `missing_filter_condition` | Error | | No `filter.condition` |
+| `filter_has_level` | Warning | Yes | Filter has `level` (not applicable) |
+| `filter_has_status` | Warning | Yes | Filter has `status` (not applicable) |
+| `missing_filter_logsource` | Warning | | No `logsource` |
 
 ### Detection Logic (7)
 
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `null_in_value_list` | Warning | `null` mixed with other values in a list |
-| `single_value_all_modifier` | Warning | `\|all` with a single value |
-| `all_with_re` | Warning | `\|all` and `\|re` combined |
-| `incompatible_modifiers` | Warning | Incompatible modifier combination (e.g. `contains\|startswith`, `re\|contains`, `gt\|contains`, regex flags without `re`) |
-| `empty_value_list` | Warning | Empty value list |
-| `wildcard_only_value` | Warning | Lone `*` value (suggests `\|exists: true` instead) |
-| `unknown_key` | Info | Top-level key likely a typo of a known key (edit distance ≤ 2); custom fields are allowed per the Sigma spec |
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `null_in_value_list` | Warning | | `null` mixed with other values in a list |
+| `single_value_all_modifier` | Warning | Yes | `\|all` with a single value |
+| `all_with_re` | Warning | Yes | `\|all` and `\|re` combined |
+| `incompatible_modifiers` | Warning | | Incompatible modifier combination (e.g. `contains\|startswith`, `re\|contains`, `gt\|contains`, regex flags without `re`) |
+| `empty_value_list` | Warning | | Empty value list |
+| `wildcard_only_value` | Warning | Yes | Lone `*` value (suggests `\|exists: true` instead) |
+| `unknown_key` | Info | Yes | Top-level key likely a typo of a known key (edit distance ≤ 2); custom fields are allowed per the Sigma spec |
 
 ### Rule Suppression
 

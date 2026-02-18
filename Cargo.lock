@@ -1933,6 +1933,7 @@ name = "rsigma-parser"
 version = "0.2.0"
 dependencies = [
  "criterion",
+ "insta",
  "log",
  "pest",
  "pest_derive",

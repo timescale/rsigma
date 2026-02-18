@@ -18,6 +18,7 @@ cargo install --path crates/rsigma-lsp
 |------------|---------|
 | Text document sync | Full (entire document on every change) |
 | Diagnostics | Lint (65 rules), parse errors, compile errors |
+| Code actions | Quick-fix actions for auto-fixable lint warnings |
 | Completions | Context-aware; trigger characters: `\|`, `:`, ` `, `\n` |
 | Hover | Field modifiers, MITRE ATT&CK tactics and techniques |
 | Document symbols | Hierarchical outline of rule structure |
@@ -69,6 +70,27 @@ All diagnostics have `source: "rsigma"`.
 | Document change | Diagnostics debounced at **150 ms** |
 | Document save | Diagnostics run immediately |
 | Document close | Pending diagnostics aborted; existing diagnostics cleared |
+
+## Code Actions
+
+Quick-fix code actions for lint warnings with auto-fix suggestions. When the cursor is on a diagnostic that has a safe fix, the editor offers a one-click action to apply it.
+
+| Fixable rule | Action |
+|--------------|--------|
+| `non_lowercase_key` | Rename key to lowercase |
+| `logsource_value_not_lowercase` | Lowercase the value |
+| `invalid_status` | Replace with closest valid status |
+| `invalid_level` | Replace with closest valid level |
+| `unknown_key` | Rename to closest known key (typo correction) |
+| `duplicate_tags` | Remove duplicate tag entry |
+| `duplicate_references` | Remove duplicate reference entry |
+| `duplicate_fields` | Remove duplicate field entry |
+| `all_with_re` | Remove redundant `\|all` modifier |
+| `single_value_all_modifier` | Remove redundant `\|all` modifier |
+| `wildcard_only_value` | Replace with `\|exists: true` |
+| `filter_has_level` / `filter_has_status` | Remove the field |
+
+All code actions are marked as `quickfix` with `isPreferred: true`. Only `Safe` disposition fixes are offered.
 
 ## Completions
 
