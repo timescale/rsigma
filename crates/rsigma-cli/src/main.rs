@@ -610,6 +610,7 @@ fn validate_file_against_schema(
                 message: format!("error reading file: {e}"),
                 path: "/".to_string(),
                 span: None,
+                fix: None,
             });
             return FileLintResult {
                 path: path.to_path_buf(),
@@ -652,6 +653,7 @@ fn validate_file_against_schema(
                 message: format!("schema: {error}"),
                 path: error.instance_path.to_string(),
                 span: None,
+                fix: None,
             });
         }
     }

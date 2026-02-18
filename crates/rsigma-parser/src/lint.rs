@@ -226,6 +226,53 @@ pub struct Span {
     pub end_col: u32,
 }
 
+// =============================================================================
+// Auto-fix types
+// =============================================================================
+
+/// Whether a fix is safe to apply automatically or needs manual review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum FixDisposition {
+    /// No semantic change — safe to apply without review.
+    Safe,
+    /// May change meaning — should be reviewed before applying.
+    Unsafe,
+}
+
+/// A single patch operation within a [`Fix`].
+///
+/// Each variant describes a format-preserving edit to a YAML document.
+/// Paths are JSON-pointer-style strings (e.g. `"/status"`, `"/tags/2"`)
+/// matching the `LintWarning::path` convention.
+///
+/// These are intentionally yamlpath/yamlpatch-agnostic so that
+/// `rsigma-parser` carries no dependency on those crates. The consumer
+/// (CLI or LSP) converts these to concrete patch operations at apply time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum FixPatch {
+    /// Replace the value at `path` with `new_value`.
+    ReplaceValue { path: String, new_value: String },
+    /// Rename the YAML key targeted by `path`.
+    ReplaceKey { path: String, new_key: String },
+    /// Remove the node at `path` entirely.
+    Remove { path: String },
+}
+
+/// A suggested fix for a lint finding.
+///
+/// Attached to a [`LintWarning`] when the issue can be corrected
+/// automatically. Contains one or more [`FixPatch`] operations that,
+/// applied sequentially, resolve the finding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Fix {
+    /// Short human-readable description (e.g. "rename 'Status' to 'status'").
+    pub title: String,
+    /// Whether the fix is safe to apply without review.
+    pub disposition: FixDisposition,
+    /// Ordered patch operations to apply.
+    pub patches: Vec<FixPatch>,
+}
+
 /// A single lint finding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LintWarning {
@@ -241,6 +288,9 @@ pub struct LintWarning {
     /// source positions available). Populated by `lint_yaml_str` which
     /// can resolve paths against the raw text.
     pub span: Option<Span>,
+    /// Optional auto-fix. `None` when the finding cannot be corrected
+    /// automatically.
+    pub fix: Option<Fix>,
 }
 
 impl fmt::Display for LintWarning {
@@ -371,6 +421,7 @@ fn warn(
         message: message.into(),
         path: path.into(),
         span: None,
+        fix: None,
     }
 }
 
