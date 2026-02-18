@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes a 64-rule linter derived from the Sigma v2.1.0 spec.
+`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes a 65-rule linter derived from the Sigma v2.1.0 spec.
 
 This library is part of [rsigma].
 
@@ -206,9 +206,9 @@ filter:
 
 The string must be at least 2 characters (e.g. `1h`). The last character is the unit; the prefix must be a positive integer.
 
-## Linter (64 rules)
+## Linter (65 rules)
 
-64 built-in lint rules derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
+65 built-in lint rules derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 The linter operates on raw YAML values to catch issues the parser silently ignores.
 
@@ -295,13 +295,14 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `filter_has_status` | Warning | Filter has `status` (not applicable) |
 | `missing_filter_logsource` | Warning | No `logsource` |
 
-### Detection Logic (6)
+### Detection Logic (7)
 
 | Rule | Severity | Trigger |
 |------|----------|---------|
 | `null_in_value_list` | Warning | `null` mixed with other values in a list |
 | `single_value_all_modifier` | Warning | `\|all` with a single value |
 | `all_with_re` | Warning | `\|all` and `\|re` combined |
+| `incompatible_modifiers` | Warning | Incompatible modifier combination (e.g. `contains\|startswith`, `re\|contains`, `gt\|contains`, regex flags without `re`) |
 | `empty_value_list` | Warning | Empty value list |
 | `wildcard_only_value` | Warning | Lone `*` value (suggests `\|exists: true` instead) |
 | `unknown_key` | Info | Top-level key likely a typo of a known key (edit distance ≤ 2); custom fields are allowed per the Sigma spec |
@@ -341,7 +342,7 @@ The `schema_violation` lint rule optionally validates rules against a JSON schem
 | Error | When |
 |-------|------|
 | `Yaml` | serde_yaml parse failure |
-| `Condition` | Condition expression parse failure (PEG/Pratt) |
+| `Condition` | Condition expression parse failure (PEG/Pratt); carries optional `SourceLocation` with line/column |
 | `UnknownModifier` | Unknown modifier in field spec |
 | `InvalidFieldSpec` | Invalid field specification |
 | `InvalidRule` | Document not a mapping, or invalid structure |

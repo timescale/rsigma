@@ -67,7 +67,7 @@ pub use ast::{
     SigmaRule, Status,
 };
 pub use condition::parse_condition;
-pub use error::{Result, SigmaParserError};
+pub use error::{Result, SigmaParserError, SourceLocation};
 pub use lint::{
     FileLintResult, InlineSuppressions, LintConfig, LintRule, LintWarning, Severity, Span,
     apply_suppressions, lint_yaml_directory, lint_yaml_directory_with_config, lint_yaml_file,

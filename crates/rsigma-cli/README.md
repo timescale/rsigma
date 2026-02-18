@@ -63,7 +63,7 @@ rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
 
 ### `lint` — Lint rules against the Sigma specification
 
-Run 64 built-in lint rules with optional JSON schema validation.
+Run 65 built-in lint rules with optional JSON schema validation.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|

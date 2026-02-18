@@ -1087,6 +1087,94 @@ level: medium
         assert!(result.is_err());
     }
 
+    // ── Field modifier edge cases ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_contains_re_combination() {
+        let spec = parse_field_spec("CommandLine|contains|re").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Contains, Modifier::Re]);
+    }
+
+    #[test]
+    fn test_parse_duplicate_modifiers() {
+        let spec = parse_field_spec("Field|contains|contains").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Contains, Modifier::Contains]);
+    }
+
+    #[test]
+    fn test_parse_conflicting_string_match_modifiers() {
+        let spec = parse_field_spec("Field|contains|startswith").unwrap();
+        assert_eq!(
+            spec.modifiers,
+            vec![Modifier::Contains, Modifier::StartsWith]
+        );
+    }
+
+    #[test]
+    fn test_parse_conflicting_endswith_startswith() {
+        let spec = parse_field_spec("Field|endswith|startswith").unwrap();
+        assert_eq!(
+            spec.modifiers,
+            vec![Modifier::EndsWith, Modifier::StartsWith]
+        );
+    }
+
+    #[test]
+    fn test_parse_re_with_contains() {
+        let spec = parse_field_spec("Field|re|contains").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Re, Modifier::Contains]);
+    }
+
+    #[test]
+    fn test_parse_cidr_with_contains() {
+        let spec = parse_field_spec("Field|cidr|contains").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Cidr, Modifier::Contains]);
+    }
+
+    #[test]
+    fn test_parse_multiple_encoding_modifiers() {
+        let spec = parse_field_spec("Field|base64|wide|base64offset").unwrap();
+        assert_eq!(
+            spec.modifiers,
+            vec![Modifier::Base64, Modifier::Wide, Modifier::Base64Offset]
+        );
+    }
+
+    #[test]
+    fn test_parse_numeric_with_string_modifiers() {
+        let spec = parse_field_spec("Field|gt|contains").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Gt, Modifier::Contains]);
+    }
+
+    #[test]
+    fn test_parse_exists_with_other_modifiers() {
+        let spec = parse_field_spec("Field|exists|contains").unwrap();
+        assert_eq!(spec.modifiers, vec![Modifier::Exists, Modifier::Contains]);
+    }
+
+    #[test]
+    fn test_parse_re_with_regex_flags() {
+        let spec = parse_field_spec("Field|re|i|m|s").unwrap();
+        assert_eq!(
+            spec.modifiers,
+            vec![
+                Modifier::Re,
+                Modifier::IgnoreCase,
+                Modifier::Multiline,
+                Modifier::DotAll
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_regex_flags_without_re() {
+        let spec = parse_field_spec("Field|i|m").unwrap();
+        assert_eq!(
+            spec.modifiers,
+            vec![Modifier::IgnoreCase, Modifier::Multiline]
+        );
+    }
+
     #[test]
     fn test_keyword_detection() {
         let yaml = r#"
@@ -1455,5 +1543,286 @@ level: medium
             }
             _ => panic!("Expected AllOf detection"),
         }
+    }
+
+    // ── Multi-document YAML inheritance tests ─────────────────────────────
+
+    #[test]
+    fn test_action_reset_clears_global() {
+        let yaml = r#"
+action: global
+title: Global Template
+logsource:
+    product: windows
+level: high
+---
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+action: reset
+---
+title: After Reset
+logsource:
+    product: linux
+detection:
+    selection:
+        command: ls
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+        assert_eq!(collection.rules.len(), 2);
+
+        // First rule inherits from global: title "Global Template", product windows
+        assert_eq!(collection.rules[0].title, "Global Template");
+        assert_eq!(
+            collection.rules[0].logsource.product,
+            Some("windows".to_string())
+        );
+        assert_eq!(collection.rules[0].level, Some(Level::High));
+
+        // After reset, global is cleared — second rule is standalone
+        assert_eq!(collection.rules[1].title, "After Reset");
+        assert_eq!(
+            collection.rules[1].logsource.product,
+            Some("linux".to_string())
+        );
+        assert_eq!(collection.rules[1].level, Some(Level::Low));
+    }
+
+    #[test]
+    fn test_global_repeat_reset_combined() {
+        let yaml = r#"
+action: global
+logsource:
+    product: windows
+level: medium
+---
+title: Rule A
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+action: repeat
+title: Rule B
+detection:
+    selection:
+        EventID: 2
+    condition: selection
+---
+action: reset
+---
+title: Rule C
+logsource:
+    product: linux
+detection:
+    selection:
+        command: cat
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+        assert_eq!(collection.rules.len(), 3);
+
+        // Rule A: global applied
+        assert_eq!(collection.rules[0].title, "Rule A");
+        assert_eq!(
+            collection.rules[0].logsource.product,
+            Some("windows".to_string())
+        );
+        assert_eq!(collection.rules[0].level, Some(Level::Medium));
+
+        // Rule B: repeat of Rule A + global
+        assert_eq!(collection.rules[1].title, "Rule B");
+        assert_eq!(
+            collection.rules[1].logsource.product,
+            Some("windows".to_string())
+        );
+        assert_eq!(collection.rules[1].level, Some(Level::Medium));
+
+        // Rule C: after reset, no global — standalone
+        assert_eq!(collection.rules[2].title, "Rule C");
+        assert_eq!(
+            collection.rules[2].logsource.product,
+            Some("linux".to_string())
+        );
+        assert_eq!(collection.rules[2].level, Some(Level::Low));
+    }
+
+    #[test]
+    fn test_deep_repeat_chain() {
+        let yaml = r#"
+title: Base
+logsource:
+    product: windows
+    category: process_creation
+level: low
+detection:
+    selection:
+        CommandLine|contains: 'cmd'
+    condition: selection
+---
+action: repeat
+title: Second
+level: medium
+detection:
+    selection:
+        CommandLine|contains: 'powershell'
+    condition: selection
+---
+action: repeat
+title: Third
+level: high
+detection:
+    selection:
+        CommandLine|contains: 'wscript'
+    condition: selection
+---
+action: repeat
+title: Fourth
+detection:
+    selection:
+        CommandLine|contains: 'cscript'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+        assert_eq!(collection.rules.len(), 4);
+
+        assert_eq!(collection.rules[0].level, Some(Level::Low));
+        assert_eq!(collection.rules[1].level, Some(Level::Medium));
+        assert_eq!(collection.rules[2].level, Some(Level::High));
+        // Fourth inherits from Third (which had level high)
+        assert_eq!(collection.rules[3].level, Some(Level::High));
+
+        // All should inherit logsource from the chain
+        for rule in &collection.rules {
+            assert_eq!(rule.logsource.product, Some("windows".to_string()));
+            assert_eq!(
+                rule.logsource.category,
+                Some("process_creation".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_errors_mixed_valid_invalid() {
+        let yaml = r#"
+title: Valid Rule
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: low
+---
+title: Invalid Rule
+detection:
+    selection:
+        field: value
+"#;
+        // The second document is missing 'condition' — should generate an error
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.rules.len(), 1);
+        assert_eq!(collection.rules[0].title, "Valid Rule");
+        assert!(
+            !collection.errors.is_empty(),
+            "Expected errors for invalid doc"
+        );
+    }
+
+    #[test]
+    fn test_reset_followed_by_repeat_inherits_previous() {
+        // `action: reset` only clears the global template — `previous`
+        // is not affected, so a subsequent `repeat` still inherits from
+        // the last non-action document.
+        let yaml = r#"
+title: Base
+logsource:
+    category: test
+detection:
+    selection:
+        field: val
+    condition: selection
+level: low
+---
+action: reset
+---
+action: repeat
+title: Repeated After Reset
+detection:
+    selection:
+        field: val2
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+        assert_eq!(collection.rules.len(), 2);
+        assert_eq!(collection.rules[0].title, "Base");
+        assert_eq!(collection.rules[1].title, "Repeated After Reset");
+        // Inherits logsource from Base (previous), but no global
+        assert_eq!(
+            collection.rules[1].logsource.category,
+            Some("test".to_string())
+        );
+        assert_eq!(collection.rules[1].level, Some(Level::Low));
+    }
+
+    #[test]
+    fn test_deep_merge_nested_maps() {
+        let yaml = r#"
+action: global
+logsource:
+    product: windows
+    service: sysmon
+    category: process_creation
+---
+title: Override Service
+logsource:
+    service: security
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+level: low
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.errors.is_empty(),
+            "errors: {:?}",
+            collection.errors
+        );
+        assert_eq!(collection.rules.len(), 1);
+
+        let rule = &collection.rules[0];
+        // Deep merge: product and category from global, service overridden
+        assert_eq!(rule.logsource.product, Some("windows".to_string()));
+        assert_eq!(rule.logsource.service, Some("security".to_string()));
+        assert_eq!(
+            rule.logsource.category,
+            Some("process_creation".to_string())
+        );
     }
 }

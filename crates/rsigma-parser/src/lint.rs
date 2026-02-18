@@ -130,6 +130,7 @@ pub enum LintRule {
     NullInValueList,
     SingleValueAllModifier,
     AllWithRe,
+    IncompatibleModifiers,
     EmptyValueList,
     WildcardOnlyValue,
     UnknownKey,
@@ -199,6 +200,7 @@ impl fmt::Display for LintRule {
             LintRule::NullInValueList => "null_in_value_list",
             LintRule::SingleValueAllModifier => "single_value_all_modifier",
             LintRule::AllWithRe => "all_with_re",
+            LintRule::IncompatibleModifiers => "incompatible_modifiers",
             LintRule::EmptyValueList => "empty_value_list",
             LintRule::WildcardOnlyValue => "wildcard_only_value",
             LintRule::UnknownKey => "unknown_key",
@@ -1078,6 +1080,15 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                     }
                 }
 
+                // Check for incompatible modifier combinations
+                if let Some(msg) = check_modifier_compatibility(field_key_str) {
+                    warnings.push(warning(
+                        LintRule::IncompatibleModifiers,
+                        format!("'{field_key_str}' in '{det_name}': {msg}"),
+                        format!("/detection/{det_name}/{field_key_str}"),
+                    ));
+                }
+
                 // Check null in value list and empty value list
                 if let Value::Sequence(seq) = field_val {
                     if seq.is_empty() {
@@ -1292,6 +1303,93 @@ fn lint_correlation_condition(
             ));
         }
     }
+}
+
+/// Check field modifier compatibility and return a diagnostic message if
+/// the combination is invalid.
+///
+/// Modifier categories (at most one from each exclusive group):
+/// - **String match**: contains, startswith, endswith
+/// - **Pattern match**: re, cidr (incompatible with string-match modifiers)
+/// - **Numeric comparison**: gt, gte, lt, lte, neq
+/// - **Existence**: exists (standalone, incompatible with everything except all/cased)
+/// - **Regex flags**: i, m, s (require re)
+fn check_modifier_compatibility(field_key: &str) -> Option<String> {
+    let parts: Vec<&str> = field_key.split('|').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let modifiers = &parts[1..];
+
+    let string_match: &[&str] = &["contains", "startswith", "endswith"];
+    let pattern_match: &[&str] = &["re", "cidr"];
+    let numeric_compare: &[&str] = &["gt", "gte", "lt", "lte", "neq"];
+    let regex_flags: &[&str] = &["i", "ignorecase", "m", "multiline", "s", "dotall"];
+
+    let has_string = modifiers
+        .iter()
+        .filter(|m| string_match.contains(m))
+        .count();
+    let has_pattern: Vec<&&str> = modifiers
+        .iter()
+        .filter(|m| pattern_match.contains(m))
+        .collect();
+    let has_numeric = modifiers.iter().any(|m| numeric_compare.contains(m));
+    let has_exists = modifiers.contains(&"exists");
+    let has_re = modifiers.contains(&"re");
+    let has_regex_flags = modifiers.iter().any(|m| regex_flags.contains(m));
+
+    // Multiple string-match modifiers are mutually exclusive
+    if has_string > 1 {
+        return Some(
+            "multiple string-match modifiers (contains, startswith, endswith) \
+             are mutually exclusive"
+                .to_string(),
+        );
+    }
+
+    // Pattern-match (re, cidr) is incompatible with string-match modifiers
+    if !has_pattern.is_empty() && has_string > 0 {
+        return Some(format!(
+            "pattern modifier '{}' is incompatible with string-match modifiers \
+             (contains, startswith, endswith)",
+            has_pattern
+                .iter()
+                .map(|m| **m)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    // Numeric comparison is incompatible with string-match and pattern modifiers
+    if has_numeric && (has_string > 0 || !has_pattern.is_empty()) {
+        return Some(
+            "numeric comparison modifiers (gt, gte, lt, lte, neq) are incompatible \
+             with string-match and pattern modifiers"
+                .to_string(),
+        );
+    }
+
+    // exists is standalone
+    if has_exists && modifiers.len() > 1 {
+        let others: Vec<&&str> = modifiers
+            .iter()
+            .filter(|m| **m != "exists" && **m != "all" && **m != "cased")
+            .collect();
+        if !others.is_empty() {
+            return Some(format!(
+                "'exists' modifier is incompatible with: {}",
+                others.iter().map(|m| **m).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+
+    // Regex flags require re
+    if has_regex_flags && !has_re {
+        return Some("regex flag modifiers (i, m, s) require the 're' modifier".to_string());
+    }
+
+    None
 }
 
 fn is_valid_timespan(s: &str) -> bool {
@@ -3460,6 +3558,214 @@ level: medium
 "#,
         );
         assert!(has_no_rule(&w, LintRule::AllWithRe));
+    }
+
+    // ── Modifier compatibility checks ────────────────────────────────────
+
+    #[test]
+    fn incompatible_contains_startswith() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|contains|startswith: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_endswith_startswith() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|endswith|startswith: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_contains_endswith() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|contains|endswith: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_re_with_contains() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|re|contains: '.*test.*'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_cidr_with_startswith() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|cidr|startswith: '192.168.0.0/16'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_exists_with_contains() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|exists|contains: true
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_gt_with_contains() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|gt|contains: 100
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn incompatible_regex_flags_without_re() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|i|m: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn compatible_re_with_regex_flags() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|re|i|m|s: '(?i)test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn compatible_contains_all() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|contains|all:
+            - 'val1'
+            - 'val2'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn compatible_base64offset_contains() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|base64offset|contains: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::IncompatibleModifiers));
+    }
+
+    #[test]
+    fn compatible_wide_base64() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|wide|base64: 'test'
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::IncompatibleModifiers));
     }
 
     // ── Info/Hint severity levels ────────────────────────────────────────
