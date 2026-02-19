@@ -1,5 +1,3 @@
-mod helpers;
-
 use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, EvalError, Event};
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;

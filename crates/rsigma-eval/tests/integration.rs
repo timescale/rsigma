@@ -1,6 +1,6 @@
 mod helpers;
 
-use helpers::{corr_engine, engine_from_yaml, eval, process};
+use helpers::{corr_engine, eval, process};
 use rsigma_eval::{Engine, Event, parse_pipeline};
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
@@ -32,18 +32,36 @@ level: critical
     let mut engine = corr_engine(yaml);
 
     for i in 0..4 {
-        let r = process(&mut engine, json!({"EventType": "failed_login", "User": "admin"}), 1000 + i);
-        assert!(r.correlations.is_empty(), "should not fire before threshold");
+        let r = process(
+            &mut engine,
+            json!({"EventType": "failed_login", "User": "admin"}),
+            1000 + i,
+        );
+        assert!(
+            r.correlations.is_empty(),
+            "should not fire before threshold"
+        );
     }
 
-    let r = process(&mut engine, json!({"EventType": "failed_login", "User": "admin"}), 1004);
+    let r = process(
+        &mut engine,
+        json!({"EventType": "failed_login", "User": "admin"}),
+        1004,
+    );
     assert_eq!(r.correlations.len(), 1);
     assert_eq!(r.correlations[0].rule_title, "Brute Force");
-    assert_eq!(r.correlations[0].group_key, vec![("User".to_string(), "admin".to_string())]);
+    assert_eq!(
+        r.correlations[0].group_key,
+        vec![("User".to_string(), "admin".to_string())]
+    );
     assert!((r.correlations[0].aggregated_value - 5.0).abs() < f64::EPSILON);
 
     // Different user should not fire (independent group)
-    let r2 = process(&mut engine, json!({"EventType": "failed_login", "User": "guest"}), 1010);
+    let r2 = process(
+        &mut engine,
+        json!({"EventType": "failed_login", "User": "guest"}),
+        1010,
+    );
     assert!(r2.correlations.is_empty());
 }
 
@@ -76,12 +94,24 @@ level: high
 
     let base_ts = 1000;
     // Two distinct IPs -- should not fire
-    process(&mut engine, json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.1"}), base_ts);
-    let r = process(&mut engine, json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.2"}), base_ts + 1);
+    process(
+        &mut engine,
+        json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.1"}),
+        base_ts,
+    );
+    let r = process(
+        &mut engine,
+        json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.2"}),
+        base_ts + 1,
+    );
     assert!(r.correlations.is_empty());
 
     // Third distinct IP -- fires
-    let r = process(&mut engine, json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.3"}), base_ts + 2);
+    let r = process(
+        &mut engine,
+        json!({"EventType": "login", "User": "admin", "SourceIP": "10.0.0.3"}),
+        base_ts + 2,
+    );
     assert_eq!(r.correlations.len(), 1);
     assert!((r.correlations[0].aggregated_value - 3.0).abs() < f64::EPSILON);
 }
@@ -212,7 +242,10 @@ level: low
 "#,
         json!({"actor.id": "flat-value", "actor": {"id": "nested-value"}}),
     );
-    assert!(matches2.is_empty(), "nested value should be shadowed by flat key");
+    assert!(
+        matches2.is_empty(),
+        "nested value should be shadowed by flat key"
+    );
 }
 
 #[test]
@@ -322,10 +355,26 @@ level: high
 
     let base_ts = 1000;
     // Mix of cmd and powershell from same user
-    process(&mut engine, json!({"CommandLine": "cmd.exe", "User": "attacker"}), base_ts);
-    process(&mut engine, json!({"CommandLine": "powershell -enc", "User": "attacker"}), base_ts + 1);
+    process(
+        &mut engine,
+        json!({"CommandLine": "cmd.exe", "User": "attacker"}),
+        base_ts,
+    );
+    process(
+        &mut engine,
+        json!({"CommandLine": "powershell -enc", "User": "attacker"}),
+        base_ts + 1,
+    );
 
-    let r = process(&mut engine, json!({"CommandLine": "cmd /c whoami", "User": "attacker"}), base_ts + 2);
-    assert_eq!(r.correlations.len(), 1, "3 events from two rules should trigger correlation");
+    let r = process(
+        &mut engine,
+        json!({"CommandLine": "cmd /c whoami", "User": "attacker"}),
+        base_ts + 2,
+    );
+    assert_eq!(
+        r.correlations.len(),
+        1,
+        "3 events from two rules should trigger correlation"
+    );
     assert_eq!(r.correlations[0].rule_title, "Recon Burst");
 }

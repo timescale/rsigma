@@ -1,5 +1,3 @@
-mod helpers;
-
 use rsigma_eval::{Engine, EvalError, parse_pipeline};
 use rsigma_parser::parse_sigma_yaml;
 

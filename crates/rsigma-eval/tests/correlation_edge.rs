@@ -183,8 +183,10 @@ level: high
 
 #[test]
 fn state_eviction_under_max_state_entries() {
-    let mut config = CorrelationConfig::default();
-    config.max_state_entries = 10;
+    let config = CorrelationConfig {
+        max_state_entries: 10,
+        ..Default::default()
+    };
 
     let mut engine = corr_engine_with_config(EVENT_COUNT_YAML, config);
     let base = 1000;
@@ -208,8 +210,10 @@ fn state_eviction_under_max_state_entries() {
 
 #[test]
 fn suppress_prevents_re_fire_within_window() {
-    let mut config = CorrelationConfig::default();
-    config.suppress = Some(30);
+    let config = CorrelationConfig {
+        suppress: Some(30),
+        ..Default::default()
+    };
 
     let mut engine = corr_engine_with_config(EVENT_COUNT_YAML, config);
     let base = 1000;
@@ -233,8 +237,10 @@ fn suppress_prevents_re_fire_within_window() {
 
 #[test]
 fn reset_action_clears_window_after_firing() {
-    let mut config = CorrelationConfig::default();
-    config.action_on_match = CorrelationAction::Reset;
+    let config = CorrelationConfig {
+        action_on_match: CorrelationAction::Reset,
+        ..Default::default()
+    };
 
     let mut engine = corr_engine_with_config(EVENT_COUNT_YAML, config);
     let base = 1000;
@@ -261,8 +267,10 @@ fn reset_action_clears_window_after_firing() {
 
 #[test]
 fn timestamp_fallback_skip_runs_detection_but_skips_correlation() {
-    let mut config = CorrelationConfig::default();
-    config.timestamp_fallback = TimestampFallback::Skip;
+    let config = CorrelationConfig {
+        timestamp_fallback: TimestampFallback::Skip,
+        ..Default::default()
+    };
 
     let collection = parse_sigma_yaml(EVENT_COUNT_YAML).unwrap();
     let mut engine = CorrelationEngine::new(config);
