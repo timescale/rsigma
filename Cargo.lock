@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-lsp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "env_logger",
  "insta",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "insta",

@@ -14,8 +14,8 @@ name = "rsigma-lsp"
 path = "src/main.rs"
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.2.0" }
-rsigma-eval = { path = "../rsigma-eval", version = "0.2.0" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.3.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.3.0" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "time", "sync"] }
 log = "0.4"
