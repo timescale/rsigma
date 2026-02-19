@@ -107,7 +107,7 @@ This library is part of [rsigma].
 - Filters match by `rule.id` or `rule.title` (from `filter.rules`).
 - If the filter has a `logsource`, the rule must be compatible (symmetric check).
 - Empty `filter.rules` applies the filter to all rules.
-- Filter detections are added as `__filter_{name}`; the condition is wrapped as `original AND NOT filter`.
+- Filter detections are added as `__filter_{counter}_{name}` (counter prevents key collisions when multiple filters share detection names); the condition is wrapped as `original AND NOT filter`.
 
 ### Selector Pattern Matching
 
@@ -380,14 +380,13 @@ transformations:
 | `InvalidRegex` | Regex compilation failure |
 | `InvalidCidr` | CIDR parse failure |
 | `Base64` | Base64 encoding error |
-| `UnknownDetection` | Condition references missing detection |
+| `UnknownDetection` | Condition references missing detection (caught at compile time) |
 | `InvalidModifiers` | Invalid modifier combo, empty AllOf/AnyOf, windash overflow, pipeline failure |
 | `IncompatibleValue` | Wrong type for modifier (e.g. null for string) |
 | `ExpectedNumeric` | Numeric modifier with non-numeric value |
 | `Parser` | Parser error (from rsigma-parser) |
 | `CorrelationError` | Correlation compile/runtime error |
-| `TimestampParse` | Timestamp parse failure |
-| `UnknownRuleRef` | Correlation references unknown rule |
+| `UnknownRuleRef` | Correlation references unknown rule (caught at `add_collection` time) |
 | `CorrelationCycle` | Cycle in correlation references |
 
 ## Usage

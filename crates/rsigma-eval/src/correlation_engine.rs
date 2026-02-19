@@ -24,7 +24,7 @@ use crate::correlation::{
     compile_correlation,
 };
 use crate::engine::Engine;
-use crate::error::Result;
+use crate::error::{EvalError, Result};
 use crate::event::Event;
 use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::MatchResult;
@@ -431,8 +431,40 @@ impl CorrelationEngine {
         for corr in &collection.correlations {
             self.add_correlation(corr)?;
         }
-        // Validate no cycles exist in the correlation reference graph
+        self.validate_rule_refs()?;
         self.detect_correlation_cycles()?;
+        Ok(())
+    }
+
+    /// Validate that every correlation's `rule_refs` resolve to at least one
+    /// known detection rule (by ID or name) or another correlation (by ID or name).
+    fn validate_rule_refs(&self) -> Result<()> {
+        let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+        for (id, name) in &self.rule_ids {
+            if let Some(id) = id {
+                known.insert(id.as_str());
+            }
+            if let Some(name) = name {
+                known.insert(name.as_str());
+            }
+        }
+        for corr in &self.correlations {
+            if let Some(ref id) = corr.id {
+                known.insert(id.as_str());
+            }
+            if let Some(ref name) = corr.name {
+                known.insert(name.as_str());
+            }
+        }
+
+        for corr in &self.correlations {
+            for rule_ref in &corr.rule_refs {
+                if !known.contains(rule_ref.as_str()) {
+                    return Err(EvalError::UnknownRuleRef(rule_ref.clone()));
+                }
+            }
+        }
         Ok(())
     }
 

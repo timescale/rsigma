@@ -41,10 +41,6 @@ pub enum EvalError {
     #[error("correlation error: {0}")]
     CorrelationError(String),
 
-    /// A timestamp could not be parsed from an event field.
-    #[error("timestamp parse error: {0}")]
-    TimestampParse(String),
-
     /// A rule referenced by a correlation was not found.
     #[error("unknown rule reference: {0}")]
     UnknownRuleRef(String),

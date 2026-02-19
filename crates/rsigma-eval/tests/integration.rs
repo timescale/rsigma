@@ -315,6 +315,54 @@ filter:
 }
 
 #[test]
+fn filters_with_same_detection_name_do_not_collide() {
+    // Regression: two filters both using "selection" as detection name used to
+    // overwrite each other's `__filter_selection` key. With the filter_counter
+    // fix, they get distinct keys (`__filter_0_selection`, `__filter_1_selection`).
+    let yaml = r#"
+title: Rule A
+id: rule-a
+logsource:
+    product: test
+detection:
+    sel:
+        EventType: login
+    condition: sel
+---
+title: Filter Env
+filter:
+    rules:
+        - rule-a
+    selection:
+        Environment: test
+    condition: selection
+---
+title: Filter User
+filter:
+    rules:
+        - rule-a
+    selection:
+        User: bot
+    condition: selection
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = Engine::new();
+    engine.add_collection(&collection).unwrap();
+
+    // Both filters should apply: env=test is excluded
+    let ev1 = json!({"EventType": "login", "Environment": "test", "User": "admin"});
+    assert!(engine.evaluate(&Event::from_value(&ev1)).is_empty());
+
+    // User=bot is excluded
+    let ev2 = json!({"EventType": "login", "Environment": "prod", "User": "bot"});
+    assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+
+    // Neither filter matches: rule fires
+    let ev3 = json!({"EventType": "login", "Environment": "prod", "User": "admin"});
+    assert_eq!(engine.evaluate(&Event::from_value(&ev3)).len(), 1);
+}
+
+#[test]
 fn global_repeat_through_correlation_engine() {
     let yaml = r#"
 action: global

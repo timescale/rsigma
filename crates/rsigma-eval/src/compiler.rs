@@ -195,6 +195,10 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
         detections.insert(name.clone(), compile_detection(detection)?);
     }
 
+    for condition in &rule.detection.conditions {
+        validate_condition_refs(condition, &detections)?;
+    }
+
     let include_event = rule
         .custom_attributes
         .get("rsigma.include_event")
@@ -210,6 +214,31 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
         conditions: rule.detection.conditions.clone(),
         include_event,
     })
+}
+
+/// Validate that all `Identifier` references in a condition expression resolve
+/// to an existing detection name. `Selector` patterns are exempt because they
+/// match by glob/wildcard and zero matches is semantically valid.
+fn validate_condition_refs(
+    expr: &ConditionExpr,
+    detections: &HashMap<String, CompiledDetection>,
+) -> Result<()> {
+    match expr {
+        ConditionExpr::Identifier(name) => {
+            if !detections.contains_key(name) {
+                return Err(EvalError::UnknownDetection(name.clone()));
+            }
+            Ok(())
+        }
+        ConditionExpr::And(exprs) | ConditionExpr::Or(exprs) => {
+            for e in exprs {
+                validate_condition_refs(e, detections)?;
+            }
+            Ok(())
+        }
+        ConditionExpr::Not(inner) => validate_condition_refs(inner, detections),
+        ConditionExpr::Selector { .. } => Ok(()),
+    }
 }
 
 /// Evaluate a compiled rule against an event, returning a `MatchResult` if it matches.

@@ -1,6 +1,5 @@
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, EvalError, Event};
+use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, EvalError};
 use rsigma_parser::parse_sigma_yaml;
-use serde_json::json;
 
 #[test]
 fn invalid_regex_surfaces_at_compile_time() {
@@ -193,11 +192,7 @@ level: high
 }
 
 #[test]
-fn unknown_detection_in_condition_silently_returns_false() {
-    // Condition references "selection_b" which doesn't exist.
-    // The engine compiles successfully but the missing detection evaluates to false,
-    // meaning the rule never matches. This is the current behavior -- no error is
-    // raised at compile time.
+fn unknown_detection_in_condition_errors_at_compile_time() {
     let yaml = r#"
 title: Ghost Reference
 logsource:
@@ -210,21 +205,15 @@ level: low
 "#;
     let collection = parse_sigma_yaml(yaml).unwrap();
     let mut engine = Engine::new();
-    engine.add_collection(&collection).unwrap();
-
-    let ev = json!({"EventType": "test"});
-    let matches = engine.evaluate(&Event::from_value(&ev));
+    let err = engine.add_collection(&collection).unwrap_err();
     assert!(
-        matches.is_empty(),
-        "rule with unknown detection reference should never match"
+        matches!(err, EvalError::UnknownDetection(ref name) if name == "selection_b"),
+        "expected UnknownDetection(\"selection_b\"), got: {err}"
     );
 }
 
 #[test]
-fn unknown_rule_ref_in_correlation_silently_ignored() {
-    // Correlation references a rule ID that doesn't exist.
-    // Currently no error -- the correlation compiles but never fires because
-    // no detection match can feed into it.
+fn unknown_rule_ref_in_correlation_errors_at_add_time() {
     let yaml = r#"
 title: Detection
 id: det-rule
@@ -249,13 +238,9 @@ level: high
 "#;
     let collection = parse_sigma_yaml(yaml).unwrap();
     let mut engine = CorrelationEngine::new(CorrelationConfig::default());
-    engine.add_collection(&collection).unwrap();
-
-    let ev = json!({"type": "event", "User": "admin"});
-    let event = Event::from_value(&ev);
-    let r = engine.process_event_at(&event, 1000);
+    let err = engine.add_collection(&collection).unwrap_err();
     assert!(
-        r.correlations.is_empty(),
-        "correlation referencing nonexistent rule should never fire"
+        matches!(err, EvalError::UnknownRuleRef(ref name) if name == "nonexistent-rule-id"),
+        "expected UnknownRuleRef(\"nonexistent-rule-id\"), got: {err}"
     );
 }

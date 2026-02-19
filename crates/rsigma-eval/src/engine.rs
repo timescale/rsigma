@@ -52,6 +52,9 @@ pub struct Engine {
     /// Global override: include the full event JSON in all match results.
     /// When `true`, overrides per-rule `rsigma.include_event` custom attributes.
     include_event: bool,
+    /// Monotonic counter used to namespace injected filter detections,
+    /// preventing key collisions when multiple filters share detection names.
+    filter_counter: usize,
 }
 
 impl Engine {
@@ -61,6 +64,7 @@ impl Engine {
             rules: Vec::new(),
             pipelines: Vec::new(),
             include_event: false,
+            filter_counter: 0,
         }
     }
 
@@ -70,6 +74,7 @@ impl Engine {
             rules: Vec::new(),
             pipelines: vec![pipeline],
             include_event: false,
+            filter_counter: 0,
         }
     }
 
@@ -151,14 +156,19 @@ impl Engine {
             return Ok(());
         }
 
+        let fc = self.filter_counter;
+        self.filter_counter += 1;
+
         // Build the filter condition expression: AND of all filter detections
+        // Keys are namespaced with the filter counter to avoid collisions when
+        // multiple filters share detection names (e.g. both use "selection").
         let filter_cond = if filter_detections.len() == 1 {
-            ConditionExpr::Identifier(format!("__filter_{}", filter_detections[0].0))
+            ConditionExpr::Identifier(format!("__filter_{fc}_{}", filter_detections[0].0))
         } else {
             ConditionExpr::And(
                 filter_detections
                     .iter()
-                    .map(|(name, _)| ConditionExpr::Identifier(format!("__filter_{name}")))
+                    .map(|(name, _)| ConditionExpr::Identifier(format!("__filter_{fc}_{name}")))
                     .collect(),
             )
         };
@@ -183,7 +193,7 @@ impl Engine {
                 // Inject filter detections into the rule
                 for (name, compiled) in &filter_detections {
                     rule.detections
-                        .insert(format!("__filter_{name}"), compiled.clone());
+                        .insert(format!("__filter_{fc}_{name}"), compiled.clone());
                 }
 
                 // Wrap each existing condition: original AND NOT filter
