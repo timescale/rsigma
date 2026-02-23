@@ -703,7 +703,7 @@ fn validate_file_against_schema(
                 rule: lint::LintRule::SchemaViolation,
                 severity: lint::Severity::Error,
                 message: format!("schema: {error}"),
-                path: error.instance_path.to_string(),
+                path: error.instance_path().to_string(),
                 span: None,
                 fix: None,
             });
