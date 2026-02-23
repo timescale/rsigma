@@ -8,7 +8,7 @@
 //! - MITRE ATT&CK tags
 //! - Selection names in condition expressions
 
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::ls_types::*;
 
 use crate::data;
 

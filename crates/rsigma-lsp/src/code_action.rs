@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rsigma_parser::lint::{
     self, FixDisposition, FixPatch, LintConfig, LintWarning, lint_yaml_str_with_config,
 };
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::ls_types::*;
 
 use crate::position::{LineIndex, resolve_path};
 
@@ -13,7 +13,7 @@ use crate::position::{LineIndex, resolve_path};
 /// the requested range, and converts each into a `CodeAction` with a
 /// `WorkspaceEdit` containing `TextEdit`s.
 pub fn code_actions(
-    uri: &Url,
+    uri: &Uri,
     text: &str,
     request_range: &Range,
     config: &LintConfig,
@@ -189,8 +189,8 @@ mod tests {
         Range::new(Position::new(0, 0), Position::new(u32::MAX, 0))
     }
 
-    fn test_uri() -> Url {
-        Url::parse("file:///test.yml").unwrap()
+    fn test_uri() -> Uri {
+        "file:///test.yml".parse().unwrap()
     }
 
     fn actions_summary(actions: &[&CodeAction]) -> String {

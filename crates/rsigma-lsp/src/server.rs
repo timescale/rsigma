@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{Mutex, RwLock};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
+use tower_lsp_server::{Client, LanguageServer};
 
 use rsigma_parser::lint::LintConfig;
 
@@ -29,9 +29,9 @@ struct DocumentState {
 /// The Sigma Language Server.
 pub struct SigmaLanguageServer {
     client: Client,
-    documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
+    documents: Arc<RwLock<HashMap<Uri, DocumentState>>>,
     /// Abort handles for pending debounced diagnostic tasks.
-    pending_diagnostics: Arc<Mutex<HashMap<Url, tokio::task::AbortHandle>>>,
+    pending_diagnostics: Arc<Mutex<HashMap<Uri, tokio::task::AbortHandle>>>,
 }
 
 impl SigmaLanguageServer {
@@ -44,8 +44,8 @@ impl SigmaLanguageServer {
     }
 
     /// Load lint config for a document by walking ancestors from the file URI.
-    fn load_lint_config(uri: &Url) -> LintConfig {
-        if let Ok(path) = uri.to_file_path()
+    fn load_lint_config(uri: &Uri) -> LintConfig {
+        if let Some(path) = uri.to_file_path()
             && let Some(config_path) = LintConfig::find_in_ancestors(&path)
             && let Ok(config) = LintConfig::load(&config_path)
         {
@@ -55,7 +55,7 @@ impl SigmaLanguageServer {
     }
 
     /// Run diagnostics immediately on a blocking thread and publish results.
-    async fn publish_diagnostics_now(&self, uri: &Url, text: &str, version: i32) {
+    async fn publish_diagnostics_now(&self, uri: &Uri, text: &str, version: i32) {
         let text = text.to_string();
         let config = Self::load_lint_config(uri);
         let diags = match tokio::task::spawn_blocking(move || {
@@ -81,7 +81,7 @@ impl SigmaLanguageServer {
     }
 
     /// Schedule diagnostics with debounce. Cancels any pending run for this URI.
-    async fn schedule_diagnostics(&self, uri: Url, text: String, version: i32) {
+    async fn schedule_diagnostics(&self, uri: Uri, text: String, version: i32) {
         let client = self.client.clone();
         let pending = self.pending_diagnostics.clone();
         let uri_for_task = uri.clone();
@@ -89,7 +89,8 @@ impl SigmaLanguageServer {
 
         // Abort any existing pending task, then spawn the new one while holding
         // the lock so no concurrent call can slip in between.
-        let mut guard = self.pending_diagnostics.lock().await;
+        let mut guard: tokio::sync::MutexGuard<'_, _> =
+            self.pending_diagnostics.lock().await;
         if let Some(handle) = guard.remove(&uri) {
             handle.abort();
         }
@@ -116,20 +117,19 @@ impl SigmaLanguageServer {
                 .publish_diagnostics(uri_for_task.clone(), diags, Some(version))
                 .await;
 
-            pending.lock().await.remove(&uri_for_task);
+            let _: Option<_> = pending.lock().await.remove(&uri_for_task);
         });
 
         guard.insert(uri, task.abort_handle());
     }
 
     /// Check if a URI looks like a Sigma YAML file.
-    fn is_sigma_file(uri: &Url) -> bool {
-        let path = uri.path();
+    fn is_sigma_file(uri: &Uri) -> bool {
+        let path = uri.path().as_str();
         path.ends_with(".yml") || path.ends_with(".yaml")
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for SigmaLanguageServer {
     async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
@@ -178,10 +178,8 @@ impl LanguageServer for SigmaLanguageServer {
             self.publish_diagnostics_now(&uri, &text, version).await;
         }
 
-        self.documents
-            .write()
-            .await
-            .insert(uri, DocumentState { text, version });
+        let mut docs: tokio::sync::RwLockWriteGuard<'_, _> = self.documents.write().await;
+        docs.insert(uri, DocumentState { text, version });
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -197,10 +195,8 @@ impl LanguageServer for SigmaLanguageServer {
                     .await;
             }
 
-            self.documents
-                .write()
-                .await
-                .insert(uri, DocumentState { text, version });
+            let mut docs: tokio::sync::RwLockWriteGuard<'_, _> = self.documents.write().await;
+            docs.insert(uri, DocumentState { text, version });
         }
     }
 
@@ -209,7 +205,7 @@ impl LanguageServer for SigmaLanguageServer {
 
         // Re-lint on save (belt and suspenders — didChange already does it).
         if Self::is_sigma_file(&uri) {
-            let docs = self.documents.read().await;
+            let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
             if let Some(doc) = docs.get(&uri) {
                 self.publish_diagnostics_now(&uri, &doc.text, doc.version)
                     .await;
@@ -222,13 +218,16 @@ impl LanguageServer for SigmaLanguageServer {
 
         // Cancel any pending diagnostics for this file.
         {
-            let mut pending = self.pending_diagnostics.lock().await;
+            let mut pending: tokio::sync::MutexGuard<'_, _> =
+                self.pending_diagnostics.lock().await;
             if let Some(handle) = pending.remove(&uri) {
                 handle.abort();
             }
         }
 
-        self.documents.write().await.remove(&uri);
+        let mut docs: tokio::sync::RwLockWriteGuard<'_, _> = self.documents.write().await;
+        docs.remove(&uri);
+        drop(docs);
 
         // Clear diagnostics for the closed file.
         self.client.publish_diagnostics(uri, vec![], None).await;
@@ -239,7 +238,7 @@ impl LanguageServer for SigmaLanguageServer {
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
 
-        let docs = self.documents.read().await;
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
         let Some(doc) = docs.get(uri) else {
             return Ok(None);
         };
@@ -285,7 +284,7 @@ impl LanguageServer for SigmaLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        let docs = self.documents.read().await;
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
         let Some(doc) = docs.get(uri) else {
             return Ok(None);
         };
@@ -313,7 +312,7 @@ impl LanguageServer for SigmaLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        let docs = self.documents.read().await;
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
         let Some(doc) = docs.get(uri) else {
             return Ok(None);
         };
@@ -339,7 +338,7 @@ impl LanguageServer for SigmaLanguageServer {
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
 
-        let docs = self.documents.read().await;
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
         let Some(doc) = docs.get(uri) else {
             return Ok(None);
         };

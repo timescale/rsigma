@@ -4,7 +4,7 @@
 use rsigma_parser::lint::{
     LintConfig, LintWarning, Severity as LintSeverity, lint_yaml_str_with_config,
 };
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::ls_types::*;
 
 use crate::position::{LineIndex, resolve_path};
 

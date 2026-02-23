@@ -5,7 +5,7 @@
 //! indentation-aware matching. When a path cannot be resolved, we fall back to
 //! line 0.
 
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp_server::ls_types::{Position, Range};
 
 /// A pre-computed line index for fast offset -> line/col lookups.
 pub struct LineIndex {
