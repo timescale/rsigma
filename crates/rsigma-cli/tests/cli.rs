@@ -7,7 +7,7 @@ use std::io::Write;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1306,5 +1306,243 @@ detection:
         fixed.matches("attack.execution").count(),
         1,
         "duplicate tag should be removed"
+    );
+}
+
+// ===========================================================================
+// Daemon state persistence (--state-db)
+// ===========================================================================
+
+const DAEMON_CORRELATION_RULES: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 3
+level: high
+"#;
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_state_db_created_on_first_run() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("state.db");
+
+    assert!(!db_path.exists());
+
+    rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin("")
+        .assert()
+        .success();
+
+    assert!(db_path.exists(), "state.db should be created on first run");
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_state_persists_across_restarts() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("state.db");
+
+    // Run 1: send 2 events (below threshold of 3), state should be saved
+    let events_run1 = "{\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                        {\"EventType\":\"login\",\"User\":\"admin\"}\n";
+    let output1 = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin(events_run1)
+        .output()
+        .unwrap();
+
+    assert!(output1.status.success());
+    let stdout1 = String::from_utf8_lossy(&output1.stdout);
+    assert!(
+        stdout1.trim().is_empty(),
+        "Run 1: no correlation output expected (only 2 events), got: {stdout1}"
+    );
+
+    // Run 2: send 1 more event — restored 2 + new 1 = 3, should trigger
+    let events_run2 = "{\"EventType\":\"login\",\"User\":\"admin\"}\n";
+    let output2 = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin(events_run2)
+        .output()
+        .unwrap();
+
+    assert!(output2.status.success());
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    assert!(
+        stdout2.contains("\"rule_title\":\"Many Logins\""),
+        "Run 2: correlation should fire with restored state, got: {stdout2}"
+    );
+    assert!(
+        stdout2.contains("\"aggregated_value\":3.0"),
+        "Run 2: aggregated value should be 3.0, got: {stdout2}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_state_db_multiple_groups() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("state.db");
+
+    // Run 1: 2 events for admin, 1 for bob
+    let events_run1 = "{\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                        {\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                        {\"EventType\":\"login\",\"User\":\"bob\"}\n";
+    rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin(events_run1)
+        .assert()
+        .success();
+
+    // Run 2: 1 event for admin (fires), 1 for bob (still 2, no fire)
+    let events_run2 = "{\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                        {\"EventType\":\"login\",\"User\":\"bob\"}\n";
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin(events_run2)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "exactly one correlation should fire (admin), got: {stdout}"
+    );
+    assert!(lines[0].contains("\"aggregated_value\":3.0"));
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_without_state_db_works() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+
+    let events = "{\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                   {\"EventType\":\"login\",\"User\":\"admin\"}\n\
+                   {\"EventType\":\"login\",\"User\":\"admin\"}\n";
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--no-detections",
+        ])
+        .write_stdin(events)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"rule_title\":\"Many Logins\""),
+        "daemon should work without --state-db, got: {stdout}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_detection_only_with_state_db() {
+    let rules_yaml = r#"
+title: Test Rule
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: "whoami"
+    condition: selection
+level: medium
+"#;
+    let rules = temp_file(".yml", rules_yaml);
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("state.db");
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--state-db",
+            db_path.to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .write_stdin("{\"CommandLine\":\"cmd /c whoami\"}\n")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"rule_title\":\"Test Rule\""),
+        "detection should still work with --state-db on detection-only rules"
     );
 }

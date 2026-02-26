@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, Event, Pipeline, ProcessResult};
+use rsigma_eval::{
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, Event, Pipeline,
+    ProcessResult,
+};
 use rsigma_parser::SigmaCollection;
 
 /// Wraps a CorrelationEngine (or a plain Engine) and provides the interface
@@ -113,6 +116,23 @@ impl DaemonEngine {
 
     pub fn rules_path(&self) -> &Path {
         &self.rules_path
+    }
+
+    /// Export correlation state as a serializable snapshot.
+    /// Returns `None` if the engine is detection-only (no correlation state to persist).
+    pub fn export_state(&self) -> Option<CorrelationSnapshot> {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => None,
+            EngineVariant::WithCorrelations(engine) => Some(engine.export_state()),
+        }
+    }
+
+    /// Import previously exported correlation state.
+    /// No-op if the engine is detection-only or snapshot is `None`.
+    pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) {
+        if let EngineVariant::WithCorrelations(engine) = &mut self.engine {
+            engine.import_state(snapshot.clone());
+        }
     }
 }
 

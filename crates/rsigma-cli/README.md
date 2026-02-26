@@ -115,12 +115,17 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
 | `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
 | `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction |
+| `--state-db` | path | none | Path to SQLite database for persisting correlation state across restarts |
+| `--state-save-interval` | integer | **30** | Seconds between periodic state snapshots (only with `--state-db`) |
 
 **Usage:**
 
 ```bash
 # Basic daemon — stream events, detect, output matches
 hel run | rsigma daemon -r rules/ -p ecs.yml
+
+# With SQLite state persistence (correlation state survives restarts)
+hel run | rsigma daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db
 
 # With all options
 rsigma daemon \
@@ -129,7 +134,8 @@ rsigma daemon \
   --jq '.event' \
   --suppress 5m \
   --action reset \
-  --api-addr 0.0.0.0:9090
+  --api-addr 0.0.0.0:9090 \
+  --state-db /var/lib/rsigma/state.db
 ```
 
 **HTTP endpoints:**
@@ -166,6 +172,8 @@ rsigma daemon \
 | `rsigma_uptime_seconds` | gauge | Daemon uptime in seconds |
 
 **Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
+
+**State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts — for example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
 
 **Feature flag:** the daemon subcommand requires the `daemon` feature (enabled by default). To build without daemon dependencies: `cargo build --no-default-features`.
 

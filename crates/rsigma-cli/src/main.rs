@@ -164,6 +164,16 @@ enum Commands {
         /// Event field name(s) for timestamp extraction in correlations
         #[arg(long = "timestamp-field")]
         timestamp_fields: Vec<String>,
+
+        /// Path to SQLite database for persisting correlation state across restarts.
+        /// When set, state is loaded on startup and saved periodically + on shutdown.
+        #[arg(long = "state-db")]
+        state_db: Option<PathBuf>,
+
+        /// Interval in seconds between periodic state snapshots (default: 30).
+        /// Only meaningful when --state-db is set.
+        #[arg(long = "state-save-interval", default_value = "30")]
+        state_save_interval: u64,
     },
 
     /// Evaluate events against Sigma rules
@@ -263,6 +273,8 @@ fn main() {
             correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
+            state_db,
+            state_save_interval,
         } => cmd_daemon(
             rules,
             pipelines,
@@ -277,6 +289,8 @@ fn main() {
             correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
+            state_db,
+            state_save_interval,
         ),
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
         Commands::Validate {
@@ -355,6 +369,8 @@ fn cmd_daemon(
     correlation_event_mode: String,
     max_correlation_events: usize,
     timestamp_fields: Vec<String>,
+    state_db: Option<PathBuf>,
+    state_save_interval: u64,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -391,6 +407,8 @@ fn cmd_daemon(
         pretty,
         api_addr: addr,
         event_filter,
+        state_db,
+        state_save_interval,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

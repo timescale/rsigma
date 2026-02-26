@@ -107,7 +107,7 @@ pub use correlation::{
 };
 pub use correlation_engine::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode,
-    CorrelationResult, ProcessResult, TimestampFallback,
+    CorrelationResult, CorrelationSnapshot, ProcessResult, TimestampFallback,
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};

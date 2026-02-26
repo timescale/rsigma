@@ -18,6 +18,7 @@ use super::health::HealthState;
 use super::metrics::Metrics;
 use super::reload;
 use super::state::DaemonEngine;
+use super::store::SqliteStateStore;
 use crate::EventFilter;
 
 #[derive(Clone)]
@@ -38,11 +39,23 @@ pub struct DaemonConfig {
     pub pretty: bool,
     pub api_addr: SocketAddr,
     pub event_filter: Arc<EventFilter>,
+    pub state_db: Option<PathBuf>,
+    pub state_save_interval: u64,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
     let metrics = Metrics::new();
     let health = HealthState::new();
+
+    // Open SQLite state store if configured
+    let state_store = config.state_db.as_ref().map(|path| {
+        let store = SqliteStateStore::open(path).unwrap_or_else(|e| {
+            tracing::error!(error = %e, path = %path.display(), "Failed to open state database");
+            std::process::exit(1);
+        });
+        tracing::info!(path = %path.display(), "State database opened");
+        Arc::new(store)
+    });
 
     let daemon_engine = DaemonEngine::new(
         config.rules_path.clone(),
@@ -74,6 +87,27 @@ pub async fn run_daemon(config: DaemonConfig) {
             Err(e) => {
                 tracing::error!(error = %e, "Failed to load initial rules");
                 std::process::exit(1);
+            }
+        }
+    }
+
+    // Restore correlation state from SQLite (after rules are loaded, lock released)
+    if let Some(ref store) = state_store {
+        match store.load().await {
+            Ok(Some(snapshot)) => {
+                let entries = snapshot.windows.values().map(|g| g.len()).sum::<usize>();
+                let mut engine = shared_engine.lock().unwrap();
+                engine.import_state(&snapshot);
+                tracing::info!(
+                    state_entries = entries,
+                    "Correlation state restored from database"
+                );
+            }
+            Ok(None) => {
+                tracing::info!("No previous correlation state found in database");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load state from database, starting fresh");
             }
         }
     }
@@ -161,6 +195,32 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     });
 
+    // Spawn periodic state saver
+    if let Some(ref store) = state_store {
+        let save_engine = shared_engine.clone();
+        let save_store = store.clone();
+        let save_interval_secs = config.state_save_interval;
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(save_interval_secs));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                let snapshot = {
+                    let engine = save_engine.lock().unwrap();
+                    engine.export_state()
+                };
+                if let Some(snapshot) = snapshot {
+                    if let Err(e) = save_store.save(&snapshot).await {
+                        tracing::warn!(error = %e, "Failed to save periodic state snapshot");
+                    } else {
+                        tracing::debug!("Periodic state snapshot saved");
+                    }
+                }
+            }
+        });
+    }
+
     // Spawn stdin reader in a blocking thread
     let stdin_engine = shared_engine.clone();
     let stdin_metrics = metrics.clone();
@@ -200,6 +260,20 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
         _ = stdin_handle => {
             tracing::info!("stdin processing complete");
+        }
+    }
+
+    // Save state on shutdown
+    if let Some(ref store) = state_store {
+        let snapshot = {
+            let engine = shared_engine.lock().unwrap();
+            engine.export_state()
+        };
+        if let Some(snapshot) = snapshot {
+            match store.save(&snapshot).await {
+                Ok(()) => tracing::info!("Correlation state saved to database on shutdown"),
+                Err(e) => tracing::error!(error = %e, "Failed to save state on shutdown"),
+            }
         }
     }
 }

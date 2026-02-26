@@ -1111,6 +1111,132 @@ impl CorrelationEngine {
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
+
+    /// Export all mutable correlation state as a serializable snapshot.
+    ///
+    /// The snapshot uses stable correlation identifiers (id > name > title)
+    /// instead of internal indices, so it survives rule reloads as long as
+    /// the correlation rules keep the same identifiers.
+    pub fn export_state(&self) -> CorrelationSnapshot {
+        let mut windows: HashMap<String, Vec<(GroupKey, WindowState)>> = HashMap::new();
+        for ((idx, gk), ws) in &self.state {
+            let corr_id = self.correlation_stable_id(*idx);
+            windows
+                .entry(corr_id)
+                .or_default()
+                .push((gk.clone(), ws.clone()));
+        }
+
+        let mut last_alert: HashMap<String, Vec<(GroupKey, i64)>> = HashMap::new();
+        for ((idx, gk), ts) in &self.last_alert {
+            let corr_id = self.correlation_stable_id(*idx);
+            last_alert
+                .entry(corr_id)
+                .or_default()
+                .push((gk.clone(), *ts));
+        }
+
+        let mut event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>> = HashMap::new();
+        for ((idx, gk), buf) in &self.event_buffers {
+            let corr_id = self.correlation_stable_id(*idx);
+            event_buffers
+                .entry(corr_id)
+                .or_default()
+                .push((gk.clone(), buf.clone()));
+        }
+
+        let mut event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>> =
+            HashMap::new();
+        for ((idx, gk), buf) in &self.event_ref_buffers {
+            let corr_id = self.correlation_stable_id(*idx);
+            event_ref_buffers
+                .entry(corr_id)
+                .or_default()
+                .push((gk.clone(), buf.clone()));
+        }
+
+        CorrelationSnapshot {
+            windows,
+            last_alert,
+            event_buffers,
+            event_ref_buffers,
+        }
+    }
+
+    /// Import previously exported state, mapping stable identifiers back to
+    /// current correlation indices. Entries whose identifiers no longer match
+    /// any loaded correlation are silently dropped.
+    pub fn import_state(&mut self, snapshot: CorrelationSnapshot) {
+        let id_to_idx = self.build_id_to_index_map();
+
+        for (corr_id, groups) in snapshot.windows {
+            if let Some(&idx) = id_to_idx.get(&corr_id) {
+                for (gk, ws) in groups {
+                    self.state.insert((idx, gk), ws);
+                }
+            }
+        }
+
+        for (corr_id, groups) in snapshot.last_alert {
+            if let Some(&idx) = id_to_idx.get(&corr_id) {
+                for (gk, ts) in groups {
+                    self.last_alert.insert((idx, gk), ts);
+                }
+            }
+        }
+
+        for (corr_id, groups) in snapshot.event_buffers {
+            if let Some(&idx) = id_to_idx.get(&corr_id) {
+                for (gk, buf) in groups {
+                    self.event_buffers.insert((idx, gk), buf);
+                }
+            }
+        }
+
+        for (corr_id, groups) in snapshot.event_ref_buffers {
+            if let Some(&idx) = id_to_idx.get(&corr_id) {
+                for (gk, buf) in groups {
+                    self.event_ref_buffers.insert((idx, gk), buf);
+                }
+            }
+        }
+    }
+
+    /// Stable identifier for a correlation rule: prefers id, then name, then title.
+    fn correlation_stable_id(&self, idx: usize) -> String {
+        let corr = &self.correlations[idx];
+        corr.id
+            .clone()
+            .or_else(|| corr.name.clone())
+            .unwrap_or_else(|| corr.title.clone())
+    }
+
+    /// Build a reverse map from stable id → current correlation index.
+    fn build_id_to_index_map(&self) -> HashMap<String, usize> {
+        self.correlations
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| (self.correlation_stable_id(idx), idx))
+            .collect()
+    }
+}
+
+/// Serializable snapshot of all mutable correlation state.
+///
+/// Uses stable string identifiers (correlation id/name/title) as keys so the
+/// snapshot can be restored after a rule reload, even if internal indices change.
+/// Inner maps use `Vec<(GroupKey, T)>` instead of `HashMap<GroupKey, T>` because
+/// `GroupKey` cannot be used as a JSON object key.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct CorrelationSnapshot {
+    /// Per-correlation, per-group window state.
+    pub windows: HashMap<String, Vec<(GroupKey, WindowState)>>,
+    /// Per-correlation, per-group last alert timestamp (for suppression).
+    pub last_alert: HashMap<String, Vec<(GroupKey, i64)>>,
+    /// Per-correlation, per-group compressed event buffers.
+    pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
+    /// Per-correlation, per-group event reference buffers.
+    pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
 }
 
 impl Default for CorrelationEngine {

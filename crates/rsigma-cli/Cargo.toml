@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = ["daemon"]
-daemon = ["tokio", "axum", "prometheus", "notify"]
+daemon = ["tokio", "axum", "prometheus", "notify", "rusqlite"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.4.0" }
@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["full"], optional = true }
 axum = { version = "0.8", features = ["json"], optional = true }
 prometheus = { version = "0.13", default-features = false, optional = true }
 notify = { version = "7", optional = true }
+rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

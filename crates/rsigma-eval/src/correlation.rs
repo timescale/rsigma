@@ -132,7 +132,7 @@ impl CompiledCondition {
 ///
 /// Each element corresponds to a `GroupByField` value extracted from an event.
 /// `None` means the field was absent from the event.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, serde::Deserialize)]
 pub struct GroupKey(pub Vec<Option<String>>);
 
 impl GroupKey {
@@ -210,7 +210,7 @@ const COMPRESSION_LEVEL: Compression = Compression::fast();
 ///
 /// The buffer enforces a hard cap (`max_events`) so memory is bounded at:
 ///   `max_events × (avg_compressed_size + 24)` bytes per group key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct EventBuffer {
     /// (timestamp, deflate-compressed event JSON) pairs, ordered by timestamp.
     entries: VecDeque<(i64, Vec<u8>)>,
@@ -301,7 +301,7 @@ fn decompress_event(compressed: &[u8]) -> Option<serde_json::Value> {
 /// Each ref costs ~40 bytes (vs. 100–1000+ bytes for compressed events),
 /// making this mode suitable for high-volume correlations where only
 /// traceability is needed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct EventRef {
     /// Event timestamp (epoch seconds).
     pub timestamp: i64,
@@ -314,7 +314,7 @@ pub struct EventRef {
 ///
 /// Stores only timestamps and optional event IDs — no event payload,
 /// no compression. This is the minimal-memory alternative to `EventBuffer`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct EventRefBuffer {
     /// Event references, ordered by timestamp.
     entries: VecDeque<EventRef>,
@@ -393,7 +393,7 @@ fn extract_event_id(event: &serde_json::Value) -> Option<String> {
 /// Per-group mutable state within a time window.
 ///
 /// Each variant matches the type of aggregation being performed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub enum WindowState {
     /// For `event_count`: timestamps of matching events.
     EventCount { timestamps: VecDeque<i64> },
