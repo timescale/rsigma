@@ -6,7 +6,7 @@ A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detect
 |-------|-------------|
 | [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST |
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
-| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, and evaluating rules |
+| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating rules, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 
 ## Installation
@@ -30,11 +30,11 @@ Evaluate events against Sigma rules from the command line:
 # Single event (inline JSON)
 rsigma eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
-# Read events from a file (@file syntax)
-rsigma eval -r path/to/rules/ -e @events.ndjson
-
 # Stream NDJSON from stdin
 cat events.ndjson | rsigma eval -r path/to/rules/
+
+# Long-running daemon with hot-reload and Prometheus metrics
+hel run | rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'

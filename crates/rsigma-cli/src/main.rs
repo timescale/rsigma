@@ -1,3 +1,5 @@
+#[cfg(feature = "daemon")]
+mod daemon;
 mod fix;
 
 use std::fs::File;
@@ -104,6 +106,66 @@ enum Commands {
         fix: bool,
     },
 
+    /// Run as a long-running daemon with hot-reload, health checks, and metrics
+    ///
+    /// Reads NDJSON events from stdin, evaluates against rules, and writes
+    /// matches to stdout. Exposes health endpoints, Prometheus metrics,
+    /// and a management API on the configured address.
+    #[cfg(feature = "daemon")]
+    Daemon {
+        /// Path to a Sigma rule file or directory of rules
+        #[arg(short, long)]
+        rules: PathBuf,
+
+        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        #[arg(short = 'p', long = "pipeline")]
+        pipelines: Vec<PathBuf>,
+
+        /// jq filter to extract the event payload from each JSON object
+        #[arg(long = "jq", conflicts_with = "jsonpath")]
+        jq: Option<String>,
+
+        /// JSONPath (RFC 9535) query to extract the event payload
+        #[arg(long = "jsonpath", conflicts_with = "jq")]
+        jsonpath: Option<String>,
+
+        /// Include the full event JSON in each detection match output
+        #[arg(long = "include-event")]
+        include_event: bool,
+
+        /// Pretty-print JSON output
+        #[arg(long)]
+        pretty: bool,
+
+        /// Address for health, metrics, and API server (default: 0.0.0.0:9090)
+        #[arg(long = "api-addr", default_value = "0.0.0.0:9090")]
+        api_addr: String,
+
+        /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
+        #[arg(long = "suppress")]
+        suppress: Option<String>,
+
+        /// Action after correlation fires: 'alert' (default) or 'reset'
+        #[arg(long = "action", value_parser = ["alert", "reset"])]
+        action: Option<String>,
+
+        /// Suppress detection output for correlation-only rules
+        #[arg(long = "no-detections")]
+        no_detections: bool,
+
+        /// Correlation event mode: none, full, or refs
+        #[arg(long = "correlation-event-mode", default_value = "none")]
+        correlation_event_mode: String,
+
+        /// Max events per correlation window group
+        #[arg(long = "max-correlation-events", default_value = "10")]
+        max_correlation_events: usize,
+
+        /// Event field name(s) for timestamp extraction in correlations
+        #[arg(long = "timestamp-field")]
+        timestamp_fields: Vec<String>,
+    },
+
     /// Evaluate events against Sigma rules
     ///
     /// Load rules from a file or directory, then evaluate JSON events.
@@ -186,6 +248,36 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(feature = "daemon")]
+        Commands::Daemon {
+            rules,
+            pipelines,
+            jq,
+            jsonpath,
+            include_event,
+            pretty,
+            api_addr,
+            suppress,
+            action,
+            no_detections,
+            correlation_event_mode,
+            max_correlation_events,
+            timestamp_fields,
+        } => cmd_daemon(
+            rules,
+            pipelines,
+            jq,
+            jsonpath,
+            include_event,
+            pretty,
+            api_addr,
+            suppress,
+            action,
+            no_detections,
+            correlation_event_mode,
+            max_correlation_events,
+            timestamp_fields,
+        ),
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
         Commands::Validate {
             path,
@@ -241,6 +333,75 @@ fn main() {
             timestamp_fields,
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon subcommand
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "daemon")]
+#[allow(clippy::too_many_arguments)]
+fn cmd_daemon(
+    rules_path: PathBuf,
+    pipeline_paths: Vec<PathBuf>,
+    jq: Option<String>,
+    jsonpath: Option<String>,
+    include_event: bool,
+    pretty: bool,
+    api_addr: String,
+    suppress: Option<String>,
+    action: Option<String>,
+    no_detections: bool,
+    correlation_event_mode: String,
+    max_correlation_events: usize,
+    timestamp_fields: Vec<String>,
+) {
+    // Set up structured logging
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
+    let pipelines = load_pipelines(&pipeline_paths);
+    let event_filter = std::sync::Arc::new(build_event_filter(jq, jsonpath));
+
+    let corr_config = build_correlation_config(
+        suppress,
+        action,
+        no_detections,
+        correlation_event_mode,
+        max_correlation_events,
+        timestamp_fields,
+    );
+
+    let addr: std::net::SocketAddr = api_addr.parse().unwrap_or_else(|e| {
+        eprintln!("Invalid API address '{api_addr}': {e}");
+        process::exit(1);
+    });
+
+    let config = daemon::server::DaemonConfig {
+        rules_path,
+        pipelines,
+        corr_config,
+        include_event,
+        pretty,
+        api_addr: addr,
+        event_filter,
+    };
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to create Tokio runtime: {e}");
+            process::exit(1);
+        });
+
+    rt.block_on(daemon::run_daemon(config));
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,7 +1381,7 @@ fn print_warnings(errors: &[String]) {
 // ---------------------------------------------------------------------------
 
 /// Pre-compiled event filter — either a jq filter or a JSONPath query.
-enum EventFilter {
+pub(crate) enum EventFilter {
     /// No filter — pass through the entire event.
     None,
     /// A compiled jq filter.
@@ -1230,7 +1391,7 @@ enum EventFilter {
 }
 
 /// Build an `EventFilter` from CLI arguments. Exits on parse errors.
-fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -> EventFilter {
+pub(crate) fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -> EventFilter {
     if let Some(jq_expr) = jq {
         eprintln!("Event filter: jq '{jq_expr}'");
         let mut defs = ParseCtx::new(Vec::new());
@@ -1321,7 +1482,10 @@ fn build_correlation_config(
 /// - `EventFilter::Jq`: runs the jq filter, which may yield multiple values
 ///   (e.g., `.records[]`).
 /// - `EventFilter::JsonPath`: queries the input, returning all matched nodes.
-fn apply_event_filter(value: &serde_json::Value, filter: &EventFilter) -> Vec<serde_json::Value> {
+pub(crate) fn apply_event_filter(
+    value: &serde_json::Value,
+    filter: &EventFilter,
+) -> Vec<serde_json::Value> {
     match filter {
         EventFilter::None => vec![value.clone()],
 

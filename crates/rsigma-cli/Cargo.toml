@@ -9,11 +9,15 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+default = ["daemon"]
+daemon = ["tokio", "axum", "prometheus", "notify"]
+
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.4.0" }
 rsigma-eval = { path = "../rsigma-eval", version = "0.4.0" }
 clap = { version = "4", features = ["derive"] }
-serde = { version = "1" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 jaq-interpret = "1.5.0"
@@ -24,6 +28,14 @@ ureq = "3"
 dirs = "6"
 yamlpath = "0.34"
 yamlpatch = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# daemon mode dependencies
+tokio = { version = "1", features = ["full"], optional = true }
+axum = { version = "0.8", features = ["json"], optional = true }
+prometheus = { version = "0.13", default-features = false, optional = true }
+notify = { version = "7", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

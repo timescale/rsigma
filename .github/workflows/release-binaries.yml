@@ -43,7 +43,7 @@ jobs:
         shell: bash
 
       - name: Build release
-        run: cargo build --release --target "${TARGET}" -p rsigma -p rsigma-lsp
+        run: cargo build --release --all-features --target "${TARGET}" -p rsigma -p rsigma-lsp
         env:
           TARGET: ${{ matrix.target }}
         shell: bash

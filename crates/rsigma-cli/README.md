@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma` is a command-line interface for parsing, validating, linting, and evaluating [Sigma](https://github.com/SigmaHQ/sigma) detection rules.
+`rsigma` is a command-line interface for parsing, validating, linting, evaluating, and running [Sigma](https://github.com/SigmaHQ/sigma) detection rules as a long-running daemon.
 
 This binary is part of the [rsigma workspace].
 
@@ -18,11 +18,11 @@ cargo install rsigma
 # Single event (inline JSON)
 rsigma eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
-# Read events from a file (@file syntax)
-rsigma eval -r path/to/rules/ -e @events.ndjson
-
 # Stream NDJSON from stdin
 cat events.ndjson | rsigma eval -r path/to/rules/
+
+# Long-running daemon with hot-reload, health checks, and Prometheus metrics
+hel run | rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
@@ -93,6 +93,81 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 ```
 
 **Schema validation skips** documents with `action: global`, `action: reset`, or `action: repeat` (action fragments).
+
+### `daemon` — Run as a long-running detection service
+
+Run rsigma as a long-running daemon that continuously reads NDJSON from stdin, evaluates against rules, writes matches to stdout, and exposes health/metrics/management APIs over HTTP.
+
+Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-reload: adding, modifying, or removing `.yml`/`.yaml` files in the rules directory triggers an automatic reload. SIGHUP and the `/api/v1/reload` endpoint also trigger reloads. The daemon is designed for production deployment behind a log collector (e.g. `hel run | rsigma daemon ...`) or an event bus.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
+| `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s), applied in priority order |
+| `--jq` | string | none | jq filter to extract event payload (conflicts with `--jsonpath`) |
+| `--jsonpath` | string | none | JSONPath (RFC 9535) query (conflicts with `--jq`) |
+| `--include-event` | flag | `false` | Include full event JSON in each detection match |
+| `--pretty` | flag | `false` | Pretty-print JSON output |
+| `--api-addr` | string | `0.0.0.0:9090` | Address for health, metrics, and management API server |
+| `--suppress` | string | none | Suppression window for correlation alerts (e.g. `5m`, `1h`) |
+| `--action` | string | none | `alert` or `reset` — action after correlation fires |
+| `--no-detections` | flag | `false` | Suppress detection-level output (only show correlation alerts) |
+| `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
+| `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
+| `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction |
+
+**Usage:**
+
+```bash
+# Basic daemon — stream events, detect, output matches
+hel run | rsigma daemon -r rules/ -p ecs.yml
+
+# With all options
+rsigma daemon \
+  -r rules/ \
+  -p ecs.yml \
+  --jq '.event' \
+  --suppress 5m \
+  --action reset \
+  --api-addr 0.0.0.0:9090
+```
+
+**HTTP endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/healthz` | GET | Always returns `{"status": "ok"}` |
+| `/readyz` | GET | Returns 200 when rules are loaded, 503 otherwise |
+| `/metrics` | GET | Prometheus metrics (events processed, matches, latency, rules loaded, etc.) |
+| `/api/v1/status` | GET | Full daemon status (rules, state entries, counters, uptime) |
+| `/api/v1/rules` | GET | Rule counts and rules path |
+| `/api/v1/reload` | POST | Trigger a manual rule reload |
+
+**Hot-reload triggers:**
+
+- File system changes to `.yml`/`.yaml` files in the rules directory (debounced 500ms)
+- `SIGHUP` signal (Unix only)
+- `POST /api/v1/reload`
+
+**Prometheus metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `rsigma_events_processed_total` | counter | Total events processed |
+| `rsigma_detection_matches_total` | counter | Total detection matches |
+| `rsigma_correlation_matches_total` | counter | Total correlation matches |
+| `rsigma_events_parse_errors_total` | counter | JSON parse errors on input |
+| `rsigma_detection_rules_loaded` | gauge | Number of detection rules loaded |
+| `rsigma_correlation_rules_loaded` | gauge | Number of correlation rules loaded |
+| `rsigma_correlation_state_entries` | gauge | Active correlation state entries |
+| `rsigma_reloads_total` | counter | Total rule reload attempts |
+| `rsigma_reloads_failed_total` | counter | Failed rule reload attempts |
+| `rsigma_event_processing_seconds` | histogram | Per-event processing latency |
+| `rsigma_uptime_seconds` | gauge | Daemon uptime in seconds |
+
+**Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
+
+**Feature flag:** the daemon subcommand requires the `daemon` feature (enabled by default). To build without daemon dependencies: `cargo build --no-default-features`.
 
 ### `eval` — Evaluate events against rules
 
@@ -225,7 +300,8 @@ All subcommands that accept a directory path scan recursively for `.yml` and `.y
 |------|-------------|----------|
 | `rsigma eval -e '...'` | Inline JSON string | Parses the string as a single JSON object and evaluates it |
 | `rsigma eval -e @path` | NDJSON file | Reads the file line-by-line as NDJSON (same behavior as stdin) |
-| `rsigma eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped |
+| `rsigma eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped. Exits after EOF |
+| `rsigma daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
 | `rsigma stdin` | Single YAML document | Parses as Sigma YAML → outputs AST as JSON |
 
 Event filters (`--jq`/`--jsonpath`) are applied to every event regardless of input mode.
@@ -291,6 +367,7 @@ The `event` field is present only when `--include-event` is set.
 | Variable | Scope | Behavior |
 |----------|-------|----------|
 | `NO_COLOR` | `lint` only | When set, disables color output regardless of `--color` setting |
+| `RUST_LOG` | `daemon` only | Log level filter (e.g. `info`, `debug`, `rsigma=debug`). Default: `info` |
 
 ## Exit Codes
 

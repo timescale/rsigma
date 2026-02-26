@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo check --workspace --all-targets
+      - run: cargo check --workspace --all-targets --all-features
 
   fmt:
     name: Format
@@ -53,7 +53,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
 
   sigma-corpus:
     name: Sigma Corpus Regression
@@ -84,7 +84,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
       - name: Build rsigma
-        run: cargo build --release -p rsigma
+        run: cargo build --release --all-features -p rsigma
       - name: Clone SigmaHQ rules
         run: git clone --depth 1 https://github.com/SigmaHQ/sigma.git /tmp/sigma
       - name: Validate and compile all Sigma rules
