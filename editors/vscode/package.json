@@ -72,6 +72,9 @@
   "overrides": {
     "vscode-languageclient": {
       "minimatch": "^10.2.1"
+    },
+    "@vscode/vsce": {
+      "undici": "^7.24.0"
     }
   }
 }
