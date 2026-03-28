@@ -43,7 +43,7 @@ pub mod transformations;
 use std::collections::HashMap;
 use std::path::Path;
 
-use rsigma_parser::{SigmaCollection, SigmaRule, SigmaString, SigmaValue};
+use rsigma_parser::{CorrelationRule, SigmaCollection, SigmaRule, SigmaString, SigmaValue};
 
 use regex::Regex;
 
@@ -169,6 +169,152 @@ impl Pipeline {
         item.rule_conditions
             .iter()
             .all(|c| c.condition.matches_rule(rule, state))
+    }
+
+    /// Apply this pipeline to a correlation rule, mutating it in place.
+    ///
+    /// Only correlation-applicable transformations fire:
+    /// - `FieldNameMapping` / `FieldNamePrefixMapping` — remap `group_by` and
+    ///   `aliases` mapping values
+    /// - `FieldNamePrefix` / `FieldNameSuffix` — modify `group_by` and alias values
+    /// - `SetCustomAttribute` — set key-value on `custom_attributes`
+    /// - `SetState` — update pipeline state
+    /// - `RuleFailure` — error if conditions match
+    ///
+    /// Detection-specific transforms (value replacements, detection item
+    /// manipulation, etc.) are silently skipped.
+    pub fn apply_to_correlation(
+        &self,
+        corr: &mut CorrelationRule,
+        state: &mut PipelineState,
+    ) -> Result<()> {
+        state.reset_rule();
+
+        for item in &self.transformations {
+            if !self.check_correlation_conditions(corr, state, item) {
+                continue;
+            }
+
+            state.reset_detection_item();
+
+            let applied = apply_correlation_transformation(corr, &item.transformation, state)?;
+
+            if applied && let Some(ref id) = item.id {
+                state.mark_applied(id);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_correlation_conditions(
+        &self,
+        corr: &CorrelationRule,
+        state: &PipelineState,
+        item: &TransformationItem,
+    ) -> bool {
+        if item.rule_conditions.is_empty() {
+            return true;
+        }
+
+        if let Some(ref expr) = item.rule_cond_expr {
+            let mut results = HashMap::new();
+            for (i, named) in item.rule_conditions.iter().enumerate() {
+                let id = named.id.clone().unwrap_or_else(|| format!("cond_{i}"));
+                results.insert(id, named.condition.matches_correlation(corr, state));
+            }
+            return eval_condition_expr(expr, &results);
+        }
+
+        item.rule_conditions
+            .iter()
+            .all(|c| c.condition.matches_correlation(corr, state))
+    }
+}
+
+/// Apply a single transformation to a correlation rule.
+///
+/// Returns `true` if the transformation was meaningfully applied.
+fn apply_correlation_transformation(
+    corr: &mut CorrelationRule,
+    transformation: &Transformation,
+    state: &mut PipelineState,
+) -> Result<bool> {
+    match transformation {
+        Transformation::FieldNameMapping { mapping } => {
+            remap_correlation_fields(corr, |name| mapping.get(name).cloned());
+            Ok(true)
+        }
+
+        Transformation::FieldNamePrefixMapping { mapping } => {
+            remap_correlation_fields(corr, |name| {
+                for (prefix, replacement) in mapping {
+                    if let Some(rest) = name.strip_prefix(prefix.as_str()) {
+                        return Some(format!("{replacement}{rest}"));
+                    }
+                }
+                None
+            });
+            Ok(true)
+        }
+
+        Transformation::FieldNamePrefix { prefix } => {
+            remap_correlation_fields(corr, |name| Some(format!("{prefix}{name}")));
+            Ok(true)
+        }
+
+        Transformation::FieldNameSuffix { suffix } => {
+            remap_correlation_fields(corr, |name| Some(format!("{name}{suffix}")));
+            Ok(true)
+        }
+
+        Transformation::SetCustomAttribute { attribute, value } => {
+            corr.custom_attributes
+                .insert(attribute.clone(), value.clone());
+            Ok(true)
+        }
+
+        Transformation::SetState { key, value } => {
+            state.set_state(key.clone(), serde_json::Value::String(value.clone()));
+            Ok(true)
+        }
+
+        Transformation::RuleFailure { message } => Err(EvalError::InvalidModifiers(format!(
+            "Pipeline rule failure: {message} (correlation: {})",
+            corr.title
+        ))),
+
+        // Detection-specific transforms are no-ops for correlations
+        _ => Ok(false),
+    }
+}
+
+/// Apply a field name mapping function to all field references in a correlation rule:
+/// `group_by` entries, `aliases` mapping values, and the `condition` field.
+fn remap_correlation_fields(corr: &mut CorrelationRule, mapper: impl Fn(&str) -> Option<String>) {
+    for field in &mut corr.group_by {
+        if let Some(new_name) = mapper(field) {
+            *field = new_name;
+        }
+    }
+
+    for alias in &mut corr.aliases {
+        let remapped: HashMap<String, String> = alias
+            .mapping
+            .iter()
+            .map(|(rule_ref, field_name)| {
+                let new_name = mapper(field_name).unwrap_or_else(|| field_name.clone());
+                (rule_ref.clone(), new_name)
+            })
+            .collect();
+        alias.mapping = remapped;
+    }
+
+    if let rsigma_parser::CorrelationCondition::Threshold { ref mut field, .. } = corr.condition
+        && let Some(f) = field.as_ref()
+        && let Some(new_name) = mapper(f)
+    {
+        *field = Some(new_name);
     }
 }
 
@@ -985,6 +1131,18 @@ pub fn apply_pipelines(pipelines: &[Pipeline], rule: &mut SigmaRule) -> Result<(
     Ok(())
 }
 
+/// Apply multiple pipelines to a correlation rule in priority order.
+pub fn apply_pipelines_to_correlation(
+    pipelines: &[Pipeline],
+    corr: &mut CorrelationRule,
+) -> Result<()> {
+    for pipeline in pipelines {
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline.apply_to_correlation(corr, &mut state)?;
+    }
+    Ok(())
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1400,6 +1558,7 @@ transformations:
         assert_eq!(item.rule_conditions[0].id, Some("is_windows".to_string()));
         assert_eq!(item.rule_conditions[1].id, Some("is_process".to_string()));
 
+        // Windows + process_creation => both match, OR is true => prefix applied
         let mut rule = rsigma_parser::SigmaRule {
             title: "Test".to_string(),
             logsource: rsigma_parser::LogSource {
@@ -1458,6 +1617,7 @@ transformations:
 
     #[test]
     fn test_named_cond_expression_or_logic() {
+        // Only is_process matches (linux, not windows), but OR means it still applies
         let yaml = r#"
 name: OR Logic
 transformations:
@@ -1530,6 +1690,7 @@ transformations:
 
     #[test]
     fn test_named_cond_expression_and_logic() {
+        // AND: both must match
         let yaml = r#"
 name: AND Logic
 transformations:
@@ -1671,5 +1832,203 @@ transformations:
         } else {
             panic!("Expected AllOf");
         }
+    }
+
+    // =========================================================================
+    // Correlation pipeline tests
+    // =========================================================================
+
+    fn make_test_correlation() -> CorrelationRule {
+        CorrelationRule {
+            title: "Test Correlation".to_string(),
+            id: Some("corr-1".to_string()),
+            name: Some("test_corr".to_string()),
+            status: None,
+            description: None,
+            author: None,
+            date: None,
+            modified: None,
+            references: vec![],
+            tags: vec![],
+            level: None,
+            correlation_type: rsigma_parser::CorrelationType::EventCount,
+            rules: vec!["rule_a".to_string()],
+            group_by: vec!["SourceIP".to_string(), "DestinationIP".to_string()],
+            timespan: rsigma_parser::Timespan::parse("5m").unwrap(),
+            condition: rsigma_parser::CorrelationCondition::Threshold {
+                predicates: vec![(rsigma_parser::ConditionOperator::Gte, 10)],
+                field: None,
+            },
+            aliases: vec![rsigma_parser::FieldAlias {
+                alias: "src_ip".to_string(),
+                mapping: {
+                    let mut m = HashMap::new();
+                    m.insert("rule_a".to_string(), "SourceIP".to_string());
+                    m
+                },
+            }],
+            generate: true,
+            custom_attributes: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_correlation_pipeline_field_name_mapping() {
+        let yaml = r#"
+name: ECS Field Mapping
+transformations:
+  - type: field_name_mapping
+    mapping:
+      SourceIP: source.ip
+      DestinationIP: destination.ip
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline
+            .apply_to_correlation(&mut corr, &mut state)
+            .unwrap();
+
+        assert_eq!(corr.group_by, vec!["source.ip", "destination.ip"]);
+        assert_eq!(corr.aliases[0].mapping["rule_a"], "source.ip");
+    }
+
+    #[test]
+    fn test_correlation_pipeline_field_prefix() {
+        let yaml = r#"
+name: Prefix
+transformations:
+  - type: field_name_prefix
+    prefix: "event."
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline
+            .apply_to_correlation(&mut corr, &mut state)
+            .unwrap();
+
+        assert_eq!(corr.group_by, vec!["event.SourceIP", "event.DestinationIP"]);
+    }
+
+    #[test]
+    fn test_correlation_pipeline_set_custom_attribute() {
+        let yaml = r#"
+name: Custom Attr
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.action
+    value: reset
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline
+            .apply_to_correlation(&mut corr, &mut state)
+            .unwrap();
+
+        assert_eq!(corr.custom_attributes["rsigma.action"], "reset");
+    }
+
+    #[test]
+    fn test_correlation_pipeline_skips_detection_rules() {
+        let yaml = r#"
+name: Detection Only
+transformations:
+  - type: field_name_prefix
+    prefix: "x."
+    rule_conditions:
+      - type: is_sigma_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline
+            .apply_to_correlation(&mut corr, &mut state)
+            .unwrap();
+
+        // is_sigma_rule => false for correlations => not applied
+        assert_eq!(corr.group_by, vec!["SourceIP", "DestinationIP"]);
+    }
+
+    #[test]
+    fn test_correlation_pipeline_rule_failure() {
+        let yaml = r#"
+name: Block Correlations
+transformations:
+  - type: rule_failure
+    message: "correlations not supported by this backend"
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        let result = pipeline.apply_to_correlation(&mut corr, &mut state);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("correlations not supported"));
+    }
+
+    #[test]
+    fn test_correlation_pipeline_condition_field_mapping() {
+        let yaml = r#"
+name: Condition Field Mapping
+transformations:
+  - type: field_name_mapping
+    mapping:
+      UserName: user.name
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+
+        let mut corr = make_test_correlation();
+        corr.condition = rsigma_parser::CorrelationCondition::Threshold {
+            predicates: vec![(rsigma_parser::ConditionOperator::Gte, 5)],
+            field: Some("UserName".to_string()),
+        };
+
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline
+            .apply_to_correlation(&mut corr, &mut state)
+            .unwrap();
+
+        if let rsigma_parser::CorrelationCondition::Threshold { field, .. } = &corr.condition {
+            assert_eq!(field.as_deref(), Some("user.name"));
+        } else {
+            panic!("Expected Threshold");
+        }
+    }
+
+    #[test]
+    fn test_apply_pipelines_to_correlation_fn() {
+        let yaml = r#"
+name: ECS Mapping
+priority: 10
+transformations:
+  - type: field_name_mapping
+    mapping:
+      SourceIP: source.ip
+    rule_conditions:
+      - type: is_sigma_correlation_rule
+"#;
+        let pipeline = parse_pipeline(yaml).unwrap();
+        let mut corr = make_test_correlation();
+
+        apply_pipelines_to_correlation(&[pipeline], &mut corr).unwrap();
+
+        assert_eq!(corr.group_by[0], "source.ip");
     }
 }
