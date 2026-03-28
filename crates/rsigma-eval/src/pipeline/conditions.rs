@@ -15,6 +15,16 @@ use super::state::PipelineState;
 // Rule Conditions
 // =============================================================================
 
+/// A rule condition paired with an optional named ID for use in
+/// `rule_cond_expression` logical expressions.
+#[derive(Debug, Clone)]
+pub struct NamedRuleCondition {
+    /// Optional ID referenced by `rule_cond_expression` (e.g. `"is_windows"`).
+    /// When absent, the condition is addressed by its positional index (`cond_N`).
+    pub id: Option<String>,
+    pub condition: RuleCondition,
+}
+
 /// A condition evaluated against a `SigmaRule` (or `CorrelationRule`).
 #[derive(Debug, Clone)]
 pub enum RuleCondition {
@@ -97,11 +107,13 @@ impl RuleCondition {
 
 /// Check if all rule conditions match for a rule.
 pub fn all_rule_conditions_match(
-    conditions: &[RuleCondition],
+    conditions: &[NamedRuleCondition],
     rule: &SigmaRule,
     state: &PipelineState,
 ) -> bool {
-    conditions.iter().all(|c| c.matches_rule(rule, state))
+    conditions
+        .iter()
+        .all(|c| c.condition.matches_rule(rule, state))
 }
 
 // =============================================================================

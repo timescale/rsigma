@@ -26,7 +26,7 @@ use crate::correlation::{
 use crate::engine::Engine;
 use crate::error::{EvalError, Result};
 use crate::event::Event;
-use crate::pipeline::{Pipeline, apply_pipelines};
+use crate::pipeline::{Pipeline, apply_pipelines, apply_pipelines_to_correlation};
 use crate::result::MatchResult;
 
 // =============================================================================
@@ -390,11 +390,23 @@ impl CorrelationEngine {
 
     /// Add a single correlation rule.
     pub fn add_correlation(&mut self, corr: &CorrelationRule) -> Result<()> {
-        // Apply engine-level custom attributes from the correlation rule
-        // (e.g. rsigma.timestamp_field).
-        self.apply_custom_attributes(&corr.custom_attributes);
+        let owned;
+        let effective = if self.pipelines.is_empty() {
+            corr
+        } else {
+            owned = {
+                let mut c = corr.clone();
+                apply_pipelines_to_correlation(&self.pipelines, &mut c)?;
+                c
+            };
+            &owned
+        };
 
-        let compiled = compile_correlation(corr)?;
+        // Apply engine-level custom attributes from the (possibly transformed)
+        // correlation rule (e.g. rsigma.timestamp_field).
+        self.apply_custom_attributes(&effective.custom_attributes);
+
+        let compiled = compile_correlation(effective)?;
         let idx = self.correlations.len();
 
         // Index by each referenced rule ID/name
