@@ -1546,3 +1546,137 @@ level: medium
         "detection should still work with --state-db on detection-only rules"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Streaming pipeline tests
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_stdin_stdout() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let event = r#"{"CommandLine":"malware.exe"}"#;
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--input",
+            "stdin",
+            "--output",
+            "stdout",
+        ])
+        .write_stdin(format!("{event}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"rule_title\":\"Test Rule\""),
+        "stdin->stdout pipeline should produce detection output: {stdout}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_file_output() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dir = TempDir::new().unwrap();
+    let out_path = dir.path().join("detections.ndjson");
+    let event = r#"{"CommandLine":"malware.exe"}"#;
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--output",
+            &format!("file://{}", out_path.display()),
+        ])
+        .write_stdin(format!("{event}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.is_empty() || !stdout.contains("\"rule_title\""),
+        "file output should NOT write to stdout: {stdout}"
+    );
+
+    let file_content = std::fs::read_to_string(&out_path).unwrap();
+    assert!(
+        file_content.contains("\"rule_title\":\"Test Rule\""),
+        "file sink should contain detection output: {file_content}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_fanout_stdout_and_file() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dir = TempDir::new().unwrap();
+    let out_path = dir.path().join("detections.ndjson");
+    let event = r#"{"CommandLine":"malware.exe"}"#;
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--output",
+            "stdout",
+            "--output",
+            &format!("file://{}", out_path.display()),
+        ])
+        .write_stdin(format!("{event}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"rule_title\":\"Test Rule\""),
+        "fan-out should write to stdout: {stdout}"
+    );
+
+    let file_content = std::fs::read_to_string(&out_path).unwrap();
+    assert!(
+        file_content.contains("\"rule_title\":\"Test Rule\""),
+        "fan-out should also write to file: {file_content}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_no_match_produces_no_output() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let event = r#"{"CommandLine":"benign.exe"}"#;
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .write_stdin(format!("{event}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().is_empty(),
+        "non-matching event should produce no stdout output: {stdout}"
+    );
+}

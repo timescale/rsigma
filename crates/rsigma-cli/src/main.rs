@@ -174,6 +174,15 @@ enum Commands {
         /// Only meaningful when --state-db is set.
         #[arg(long = "state-save-interval", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
         state_save_interval: u64,
+
+        /// Event input source. Supported schemes: stdin, http, nats://<host>:<port>/<subject>
+        #[arg(long = "input", default_value = "stdin")]
+        input: String,
+
+        /// Detection output sink (can be repeated for fan-out).
+        /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
+        #[arg(long = "output", default_value = "stdout")]
+        output: Vec<String>,
     },
 
     /// Evaluate events against Sigma rules
@@ -275,6 +284,8 @@ fn main() {
             timestamp_fields,
             state_db,
             state_save_interval,
+            input,
+            output,
         } => cmd_daemon(
             rules,
             pipelines,
@@ -291,6 +302,8 @@ fn main() {
             timestamp_fields,
             state_db,
             state_save_interval,
+            input,
+            output,
         ),
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
         Commands::Validate {
@@ -371,6 +384,8 @@ fn cmd_daemon(
     timestamp_fields: Vec<String>,
     state_db: Option<PathBuf>,
     state_save_interval: u64,
+    input: String,
+    output: Vec<String>,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -409,6 +424,8 @@ fn cmd_daemon(
         event_filter,
         state_db,
         state_save_interval,
+        input,
+        output,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

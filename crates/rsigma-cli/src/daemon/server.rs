@@ -1,4 +1,3 @@
-use std::io::{self, BufRead};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rsigma_eval::{CorrelationConfig, Pipeline};
+use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -19,6 +18,7 @@ use super::metrics::Metrics;
 use super::reload;
 use super::state::DaemonEngine;
 use super::store::SqliteStateStore;
+use super::streaming::{self, FileSink, Sink, StdinSource, StdoutSink};
 use crate::EventFilter;
 
 #[derive(Clone)]
@@ -28,6 +28,8 @@ struct AppState {
     health: HealthState,
     reload_tx: mpsc::Sender<()>,
     start_time: Instant,
+    /// Channel for HTTP event ingestion. Set when --input is http.
+    event_tx: Option<mpsc::Sender<String>>,
 }
 
 #[derive(Clone)]
@@ -41,6 +43,8 @@ pub struct DaemonConfig {
     pub event_filter: Arc<EventFilter>,
     pub state_db: Option<PathBuf>,
     pub state_save_interval: u64,
+    pub input: String,
+    pub output: Vec<String>,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -132,12 +136,22 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let start_time = Instant::now();
 
+    // Create event channel early so both source and HTTP handler can use it
+    let (event_tx, mut event_rx) = mpsc::channel::<String>(10_000);
+
+    let http_event_tx = if config.input == "http" {
+        Some(event_tx.clone())
+    } else {
+        None
+    };
+
     let app_state = AppState {
         engine: shared_engine.clone(),
         metrics: metrics.clone(),
         health: health.clone(),
         reload_tx: reload_tx.clone(),
         start_time,
+        event_tx: http_event_tx,
     };
 
     let app = Router::new()
@@ -147,6 +161,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/rules", get(list_rules))
         .route("/api/v1/status", get(status))
         .route("/api/v1/reload", post(trigger_reload))
+        .route("/api/v1/events", post(ingest_events))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(config.api_addr)
@@ -227,35 +242,99 @@ pub async fn run_daemon(config: DaemonConfig) {
         });
     }
 
-    // Spawn stdin reader in a blocking thread
-    let stdin_engine = shared_engine.clone();
-    let stdin_metrics = metrics.clone();
-    let pretty = config.pretty;
-    let event_filter = config.event_filter.clone();
-    let stdin_handle = tokio::task::spawn_blocking(move || {
-        let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let mut engine = stdin_engine.lock().unwrap();
-                    process_line(&mut engine, &line, &stdin_metrics, pretty, &event_filter);
+    // --- Streaming pipeline: source -> engine -> sink ---
+    // event_tx / event_rx were created above (before AppState) so the HTTP
+    // handler can share event_tx when --input is http.
 
-                    let stats = engine.stats();
-                    stdin_metrics
-                        .correlation_state_entries
-                        .set(stats.state_entries as i64);
+    let (sink_tx, mut sink_rx) = mpsc::channel::<ProcessResult>(10_000);
+
+    // Select source based on --input flag
+    match config.input.as_str() {
+        "stdin" | "stdin://" => {
+            streaming::spawn_source(StdinSource::new(), event_tx);
+            tracing::info!(input = "stdin", "Event source started");
+        }
+        "http" => {
+            // Events arrive via POST /api/v1/events; event_tx is held by AppState.
+            // Drop the local event_tx so the channel closes when AppState is dropped.
+            drop(event_tx);
+            tracing::info!(input = "http", "Event source started (POST /api/v1/events)");
+        }
+        #[cfg(feature = "daemon-nats")]
+        input if input.starts_with("nats://") => {
+            let (url, subject) = parse_nats_url(input);
+            match streaming::NatsSource::connect(&url, &subject).await {
+                Ok(source) => {
+                    streaming::spawn_source(source, event_tx);
+                    tracing::info!(url = url, subject = subject, "NATS source started");
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "Error reading stdin");
-                    break;
+                    tracing::error!(error = %e, url = url, "Failed to connect NATS source");
+                    std::process::exit(1);
                 }
             }
         }
-        tracing::info!("stdin closed, shutting down");
+        other => {
+            tracing::error!(
+                input = other,
+                "Unsupported input source (supported: stdin, http, nats://)"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Engine task: reads events, evaluates rules, sends results to sink channel
+    let engine_shared = shared_engine.clone();
+    let engine_metrics = metrics.clone();
+    let event_filter = config.event_filter.clone();
+    let engine_handle = tokio::spawn(async move {
+        while let Some(line) = event_rx.recv().await {
+            let result = {
+                let mut engine = engine_shared.lock().unwrap();
+                let result = process_line(&mut engine, &line, &engine_metrics, &event_filter);
+                let stats = engine.stats();
+                engine_metrics
+                    .correlation_state_entries
+                    .set(stats.state_entries as i64);
+                result
+            };
+            if result.detections.is_empty() && result.correlations.is_empty() {
+                continue;
+            }
+            if sink_tx.send(result).await.is_err() {
+                tracing::debug!("Sink channel closed, engine shutting down");
+                break;
+            }
+        }
+        tracing::info!("Event source exhausted, engine shutting down");
+    });
+
+    // Build sink(s) from --output flags. Multiple outputs produce a FanOut.
+    let pretty = config.pretty;
+    let output_specs = if config.output.is_empty() {
+        vec!["stdout".to_string()]
+    } else {
+        config.output.clone()
+    };
+    let mut sinks = Vec::new();
+    for spec in &output_specs {
+        sinks.push(build_sink(spec, pretty).await);
+    }
+    let sink = if sinks.len() == 1 {
+        sinks.pop().unwrap()
+    } else {
+        Sink::FanOut(sinks)
+    };
+    tracing::info!(output = ?output_specs, "Sink started");
+
+    // Sink task: reads ProcessResult from channel, writes via Sink dispatch
+    let sink_handle = tokio::spawn(async move {
+        let mut sink = sink;
+        while let Some(result) = sink_rx.recv().await {
+            if let Err(e) = sink.send(&result).await {
+                tracing::warn!(error = %e, "Error writing to sink");
+            }
+        }
     });
 
     tokio::select! {
@@ -264,10 +343,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 tracing::error!(error = %e, "HTTP server error");
             }
         }
-        _ = stdin_handle => {
-            tracing::info!("stdin processing complete");
+        _ = engine_handle => {
+            tracing::info!("Streaming pipeline complete");
         }
     }
+
+    // Wait for the sink task to drain any remaining results before exiting.
+    // The engine task owns sink_tx, so once it exits, sink_rx closes and the
+    // sink task finishes after processing buffered items.
+    let _ = sink_handle.await;
 
     // Save state on shutdown
     if let Some(ref store) = state_store {
@@ -284,11 +368,70 @@ pub async fn run_daemon(config: DaemonConfig) {
     }
 }
 
+/// Build a single Sink from an output spec string.
+async fn build_sink(spec: &str, pretty: bool) -> Sink {
+    if spec == "stdout" || spec == "stdout://" {
+        return Sink::Stdout(StdoutSink::new(pretty));
+    }
+
+    if let Some(path) = spec.strip_prefix("file://") {
+        let path = std::path::Path::new(path);
+        return match FileSink::open(path) {
+            Ok(file_sink) => {
+                tracing::info!(path = %path.display(), "File sink opened");
+                Sink::File(file_sink)
+            }
+            Err(e) => {
+                tracing::error!(path = %path.display(), error = %e, "Failed to open file sink");
+                std::process::exit(1);
+            }
+        };
+    }
+
+    #[cfg(feature = "daemon-nats")]
+    if spec.starts_with("nats://") {
+        let (url, subject) = parse_nats_url(spec);
+        return match streaming::NatsSink::connect(&url, &subject).await {
+            Ok(nats_sink) => {
+                tracing::info!(url = url, subject = subject, "NATS sink started");
+                Sink::Nats(nats_sink)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, url = url, "Failed to connect NATS sink");
+                std::process::exit(1);
+            }
+        };
+    }
+
+    tracing::error!(
+        output = spec,
+        "Unsupported output sink (supported: stdout, file://<path>, nats://)"
+    );
+    std::process::exit(1);
+}
+
 async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to listen for ctrl+c");
     tracing::info!("Shutdown signal received");
+}
+
+/// Parse a nats:// URL into (server_url, subject).
+///
+/// Input: "nats://host:port/subject.path.>"
+/// Output: ("nats://host:port", "subject.path.>")
+#[cfg(feature = "daemon-nats")]
+fn parse_nats_url(url: &str) -> (String, String) {
+    let without_scheme = url.strip_prefix("nats://").unwrap_or(url);
+    match without_scheme.find('/') {
+        Some(pos) => {
+            let server = format!("nats://{}", &without_scheme[..pos]);
+            let subject = without_scheme[pos + 1..].to_string();
+            (server, subject)
+        }
+        None => (format!("nats://{without_scheme}"), ">".to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,4 +526,45 @@ async fn trigger_reload(State(state): State<AppState>) -> impl IntoResponse {
             Json(serde_json::json!({ "status": "reload_already_pending" })),
         ),
     }
+}
+
+/// Accept NDJSON events via HTTP POST for processing.
+/// Each non-empty line in the request body is treated as a separate JSON event.
+async fn ingest_events(State(state): State<AppState>, body: String) -> Response {
+    let event_tx = match &state.event_tx {
+        Some(tx) => tx,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "event ingestion not enabled (start with --input http)"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut accepted = 0u64;
+    for line in body.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if event_tx.send(line.to_string()).await.is_err() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "event channel closed",
+                    "accepted": accepted,
+                })),
+            )
+                .into_response();
+        }
+        accepted += 1;
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "accepted": accepted })),
+    )
+        .into_response()
 }

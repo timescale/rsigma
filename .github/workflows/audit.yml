@@ -26,4 +26,6 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - run: cargo install cargo-audit --locked
-      - run: cargo audit
+      # RUSTSEC-2026-0049: rustls-webpki 0.102.x CRL bug, transitive dep of async-nats 0.46.0.
+      # Remove --ignore when async-nats updates its rustls-webpki dependency.
+      - run: cargo audit --ignore RUSTSEC-2026-0049

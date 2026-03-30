@@ -36,6 +36,19 @@ cat events.ndjson | rsigma eval -r path/to/rules/
 # Long-running daemon with hot-reload and Prometheus metrics
 hel run | rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 
+# Daemon with file output (detections appended as NDJSON)
+hel run | rsigma daemon -r rules/ --output file:///var/log/detections.ndjson
+
+# Fan-out: write detections to both stdout and a file
+hel run | rsigma daemon -r rules/ --output stdout --output file:///tmp/detections.ndjson
+
+# Accept events via HTTP POST instead of stdin
+rsigma daemon -r rules/ --input http
+# Then: curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
+
+# NATS JetStream source and sink (requires daemon-nats feature)
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
+
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
 ```

@@ -12,6 +12,7 @@ homepage.workspace = true
 [features]
 default = ["daemon"]
 daemon = ["tokio", "axum", "prometheus", "notify", "rusqlite"]
+daemon-nats = ["daemon", "async-nats", "tokio-stream"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.5.0" }
@@ -37,6 +38,8 @@ axum = { version = "0.8", features = ["json"], optional = true }
 prometheus = { version = "0.13", default-features = false, optional = true }
 notify = { version = "7", optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
+async-nats = { version = "0.46", optional = true }
+tokio-stream = { version = "0.1", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.1.2"
