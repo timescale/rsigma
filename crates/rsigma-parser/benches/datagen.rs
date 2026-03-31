@@ -103,6 +103,7 @@ pub fn gen_single_rule(rng: &mut StdRng, id: usize) -> String {
 
     let mut detection = String::new();
     detection.push_str("    selection:\n");
+    let mut used_keys = std::collections::HashSet::new();
     for _ in 0..num_items {
         let field = FIELD_NAMES[rng.random_range(0..FIELD_NAMES.len())];
         let val = STRING_VALUES[rng.random_range(0..STRING_VALUES.len())];
@@ -113,18 +114,23 @@ pub fn gen_single_rule(rng: &mut StdRng, id: usize) -> String {
             3 => "|endswith",
             _ => "",
         };
-        detection.push_str(&format!("        {field}{modifier}: '{val}'\n"));
+        let key = format!("{field}{modifier}");
+        if !used_keys.insert(key.clone()) {
+            continue;
+        }
+        detection.push_str(&format!("        {key}: '{val}'\n"));
     }
 
     // Optionally add a filter
-    if rng.random_bool(0.3) {
+    let has_filter = rng.random_bool(0.3);
+    if has_filter {
         detection.push_str("    filter:\n");
         let field = FIELD_NAMES[rng.random_range(0..FIELD_NAMES.len())];
         let val = STRING_VALUES[rng.random_range(0..STRING_VALUES.len())];
         detection.push_str(&format!("        {field}: '{val}'\n"));
     }
 
-    let condition = if rng.random_bool(0.3) {
+    let condition = if has_filter {
         "selection and not filter".to_string()
     } else {
         "selection".to_string()

@@ -19,7 +19,6 @@ fn bench_compile_rules(c: &mut Criterion) {
     for n in [100, 500, 1000, 5000] {
         let yaml = datagen::gen_n_rules(n);
         let collection = parse_sigma_yaml(&yaml).unwrap();
-
         group.bench_with_input(
             BenchmarkId::new("count", n),
             &collection,
