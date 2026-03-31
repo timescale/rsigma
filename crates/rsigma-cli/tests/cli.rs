@@ -1680,3 +1680,66 @@ fn daemon_streaming_no_match_produces_no_output() {
         "non-matching event should produce no stdout output: {stdout}"
     );
 }
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_batch_size() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let events = (0..5)
+        .map(|_| r#"{"CommandLine":"malware.exe"}"#)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--batch-size",
+            "4",
+        ])
+        .write_stdin(events)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let matches: Vec<_> = stdout.lines().collect();
+    assert_eq!(
+        matches.len(),
+        5,
+        "batch-size=4 should still produce 5 detections: got {count}",
+        count = matches.len()
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_streaming_custom_buffer_size() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let event = r#"{"CommandLine":"malware.exe"}"#;
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--buffer-size",
+            "16",
+        ])
+        .write_stdin(format!("{event}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"rule_title\":\"Test Rule\""),
+        "small buffer-size should still produce output: {stdout}"
+    );
+}

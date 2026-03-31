@@ -116,14 +116,34 @@ impl Sink {
 ///
 /// The source reads events in a loop via `recv()` and forwards them to
 /// `event_tx`. When the source is exhausted or the channel is closed,
-/// the task completes.
+/// the task completes. Tracks `input_queue_depth` and `back_pressure_events`
+/// metrics when provided.
 pub fn spawn_source<S: EventSource>(
     mut source: S,
     event_tx: tokio::sync::mpsc::Sender<String>,
+    metrics: Option<crate::daemon::metrics::Metrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(line) = source.recv().await {
-            if event_tx.send(line).await.is_err() {
+            if let Some(ref m) = metrics {
+                match event_tx.try_send(line) {
+                    Ok(()) => {
+                        m.input_queue_depth.inc();
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(line)) => {
+                        m.back_pressure_events.inc();
+                        m.input_queue_depth.inc();
+                        if event_tx.send(line).await.is_err() {
+                            tracing::debug!("Event channel closed, source shutting down");
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        tracing::debug!("Event channel closed, source shutting down");
+                        break;
+                    }
+                }
+            } else if event_tx.send(line).await.is_err() {
                 tracing::debug!("Event channel closed, source shutting down");
                 break;
             }

@@ -49,6 +49,9 @@ rsigma daemon -r rules/ --input http
 # NATS JetStream source and sink (requires daemon-nats feature)
 rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
 
+# Tune pipeline: micro-batch 64 events per lock, 50K buffer, 10s drain on shutdown
+rsigma daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
+
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
 ```
