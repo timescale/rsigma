@@ -16,6 +16,11 @@ pub struct Metrics {
     pub reloads_failed: IntCounter,
     pub processing_latency: Histogram,
     pub uptime_seconds: Gauge,
+    pub input_queue_depth: IntGauge,
+    pub output_queue_depth: IntGauge,
+    pub back_pressure_events: IntCounter,
+    pub pipeline_latency: Histogram,
+    pub batch_size_histogram: Histogram,
 }
 
 impl Metrics {
@@ -82,6 +87,41 @@ impl Metrics {
             "Daemon uptime in seconds",
         ))
         .unwrap();
+        let input_queue_depth = IntGauge::with_opts(Opts::new(
+            "rsigma_input_queue_depth",
+            "Current events buffered in source→engine channel",
+        ))
+        .unwrap();
+        let output_queue_depth = IntGauge::with_opts(Opts::new(
+            "rsigma_output_queue_depth",
+            "Current results buffered in engine→sink channel",
+        ))
+        .unwrap();
+        let back_pressure_events = IntCounter::with_opts(Opts::new(
+            "rsigma_back_pressure_events_total",
+            "Times a source was blocked on a full event channel",
+        ))
+        .unwrap();
+        let pipeline_latency = Histogram::with_opts(
+            HistogramOpts::new(
+                "rsigma_pipeline_latency_seconds",
+                "End-to-end latency from event dequeue to sink send",
+            )
+            .buckets(vec![
+                0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5,
+            ]),
+        )
+        .unwrap();
+        let batch_size_histogram = Histogram::with_opts(
+            HistogramOpts::new(
+                "rsigma_batch_size",
+                "Number of events processed per engine lock acquisition",
+            )
+            .buckets(vec![
+                1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0,
+            ]),
+        )
+        .unwrap();
 
         registry
             .register(Box::new(events_processed.clone()))
@@ -110,6 +150,21 @@ impl Metrics {
             .register(Box::new(processing_latency.clone()))
             .unwrap();
         registry.register(Box::new(uptime_seconds.clone())).unwrap();
+        registry
+            .register(Box::new(input_queue_depth.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(output_queue_depth.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(back_pressure_events.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(pipeline_latency.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(batch_size_histogram.clone()))
+            .unwrap();
 
         Metrics {
             registry,
@@ -124,6 +179,11 @@ impl Metrics {
             reloads_failed,
             processing_latency,
             uptime_seconds,
+            input_queue_depth,
+            output_queue_depth,
+            back_pressure_events,
+            pipeline_latency,
+            batch_size_histogram,
         }
     }
 

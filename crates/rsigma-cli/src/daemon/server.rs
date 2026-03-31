@@ -45,6 +45,9 @@ pub struct DaemonConfig {
     pub state_save_interval: u64,
     pub input: String,
     pub output: Vec<String>,
+    pub buffer_size: usize,
+    pub batch_size: usize,
+    pub drain_timeout: u64,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -137,7 +140,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let start_time = Instant::now();
 
     // Create event channel early so both source and HTTP handler can use it
-    let (event_tx, mut event_rx) = mpsc::channel::<String>(10_000);
+    let buffer_size = config.buffer_size;
+    let (event_tx, mut event_rx) = mpsc::channel::<String>(buffer_size);
 
     let http_event_tx = if config.input == "http" {
         Some(event_tx.clone())
@@ -246,27 +250,31 @@ pub async fn run_daemon(config: DaemonConfig) {
     // event_tx / event_rx were created above (before AppState) so the HTTP
     // handler can share event_tx when --input is http.
 
-    let (sink_tx, mut sink_rx) = mpsc::channel::<ProcessResult>(10_000);
+    let (sink_tx, mut sink_rx) = mpsc::channel::<ProcessResult>(buffer_size);
 
-    // Select source based on --input flag
-    match config.input.as_str() {
+    // Select source based on --input flag. Store the source handle so we can
+    // abort it on shutdown to trigger graceful drain.
+    let source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
-            streaming::spawn_source(StdinSource::new(), event_tx);
+            let h = streaming::spawn_source(StdinSource::new(), event_tx, Some(metrics.clone()));
             tracing::info!(input = "stdin", "Event source started");
+            Some(h)
         }
         "http" => {
             // Events arrive via POST /api/v1/events; event_tx is held by AppState.
             // Drop the local event_tx so the channel closes when AppState is dropped.
             drop(event_tx);
             tracing::info!(input = "http", "Event source started (POST /api/v1/events)");
+            None
         }
         #[cfg(feature = "daemon-nats")]
         input if input.starts_with("nats://") => {
             let (url, subject) = parse_nats_url(input);
             match streaming::NatsSource::connect(&url, &subject).await {
                 Ok(source) => {
-                    streaming::spawn_source(source, event_tx);
+                    let h = streaming::spawn_source(source, event_tx, Some(metrics.clone()));
                     tracing::info!(url = url, subject = subject, "NATS source started");
+                    Some(h)
                 }
                 Err(e) => {
                     tracing::error!(error = %e, url = url, "Failed to connect NATS source");
@@ -281,28 +289,70 @@ pub async fn run_daemon(config: DaemonConfig) {
             );
             std::process::exit(1);
         }
-    }
+    };
 
-    // Engine task: reads events, evaluates rules, sends results to sink channel
+    // Engine task: reads events, evaluates rules, sends results to sink channel.
+    // Supports micro-batching: collects up to batch_size events per lock acquisition.
     let engine_shared = shared_engine.clone();
     let engine_metrics = metrics.clone();
     let event_filter = config.event_filter.clone();
-    let engine_handle = tokio::spawn(async move {
-        while let Some(line) = event_rx.recv().await {
-            let result = {
+    let batch_size = config.batch_size;
+    let mut engine_handle = tokio::spawn(async move {
+        loop {
+            let pipeline_start = std::time::Instant::now();
+
+            let first = match event_rx.recv().await {
+                Some(line) => line,
+                None => break,
+            };
+            engine_metrics.input_queue_depth.dec();
+
+            let mut batch = Vec::with_capacity(batch_size.min(64));
+            batch.push(first);
+            while batch.len() < batch_size {
+                match event_rx.try_recv() {
+                    Ok(line) => {
+                        engine_metrics.input_queue_depth.dec();
+                        batch.push(line);
+                    }
+                    Err(_) => break,
+                }
+            }
+            engine_metrics
+                .batch_size_histogram
+                .observe(batch.len() as f64);
+
+            let results: Vec<ProcessResult> = {
                 let mut engine = engine_shared.lock().unwrap();
-                let result = process_line(&mut engine, &line, &engine_metrics, &event_filter);
+                let results: Vec<_> = batch
+                    .iter()
+                    .map(|line| process_line(&mut engine, line, &engine_metrics, &event_filter))
+                    .collect();
                 let stats = engine.stats();
                 engine_metrics
                     .correlation_state_entries
                     .set(stats.state_entries as i64);
-                result
+                results
             };
-            if result.detections.is_empty() && result.correlations.is_empty() {
-                continue;
+
+            let mut shutdown = false;
+            for result in results {
+                if result.detections.is_empty() && result.correlations.is_empty() {
+                    continue;
+                }
+                engine_metrics.output_queue_depth.inc();
+                if sink_tx.send(result).await.is_err() {
+                    tracing::debug!("Sink channel closed, engine shutting down");
+                    shutdown = true;
+                    break;
+                }
             }
-            if sink_tx.send(result).await.is_err() {
-                tracing::debug!("Sink channel closed, engine shutting down");
+
+            engine_metrics
+                .pipeline_latency
+                .observe(pipeline_start.elapsed().as_secs_f64());
+
+            if shutdown {
                 break;
             }
         }
@@ -328,30 +378,55 @@ pub async fn run_daemon(config: DaemonConfig) {
     tracing::info!(output = ?output_specs, "Sink started");
 
     // Sink task: reads ProcessResult from channel, writes via Sink dispatch
+    let sink_metrics = metrics.clone();
     let sink_handle = tokio::spawn(async move {
         let mut sink = sink;
         while let Some(result) = sink_rx.recv().await {
+            sink_metrics.output_queue_depth.dec();
             if let Err(e) = sink.send(&result).await {
                 tracing::warn!(error = %e, "Error writing to sink");
             }
         }
     });
 
-    tokio::select! {
+    let drain_duration = std::time::Duration::from_secs(config.drain_timeout);
+
+    let shutdown_triggered = tokio::select! {
         result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
             if let Err(e) = result {
                 tracing::error!(error = %e, "HTTP server error");
             }
+            true
         }
-        _ = engine_handle => {
+        _ = &mut engine_handle => {
             tracing::info!("Streaming pipeline complete");
+            false
         }
-    }
+    };
 
-    // Wait for the sink task to drain any remaining results before exiting.
-    // The engine task owns sink_tx, so once it exits, sink_rx closes and the
-    // sink task finishes after processing buffered items.
-    let _ = sink_handle.await;
+    if shutdown_triggered {
+        tracing::info!("Shutdown signal received, draining pipeline...");
+
+        // Abort the source task to stop feeding new events. Dropping its
+        // event_tx clone closes event_rx once the engine drains buffered events.
+        if let Some(h) = source_handle {
+            h.abort();
+        }
+
+        let drain = async {
+            let _ = engine_handle.await;
+            let _ = sink_handle.await;
+        };
+        if tokio::time::timeout(drain_duration, drain).await.is_err() {
+            tracing::warn!(
+                timeout_secs = config.drain_timeout,
+                "Drain timeout exceeded, some events may be lost"
+            );
+        }
+    } else {
+        // Engine exited naturally (source exhausted). Drain the sink.
+        let _ = sink_handle.await;
+    }
 
     // Save state on shutdown
     if let Some(ref store) = state_store {

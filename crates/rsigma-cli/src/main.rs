@@ -183,6 +183,20 @@ enum Commands {
         /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
         #[arg(long = "output", default_value = "stdout")]
         output: Vec<String>,
+
+        /// Bounded channel capacity for source→engine and engine→sink queues.
+        /// Higher values absorb bursts; lower values apply back-pressure sooner.
+        #[arg(long = "buffer-size", default_value = "10000")]
+        buffer_size: usize,
+
+        /// Maximum events to process per engine lock acquisition.
+        /// Reduces mutex overhead under load. 1 = process one at a time (default).
+        #[arg(long = "batch-size", default_value = "1")]
+        batch_size: usize,
+
+        /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
+        #[arg(long = "drain-timeout", default_value = "5")]
+        drain_timeout: u64,
     },
 
     /// Evaluate events against Sigma rules
@@ -286,6 +300,9 @@ fn main() {
             state_save_interval,
             input,
             output,
+            buffer_size,
+            batch_size,
+            drain_timeout,
         } => cmd_daemon(
             rules,
             pipelines,
@@ -304,6 +321,9 @@ fn main() {
             state_save_interval,
             input,
             output,
+            buffer_size,
+            batch_size,
+            drain_timeout,
         ),
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
         Commands::Validate {
@@ -386,6 +406,9 @@ fn cmd_daemon(
     state_save_interval: u64,
     input: String,
     output: Vec<String>,
+    buffer_size: usize,
+    batch_size: usize,
+    drain_timeout: u64,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -426,6 +449,9 @@ fn cmd_daemon(
         state_save_interval,
         input,
         output,
+        buffer_size,
+        batch_size,
+        drain_timeout,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
