@@ -466,16 +466,16 @@ Rules are pre-filtered at evaluation time using an inverted index on exact-match
 
 ### Detection Evaluation
 
-| Scenario | Time | Throughput |
-|----------|------|------------|
-| Compile 1,000 rules | 946 µs | -- |
-| Compile 5,000 rules | 4.7 ms | -- |
-| 1 event vs 100 rules | 2.3 µs | -- |
-| 1 event vs 1,000 rules | 30 µs | -- |
-| 1 event vs 5,000 rules | 164 µs | -- |
-| 100K events vs 100 rules | 253 ms | **396K events/sec** |
-| Wildcard-heavy (1,000 rules, 100 events) | 18.3 µs | -- |
-| Regex-heavy (1,000 rules, 100 events) | 5.1 µs | -- |
+| Scenario | Baseline | Indexed | Speedup |
+|----------|----------|---------|---------|
+| Compile 1,000 rules | 740 µs | 946 µs | 0.8x (index build) |
+| Compile 5,000 rules | 3.8 ms | 4.7 ms | 0.8x (index build) |
+| 1 event vs 100 rules | 5.6 µs | 2.3 µs | **2.4x** |
+| 1 event vs 1,000 rules | 81 µs | 30 µs | **2.7x** |
+| 1 event vs 5,000 rules | 415 µs | 164 µs | **2.5x** |
+| 100K events vs 100 rules | 613 ms (163K/s) | 253 ms (396K/s) | **2.4x** |
+| Wildcard-heavy (1,000 rules, 100 events) | 16 µs | 18 µs | ~1x (unindexable) |
+| Regex-heavy (1,000 rules, 100 events) | 3.3 µs | 5.1 µs | ~1x (unindexable) |
 
 ### Batch Evaluation (sequential vs `parallel` feature)
 
@@ -487,14 +487,14 @@ Rules are pre-filtered at evaluation time using an inverted index on exact-match
 
 ### Correlation Engine
 
-| Scenario | Time | Throughput |
-|----------|------|------------|
-| 1K events, 20 event_count correlations | 988 µs | **1.01M events/sec** |
-| 1K events, 10 temporal correlations | 502 µs | **1.99M events/sec** |
-| 100K events, 50 detection + 10 correlation rules | 176 ms | **568K events/sec** |
-| Batch 10K events (sequential) | 18.1 ms | **552K events/sec** |
-| Batch 10K events (process_batch) | 19.2 ms | **521K events/sec** |
-| 50K unique group keys (state pressure) | 38.4 ms | **1.30M events/sec** |
+| Scenario | Baseline | Indexed | Speedup |
+|----------|----------|---------|---------|
+| 1K events, 20 event_count correlations | 1.08 ms (926K/s) | 988 µs (1.01M/s) | 1.1x |
+| 1K events, 10 temporal correlations | 489 µs (2.04M/s) | 502 µs (1.99M/s) | ~1x |
+| 100K events, 50 detection + 10 correlation rules | 293 ms (342K/s) | 176 ms (568K/s) | **1.7x** |
+| Batch 10K events (sequential) | -- | 18.1 ms (552K/s) | -- |
+| Batch 10K events (process_batch) | -- | 19.2 ms (521K/s) | -- |
+| 50K unique group keys (state pressure) | 32.9 ms (1.52M/s) | 38.4 ms (1.30M/s) | ~1x |
 
 ```bash
 cargo bench --bench eval
