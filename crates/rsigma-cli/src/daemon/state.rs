@@ -94,16 +94,23 @@ impl DaemonEngine {
         }
     }
 
-    pub fn process_event(&mut self, event: &Event) -> ProcessResult {
+    /// Process a batch of events using parallel detection + sequential correlation.
+    ///
+    /// Delegates to `Engine::evaluate_batch` or `CorrelationEngine::process_batch`
+    /// depending on whether correlation rules are loaded.
+    pub fn process_batch(&mut self, events: &[&Event]) -> Vec<ProcessResult> {
         match &mut self.engine {
             EngineVariant::DetectionOnly(engine) => {
-                let detections = engine.evaluate(event);
-                ProcessResult {
-                    detections,
-                    correlations: vec![],
-                }
+                let batch_detections = engine.evaluate_batch(events);
+                batch_detections
+                    .into_iter()
+                    .map(|detections| ProcessResult {
+                        detections,
+                        correlations: vec![],
+                    })
+                    .collect()
             }
-            EngineVariant::WithCorrelations(engine) => engine.process_event(event),
+            EngineVariant::WithCorrelations(engine) => engine.process_batch(events),
         }
     }
 
