@@ -148,6 +148,64 @@ fn bench_correlation_throughput(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: batch correlation (process_batch vs sequential process_event_at)
+// ---------------------------------------------------------------------------
+
+fn bench_correlation_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("correlation_batch");
+    group.sample_size(10);
+
+    let yaml = datagen::gen_rules_with_event_count_correlations(50, 10);
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+
+    let n_events = 10_000;
+    let event_values = datagen::gen_event_values(n_events);
+    let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+
+    group.throughput(criterion::Throughput::Elements(n_events as u64));
+
+    // Sequential: loop calling process_event_at per event
+    group.bench_with_input(
+        BenchmarkId::new("mode", "sequential"),
+        &events,
+        |b, events| {
+            b.iter_with_setup(
+                || {
+                    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                    engine.add_collection(&collection).unwrap();
+                    engine
+                },
+                |mut engine| {
+                    let base_ts = 1_000_000i64;
+                    for (i, event) in events.iter().enumerate() {
+                        let result = engine.process_event_at(black_box(event), base_ts + i as i64);
+                        black_box(&result);
+                    }
+                },
+            );
+        },
+    );
+
+    // Batch: process_batch (parallel detection + sequential correlation)
+    group.bench_with_input(BenchmarkId::new("mode", "batch"), &events, |b, events| {
+        b.iter_with_setup(
+            || {
+                let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                engine.add_collection(&collection).unwrap();
+                engine
+            },
+            |mut engine| {
+                let refs: Vec<&Event> = events.iter().collect();
+                let results = engine.process_batch(black_box(&refs));
+                black_box(results);
+            },
+        );
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: state pressure (many unique group keys)
 // ---------------------------------------------------------------------------
 
@@ -236,6 +294,7 @@ criterion_group!(
     bench_correlation_event_count,
     bench_correlation_temporal,
     bench_correlation_throughput,
+    bench_correlation_batch,
     bench_correlation_state_pressure,
 );
 criterion_main!(benches);

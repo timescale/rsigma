@@ -12,7 +12,7 @@ use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use super::engine::{SharedEngine, process_line};
+use super::engine::{SharedEngine, process_batch_lines};
 use super::health::HealthState;
 use super::metrics::Metrics;
 use super::reload;
@@ -324,10 +324,8 @@ pub async fn run_daemon(config: DaemonConfig) {
 
             let results: Vec<ProcessResult> = {
                 let mut engine = engine_shared.lock().unwrap();
-                let results: Vec<_> = batch
-                    .iter()
-                    .map(|line| process_line(&mut engine, line, &engine_metrics, &event_filter))
-                    .collect();
+                let results =
+                    process_batch_lines(&mut engine, &batch, &engine_metrics, &event_filter);
                 let stats = engine.stats();
                 engine_metrics
                     .correlation_state_entries

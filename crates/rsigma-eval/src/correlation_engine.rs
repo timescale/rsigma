@@ -573,13 +573,14 @@ impl CorrelationEngine {
     /// - `WallClock`: use `Utc::now()` (good for real-time streaming)
     /// - `Skip`: return detections only, skip correlation state updates
     pub fn process_event(&mut self, event: &Event) -> ProcessResult {
+        let all_detections = self.engine.evaluate(event);
+
         let ts = match self.extract_event_timestamp(event) {
             Some(ts) => ts,
             None => match self.config.timestamp_fallback {
                 TimestampFallback::WallClock => Utc::now().timestamp(),
                 TimestampFallback::Skip => {
                     // Still run detection (stateless), but skip correlation
-                    let all_detections = self.engine.evaluate(event);
                     let detections = self.filter_detections(all_detections);
                     return ProcessResult {
                         detections,
@@ -588,7 +589,7 @@ impl CorrelationEngine {
                 }
             },
         };
-        self.process_event_at(event, ts)
+        self.process_with_detections(event, all_detections, ts)
     }
 
     /// Process an event with an explicit Unix epoch timestamp (seconds).
@@ -596,30 +597,116 @@ impl CorrelationEngine {
     /// The timestamp is clamped to `[0, i64::MAX / 2]` to prevent overflow
     /// when adding timespan durations internally.
     pub fn process_event_at(&mut self, event: &Event, timestamp_secs: i64) -> ProcessResult {
+        let all_detections = self.engine.evaluate(event);
+        self.process_with_detections(event, all_detections, timestamp_secs)
+    }
+
+    /// Process an event with pre-computed detection results.
+    ///
+    /// Enables external parallelism: callers can run detection (via
+    /// [`evaluate`](Self::evaluate)) in parallel, then feed results here
+    /// sequentially for stateful correlation.
+    pub fn process_with_detections(
+        &mut self,
+        event: &Event,
+        all_detections: Vec<MatchResult>,
+        timestamp_secs: i64,
+    ) -> ProcessResult {
         let timestamp_secs = timestamp_secs.clamp(0, i64::MAX / 2);
 
-        // Step 1: Memory management — evict before adding new state to enforce limit
+        // Memory management — evict before adding new state to enforce limit
         if self.state.len() >= self.config.max_state_entries {
             self.evict_all(timestamp_secs);
         }
 
-        // Step 2: Run stateless detection
-        let all_detections = self.engine.evaluate(event);
-
-        // Step 3: Feed detection matches into correlations
+        // Feed detection matches into correlations
         let mut correlations = Vec::new();
         self.feed_detections(event, &all_detections, timestamp_secs, &mut correlations);
 
-        // Step 4: Chain — correlation results may trigger higher-level correlations
+        // Chain — correlation results may trigger higher-level correlations
         self.chain_correlations(&correlations, timestamp_secs);
 
-        // Step 5: Filter detections by generate flag
+        // Filter detections by generate flag
         let detections = self.filter_detections(all_detections);
 
         ProcessResult {
             detections,
             correlations,
         }
+    }
+
+    /// Run stateless detection only (no correlation), delegating to the inner engine.
+    ///
+    /// Takes `&self` so it can be called concurrently from multiple threads
+    /// (e.g. via `rayon::par_iter`) while the mutable correlation phase runs
+    /// sequentially afterwards.
+    pub fn evaluate(&self, event: &Event) -> Vec<MatchResult> {
+        self.engine.evaluate(event)
+    }
+
+    /// Process a batch of events: parallel detection, then sequential correlation.
+    ///
+    /// When the `parallel` feature is enabled, the stateless detection phase runs
+    /// concurrently via rayon. Timestamp extraction also runs in the parallel
+    /// phase (it borrows `&self.config` immutably). After `collect()` releases the
+    /// immutable borrows, each event's pre-computed detections are fed into the
+    /// stateful correlation engine sequentially.
+    pub fn process_batch<'a>(&mut self, events: &[&'a Event<'a>]) -> Vec<ProcessResult> {
+        // Borrow split: take immutable refs to fields needed for the parallel phase.
+        // These are released by collect() before the sequential &mut self phase.
+        let engine = &self.engine;
+        let ts_fields = &self.config.timestamp_fields;
+
+        let batch_results: Vec<(Vec<MatchResult>, Option<i64>)> = {
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                events
+                    .par_iter()
+                    .map(|e| {
+                        let detections = engine.evaluate(e);
+                        let ts = extract_event_ts(e, ts_fields);
+                        (detections, ts)
+                    })
+                    .collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                events
+                    .iter()
+                    .map(|e| {
+                        let detections = engine.evaluate(e);
+                        let ts = extract_event_ts(e, ts_fields);
+                        (detections, ts)
+                    })
+                    .collect()
+            }
+        };
+
+        // Sequential correlation phase
+        let mut results = Vec::with_capacity(events.len());
+        for ((detections, ts_opt), event) in batch_results.into_iter().zip(events) {
+            match ts_opt {
+                Some(ts) => {
+                    results.push(self.process_with_detections(event, detections, ts));
+                }
+                None => match self.config.timestamp_fallback {
+                    TimestampFallback::WallClock => {
+                        let ts = Utc::now().timestamp();
+                        results.push(self.process_with_detections(event, detections, ts));
+                    }
+                    TimestampFallback::Skip => {
+                        // Still return detection results, but skip correlation
+                        let detections = self.filter_detections(detections);
+                        results.push(ProcessResult {
+                            detections,
+                            correlations: Vec::new(),
+                        });
+                    }
+                },
+            }
+        }
+        results
     }
 
     /// Filter detections by the `generate` flag / `emit_detections` config.
@@ -1279,6 +1366,21 @@ impl Default for CorrelationEngine {
 // =============================================================================
 // Timestamp parsing helpers
 // =============================================================================
+
+/// Extract a timestamp from an event using the given field names.
+///
+/// Standalone version of `CorrelationEngine::extract_event_timestamp` for use
+/// in contexts where borrowing `&self` is not possible (e.g. rayon closures).
+fn extract_event_ts(event: &Event, timestamp_fields: &[String]) -> Option<i64> {
+    for field_name in timestamp_fields {
+        if let Some(val) = event.get_field(field_name)
+            && let Some(ts) = parse_timestamp_value(val)
+        {
+            return Some(ts);
+        }
+    }
+    None
+}
 
 /// Parse a JSON value as a Unix epoch timestamp in seconds.
 fn parse_timestamp_value(val: &serde_json::Value) -> Option<i64> {
@@ -4061,5 +4163,126 @@ level: high
             engine.correlations[0].action,
             Some(CorrelationAction::Reset)
         );
+    }
+
+    #[test]
+    fn test_process_with_detections_matches_process_event_at() {
+        let yaml = r#"
+title: Login Failure
+id: login-fail
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_failure
+    condition: selection
+---
+title: Brute Force
+correlation:
+    type: event_count
+    rules:
+        - login-fail
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+
+        // Run with process_event_at
+        let mut engine1 = CorrelationEngine::new(CorrelationConfig::default());
+        engine1.add_collection(&collection).unwrap();
+
+        let events: Vec<serde_json::Value> = (0..5)
+            .map(|i| json!({"EventType": "login_failure", "User": "admin", "@timestamp": format!("2025-01-01T00:00:0{}Z", i + 1)}))
+            .collect();
+
+        let results1: Vec<ProcessResult> = events
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let e = Event::from_value(v);
+                engine1.process_event_at(&e, 1000 + i as i64)
+            })
+            .collect();
+
+        // Run with evaluate + process_with_detections
+        let mut engine2 = CorrelationEngine::new(CorrelationConfig::default());
+        engine2.add_collection(&collection).unwrap();
+
+        let results2: Vec<ProcessResult> = events
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let e = Event::from_value(v);
+                let detections = engine2.evaluate(&e);
+                engine2.process_with_detections(&e, detections, 1000 + i as i64)
+            })
+            .collect();
+
+        // Same number of results
+        assert_eq!(results1.len(), results2.len());
+        for (r1, r2) in results1.iter().zip(results2.iter()) {
+            assert_eq!(r1.detections.len(), r2.detections.len());
+            assert_eq!(r1.correlations.len(), r2.correlations.len());
+        }
+    }
+
+    #[test]
+    fn test_process_batch_matches_sequential() {
+        let yaml = r#"
+title: Login Failure
+id: login-fail-batch
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_failure
+    condition: selection
+---
+title: Brute Force Batch
+correlation:
+    type: event_count
+    rules:
+        - login-fail-batch
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+
+        let event_values: Vec<serde_json::Value> = (0..5)
+            .map(|i| json!({"EventType": "login_failure", "User": "admin", "@timestamp": format!("2025-01-01T00:00:0{}Z", i + 1)}))
+            .collect();
+
+        // Sequential
+        let mut engine1 = CorrelationEngine::new(CorrelationConfig::default());
+        engine1.add_collection(&collection).unwrap();
+        let sequential: Vec<ProcessResult> = event_values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let e = Event::from_value(v);
+                engine1.process_event_at(&e, 1000 + i as i64)
+            })
+            .collect();
+
+        // Batch
+        let mut engine2 = CorrelationEngine::new(CorrelationConfig::default());
+        engine2.add_collection(&collection).unwrap();
+        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let refs: Vec<&Event> = events.iter().collect();
+        let batch = engine2.process_batch(&refs);
+
+        assert_eq!(sequential.len(), batch.len());
+        for (seq, bat) in sequential.iter().zip(batch.iter()) {
+            assert_eq!(seq.detections.len(), bat.detections.len());
+            assert_eq!(seq.correlations.len(), bat.correlations.len());
+        }
     }
 }

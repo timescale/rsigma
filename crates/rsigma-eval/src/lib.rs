@@ -96,6 +96,7 @@ pub mod event;
 pub mod matcher;
 pub mod pipeline;
 pub mod result;
+pub(crate) mod rule_index;
 
 // Re-export the most commonly used types and functions at crate root
 pub use compiler::{

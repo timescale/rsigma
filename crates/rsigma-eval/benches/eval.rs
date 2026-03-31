@@ -19,7 +19,6 @@ fn bench_compile_rules(c: &mut Criterion) {
     for n in [100, 500, 1000, 5000] {
         let yaml = datagen::gen_n_rules(n);
         let collection = parse_sigma_yaml(&yaml).unwrap();
-
         group.bench_with_input(
             BenchmarkId::new("count", n),
             &collection,
@@ -137,6 +136,55 @@ fn bench_eval_wildcard_heavy(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: batch parallel evaluation vs sequential
+// ---------------------------------------------------------------------------
+
+fn bench_eval_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eval_batch");
+    group.sample_size(20);
+
+    for (n_rules, n_events) in [(100, 1_000), (1000, 1_000), (5000, 1_000)] {
+        let yaml = datagen::gen_n_rules(n_rules);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        let event_values = datagen::gen_event_values(n_events);
+        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+
+        group.throughput(criterion::Throughput::Elements(n_events as u64));
+
+        // Sequential: loop calling evaluate() per event
+        let label = format!("{n_rules}r_seq");
+        group.bench_with_input(
+            BenchmarkId::new("sequential", &label),
+            &events,
+            |b, events| {
+                b.iter(|| {
+                    let mut total = 0usize;
+                    for event in events {
+                        total += engine.evaluate(black_box(event)).len();
+                    }
+                    black_box(total);
+                });
+            },
+        );
+
+        // Batch: evaluate_batch() (parallel when feature enabled)
+        let label = format!("{n_rules}r_batch");
+        group.bench_with_input(BenchmarkId::new("batch", &label), &events, |b, events| {
+            b.iter(|| {
+                let refs: Vec<&Event> = events.iter().collect();
+                let results = engine.evaluate_batch(black_box(&refs));
+                black_box(results);
+            });
+        });
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: regex-heavy rules
 // ---------------------------------------------------------------------------
 
@@ -179,6 +227,7 @@ criterion_group!(
     bench_compile_rules,
     bench_eval_single_event,
     bench_eval_throughput,
+    bench_eval_batch,
     bench_eval_wildcard_heavy,
     bench_eval_regex_heavy,
 );

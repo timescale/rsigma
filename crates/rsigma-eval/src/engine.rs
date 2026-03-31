@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::event::Event;
 use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::MatchResult;
+use crate::rule_index::RuleIndex;
 
 /// The main rule evaluation engine.
 ///
@@ -55,6 +56,9 @@ pub struct Engine {
     /// Monotonic counter used to namespace injected filter detections,
     /// preventing key collisions when multiple filters share detection names.
     filter_counter: usize,
+    /// Inverted index mapping `(field, exact_value)` to candidate rule indices.
+    /// Rebuilt after every rule mutation (add, filter).
+    rule_index: RuleIndex,
 }
 
 impl Engine {
@@ -65,6 +69,7 @@ impl Engine {
             pipelines: Vec::new(),
             include_event: false,
             filter_counter: 0,
+            rule_index: RuleIndex::empty(),
         }
     }
 
@@ -75,6 +80,7 @@ impl Engine {
             pipelines: vec![pipeline],
             include_event: false,
             filter_counter: 0,
+            rule_index: RuleIndex::empty(),
         }
     }
 
@@ -96,6 +102,7 @@ impl Engine {
     /// Add a single parsed Sigma rule.
     ///
     /// If pipelines are set, the rule is cloned and transformed before compilation.
+    /// The inverted index is rebuilt after adding the rule.
     pub fn add_rule(&mut self, rule: &SigmaRule) -> Result<()> {
         let compiled = if self.pipelines.is_empty() {
             compile_rule(rule)?
@@ -105,6 +112,7 @@ impl Engine {
             compile_rule(&transformed)?
         };
         self.rules.push(compiled);
+        self.rebuild_index();
         Ok(())
     }
 
@@ -112,21 +120,30 @@ impl Engine {
     ///
     /// Filter rules modify referenced detection rules by appending exclusion
     /// conditions. Correlation rules are handled by `CorrelationEngine`.
+    /// The inverted index is rebuilt once after all rules and filters are loaded.
     pub fn add_collection(&mut self, collection: &SigmaCollection) -> Result<()> {
         for rule in &collection.rules {
-            self.add_rule(rule)?;
+            let compiled = if self.pipelines.is_empty() {
+                compile_rule(rule)?
+            } else {
+                let mut transformed = rule.clone();
+                apply_pipelines(&self.pipelines, &mut transformed)?;
+                compile_rule(&transformed)?
+            };
+            self.rules.push(compiled);
         }
-        // Apply filter rules after all detection rules are loaded
         for filter in &collection.filters {
-            self.apply_filter(filter)?;
+            self.apply_filter_no_rebuild(filter)?;
         }
+        self.rebuild_index();
         Ok(())
     }
 
     /// Add all detection rules from a collection, applying the given pipelines.
     ///
     /// This is a convenience method that temporarily sets pipelines, adds the
-    /// collection, then clears them.
+    /// collection, then clears them. The inverted index is rebuilt once after
+    /// all rules and filters are loaded.
     pub fn add_collection_with_pipelines(
         &mut self,
         collection: &SigmaCollection,
@@ -140,11 +157,16 @@ impl Engine {
         result
     }
 
-    /// Apply a filter rule to all referenced detection rules.
-    ///
-    /// For each detection in the filter, compile it and inject it into matching
-    /// rules as `AND NOT filter_condition`.
+    /// Apply a filter rule to all referenced detection rules and rebuild the index.
     pub fn apply_filter(&mut self, filter: &FilterRule) -> Result<()> {
+        self.apply_filter_no_rebuild(filter)?;
+        self.rebuild_index();
+        Ok(())
+    }
+
+    /// Apply a filter rule without rebuilding the index.
+    /// Used internally when multiple mutations are batched.
+    fn apply_filter_no_rebuild(&mut self, filter: &FilterRule) -> Result<()> {
         // Compile filter detections
         let mut filter_detections = Vec::new();
         for (name, detection) in &filter.detection.named {
@@ -222,15 +244,22 @@ impl Engine {
         Ok(())
     }
 
-    /// Add a pre-compiled rule directly.
+    /// Add a pre-compiled rule directly and rebuild the index.
     pub fn add_compiled_rule(&mut self, rule: CompiledRule) {
         self.rules.push(rule);
+        self.rebuild_index();
     }
 
-    /// Evaluate an event against all rules, returning matches.
+    /// Rebuild the inverted index from the current rule set.
+    fn rebuild_index(&mut self) {
+        self.rule_index = RuleIndex::build(&self.rules);
+    }
+
+    /// Evaluate an event against candidate rules using the inverted index.
     pub fn evaluate(&self, event: &Event) -> Vec<MatchResult> {
         let mut results = Vec::new();
-        for rule in &self.rules {
+        for idx in self.rule_index.candidates(event) {
+            let rule = &self.rules[idx];
             if let Some(mut m) = evaluate_rule(rule, event) {
                 if self.include_event && m.event.is_none() {
                     m.event = Some(event.as_value().clone());
@@ -241,19 +270,19 @@ impl Engine {
         results
     }
 
-    /// Evaluate an event against rules matching the given logsource.
+    /// Evaluate an event against candidate rules matching the given logsource.
     ///
-    /// Only rules whose logsource is compatible with `event_logsource` are
-    /// evaluated. A rule's logsource is compatible if every field it specifies
-    /// (category, product, service) matches the corresponding field in the
-    /// event logsource.
+    /// Uses the inverted index for candidate pre-filtering, then applies the
+    /// logsource constraint. Only rules whose logsource is compatible with
+    /// `event_logsource` are evaluated.
     pub fn evaluate_with_logsource(
         &self,
         event: &Event,
         event_logsource: &LogSource,
     ) -> Vec<MatchResult> {
         let mut results = Vec::new();
-        for rule in &self.rules {
+        for idx in self.rule_index.candidates(event) {
+            let rule = &self.rules[idx];
             if logsource_matches(&rule.logsource, event_logsource)
                 && let Some(mut m) = evaluate_rule(rule, event)
             {
@@ -264,6 +293,23 @@ impl Engine {
             }
         }
         results
+    }
+
+    /// Evaluate a batch of events, returning per-event match results.
+    ///
+    /// When the `parallel` feature is enabled, events are evaluated concurrently
+    /// using rayon's work-stealing thread pool. Otherwise, falls back to
+    /// sequential evaluation.
+    pub fn evaluate_batch<'a>(&self, events: &[&'a Event<'a>]) -> Vec<Vec<MatchResult>> {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            events.par_iter().map(|e| self.evaluate(e)).collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            events.iter().map(|e| self.evaluate(e)).collect()
+        }
     }
 
     /// Number of rules loaded in the engine.
@@ -1513,5 +1559,60 @@ level: low
         // State was set → prefix was applied
         let ev = json!({"winlog.CommandLine": "testing"});
         assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+    }
+
+    #[test]
+    fn test_evaluate_batch_matches_sequential() {
+        let yaml = r#"
+title: Login
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: 'login'
+    condition: selection
+---
+title: Process Create
+logsource:
+    product: windows
+detection:
+    selection:
+        EventType: 'process_create'
+    condition: selection
+---
+title: Keyword
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        let vals = [
+            json!({"EventType": "login", "User": "admin"}),
+            json!({"EventType": "process_create", "CommandLine": "whoami"}),
+            json!({"EventType": "file_create"}),
+            json!({"CommandLine": "whoami /all"}),
+        ];
+        let events: Vec<Event> = vals.iter().map(Event::from_value).collect();
+
+        // Sequential
+        let sequential: Vec<Vec<_>> = events.iter().map(|e| engine.evaluate(e)).collect();
+
+        // Batch
+        let refs: Vec<&Event> = events.iter().collect();
+        let batch = engine.evaluate_batch(&refs);
+
+        assert_eq!(sequential.len(), batch.len());
+        for (seq, bat) in sequential.iter().zip(batch.iter()) {
+            assert_eq!(seq.len(), bat.len());
+            for (s, b) in seq.iter().zip(bat.iter()) {
+                assert_eq!(s.rule_title, b.rule_title);
+            }
+        }
     }
 }
