@@ -2660,6 +2660,7 @@ dependencies = [
  "log",
  "proptest",
  "rand 0.9.2",
+ "rayon",
  "regex",
  "rsigma-parser",
  "serde",

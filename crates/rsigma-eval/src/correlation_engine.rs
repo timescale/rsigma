@@ -644,6 +644,71 @@ impl CorrelationEngine {
         self.engine.evaluate(event)
     }
 
+    /// Process a batch of events: parallel detection, then sequential correlation.
+    ///
+    /// When the `parallel` feature is enabled, the stateless detection phase runs
+    /// concurrently via rayon. Timestamp extraction also runs in the parallel
+    /// phase (it borrows `&self.config` immutably). After `collect()` releases the
+    /// immutable borrows, each event's pre-computed detections are fed into the
+    /// stateful correlation engine sequentially.
+    pub fn process_batch<'a>(&mut self, events: &[&'a Event<'a>]) -> Vec<ProcessResult> {
+        // Borrow split: take immutable refs to fields needed for the parallel phase.
+        // These are released by collect() before the sequential &mut self phase.
+        let engine = &self.engine;
+        let ts_fields = &self.config.timestamp_fields;
+
+        let batch_results: Vec<(Vec<MatchResult>, Option<i64>)> = {
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                events
+                    .par_iter()
+                    .map(|e| {
+                        let detections = engine.evaluate(e);
+                        let ts = extract_event_ts(e, ts_fields);
+                        (detections, ts)
+                    })
+                    .collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                events
+                    .iter()
+                    .map(|e| {
+                        let detections = engine.evaluate(e);
+                        let ts = extract_event_ts(e, ts_fields);
+                        (detections, ts)
+                    })
+                    .collect()
+            }
+        };
+
+        // Sequential correlation phase
+        let mut results = Vec::with_capacity(events.len());
+        for ((detections, ts_opt), event) in batch_results.into_iter().zip(events) {
+            match ts_opt {
+                Some(ts) => {
+                    results.push(self.process_with_detections(event, detections, ts));
+                }
+                None => match self.config.timestamp_fallback {
+                    TimestampFallback::WallClock => {
+                        let ts = Utc::now().timestamp();
+                        results.push(self.process_with_detections(event, detections, ts));
+                    }
+                    TimestampFallback::Skip => {
+                        // Still return detection results, but skip correlation
+                        let detections = self.filter_detections(detections);
+                        results.push(ProcessResult {
+                            detections,
+                            correlations: Vec::new(),
+                        });
+                    }
+                },
+            }
+        }
+        results
+    }
+
     /// Filter detections by the `generate` flag / `emit_detections` config.
     ///
     /// If `emit_detections` is false and some rules are correlation-only,
@@ -1301,6 +1366,21 @@ impl Default for CorrelationEngine {
 // =============================================================================
 // Timestamp parsing helpers
 // =============================================================================
+
+/// Extract a timestamp from an event using the given field names.
+///
+/// Standalone version of `CorrelationEngine::extract_event_timestamp` for use
+/// in contexts where borrowing `&self` is not possible (e.g. rayon closures).
+fn extract_event_ts(event: &Event, timestamp_fields: &[String]) -> Option<i64> {
+    for field_name in timestamp_fields {
+        if let Some(val) = event.get_field(field_name)
+            && let Some(ts) = parse_timestamp_value(val)
+        {
+            return Some(ts);
+        }
+    }
+    None
+}
 
 /// Parse a JSON value as a Unix epoch timestamp in seconds.
 fn parse_timestamp_value(val: &serde_json::Value) -> Option<i64> {

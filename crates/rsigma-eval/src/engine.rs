@@ -295,6 +295,23 @@ impl Engine {
         results
     }
 
+    /// Evaluate a batch of events, returning per-event match results.
+    ///
+    /// When the `parallel` feature is enabled, events are evaluated concurrently
+    /// using rayon's work-stealing thread pool. Otherwise, falls back to
+    /// sequential evaluation.
+    pub fn evaluate_batch<'a>(&self, events: &[&'a Event<'a>]) -> Vec<Vec<MatchResult>> {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            events.par_iter().map(|e| self.evaluate(e)).collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            events.iter().map(|e| self.evaluate(e)).collect()
+        }
+    }
+
     /// Number of rules loaded in the engine.
     pub fn rule_count(&self) -> usize {
         self.rules.len()

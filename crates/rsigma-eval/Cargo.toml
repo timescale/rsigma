@@ -9,6 +9,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+parallel = ["rayon"]
+
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.5.0" }
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +24,7 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1"
 log = "0.4"
+rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
