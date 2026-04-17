@@ -239,7 +239,16 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
     // Custom attributes (rsigma.* extension keys) — mirrors pySigma's
     // `SigmaRule.custom_attributes`. Parsed from the top-level `custom_attributes`
     // mapping; pipeline transformations may also populate this field.
-    let custom_attributes = parse_custom_attributes(m);
+    let custom_attributes: HashMap<String, String> = m
+        .get(val_key("custom_attributes"))
+        .and_then(|v| v.as_mapping())
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Collect custom rule attributes: any top-level key not in the standard schema
     let standard_rule_keys: &[&str] = &[
@@ -300,21 +309,6 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         custom_attributes,
         custom_rule_attributes,
     })
-}
-
-/// Parse the top-level `custom_attributes:` mapping (string → string).
-///
-/// Non-mapping values, non-string keys, and non-string values are ignored.
-/// Mirrors the behavior described on `SigmaRule.custom_attributes` /
-/// `CorrelationRule.custom_attributes`.
-fn parse_custom_attributes(m: &serde_yaml::Mapping) -> HashMap<String, String> {
-    match m.get(val_key("custom_attributes")) {
-        Some(Value::Mapping(attrs)) => attrs
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
-            .collect(),
-        _ => HashMap::new(),
-    }
 }
 
 // =============================================================================
@@ -614,7 +608,16 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     let aliases = parse_correlation_aliases(corr);
 
     // Custom attributes (rsigma.* extension keys)
-    let custom_attributes = parse_custom_attributes(m);
+    let custom_attributes: HashMap<String, String> = m
+        .get(val_key("custom_attributes"))
+        .and_then(|v| v.as_mapping())
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Collect custom correlation rule attributes: any top-level key not in the standard schema
     // Top-level keys from the Sigma correlation-rules JSON schema plus keys this
