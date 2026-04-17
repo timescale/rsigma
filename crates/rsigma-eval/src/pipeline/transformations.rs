@@ -849,10 +849,7 @@ fn expand_placeholder_string(s: &str, state: &PipelineState, wildcard: bool) -> 
     let mut has_unresolved = false;
 
     // Simple regex-free pattern matching for %name%
-    loop {
-        let Some(start) = result.find('%') else {
-            break;
-        };
+    while let Some(start) = result.find('%') {
         let rest = &result[start + 1..];
         let Some(end) = rest.find('%') else {
             break;
