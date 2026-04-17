@@ -246,12 +246,8 @@ pub struct CorrelationResult {
     /// Custom rule attributes from the original Sigma correlation rule YAML.
     /// Contains any non-standard top-level fields from the rule definition.
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
-    #[serde(skip_serializing_if = "arc_map_is_empty")]
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub custom_rule_attributes: Arc<HashMap<String, serde_json::Value>>,
-}
-
-fn arc_map_is_empty(map: &Arc<HashMap<String, serde_json::Value>>) -> bool {
-    map.is_empty()
 }
 
 // =============================================================================
