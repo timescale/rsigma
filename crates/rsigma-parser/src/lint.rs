@@ -598,7 +598,13 @@ const KNOWN_KEYS_DETECTION: &[&str] = &[
 ];
 
 /// Extra top-level keys valid for correlation rules.
-const KNOWN_KEYS_CORRELATION: &[&str] = &["correlation", "level", "generate"];
+const KNOWN_KEYS_CORRELATION: &[&str] = &[
+    "correlation",
+    "level",
+    "generate",
+    "falsepositives",
+    "custom_attributes",
+];
 
 /// Extra top-level keys valid for filter rules.
 const KNOWN_KEYS_FILTER: &[&str] = &["logsource", "filter"];
@@ -1414,15 +1420,20 @@ fn lint_correlation_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning
         }
     }
 
-    // ── generate ─────────────────────────────────────────────────────────
-    if let Some(gen_val) = corr.get(key("generate"))
-        && !gen_val.is_bool()
-    {
-        warnings.push(err(
-            LintRule::GenerateNotBoolean,
-            "'generate' must be a boolean (true/false)",
-            "/correlation/generate",
-        ));
+    // ── generate (document root per schema; nested under `correlation` is legacy) ──
+    for (path, val) in [
+        ("/generate", m.get(key("generate"))),
+        ("/correlation/generate", corr.get(key("generate"))),
+    ] {
+        if let Some(gen_val) = val
+            && !gen_val.is_bool()
+        {
+            warnings.push(err(
+                LintRule::GenerateNotBoolean,
+                "'generate' must be a boolean (true/false)",
+                path,
+            ));
+        }
     }
 }
 

@@ -561,7 +561,9 @@ pub struct CorrelationRule {
     pub date: Option<String>,
     pub modified: Option<String>,
     pub references: Vec<String>,
+    pub taxonomy: Option<String>,
     pub tags: Vec<String>,
+    pub falsepositives: Vec<String>,
     pub level: Option<Level>,
 
     // Correlation-specific fields

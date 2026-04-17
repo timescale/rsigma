@@ -578,10 +578,12 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         .ok_or_else(|| SigmaParserError::InvalidCorrelation("Missing timeframe".into()))?;
     let timespan = Timespan::parse(timespan_str)?;
 
-    // Generate flag
-    let generate = corr
+    // Generate flag - Sigma correlation schema defines `generate` at document root.
+    // Nested `correlation.generate` is accepted for backward compatibility.
+    let generate = m
         .get(val_key("generate"))
         .and_then(|v| v.as_bool())
+        .or_else(|| corr.get(val_key("generate")).and_then(|v| v.as_bool()))
         .unwrap_or(false);
 
     // Condition
@@ -602,21 +604,25 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     };
 
     // Collect custom correlation rule attributes: any top-level key not in the standard schema
+    // Top-level keys from the Sigma correlation-rules JSON schema plus keys this
+    // parser reads from the document root (including common extensions).
     let standard_correlation_keys: &[&str] = &[
-        "title",
-        "id",
-        "status",
-        "description",
         "author",
-        "references",
-        "date",
-        "modified",
-        "taxonomy",
         "correlation",
-        "falsepositives",
-        "level",
-        "generate",
         "custom_attributes",
+        "date",
+        "description",
+        "falsepositives",
+        "generate",
+        "id",
+        "level",
+        "modified",
+        "name",
+        "references",
+        "status",
+        "tags",
+        "taxonomy",
+        "title",
     ];
 
     let custom_rule_attributes: HashMap<String, Value> = m
@@ -641,7 +647,9 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
         references: get_str_list(m, "references"),
+        taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
         tags: get_str_list(m, "tags"),
+        falsepositives: get_str_list(m, "falsepositives"),
         level: get_str(m, "level").and_then(|s| s.parse().ok()),
         correlation_type,
         rules,
@@ -2016,6 +2024,13 @@ detection:
     condition: selection
 ---
 title: Many Logins
+name: reserved_name
+tags:
+    - test.tag
+taxonomy: test.taxonomy
+falsepositives:
+    - benign activity
+generate: false
 my_custom_correlation_field: custom_value
 priority: high_priority
 correlation:
@@ -2048,5 +2063,68 @@ level: high
         assert!(!corr.custom_rule_attributes.contains_key("correlation"));
         assert!(!corr.custom_rule_attributes.contains_key("level"));
         assert!(!corr.custom_rule_attributes.contains_key("id"));
+        assert!(!corr.custom_rule_attributes.contains_key("name"));
+        assert!(!corr.custom_rule_attributes.contains_key("tags"));
+        assert!(!corr.custom_rule_attributes.contains_key("taxonomy"));
+        assert!(!corr.custom_rule_attributes.contains_key("falsepositives"));
+        assert!(!corr.custom_rule_attributes.contains_key("generate"));
+    }
+
+    #[test]
+    fn test_parse_correlation_rule_schema_top_level_metadata() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+name: bucket_enum_corr
+tags:
+    - attack.collection
+taxonomy: enterprise_attack
+falsepositives:
+    - Scheduled backups
+generate: true
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+level: high
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert_eq!(collection.correlations.len(), 1);
+        let corr = &collection.correlations[0];
+        assert_eq!(corr.name.as_deref(), Some("bucket_enum_corr"));
+        assert_eq!(corr.tags, vec!["attack.collection"]);
+        assert_eq!(corr.taxonomy.as_deref(), Some("enterprise_attack"));
+        assert_eq!(corr.falsepositives, vec!["Scheduled backups"]);
+        assert!(corr.generate);
+    }
+
+    #[test]
+    fn test_parse_correlation_generate_nested_fallback() {
+        let yaml = r#"
+title: Nested Gen
+correlation:
+    type: temporal
+    rules:
+        - a
+    group-by:
+        - x
+    timespan: 1m
+    generate: true
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(collection.correlations[0].generate);
     }
 }
