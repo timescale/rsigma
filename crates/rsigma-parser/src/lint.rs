@@ -100,6 +100,7 @@ pub enum LintRule {
     ScopeTooShort,
     LogsourceValueNotLowercase,
     ConditionReferencesUnknown,
+    DeprecatedAggregationSyntax,
 
     // ── Correlation rules ────────────────────────────────────────────────
     MissingCorrelation,
@@ -176,6 +177,7 @@ impl fmt::Display for LintRule {
             LintRule::ScopeTooShort => "scope_too_short",
             LintRule::LogsourceValueNotLowercase => "logsource_value_not_lowercase",
             LintRule::ConditionReferencesUnknown => "condition_references_unknown",
+            LintRule::DeprecatedAggregationSyntax => "deprecated_aggregation_syntax",
             LintRule::MissingCorrelation => "missing_correlation",
             LintRule::MissingCorrelationType => "missing_correlation_type",
             LintRule::InvalidCorrelationType => "invalid_correlation_type",
@@ -908,16 +910,24 @@ fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWarning>)
                     "/detection/condition",
                 ));
             } else if let Some(cond_str) = get_str(det, "condition") {
-                // Check that condition references existing identifiers
-                for ident in extract_condition_identifiers(cond_str) {
-                    if !det_keys.contains(ident.as_str()) {
-                        warnings.push(err(
-                            LintRule::ConditionReferencesUnknown,
-                            format!(
-                                "condition references '{ident}' but no such detection identifier exists"
-                            ),
-                            "/detection/condition",
-                        ));
+                if has_deprecated_aggregation(cond_str) {
+                    warnings.push(warning(
+                        LintRule::DeprecatedAggregationSyntax,
+                        "condition uses deprecated Sigma v1.x aggregation syntax \
+                         (| count/min/max/avg/sum/near); use a correlation rule instead",
+                        "/detection/condition",
+                    ));
+                } else {
+                    for ident in extract_condition_identifiers(cond_str) {
+                        if !det_keys.contains(ident.as_str()) {
+                            warnings.push(err(
+                                LintRule::ConditionReferencesUnknown,
+                                format!(
+                                    "condition references '{ident}' but no such detection identifier exists"
+                                ),
+                                "/detection/condition",
+                            ));
+                        }
                     }
                 }
             }
@@ -1158,6 +1168,26 @@ fn extract_condition_identifiers(condition: &str) -> Vec<String> {
         .filter(|s| !s.contains('*'))
         .map(|s| s.to_string())
         .collect()
+}
+
+/// Detect deprecated Sigma v1.x pipe-aggregation syntax in a condition string.
+///
+/// Patterns like `selection | count(User) by SourceIP > 5` use a pipe followed
+/// by an aggregation keyword. These were replaced by correlation rules in v2.x.
+fn has_deprecated_aggregation(condition: &str) -> bool {
+    let pipe_pos = match condition.find('|') {
+        Some(p) => p,
+        None => return false,
+    };
+    let after_pipe = condition[pipe_pos + 1..].trim_start();
+    let agg_keyword = after_pipe
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .next()
+        .unwrap_or("");
+    matches!(
+        agg_keyword,
+        "count" | "min" | "max" | "avg" | "sum" | "near"
+    )
 }
 
 /// Checks detection logic: null in value lists, single-value |all, empty value lists.
@@ -2038,6 +2068,9 @@ pub struct LintConfig {
     pub disabled_rules: HashSet<String>,
     /// Override the default severity of a rule (e.g. `title_too_long -> Info`).
     pub severity_overrides: HashMap<String, Severity>,
+    /// Glob patterns for paths to exclude from directory linting.
+    /// Matched against relative paths from the lint root (e.g. `"config/**"`).
+    pub exclude_patterns: Vec<String>,
 }
 
 /// Raw YAML shape for `.rsigma-lint.yml`.
@@ -2047,6 +2080,8 @@ struct RawLintConfig {
     disabled_rules: Vec<String>,
     #[serde(default)]
     severity_overrides: HashMap<String, String>,
+    #[serde(default)]
+    exclude: Vec<String>,
 }
 
 impl LintConfig {
@@ -2075,6 +2110,7 @@ impl LintConfig {
         Ok(LintConfig {
             disabled_rules,
             severity_overrides,
+            exclude_patterns: raw.exclude,
         })
     }
 
@@ -2111,11 +2147,33 @@ impl LintConfig {
         for (rule, sev) in &other.severity_overrides {
             self.severity_overrides.insert(rule.clone(), *sev);
         }
+        self.exclude_patterns
+            .extend(other.exclude_patterns.iter().cloned());
     }
 
     /// Check if a rule is disabled.
     pub fn is_disabled(&self, rule: &LintRule) -> bool {
         self.disabled_rules.contains(&rule.to_string())
+    }
+
+    /// Build a compiled [`globset::GlobSet`] from the exclude patterns.
+    ///
+    /// Returns `None` if there are no patterns. Invalid patterns are silently
+    /// skipped (they will have been validated at config load time in practice).
+    pub fn build_exclude_set(&self) -> Option<globset::GlobSet> {
+        if self.exclude_patterns.is_empty() {
+            return None;
+        }
+        let mut builder = globset::GlobSetBuilder::new();
+        for pat in &self.exclude_patterns {
+            if let Ok(glob) = globset::GlobBuilder::new(pat)
+                .literal_separator(false)
+                .build()
+            {
+                builder.add(glob);
+            }
+        }
+        builder.build().ok()
     }
 }
 
@@ -2298,16 +2356,22 @@ pub fn lint_yaml_file_with_config(
 }
 
 /// Lint a directory with config-based suppression.
+///
+/// Respects `config.exclude_patterns`: glob patterns matched against paths
+/// relative to `dir` (e.g. `"config/**"` skips `<dir>/config/...`).
 pub fn lint_yaml_directory_with_config(
     dir: &Path,
     config: &LintConfig,
 ) -> crate::error::Result<Vec<FileLintResult>> {
     let mut results = Vec::new();
     let mut visited = HashSet::new();
+    let exclude_set = config.build_exclude_set();
 
     fn walk(
         dir: &Path,
+        base: &Path,
         config: &LintConfig,
+        exclude_set: &Option<globset::GlobSet>,
         results: &mut Vec<FileLintResult>,
         visited: &mut HashSet<std::path::PathBuf>,
     ) -> crate::error::Result<()> {
@@ -2324,6 +2388,14 @@ pub fn lint_yaml_directory_with_config(
 
         for entry in entries {
             let path = entry.path();
+
+            if let Some(gs) = exclude_set
+                && let Ok(rel) = path.strip_prefix(base)
+                && gs.is_match(rel)
+            {
+                continue;
+            }
+
             if path.is_dir() {
                 if path
                     .file_name()
@@ -2332,7 +2404,7 @@ pub fn lint_yaml_directory_with_config(
                 {
                     continue;
                 }
-                walk(&path, config, results, visited)?;
+                walk(&path, base, config, exclude_set, results, visited)?;
             } else if matches!(
                 path.extension().and_then(|e| e.to_str()),
                 Some("yml" | "yaml")
@@ -2355,7 +2427,7 @@ pub fn lint_yaml_directory_with_config(
         Ok(())
     }
 
-    walk(dir, config, &mut results, &mut visited)?;
+    walk(dir, dir, config, &exclude_set, &mut results, &mut visited)?;
     Ok(results)
 }
 
@@ -4242,6 +4314,7 @@ detection:
             severity_overrides: [("rule_d".to_string(), Severity::Hint)]
                 .into_iter()
                 .collect(),
+            exclude_patterns: vec!["test/**".to_string()],
         };
 
         base.merge(&other);
@@ -4249,6 +4322,7 @@ detection:
         assert!(base.disabled_rules.contains("rule_c"));
         assert_eq!(base.severity_overrides.get("rule_b"), Some(&Severity::Info));
         assert_eq!(base.severity_overrides.get("rule_d"), Some(&Severity::Hint));
+        assert_eq!(base.exclude_patterns, vec!["test/**".to_string()]);
     }
 
     #[test]
@@ -4628,5 +4702,216 @@ detection:
             find_fix(&w, LintRule::InvalidStatus).is_none(),
             "no fix when edit distance is too large"
         );
+    }
+
+    // ── Deprecated aggregation syntax ───────────────────────────────────
+
+    #[test]
+    fn deprecated_aggregation_count() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 4625
+    condition: selection | count(TargetUserName) by IpAddress > 5
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::DeprecatedAggregationSyntax));
+        assert!(has_no_rule(&w, LintRule::ConditionReferencesUnknown));
+        let dag = w
+            .iter()
+            .find(|w| w.rule == LintRule::DeprecatedAggregationSyntax)
+            .unwrap();
+        assert_eq!(dag.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn deprecated_aggregation_near() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection | near(field) by host
+level: medium
+"#,
+        );
+        assert!(has_rule(&w, LintRule::DeprecatedAggregationSyntax));
+        assert!(has_no_rule(&w, LintRule::ConditionReferencesUnknown));
+    }
+
+    #[test]
+    fn no_deprecated_aggregation_for_normal_condition() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::DeprecatedAggregationSyntax));
+    }
+
+    #[test]
+    fn no_deprecated_aggregation_for_pipe_in_field_modifier() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        field|contains: value
+    condition: selection
+level: medium
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::DeprecatedAggregationSyntax));
+        assert!(has_no_rule(&w, LintRule::ConditionReferencesUnknown));
+    }
+
+    #[test]
+    fn has_deprecated_aggregation_function() {
+        assert!(has_deprecated_aggregation(
+            "selection | count(User) by SourceIP > 5"
+        ));
+        assert!(has_deprecated_aggregation(
+            "selection |  sum(Amount) by Account > 1000"
+        ));
+        assert!(has_deprecated_aggregation(
+            "selection | near(field) by host"
+        ));
+        assert!(has_deprecated_aggregation(
+            "selection | min(score) by host > 0"
+        ));
+        assert!(has_deprecated_aggregation(
+            "selection | max(score) by host > 100"
+        ));
+        assert!(has_deprecated_aggregation(
+            "selection | avg(score) by host > 50"
+        ));
+        assert!(!has_deprecated_aggregation("selection and not filter"));
+        assert!(!has_deprecated_aggregation("1 of selection*"));
+        assert!(!has_deprecated_aggregation("all of them"));
+    }
+
+    // ── Exclude patterns ────────────────────────────────────────────────
+
+    #[test]
+    fn lint_config_exclude_from_yaml() {
+        let yaml = r#"
+disabled_rules:
+  - missing_description
+exclude:
+  - "config/**"
+  - "**/unsupported/**"
+"#;
+        let tmp = std::env::temp_dir().join("rsigma_test_exclude.yml");
+        std::fs::write(&tmp, yaml).unwrap();
+        let config = LintConfig::load(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        assert!(config.disabled_rules.contains("missing_description"));
+        assert_eq!(config.exclude_patterns.len(), 2);
+        assert_eq!(config.exclude_patterns[0], "config/**");
+        assert_eq!(config.exclude_patterns[1], "**/unsupported/**");
+    }
+
+    #[test]
+    fn lint_config_build_exclude_set_empty() {
+        let config = LintConfig::default();
+        assert!(config.build_exclude_set().is_none());
+    }
+
+    #[test]
+    fn lint_config_build_exclude_set_matches() {
+        let config = LintConfig {
+            exclude_patterns: vec!["config/**".to_string()],
+            ..Default::default()
+        };
+        let gs = config.build_exclude_set().expect("should build");
+        assert!(gs.is_match("config/data_mapping/foo.yaml"));
+        assert!(gs.is_match("config/nested/deep/bar.yml"));
+        assert!(!gs.is_match("rules/windows/test.yml"));
+    }
+
+    #[test]
+    fn lint_directory_with_excludes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        // Valid rule
+        std::fs::write(
+            rules_dir.join("good.yml"),
+            r#"
+title: Good Rule
+logsource:
+    category: test
+detection:
+    sel:
+        field: value
+    condition: sel
+level: medium
+"#,
+        )
+        .unwrap();
+
+        // Non-rule config file (would produce errors if linted)
+        std::fs::write(
+            config_dir.join("mapping.yaml"),
+            r#"
+Title: Logon
+Channel: Security
+EventID: 4624
+"#,
+        )
+        .unwrap();
+
+        // Without excludes: config file produces errors
+        let no_exclude = LintConfig::default();
+        let results = lint_yaml_directory_with_config(tmp.path(), &no_exclude).unwrap();
+        let config_warnings: Vec<_> = results
+            .iter()
+            .filter(|r| r.path.to_string_lossy().contains("config"))
+            .flat_map(|r| &r.warnings)
+            .collect();
+        assert!(
+            !config_warnings.is_empty(),
+            "config file should produce warnings without excludes"
+        );
+
+        // With excludes: config file is skipped
+        let with_exclude = LintConfig {
+            exclude_patterns: vec!["config/**".to_string()],
+            ..Default::default()
+        };
+        let results = lint_yaml_directory_with_config(tmp.path(), &with_exclude).unwrap();
+        let config_results: Vec<_> = results
+            .iter()
+            .filter(|r| r.path.to_string_lossy().contains("config"))
+            .collect();
+        assert!(config_results.is_empty(), "config file should be excluded");
+
+        // The valid rule should still be linted
+        let rule_results: Vec<_> = results
+            .iter()
+            .filter(|r| r.path.to_string_lossy().contains("good.yml"))
+            .collect();
+        assert_eq!(rule_results.len(), 1);
     }
 }
