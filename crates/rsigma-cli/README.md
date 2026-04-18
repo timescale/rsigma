@@ -63,7 +63,7 @@ rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
 
 ### `lint` — Lint rules against the Sigma specification
 
-Run 65 built-in lint rules with optional JSON schema validation.
+Run 66 built-in lint rules with optional JSON schema validation.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -73,6 +73,7 @@ Run 65 built-in lint rules with optional JSON schema validation.
 | `--color` | string | `"auto"` | `auto`, `always`, or `never` |
 | `--disable` | string | `""` | Comma-separated lint rule IDs to suppress |
 | `--config` | path | none | Explicit path to `.rsigma-lint.yml` (otherwise auto-discovered by walking ancestor directories) |
+| `--exclude` | string | none | Glob pattern for paths to skip (repeatable, relative to lint root) |
 | `--fix` | flag | `false` | Automatically apply safe fixes (lowercase keys, correct typos, remove duplicates, etc.) |
 
 ```bash
@@ -83,6 +84,8 @@ rsigma lint rule.yml --schema my-schema.json   # local JSON schema
 rsigma lint path/to/rules/ --color always      # force color
 rsigma lint rules/ --disable missing_description,missing_author  # suppress specific rules
 rsigma lint rules/ --config my-lint.yml        # explicit config file
+rsigma lint rules/ --exclude "config/**"       # skip non-rule files
+rsigma lint rules/ --exclude "config/**" --exclude "**/unsupported/**"  # multiple patterns
 rsigma lint rules/ --fix                       # auto-fix safe issues
 ```
 
