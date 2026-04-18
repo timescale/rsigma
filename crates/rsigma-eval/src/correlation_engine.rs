@@ -243,11 +243,11 @@ pub struct CorrelationResult {
     /// Contains up to `max_correlation_events` timestamp + optional ID pairs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_refs: Option<Vec<EventRef>>,
-    /// Custom rule attributes from the original Sigma correlation rule YAML.
-    /// Contains any non-standard top-level fields from the rule definition.
-    /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
+    /// Custom attributes from the original Sigma correlation rule (merged
+    /// view of arbitrary top-level keys, the `custom_attributes:` block, and
+    /// any pipeline-applied overrides).
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub custom_rule_attributes: Arc<HashMap<String, serde_json::Value>>,
+    pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
 }
 
 // =============================================================================
@@ -369,16 +369,19 @@ impl CorrelationEngine {
     ///   Only applied when the CLI did not already set `--suppress`.
     /// - `rsigma.action` — sets the default post-fire action (`alert`/`reset`).
     ///   Only applied when the CLI did not already set `--action`.
-    fn apply_custom_attributes(&mut self, attrs: &std::collections::HashMap<String, String>) {
+    fn apply_custom_attributes(
+        &mut self,
+        attrs: &std::collections::HashMap<String, serde_yaml::Value>,
+    ) {
         // rsigma.timestamp_field — prepend to priority list, skip duplicates
-        if let Some(field) = attrs.get("rsigma.timestamp_field")
-            && !self.config.timestamp_fields.contains(field)
+        if let Some(field) = attrs.get("rsigma.timestamp_field").and_then(|v| v.as_str())
+            && !self.config.timestamp_fields.iter().any(|f| f == field)
         {
-            self.config.timestamp_fields.insert(0, field.clone());
+            self.config.timestamp_fields.insert(0, field.to_string());
         }
 
         // rsigma.suppress — only when CLI didn't already set one
-        if let Some(val) = attrs.get("rsigma.suppress")
+        if let Some(val) = attrs.get("rsigma.suppress").and_then(|v| v.as_str())
             && self.config.suppress.is_none()
             && let Ok(ts) = rsigma_parser::Timespan::parse(val)
         {
@@ -386,7 +389,7 @@ impl CorrelationEngine {
         }
 
         // rsigma.action — only when CLI left it at the default (Alert)
-        if let Some(val) = attrs.get("rsigma.action")
+        if let Some(val) = attrs.get("rsigma.action").and_then(|v| v.as_str())
             && self.config.action_on_match == CorrelationAction::Alert
             && let Ok(a) = val.parse::<CorrelationAction>()
         {
@@ -960,7 +963,7 @@ impl CorrelationEngine {
                     timespan_secs: timespan,
                     events,
                     event_refs,
-                    custom_rule_attributes: corr.custom_rule_attributes.clone(),
+                    custom_attributes: corr.custom_attributes.clone(),
                 };
                 out.push(result);
 
@@ -1064,7 +1067,7 @@ impl CorrelationEngine {
                         // over correlation results, not raw events)
                         events: None,
                         event_refs: None,
-                        custom_rule_attributes: corr.custom_rule_attributes.clone(),
+                        custom_attributes: corr.custom_attributes.clone(),
                     });
                 }
             }
@@ -3247,11 +3250,19 @@ level: high
     // Custom attribute → engine config tests
     // =========================================================================
 
+    fn yaml_str_attrs<const N: usize>(
+        pairs: [(&str, &str); N],
+    ) -> std::collections::HashMap<String, serde_yaml::Value> {
+        pairs
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), serde_yaml::Value::String(v.to_string())))
+            .collect()
+    }
+
     #[test]
     fn test_custom_attr_timestamp_field() {
         let mut engine = CorrelationEngine::new(CorrelationConfig::default());
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.timestamp_field".to_string(), "time".to_string());
+        let attrs = yaml_str_attrs([("rsigma.timestamp_field", "time")]);
         engine.apply_custom_attributes(&attrs);
 
         assert_eq!(
@@ -3270,8 +3281,7 @@ level: high
     #[test]
     fn test_custom_attr_timestamp_field_no_duplicates() {
         let mut engine = CorrelationEngine::new(CorrelationConfig::default());
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.timestamp_field".to_string(), "time".to_string());
+        let attrs = yaml_str_attrs([("rsigma.timestamp_field", "time")]);
         // Apply twice — should not duplicate
         engine.apply_custom_attributes(&attrs);
         engine.apply_custom_attributes(&attrs);
@@ -3290,8 +3300,7 @@ level: high
         let mut engine = CorrelationEngine::new(CorrelationConfig::default());
         assert!(engine.config.suppress.is_none());
 
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.suppress".to_string(), "5m".to_string());
+        let attrs = yaml_str_attrs([("rsigma.suppress", "5m")]);
         engine.apply_custom_attributes(&attrs);
 
         assert_eq!(engine.config.suppress, Some(300));
@@ -3305,8 +3314,7 @@ level: high
         };
         let mut engine = CorrelationEngine::new(config);
 
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.suppress".to_string(), "5m".to_string());
+        let attrs = yaml_str_attrs([("rsigma.suppress", "5m")]);
         engine.apply_custom_attributes(&attrs);
 
         assert_eq!(
@@ -3321,8 +3329,7 @@ level: high
         let mut engine = CorrelationEngine::new(CorrelationConfig::default());
         assert_eq!(engine.config.action_on_match, CorrelationAction::Alert);
 
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.action".to_string(), "reset".to_string());
+        let attrs = yaml_str_attrs([("rsigma.action", "reset")]);
         engine.apply_custom_attributes(&attrs);
 
         assert_eq!(engine.config.action_on_match, CorrelationAction::Reset);
@@ -3336,8 +3343,7 @@ level: high
         };
         let mut engine = CorrelationEngine::new(config);
 
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert("rsigma.action".to_string(), "alert".to_string());
+        let attrs = yaml_str_attrs([("rsigma.action", "alert")]);
         engine.apply_custom_attributes(&attrs);
 
         assert_eq!(
@@ -4295,7 +4301,7 @@ level: high
     }
 
     #[test]
-    fn test_correlation_result_custom_rule_attributes() {
+    fn test_correlation_result_custom_attributes() {
         let yaml = r#"
 title: Login
 id: login-cra
@@ -4338,26 +4344,25 @@ level: high
                 let corr = &result.correlations[0];
                 assert_eq!(corr.rule_title, "Many Logins");
                 assert_eq!(
-                    corr.custom_rule_attributes.get("my_custom_field"),
+                    corr.custom_attributes.get("my_custom_field"),
                     Some(&serde_json::Value::String("hello".to_string()))
                 );
                 assert_eq!(
-                    corr.custom_rule_attributes.get("priority"),
+                    corr.custom_attributes.get("priority"),
                     Some(&serde_json::json!(9))
                 );
-                let nested = corr.custom_rule_attributes.get("nested").unwrap();
+                let nested = corr.custom_attributes.get("nested").unwrap();
                 assert_eq!(nested.get("key"), Some(&serde_json::json!("value")));
 
-                // Standard fields must not leak into custom_rule_attributes
-                assert!(!corr.custom_rule_attributes.contains_key("title"));
-                assert!(!corr.custom_rule_attributes.contains_key("correlation"));
-                assert!(!corr.custom_rule_attributes.contains_key("level"));
+                assert!(!corr.custom_attributes.contains_key("title"));
+                assert!(!corr.custom_attributes.contains_key("correlation"));
+                assert!(!corr.custom_attributes.contains_key("level"));
             }
         }
     }
 
     #[test]
-    fn test_detection_result_custom_rule_attributes() {
+    fn test_detection_result_custom_attributes() {
         let yaml = r#"
 title: Login Detection
 logsource:
@@ -4381,13 +4386,13 @@ score: 42
         assert_eq!(result.detections.len(), 1);
         let det = &result.detections[0];
         assert_eq!(
-            det.custom_rule_attributes.get("my_detection_tag"),
+            det.custom_attributes.get("my_detection_tag"),
             Some(&serde_json::Value::String("important".to_string()))
         );
         assert_eq!(
-            det.custom_rule_attributes.get("score"),
+            det.custom_attributes.get("score"),
             Some(&serde_json::json!(42))
         );
-        assert!(!det.custom_rule_attributes.contains_key("title"));
+        assert!(!det.custom_attributes.contains_key("title"));
     }
 }

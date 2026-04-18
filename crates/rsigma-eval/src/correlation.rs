@@ -59,9 +59,9 @@ pub struct CompiledCorrelation {
     /// Maximum events to store per window group for event inclusion.
     /// `None` means use the engine default (`CorrelationConfig.max_correlation_events`).
     pub max_events: Option<usize>,
-    /// Custom rule attributes from the original Sigma correlation rule YAML.
+    /// Custom attributes from the original Sigma correlation rule (merged).
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
-    pub custom_rule_attributes: Arc<HashMap<String, serde_json::Value>>,
+    pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
 }
 
 /// A group-by field, potentially aliased per referenced rule.
@@ -834,30 +834,35 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
     let suppress_secs = rule
         .custom_attributes
         .get("rsigma.suppress")
-        .and_then(|v| rsigma_parser::Timespan::parse(v).ok())
+        .and_then(|v| v.as_str())
+        .and_then(|s| rsigma_parser::Timespan::parse(s).ok())
         .map(|ts| ts.seconds);
 
-    let action = rule.custom_attributes.get("rsigma.action").and_then(|v| {
-        v.parse::<crate::correlation_engine::CorrelationAction>()
-            .ok()
-    });
+    let action = rule
+        .custom_attributes
+        .get("rsigma.action")
+        .and_then(|v| v.as_str())
+        .and_then(|s| {
+            s.parse::<crate::correlation_engine::CorrelationAction>()
+                .ok()
+        });
 
     let event_mode = rule
         .custom_attributes
         .get("rsigma.correlation_event_mode")
-        .and_then(|v| {
-            v.parse::<crate::correlation_engine::CorrelationEventMode>()
+        .and_then(|v| v.as_str())
+        .and_then(|s| {
+            s.parse::<crate::correlation_engine::CorrelationEventMode>()
                 .ok()
         });
 
     let max_events = rule
         .custom_attributes
         .get("rsigma.max_correlation_events")
-        .and_then(|v| v.parse::<usize>().ok());
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<usize>().ok());
 
-    let custom_rule_attributes = Arc::new(crate::compiler::yaml_to_json_map(
-        &rule.custom_rule_attributes,
-    ));
+    let custom_attributes = Arc::new(crate::compiler::yaml_to_json_map(&rule.custom_attributes));
 
     Ok(CompiledCorrelation {
         id: rule.id.clone(),
@@ -876,7 +881,7 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         action,
         event_mode,
         max_events,
-        custom_rule_attributes,
+        custom_attributes,
     })
 }
 
@@ -1684,17 +1689,24 @@ level: high
     fn test_compile_correlation_with_custom_attributes() {
         use rsigma_parser::*;
 
-        let mut custom_attributes = std::collections::HashMap::new();
+        let mut custom_attributes: HashMap<String, serde_yaml::Value> =
+            std::collections::HashMap::new();
         custom_attributes.insert(
             "rsigma.correlation_event_mode".to_string(),
-            "refs".to_string(),
+            serde_yaml::Value::String("refs".to_string()),
         );
         custom_attributes.insert(
             "rsigma.max_correlation_events".to_string(),
-            "25".to_string(),
+            serde_yaml::Value::String("25".to_string()),
         );
-        custom_attributes.insert("rsigma.suppress".to_string(), "5m".to_string());
-        custom_attributes.insert("rsigma.action".to_string(), "reset".to_string());
+        custom_attributes.insert(
+            "rsigma.suppress".to_string(),
+            serde_yaml::Value::String("5m".to_string()),
+        );
+        custom_attributes.insert(
+            "rsigma.action".to_string(),
+            serde_yaml::Value::String("reset".to_string()),
+        );
 
         let rule = CorrelationRule {
             title: "Test Corr".to_string(),
@@ -1721,7 +1733,6 @@ level: high
             aliases: vec![],
             generate: false,
             custom_attributes,
-            custom_rule_attributes: HashMap::new(),
         };
 
         let compiled = compile_correlation(&rule).unwrap();

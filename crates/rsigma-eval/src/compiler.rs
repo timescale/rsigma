@@ -44,10 +44,11 @@ pub struct CompiledRule {
     /// Whether to include the full event JSON in the match result.
     /// Controlled by the `rsigma.include_event` custom attribute.
     pub include_event: bool,
-    /// Custom rule attributes from the original Sigma rule YAML.
-    /// Non-standard top-level fields are propagated to match results.
-    /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
-    pub custom_rule_attributes: Arc<HashMap<String, serde_json::Value>>,
+    /// Custom attributes from the original Sigma rule (merged view of
+    /// arbitrary top-level keys, the explicit `custom_attributes:` block,
+    /// and pipeline `SetCustomAttribute` additions). Propagated to match
+    /// results. Wrapped in `Arc` so per-match cloning is a pointer bump.
+    pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
 }
 
 /// A compiled detection definition.
@@ -207,9 +208,10 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
     let include_event = rule
         .custom_attributes
         .get("rsigma.include_event")
-        .is_some_and(|v| v == "true");
+        .and_then(|v| v.as_str())
+        == Some("true");
 
-    let custom_rule_attributes = Arc::new(yaml_to_json_map(&rule.custom_rule_attributes));
+    let custom_attributes = Arc::new(yaml_to_json_map(&rule.custom_attributes));
 
     Ok(CompiledRule {
         title: rule.title.clone(),
@@ -220,7 +222,7 @@ pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
         detections,
         conditions: rule.detection.conditions.clone(),
         include_event,
-        custom_rule_attributes,
+        custom_attributes,
     })
 }
 
@@ -273,7 +275,7 @@ pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> 
                 matched_selections,
                 matched_fields,
                 event: event_data,
-                custom_rule_attributes: rule.custom_rule_attributes.clone(),
+                custom_attributes: rule.custom_attributes.clone(),
             });
         }
     }
@@ -1534,7 +1536,10 @@ mod tests {
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
     }
 
-    fn make_test_sigma_rule(title: &str, custom_attributes: HashMap<String, String>) -> SigmaRule {
+    fn make_test_sigma_rule(
+        title: &str,
+        custom_attributes: HashMap<String, serde_yaml::Value>,
+    ) -> SigmaRule {
         use rsigma_parser::{Detections, LogSource};
         SigmaRule {
             title: title.to_string(),
@@ -1579,14 +1584,16 @@ mod tests {
             fields: vec![],
             falsepositives: vec![],
             custom_attributes,
-            custom_rule_attributes: HashMap::new(),
         }
     }
 
     #[test]
     fn test_include_event_custom_attribute() {
         let mut attrs = HashMap::new();
-        attrs.insert("rsigma.include_event".to_string(), "true".to_string());
+        attrs.insert(
+            "rsigma.include_event".to_string(),
+            serde_yaml::Value::String("true".to_string()),
+        );
         let rule = make_test_sigma_rule("Include Event Test", attrs);
 
         let compiled = compile_rule(&rule).unwrap();
@@ -1613,7 +1620,7 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_rule_attributes_propagate_to_match_result() {
+    fn test_custom_attributes_propagate_to_match_result() {
         let yaml = r#"
 title: Rule With Custom Attrs
 logsource:
@@ -1631,45 +1638,81 @@ severity_score: 42
 
         let compiled = compile_rule(rule).unwrap();
 
-        // Custom rule attributes should be on the compiled rule
         assert_eq!(
-            compiled.custom_rule_attributes.get("my_custom_field"),
+            compiled.custom_attributes.get("my_custom_field"),
             Some(&serde_json::Value::String("some_value".to_string()))
         );
         assert_eq!(
-            compiled.custom_rule_attributes.get("severity_score"),
+            compiled.custom_attributes.get("severity_score"),
             Some(&serde_json::json!(42))
         );
 
-        // Standard fields should NOT be in custom_rule_attributes
-        assert!(!compiled.custom_rule_attributes.contains_key("title"));
-        assert!(!compiled.custom_rule_attributes.contains_key("level"));
+        assert!(!compiled.custom_attributes.contains_key("title"));
+        assert!(!compiled.custom_attributes.contains_key("level"));
 
-        // Match the rule and verify attributes propagate to MatchResult
         let ev = json!({"action": "login"});
         let event = Event::from_value(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
 
         assert_eq!(
-            result.custom_rule_attributes.get("my_custom_field"),
+            result.custom_attributes.get("my_custom_field"),
             Some(&serde_json::Value::String("some_value".to_string()))
         );
         assert_eq!(
-            result.custom_rule_attributes.get("severity_score"),
+            result.custom_attributes.get("severity_score"),
             Some(&serde_json::json!(42))
         );
     }
 
     #[test]
-    fn test_empty_custom_rule_attributes() {
+    fn test_empty_custom_attributes() {
         let rule = make_test_sigma_rule("No Custom Attrs", HashMap::new());
         let compiled = compile_rule(&rule).unwrap();
-        assert!(compiled.custom_rule_attributes.is_empty());
+        assert!(compiled.custom_attributes.is_empty());
 
         let ev = json!({"action": "login"});
         let event = Event::from_value(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
-        assert!(result.custom_rule_attributes.is_empty());
+        assert!(result.custom_attributes.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_set_custom_attribute_overrides_rule_yaml() {
+        // The YAML sets `rsigma.include_event: false`; the pipeline then writes
+        // "true" via `SetCustomAttribute` — last-write-wins.
+        let yaml = r#"
+title: Override Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+level: low
+custom_attributes:
+    rsigma.include_event: "false"
+"#;
+        let pipeline_yaml = r#"
+name: override
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.include_event
+    value: "true"
+"#;
+        let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+        let mut rule = collection.rules[0].clone();
+        let pipeline = crate::pipeline::parse_pipeline(pipeline_yaml).unwrap();
+        crate::pipeline::apply_pipelines(&[pipeline], &mut rule).unwrap();
+
+        assert_eq!(
+            rule.custom_attributes
+                .get("rsigma.include_event")
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+
+        let compiled = compile_rule(&rule).unwrap();
+        assert!(compiled.include_event);
     }
 }
 

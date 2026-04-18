@@ -433,21 +433,18 @@ pub struct SigmaRule {
     pub tags: Vec<String>,
     pub scope: Vec<String>,
 
-    /// Custom attributes set by pipeline transformations (e.g. `SetCustomAttribute`).
+    /// Custom attributes attached to the rule.
     ///
-    /// Backends / engines can read these to modify behavior per-rule.
-    /// This mirrors pySigma's `SigmaRule.custom_attributes` dict.
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub custom_attributes: HashMap<String, String>,
-
-    /// Custom rule attributes parsed from the Sigma rule YAML.
+    /// Populated from (a) any top-level YAML key that is not part of the
+    /// standard Sigma rule schema, (b) the entries of the dedicated top-level
+    /// `custom_attributes:` mapping (explicit entries win over arbitrary keys
+    /// of the same name), and (c) pipeline transformations such as
+    /// `SetCustomAttribute`, which are applied last and override both.
     ///
-    /// Any top-level key that is not part of the standard Sigma rule schema
-    /// is captured here as a custom rule attribute. This allows rule authors
-    /// to attach arbitrary metadata to rules and have it propagate through
-    /// the evaluation pipeline to match results.
+    /// Mirrors pySigma's `SigmaRule.custom_attributes` dict. Engines and
+    /// backends can read these to modify per-rule behavior.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub custom_rule_attributes: HashMap<String, serde_yaml::Value>,
+    pub custom_attributes: HashMap<String, serde_yaml::Value>,
 }
 
 // =============================================================================
@@ -574,17 +571,16 @@ pub struct CorrelationRule {
     pub condition: CorrelationCondition,
     pub aliases: Vec<FieldAlias>,
     pub generate: bool,
-    /// Custom key-value attributes (e.g. `rsigma.correlation_event_mode`).
-    /// Parsed from the top-level `custom_attributes` mapping in the YAML or set
-    /// programmatically. Mirrors `SigmaRule.custom_attributes`.
-    pub custom_attributes: HashMap<String, String>,
 
-    /// Custom rule attributes parsed from the correlation rule YAML.
+    /// Custom attributes attached to the correlation rule.
     ///
-    /// Any top-level key that is not part of the standard Sigma correlation
-    /// rule schema is captured here. Mirrors `SigmaRule.custom_rule_attributes`.
+    /// Populated the same way as `SigmaRule.custom_attributes`: arbitrary
+    /// top-level YAML keys, the dedicated `custom_attributes:` block, and
+    /// pipeline `SetCustomAttribute` transformations (last-write-wins).
+    /// Engine-level `rsigma.*` extensions (e.g. `rsigma.correlation_event_mode`,
+    /// `rsigma.suppress`, `rsigma.action`) are read from here.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub custom_rule_attributes: HashMap<String, serde_yaml::Value>,
+    pub custom_attributes: HashMap<String, serde_yaml::Value>,
 }
 
 // =============================================================================

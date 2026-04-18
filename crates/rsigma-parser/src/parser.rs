@@ -236,21 +236,10 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         .transpose()?
         .unwrap_or_default();
 
-    // Custom attributes (rsigma.* extension keys) — mirrors pySigma's
-    // `SigmaRule.custom_attributes`. Parsed from the top-level `custom_attributes`
-    // mapping; pipeline transformations may also populate this field.
-    let custom_attributes: HashMap<String, String> = m
-        .get(val_key("custom_attributes"))
-        .and_then(|v| v.as_mapping())
-        .map(|attrs| {
-            attrs
-                .iter()
-                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Collect custom rule attributes: any top-level key not in the standard schema
+    // Custom attributes: merge arbitrary top-level keys and the entries of the
+    // dedicated `custom_attributes:` mapping. Entries in `custom_attributes:`
+    // win over a top-level key of the same name (last-write-wins).
+    // Mirrors pySigma's `SigmaRule.custom_attributes` dict.
     let standard_rule_keys: &[&str] = &[
         "title",
         "id",
@@ -273,18 +262,7 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         "scope",
         "custom_attributes",
     ];
-
-    let custom_rule_attributes: HashMap<String, Value> = m
-        .iter()
-        .filter_map(|(k, v)| {
-            let key = k.as_str()?;
-            if standard_rule_keys.contains(&key) {
-                None
-            } else {
-                Some((key.to_string(), v.clone()))
-            }
-        })
-        .collect();
+    let custom_attributes = collect_custom_attributes(m, standard_rule_keys);
 
     Ok(SigmaRule {
         title,
@@ -307,8 +285,44 @@ fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         tags: get_str_list(m, "tags"),
         scope: get_str_list(m, "scope"),
         custom_attributes,
-        custom_rule_attributes,
     })
+}
+
+/// Build the unified `custom_attributes` map for a rule document.
+///
+/// Merges two sources:
+/// 1. Any top-level YAML key not in `standard_keys` (kept as-is, supports
+///    arbitrary nested values).
+/// 2. The entries of the top-level `custom_attributes:` mapping (if present),
+///    which override (1) for colliding keys.
+///
+/// Pipeline transformations such as `SetCustomAttribute` are applied later
+/// and can further override both sources.
+fn collect_custom_attributes(
+    m: &serde_yaml::Mapping,
+    standard_keys: &[&str],
+) -> HashMap<String, Value> {
+    let mut attrs: HashMap<String, Value> = m
+        .iter()
+        .filter_map(|(k, v)| {
+            let key = k.as_str()?;
+            if standard_keys.contains(&key) {
+                None
+            } else {
+                Some((key.to_string(), v.clone()))
+            }
+        })
+        .collect();
+
+    if let Some(Value::Mapping(explicit)) = m.get(val_key("custom_attributes")) {
+        for (k, v) in explicit {
+            if let Some(key) = k.as_str() {
+                attrs.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+
+    attrs
 }
 
 // =============================================================================
@@ -607,19 +621,6 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
     // Aliases
     let aliases = parse_correlation_aliases(corr);
 
-    // Custom attributes (rsigma.* extension keys)
-    let custom_attributes: HashMap<String, String> = m
-        .get(val_key("custom_attributes"))
-        .and_then(|v| v.as_mapping())
-        .map(|attrs| {
-            attrs
-                .iter()
-                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Collect custom correlation rule attributes: any top-level key not in the standard schema
     // Top-level keys from the Sigma correlation-rules JSON schema plus keys this
     // parser reads from the document root (including common extensions).
     let standard_correlation_keys: &[&str] = &[
@@ -640,18 +641,7 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         "taxonomy",
         "title",
     ];
-
-    let custom_rule_attributes: HashMap<String, Value> = m
-        .iter()
-        .filter_map(|(k, v)| {
-            let key = k.as_str()?;
-            if standard_correlation_keys.contains(&key) {
-                None
-            } else {
-                Some((key.to_string(), v.clone()))
-            }
-        })
-        .collect();
+    let custom_attributes = collect_custom_attributes(m, standard_correlation_keys);
 
     Ok(CorrelationRule {
         title,
@@ -675,7 +665,6 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         aliases,
         generate,
         custom_attributes,
-        custom_rule_attributes,
     })
 }
 
@@ -1071,20 +1060,28 @@ level: high
 
         let corr = &collection.correlations[0];
         assert_eq!(
-            corr.custom_attributes.get("rsigma.correlation_event_mode"),
-            Some(&"refs".to_string())
+            corr.custom_attributes
+                .get("rsigma.correlation_event_mode")
+                .and_then(Value::as_str),
+            Some("refs")
         );
         assert_eq!(
-            corr.custom_attributes.get("rsigma.suppress"),
-            Some(&"5m".to_string())
+            corr.custom_attributes
+                .get("rsigma.suppress")
+                .and_then(Value::as_str),
+            Some("5m")
         );
         assert_eq!(
-            corr.custom_attributes.get("rsigma.action"),
-            Some(&"reset".to_string())
+            corr.custom_attributes
+                .get("rsigma.action")
+                .and_then(Value::as_str),
+            Some("reset")
         );
         assert_eq!(
-            corr.custom_attributes.get("rsigma.max_correlation_events"),
-            Some(&"25".to_string())
+            corr.custom_attributes
+                .get("rsigma.max_correlation_events")
+                .and_then(Value::as_str),
+            Some("25")
         );
     }
 
@@ -1952,7 +1949,7 @@ level: medium
     }
 
     #[test]
-    fn test_parse_detection_rule_custom_rule_attributes() {
+    fn test_parse_detection_rule_custom_attributes_arbitrary_keys() {
         let yaml = r#"
 title: Test Rule With Custom Attrs
 logsource:
@@ -1979,39 +1976,36 @@ custom_object:
         let rule = &collection.rules[0];
         assert_eq!(rule.title, "Test Rule With Custom Attrs");
 
-        // Custom rule attributes should be captured
         assert_eq!(
-            rule.custom_rule_attributes.get("my_custom_field"),
+            rule.custom_attributes.get("my_custom_field"),
             Some(&Value::String("some_value".to_string()))
         );
         assert_eq!(
-            rule.custom_rule_attributes
+            rule.custom_attributes
                 .get("severity_score")
                 .and_then(|v| v.as_u64()),
             Some(42)
         );
         assert_eq!(
-            rule.custom_rule_attributes.get("organization"),
+            rule.custom_attributes.get("organization"),
             Some(&Value::String("ACME Corp".to_string()))
         );
 
-        // List values should be preserved
-        let custom_list = rule.custom_rule_attributes.get("custom_list").unwrap();
+        let custom_list = rule.custom_attributes.get("custom_list").unwrap();
         assert!(custom_list.is_sequence());
 
-        // Object values should be preserved
-        let custom_obj = rule.custom_rule_attributes.get("custom_object").unwrap();
+        let custom_obj = rule.custom_attributes.get("custom_object").unwrap();
         assert!(custom_obj.is_mapping());
 
-        // Standard fields should NOT be in custom_rule_attributes
-        assert!(!rule.custom_rule_attributes.contains_key("title"));
-        assert!(!rule.custom_rule_attributes.contains_key("logsource"));
-        assert!(!rule.custom_rule_attributes.contains_key("detection"));
-        assert!(!rule.custom_rule_attributes.contains_key("level"));
+        assert!(!rule.custom_attributes.contains_key("title"));
+        assert!(!rule.custom_attributes.contains_key("logsource"));
+        assert!(!rule.custom_attributes.contains_key("detection"));
+        assert!(!rule.custom_attributes.contains_key("level"));
+        assert!(!rule.custom_attributes.contains_key("custom_attributes"));
     }
 
     #[test]
-    fn test_parse_detection_rule_no_custom_rule_attributes() {
+    fn test_parse_detection_rule_no_custom_attributes() {
         let yaml = r#"
 title: Standard Rule
 logsource:
@@ -2024,12 +2018,11 @@ level: low
 "#;
         let collection = parse_sigma_yaml(yaml).unwrap();
         let rule = &collection.rules[0];
-        assert!(rule.custom_rule_attributes.is_empty());
         assert!(rule.custom_attributes.is_empty());
     }
 
     #[test]
-    fn test_parse_detection_rule_custom_attributes() {
+    fn test_parse_detection_rule_custom_attributes_explicit_block() {
         let yaml = r#"
 title: Rule With Custom Attrs
 custom_attributes:
@@ -2046,23 +2039,49 @@ level: low
         let collection = parse_sigma_yaml(yaml).unwrap();
         let rule = &collection.rules[0];
         assert_eq!(
-            rule.custom_attributes.get("rsigma.suppress"),
-            Some(&"5m".to_string())
+            rule.custom_attributes
+                .get("rsigma.suppress")
+                .and_then(Value::as_str),
+            Some("5m")
         );
         assert_eq!(
-            rule.custom_attributes.get("rsigma.action"),
-            Some(&"reset".to_string())
+            rule.custom_attributes
+                .get("rsigma.action")
+                .and_then(Value::as_str),
+            Some("reset")
         );
-        // Reserved key — must not leak into custom_rule_attributes
-        assert!(
-            !rule
-                .custom_rule_attributes
-                .contains_key("custom_attributes")
+        // The reserved key itself must not be carried into the merged map.
+        assert!(!rule.custom_attributes.contains_key("custom_attributes"));
+    }
+
+    #[test]
+    fn test_parse_detection_rule_custom_attributes_explicit_overrides_toplevel() {
+        // Arbitrary top-level `priority: top` is captured first, then the
+        // explicit `custom_attributes:` block overrides it.
+        let yaml = r#"
+title: Merge Test
+priority: top
+custom_attributes:
+    priority: explicit
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let rule = &collection.rules[0];
+        assert_eq!(
+            rule.custom_attributes
+                .get("priority")
+                .and_then(Value::as_str),
+            Some("explicit")
         );
     }
 
     #[test]
-    fn test_parse_correlation_rule_custom_rule_attributes() {
+    fn test_parse_correlation_rule_custom_attributes_arbitrary_keys() {
         let yaml = r#"
 title: Login
 id: login-rule
@@ -2099,25 +2118,24 @@ level: high
 
         let corr = &collection.correlations[0];
         assert_eq!(
-            corr.custom_rule_attributes
-                .get("my_custom_correlation_field"),
+            corr.custom_attributes.get("my_custom_correlation_field"),
             Some(&Value::String("custom_value".to_string()))
         );
         assert_eq!(
-            corr.custom_rule_attributes.get("priority"),
+            corr.custom_attributes.get("priority"),
             Some(&Value::String("high_priority".to_string()))
         );
 
-        // Standard correlation fields should NOT be in custom_rule_attributes
-        assert!(!corr.custom_rule_attributes.contains_key("title"));
-        assert!(!corr.custom_rule_attributes.contains_key("correlation"));
-        assert!(!corr.custom_rule_attributes.contains_key("level"));
-        assert!(!corr.custom_rule_attributes.contains_key("id"));
-        assert!(!corr.custom_rule_attributes.contains_key("name"));
-        assert!(!corr.custom_rule_attributes.contains_key("tags"));
-        assert!(!corr.custom_rule_attributes.contains_key("taxonomy"));
-        assert!(!corr.custom_rule_attributes.contains_key("falsepositives"));
-        assert!(!corr.custom_rule_attributes.contains_key("generate"));
+        assert!(!corr.custom_attributes.contains_key("title"));
+        assert!(!corr.custom_attributes.contains_key("correlation"));
+        assert!(!corr.custom_attributes.contains_key("level"));
+        assert!(!corr.custom_attributes.contains_key("id"));
+        assert!(!corr.custom_attributes.contains_key("name"));
+        assert!(!corr.custom_attributes.contains_key("tags"));
+        assert!(!corr.custom_attributes.contains_key("taxonomy"));
+        assert!(!corr.custom_attributes.contains_key("falsepositives"));
+        assert!(!corr.custom_attributes.contains_key("generate"));
+        assert!(!corr.custom_attributes.contains_key("custom_attributes"));
     }
 
     #[test]

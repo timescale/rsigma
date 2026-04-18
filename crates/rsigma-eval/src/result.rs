@@ -28,11 +28,14 @@ pub struct MatchResult {
     /// `rsigma.include_event` custom attribute is set to `"true"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<serde_json::Value>,
-    /// Custom rule attributes parsed from the original Sigma rule YAML.
-    /// Contains any non-standard top-level fields from the rule definition.
+    /// Custom attributes carried from the original Sigma rule.
+    ///
+    /// Contains the merged view of (a) arbitrary non-standard top-level keys,
+    /// (b) the explicit `custom_attributes:` block, and (c) anything added by
+    /// pipeline `SetCustomAttribute` transformations.
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub custom_rule_attributes: Arc<HashMap<String, serde_json::Value>>,
+    pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
 }
 
 /// A specific field match within a detection.

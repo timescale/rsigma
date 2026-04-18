@@ -270,7 +270,7 @@ fn apply_correlation_transformation(
 
         Transformation::SetCustomAttribute { attribute, value } => {
             corr.custom_attributes
-                .insert(attribute.clone(), value.clone());
+                .insert(attribute.clone(), serde_yaml::Value::String(value.clone()));
             Ok(true)
         }
 
@@ -1288,7 +1288,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: std::collections::HashMap::new(),
-            custom_rule_attributes: std::collections::HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1362,7 +1361,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: std::collections::HashMap::new(),
-            custom_rule_attributes: std::collections::HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1604,7 +1602,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1677,7 +1674,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1752,7 +1748,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1825,7 +1820,6 @@ transformations:
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -1877,7 +1871,6 @@ transformations:
             }],
             generate: true,
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         }
     }
 
@@ -1945,7 +1938,10 @@ transformations:
             .apply_to_correlation(&mut corr, &mut state)
             .unwrap();
 
-        assert_eq!(corr.custom_attributes["rsigma.action"], "reset");
+        assert_eq!(
+            corr.custom_attributes["rsigma.action"],
+            serde_yaml::Value::String("reset".to_string())
+        );
     }
 
     #[test]

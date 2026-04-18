@@ -183,7 +183,7 @@ When the `re` modifier is present, string values are parsed with `SigmaValue::fr
 - **Extended (string):** `"rule_a and rule_b"` for temporal types — parsed as a boolean expression over rule references.
 - **Default (temporal, no condition):** `Threshold { predicates: [(Gte, 1)], field: None }`.
 - **Timeframe/timespan:** The parser accepts both `timeframe` and `timespan` keys.
-- **Custom attributes:** Correlation rules support a `custom_attributes` mapping (string-to-string) for `rsigma.*` engine extensions.
+- **Custom attributes:** Both detection and correlation rules expose a unified `custom_attributes` map (`HashMap<String, serde_yaml::Value>`). It merges (a) any arbitrary top-level YAML key that is not part of the Sigma schema, (b) entries of the optional top-level `custom_attributes:` mapping (explicit block wins over arbitrary keys of the same name), and (c) values set by pipeline `SetCustomAttribute` transformations (applied last, last-write-wins). Engines read `rsigma.*` extensions (`rsigma.suppress`, `rsigma.action`, `rsigma.correlation_event_mode`, etc.) from this map.
 
 ## Filter Rules
 

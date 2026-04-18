@@ -133,9 +133,9 @@ pub enum Transformation {
 
     /// Set a custom attribute on the rule.
     ///
-    /// Stores the key-value pair in `SigmaRule.custom_attributes`.
-    /// Backends / engines can read these to modify per-rule behavior
-    /// (e.g. `rsigma.suppress`, `rsigma.action`).
+    /// Stores the key-value pair in `SigmaRule.custom_attributes` as a
+    /// `serde_yaml::Value::String`. Backends / engines can read these to
+    /// modify per-rule behavior (e.g. `rsigma.suppress`, `rsigma.action`).
     /// Mirrors pySigma's `SetCustomAttributeTransformation`.
     SetCustomAttribute { attribute: String, value: String },
 
@@ -404,7 +404,7 @@ impl Transformation {
 
             Transformation::SetCustomAttribute { attribute, value } => {
                 rule.custom_attributes
-                    .insert(attribute.clone(), value.clone());
+                    .insert(attribute.clone(), serde_yaml::Value::String(value.clone()));
                 Ok(true)
             }
 
@@ -1490,7 +1490,6 @@ mod tests {
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         }
     }
 
@@ -1742,7 +1741,6 @@ mod tests {
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::default();
@@ -2069,8 +2067,10 @@ mod tests {
         let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
         assert!(result);
         assert_eq!(
-            rule.custom_attributes.get("custom.key"),
-            Some(&"custom_value".to_string())
+            rule.custom_attributes
+                .get("custom.key")
+                .and_then(|v| v.as_str()),
+            Some("custom_value")
         );
     }
 
@@ -2255,7 +2255,6 @@ mod tests {
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::default();
@@ -2312,7 +2311,6 @@ mod tests {
             tags: vec![],
             scope: vec![],
             custom_attributes: HashMap::new(),
-            custom_rule_attributes: HashMap::new(),
         };
 
         let mut state = PipelineState::default();
@@ -2815,8 +2813,10 @@ transformations:
 
         // step4: custom attribute was set
         assert_eq!(
-            rule.custom_attributes.get("rsigma.processed"),
-            Some(&"true".to_string())
+            rule.custom_attributes
+                .get("rsigma.processed")
+                .and_then(|v| v.as_str()),
+            Some("true")
         );
 
         // All steps should be tracked
