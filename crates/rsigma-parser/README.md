@@ -218,9 +218,9 @@ filter:
 
 The string must be at least 2 characters (e.g. `1h`). The last character is the unit; the prefix must be a positive integer.
 
-## Linter (65 rules)
+## Linter (66 rules)
 
-65 built-in lint rules derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
+66 built-in lint rules derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 The linter operates on raw YAML values to catch issues the parser silently ignores.
 
@@ -254,7 +254,7 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `taxonomy_too_long` | Warning | | `taxonomy` exceeds 256 characters |
 | `non_lowercase_key` | Warning | Yes | Top-level key is not lowercase |
 
-### Detection Rules (17)
+### Detection Rules (18)
 
 | Rule | Severity | Fix | Trigger |
 |------|----------|-----|---------|
@@ -275,6 +275,7 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `scope_too_short` | Warning | | `scope` entry under 2 characters |
 | `logsource_value_not_lowercase` | Warning | Yes | Logsource `category`/`product`/`service` not lowercase |
 | `condition_references_unknown` | Error | | Condition references non-existent detection identifier |
+| `deprecated_aggregation_syntax` | Warning | | Condition uses deprecated Sigma v1.x pipe-aggregation syntax (`\| count/min/max/avg/sum/near`); use a correlation rule instead |
 
 ### Correlation Rules (13)
 
@@ -324,7 +325,8 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 Three-tier system to disable or override lint rules:
 
 - **CLI**: `--disable rule1,rule2` suppresses specific rules globally
-- **Config file**: `.rsigma-lint.yml` (or `.rsigma-lint.yaml`) with `disabled_rules` and `severity_overrides`, auto-discovered by walking ancestor directories from the target path upward
+- **CLI**: `--exclude "pattern"` excludes paths matching glob patterns (relative to lint root, repeatable)
+- **Config file**: `.rsigma-lint.yml` (or `.rsigma-lint.yaml`) with `disabled_rules`, `severity_overrides`, and `exclude`, auto-discovered by walking ancestor directories from the target path upward
 - **Inline comments**: `# rsigma-disable`, `# rsigma-disable rule1, rule2`, `# rsigma-disable-next-line`, `# rsigma-disable-next-line rule1, rule2`
 
 ```yaml
@@ -334,9 +336,12 @@ disabled_rules:
   - missing_author
 severity_overrides:
   title_too_long: info
+exclude:
+  - "config/**"
+  - "**/unsupported/**"
 ```
 
-**Suppression order:** Warnings are first filtered by `disabled_rules`, then by inline suppressions, then `severity_overrides` are applied to remaining warnings.
+**Suppression order:** Excluded paths are skipped during directory traversal. Remaining warnings are filtered by `disabled_rules`, then by inline suppressions, then `severity_overrides` are applied.
 
 Inline `#` inside quoted YAML strings is not treated as a comment.
 

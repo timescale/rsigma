@@ -100,6 +100,12 @@ enum Commands {
         #[arg(long = "config")]
         lint_config: Option<PathBuf>,
 
+        /// Exclude paths matching glob patterns (can be repeated).
+        /// Patterns are matched against paths relative to the lint root.
+        /// Example: --exclude "config/**" --exclude "**/unsupported/**"
+        #[arg(long)]
+        exclude: Vec<String>,
+
         /// Auto-fix safe lint issues in-place.
         /// Applies format-preserving fixes to files on disk.
         #[arg(long)]
@@ -338,6 +344,7 @@ fn main() {
             color,
             disable,
             lint_config,
+            exclude,
             fix: apply_fix,
         } => cmd_lint(
             path,
@@ -346,6 +353,7 @@ fn main() {
             &color,
             disable,
             lint_config,
+            exclude,
             apply_fix,
         ),
         Commands::Condition { expr } => cmd_condition(expr),
@@ -549,6 +557,7 @@ fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<PathBuf>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_lint(
     path: PathBuf,
     schema: Option<String>,
@@ -556,12 +565,13 @@ fn cmd_lint(
     color: &str,
     disable: Vec<String>,
     lint_config_path: Option<PathBuf>,
+    exclude: Vec<String>,
     apply_fix: bool,
 ) {
     let p = Painter::new(color);
 
     // 0. Build lint config from file + CLI flags
-    let config = build_lint_config(&path, disable, lint_config_path);
+    let config = build_lint_config(&path, disable, lint_config_path, exclude);
 
     // 1. Run built-in lint checks (with suppression)
     let results: Vec<FileLintResult> = if path.is_dir() {
@@ -1338,6 +1348,7 @@ fn build_lint_config(
     path: &std::path::Path,
     disable: Vec<String>,
     lint_config_path: Option<PathBuf>,
+    exclude: Vec<String>,
 ) -> LintConfig {
     // Load config file
     let mut config = if let Some(explicit) = lint_config_path {
@@ -1369,10 +1380,11 @@ fn build_lint_config(
         LintConfig::default()
     };
 
-    // Merge --disable CLI flags
-    if !disable.is_empty() {
+    // Merge --disable and --exclude CLI flags
+    if !disable.is_empty() || !exclude.is_empty() {
         let cli_config = LintConfig {
             disabled_rules: disable.into_iter().collect(),
+            exclude_patterns: exclude,
             ..Default::default()
         };
         config.merge(&cli_config);
