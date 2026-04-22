@@ -203,6 +203,18 @@ enum Commands {
         /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
         #[arg(long = "drain-timeout", default_value = "5")]
         drain_timeout: u64,
+
+        /// Input log format for event parsing.
+        /// auto: try JSON → syslog → plain (default).
+        /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
+        /// cef (requires cef feature).
+        #[arg(long = "input-format", default_value = "auto")]
+        input_format: String,
+
+        /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
+        /// Only used when --input-format is syslog or auto. Defaults to UTC.
+        #[arg(long = "syslog-tz", default_value = "+00:00")]
+        syslog_tz: String,
     },
 
     /// Evaluate events against Sigma rules
@@ -280,6 +292,18 @@ enum Commands {
         /// Equivalent to the `rsigma.timestamp_field` custom attribute.
         #[arg(long = "timestamp-field")]
         timestamp_fields: Vec<String>,
+
+        /// Input log format for event parsing.
+        /// auto: try JSON → syslog → plain (default).
+        /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
+        /// cef (requires cef feature).
+        #[arg(long = "input-format", default_value = "auto")]
+        input_format: String,
+
+        /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
+        /// Only used when --input-format is syslog or auto. Defaults to UTC.
+        #[arg(long = "syslog-tz", default_value = "+00:00")]
+        syslog_tz: String,
     },
 }
 
@@ -309,6 +333,8 @@ fn main() {
             buffer_size,
             batch_size,
             drain_timeout,
+            input_format,
+            syslog_tz,
         } => cmd_daemon(
             rules,
             pipelines,
@@ -330,6 +356,8 @@ fn main() {
             buffer_size,
             batch_size,
             drain_timeout,
+            input_format,
+            syslog_tz,
         ),
         Commands::Parse { path, pretty } => cmd_parse(path, pretty),
         Commands::Validate {
@@ -372,6 +400,8 @@ fn main() {
             correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
+            input_format,
+            syslog_tz,
         } => cmd_eval(
             rules,
             event,
@@ -386,6 +416,8 @@ fn main() {
             correlation_event_mode,
             max_correlation_events,
             timestamp_fields,
+            input_format,
+            syslog_tz,
         ),
     }
 }
@@ -417,6 +449,8 @@ fn cmd_daemon(
     buffer_size: usize,
     batch_size: usize,
     drain_timeout: u64,
+    input_format: String,
+    syslog_tz: String,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -430,6 +464,7 @@ fn cmd_daemon(
 
     let pipelines = load_pipelines(&pipeline_paths);
     let event_filter = std::sync::Arc::new(build_event_filter(jq, jsonpath));
+    let parsed_input_format = parse_input_format(&input_format, &syslog_tz);
 
     let corr_config = build_correlation_config(
         suppress,
@@ -460,6 +495,7 @@ fn cmd_daemon(
         buffer_size,
         batch_size,
         drain_timeout,
+        input_format: parsed_input_format,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -1046,6 +1082,8 @@ fn cmd_eval(
     correlation_event_mode: String,
     max_correlation_events: usize,
     timestamp_fields: Vec<String>,
+    input_format: String,
+    syslog_tz: String,
 ) {
     let collection = load_collection(&rules_path);
     let pipelines = load_pipelines(&pipeline_paths);
@@ -1077,6 +1115,8 @@ fn cmd_eval(
             &event_filter,
             corr_config,
             include_event,
+            &input_format,
+            &syslog_tz,
         );
     } else {
         cmd_eval_detection_only(
@@ -1087,6 +1127,8 @@ fn cmd_eval(
             &pipelines,
             &event_filter,
             include_event,
+            &input_format,
+            &syslog_tz,
         );
     }
 }
@@ -1102,6 +1144,8 @@ fn cmd_eval_with_correlations(
     event_filter: &EventFilter,
     config: CorrelationConfig,
     include_event: bool,
+    input_format_str: &str,
+    syslog_tz_str: &str,
 ) {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
@@ -1153,16 +1197,28 @@ fn cmd_eval_with_correlations(
                 process::exit(1);
             });
             let reader = BufReader::new(file);
-            let (det_count, corr_count, line_num) =
-                eval_ndjson_corr(&mut engine, reader, event_filter, pretty);
+            let (det_count, corr_count, line_num) = eval_stream_corr(
+                &mut engine,
+                reader,
+                event_filter,
+                pretty,
+                input_format_str,
+                syslog_tz_str,
+            );
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
             );
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
-            let (det_count, corr_count, line_num) =
-                eval_ndjson_corr(&mut engine, stdin.lock(), event_filter, pretty);
+            let (det_count, corr_count, line_num) = eval_stream_corr(
+                &mut engine,
+                stdin.lock(),
+                event_filter,
+                pretty,
+                input_format_str,
+                syslog_tz_str,
+            );
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
             );
@@ -1170,16 +1226,25 @@ fn cmd_eval_with_correlations(
     }
 }
 
-/// Stream NDJSON through the correlation engine. Returns (det_count, corr_count, line_count).
-fn eval_ndjson_corr(
+/// Stream lines through the correlation engine with format-aware parsing.
+/// Returns (det_count, corr_count, line_count).
+#[allow(clippy::too_many_arguments)]
+fn eval_stream_corr(
     engine: &mut CorrelationEngine,
     reader: impl BufRead,
     event_filter: &EventFilter,
     pretty: bool,
+    input_format_str: &str,
+    syslog_tz_str: &str,
 ) -> (u64, u64, u64) {
     let mut line_num = 0u64;
     let mut det_count = 0u64;
     let mut corr_count = 0u64;
+
+    #[cfg(feature = "daemon")]
+    let format = parse_input_format(input_format_str, syslog_tz_str);
+    #[cfg(not(feature = "daemon"))]
+    let _ = (input_format_str, syslog_tz_str);
 
     for line in reader.lines() {
         line_num += 1;
@@ -1195,33 +1260,113 @@ fn eval_ndjson_corr(
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Invalid JSON on line {line_num}: {e}");
-                continue;
-            }
-        };
-
-        for payload in apply_event_filter(&value, event_filter) {
-            let event = JsonEvent::borrow(&payload);
-            let result = engine.process_event(&event);
-
-            for m in &result.detections {
-                det_count += 1;
-                print_json(m, pretty);
-            }
-            for m in &result.correlations {
-                corr_count += 1;
-                print_json(m, pretty);
-            }
+        // Format-aware parsing: use rsigma-runtime's input adapters when available.
+        #[cfg(feature = "daemon")]
+        {
+            eval_line_corr(
+                engine,
+                &line,
+                &format,
+                event_filter,
+                pretty,
+                &mut det_count,
+                &mut corr_count,
+            );
+        }
+        #[cfg(not(feature = "daemon"))]
+        {
+            eval_line_corr_json(
+                engine,
+                &line,
+                event_filter,
+                pretty,
+                &mut det_count,
+                &mut corr_count,
+            );
         }
     }
 
     (det_count, corr_count, line_num)
 }
 
+/// Evaluate a single line through the correlation engine using format-aware parsing.
+#[cfg(feature = "daemon")]
+fn eval_line_corr(
+    engine: &mut CorrelationEngine,
+    line: &str,
+    format: &rsigma_runtime::InputFormat,
+    event_filter: &EventFilter,
+    pretty: bool,
+    det_count: &mut u64,
+    corr_count: &mut u64,
+) {
+    use rsigma_eval::Event;
+
+    if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
+        // For JSON events, apply the event filter (which may produce multiple payloads).
+        if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
+            let json_value = decoded.to_json();
+            for payload in apply_event_filter(&json_value, event_filter) {
+                let event = JsonEvent::borrow(&payload);
+                let result = engine.process_event(&event);
+                for m in &result.detections {
+                    *det_count += 1;
+                    print_json(m, pretty);
+                }
+                for m in &result.correlations {
+                    *corr_count += 1;
+                    print_json(m, pretty);
+                }
+            }
+        } else {
+            // Non-JSON events: evaluate directly (no event filter).
+            let result = engine.process_event(&decoded);
+            for m in &result.detections {
+                *det_count += 1;
+                print_json(m, pretty);
+            }
+            for m in &result.correlations {
+                *corr_count += 1;
+                print_json(m, pretty);
+            }
+        }
+    }
+}
+
+/// Evaluate a single line through the correlation engine (JSON-only fallback).
+#[cfg(not(feature = "daemon"))]
+fn eval_line_corr_json(
+    engine: &mut CorrelationEngine,
+    line: &str,
+    event_filter: &EventFilter,
+    pretty: bool,
+    det_count: &mut u64,
+    corr_count: &mut u64,
+) {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Invalid JSON: {e}");
+            return;
+        }
+    };
+
+    for payload in apply_event_filter(&value, event_filter) {
+        let event = JsonEvent::borrow(&payload);
+        let result = engine.process_event(&event);
+        for m in &result.detections {
+            *det_count += 1;
+            print_json(m, pretty);
+        }
+        for m in &result.correlations {
+            *corr_count += 1;
+            print_json(m, pretty);
+        }
+    }
+}
+
 /// Evaluation without correlations (stateless, original behavior).
+#[allow(clippy::too_many_arguments)]
 fn cmd_eval_detection_only(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
@@ -1230,6 +1375,8 @@ fn cmd_eval_detection_only(
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     include_event: bool,
+    input_format_str: &str,
+    syslog_tz_str: &str,
 ) {
     let mut engine = Engine::new();
     engine.set_include_event(include_event);
@@ -1281,27 +1428,49 @@ fn cmd_eval_detection_only(
                 process::exit(1);
             });
             let reader = BufReader::new(file);
-            let (match_count, line_num) = eval_ndjson_detect(&engine, reader, event_filter, pretty);
+            let (match_count, line_num) = eval_stream_detect(
+                &engine,
+                reader,
+                event_filter,
+                pretty,
+                input_format_str,
+                syslog_tz_str,
+            );
             eprintln!("Processed {line_num} events, {match_count} matches.");
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
-            let (match_count, line_num) =
-                eval_ndjson_detect(&engine, stdin.lock(), event_filter, pretty);
+            let (match_count, line_num) = eval_stream_detect(
+                &engine,
+                stdin.lock(),
+                event_filter,
+                pretty,
+                input_format_str,
+                syslog_tz_str,
+            );
             eprintln!("Processed {line_num} events, {match_count} matches.");
         }
     }
 }
 
-/// Stream NDJSON through the detection engine. Returns (match_count, line_count).
-fn eval_ndjson_detect(
+/// Stream lines through the detection engine with format-aware parsing.
+/// Returns (match_count, line_count).
+#[allow(clippy::too_many_arguments)]
+fn eval_stream_detect(
     engine: &Engine,
     reader: impl BufRead,
     event_filter: &EventFilter,
     pretty: bool,
+    input_format_str: &str,
+    syslog_tz_str: &str,
 ) -> (u64, u64) {
     let mut line_num = 0u64;
     let mut match_count = 0u64;
+
+    #[cfg(feature = "daemon")]
+    let format = parse_input_format(input_format_str, syslog_tz_str);
+    #[cfg(not(feature = "daemon"))]
+    let _ = (input_format_str, syslog_tz_str);
 
     for line in reader.lines() {
         line_num += 1;
@@ -1317,26 +1486,81 @@ fn eval_ndjson_detect(
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Invalid JSON on line {line_num}: {e}");
-                continue;
-            }
-        };
-
-        for payload in apply_event_filter(&value, event_filter) {
-            let event = JsonEvent::borrow(&payload);
-            let matches = engine.evaluate(&event);
-
-            for m in &matches {
-                match_count += 1;
-                print_json(m, pretty);
-            }
+        #[cfg(feature = "daemon")]
+        {
+            eval_line_detect(
+                engine,
+                &line,
+                &format,
+                event_filter,
+                pretty,
+                &mut match_count,
+            );
+        }
+        #[cfg(not(feature = "daemon"))]
+        {
+            eval_line_detect_json(engine, &line, event_filter, pretty, &mut match_count);
         }
     }
 
     (match_count, line_num)
+}
+
+/// Evaluate a single line through the detection engine using format-aware parsing.
+#[cfg(feature = "daemon")]
+fn eval_line_detect(
+    engine: &Engine,
+    line: &str,
+    format: &rsigma_runtime::InputFormat,
+    event_filter: &EventFilter,
+    pretty: bool,
+    match_count: &mut u64,
+) {
+    use rsigma_eval::Event;
+
+    if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
+        if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
+            let json_value = decoded.to_json();
+            for payload in apply_event_filter(&json_value, event_filter) {
+                let event = JsonEvent::borrow(&payload);
+                for m in &engine.evaluate(&event) {
+                    *match_count += 1;
+                    print_json(m, pretty);
+                }
+            }
+        } else {
+            for m in &engine.evaluate(&decoded) {
+                *match_count += 1;
+                print_json(m, pretty);
+            }
+        }
+    }
+}
+
+/// Evaluate a single line through the detection engine (JSON-only fallback).
+#[cfg(not(feature = "daemon"))]
+fn eval_line_detect_json(
+    engine: &Engine,
+    line: &str,
+    event_filter: &EventFilter,
+    pretty: bool,
+    match_count: &mut u64,
+) {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Invalid JSON: {e}");
+            return;
+        }
+    };
+
+    for payload in apply_event_filter(&value, event_filter) {
+        let event = JsonEvent::borrow(&payload);
+        for m in &engine.evaluate(&event) {
+            *match_count += 1;
+            print_json(m, pretty);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1447,6 +1671,75 @@ fn print_warnings(errors: &[String]) {
             eprintln!("  - {err}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Input format parsing
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "daemon")]
+fn parse_input_format(format_str: &str, syslog_tz: &str) -> rsigma_runtime::InputFormat {
+    use rsigma_runtime::InputFormat;
+    use rsigma_runtime::input::SyslogConfig;
+
+    let tz_secs = parse_tz_offset(syslog_tz);
+
+    match format_str {
+        "auto" => InputFormat::Auto,
+        "json" => InputFormat::Json,
+        "syslog" => InputFormat::Syslog(SyslogConfig {
+            default_tz_offset_secs: tz_secs,
+        }),
+        "plain" => InputFormat::Plain,
+        #[cfg(feature = "logfmt")]
+        "logfmt" => InputFormat::Logfmt,
+        #[cfg(feature = "cef")]
+        "cef" => InputFormat::Cef,
+        other => {
+            eprintln!("Unknown input format: '{other}'");
+            eprintln!("Supported formats: auto, json, syslog, plain");
+            #[cfg(feature = "logfmt")]
+            eprintln!("  (with logfmt feature): logfmt");
+            #[cfg(feature = "cef")]
+            eprintln!("  (with cef feature): cef");
+            process::exit(1);
+        }
+    }
+}
+
+/// Parse a timezone offset string like "+05:00" or "-08:00" into seconds east of UTC.
+#[cfg(feature = "daemon")]
+fn parse_tz_offset(s: &str) -> i32 {
+    let s = s.trim();
+    if s == "UTC" || s == "utc" || s == "Z" || s == "+00:00" {
+        return 0;
+    }
+
+    let (sign, rest) = if let Some(rest) = s.strip_prefix('+') {
+        (1i32, rest)
+    } else if let Some(rest) = s.strip_prefix('-') {
+        (-1i32, rest)
+    } else {
+        eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
+        process::exit(1);
+    };
+
+    let parts: Vec<&str> = rest.split(':').collect();
+    if parts.len() != 2 {
+        eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
+        process::exit(1);
+    }
+
+    let hours: i32 = parts[0].parse().unwrap_or_else(|_| {
+        eprintln!("Invalid timezone offset hours: '{}'", parts[0]);
+        process::exit(1);
+    });
+    let minutes: i32 = parts[1].parse().unwrap_or_else(|_| {
+        eprintln!("Invalid timezone offset minutes: '{}'", parts[1]);
+        process::exit(1);
+    });
+
+    sign * (hours * 3600 + minutes * 60)
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,14 @@ use arc_swap::ArcSwap;
 use rsigma_eval::{JsonEvent, ProcessResult};
 
 use crate::engine::RuntimeEngine;
+use crate::input::{EventInputDecoded, InputFormat, parse_line};
 use crate::metrics::MetricsHook;
+
+/// Closure that extracts multiple payloads from a single JSON value.
+///
+/// Used by the daemon's event filter (e.g. jq/jsonpath) to explode a JSON
+/// object into sub-events (e.g. `.records[]`). Only applies to JSON input.
+pub type EventFilter = dyn Fn(&serde_json::Value) -> Vec<serde_json::Value>;
 
 /// Thread-safe handle to the engine, swappable atomically for hot-reload.
 ///
@@ -57,7 +64,7 @@ impl LogProcessor {
     pub fn process_batch_lines(
         &self,
         batch: &[String],
-        event_filter: &dyn Fn(&serde_json::Value) -> Vec<serde_json::Value>,
+        event_filter: &EventFilter,
     ) -> Vec<ProcessResult> {
         let engine_guard = self.engine.load();
         let mut engine = engine_guard.lock().unwrap();
@@ -88,12 +95,7 @@ impl LogProcessor {
         }
 
         if flat.is_empty() {
-            return (0..batch.len())
-                .map(|_| ProcessResult {
-                    detections: vec![],
-                    correlations: vec![],
-                })
-                .collect();
+            return empty_results(batch.len());
         }
 
         // Phase 2: Batch evaluation — parallel detection + sequential correlation
@@ -111,14 +113,115 @@ impl LogProcessor {
             .set_correlation_state_entries(stats.state_entries as u64);
 
         // Phase 3: Merge results per input line and update metrics
-        let mut line_results: Vec<ProcessResult> = (0..batch.len())
-            .map(|_| ProcessResult {
-                detections: vec![],
-                correlations: vec![],
-            })
-            .collect();
+        let mut line_results = empty_results(batch.len());
 
         for ((line_idx, _), result) in flat.iter().zip(batch_results) {
+            self.metrics.on_events_processed(1);
+            self.metrics.observe_processing_latency(per_event_latency);
+            self.metrics
+                .on_detection_matches(result.detections.len() as u64);
+            self.metrics
+                .on_correlation_matches(result.correlations.len() as u64);
+
+            line_results[*line_idx].detections.extend(result.detections);
+            line_results[*line_idx]
+                .correlations
+                .extend(result.correlations);
+        }
+
+        line_results
+    }
+
+    /// Process a batch of raw input lines using the specified input format.
+    ///
+    /// Unlike [`process_batch_lines`](Self::process_batch_lines), this method
+    /// supports all input formats (JSON, syslog, plain, logfmt, CEF). The
+    /// `event_filter` only applies to JSON-decoded events (it extracts multiple
+    /// payloads from one JSON object, e.g. a `records[]` array). Non-JSON
+    /// formats produce exactly one event per line.
+    ///
+    /// Returns one `ProcessResult` per input line.
+    pub fn process_batch_with_format(
+        &self,
+        batch: &[String],
+        format: &InputFormat,
+        event_filter: Option<&EventFilter>,
+    ) -> Vec<ProcessResult> {
+        let engine_guard = self.engine.load();
+        let mut engine = engine_guard.lock().unwrap();
+
+        // Phase 1: Parse each line into decoded events, tracking line origin.
+        // For JSON with an event_filter, one line can produce multiple events.
+        let mut decoded_events: Vec<(usize, EventInputDecoded)> = Vec::with_capacity(batch.len());
+
+        for (line_idx, line) in batch.iter().enumerate() {
+            match format {
+                InputFormat::Json | InputFormat::Auto => {
+                    // For JSON/auto with event_filter: parse as JSON first to apply filter.
+                    if let Some(filter) = event_filter {
+                        if let Some(EventInputDecoded::Json(_)) = parse_line(line, format) {
+                            // Re-parse as raw JSON to apply filter.
+                            match serde_json::from_str::<serde_json::Value>(line) {
+                                Ok(value) => {
+                                    let payloads = filter(&value);
+                                    for payload in payloads {
+                                        decoded_events.push((
+                                            line_idx,
+                                            EventInputDecoded::Json(JsonEvent::owned(payload)),
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    self.metrics.on_parse_error();
+                                    tracing::debug!(error = %e, "Parse error on input");
+                                }
+                            }
+                        } else if let Some(decoded) = parse_line(line, format) {
+                            // Auto-detect fell through to syslog/plain — no filter.
+                            decoded_events.push((line_idx, decoded));
+                        } else {
+                            self.metrics.on_parse_error();
+                            tracing::debug!("Failed to parse input line");
+                        }
+                    } else if let Some(decoded) = parse_line(line, format) {
+                        decoded_events.push((line_idx, decoded));
+                    } else {
+                        self.metrics.on_parse_error();
+                        tracing::debug!("Failed to parse input line");
+                    }
+                }
+                _ => {
+                    // Non-JSON formats: one event per line, no filter.
+                    if let Some(decoded) = parse_line(line, format) {
+                        decoded_events.push((line_idx, decoded));
+                    } else {
+                        self.metrics.on_parse_error();
+                        tracing::debug!("Failed to parse input line");
+                    }
+                }
+            }
+        }
+
+        if decoded_events.is_empty() {
+            return empty_results(batch.len());
+        }
+
+        // Phase 2: Batch evaluation — parallel detection + sequential correlation
+        let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();
+
+        let start = Instant::now();
+        let batch_results = engine.process_batch(&event_refs);
+        let elapsed = start.elapsed().as_secs_f64();
+        let per_event_latency = elapsed / event_refs.len() as f64;
+
+        let stats = engine.stats();
+        self.metrics
+            .set_correlation_state_entries(stats.state_entries as u64);
+
+        // Phase 3: Merge results per input line and update metrics
+        let mut line_results = empty_results(batch.len());
+
+        for ((line_idx, _), result) in decoded_events.iter().zip(batch_results) {
             self.metrics.on_events_processed(1);
             self.metrics.observe_processing_latency(per_event_latency);
             self.metrics
@@ -201,6 +304,16 @@ impl LogProcessor {
         let engine = snapshot.lock().unwrap();
         engine.stats()
     }
+}
+
+/// Produce a vec of empty `ProcessResult`, one per input line.
+fn empty_results(count: usize) -> Vec<ProcessResult> {
+    (0..count)
+        .map(|_| ProcessResult {
+            detections: vec![],
+            correlations: vec![],
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -608,5 +721,214 @@ detection:
         }
 
         std::mem::forget(dir);
+    }
+
+    // --- Tests for process_batch_with_format ---
+
+    #[test]
+    fn format_json_matches() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        let batch = vec![r#"{"EventID": 1}"#.to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Json, None);
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].detections.is_empty(),
+            "JSON EventID=1 should match"
+        );
+    }
+
+    #[test]
+    fn format_syslog_extracts_fields() {
+        let proc = make_processor(
+            r#"
+title: Syslog Test
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        hostname: mymachine
+    condition: selection
+"#,
+        );
+
+        let batch = vec!["<34>Oct 11 22:14:15 mymachine su: test message".to_string()];
+        let results = proc.process_batch_with_format(
+            &batch,
+            &InputFormat::Syslog(crate::input::SyslogConfig::default()),
+            None,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].detections.is_empty(),
+            "syslog hostname=mymachine should match"
+        );
+    }
+
+    #[test]
+    fn format_plain_keyword_match() {
+        let proc = make_processor(
+            r#"
+title: Keyword Test
+status: test
+logsource:
+    category: test
+detection:
+    keywords:
+        - "disk full"
+    condition: keywords
+"#,
+        );
+
+        let batch = vec!["ERROR: disk full on /dev/sda1".to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Plain, None);
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].detections.is_empty(),
+            "plain keyword 'disk full' should match"
+        );
+    }
+
+    #[test]
+    fn format_auto_detects_json() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        let batch = vec![r#"{"EventID": 1}"#.to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Auto, None);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].detections.is_empty());
+    }
+
+    #[test]
+    fn format_json_with_event_filter() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        let filter = |v: &serde_json::Value| -> Vec<serde_json::Value> {
+            if let Some(records) = v.get("records").and_then(|r| r.as_array()) {
+                records.clone()
+            } else {
+                vec![v.clone()]
+            }
+        };
+
+        let batch = vec![r#"{"records": [{"EventID": 1}, {"EventID": 2}]}"#.to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Json, Some(&filter));
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].detections.len(),
+            1,
+            "only EventID=1 from records array should match"
+        );
+    }
+
+    #[test]
+    fn format_empty_lines_skipped() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        let batch = vec![
+            "".to_string(),
+            "   ".to_string(),
+            r#"{"EventID": 1}"#.to_string(),
+        ];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Json, None);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].detections.is_empty());
+        assert!(results[1].detections.is_empty());
+        assert!(!results[2].detections.is_empty());
+    }
+
+    #[cfg(feature = "logfmt")]
+    #[test]
+    fn format_logfmt_matches() {
+        let proc = make_processor(
+            r#"
+title: Logfmt Test
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        level: error
+    condition: selection
+"#,
+        );
+
+        let batch = vec!["level=error msg=something host=web01".to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Logfmt, None);
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].detections.is_empty(),
+            "logfmt level=error should match"
+        );
+    }
+
+    #[cfg(feature = "cef")]
+    #[test]
+    fn format_cef_matches() {
+        let proc = make_processor(
+            r#"
+title: CEF Test
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        deviceVendor: Security
+    condition: selection
+"#,
+        );
+
+        let batch = vec!["CEF:0|Security|IDS|1.0|100|Attack|9|src=10.0.0.1".to_string()];
+        let results = proc.process_batch_with_format(&batch, &InputFormat::Cef, None);
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].detections.is_empty(),
+            "CEF deviceVendor=Security should match"
+        );
     }
 }

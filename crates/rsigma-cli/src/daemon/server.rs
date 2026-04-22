@@ -10,7 +10,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use rsigma_runtime::{
-    FileSink, LogProcessor, MetricsHook, RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
+    FileSink, InputFormat, LogProcessor, MetricsHook, RuntimeEngine, Sink, StdinSource, StdoutSink,
+    spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -48,6 +49,7 @@ pub struct DaemonConfig {
     pub buffer_size: usize,
     pub batch_size: usize,
     pub drain_timeout: u64,
+    pub input_format: InputFormat,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -289,8 +291,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     let engine_metrics = metrics.clone();
     let event_filter = config.event_filter.clone();
     let batch_size = config.batch_size;
+    let input_format = config.input_format.clone();
     let mut engine_handle = tokio::spawn(async move {
-        let filter_fn = |v: &serde_json::Value| crate::apply_event_filter(v, &event_filter);
+        let filter_fn = move |v: &serde_json::Value| crate::apply_event_filter(v, &event_filter);
         loop {
             let pipeline_start = std::time::Instant::now();
 
@@ -314,7 +317,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             engine_metrics.observe_batch_size(batch.len() as u64);
 
             let results: Vec<ProcessResult> =
-                engine_processor.process_batch_lines(&batch, &filter_fn);
+                engine_processor.process_batch_with_format(&batch, &input_format, Some(&filter_fn));
 
             let mut shutdown = false;
             for result in results {
