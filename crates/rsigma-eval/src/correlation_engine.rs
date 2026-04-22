@@ -26,7 +26,7 @@ use crate::correlation::{
 };
 use crate::engine::Engine;
 use crate::error::{EvalError, Result};
-use crate::event::Event;
+use crate::event::{Event, EventValue};
 use crate::pipeline::{Pipeline, apply_pipelines, apply_pipelines_to_correlation};
 use crate::result::MatchResult;
 
@@ -581,7 +581,7 @@ impl CorrelationEngine {
     /// When no timestamp field is found, the `timestamp_fallback` policy applies:
     /// - `WallClock`: use `Utc::now()` (good for real-time streaming)
     /// - `Skip`: return detections only, skip correlation state updates
-    pub fn process_event(&mut self, event: &Event) -> ProcessResult {
+    pub fn process_event(&mut self, event: &impl Event) -> ProcessResult {
         let all_detections = self.engine.evaluate(event);
 
         let ts = match self.extract_event_timestamp(event) {
@@ -605,7 +605,7 @@ impl CorrelationEngine {
     ///
     /// The timestamp is clamped to `[0, i64::MAX / 2]` to prevent overflow
     /// when adding timespan durations internally.
-    pub fn process_event_at(&mut self, event: &Event, timestamp_secs: i64) -> ProcessResult {
+    pub fn process_event_at(&mut self, event: &impl Event, timestamp_secs: i64) -> ProcessResult {
         let all_detections = self.engine.evaluate(event);
         self.process_with_detections(event, all_detections, timestamp_secs)
     }
@@ -617,7 +617,7 @@ impl CorrelationEngine {
     /// sequentially for stateful correlation.
     pub fn process_with_detections(
         &mut self,
-        event: &Event,
+        event: &impl Event,
         all_detections: Vec<MatchResult>,
         timestamp_secs: i64,
     ) -> ProcessResult {
@@ -649,7 +649,7 @@ impl CorrelationEngine {
     /// Takes `&self` so it can be called concurrently from multiple threads
     /// (e.g. via `rayon::par_iter`) while the mutable correlation phase runs
     /// sequentially afterwards.
-    pub fn evaluate(&self, event: &Event) -> Vec<MatchResult> {
+    pub fn evaluate(&self, event: &impl Event) -> Vec<MatchResult> {
         self.engine.evaluate(event)
     }
 
@@ -660,7 +660,7 @@ impl CorrelationEngine {
     /// phase (it borrows `&self.config` immutably). After `collect()` releases the
     /// immutable borrows, each event's pre-computed detections are fed into the
     /// stateful correlation engine sequentially.
-    pub fn process_batch<'a>(&mut self, events: &[&'a Event<'a>]) -> Vec<ProcessResult> {
+    pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
         // Borrow split: take immutable refs to fields needed for the parallel phase.
         // These are released by collect() before the sequential &mut self phase.
         let engine = &self.engine;
@@ -742,7 +742,7 @@ impl CorrelationEngine {
     /// Feed detection matches into correlation window states.
     fn feed_detections(
         &mut self,
-        event: &Event,
+        event: &impl Event,
         detections: &[MatchResult],
         ts: i64,
         out: &mut Vec<CorrelationResult>,
@@ -814,7 +814,7 @@ impl CorrelationEngine {
     fn update_correlation(
         &mut self,
         corr_idx: usize,
-        event: &Event,
+        event: &impl Event,
         ts: i64,
         rule_id: &Option<String>,
         rule_name: &Option<String>,
@@ -864,7 +864,7 @@ impl CorrelationEngine {
             CorrelationType::ValueCount => {
                 if let Some(ref field_name) = corr.condition.field
                     && let Some(val) = event.get_field(field_name)
-                    && let Some(s) = value_to_string_for_count(val)
+                    && let Some(s) = value_to_string_for_count(&val)
                 {
                     state.push_value_count(ts, s);
                 }
@@ -878,7 +878,7 @@ impl CorrelationEngine {
             | CorrelationType::ValueMedian => {
                 if let Some(ref field_name) = corr.condition.field
                     && let Some(val) = event.get_field(field_name)
-                    && let Some(n) = value_to_f64(val)
+                    && let Some(n) = value_to_f64_ev(&val)
                 {
                     state.push_numeric(ts, n);
                 }
@@ -893,7 +893,8 @@ impl CorrelationEngine {
                     .entry(state_key.clone())
                     .or_insert_with(|| EventBuffer::new(max_events));
                 buf.evict(cutoff);
-                buf.push(ts, event.as_value());
+                let json = event.to_json();
+                buf.push(ts, &json);
             }
             CorrelationEventMode::Refs => {
                 let buf = self
@@ -901,7 +902,8 @@ impl CorrelationEngine {
                     .entry(state_key.clone())
                     .or_insert_with(|| EventRefBuffer::new(max_events));
                 buf.evict(cutoff);
-                buf.push(ts, event.as_value());
+                let json = event.to_json();
+                buf.push(ts, &json);
             }
             CorrelationEventMode::None => {}
         }
@@ -1096,10 +1098,10 @@ impl CorrelationEngine {
     /// - ISO 8601 strings (e.g., "2024-07-10T12:30:00Z")
     ///
     /// Returns `None` if no field yields a valid timestamp.
-    fn extract_event_timestamp(&self, event: &Event) -> Option<i64> {
+    fn extract_event_timestamp(&self, event: &impl Event) -> Option<i64> {
         for field_name in &self.config.timestamp_fields {
             if let Some(val) = event.get_field(field_name)
-                && let Some(ts) = parse_timestamp_value(val)
+                && let Some(ts) = parse_timestamp_value(&val)
             {
                 return Some(ts);
             }
@@ -1382,10 +1384,10 @@ impl Default for CorrelationEngine {
 ///
 /// Standalone version of `CorrelationEngine::extract_event_timestamp` for use
 /// in contexts where borrowing `&self` is not possible (e.g. rayon closures).
-fn extract_event_ts(event: &Event, timestamp_fields: &[String]) -> Option<i64> {
+fn extract_event_ts(event: &impl Event, timestamp_fields: &[String]) -> Option<i64> {
     for field_name in timestamp_fields {
         if let Some(val) = event.get_field(field_name)
-            && let Some(ts) = parse_timestamp_value(val)
+            && let Some(ts) = parse_timestamp_value(&val)
         {
             return Some(ts);
         }
@@ -1393,17 +1395,11 @@ fn extract_event_ts(event: &Event, timestamp_fields: &[String]) -> Option<i64> {
     None
 }
 
-/// Parse a JSON value as a Unix epoch timestamp in seconds.
-fn parse_timestamp_value(val: &serde_json::Value) -> Option<i64> {
+fn parse_timestamp_value(val: &EventValue) -> Option<i64> {
     match val {
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(normalize_epoch(i))
-            } else {
-                n.as_f64().map(|f| normalize_epoch(f as i64))
-            }
-        }
-        serde_json::Value::String(s) => parse_timestamp_string(s),
+        EventValue::Int(i) => Some(normalize_epoch(*i)),
+        EventValue::Float(f) => Some(normalize_epoch(*f as i64)),
+        EventValue::Str(s) => parse_timestamp_string(s),
         _ => None,
     }
 }
@@ -1442,23 +1438,19 @@ fn parse_timestamp_string(s: &str) -> Option<i64> {
 }
 
 /// Convert a JSON value to a string for value_count purposes.
-fn value_to_string_for_count(v: &serde_json::Value) -> Option<String> {
+fn value_to_string_for_count(v: &EventValue) -> Option<String> {
     match v {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        serde_json::Value::Null => Some("null".to_string()),
+        EventValue::Str(s) => Some(s.to_string()),
+        EventValue::Int(n) => Some(n.to_string()),
+        EventValue::Float(f) => Some(f.to_string()),
+        EventValue::Bool(b) => Some(b.to_string()),
+        EventValue::Null => Some("null".to_string()),
         _ => None,
     }
 }
 
-/// Convert a JSON value to f64 for numeric aggregation.
-fn value_to_f64(v: &serde_json::Value) -> Option<f64> {
-    match v {
-        serde_json::Value::Number(n) => n.as_f64(),
-        serde_json::Value::String(s) => s.parse().ok(),
-        _ => None,
-    }
+fn value_to_f64_ev(v: &EventValue) -> Option<f64> {
+    v.as_f64()
 }
 
 // =============================================================================
@@ -1468,6 +1460,7 @@ fn value_to_f64(v: &serde_json::Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::JsonEvent;
     use rsigma_parser::parse_sigma_yaml;
     use serde_json::json;
 
@@ -1477,40 +1470,40 @@ mod tests {
 
     #[test]
     fn test_parse_timestamp_epoch_secs() {
-        let val = json!(1720612200);
+        let val = EventValue::Int(1720612200);
         assert_eq!(parse_timestamp_value(&val), Some(1720612200));
     }
 
     #[test]
     fn test_parse_timestamp_epoch_millis() {
-        let val = json!(1720612200000i64);
+        let val = EventValue::Int(1720612200000);
         assert_eq!(parse_timestamp_value(&val), Some(1720612200));
     }
 
     #[test]
     fn test_parse_timestamp_rfc3339() {
-        let val = json!("2024-07-10T12:30:00Z");
+        let val = EventValue::Str(std::borrow::Cow::Borrowed("2024-07-10T12:30:00Z"));
         let ts = parse_timestamp_value(&val).unwrap();
         assert_eq!(ts, 1720614600);
     }
 
     #[test]
     fn test_parse_timestamp_naive() {
-        let val = json!("2024-07-10T12:30:00");
+        let val = EventValue::Str(std::borrow::Cow::Borrowed("2024-07-10T12:30:00"));
         let ts = parse_timestamp_value(&val).unwrap();
         assert_eq!(ts, 1720614600);
     }
 
     #[test]
     fn test_parse_timestamp_with_space() {
-        let val = json!("2024-07-10 12:30:00");
+        let val = EventValue::Str(std::borrow::Cow::Borrowed("2024-07-10 12:30:00"));
         let ts = parse_timestamp_value(&val).unwrap();
         assert_eq!(ts, 1720614600);
     }
 
     #[test]
     fn test_parse_timestamp_fractional() {
-        let val = json!("2024-07-10T12:30:00.123Z");
+        let val = EventValue::Str(std::borrow::Cow::Borrowed("2024-07-10T12:30:00.123Z"));
         let ts = parse_timestamp_value(&val).unwrap();
         assert_eq!(ts, 1720614600);
     }
@@ -1525,7 +1518,7 @@ mod tests {
         let engine = CorrelationEngine::new(config);
 
         let v = json!({"@timestamp": "2024-07-10T12:30:00Z", "data": "test"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let ts = engine.extract_event_timestamp(&event);
         assert_eq!(ts, Some(1720614600));
     }
@@ -1545,7 +1538,7 @@ mod tests {
 
         // First field missing, second field present
         let v = json!({"timestamp": 1720613400, "data": "test"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let ts = engine.extract_event_timestamp(&event);
         assert_eq!(ts, Some(1720613400));
     }
@@ -1559,7 +1552,7 @@ mod tests {
         let engine = CorrelationEngine::new(config);
 
         let v = json!({"data": "no timestamp here"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         assert_eq!(engine.extract_event_timestamp(&event), None);
     }
 
@@ -1598,7 +1591,7 @@ level: high
 
         // Events with no timestamp field — should NOT update correlation state
         let v = json!({"action": "click", "User": "alice"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
 
         let r1 = engine.process_event(&event);
         assert!(!r1.detections.is_empty(), "detection should still fire");
@@ -1648,7 +1641,7 @@ level: high
         // Events with no timestamp — WallClock fallback means they get Utc::now()
         // and should be close enough to correlate (generous 60s window)
         let v = json!({"action": "click", "User": "alice"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
 
         let _r1 = engine.process_event(&event);
         let _r2 = engine.process_event(&event);
@@ -1704,7 +1697,7 @@ level: high
         let base_ts = 1000i64;
         for i in 0..3 {
             let v = json!({"CommandLine": "whoami", "User": "admin"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, base_ts + i * 10);
 
             // Each event should match the detection rule
@@ -1756,13 +1749,13 @@ level: high
         let ts = 1000i64;
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "alice"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, ts + i);
             assert!(r.correlations.is_empty());
         }
         for i in 0..3 {
             let v = json!({"EventType": "login", "User": "bob"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, ts + i);
             if i == 2 {
                 assert_eq!(r.correlations.len(), 1);
@@ -1805,7 +1798,7 @@ level: medium
 
         // Send 2 events at t=0,1 then 1 event at t=15 (outside window)
         let v = json!({"action": "click", "User": "admin"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         engine.process_event_at(&event, 0);
         engine.process_event_at(&event, 1);
         let r = engine.process_event_at(&event, 15);
@@ -1852,7 +1845,7 @@ level: high
         // 3 different users failing login on same host
         for (i, user) in ["alice", "bob", "charlie"].iter().enumerate() {
             let v = json!({"EventType": "failed_login", "Host": "srv01", "User": user});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, ts + i as i64);
             if i == 2 {
                 assert_eq!(r.correlations.len(), 1);
@@ -1909,13 +1902,13 @@ level: high
         let ts = 1000i64;
         // Only recon A fires
         let v1 = json!({"CommandLine": "whoami", "User": "admin"});
-        let ev1 = Event::from_value(&v1);
+        let ev1 = JsonEvent::borrow(&v1);
         let r1 = engine.process_event_at(&ev1, ts);
         assert!(r1.correlations.is_empty());
 
         // Now recon B fires — both rules have fired within window
         let v2 = json!({"CommandLine": "ipconfig /all", "User": "admin"});
-        let ev2 = Event::from_value(&v2);
+        let ev2 = JsonEvent::borrow(&v2);
         let r2 = engine.process_event_at(&ev2, ts + 10);
         assert_eq!(r2.correlations.len(), 1);
         assert_eq!(r2.correlations[0].rule_title, "Recon Combo");
@@ -1969,13 +1962,13 @@ level: critical
         let ts = 1000i64;
         // Failed login first
         let v1 = json!({"EventType": "failed_login", "User": "admin"});
-        let ev1 = Event::from_value(&v1);
+        let ev1 = JsonEvent::borrow(&v1);
         let r1 = engine.process_event_at(&ev1, ts);
         assert!(r1.correlations.is_empty());
 
         // Then successful login — correct order!
         let v2 = json!({"EventType": "success_login", "User": "admin"});
-        let ev2 = Event::from_value(&v2);
+        let ev2 = JsonEvent::borrow(&v2);
         let r2 = engine.process_event_at(&ev2, ts + 10);
         assert_eq!(r2.correlations.len(), 1);
     }
@@ -2022,11 +2015,11 @@ level: high
         let ts = 1000i64;
         // B fires first, then A — wrong order
         let v1 = json!({"type": "b", "User": "admin"});
-        let ev1 = Event::from_value(&v1);
+        let ev1 = JsonEvent::borrow(&v1);
         engine.process_event_at(&ev1, ts);
 
         let v2 = json!({"type": "a", "User": "admin"});
-        let ev2 = Event::from_value(&v2);
+        let ev2 = JsonEvent::borrow(&v2);
         let r2 = engine.process_event_at(&ev2, ts + 10);
         assert!(r2.correlations.is_empty());
     }
@@ -2067,12 +2060,12 @@ level: high
 
         let ts = 1000i64;
         let v1 = json!({"action": "upload", "User": "alice", "bytes_sent": 600});
-        let ev1 = Event::from_value(&v1);
+        let ev1 = JsonEvent::borrow(&v1);
         let r1 = engine.process_event_at(&ev1, ts);
         assert!(r1.correlations.is_empty());
 
         let v2 = json!({"action": "upload", "User": "alice", "bytes_sent": 500});
-        let ev2 = Event::from_value(&v2);
+        let ev2 = JsonEvent::borrow(&v2);
         let r2 = engine.process_event_at(&ev2, ts + 5);
         assert_eq!(r2.correlations.len(), 1);
         assert!((r2.correlations[0].aggregated_value - 1100.0).abs() < f64::EPSILON);
@@ -2112,7 +2105,7 @@ level: medium
         // Avg of 400, 600, 800 = 600 > 500
         for (i, latency) in [400, 600, 800].iter().enumerate() {
             let v = json!({"type": "request", "Service": "api", "latency_ms": latency});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, ts + i as i64);
             if i == 2 {
                 assert_eq!(r.correlations.len(), 1);
@@ -2155,12 +2148,12 @@ level: low
         engine.add_collection(&collection).unwrap();
 
         let v = json!({"action": "test", "User": "alice"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         engine.process_event_at(&event, 1000);
         assert_eq!(engine.state_count(), 1);
 
         let v2 = json!({"action": "test", "User": "bob"});
-        let event2 = Event::from_value(&v2);
+        let event2 = JsonEvent::borrow(&v2);
         engine.process_event_at(&event2, 1001);
         assert_eq!(engine.state_count(), 2);
 
@@ -2205,7 +2198,7 @@ level: high
         // generate defaults to false — detection matches are still returned
         // (filtering by generate flag is a backend concern, not eval)
         let v = json!({"action": "test", "User": "alice"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let r = engine.process_event_at(&event, 1000);
         assert_eq!(r.detections.len(), 1);
         assert_eq!(r.correlations.len(), 1);
@@ -2255,7 +2248,7 @@ level: high
                 "eventName": "ListBuckets",
                 "userIdentity.arn": "arn:aws:iam::123456789:user/attacker"
             });
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, base_ts + i * 60);
             if i == 4 {
                 assert_eq!(r.correlations.len(), 1);
@@ -2337,7 +2330,7 @@ level: critical
         // Send 3 failed logins → triggers "many_failed_chain"
         for i in 0..3 {
             let v = json!({"EventType": "failed_login", "User": "victim"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let r = engine.process_event_at(&event, ts + i);
             if i == 2 {
                 // The event_count correlation should fire
@@ -2357,7 +2350,7 @@ level: critical
         // to have fired. success-login-chain is a detection rule, not a correlation,
         // so it gets matched via the regular detection path.
         let v = json!({"EventType": "success_login", "User": "victim"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let r = engine.process_event_at(&event, ts + 30);
 
         // The detection should match
@@ -2421,7 +2414,7 @@ level: high
             "http.response.status_code": 500,
             "destination.ip": "10.0.0.5"
         });
-        let ev1 = Event::from_value(&v1);
+        let ev1 = JsonEvent::borrow(&v1);
         let r1 = engine.process_event_at(&ev1, ts);
         assert_eq!(r1.detections.len(), 1);
         assert!(r1.correlations.is_empty());
@@ -2431,7 +2424,7 @@ level: high
             "event.type": "connection",
             "source.ip": "10.0.0.5"
         });
-        let ev2 = Event::from_value(&v2);
+        let ev2 = JsonEvent::borrow(&v2);
         let r2 = engine.process_event_at(&ev2, ts + 5);
         assert_eq!(r2.detections.len(), 1);
         // Both rules fired for the same internal_ip group → temporal should fire
@@ -2484,7 +2477,7 @@ level: medium
         // Push some numeric-ish values for the image field
         for (i, val) in [10.0, 20.0, 30.0, 40.0, 50.0].iter().enumerate() {
             let v = json!({"type": "process_creation", "ComputerName": "srv01", "image": val});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let _ = engine.process_event_at(&event, ts + i as i64);
         }
         // The median (30.0) should be <= 50, so condition fires
@@ -2537,12 +2530,12 @@ level: high
 
         // Login failure by alice
         let ev1 = json!({"EventType": "login_failure", "User": "alice"});
-        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        let r1 = engine.process_event_at(&JsonEvent::borrow(&ev1), ts);
         assert!(r1.correlations.is_empty(), "only one rule fired so far");
 
         // Password change by alice — both rules have now fired
         let ev2 = json!({"EventType": "password_change", "User": "alice"});
-        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 10);
+        let r2 = engine.process_event_at(&JsonEvent::borrow(&ev2), ts + 10);
         assert_eq!(
             r2.correlations.len(),
             1,
@@ -2591,7 +2584,7 @@ level: medium
 
         // Only SSH login by bob — "or" means this suffices
         let ev = json!({"EventType": "ssh_login", "User": "bob"});
-        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), 1000);
         assert_eq!(r.correlations.len(), 1);
         assert_eq!(r.correlations[0].rule_title, "Any Remote Access");
     }
@@ -2636,12 +2629,12 @@ level: high
 
         // Only whoami (recon-1) — should not fire
         let ev = json!({"CommandLine": "whoami", "Host": "srv01"});
-        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), 1000);
         assert!(r.correlations.is_empty(), "only one of two AND rules fired");
 
         // Now ipconfig (recon-2) — should fire
         let ev2 = json!({"CommandLine": "ipconfig /all", "Host": "srv01"});
-        let r2 = engine.process_event_at(&Event::from_value(&ev2), 1010);
+        let r2 = engine.process_event_at(&JsonEvent::borrow(&ev2), 1010);
         assert_eq!(r2.correlations.len(), 1);
         assert_eq!(r2.correlations[0].rule_title, "Full Recon");
     }
@@ -2692,7 +2685,7 @@ level: critical
         // Service account failures should be filtered — don't count
         for i in 0..5 {
             let ev = json!({"EventType": "auth_failure", "User": "svc_backup"});
-            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + i);
             assert!(
                 r.correlations.is_empty(),
                 "service account should be filtered, no correlation"
@@ -2702,13 +2695,13 @@ level: critical
         // Normal user failures should count
         for i in 0..2 {
             let ev = json!({"EventType": "auth_failure", "User": "alice"});
-            let r = engine.process_event_at(&Event::from_value(&ev), ts + 10 + i);
+            let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 10 + i);
             assert!(r.correlations.is_empty(), "not yet 3 events");
         }
 
         // Third failure triggers correlation
         let ev = json!({"EventType": "auth_failure", "User": "alice"});
-        let r = engine.process_event_at(&Event::from_value(&ev), ts + 12);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 12);
         assert_eq!(r.correlations.len(), 1);
         assert_eq!(r.correlations[0].rule_title, "Brute Force");
     }
@@ -2760,11 +2753,11 @@ level: high
         let ts = 1000i64;
         // Mix of docx and xlsx accesses by same user
         let ev1 = json!({"FileName": "report.docx", "User": "bob"});
-        engine.process_event_at(&Event::from_value(&ev1), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev1), ts);
         let ev2 = json!({"FileName": "data.xlsx", "User": "bob"});
-        engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        engine.process_event_at(&JsonEvent::borrow(&ev2), ts + 1);
         let ev3 = json!({"FileName": "notes.docx", "User": "bob"});
-        let r = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev3), ts + 2);
 
         assert_eq!(r.correlations.len(), 1);
         assert_eq!(r.correlations[0].rule_title, "Mass File Access");
@@ -2805,17 +2798,17 @@ level: medium
         let ts = 1000i64;
         // Event where User field matches the placeholder
         let ev1 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "alice"});
-        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        let r1 = engine.process_event_at(&JsonEvent::borrow(&ev1), ts);
         assert!(r1.correlations.is_empty());
 
         let ev2 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "alice"});
-        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        let r2 = engine.process_event_at(&JsonEvent::borrow(&ev2), ts + 1);
         assert_eq!(r2.correlations.len(), 1);
         assert_eq!(r2.correlations[0].rule_title, "Excessive Temp Access");
 
         // Different user — should NOT match (path says alice, user is bob)
         let ev3 = json!({"FilePath": "C:\\Users\\alice\\Temp", "User": "bob"});
-        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev3), ts + 2);
         // Detection doesn't fire for this event since expand resolves to C:\Users\bob\Temp
         assert_eq!(r3.detections.len(), 0);
     }
@@ -2858,19 +2851,19 @@ level: high
         // Login at 3AM
         let ev1 =
             json!({"EventType": "login", "User": "alice", "Timestamp": "2024-01-15T03:10:00Z"});
-        let r1 = engine.process_event_at(&Event::from_value(&ev1), ts);
+        let r1 = engine.process_event_at(&JsonEvent::borrow(&ev1), ts);
         assert_eq!(r1.detections.len(), 1);
         assert!(r1.correlations.is_empty());
 
         let ev2 =
             json!({"EventType": "login", "User": "alice", "Timestamp": "2024-01-15T03:45:00Z"});
-        let r2 = engine.process_event_at(&Event::from_value(&ev2), ts + 1);
+        let r2 = engine.process_event_at(&JsonEvent::borrow(&ev2), ts + 1);
         assert_eq!(r2.correlations.len(), 1);
         assert_eq!(r2.correlations[0].rule_title, "Frequent Night Logins");
 
         // Login at noon — should NOT count
         let ev3 = json!({"EventType": "login", "User": "bob", "Timestamp": "2024-01-15T12:00:00Z"});
-        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 2);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev3), ts + 2);
         assert!(
             r3.detections.is_empty(),
             "noon login should not match night rule"
@@ -2918,25 +2911,25 @@ level: high
         // Send 2 events — gt:2 is false
         for i in 0..2 {
             let ev = json!({"EventType": "login", "User": "alice"});
-            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + i);
             assert!(r.correlations.is_empty(), "2 events should not fire (gt:2)");
         }
 
         // 3rd event — gt:2 is true, lte:5 is true → fires
         let ev3 = json!({"EventType": "login", "User": "alice"});
-        let r3 = engine.process_event_at(&Event::from_value(&ev3), ts + 3);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev3), ts + 3);
         assert_eq!(r3.correlations.len(), 1, "3 events: gt:2 AND lte:5");
 
         // Send events 4, 5 — still in range
         for i in 4..=5 {
             let ev = json!({"EventType": "login", "User": "alice"});
-            let r = engine.process_event_at(&Event::from_value(&ev), ts + i);
+            let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + i);
             assert_eq!(r.correlations.len(), 1, "{i} events still in range");
         }
 
         // 6th event — lte:5 is false → no fire
         let ev6 = json!({"EventType": "login", "User": "alice"});
-        let r6 = engine.process_event_at(&Event::from_value(&ev6), ts + 6);
+        let r6 = engine.process_event_at(&JsonEvent::borrow(&ev6), ts + 6);
         assert!(
             r6.correlations.is_empty(),
             "6 events exceeds lte:5, should not fire"
@@ -2986,27 +2979,27 @@ level: high
         let ts = 1000;
 
         // Fire 3 events to hit threshold
-        engine.process_event_at(&Event::from_value(&ev), ts);
-        engine.process_event_at(&Event::from_value(&ev), ts + 1);
-        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 1);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 2);
         assert_eq!(r3.correlations.len(), 1, "should fire on 3rd event");
 
         // 4th event within suppress window → suppressed
-        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        let r4 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 3);
         assert!(
             r4.correlations.is_empty(),
             "should be suppressed within 10s window"
         );
 
         // 5th event still within suppress window → suppressed
-        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 9);
+        let r5 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 9);
         assert!(
             r5.correlations.is_empty(),
             "should be suppressed at ts+9 (< ts+2+10)"
         );
 
         // Event after suppress window expires → fires again
-        let r6 = engine.process_event_at(&Event::from_value(&ev), ts + 13);
+        let r6 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 13);
         assert_eq!(
             r6.correlations.len(),
             1,
@@ -3028,20 +3021,20 @@ level: high
 
         // Alice hits threshold
         let ev_a = json!({"EventType": "login", "User": "alice"});
-        engine.process_event_at(&Event::from_value(&ev_a), ts);
-        engine.process_event_at(&Event::from_value(&ev_a), ts + 1);
-        let r = engine.process_event_at(&Event::from_value(&ev_a), ts + 2);
+        engine.process_event_at(&JsonEvent::borrow(&ev_a), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev_a), ts + 1);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev_a), ts + 2);
         assert_eq!(r.correlations.len(), 1, "alice should fire");
 
         // Bob hits threshold — different group key, not suppressed
         let ev_b = json!({"EventType": "login", "User": "bob"});
-        engine.process_event_at(&Event::from_value(&ev_b), ts + 3);
-        engine.process_event_at(&Event::from_value(&ev_b), ts + 4);
-        let r = engine.process_event_at(&Event::from_value(&ev_b), ts + 5);
+        engine.process_event_at(&JsonEvent::borrow(&ev_b), ts + 3);
+        engine.process_event_at(&JsonEvent::borrow(&ev_b), ts + 4);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev_b), ts + 5);
         assert_eq!(r.correlations.len(), 1, "bob should fire independently");
 
         // Alice is still suppressed
-        let r = engine.process_event_at(&Event::from_value(&ev_a), ts + 6);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev_a), ts + 6);
         assert!(r.correlations.is_empty(), "alice still suppressed");
     }
 
@@ -3063,20 +3056,20 @@ level: high
         let ts = 1000;
 
         // Hit threshold: 3 events
-        engine.process_event_at(&Event::from_value(&ev), ts);
-        engine.process_event_at(&Event::from_value(&ev), ts + 1);
-        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 1);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 2);
         assert_eq!(r3.correlations.len(), 1, "should fire on 3rd event");
 
         // State was reset, so 4th and 5th events should NOT fire
-        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        let r4 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 3);
         assert!(r4.correlations.is_empty(), "reset: need 3 more events");
 
-        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 4);
+        let r5 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 4);
         assert!(r5.correlations.is_empty(), "reset: still only 2");
 
         // 6th event (3rd after reset) should fire again
-        let r6 = engine.process_event_at(&Event::from_value(&ev), ts + 5);
+        let r6 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 5);
         assert_eq!(
             r6.correlations.len(),
             1,
@@ -3095,7 +3088,7 @@ level: high
         engine.add_collection(&collection).unwrap();
 
         let ev = json!({"EventType": "login", "User": "alice"});
-        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), 1000);
         assert_eq!(r.detections.len(), 1, "by default detections are emitted");
     }
 
@@ -3110,7 +3103,7 @@ level: high
         engine.add_collection(&collection).unwrap();
 
         let ev = json!({"EventType": "login", "User": "alice"});
-        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), 1000);
         assert!(
             r.detections.is_empty(),
             "detection matches should be suppressed when emit_detections=false"
@@ -3152,7 +3145,7 @@ level: high
         engine.add_collection(&collection).unwrap();
 
         let ev = json!({"EventType": "login", "User": "alice"});
-        let r = engine.process_event_at(&Event::from_value(&ev), 1000);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), 1000);
         // generate: true means this rule is NOT correlation-only
         assert_eq!(
             r.detections.len(),
@@ -3180,16 +3173,16 @@ level: high
         let ts = 1000;
 
         // Hit threshold: fires and resets
-        engine.process_event_at(&Event::from_value(&ev), ts);
-        engine.process_event_at(&Event::from_value(&ev), ts + 1);
-        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 1);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 2);
         assert_eq!(r3.correlations.len(), 1, "fires on 3rd event");
 
         // Push 3 more events quickly (state was reset, so new count → 3)
         // but suppress window hasn't expired (ts+2 + 5 = ts+7)
-        engine.process_event_at(&Event::from_value(&ev), ts + 3);
-        engine.process_event_at(&Event::from_value(&ev), ts + 4);
-        let r = engine.process_event_at(&Event::from_value(&ev), ts + 5);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 3);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 4);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 5);
         assert!(
             r.correlations.is_empty(),
             "threshold met again but still suppressed"
@@ -3198,7 +3191,7 @@ level: high
         // After suppress expires (at ts+8, which is ts+2+6 > suppress=5),
         // the accumulated events from step 2 (ts+3,4,5) still satisfy gte:3,
         // so the first event after expiry fires immediately and resets.
-        let r = engine.process_event_at(&Event::from_value(&ev), ts + 8);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 8);
         assert_eq!(
             r.correlations.len(),
             1,
@@ -3207,9 +3200,9 @@ level: high
 
         // State was reset again at ts+8, suppress window now ts+8..ts+13.
         // Need 3 new events to fire, and suppress must expire.
-        engine.process_event_at(&Event::from_value(&ev), ts + 9);
-        engine.process_event_at(&Event::from_value(&ev), ts + 10);
-        let r = engine.process_event_at(&Event::from_value(&ev), ts + 11);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 9);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 10);
+        let r = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 11);
         assert!(
             r.correlations.is_empty(),
             "threshold met but suppress window hasn't expired (ts+11 - ts+8 = 3 < 5)"
@@ -3229,20 +3222,20 @@ level: high
         let ev = json!({"EventType": "login", "User": "alice"});
         let ts = 1000;
 
-        engine.process_event_at(&Event::from_value(&ev), ts);
-        engine.process_event_at(&Event::from_value(&ev), ts + 1);
-        let r3 = engine.process_event_at(&Event::from_value(&ev), ts + 2);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts);
+        engine.process_event_at(&JsonEvent::borrow(&ev), ts + 1);
+        let r3 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 2);
         assert_eq!(r3.correlations.len(), 1);
 
         // Without suppression, 4th event should also fire
-        let r4 = engine.process_event_at(&Event::from_value(&ev), ts + 3);
+        let r4 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 3);
         assert_eq!(
             r4.correlations.len(),
             1,
             "no suppression: fires on every event after threshold"
         );
 
-        let r5 = engine.process_event_at(&Event::from_value(&ev), ts + 4);
+        let r5 = engine.process_event_at(&JsonEvent::borrow(&ev), ts + 4);
         assert_eq!(r5.correlations.len(), 1, "still fires");
     }
 
@@ -3369,7 +3362,7 @@ level: high
             "User": "alice",
             "event_time": "2026-02-11T12:00:00Z"
         });
-        let result = engine.process_event(&Event::from_value(&ev));
+        let result = engine.process_event(&JsonEvent::borrow(&ev));
 
         // The detection should match, and timestamp should be ~1739275200 (2026-02-11)
         assert!(!result.detections.is_empty() || result.correlations.is_empty());
@@ -3377,7 +3370,7 @@ level: high
         // If it used Utc::now, the test would still pass but the timestamp would be
         // wildly different. We verify by checking the extracted value directly.
         let ts = engine
-            .extract_event_timestamp(&Event::from_value(&ev))
+            .extract_event_timestamp(&JsonEvent::borrow(&ev))
             .expect("should extract timestamp");
         assert!(
             ts > 1_700_000_000 && ts < 1_800_000_000,
@@ -3624,7 +3617,7 @@ level: high
 
         for i in 0..3 {
             let v = json!({"EventType": "login", "User": "admin", "@timestamp": 1000 + i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if i == 2 {
                 assert_eq!(result.correlations.len(), 1);
@@ -3673,7 +3666,7 @@ level: high
 
         let mut corr_result = None;
         for (i, ev) in events_sent.iter().enumerate() {
-            let event = Event::from_value(ev);
+            let event = JsonEvent::borrow(ev);
             let result = engine.process_event_at(&event, 1000 + i as i64);
             if !result.correlations.is_empty() {
                 corr_result = Some(result);
@@ -3735,7 +3728,7 @@ level: high
         let mut corr_result = None;
         for i in 0..5 {
             let v = json!({"EventType": "login", "User": "admin", "idx": i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if !result.correlations.is_empty() {
                 corr_result = Some(result);
@@ -3791,7 +3784,7 @@ level: high
         // First round: 2 events -> fires
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "admin", "round": 1, "idx": i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if i == 1 {
                 assert_eq!(result.correlations.len(), 1);
@@ -3803,7 +3796,7 @@ level: high
         // After reset, event buffer should be cleared.
         // Second round: need 2 more events to fire again
         let v = json!({"EventType": "login", "User": "admin", "round": 2, "idx": 0});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let result = engine.process_event_at(&event, 1010);
         assert!(
             result.correlations.is_empty(),
@@ -3811,7 +3804,7 @@ level: high
         );
 
         let v = json!({"EventType": "login", "User": "admin", "round": 2, "idx": 1});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let result = engine.process_event_at(&event, 1011);
         assert_eq!(result.correlations.len(), 1);
         let events = result.correlations[0].events.as_ref().unwrap();
@@ -3854,7 +3847,7 @@ level: high
 
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "admin"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if i == 1 {
                 assert_eq!(result.correlations.len(), 1);
@@ -3900,14 +3893,14 @@ level: high
         // Push 2 events at ts=1000,1001 — within the 10s window
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "admin", "idx": i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             engine.process_event_at(&event, 1000 + i);
         }
 
         // Push 1 more event at ts=1015 — the first 2 events are now outside the
         // 10s window (cutoff = 1015 - 10 = 1005)
         let v = json!({"EventType": "login", "User": "admin", "idx": 2});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let result = engine.process_event_at(&event, 1015);
         // Should NOT fire: only 1 event in window (the one at ts=1015)
         assert!(
@@ -3918,7 +3911,7 @@ level: high
         // Push 2 more to reach threshold
         for i in 3..5 {
             let v = json!({"EventType": "login", "User": "admin", "idx": i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1016 + i - 3);
             if i == 4 {
                 assert_eq!(result.correlations.len(), 1);
@@ -3970,7 +3963,7 @@ level: high
         // Push some events
         for i in 0..5 {
             let v = json!({"EventType": "login", "User": "admin"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             engine.process_event_at(&event, 1000 + i);
         }
 
@@ -4014,7 +4007,7 @@ level: high
         let mut corr_result = None;
         for i in 0..3 {
             let v = json!({"EventType": "login", "User": "admin", "id": format!("evt-{i}"), "@timestamp": 1000 + i});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if !result.correlations.is_empty() {
                 corr_result = Some(result.correlations[0].clone());
@@ -4072,7 +4065,7 @@ level: high
         let mut corr_result = None;
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "admin"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if !result.correlations.is_empty() {
                 corr_result = Some(result.correlations[0].clone());
@@ -4123,7 +4116,7 @@ level: high
         let mut corr_result = None;
         for i in 0..3 {
             let v = json!({"EventType": "login", "User": "admin", "id": format!("e{i}")});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, 1000 + i);
             if !result.correlations.is_empty() {
                 corr_result = Some(result.correlations[0].clone());
@@ -4217,7 +4210,7 @@ level: high
             .iter()
             .enumerate()
             .map(|(i, v)| {
-                let e = Event::from_value(v);
+                let e = JsonEvent::borrow(v);
                 engine1.process_event_at(&e, 1000 + i as i64)
             })
             .collect();
@@ -4230,7 +4223,7 @@ level: high
             .iter()
             .enumerate()
             .map(|(i, v)| {
-                let e = Event::from_value(v);
+                let e = JsonEvent::borrow(v);
                 let detections = engine2.evaluate(&e);
                 engine2.process_with_detections(&e, detections, 1000 + i as i64)
             })
@@ -4281,7 +4274,7 @@ level: high
             .iter()
             .enumerate()
             .map(|(i, v)| {
-                let e = Event::from_value(v);
+                let e = JsonEvent::borrow(v);
                 engine1.process_event_at(&e, 1000 + i as i64)
             })
             .collect();
@@ -4289,8 +4282,8 @@ level: high
         // Batch
         let mut engine2 = CorrelationEngine::new(CorrelationConfig::default());
         engine2.add_collection(&collection).unwrap();
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
-        let refs: Vec<&Event> = events.iter().collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
+        let refs: Vec<&JsonEvent> = events.iter().collect();
         let batch = engine2.process_batch(&refs);
 
         assert_eq!(sequential.len(), batch.len());
@@ -4336,7 +4329,7 @@ level: high
         let base_ts = 1000i64;
         for i in 0..2 {
             let v = json!({"EventType": "login", "User": "alice"});
-            let event = Event::from_value(&v);
+            let event = JsonEvent::borrow(&v);
             let result = engine.process_event_at(&event, base_ts + i * 10);
 
             if i == 1 {
@@ -4380,7 +4373,7 @@ score: 42
         engine.add_collection(&collection).unwrap();
 
         let v = json!({"EventType": "login"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let result = engine.process_event(&event);
 
         assert_eq!(result.detections.len(), 1);

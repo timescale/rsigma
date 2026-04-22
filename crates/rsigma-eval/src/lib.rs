@@ -18,7 +18,8 @@
 //!
 //! ```rust
 //! use rsigma_parser::parse_sigma_yaml;
-//! use rsigma_eval::{Engine, Event};
+//! use rsigma_eval::Engine;
+//! use rsigma_eval::event::JsonEvent;
 //! use serde_json::json;
 //!
 //! let yaml = r#"
@@ -38,7 +39,7 @@
 //! engine.add_collection(&collection).unwrap();
 //!
 //! let event_val = json!({"CommandLine": "cmd /c whoami"});
-//! let event = Event::from_value(&event_val);
+//! let event = JsonEvent::borrow(&event_val);
 //! let matches = engine.evaluate(&event);
 //! assert_eq!(matches.len(), 1);
 //! ```
@@ -47,7 +48,8 @@
 //!
 //! ```rust
 //! use rsigma_parser::parse_sigma_yaml;
-//! use rsigma_eval::{CorrelationEngine, CorrelationConfig, Event};
+//! use rsigma_eval::{CorrelationEngine, CorrelationConfig};
+//! use rsigma_eval::event::JsonEvent;
 //! use serde_json::json;
 //!
 //! let yaml = r#"
@@ -79,7 +81,7 @@
 //!
 //! for i in 0..3 {
 //!     let v = json!({"EventType": "login", "User": "admin"});
-//!     let event = Event::from_value(&v);
+//!     let event = JsonEvent::borrow(&v);
 //!     let result = engine.process_event_at(&event, 1000 + i);
 //!     if i == 2 {
 //!         assert_eq!(result.correlations.len(), 1);
@@ -96,7 +98,7 @@ pub mod event;
 pub mod matcher;
 pub mod pipeline;
 pub mod result;
-pub(crate) mod rule_index;
+pub mod rule_index;
 
 // Re-export the most commonly used types and functions at crate root
 pub use compiler::{
@@ -112,7 +114,7 @@ pub use correlation_engine::{
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};
-pub use event::Event;
+pub use event::{Event, JsonEvent};
 pub use matcher::CompiledMatcher;
 pub use pipeline::{
     Pipeline, apply_pipelines, merge_pipelines, parse_pipeline, parse_pipeline_file,

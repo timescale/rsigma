@@ -11,8 +11,8 @@ use std::time::SystemTime;
 use clap::{Parser, Subcommand};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, Engine, Event,
-    Pipeline, parse_pipeline_file,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, Engine,
+    JsonEvent, Pipeline, parse_pipeline_file,
 };
 use rsigma_parser::lint::{self, FileLintResult, LintConfig};
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
@@ -1131,7 +1131,7 @@ fn cmd_eval_with_correlations(
             };
 
             for payload in apply_event_filter(&value, event_filter) {
-                let event = Event::from_value(&payload);
+                let event = JsonEvent::borrow(&payload);
                 let result = engine.process_event(&event);
 
                 let total = result.detections.len() + result.correlations.len();
@@ -1204,7 +1204,7 @@ fn eval_ndjson_corr(
         };
 
         for payload in apply_event_filter(&value, event_filter) {
-            let event = Event::from_value(&payload);
+            let event = JsonEvent::borrow(&payload);
             let result = engine.process_event(&event);
 
             for m in &result.detections {
@@ -1262,7 +1262,7 @@ fn cmd_eval_detection_only(
                 eprintln!("No matches.");
             } else {
                 for payload in &payloads {
-                    let event = Event::from_value(payload);
+                    let event = JsonEvent::borrow(payload);
                     let matches = engine.evaluate(&event);
 
                     if matches.is_empty() {
@@ -1326,7 +1326,7 @@ fn eval_ndjson_detect(
         };
 
         for payload in apply_event_filter(&value, event_filter) {
-            let event = Event::from_value(&payload);
+            let event = JsonEvent::borrow(&payload);
             let matches = engine.evaluate(&event);
 
             for m in &matches {

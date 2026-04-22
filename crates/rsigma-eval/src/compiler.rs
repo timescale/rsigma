@@ -252,17 +252,15 @@ fn validate_condition_refs(
 }
 
 /// Evaluate a compiled rule against an event, returning a `MatchResult` if it matches.
-pub fn evaluate_rule(rule: &CompiledRule, event: &Event) -> Option<MatchResult> {
-    // Evaluate each condition (usually just one)
+pub fn evaluate_rule(rule: &CompiledRule, event: &impl Event) -> Option<MatchResult> {
     for condition in &rule.conditions {
         let mut matched_selections = Vec::new();
         if eval_condition(condition, &rule.detections, event, &mut matched_selections) {
-            // Collect field matches from the matched selections
             let matched_fields =
                 collect_field_matches(&matched_selections, &rule.detections, event);
 
             let event_data = if rule.include_event {
-                Some(event.as_value().clone())
+                Some(event.to_json())
             } else {
                 None
             };
@@ -694,7 +692,7 @@ fn compile_value_default(value: &SigmaValue, case_insensitive: bool) -> Result<C
 pub fn eval_condition(
     expr: &ConditionExpr,
     detections: &HashMap<String, CompiledDetection>,
-    event: &Event,
+    event: &impl Event,
     matched_selections: &mut Vec<String>,
 ) -> bool {
     match expr {
@@ -754,8 +752,7 @@ pub fn eval_condition(
     }
 }
 
-/// Evaluate a compiled detection against an event.
-fn eval_detection(detection: &CompiledDetection, event: &Event) -> bool {
+fn eval_detection(detection: &CompiledDetection, event: &impl Event) -> bool {
     match detection {
         CompiledDetection::AllOf(items) => {
             items.iter().all(|item| eval_detection_item(item, event))
@@ -765,39 +762,31 @@ fn eval_detection(detection: &CompiledDetection, event: &Event) -> bool {
     }
 }
 
-/// Evaluate a single compiled detection item against an event.
-fn eval_detection_item(item: &CompiledDetectionItem, event: &Event) -> bool {
-    // Handle exists modifier
+fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool {
     if let Some(expect_exists) = item.exists {
         if let Some(field) = &item.field {
             let exists = event.get_field(field).is_some_and(|v| !v.is_null());
             return exists == expect_exists;
         }
-        return !expect_exists; // No field name + exists → field doesn't exist
+        return !expect_exists;
     }
 
     match &item.field {
         Some(field_name) => {
-            // Field-based detection
             if let Some(value) = event.get_field(field_name) {
-                item.matcher.matches(value, event)
+                item.matcher.matches(&value, event)
             } else {
-                // Field not present — check if matcher handles null
                 matches!(item.matcher, CompiledMatcher::Null)
             }
         }
-        None => {
-            // Keyword detection (no field) — search all string values
-            item.matcher.matches_keyword(event)
-        }
+        None => item.matcher.matches_keyword(event),
     }
 }
 
-/// Collect field matches from matched selections for the MatchResult.
 fn collect_field_matches(
     selection_names: &[String],
     detections: &HashMap<String, CompiledDetection>,
-    event: &Event,
+    event: &impl Event,
 ) -> Vec<FieldMatch> {
     let mut matches = Vec::new();
     for name in selection_names {
@@ -810,7 +799,7 @@ fn collect_field_matches(
 
 fn collect_detection_fields(
     detection: &CompiledDetection,
-    event: &Event,
+    event: &impl Event,
     out: &mut Vec<FieldMatch>,
 ) {
     match detection {
@@ -818,11 +807,11 @@ fn collect_detection_fields(
             for item in items {
                 if let Some(field_name) = &item.field
                     && let Some(value) = event.get_field(field_name)
-                    && item.matcher.matches(value, event)
+                    && item.matcher.matches(&value, event)
                 {
                     out.push(FieldMatch {
                         field: field_name.clone(),
-                        value: value.clone(),
+                        value: value.to_json(),
                     });
                 }
             }
@@ -834,9 +823,7 @@ fn collect_detection_fields(
                 }
             }
         }
-        CompiledDetection::Keywords(_) => {
-            // Keyword matches don't have specific field names
-        }
+        CompiledDetection::Keywords(_) => {}
     }
 }
 
@@ -1094,6 +1081,7 @@ fn expand_windash(input: &str) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::JsonEvent;
     use rsigma_parser::FieldSpec;
     use serde_json::json;
 
@@ -1119,11 +1107,11 @@ mod tests {
         assert_eq!(compiled.field, Some("CommandLine".into()));
 
         let ev = json!({"CommandLine": "whoami"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"CommandLine": "WHOAMI"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(eval_detection_item(&compiled, &event2)); // case-insensitive
     }
 
@@ -1137,11 +1125,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"CommandLine": "cmd /c whoami /all"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"CommandLine": "ipconfig"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1155,11 +1143,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"Image": "C:\\Windows\\cmd.exe"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"Image": "C:\\Windows\\cmd.bat"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1176,11 +1164,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"CommandLine": "net user admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"CommandLine": "net localgroup"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2)); // missing "user"
     }
 
@@ -1228,7 +1216,7 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"CommandLine": "cmd.exe /c whoami"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
     }
 
@@ -1245,13 +1233,13 @@ mod tests {
         let ev_match = json!({"User": "Admin"});
         assert!(eval_detection_item(
             &compiled,
-            &Event::from_value(&ev_match)
+            &JsonEvent::borrow(&ev_match)
         ));
 
         let ev_no_match = json!({"User": "admin"});
         assert!(!eval_detection_item(
             &compiled,
-            &Event::from_value(&ev_no_match)
+            &JsonEvent::borrow(&ev_no_match)
         ));
     }
 
@@ -1268,13 +1256,13 @@ mod tests {
         let ev_exact = json!({"User": "Admin"});
         assert!(eval_detection_item(
             &compiled,
-            &Event::from_value(&ev_exact)
+            &JsonEvent::borrow(&ev_exact)
         ));
 
         let ev_lower = json!({"User": "admin"});
         assert!(eval_detection_item(
             &compiled,
-            &Event::from_value(&ev_lower)
+            &JsonEvent::borrow(&ev_lower)
         ));
     }
 
@@ -1288,11 +1276,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"SourceIP": "10.1.2.3"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"SourceIP": "192.168.1.1"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1306,11 +1294,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"SomeField": "value"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"OtherField": "value"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1324,11 +1312,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"Image": "C:\\Windows\\System32\\cmd.exe"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"Image": "C:\\Windows\\powershell.exe"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1338,11 +1326,11 @@ mod tests {
         let compiled = compile_detection_item(&item).unwrap();
 
         let ev = json!({"EventID": 4688});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert!(eval_detection_item(&compiled, &event));
 
         let ev2 = json!({"EventID": 1000});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(!eval_detection_item(&compiled, &event2));
     }
 
@@ -1437,12 +1425,12 @@ mod tests {
         ]);
 
         let ev = json!({"CommandLine": "whoami", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let mut matched = Vec::new();
         assert!(eval_condition(&cond, &detections, &event, &mut matched));
 
         let ev2 = json!({"CommandLine": "whoami", "User": "SYSTEM"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
     }
@@ -1468,7 +1456,7 @@ mod tests {
             "path": "C:\\Users\\admin\\Downloads",
             "username": "admin"
         });
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let mut matched = Vec::new();
         assert!(eval_condition(&cond, &detections, &event, &mut matched));
 
@@ -1477,7 +1465,7 @@ mod tests {
             "path": "C:\\Users\\admin\\Downloads",
             "username": "guest"
         });
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
     }
@@ -1498,13 +1486,13 @@ mod tests {
 
         // Match: timestamp at 03:xx UTC
         let ev = json!({"timestamp": "2024-07-10T03:30:00Z"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let mut matched = Vec::new();
         assert!(eval_condition(&cond, &detections, &event, &mut matched));
 
         // No match: timestamp at 12:xx UTC
         let ev2 = json!({"timestamp": "2024-07-10T12:30:00Z"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
     }
@@ -1525,13 +1513,13 @@ mod tests {
 
         // Match: December
         let ev = json!({"created": "2024-12-25T10:00:00Z"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let mut matched = Vec::new();
         assert!(eval_condition(&cond, &detections, &event, &mut matched));
 
         // No match: July
         let ev2 = json!({"created": "2024-07-10T10:00:00Z"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         let mut matched2 = Vec::new();
         assert!(!eval_condition(&cond, &detections, &event2, &mut matched2));
     }
@@ -1600,7 +1588,7 @@ mod tests {
         assert!(compiled.include_event);
 
         let ev = json!({"action": "login", "user": "alice"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
         assert!(result.event.is_some());
         assert_eq!(result.event.unwrap(), ev);
@@ -1614,7 +1602,7 @@ mod tests {
         assert!(!compiled.include_event);
 
         let ev = json!({"action": "login", "user": "alice"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
         assert!(result.event.is_none());
     }
@@ -1651,7 +1639,7 @@ severity_score: 42
         assert!(!compiled.custom_attributes.contains_key("level"));
 
         let ev = json!({"action": "login"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
 
         assert_eq!(
@@ -1671,7 +1659,7 @@ severity_score: 42
         assert!(compiled.custom_attributes.is_empty());
 
         let ev = json!({"action": "login"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let result = evaluate_rule(&compiled, &event).unwrap();
         assert!(result.custom_attributes.is_empty());
     }

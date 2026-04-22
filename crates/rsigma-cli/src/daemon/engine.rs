@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use rsigma_eval::{Event, ProcessResult};
+use rsigma_eval::{JsonEvent, ProcessResult};
 
 use super::metrics::Metrics;
 use super::state::DaemonEngine;
@@ -61,8 +61,8 @@ pub fn process_batch_lines(
     }
 
     // Phase 2: Batch evaluation — parallel detection + sequential correlation
-    let events: Vec<Event> = flat.iter().map(|(_, v)| Event::from_value(v)).collect();
-    let event_refs: Vec<&Event> = events.iter().collect();
+    let events: Vec<JsonEvent> = flat.iter().map(|(_, v)| JsonEvent::borrow(v)).collect();
+    let event_refs: Vec<&JsonEvent> = events.iter().collect();
 
     let start = Instant::now();
     let batch_results = engine.process_batch(&event_refs);

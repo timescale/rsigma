@@ -2,7 +2,7 @@ mod helpers;
 
 use helpers::{corr_engine, corr_engine_with_config, process};
 use rsigma_eval::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, Event, TimestampFallback,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, JsonEvent, TimestampFallback,
 };
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
@@ -281,7 +281,7 @@ fn timestamp_fallback_skip_runs_detection_but_skips_correlation() {
     // - Correlation should NOT accumulate
     for _ in 0..5 {
         let ev = json!({"EventType": "login", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let r = engine.process_event(&event);
         assert_eq!(r.detections.len(), 1, "detection should fire");
         assert!(

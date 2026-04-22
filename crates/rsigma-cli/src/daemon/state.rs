@@ -1,8 +1,8 @@
 use std::path::Path;
 
+use rsigma_eval::event::Event;
 use rsigma_eval::{
-    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, Event, Pipeline,
-    ProcessResult,
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, Pipeline, ProcessResult,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -98,7 +98,7 @@ impl DaemonEngine {
     ///
     /// Delegates to `Engine::evaluate_batch` or `CorrelationEngine::process_batch`
     /// depending on whether correlation rules are loaded.
-    pub fn process_batch(&mut self, events: &[&Event]) -> Vec<ProcessResult> {
+    pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
         match &mut self.engine {
             EngineVariant::DetectionOnly(engine) => {
                 let batch_detections = engine.evaluate_batch(events);

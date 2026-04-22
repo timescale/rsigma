@@ -60,7 +60,8 @@ Or use the library directly:
 
 ```rust
 use rsigma_parser::parse_sigma_yaml;
-use rsigma_eval::{Engine, Event};
+use rsigma_eval::Engine;
+use rsigma_eval::event::JsonEvent;
 use serde_json::json;
 
 let yaml = r#"
@@ -79,7 +80,7 @@ let collection = parse_sigma_yaml(yaml).unwrap();
 let mut engine = Engine::new();
 engine.add_collection(&collection).unwrap();
 
-let event = Event::from_value(&json!({"CommandLine": "cmd /c whoami"}));
+let event = JsonEvent::borrow(&json!({"CommandLine": "cmd /c whoami"}));
 let matches = engine.evaluate(&event);
 assert_eq!(matches[0].rule_title, "Detect Whoami");
 ```
