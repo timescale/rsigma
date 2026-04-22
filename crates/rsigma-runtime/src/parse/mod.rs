@@ -4,4 +4,5 @@
 //! Parsers return simple owned types (`Vec<(String, String)>`, structs) that
 //! the Phase 3 input adapters convert into [`rsigma_eval::KvEvent`] or similar.
 
+pub mod cef;
 pub mod logfmt;
