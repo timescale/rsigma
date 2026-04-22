@@ -184,7 +184,7 @@ impl GroupKey {
     }
 }
 
-/// Convert a JSON value to a string for group-key purposes.
+/// Convert an [`EventValue`] to a string for group-key purposes.
 fn value_to_string(v: &EventValue) -> Option<String> {
     match v {
         EventValue::Str(s) => Some(s.to_string()),

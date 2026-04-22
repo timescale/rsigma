@@ -20,67 +20,89 @@ use crate::event::{Event, EventValue};
 #[derive(Debug, Clone)]
 pub enum CompiledMatcher {
     // -- String matchers --
+    /// Exact string equality.
     Exact {
         value: String,
         case_insensitive: bool,
     },
+    /// Substring containment.
     Contains {
         value: String,
         case_insensitive: bool,
     },
+    /// String starts with prefix.
     StartsWith {
         value: String,
         case_insensitive: bool,
     },
+    /// String ends with suffix.
     EndsWith {
         value: String,
         case_insensitive: bool,
     },
+    /// Compiled regex pattern (flags baked in at compile time).
     Regex(Regex),
 
     // -- Network --
+    /// CIDR network match for IP addresses.
     Cidr(IpNet),
 
     // -- Numeric --
+    /// Numeric equality.
     NumericEq(f64),
+    /// Numeric greater-than.
     NumericGt(f64),
+    /// Numeric greater-than-or-equal.
     NumericGte(f64),
+    /// Numeric less-than.
     NumericLt(f64),
+    /// Numeric less-than-or-equal.
     NumericLte(f64),
 
     // -- Special --
+    /// Field existence check. `true` = field must exist, `false` = must not exist.
     Exists(bool),
+    /// Compare against another field's value.
     FieldRef {
         field: String,
         case_insensitive: bool,
     },
+    /// Match null / missing values.
     Null,
+    /// Boolean equality.
     BoolEq(bool),
 
     // -- Expand --
+    /// Placeholder expansion: `%fieldname%` is resolved from the event at match time.
     Expand {
         template: Vec<ExpandPart>,
         case_insensitive: bool,
     },
 
     // -- Timestamp --
+    /// Extract a time component from a timestamp field value and match it.
     TimestampPart {
         part: TimePart,
         inner: Box<CompiledMatcher>,
     },
 
     // -- Negation --
+    /// Negated matcher: matches if the inner matcher does NOT match.
     Not(Box<CompiledMatcher>),
 
     // -- Composite --
+    /// Match if ANY child matches (OR).
     AnyOf(Vec<CompiledMatcher>),
+    /// Match if ALL children match (AND).
     AllOf(Vec<CompiledMatcher>),
 }
 
 /// A part of an expand template.
 #[derive(Debug, Clone)]
 pub enum ExpandPart {
+    /// Literal text.
     Literal(String),
+    /// A placeholder field name (between `%` delimiters).
     Placeholder(String),
 }
 
@@ -97,6 +119,8 @@ pub enum TimePart {
 
 impl CompiledMatcher {
     /// Check if this matcher matches an [`EventValue`] from an event.
+    ///
+    /// The `event` parameter is needed for `FieldRef` to access other fields.
     #[inline]
     pub fn matches(&self, value: &EventValue, event: &impl Event) -> bool {
         match self {
@@ -234,12 +258,19 @@ impl CompiledMatcher {
 
     /// Check if this matcher matches any string value in the event.
     /// Used for keyword detection (field-less matching).
+    ///
+    /// Avoids allocating a `Vec` of all strings and a `String` per value by
+    /// using `matches_str` with a short-circuiting traversal.
     #[inline]
     pub fn matches_keyword(&self, event: &impl Event) -> bool {
         event.any_string_value(&|s| self.matches_str(s))
     }
 
     /// Check if this matcher matches a plain `&str` value.
+    ///
+    /// Handles the string-matching subset of `CompiledMatcher`. Matchers that
+    /// require a full `EventValue` (numeric comparisons, field refs, etc.)
+    /// return `false` — those are never used in keyword detection.
     fn matches_str(&self, s: &str) -> bool {
         match self {
             CompiledMatcher::Exact {
@@ -295,6 +326,9 @@ impl CompiledMatcher {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+/// Try to extract a string representation from an [`EventValue`] and apply a predicate.
+///
+/// Handles `Str` directly and coerces numbers/bools to string for comparison.
 fn match_str_value(value: &EventValue, pred: impl Fn(&str) -> bool) -> bool {
     match_str_value_ref(value, &pred)
 }
@@ -310,6 +344,9 @@ fn match_str_value_ref(value: &EventValue, pred: &dyn Fn(&str) -> bool) -> bool 
     }
 }
 
+/// Try to extract a numeric value and apply a predicate.
+///
+/// Handles numeric values directly and tries to parse strings as numbers.
 fn match_numeric_value(value: &EventValue, pred: impl Fn(f64) -> bool) -> bool {
     match_numeric_value_ref(value, &pred)
 }
@@ -325,6 +362,9 @@ fn match_numeric_value_ref(value: &EventValue, pred: &dyn Fn(f64) -> bool) -> bo
 }
 
 /// Convert a [`SigmaString`](rsigma_parser::SigmaString) to a regex pattern string.
+///
+/// Wildcards are converted: `*` → `.*`, `?` → `.`
+/// Plain text is regex-escaped.
 pub fn sigma_string_to_regex(
     parts: &[rsigma_parser::value::StringPart],
     case_insensitive: bool,
@@ -357,6 +397,7 @@ pub fn sigma_string_to_regex(
 // Expand helpers
 // ---------------------------------------------------------------------------
 
+/// Resolve all placeholders in an expand template from the event.
 fn expand_template(template: &[ExpandPart], event: &impl Event) -> String {
     let mut result = String::new();
     for part in template {
@@ -418,6 +459,7 @@ pub fn parse_expand_template(s: &str) -> Vec<ExpandPart> {
 // Timestamp part helpers
 // ---------------------------------------------------------------------------
 
+/// Extract a time component from an [`EventValue`] (timestamp string or number).
 fn extract_timestamp_part(value: &EventValue, part: TimePart) -> Option<i64> {
     match value {
         EventValue::Str(s) => parse_timestamp_str(s, part),
@@ -459,6 +501,7 @@ fn parse_timestamp_str(ts_str: &str, part: TimePart) -> Option<i64> {
     None
 }
 
+/// Extract a specific time component from a UTC DateTime.
 fn extract_part_from_datetime(dt: &chrono::DateTime<chrono::Utc>, part: TimePart) -> i64 {
     match part {
         TimePart::Minute => dt.minute() as i64,

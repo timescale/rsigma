@@ -1395,6 +1395,7 @@ fn extract_event_ts(event: &impl Event, timestamp_fields: &[String]) -> Option<i
     None
 }
 
+/// Parse an [`EventValue`] as a Unix epoch timestamp in seconds.
 fn parse_timestamp_value(val: &EventValue) -> Option<i64> {
     match val {
         EventValue::Int(i) => Some(normalize_epoch(*i)),
@@ -1437,7 +1438,7 @@ fn parse_timestamp_string(s: &str) -> Option<i64> {
     None
 }
 
-/// Convert a JSON value to a string for value_count purposes.
+/// Convert an [`EventValue`] to a string for value_count purposes.
 fn value_to_string_for_count(v: &EventValue) -> Option<String> {
     match v {
         EventValue::Str(s) => Some(s.to_string()),
@@ -1449,6 +1450,7 @@ fn value_to_string_for_count(v: &EventValue) -> Option<String> {
     }
 }
 
+/// Convert an [`EventValue`] to f64 for numeric aggregation.
 fn value_to_f64_ev(v: &EventValue) -> Option<f64> {
     v.as_f64()
 }

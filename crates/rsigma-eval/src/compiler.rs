@@ -752,6 +752,7 @@ pub fn eval_condition(
     }
 }
 
+/// Evaluate a compiled detection against an event.
 fn eval_detection(detection: &CompiledDetection, event: &impl Event) -> bool {
     match detection {
         CompiledDetection::AllOf(items) => {
@@ -762,6 +763,7 @@ fn eval_detection(detection: &CompiledDetection, event: &impl Event) -> bool {
     }
 }
 
+/// Evaluate a single compiled detection item against an event.
 fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool {
     if let Some(expect_exists) = item.exists {
         if let Some(field) = &item.field {
@@ -783,6 +785,7 @@ fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool
     }
 }
 
+/// Collect field matches from matched selections for the MatchResult.
 fn collect_field_matches(
     selection_names: &[String],
     detections: &HashMap<String, CompiledDetection>,

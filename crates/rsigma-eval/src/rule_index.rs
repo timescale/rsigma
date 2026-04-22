@@ -190,7 +190,7 @@ fn extract_from_matcher(matcher: &CompiledMatcher, field: &str, out: &mut Vec<(S
     }
 }
 
-/// Convert a JSON value to a lowercase string for index lookup.
+/// Convert an [`EventValue`] to a lowercase string for index lookup.
 ///
 /// Returns `None` for null, objects, and arrays (not meaningful for exact match).
 fn value_to_lowercase_string(value: &EventValue) -> Option<String> {

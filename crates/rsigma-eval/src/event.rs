@@ -193,18 +193,23 @@ impl<T: Event + ?Sized> Event for &T {
 ///
 /// Supports both borrowed (`&Value`) and owned (`Value`) backing via `Cow`.
 /// This is the primary implementation for JSON/NDJSON input.
+///
+/// Flat keys are checked first: `"actor.id"` as a single key takes precedence
+/// over `{"actor": {"id": ...}}` nested traversal.
 #[derive(Debug)]
 pub struct JsonEvent<'a> {
     inner: Cow<'a, Value>,
 }
 
 impl<'a> JsonEvent<'a> {
+    /// Wrap a borrowed JSON value as an event.
     pub fn borrow(v: &'a Value) -> Self {
         Self {
             inner: Cow::Borrowed(v),
         }
     }
 
+    /// Wrap an owned JSON value as an event.
     pub fn owned(v: Value) -> Self {
         Self {
             inner: Cow::Owned(v),
@@ -225,6 +230,11 @@ impl From<Value> for JsonEvent<'static> {
 }
 
 impl<'a> Event for JsonEvent<'a> {
+    /// Get a field value by name, supporting dot-notation for nested access.
+    ///
+    /// Checks for a flat key first (exact match), then falls back to
+    /// dot-separated traversal. When a path segment yields an array,
+    /// each element is tried and the first match is returned (OR semantics).
     fn get_field(&self, path: &str) -> Option<EventValue<'_>> {
         let value: &Value = &self.inner;
 
@@ -242,10 +252,19 @@ impl<'a> Event for JsonEvent<'a> {
         None
     }
 
+    /// Check if any string value in the event satisfies a predicate.
+    ///
+    /// Short-circuits on the first match, avoiding the allocation of
+    /// collecting all string values into a `Vec`.
     fn any_string_value(&self, pred: &dyn Fn(&str) -> bool) -> bool {
         any_string_value_json(&self.inner, pred, MAX_NESTING_DEPTH)
     }
 
+    /// Iterate over all string values in the event (for keyword detection).
+    ///
+    /// Recursively walks the entire event object and yields every string
+    /// value found, including inside nested objects and arrays. Traversal
+    /// is capped at 64 levels of nesting to prevent stack overflow.
     fn all_string_values(&self) -> Vec<Cow<'_, str>> {
         let mut values = Vec::new();
         collect_string_values_json(&self.inner, &mut values, MAX_NESTING_DEPTH);
@@ -259,6 +278,10 @@ impl<'a> Event for JsonEvent<'a> {
 
 // -- JsonEvent helpers --------------------------------------------------------
 
+/// Recursively traverse a JSON value following dot-notation path segments.
+///
+/// When a segment resolves to an array, each element is tried and the first
+/// match for the remaining path is returned.
 fn traverse_json<'a>(current: &'a Value, parts: &[&str]) -> Option<&'a Value> {
     if parts.is_empty() {
         return Some(current);
