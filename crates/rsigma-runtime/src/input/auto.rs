@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn mixed_format_batch() {
-        let lines = vec![
+        let lines = [
             r#"{"EventID": 1}"#,
             "<34>Oct 11 22:14:15 host su: test",
             "plain log line",

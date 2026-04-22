@@ -13,6 +13,9 @@ homepage.workspace = true
 default = ["daemon"]
 daemon = ["rsigma-runtime", "tokio", "axum", "prometheus", "notify", "rusqlite"]
 daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream"]
+logfmt = ["rsigma-runtime/logfmt"]
+cef = ["rsigma-runtime/cef"]
+evtx = ["rsigma-runtime/evtx"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.6.0" }
