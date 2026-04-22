@@ -348,4 +348,261 @@ detection:
 
         std::mem::forget(dir);
     }
+
+    #[test]
+    fn reload_rules_preserves_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let mut engine = RuntimeEngine::new(
+            rule_path.clone(),
+            vec![],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.load_rules().unwrap();
+        let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+        let batch = vec![r#"{"EventID": 1}"#.to_string()];
+        assert!(
+            !proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty()
+        );
+
+        // Update the rule file and reload
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule B
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 42
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let stats = proc.reload_rules().unwrap();
+        assert_eq!(stats.detection_rules, 1);
+
+        // Old rule should no longer match
+        assert!(
+            proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty()
+        );
+        // New rule should match
+        let batch2 = vec![r#"{"EventID": 42}"#.to_string()];
+        assert!(
+            !proc.process_batch_lines(&batch2, &identity_filter)[0]
+                .detections
+                .is_empty()
+        );
+
+        std::mem::forget(dir);
+    }
+
+    #[test]
+    fn custom_event_filter() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        // Filter that extracts a nested "records" array
+        let filter = |v: &serde_json::Value| -> Vec<serde_json::Value> {
+            if let Some(records) = v.get("records").and_then(|r| r.as_array()) {
+                records.clone()
+            } else {
+                vec![v.clone()]
+            }
+        };
+
+        let batch = vec![r#"{"records": [{"EventID": 1}, {"EventID": 2}]}"#.to_string()];
+        let results = proc.process_batch_lines(&batch, &filter);
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].detections.len(),
+            1,
+            "only EventID=1 from records array should match"
+        );
+    }
+
+    #[test]
+    fn empty_batch_returns_empty() {
+        let proc = make_processor(
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        );
+
+        let batch: Vec<String> = vec![];
+        let results = proc.process_batch_lines(&batch, &identity_filter);
+        assert!(results.is_empty());
+    }
+
+    /// Verify MetricsHook is called correctly during processing.
+    #[test]
+    fn metrics_hook_invocations() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct CountingMetrics {
+            parse_errors: AtomicU64,
+            events_processed: AtomicU64,
+            detection_matches: AtomicU64,
+        }
+
+        impl MetricsHook for CountingMetrics {
+            fn on_parse_error(&self) {
+                self.parse_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            fn on_events_processed(&self, count: u64) {
+                self.events_processed.fetch_add(count, Ordering::Relaxed);
+            }
+            fn on_detection_matches(&self, count: u64) {
+                self.detection_matches.fetch_add(count, Ordering::Relaxed);
+            }
+            fn on_correlation_matches(&self, _: u64) {}
+            fn observe_processing_latency(&self, _: f64) {}
+            fn on_input_queue_depth_change(&self, _: i64) {}
+            fn on_back_pressure(&self) {}
+            fn observe_batch_size(&self, _: u64) {}
+            fn on_output_queue_depth_change(&self, _: i64) {}
+            fn observe_pipeline_latency(&self, _: f64) {}
+            fn set_correlation_state_entries(&self, _: u64) {}
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Test Rule
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let mut engine = RuntimeEngine::new(rule_path, vec![], CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+
+        let metrics = Arc::new(CountingMetrics {
+            parse_errors: AtomicU64::new(0),
+            events_processed: AtomicU64::new(0),
+            detection_matches: AtomicU64::new(0),
+        });
+        let proc = LogProcessor::new(engine, metrics.clone());
+
+        let batch = vec![
+            "not json".to_string(),
+            r#"{"EventID": 1}"#.to_string(),
+            r#"{"EventID": 2}"#.to_string(),
+        ];
+        proc.process_batch_lines(&batch, &identity_filter);
+
+        assert_eq!(metrics.parse_errors.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.events_processed.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.detection_matches.load(Ordering::Relaxed), 1);
+
+        std::mem::forget(dir);
+    }
+
+    /// Verify concurrent processing and swap don't panic (basic thread safety).
+    #[test]
+    fn concurrent_swap_and_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let mut engine = RuntimeEngine::new(
+            rule_path.clone(),
+            vec![],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.load_rules().unwrap();
+        let proc = Arc::new(LogProcessor::new(engine, Arc::new(NoopMetrics)));
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let proc = proc.clone();
+                let rule_path = rule_path.clone();
+                std::thread::spawn(move || {
+                    let batch = vec![r#"{"EventID": 1}"#.to_string()];
+                    for _ in 0..100 {
+                        let _ = proc.process_batch_lines(&batch, &identity_filter);
+                    }
+                    // Thread 0 does a swap mid-flight
+                    if i == 0 {
+                        let mut new_engine = RuntimeEngine::new(
+                            rule_path,
+                            vec![],
+                            CorrelationConfig::default(),
+                            false,
+                        );
+                        new_engine.load_rules().unwrap();
+                        proc.swap_engine(new_engine);
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        std::mem::forget(dir);
+    }
 }
