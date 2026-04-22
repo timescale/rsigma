@@ -6,7 +6,7 @@
 mod datagen;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use rsigma_eval::{Engine, Event};
+use rsigma_eval::{Engine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ fn bench_eval_single_event(c: &mut Criterion) {
 
     let events = datagen::gen_event_values(1);
     let event_val = &events[0];
-    let event = Event::from_value(event_val);
+    let event = JsonEvent::borrow(event_val);
 
     for n in [100, 500, 1000, 5000] {
         let yaml = datagen::gen_n_rules(n);
@@ -79,7 +79,7 @@ fn bench_eval_throughput(c: &mut Criterion) {
 
     for n_events in [1_000, 10_000, 100_000] {
         let event_values = datagen::gen_event_values(n_events);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(n_events as u64));
 
@@ -115,7 +115,7 @@ fn bench_eval_wildcard_heavy(c: &mut Criterion) {
         engine.add_collection(&collection).unwrap();
 
         let event_values = datagen::gen_event_values(100);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.bench_with_input(
             BenchmarkId::new("rules", n),
@@ -150,7 +150,7 @@ fn bench_eval_batch(c: &mut Criterion) {
         engine.add_collection(&collection).unwrap();
 
         let event_values = datagen::gen_event_values(n_events);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(n_events as u64));
 
@@ -174,7 +174,7 @@ fn bench_eval_batch(c: &mut Criterion) {
         let label = format!("{n_rules}r_batch");
         group.bench_with_input(BenchmarkId::new("batch", &label), &events, |b, events| {
             b.iter(|| {
-                let refs: Vec<&Event> = events.iter().collect();
+                let refs: Vec<&JsonEvent> = events.iter().collect();
                 let results = engine.evaluate_batch(black_box(&refs));
                 black_box(results);
             });
@@ -198,7 +198,7 @@ fn bench_eval_regex_heavy(c: &mut Criterion) {
         engine.add_collection(&collection).unwrap();
 
         let event_values = datagen::gen_event_values(100);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.bench_with_input(
             BenchmarkId::new("rules", n),

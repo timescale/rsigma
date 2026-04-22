@@ -8,7 +8,7 @@ mod datagen;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, Event};
+use rsigma_eval::{CorrelationConfig, CorrelationEngine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
 
 // ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ fn bench_correlation_event_count(c: &mut Criterion) {
         engine.add_collection(&collection).unwrap();
 
         let event_values = datagen::gen_event_values(1_000);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(1_000));
 
@@ -70,7 +70,7 @@ fn bench_correlation_temporal(c: &mut Criterion) {
         let collection = parse_sigma_yaml(&yaml).unwrap();
 
         let event_values = datagen::gen_event_values(1_000);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(1_000));
 
@@ -113,7 +113,7 @@ fn bench_correlation_throughput(c: &mut Criterion) {
 
     for n_events in [10_000, 100_000] {
         let event_values = datagen::gen_event_values(n_events);
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(n_events as u64));
 
@@ -160,7 +160,7 @@ fn bench_correlation_batch(c: &mut Criterion) {
 
     let n_events = 10_000;
     let event_values = datagen::gen_event_values(n_events);
-    let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+    let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
     group.throughput(criterion::Throughput::Elements(n_events as u64));
 
@@ -195,7 +195,7 @@ fn bench_correlation_batch(c: &mut Criterion) {
                 engine
             },
             |mut engine| {
-                let refs: Vec<&Event> = events.iter().collect();
+                let refs: Vec<&JsonEvent> = events.iter().collect();
                 let results = engine.process_batch(black_box(&refs));
                 black_box(results);
             },
@@ -254,7 +254,7 @@ level: high
                 })
             })
             .collect();
-        let events: Vec<Event> = event_values.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
 
         group.throughput(criterion::Throughput::Elements(n_unique_keys as u64));
 

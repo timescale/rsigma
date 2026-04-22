@@ -1,7 +1,7 @@
 mod helpers;
 
 use helpers::{corr_engine, eval, process};
-use rsigma_eval::{Engine, Event, parse_pipeline};
+use rsigma_eval::{Engine, JsonEvent, parse_pipeline};
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
 
@@ -150,16 +150,16 @@ level: medium
 
     // After pipeline, rule expects ECS fields
     let ev = json!({"process.command_line": "cmd /c whoami", "user.name": "attacker"});
-    let matches = engine.evaluate(&Event::from_value(&ev));
+    let matches = engine.evaluate(&JsonEvent::borrow(&ev));
     assert_eq!(matches.len(), 1);
 
     // Filter still works through the mapped field name
     let ev2 = json!({"process.command_line": "cmd /c whoami", "user.name": "SYSTEM"});
-    assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
 
     // Original field names should not match
     let ev3 = json!({"CommandLine": "cmd /c whoami", "User": "attacker"});
-    assert!(engine.evaluate(&Event::from_value(&ev3)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev3)).is_empty());
 }
 
 #[test]
@@ -299,19 +299,19 @@ filter:
 
     // In test environment: global filter blocks everything
     let ev = json!({"EventID": 1, "Environment": "test", "User": "admin"});
-    assert!(engine.evaluate(&Event::from_value(&ev)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev)).is_empty());
 
     // Rule A as svc_account in prod: targeted filter blocks
     let ev2 = json!({"EventID": 1, "Environment": "prod", "User": "svc_account"});
-    assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
 
     // Rule B as svc_account in prod: targeted filter does NOT apply to rule-b
     let ev3 = json!({"EventID": 4688, "Environment": "prod", "User": "svc_account"});
-    assert_eq!(engine.evaluate(&Event::from_value(&ev3)).len(), 1);
+    assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev3)).len(), 1);
 
     // Rule A as admin in prod: no filter applies
     let ev4 = json!({"EventID": 1, "Environment": "prod", "User": "admin"});
-    assert_eq!(engine.evaluate(&Event::from_value(&ev4)).len(), 1);
+    assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev4)).len(), 1);
 }
 
 #[test]
@@ -351,15 +351,15 @@ filter:
 
     // Both filters should apply: env=test is excluded
     let ev1 = json!({"EventType": "login", "Environment": "test", "User": "admin"});
-    assert!(engine.evaluate(&Event::from_value(&ev1)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev1)).is_empty());
 
     // User=bot is excluded
     let ev2 = json!({"EventType": "login", "Environment": "prod", "User": "bot"});
-    assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+    assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
 
     // Neither filter matches: rule fires
     let ev3 = json!({"EventType": "login", "Environment": "prod", "User": "admin"});
-    assert_eq!(engine.evaluate(&Event::from_value(&ev3)).len(), 1);
+    assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev3)).len(), 1);
 }
 
 #[test]

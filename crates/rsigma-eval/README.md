@@ -399,7 +399,8 @@ transformations:
 
 ```rust
 use rsigma_parser::parse_sigma_yaml;
-use rsigma_eval::{Engine, Event, parse_pipeline};
+use rsigma_eval::{Engine, parse_pipeline};
+use rsigma_eval::event::JsonEvent;
 use serde_json::json;
 
 let yaml = r#"
@@ -431,7 +432,7 @@ let mut engine = Engine::new_with_pipeline(pipeline);
 engine.add_collection(&collection).unwrap();
 
 // Rule now expects ECS field names
-let event = Event::from_value(&json!({"process.command_line": "whoami"}));
+let event = JsonEvent::borrow(&json!({"process.command_line": "whoami"}));
 let matches = engine.evaluate(&event);
 ```
 

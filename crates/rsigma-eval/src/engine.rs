@@ -23,6 +23,7 @@ use crate::rule_index::RuleIndex;
 /// ```rust
 /// use rsigma_parser::parse_sigma_yaml;
 /// use rsigma_eval::{Engine, Event};
+/// use rsigma_eval::event::JsonEvent;
 /// use serde_json::json;
 ///
 /// let yaml = r#"
@@ -42,7 +43,7 @@ use crate::rule_index::RuleIndex;
 /// engine.add_collection(&collection).unwrap();
 ///
 /// let event_val = json!({"CommandLine": "cmd /c whoami"});
-/// let event = Event::from_value(&event_val);
+/// let event = JsonEvent::borrow(&event_val);
 /// let matches = engine.evaluate(&event);
 /// assert_eq!(matches.len(), 1);
 /// assert_eq!(matches[0].rule_title, "Detect Whoami");
@@ -256,13 +257,13 @@ impl Engine {
     }
 
     /// Evaluate an event against candidate rules using the inverted index.
-    pub fn evaluate(&self, event: &Event) -> Vec<MatchResult> {
+    pub fn evaluate<E: Event>(&self, event: &E) -> Vec<MatchResult> {
         let mut results = Vec::new();
         for idx in self.rule_index.candidates(event) {
             let rule = &self.rules[idx];
             if let Some(mut m) = evaluate_rule(rule, event) {
                 if self.include_event && m.event.is_none() {
-                    m.event = Some(event.as_value().clone());
+                    m.event = Some(event.to_json());
                 }
                 results.push(m);
             }
@@ -275,9 +276,9 @@ impl Engine {
     /// Uses the inverted index for candidate pre-filtering, then applies the
     /// logsource constraint. Only rules whose logsource is compatible with
     /// `event_logsource` are evaluated.
-    pub fn evaluate_with_logsource(
+    pub fn evaluate_with_logsource<E: Event>(
         &self,
-        event: &Event,
+        event: &E,
         event_logsource: &LogSource,
     ) -> Vec<MatchResult> {
         let mut results = Vec::new();
@@ -287,7 +288,7 @@ impl Engine {
                 && let Some(mut m) = evaluate_rule(rule, event)
             {
                 if self.include_event && m.event.is_none() {
-                    m.event = Some(event.as_value().clone());
+                    m.event = Some(event.to_json());
                 }
                 results.push(m);
             }
@@ -300,7 +301,7 @@ impl Engine {
     /// When the `parallel` feature is enabled, events are evaluated concurrently
     /// using rayon's work-stealing thread pool. Otherwise, falls back to
     /// sequential evaluation.
-    pub fn evaluate_batch<'a>(&self, events: &[&'a Event<'a>]) -> Vec<Vec<MatchResult>> {
+    pub fn evaluate_batch<E: Event + Sync>(&self, events: &[&E]) -> Vec<Vec<MatchResult>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
@@ -378,6 +379,7 @@ fn logsource_matches(rule_ls: &LogSource, event_ls: &LogSource) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::JsonEvent;
     use rsigma_parser::parse_sigma_yaml;
     use serde_json::json;
 
@@ -405,7 +407,7 @@ level: medium
         );
 
         let ev = json!({"CommandLine": "cmd /c whoami /all"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let matches = engine.evaluate(&event);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].rule_title, "Detect Whoami");
@@ -428,7 +430,7 @@ level: medium
         );
 
         let ev = json!({"CommandLine": "ipconfig /all"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let matches = engine.evaluate(&event);
         assert!(matches.is_empty());
     }
@@ -452,12 +454,12 @@ level: high
 
         // Match: whoami by non-SYSTEM user
         let ev = json!({"CommandLine": "whoami", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         // No match: whoami by SYSTEM
         let ev2 = json!({"CommandLine": "whoami", "User": "SYSTEM"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(engine.evaluate(&event2).is_empty());
     }
 
@@ -480,11 +482,11 @@ level: medium
         );
 
         let ev = json!({"CommandLine": "ipconfig /all"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         let ev2 = json!({"CommandLine": "dir"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(engine.evaluate(&event2).is_empty());
     }
 
@@ -505,7 +507,7 @@ level: medium
         );
 
         let ev = json!({"CommandLine": "whoami"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
 
         // Matching logsource
         let ls_match = LogSource {
@@ -546,7 +548,7 @@ level: medium
         );
 
         let ev = json!({"CommandLine": "powershell.exe -enc"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
     }
 
@@ -582,12 +584,12 @@ filter:
 
         // Match: whoami by non-SYSTEM user
         let ev = json!({"CommandLine": "whoami", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         // No match: whoami by SYSTEM (filtered out)
         let ev2 = json!({"CommandLine": "whoami", "User": "SYSTEM"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(engine.evaluate(&event2).is_empty());
     }
 
@@ -616,11 +618,11 @@ filter:
         engine.add_collection(&collection).unwrap();
 
         let ev = json!({"EventType": "alert", "Environment": "prod"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         let ev2 = json!({"EventType": "alert", "Environment": "test"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(engine.evaluate(&event2).is_empty());
     }
 
@@ -652,7 +654,7 @@ level: low
 
         // Only Rule A matches
         let ev = json!({"CommandLine": "whoami"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let matches = engine.evaluate(&event);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].rule_title, "Rule A");
@@ -689,12 +691,12 @@ filter:
 
         // Match: mimikatz not launched by admin toolkit
         let ev = json!({"CommandLine": "mimikatz.exe", "ParentImage": "C:\\cmd.exe"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         // No match: mimikatz launched by admin toolkit (filtered)
         let ev2 = json!({"CommandLine": "mimikatz.exe", "ParentImage": "C:\\admin_toolkit.exe"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert!(engine.evaluate(&event2).is_empty());
     }
 
@@ -728,18 +730,18 @@ filter:
 
         // Match: port 443 to external IP
         let ev = json!({"DestinationPort": 443, "DestinationIp": "8.8.8.8", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         assert_eq!(engine.evaluate(&event).len(), 1);
 
         // Match: port 443 to internal IP but different user (filter needs both)
         let ev2 = json!({"DestinationPort": 443, "DestinationIp": "10.0.0.1", "User": "admin"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         assert_eq!(engine.evaluate(&event2).len(), 1);
 
         // No match: port 443 to internal IP by svc_account (both filter conditions met)
         let ev3 =
             json!({"DestinationPort": 443, "DestinationIp": "10.0.0.1", "User": "svc_account"});
-        let event3 = Event::from_value(&ev3);
+        let event3 = JsonEvent::borrow(&ev3);
         assert!(engine.evaluate(&event3).is_empty());
     }
 
@@ -778,15 +780,15 @@ filter:
 
         // In prod: both rules should fire
         let ev1 = json!({"EventID": 1, "Environment": "prod"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev1)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev1)).len(), 1);
         let ev2 = json!({"EventID": 2, "Environment": "prod"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev2)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev2)).len(), 1);
 
         // In test: both filtered out
         let ev3 = json!({"EventID": 1, "Environment": "test"});
-        assert!(engine.evaluate(&Event::from_value(&ev3)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev3)).is_empty());
         let ev4 = json!({"EventID": 2, "Environment": "test"});
-        assert!(engine.evaluate(&Event::from_value(&ev4)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev4)).is_empty());
     }
 
     // =========================================================================
@@ -812,14 +814,14 @@ level: high
             "TargetFilename": "C:\\Users\\admin\\AppData\\sensitive.dat",
             "username": "admin"
         });
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // No match: different user
         let ev2 = json!({
             "TargetFilename": "C:\\Users\\admin\\AppData\\sensitive.dat",
             "username": "guest"
         });
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -841,14 +843,14 @@ level: medium
             "vendor": "Acme",
             "product": "Widget"
         });
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         let ev2 = json!({
             "RegistryKey": "HKLM\\SOFTWARE\\Acme\\Widget",
             "vendor": "Other",
             "product": "Widget"
         });
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     // =========================================================================
@@ -873,11 +875,11 @@ level: high
 
         // Match: login at 03:xx UTC
         let ev = json!({"EventType": "login", "Timestamp": "2024-07-10T03:45:00Z"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // No match: login at 14:xx UTC
         let ev2 = json!({"EventType": "login", "Timestamp": "2024-07-10T14:45:00Z"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -897,10 +899,10 @@ level: medium
         let engine = make_engine_with_rule(yaml);
 
         let ev = json!({"EventType": "access", "CreatedAt": "2024-12-25T10:00:00Z"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         let ev2 = json!({"EventType": "access", "CreatedAt": "2024-12-26T10:00:00Z"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -920,10 +922,10 @@ level: low
         let engine = make_engine_with_rule(yaml);
 
         let ev = json!({"EventType": "auth", "EventTime": "2020-06-15T10:00:00Z"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         let ev2 = json!({"EventType": "auth", "EventTime": "2024-06-15T10:00:00Z"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     // =========================================================================
@@ -960,19 +962,19 @@ detection:
 
         // First rule matches whoami
         let ev1 = json!({"CommandLine": "whoami /all"});
-        let matches1 = engine.evaluate(&Event::from_value(&ev1));
+        let matches1 = engine.evaluate(&JsonEvent::borrow(&ev1));
         assert_eq!(matches1.len(), 1);
         assert_eq!(matches1[0].rule_title, "Detect Whoami");
 
         // Second rule matches ipconfig (inherited logsource/level)
         let ev2 = json!({"CommandLine": "ipconfig /all"});
-        let matches2 = engine.evaluate(&Event::from_value(&ev2));
+        let matches2 = engine.evaluate(&JsonEvent::borrow(&ev2));
         assert_eq!(matches2.len(), 1);
         assert_eq!(matches2[0].rule_title, "Detect Ipconfig");
 
         // Neither matches dir
         let ev3 = json!({"CommandLine": "dir"});
-        assert!(engine.evaluate(&Event::from_value(&ev3)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev3)).is_empty());
     }
 
     #[test]
@@ -1006,12 +1008,12 @@ detection:
         engine.add_collection(&collection).unwrap();
 
         let ev1 = json!({"CommandLine": "net user admin"});
-        let m1 = engine.evaluate(&Event::from_value(&ev1));
+        let m1 = engine.evaluate(&JsonEvent::borrow(&ev1));
         assert_eq!(m1.len(), 1);
         assert_eq!(m1[0].rule_title, "Detect Net User");
 
         let ev2 = json!({"CommandLine": "net group admins"});
-        let m2 = engine.evaluate(&Event::from_value(&ev2));
+        let m2 = engine.evaluate(&JsonEvent::borrow(&ev2));
         assert_eq!(m2.len(), 1);
         assert_eq!(m2[0].rule_title, "Detect Net Group");
     }
@@ -1038,11 +1040,11 @@ level: medium
 
         // Match: TCP on port 80 (neq 443 is true)
         let ev = json!({"Protocol": "TCP", "DestinationPort": "80"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // No match: TCP on port 443 (neq 443 is false)
         let ev2 = json!({"Protocol": "TCP", "DestinationPort": "443"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -1060,10 +1062,10 @@ level: medium
         let engine = make_engine_with_rule(yaml);
 
         let ev = json!({"DestinationPort": 80});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         let ev2 = json!({"DestinationPort": 443});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     // =========================================================================
@@ -1090,7 +1092,7 @@ level: medium
         // With `all of them` excluding `_helper`, only `selection` needs to match
         let ev = json!({"CommandLine": "whoami", "User": "admin"});
         assert_eq!(
-            engine.evaluate(&Event::from_value(&ev)).len(),
+            engine.evaluate(&JsonEvent::borrow(&ev)).len(),
             1,
             "all of them should exclude _helper, so only selection is required"
         );
@@ -1116,12 +1118,12 @@ level: medium
 
         // `1 of them` excludes `_private`, so only sel_cmd and sel_ps are considered
         let ev = json!({"CommandLine": "cmd.exe", "User": "guest"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // _private alone should not count
         let ev2 = json!({"CommandLine": "notepad", "User": "admin"});
         assert!(
-            engine.evaluate(&Event::from_value(&ev2)).is_empty(),
+            engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty(),
             "_private should be excluded from 'them'"
         );
     }
@@ -1149,7 +1151,7 @@ level: medium
         // T=0x54,0x00 e=0x65,0x00 s=0x73,0x00 t=0x74,0x00
         // base64 of [0x54,0x00,0x65,0x00,0x73,0x00,0x74,0x00] = "VABlAHMAdAA="
         let ev = json!({"Payload": "VABlAHMAdAA="});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     #[test]
@@ -1169,7 +1171,7 @@ level: medium
         // "AB" in UTF-16BE: A=0x00,0x41 B=0x00,0x42
         // base64 of [0x00,0x41,0x00,0x42] = "AEEAQg=="
         let ev = json!({"Payload": "AEEAQg=="});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     #[test]
@@ -1189,7 +1191,7 @@ level: medium
         // "A" in UTF-16 with BOM: FF FE (BOM) + 41 00 (A in UTF-16LE)
         // base64 of [0xFF,0xFE,0x41,0x00] = "//5BAA=="
         let ev = json!({"Payload": "//5BAA=="});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     // =========================================================================
@@ -1234,11 +1236,11 @@ level: medium
         // Actually, after pipeline transforms the rule's field names,
         // the rule now looks for "process.command_line" in the event.
         let ev = json!({"process.command_line": "cmd /c whoami"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // Old field name should no longer match
         let ev2 = json!({"CommandLine": "cmd /c whoami"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -1274,11 +1276,11 @@ level: low
 
         // Must have both the original match AND source=windows
         let ev = json!({"CommandLine": "cmd.exe", "source": "windows"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // Missing source field: should not match (pipeline added condition)
         let ev2 = json!({"CommandLine": "cmd.exe"});
-        assert!(engine.evaluate(&Event::from_value(&ev2)).is_empty());
+        assert!(engine.evaluate(&JsonEvent::borrow(&ev2)).is_empty());
     }
 
     #[test]
@@ -1315,7 +1317,7 @@ level: low
 
         // Rule still evaluates based on detection logic
         let ev = json!({"action": "test"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // But with logsource routing, the original windows logsource no longer matches
         let ls = LogSource {
@@ -1325,7 +1327,7 @@ level: low
         };
         assert!(
             engine
-                .evaluate_with_logsource(&Event::from_value(&ev), &ls)
+                .evaluate_with_logsource(&JsonEvent::borrow(&ev), &ls)
                 .is_empty(),
             "logsource was changed; windows/process_creation should not match"
         );
@@ -1337,7 +1339,7 @@ level: low
         };
         assert_eq!(
             engine
-                .evaluate_with_logsource(&Event::from_value(&ev), &ls2)
+                .evaluate_with_logsource(&JsonEvent::borrow(&ev), &ls2)
                 .len(),
             1,
             "elastic/endpoint should match the transformed logsource"
@@ -1374,7 +1376,7 @@ level: low
 
         // After replace: rule looks for "C:/Windows" instead of "C:\Windows"
         let ev = json!({"FilePath": "C:/Windows/System32/cmd.exe"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     #[test]
@@ -1420,13 +1422,13 @@ level: low
 
         // Windows rule: field was prefixed to win.CommandLine
         let ev_win = json!({"win.CommandLine": "whoami"});
-        let m = engine.evaluate(&Event::from_value(&ev_win));
+        let m = engine.evaluate(&JsonEvent::borrow(&ev_win));
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].rule_title, "Windows Rule");
 
         // Linux rule: field was NOT prefixed (still CommandLine)
         let ev_linux = json!({"CommandLine": "whoami"});
-        let m2 = engine.evaluate(&Event::from_value(&ev_linux));
+        let m2 = engine.evaluate(&JsonEvent::borrow(&ev_linux));
         assert_eq!(m2.len(), 1);
         assert_eq!(m2[0].rule_title, "Linux Rule");
     }
@@ -1473,7 +1475,7 @@ level: low
         // After p1: CommandLine -> process.args
         // After p2: process.args -> process.args.keyword
         let ev = json!({"process.args.keyword": "testing"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     #[test]
@@ -1509,13 +1511,13 @@ level: medium
 
         // EventID detection item was dropped, so only CommandLine matters
         let ev = json!({"CommandLine": "whoami"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
 
         // Without pipeline, EventID=1 would also be required
         let mut engine2 = Engine::new();
         engine2.add_collection(&collection).unwrap();
         // Without EventID, should not match
-        assert!(engine2.evaluate(&Event::from_value(&ev)).is_empty());
+        assert!(engine2.evaluate(&JsonEvent::borrow(&ev)).is_empty());
     }
 
     #[test]
@@ -1558,7 +1560,7 @@ level: low
 
         // State was set → prefix was applied
         let ev = json!({"winlog.CommandLine": "testing"});
-        assert_eq!(engine.evaluate(&Event::from_value(&ev)).len(), 1);
+        assert_eq!(engine.evaluate(&JsonEvent::borrow(&ev)).len(), 1);
     }
 
     #[test]
@@ -1598,13 +1600,13 @@ detection:
             json!({"EventType": "file_create"}),
             json!({"CommandLine": "whoami /all"}),
         ];
-        let events: Vec<Event> = vals.iter().map(Event::from_value).collect();
+        let events: Vec<JsonEvent> = vals.iter().map(JsonEvent::borrow).collect();
 
         // Sequential
         let sequential: Vec<Vec<_>> = events.iter().map(|e| engine.evaluate(e)).collect();
 
         // Batch
-        let refs: Vec<&Event> = events.iter().collect();
+        let refs: Vec<&JsonEvent> = events.iter().collect();
         let batch = engine.evaluate_batch(&refs);
 
         assert_eq!(sequential.len(), batch.len());

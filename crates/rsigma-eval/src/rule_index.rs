@@ -10,10 +10,8 @@
 
 use std::collections::HashMap;
 
-use serde_json::Value;
-
 use crate::compiler::{CompiledDetection, CompiledDetectionItem, CompiledRule};
-use crate::event::Event;
+use crate::event::{Event, EventValue};
 use crate::matcher::CompiledMatcher;
 
 /// Pre-computed inverted index over compiled rules.
@@ -90,7 +88,7 @@ impl RuleIndex {
     /// Looks up each indexed field name in the event, then checks the field's
     /// value against the index. Returns the union of all matching rule indices
     /// plus all unindexable rules, deduplicated.
-    pub(crate) fn candidates(&self, event: &Event) -> Vec<usize> {
+    pub(crate) fn candidates(&self, event: &impl Event) -> Vec<usize> {
         if self.field_index.is_empty() {
             return (0..self.rule_count).collect();
         }
@@ -100,7 +98,7 @@ impl RuleIndex {
 
         for (field_name, value_map) in &self.field_index {
             if let Some(event_value) = event.get_field(field_name)
-                && let Some(search_key) = value_to_lowercase_string(event_value)
+                && let Some(search_key) = value_to_lowercase_string(&event_value)
                 && let Some(rule_indices) = value_map.get(&search_key)
             {
                 for &idx in rule_indices {
@@ -192,14 +190,15 @@ fn extract_from_matcher(matcher: &CompiledMatcher, field: &str, out: &mut Vec<(S
     }
 }
 
-/// Convert a JSON value to a lowercase string for index lookup.
+/// Convert an [`EventValue`] to a lowercase string for index lookup.
 ///
 /// Returns `None` for null, objects, and arrays (not meaningful for exact match).
-fn value_to_lowercase_string(value: &Value) -> Option<String> {
+fn value_to_lowercase_string(value: &EventValue) -> Option<String> {
     match value {
-        Value::String(s) => Some(s.to_lowercase()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
+        EventValue::Str(s) => Some(s.to_lowercase()),
+        EventValue::Int(n) => Some(n.to_string()),
+        EventValue::Float(f) => Some(f.to_string()),
+        EventValue::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -208,6 +207,7 @@ fn value_to_lowercase_string(value: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use crate::Engine;
+    use crate::event::JsonEvent;
     use rsigma_parser::parse_sigma_yaml;
     use serde_json::json;
 
@@ -293,7 +293,7 @@ detection:
         );
 
         let ev = json!({"EventType": "login", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
     }
@@ -313,7 +313,7 @@ detection:
         );
 
         let ev = json!({"EventType": "file_create", "User": "admin"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert!(candidates.is_empty());
     }
@@ -333,7 +333,7 @@ detection:
         );
 
         let ev = json!({"SomeField": "whatever"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
     }
@@ -353,7 +353,7 @@ detection:
         );
 
         let ev = json!({"EventType": "login"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
     }
@@ -391,12 +391,12 @@ detection:
         assert_eq!(index.unindexable_count(), 0);
 
         let ev = json!({"EventType": "login"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
 
         let ev2 = json!({"EventType": "process_create"});
-        let event2 = Event::from_value(&ev2);
+        let event2 = JsonEvent::borrow(&ev2);
         let candidates2 = index.candidates(&event2);
         assert_eq!(candidates2, vec![2]);
     }
@@ -444,9 +444,9 @@ detection:
         let ev_logout = json!({"EventType": "logout"});
         let ev_other = json!({"EventType": "file_create"});
 
-        assert_eq!(index.candidates(&Event::from_value(&ev_login)), vec![0]);
-        assert_eq!(index.candidates(&Event::from_value(&ev_logout)), vec![0]);
-        assert!(index.candidates(&Event::from_value(&ev_other)).is_empty());
+        assert_eq!(index.candidates(&JsonEvent::borrow(&ev_login)), vec![0]);
+        assert_eq!(index.candidates(&JsonEvent::borrow(&ev_logout)), vec![0]);
+        assert!(index.candidates(&JsonEvent::borrow(&ev_other)).is_empty());
     }
 
     #[test]
@@ -464,7 +464,7 @@ detection:
         );
 
         let ev = json!({"DestinationPort": 443});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
     }
@@ -492,7 +492,7 @@ detection:
         // Event matches BOTH indexed fields for the same rule.
         // Candidate should appear only once.
         let ev = json!({"EventType": "login", "Protocol": "TCP"});
-        let event = Event::from_value(&ev);
+        let event = JsonEvent::borrow(&ev);
         let candidates = index.candidates(&event);
         assert_eq!(candidates, vec![0]);
     }

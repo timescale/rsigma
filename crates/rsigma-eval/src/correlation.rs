@@ -18,7 +18,7 @@ use rsigma_parser::{
 };
 
 use crate::error::{EvalError, Result};
-use crate::event::Event;
+use crate::event::{Event, EventValue};
 
 // =============================================================================
 // Compiled types
@@ -142,12 +142,14 @@ pub struct GroupKey(pub Vec<Option<String>>);
 impl GroupKey {
     /// Extract a group key from an event given the group-by fields and the
     /// rule reference identifiers (ID, name, etc.) that produced the detection match.
-    pub fn extract(event: &Event, group_by: &[GroupByField], rule_refs: &[&str]) -> Self {
+    pub fn extract(event: &impl Event, group_by: &[GroupByField], rule_refs: &[&str]) -> Self {
         let values = group_by
             .iter()
             .map(|field| {
                 let field_name = field.resolve(rule_refs);
-                event.get_field(field_name).and_then(value_to_string)
+                event
+                    .get_field(field_name)
+                    .and_then(|v| value_to_string(&v))
             })
             .collect();
         GroupKey(values)
@@ -182,12 +184,13 @@ impl GroupKey {
     }
 }
 
-/// Convert a JSON value to a string for group-key purposes.
-fn value_to_string(v: &serde_json::Value) -> Option<String> {
+/// Convert an [`EventValue`] to a string for group-key purposes.
+fn value_to_string(v: &EventValue) -> Option<String> {
     match v {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
+        EventValue::Str(s) => Some(s.to_string()),
+        EventValue::Int(n) => Some(n.to_string()),
+        EventValue::Float(f) => Some(f.to_string()),
+        EventValue::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -926,12 +929,13 @@ fn compile_condition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::JsonEvent;
     use serde_json::json;
 
     #[test]
     fn test_group_key_extract() {
         let v = json!({"User": "admin", "Host": "srv01"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let group_by = vec![
             GroupByField::Direct("User".to_string()),
             GroupByField::Direct("Host".to_string()),
@@ -946,7 +950,7 @@ mod tests {
     #[test]
     fn test_group_key_missing_field() {
         let v = json!({"User": "admin"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let group_by = vec![
             GroupByField::Direct("User".to_string()),
             GroupByField::Direct("Host".to_string()),
@@ -958,7 +962,7 @@ mod tests {
     #[test]
     fn test_group_key_aliased() {
         let v = json!({"source.ip": "10.0.0.1"});
-        let event = Event::from_value(&v);
+        let event = JsonEvent::borrow(&v);
         let group_by = vec![GroupByField::Aliased {
             alias: "internal_ip".to_string(),
             mapping: HashMap::from([

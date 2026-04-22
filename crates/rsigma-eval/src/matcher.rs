@@ -1,17 +1,16 @@
 //! Compiled matchers for zero-allocation hot-path evaluation.
 //!
 //! Each `CompiledMatcher` variant is pre-compiled at rule load time.
-//! At evaluation time, `matches()` performs the comparison against a JSON
-//! value from the event with no dynamic dispatch or allocation.
+//! At evaluation time, `matches()` performs the comparison against an
+//! [`EventValue`] from the event with no dynamic dispatch or allocation.
 
 use std::net::IpAddr;
 
 use chrono::{Datelike, Timelike};
 use ipnet::IpNet;
 use regex::Regex;
-use serde_json::Value;
 
-use crate::event::Event;
+use crate::event::{Event, EventValue};
 
 /// A pre-compiled matcher for a single value comparison.
 ///
@@ -26,25 +25,21 @@ pub enum CompiledMatcher {
         value: String,
         case_insensitive: bool,
     },
-
     /// Substring containment.
     Contains {
         value: String,
         case_insensitive: bool,
     },
-
     /// String starts with prefix.
     StartsWith {
         value: String,
         case_insensitive: bool,
     },
-
     /// String ends with suffix.
     EndsWith {
         value: String,
         case_insensitive: bool,
     },
-
     /// Compiled regex pattern (flags baked in at compile time).
     Regex(Regex),
 
@@ -67,16 +62,13 @@ pub enum CompiledMatcher {
     // -- Special --
     /// Field existence check. `true` = field must exist, `false` = must not exist.
     Exists(bool),
-
     /// Compare against another field's value.
     FieldRef {
         field: String,
         case_insensitive: bool,
     },
-
     /// Match null / missing values.
     Null,
-
     /// Boolean equality.
     BoolEq(bool),
 
@@ -101,7 +93,6 @@ pub enum CompiledMatcher {
     // -- Composite --
     /// Match if ANY child matches (OR).
     AnyOf(Vec<CompiledMatcher>),
-
     /// Match if ALL children match (AND).
     AllOf(Vec<CompiledMatcher>),
 }
@@ -127,11 +118,11 @@ pub enum TimePart {
 }
 
 impl CompiledMatcher {
-    /// Check if this matcher matches a JSON value from an event.
+    /// Check if this matcher matches an [`EventValue`] from an event.
     ///
     /// The `event` parameter is needed for `FieldRef` to access other fields.
-    /// The `field_name` is the name of the field being matched (for `FieldRef` comparison).
-    pub fn matches(&self, value: &Value, event: &Event) -> bool {
+    #[inline]
+    pub fn matches(&self, value: &EventValue, event: &impl Event) -> bool {
         match self {
             // -- String matchers --
             CompiledMatcher::Exact {
@@ -195,12 +186,9 @@ impl CompiledMatcher {
             CompiledMatcher::NumericLte(n) => match_numeric_value(value, |v| v <= *n),
 
             // -- Special --
-            CompiledMatcher::Exists(_expect) => {
-                // Exists is handled at the detection item level, not here.
-                // This variant should not be reached during normal value matching.
-                // If it is, treat `value` presence as existence.
+            CompiledMatcher::Exists(expect) => {
                 let exists = !value.is_null();
-                exists == *_expect
+                exists == *expect
             }
 
             CompiledMatcher::FieldRef {
@@ -209,12 +197,12 @@ impl CompiledMatcher {
             } => {
                 if let Some(ref_value) = event.get_field(ref_field) {
                     if *case_insensitive {
-                        match (value_to_str(value), value_to_str(ref_value)) {
+                        match (value.as_str(), ref_value.as_str()) {
                             (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
-                            _ => value == ref_value,
+                            _ => value == &ref_value,
                         }
                     } else {
-                        value == ref_value
+                        value == &ref_value
                     }
                 } else {
                     false
@@ -224,9 +212,8 @@ impl CompiledMatcher {
             CompiledMatcher::Null => value.is_null(),
 
             CompiledMatcher::BoolEq(expected) => match value {
-                Value::Bool(b) => b == expected,
-                // Also accept string representations
-                Value::String(s) => match s.to_lowercase().as_str() {
+                EventValue::Bool(b) => b == expected,
+                EventValue::Str(s) => match s.to_lowercase().as_str() {
                     "true" | "1" | "yes" => *expected,
                     "false" | "0" | "no" => !*expected,
                     _ => false,
@@ -239,7 +226,6 @@ impl CompiledMatcher {
                 template,
                 case_insensitive,
             } => {
-                // Resolve all placeholders from the event
                 let expanded = expand_template(template, event);
                 match_str_value(value, |s| {
                     if *case_insensitive {
@@ -252,11 +238,9 @@ impl CompiledMatcher {
 
             // -- Timestamp --
             CompiledMatcher::TimestampPart { part, inner } => {
-                // Extract the time component from the value and match it
-                let component = extract_timestamp_part(value, *part);
-                match component {
+                match extract_timestamp_part(value, *part) {
                     Some(n) => {
-                        let num_val = Value::Number(serde_json::Number::from(n));
+                        let num_val = EventValue::Int(n);
                         inner.matches(&num_val, event)
                     }
                     None => false,
@@ -268,7 +252,6 @@ impl CompiledMatcher {
 
             // -- Composite --
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches(value, event)),
-
             CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches(value, event)),
         }
     }
@@ -278,15 +261,16 @@ impl CompiledMatcher {
     ///
     /// Avoids allocating a `Vec` of all strings and a `String` per value by
     /// using `matches_str` with a short-circuiting traversal.
-    pub fn matches_keyword(&self, event: &Event) -> bool {
+    #[inline]
+    pub fn matches_keyword(&self, event: &impl Event) -> bool {
         event.any_string_value(&|s| self.matches_str(s))
     }
 
     /// Check if this matcher matches a plain `&str` value.
     ///
     /// Handles the string-matching subset of `CompiledMatcher`. Matchers that
-    /// require a full `Value` (numeric comparisons, field refs, etc.) return
-    /// `false` — those are never used in keyword detection.
+    /// require a full `EventValue` (numeric comparisons, field refs, etc.)
+    /// return `false` — those are never used in keyword detection.
     fn matches_str(&self, s: &str) -> bool {
         match self {
             CompiledMatcher::Exact {
@@ -333,7 +317,6 @@ impl CompiledMatcher {
             CompiledMatcher::Not(inner) => !inner.matches_str(s),
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches_str(s)),
             CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches_str(s)),
-            // Non-string matchers are irrelevant for keyword search
             _ => false,
         }
     }
@@ -343,48 +326,38 @@ impl CompiledMatcher {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Try to extract a string representation from a JSON value and apply a predicate.
+/// Try to extract a string representation from an [`EventValue`] and apply a predicate.
 ///
-/// Handles `String` directly and coerces numbers/bools to string for comparison.
-fn match_str_value(value: &Value, pred: impl Fn(&str) -> bool) -> bool {
+/// Handles `Str` directly and coerces numbers/bools to string for comparison.
+fn match_str_value(value: &EventValue, pred: impl Fn(&str) -> bool) -> bool {
     match_str_value_ref(value, &pred)
 }
 
-fn match_str_value_ref(value: &Value, pred: &dyn Fn(&str) -> bool) -> bool {
+fn match_str_value_ref(value: &EventValue, pred: &dyn Fn(&str) -> bool) -> bool {
     match value {
-        Value::String(s) => pred(s),
-        // Coerce numeric and bool types to strings for string matching
-        Value::Number(n) => pred(&n.to_string()),
-        Value::Bool(b) => pred(if *b { "true" } else { "false" }),
-        // For arrays, match if any element matches
-        Value::Array(arr) => arr.iter().any(|v| match_str_value_ref(v, pred)),
+        EventValue::Str(s) => pred(s),
+        EventValue::Int(n) => pred(&n.to_string()),
+        EventValue::Float(f) => pred(&f.to_string()),
+        EventValue::Bool(b) => pred(if *b { "true" } else { "false" }),
+        EventValue::Array(arr) => arr.iter().any(|v| match_str_value_ref(v, pred)),
         _ => false,
     }
 }
 
 /// Try to extract a numeric value and apply a predicate.
 ///
-/// Handles JSON numbers directly and tries to parse strings as numbers.
-fn match_numeric_value(value: &Value, pred: impl Fn(f64) -> bool) -> bool {
+/// Handles numeric values directly and tries to parse strings as numbers.
+fn match_numeric_value(value: &EventValue, pred: impl Fn(f64) -> bool) -> bool {
     match_numeric_value_ref(value, &pred)
 }
 
-fn match_numeric_value_ref(value: &Value, pred: &dyn Fn(f64) -> bool) -> bool {
+fn match_numeric_value_ref(value: &EventValue, pred: &dyn Fn(f64) -> bool) -> bool {
     match value {
-        Value::Number(n) => n.as_f64().is_some_and(pred),
-        Value::String(s) => s.parse::<f64>().is_ok_and(pred),
-        Value::Array(arr) => arr.iter().any(|v| match_numeric_value_ref(v, pred)),
+        EventValue::Int(n) => pred(*n as f64),
+        EventValue::Float(f) => pred(*f),
+        EventValue::Str(s) => s.parse::<f64>().is_ok_and(pred),
+        EventValue::Array(arr) => arr.iter().any(|v| match_numeric_value_ref(v, pred)),
         _ => false,
-    }
-}
-
-/// Extract a string representation from a JSON value (for FieldRef comparison).
-fn value_to_str(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        _ => None,
     }
 }
 
@@ -425,19 +398,16 @@ pub fn sigma_string_to_regex(
 // ---------------------------------------------------------------------------
 
 /// Resolve all placeholders in an expand template from the event.
-fn expand_template(template: &[ExpandPart], event: &Event) -> String {
+fn expand_template(template: &[ExpandPart], event: &impl Event) -> String {
     let mut result = String::new();
     for part in template {
         match part {
             ExpandPart::Literal(s) => result.push_str(s),
             ExpandPart::Placeholder(field) => {
-                if let Some(val) = event.get_field(field) {
-                    match val {
-                        Value::String(s) => result.push_str(s),
-                        Value::Number(n) => result.push_str(&n.to_string()),
-                        Value::Bool(b) => result.push_str(&b.to_string()),
-                        _ => {}
-                    }
+                if let Some(val) = event.get_field(field)
+                    && let Some(s) = val.as_str()
+                {
+                    result.push_str(&s);
                 }
             }
         }
@@ -455,14 +425,12 @@ pub fn parse_expand_template(s: &str) -> Vec<ExpandPart> {
     for ch in s.chars() {
         if ch == '%' {
             if in_placeholder {
-                // End of placeholder
                 if !placeholder.is_empty() {
                     parts.push(ExpandPart::Placeholder(placeholder.clone()));
                     placeholder.clear();
                 }
                 in_placeholder = false;
             } else {
-                // Start of placeholder — flush current literal
                 if !current.is_empty() {
                     parts.push(ExpandPart::Literal(current.clone()));
                     current.clear();
@@ -476,9 +444,7 @@ pub fn parse_expand_template(s: &str) -> Vec<ExpandPart> {
         }
     }
 
-    // Flush remaining
     if in_placeholder && !placeholder.is_empty() {
-        // Unterminated placeholder — treat as literal
         current.push('%');
         current.push_str(&placeholder);
     }
@@ -493,46 +459,45 @@ pub fn parse_expand_template(s: &str) -> Vec<ExpandPart> {
 // Timestamp part helpers
 // ---------------------------------------------------------------------------
 
-/// Extract a time component from a JSON value (timestamp string or number).
-fn extract_timestamp_part(value: &Value, part: TimePart) -> Option<i64> {
-    let ts_str = match value {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => {
-            // Interpret numeric timestamps as epoch seconds.
-            // Values above 1e12 (i.e. 1_000_000_000_000, ~= Sep 2001 in millis)
-            // are assumed to be **milliseconds** and divided by 1000.  This
-            // heuristic mirrors the approach used by pySigma and covers all
-            // real-world epoch-second timestamps (the threshold won't be
-            // reached in seconds until the year ~33658).
-            let secs = n.as_i64()?;
+/// Extract a time component from an [`EventValue`] (timestamp string or number).
+fn extract_timestamp_part(value: &EventValue, part: TimePart) -> Option<i64> {
+    match value {
+        EventValue::Str(s) => parse_timestamp_str(s, part),
+        EventValue::Int(n) => {
+            let secs = if *n > 1_000_000_000_000 { n / 1000 } else { *n };
+            let dt = chrono::DateTime::from_timestamp(secs, 0)?;
+            Some(extract_part_from_datetime(&dt, part))
+        }
+        EventValue::Float(f) => {
+            let secs = *f as i64;
             let secs = if secs > 1_000_000_000_000 {
                 secs / 1000
             } else {
                 secs
             };
             let dt = chrono::DateTime::from_timestamp(secs, 0)?;
-            return Some(extract_part_from_datetime(&dt, part));
+            Some(extract_part_from_datetime(&dt, part))
         }
-        _ => return None,
-    };
+        _ => None,
+    }
+}
 
-    // Try parsing as RFC 3339 / ISO 8601
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts_str) {
+fn parse_timestamp_str(ts_str: &str, part: TimePart) -> Option<i64> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
         return Some(extract_part_from_datetime(&dt.to_utc(), part));
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%dT%H:%M:%S") {
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S") {
         let dt = naive.and_utc();
         return Some(extract_part_from_datetime(&dt, part));
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S") {
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S") {
         let dt = naive.and_utc();
         return Some(extract_part_from_datetime(&dt, part));
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%dT%H:%M:%S%.f") {
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%.f") {
         let dt = naive.and_utc();
         return Some(extract_part_from_datetime(&dt, part));
     }
-
     None
 }
 
@@ -551,9 +516,10 @@ fn extract_part_from_datetime(dt: &chrono::DateTime<chrono::Utc>, part: TimePart
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::JsonEvent;
     use serde_json::json;
 
-    fn ev() -> serde_json::Value {
+    fn empty_event() -> serde_json::Value {
         json!({})
     }
 
@@ -563,12 +529,12 @@ mod tests {
             value: "whoami".into(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("whoami"), &event));
-        assert!(m.matches(&json!("WHOAMI"), &event));
-        assert!(m.matches(&json!("Whoami"), &event));
-        assert!(!m.matches(&json!("other"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("whoami".into()), &event));
+        assert!(m.matches(&EventValue::Str("WHOAMI".into()), &event));
+        assert!(m.matches(&EventValue::Str("Whoami".into()), &event));
+        assert!(!m.matches(&EventValue::Str("other".into()), &event));
     }
 
     #[test]
@@ -577,10 +543,10 @@ mod tests {
             value: "whoami".into(),
             case_insensitive: false,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("whoami"), &event));
-        assert!(!m.matches(&json!("WHOAMI"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("whoami".into()), &event));
+        assert!(!m.matches(&EventValue::Str("WHOAMI".into()), &event));
     }
 
     #[test]
@@ -589,11 +555,11 @@ mod tests {
             value: "admin".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("superadminuser"), &event));
-        assert!(m.matches(&json!("ADMIN"), &event));
-        assert!(!m.matches(&json!("user"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("superadminuser".into()), &event));
+        assert!(m.matches(&EventValue::Str("ADMIN".into()), &event));
+        assert!(!m.matches(&EventValue::Str("user".into()), &event));
     }
 
     #[test]
@@ -602,11 +568,11 @@ mod tests {
             value: "cmd".into(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("cmd.exe"), &event));
-        assert!(m.matches(&json!("CMD.EXE"), &event));
-        assert!(!m.matches(&json!("xcmd"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("cmd.exe".into()), &event));
+        assert!(m.matches(&EventValue::Str("CMD.EXE".into()), &event));
+        assert!(!m.matches(&EventValue::Str("xcmd".into()), &event));
     }
 
     #[test]
@@ -615,74 +581,73 @@ mod tests {
             value: ".exe".into(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("cmd.exe"), &event));
-        assert!(m.matches(&json!("CMD.EXE"), &event));
-        assert!(!m.matches(&json!("cmd.bat"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("cmd.exe".into()), &event));
+        assert!(m.matches(&EventValue::Str("CMD.EXE".into()), &event));
+        assert!(!m.matches(&EventValue::Str("cmd.bat".into()), &event));
     }
 
     #[test]
     fn test_regex() {
         let re = Regex::new("(?i)^test.*value$").unwrap();
         let m = CompiledMatcher::Regex(re);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("testXYZvalue"), &event));
-        assert!(m.matches(&json!("TESTvalue"), &event));
-        assert!(!m.matches(&json!("notamatch"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("testXYZvalue".into()), &event));
+        assert!(m.matches(&EventValue::Str("TESTvalue".into()), &event));
+        assert!(!m.matches(&EventValue::Str("notamatch".into()), &event));
     }
 
     #[test]
     fn test_cidr() {
         let net: IpNet = "10.0.0.0/8".parse().unwrap();
         let m = CompiledMatcher::Cidr(net);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("10.1.2.3"), &event));
-        assert!(!m.matches(&json!("192.168.1.1"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("10.1.2.3".into()), &event));
+        assert!(!m.matches(&EventValue::Str("192.168.1.1".into()), &event));
     }
 
     #[test]
     fn test_numeric() {
         let m = CompiledMatcher::NumericGte(100.0);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!(100), &event));
-        assert!(m.matches(&json!(200), &event));
-        assert!(!m.matches(&json!(50), &event));
-        // String coercion
-        assert!(m.matches(&json!("150"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Int(100), &event));
+        assert!(m.matches(&EventValue::Int(200), &event));
+        assert!(!m.matches(&EventValue::Int(50), &event));
+        assert!(m.matches(&EventValue::Str("150".into()), &event));
     }
 
     #[test]
     fn test_null() {
         let m = CompiledMatcher::Null;
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&Value::Null, &event));
-        assert!(!m.matches(&json!(""), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Null, &event));
+        assert!(!m.matches(&EventValue::Str("".into()), &event));
     }
 
     #[test]
     fn test_bool() {
         let m = CompiledMatcher::BoolEq(true);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!(true), &event));
-        assert!(!m.matches(&json!(false), &event));
-        assert!(m.matches(&json!("true"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Bool(true), &event));
+        assert!(!m.matches(&EventValue::Bool(false), &event));
+        assert!(m.matches(&EventValue::Str("true".into()), &event));
     }
 
     #[test]
     fn test_field_ref() {
         let e = json!({"src": "10.0.0.1", "dst": "10.0.0.1"});
-        let event = Event::from_value(&e);
+        let event = JsonEvent::borrow(&e);
         let m = CompiledMatcher::FieldRef {
             field: "dst".into(),
             case_insensitive: true,
         };
-        assert!(m.matches(&json!("10.0.0.1"), &event));
+        assert!(m.matches(&EventValue::Str("10.0.0.1".into()), &event));
     }
 
     #[test]
@@ -697,11 +662,11 @@ mod tests {
                 case_insensitive: false,
             },
         ]);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("a"), &event));
-        assert!(m.matches(&json!("b"), &event));
-        assert!(!m.matches(&json!("c"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("a".into()), &event));
+        assert!(m.matches(&EventValue::Str("b".into()), &event));
+        assert!(!m.matches(&EventValue::Str("c".into()), &event));
     }
 
     #[test]
@@ -716,10 +681,10 @@ mod tests {
                 case_insensitive: false,
             },
         ]);
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("adminuser"), &event));
-        assert!(!m.matches(&json!("admin"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("adminuser".into()), &event));
+        assert!(!m.matches(&EventValue::Str("admin".into()), &event));
     }
 
     #[test]
@@ -728,11 +693,19 @@ mod tests {
             value: "target".into(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        // Match within a JSON array
-        assert!(m.matches(&json!(["other", "target", "more"]), &event));
-        assert!(!m.matches(&json!(["other", "nope"]), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        let arr = EventValue::Array(vec![
+            EventValue::Str("other".into()),
+            EventValue::Str("target".into()),
+            EventValue::Str("more".into()),
+        ]);
+        assert!(m.matches(&arr, &event));
+        let arr2 = EventValue::Array(vec![
+            EventValue::Str("other".into()),
+            EventValue::Str("nope".into()),
+        ]);
+        assert!(!m.matches(&arr2, &event));
     }
 
     #[test]
@@ -741,9 +714,9 @@ mod tests {
             value: "42".into(),
             case_insensitive: false,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!(42), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Int(42), &event));
     }
 
     // =========================================================================
@@ -752,16 +725,15 @@ mod tests {
 
     #[test]
     fn test_exact_unicode_case_insensitive() {
-        // German uppercase Ä should match lowercase ä
         let m = CompiledMatcher::Exact {
             value: "ärzte".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("ÄRZTE"), &event));
-        assert!(m.matches(&json!("Ärzte"), &event));
-        assert!(m.matches(&json!("ärzte"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("ÄRZTE".into()), &event));
+        assert!(m.matches(&EventValue::Str("Ärzte".into()), &event));
+        assert!(m.matches(&EventValue::Str("ärzte".into()), &event));
     }
 
     #[test]
@@ -770,10 +742,10 @@ mod tests {
             value: "ñ".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("España"), &event));
-        assert!(m.matches(&json!("ESPAÑA"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("España".into()), &event));
+        assert!(m.matches(&EventValue::Str("ESPAÑA".into()), &event));
     }
 
     #[test]
@@ -782,11 +754,11 @@ mod tests {
             value: "über".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("Übersicht"), &event));
-        assert!(m.matches(&json!("ÜBERSICHT"), &event));
-        assert!(!m.matches(&json!("not-uber"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("Übersicht".into()), &event));
+        assert!(m.matches(&EventValue::Str("ÜBERSICHT".into()), &event));
+        assert!(!m.matches(&EventValue::Str("not-uber".into()), &event));
     }
 
     #[test]
@@ -795,11 +767,11 @@ mod tests {
             value: "ção".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("Aplicação"), &event));
-        assert!(m.matches(&json!("APLICAÇÃO"), &event));
-        assert!(!m.matches(&json!("Aplicacao"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("Aplicação".into()), &event));
+        assert!(m.matches(&EventValue::Str("APLICAÇÃO".into()), &event));
+        assert!(!m.matches(&EventValue::Str("Aplicacao".into()), &event));
     }
 
     #[test]
@@ -808,10 +780,10 @@ mod tests {
             value: "σίγμα".to_lowercase(),
             case_insensitive: true,
         };
-        let e = ev();
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("ΣΊΓΜΑ"), &event));
-        assert!(m.matches(&json!("σίγμα"), &event));
+        let e = empty_event();
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("ΣΊΓΜΑ".into()), &event));
+        assert!(m.matches(&EventValue::Str("σίγμα".into()), &event));
     }
 
     // =========================================================================
@@ -851,9 +823,15 @@ mod tests {
             case_insensitive: true,
         };
         let e = json!({"user": "admin", "path": "C:\\Users\\admin\\Downloads"});
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("C:\\Users\\admin\\Downloads"), &event));
-        assert!(!m.matches(&json!("C:\\Users\\other\\Downloads"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(
+            &EventValue::Str("C:\\Users\\admin\\Downloads".into()),
+            &event
+        ));
+        assert!(!m.matches(
+            &EventValue::Str("C:\\Users\\other\\Downloads".into()),
+            &event
+        ));
     }
 
     #[test]
@@ -863,10 +841,9 @@ mod tests {
             template,
             case_insensitive: false,
         };
-        // user is present but domain is not — should produce "admin@"
         let e = json!({"user": "admin"});
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("admin@"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("admin@".into()), &event));
     }
 
     // =========================================================================
@@ -880,10 +857,9 @@ mod tests {
             inner: Box::new(CompiledMatcher::NumericEq(12.0)),
         };
         let e = json!({});
-        let event = Event::from_value(&e);
-        // 2024-07-10T12:30:00Z — hour should be 12
-        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
-        assert!(!m.matches(&json!("2024-07-10T15:30:00Z"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("2024-07-10T12:30:00Z".into()), &event));
+        assert!(!m.matches(&EventValue::Str("2024-07-10T15:30:00Z".into()), &event));
     }
 
     #[test]
@@ -893,9 +869,9 @@ mod tests {
             inner: Box::new(CompiledMatcher::NumericEq(7.0)),
         };
         let e = json!({});
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
-        assert!(!m.matches(&json!("2024-08-10T12:30:00Z"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("2024-07-10T12:30:00Z".into()), &event));
+        assert!(!m.matches(&EventValue::Str("2024-08-10T12:30:00Z".into()), &event));
     }
 
     #[test]
@@ -905,9 +881,9 @@ mod tests {
             inner: Box::new(CompiledMatcher::NumericEq(10.0)),
         };
         let e = json!({});
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
-        assert!(!m.matches(&json!("2024-07-15T12:30:00Z"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("2024-07-10T12:30:00Z".into()), &event));
+        assert!(!m.matches(&EventValue::Str("2024-07-15T12:30:00Z".into()), &event));
     }
 
     #[test]
@@ -917,9 +893,9 @@ mod tests {
             inner: Box::new(CompiledMatcher::NumericEq(2024.0)),
         };
         let e = json!({});
-        let event = Event::from_value(&e);
-        assert!(m.matches(&json!("2024-07-10T12:30:00Z"), &event));
-        assert!(!m.matches(&json!("2023-07-10T12:30:00Z"), &event));
+        let event = JsonEvent::borrow(&e);
+        assert!(m.matches(&EventValue::Str("2024-07-10T12:30:00Z".into()), &event));
+        assert!(!m.matches(&EventValue::Str("2023-07-10T12:30:00Z".into()), &event));
     }
 
     #[test]
@@ -929,9 +905,9 @@ mod tests {
             inner: Box::new(CompiledMatcher::NumericEq(12.0)),
         };
         let e = json!({});
-        let event = Event::from_value(&e);
+        let event = JsonEvent::borrow(&e);
         // 2024-07-10T12:30:00Z = 1720614600
-        assert!(m.matches(&json!(1720614600), &event));
+        assert!(m.matches(&EventValue::Int(1720614600), &event));
     }
 }
 
@@ -942,15 +918,14 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use crate::event::JsonEvent;
     use proptest::prelude::*;
     use rsigma_parser::value::{SpecialChar, StringPart};
     use serde_json::json;
 
-    /// Strategy to generate a random sequence of StringParts (plain text + wildcards).
     fn arb_string_parts() -> impl Strategy<Value = Vec<StringPart>> {
         prop::collection::vec(
             prop_oneof![
-                // Plain text: ASCII printable, including regex metacharacters
                 "[[:print:]]{0,20}".prop_map(StringPart::Plain),
                 Just(StringPart::Special(SpecialChar::WildcardMulti)),
                 Just(StringPart::Special(SpecialChar::WildcardSingle)),
@@ -959,22 +934,15 @@ mod proptests {
         )
     }
 
-    // -------------------------------------------------------------------------
-    // 1. Wildcard → regex compilation never panics and always produces valid regex
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn wildcard_regex_always_valid(parts in arb_string_parts(), ci in any::<bool>()) {
             let pattern = sigma_string_to_regex(&parts, ci);
-            // Must compile without error
             prop_assert!(regex::Regex::new(&pattern).is_ok(),
                 "sigma_string_to_regex produced invalid regex: {}", pattern);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 2. Plain text roundtrip: a plain-only SigmaString matches its own text
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn plain_text_matches_itself(text in "[[:print:]]{1,30}") {
@@ -986,9 +954,6 @@ mod proptests {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 3. Plain text never accidentally matches unrelated strings via regex injection
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn plain_text_rejects_different_string(
@@ -1004,9 +969,6 @@ mod proptests {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 4. Case-insensitive Exact matcher: symmetric under case change
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn exact_ci_symmetric(s in "[[:alpha:]]{1,20}") {
@@ -1015,9 +977,9 @@ mod proptests {
                 case_insensitive: true,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let upper = json!(s.to_uppercase());
-            let lower = json!(s.to_lowercase());
+            let event = JsonEvent::borrow(&e);
+            let upper = EventValue::Str(s.to_uppercase().into());
+            let lower = EventValue::Str(s.to_lowercase().into());
             prop_assert!(m.matches(&upper, &event),
                 "CI exact should match uppercase: {:?}", s.to_uppercase());
             prop_assert!(m.matches(&lower, &event),
@@ -1025,9 +987,6 @@ mod proptests {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 5. Contains matcher agrees with str::contains
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn contains_agrees_with_stdlib(
@@ -1040,16 +999,13 @@ mod proptests {
                 case_insensitive: false,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "Contains({:?}) on {:?}", needle, haystack);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 6. StartsWith matcher agrees with str::starts_with
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn startswith_agrees_with_stdlib(
@@ -1062,16 +1018,13 @@ mod proptests {
                 case_insensitive: false,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "StartsWith({:?}) on {:?}", prefix, haystack);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 7. EndsWith matcher agrees with str::ends_with
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn endswith_agrees_with_stdlib(
@@ -1084,16 +1037,13 @@ mod proptests {
                 case_insensitive: false,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "EndsWith({:?}) on {:?}", suffix, haystack);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 8. CI Contains/StartsWith/EndsWith agree with lowercased stdlib equivalents
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn ci_contains_agrees_with_lowercased(
@@ -1106,8 +1056,8 @@ mod proptests {
                 case_insensitive: true,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "CI Contains({:?}) on {:?}", needle, haystack);
         }
@@ -1123,8 +1073,8 @@ mod proptests {
                 case_insensitive: true,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "CI StartsWith({:?}) on {:?}", prefix, haystack);
         }
@@ -1140,16 +1090,13 @@ mod proptests {
                 case_insensitive: true,
             };
             let e = json!({});
-            let event = Event::from_value(&e);
-            let val = json!(haystack);
+            let event = JsonEvent::borrow(&e);
+            let val = EventValue::Str(haystack.clone().into());
             prop_assert_eq!(m.matches(&val, &event), expected,
                 "CI EndsWith({:?}) on {:?}", suffix, haystack);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 9. Wildcard * matches any string, ? matches any single char
-    // -------------------------------------------------------------------------
     proptest! {
         #[test]
         fn wildcard_star_matches_anything(s in "[[:print:]]{0,30}") {
