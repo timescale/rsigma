@@ -46,6 +46,7 @@ pub mod engine;
 pub mod error;
 pub mod io;
 pub mod metrics;
+pub mod parse;
 pub mod processor;
 
 pub use engine::{EngineStats, RuntimeEngine};
