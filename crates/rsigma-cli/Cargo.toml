@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tokio = { version = "1", features = ["full"], optional = true }
 axum = { version = "0.8", features = ["json"], optional = true }
 prometheus = { version = "0.13", default-features = false, optional = true }
-notify = { version = "7", optional = true }
+notify = { version = "8.2", optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 async-nats = { version = "0.47", optional = true }
 tokio-stream = { version = "0.1", optional = true }
