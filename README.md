@@ -1,6 +1,6 @@
 # RSigma
 
-A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard — parser, evaluation engine, linter, CLI, and LSP. rsigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them directly against JSON log events in real time. It runs detection and stateful correlation logic in-process with memory-efficient compressed event storage, supports pySigma-compatible processing pipelines for field mapping and backend configuration, and streams results from NDJSON input — no external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, and plain text, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. pySigma-compatible processing pipelines handle field mapping and backend configuration. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
 
 | Crate | Description |
 |-------|-------------|
@@ -55,6 +55,18 @@ rsigma daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
 
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
+
+# Multi-format input (auto-detect is the default: JSON → syslog → plain)
+rsigma daemon -r rules/ --input-format auto
+
+# Explicit syslog with timezone offset
+tail -f /var/log/syslog | rsigma eval -r rules/ --input-format syslog --syslog-tz +0530
+
+# logfmt (requires logfmt feature)
+rsigma eval -r rules/ --input-format logfmt < app.log
+
+# CEF / ArcSight (requires cef feature)
+rsigma eval -r rules/ --input-format cef < arcsight.log
 ```
 
 Or use the library directly:
