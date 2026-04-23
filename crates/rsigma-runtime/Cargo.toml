@@ -35,3 +35,10 @@ evtx = { version = "0.11", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
+criterion = "0.5"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+
+[[bench]]
+name = "runtime_throughput"
+harness = false
