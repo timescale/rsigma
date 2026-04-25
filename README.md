@@ -1,13 +1,14 @@
 # RSigma
 
-A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, and plain text, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. pySigma-compatible processing pipelines handle field mapping and backend configuration. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, and plain text, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. pySigma-compatible processing pipelines handle field mapping and backend configuration. A conversion engine transforms rules into backend-native query strings (SQL, SPL, KQL, Lucene, etc.) via a pluggable backend trait. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
 
 | Crate | Description |
 |-------|-------------|
 | [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST |
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
-| [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime — input adapters, log processor, hot-reload |
-| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating rules, and running a detection daemon |
+| [`rsigma-convert`](crates/rsigma-convert/) | Transform rules into backend-native query strings |
+| [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
+| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 
 ## Installation
@@ -67,6 +68,18 @@ rsigma eval -r rules/ --input-format logfmt < app.log
 
 # CEF / ArcSight (requires cef feature)
 rsigma eval -r rules/ --input-format cef < arcsight.log
+
+# Convert rules to backend-native queries
+rsigma convert -r rules/ -t test
+
+# Convert with a processing pipeline and specific output format
+rsigma convert -r rules/ -t test -p pipelines/ecs.yml -f state
+
+# List available conversion backends
+rsigma list-targets
+
+# List available output formats for a backend
+rsigma list-formats -t test
 ```
 
 Or use the library directly:
@@ -164,33 +177,34 @@ See [`examples/jsonl_stdin.rs`](crates/rsigma-runtime/examples/jsonl_stdin.rs) a
      │  parser)   │
      └────────────┘
            │
-     ┌─────┴───────────────────────────────────────────────┐
-     │                                                     │
-     ▼                                                     ▼
-    ┌──────────────────────────────────────────┐   ┌────────────────────┐
-    │              rsigma-eval                 │   │    rsigma-lsp      │
-    │                                          │   │                    │
-    │  Event trait ──> JsonEvent, KvEvent,     │   │  LSP server over   │
-    │    PlainEvent (static dispatch)          │   │  stdio (tower-lsp) │
-    │                                          │   │                    │
-    │  pipeline/ ──> Pipeline (YAML parsing,   │   │  • diagnostics     │
-    │    conditions, transformations, state)   │   │    (lint + parse   │
-    │    ↓ transforms SigmaRule AST            │   │     + compile)     │
-    │                                          │   │  • completions     │
-    │  compiler.rs ──> CompiledRule            │   │  • hover           │
-    │  matcher.rs  ──> CompiledMatcher         │   │  • document        │
-    │  engine.rs   ──> Engine (stateless)      │   │    symbols         │
-    │                                          │   │                    │
-    │  correlation.rs ──> CompiledCorrelation  │   │  Editors:          │
-    │    + EventBuffer (deflate-compressed)    │   │  VSCode, Neovim,   │
-    │  correlation_engine.rs ──> (stateful)    │   │  Helix, Zed, ...   │
-    │    sliding windows, group-by, chaining,  │   └────────────────────┘
-    │    alert suppression, action-on-fire,    │
-    │    memory management, event inclusion    │
-    │                                          │
-    │  rsigma.* custom attributes ─────────>   │
-    │    engine config from pipelines          │
-    └──────────────────────────────────────────┘
+     ┌─────┴───────────────────────────────────────────────────────────┐
+     │                                   │                             │
+     ▼                                   ▼                             ▼
+    ┌─────────────────────────┐   ┌─────────────────────┐   ┌────────────────────┐
+    │      rsigma-eval        │   │   rsigma-convert    │   │    rsigma-lsp      │
+    │                         │   │                     │   │                    │
+    │  Event trait ──>        │   │  Backend trait ──>  │   │  LSP server over   │
+    │    JsonEvent, KvEvent,  │   │    pluggable query  │   │  stdio (tower-lsp) │
+    │    PlainEvent           │   │    generation       │   │                    │
+    │                         │   │                     │   │  • diagnostics     │
+    │  pipeline/ ──>          │   │  TextQueryConfig    │   │    (lint + parse   │
+    │    Pipeline, conditions,│   │    ──> ~90 config   │   │     + compile)     │
+    │    transformations,     │   │    fields for text  │   │  • completions     │
+    │    state, finalizers    │   │    query backends   │   │  • hover           │
+    │                         │   │                     │   │  • document        │
+    │  compiler.rs ──>        │   │  Condition walker,  │   │    symbols         │
+    │    CompiledRule         │   │    deferred exprs,  │   │                    │
+    │  engine.rs ──>          │   │    conversion state │   │  Editors:          │
+    │    Engine (stateless)   │   │                     │   │  VSCode, Neovim,   │
+    │                         │   │  backends/ ──>      │   │  Helix, Zed, ...   │
+    │  correlation.rs ──>     │   │    TextQueryTest,   │   └────────────────────┘
+    │    sliding windows,     │   │    (PostgreSQL WIP) │
+    │    group-by, chaining,  │   └─────────────────────┘
+    │    suppression, events  │
+    │                         │
+    │  rsigma.* custom        │
+    │    attributes           │
+    └─────────────────────────┘
               │
               ▼
     ┌──────────────────────────────────────────┐
@@ -221,14 +235,14 @@ See [`examples/jsonl_stdin.rs`](crates/rsigma-runtime/examples/jsonl_stdin.rs) a
 
 ## Reference
 
-- [pySigma](https://github.com/SigmaHQ/pySigma) — reference Python implementation
-- [Sigma Specification V2.0.0](https://github.com/SigmaHQ/sigma-specification) — formal specification
-- [sigma-rust](https://github.com/jopohl/sigma-rust) — Pratt parsing approach
-- [sigmars](https://github.com/crowdalert/sigmars) — correlation support patterns
+- [pySigma](https://github.com/SigmaHQ/pySigma): reference Python implementation
+- [Sigma Specification V2.0.0](https://github.com/SigmaHQ/sigma-specification): formal specification
+- [sigma-rust](https://github.com/jopohl/sigma-rust): Pratt parsing approach
+- [sigmars](https://github.com/crowdalert/sigmars): correlation support patterns
 
 ## Releasing
 
-All four crates share a single version (set in the workspace `Cargo.toml`) and are published together.
+All crates share a single version (set in the workspace `Cargo.toml`) and are published together.
 
 ### Publishing a new version
 

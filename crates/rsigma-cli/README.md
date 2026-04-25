@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma` is a command-line interface for parsing, validating, linting, evaluating, and running [Sigma](https://github.com/SigmaHQ/sigma) detection rules as a long-running daemon.
+`rsigma` is a command-line interface for parsing, validating, linting, evaluating, converting, and running [Sigma](https://github.com/SigmaHQ/sigma) detection rules as a long-running daemon.
 
 This binary is part of the [rsigma workspace].
 
@@ -26,11 +26,17 @@ hel run | rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 
 # With a processing pipeline for field mapping
 rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
+
+# Convert rules to backend-native queries
+rsigma convert -r rules/ -t test
+
+# List available conversion backends
+rsigma list-targets
 ```
 
 ## Subcommands
 
-### `parse` — Parse a single rule
+### `parse`: Parse a single rule
 
 Parse a Sigma YAML file and output the AST as JSON.
 
@@ -46,7 +52,7 @@ rsigma parse rule.yml --pretty   # same (default)
 
 Note: pretty-print is on by default and cannot be disabled.
 
-### `validate` — Validate rules in a directory
+### `validate`: Validate rules in a directory
 
 Parse and compile all rules in a directory, reporting errors.
 
@@ -61,7 +67,7 @@ rsigma validate path/to/rules/ -v              # verbose output
 rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
 ```
 
-### `lint` — Lint rules against the Sigma specification
+### `lint`: Lint rules against the Sigma specification
 
 Run 66 built-in lint rules with optional JSON schema validation.
 
@@ -97,7 +103,7 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 
 **Schema validation skips** documents with `action: global`, `action: reset`, or `action: repeat` (action fragments).
 
-### `daemon` — Run as a long-running detection service
+### `daemon`: Run as a long-running detection service
 
 Run rsigma as a long-running daemon that continuously reads NDJSON from stdin, evaluates against rules, writes matches to stdout, and exposes health/metrics/management APIs over HTTP.
 
@@ -113,7 +119,7 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 | `--pretty` | flag | `false` | Pretty-print JSON output |
 | `--api-addr` | string | `0.0.0.0:9090` | Address for health, metrics, and management API server |
 | `--suppress` | string | none | Suppression window for correlation alerts (e.g. `5m`, `1h`) |
-| `--action` | string | none | `alert` or `reset` — action after correlation fires |
+| `--action` | string | none | `alert` or `reset`, the action taken after correlation fires |
 | `--no-detections` | flag | `false` | Suppress detection-level output (only show correlation alerts) |
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
 | `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
@@ -124,7 +130,7 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 **Usage:**
 
 ```bash
-# Basic daemon — stream events, detect, output matches
+# Basic daemon: stream events, detect, output matches
 hel run | rsigma daemon -r rules/ -p ecs.yml
 
 # With SQLite state persistence (correlation state survives restarts)
@@ -176,11 +182,11 @@ rsigma daemon \
 
 **Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
 
-**State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts — for example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
+**State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts. For example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
 
 **Feature flag:** the daemon subcommand requires the `daemon` feature (enabled by default). To build without daemon dependencies: `cargo build --no-default-features`.
 
-### `eval` — Evaluate events against rules
+### `eval`: Evaluate events against rules
 
 Evaluate JSON events against Sigma detection and correlation rules.
 
@@ -193,7 +199,7 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--jq` | string | none | jq filter to extract event payload (conflicts with `--jsonpath`) |
 | `--jsonpath` | string | none | JSONPath (RFC 9535) query (conflicts with `--jq`) |
 | `--suppress` | string | none | Suppression window for correlation alerts (e.g. `5m`, `1h`, `30s`) |
-| `--action` | string | none | `alert` or `reset` — action after correlation fires |
+| `--action` | string | none | `alert` or `reset`, the action taken after correlation fires |
 | `--no-detections` | flag | `false` | Suppress detection-level output (only show correlation alerts) |
 | `--include-event` | flag | `false` | Include full event JSON in each detection match |
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
@@ -206,13 +212,13 @@ Evaluate JSON events against Sigma detection and correlation rules.
 # Single event (inline JSON)
 rsigma eval -r path/to/rules/ -e '{"CommandLine": "whoami"}'
 
-# Read events from a file (@file syntax — streams as NDJSON, one event per line)
+# Read events from a file (@file syntax, streams as NDJSON, one event per line)
 rsigma eval -r path/to/rules/ -e @events.ndjson
 
 # Stream NDJSON from stdin
 cat events.ndjson | rsigma eval -r path/to/rules/
 
-# With processing pipeline(s) — applied in priority order
+# With processing pipeline(s), applied in priority order
 rsigma eval -r rules/ -p sysmon.yml -p custom.yml -e '...'
 ```
 
@@ -235,7 +241,7 @@ rsigma eval -r rules/ --jq '.event' -e '{"ts":"...","event":{"CommandLine":"whoa
 # JSONPath (RFC 9535)
 rsigma eval -r rules/ --jsonpath '$.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
 
-# Array unwrapping — yields one event per element
+# Array unwrapping: yields one event per element
 rsigma eval -r rules/ --jq '.records[]' -e '{"records":[{"CommandLine":"whoami"},{"CommandLine":"id"}]}'
 
 # Stream with extraction
@@ -252,10 +258,10 @@ rsigma eval -r rules/ --include-event -e '{"CommandLine": "whoami"}'
 **Correlation options:**
 
 ```bash
-# Suppression — deduplicate correlation alerts within a time window
+# Suppress duplicate correlation alerts within a time window
 rsigma eval -r rules/ --suppress 5m < events.ndjson
 
-# Action on fire — reset state after alert (default: alert)
+# Reset state after alert fires (default: alert)
 rsigma eval -r rules/ --suppress 5m --action reset < events.ndjson
 
 # Include full contributing events in correlation output (compressed in memory)
@@ -274,7 +280,49 @@ rsigma eval -r rules/ --no-detections < events.ndjson
 rsigma eval -r rules/ --timestamp-field time < events.ndjson
 ```
 
-### `condition` — Parse a condition expression
+### `convert`: Convert rules to backend-native queries
+
+Convert Sigma rules into query strings for a specific backend (SQL, SPL, KQL, Lucene, etc.).
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
+| `--target` / `-t` | string | required | Backend target name (see `list-targets`) |
+| `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s) |
+| `--format` / `-f` | string | `"default"` | Output format (see `list-formats`) |
+
+```bash
+# Convert rules using the test backend
+rsigma convert -r rules/ -t test
+
+# Convert with a pipeline and specific output format
+rsigma convert -r rules/ -t test -p pipelines/ecs.yml -f state
+
+# Convert a single rule
+rsigma convert -r rule.yml -t test
+```
+
+### `list-targets`: List available conversion backends
+
+List all registered conversion backend targets.
+
+```bash
+rsigma list-targets
+```
+
+### `list-formats`: List output formats for a backend
+
+List the output formats supported by a specific backend.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--target` / `-t` | string | required | Backend target name |
+
+```bash
+rsigma list-formats -t test
+```
+
+### `condition`: Parse a condition expression
 
 Parse a Sigma condition expression and output the AST as pretty-printed JSON. Output is always pretty-printed.
 
@@ -286,7 +334,7 @@ Parse a Sigma condition expression and output the AST as pretty-printed JSON. Ou
 rsigma condition 'selection and not filter'
 ```
 
-### `stdin` — Parse YAML from stdin
+### `stdin`: Parse YAML from stdin
 
 Read a single Sigma YAML document from stdin and output the AST as JSON.
 

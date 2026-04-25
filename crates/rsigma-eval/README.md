@@ -62,6 +62,7 @@ This library is part of [rsigma].
 | `parse_pipeline(yaml: &str)` | Parse a pipeline from a YAML string |
 | `parse_pipeline_file(path: &Path)` | Parse a pipeline from a YAML file |
 | `apply_pipelines(pipelines, rule)` | Apply all pipelines to a rule in priority order |
+| `apply_pipelines_with_state(pipelines, rule)` | Apply pipelines and return the merged `PipelineState` (for backends) |
 | `merge_pipelines(pipelines)` | Merge multiple pipelines into one (sorted by priority) |
 
 ## Detection Engine
@@ -238,7 +239,7 @@ pySigma-compatible pipeline system for field mapping, logsource transformation, 
 
 - **Priority**: `Pipeline.priority` (default `0`); lower runs first.
 - **Sorting**: pipelines are sorted by `priority` on add.
-- **State isolation**: each pipeline gets its own `PipelineState`; state is not shared across pipelines.
+- **State isolation**: each pipeline gets its own `PipelineState`; state is not shared across pipelines. Use `apply_pipelines_with_state()` to collect merged state for backends.
 
 ### Transformation Item Fields
 
@@ -336,7 +337,7 @@ Each transformation item in a pipeline can have:
 | `json` | `indent` | — |
 | `template` | `template` | `""` |
 
-Finalizers are stored in the pipeline but not executed in eval mode.
+Finalizers are stored in the pipeline and not executed in eval mode. Each finalizer has an `apply()` method used by `rsigma-convert` backends to transform a `Vec<String>` of queries into a single output string.
 
 ## Custom Attributes (`rsigma.*`)
 
