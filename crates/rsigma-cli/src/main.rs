@@ -305,6 +305,49 @@ enum Commands {
         #[arg(long = "syslog-tz", default_value = "+00:00")]
         syslog_tz: String,
     },
+
+    /// Convert Sigma rules to backend-native queries
+    Convert {
+        /// Path(s) to Sigma rule file(s) or directory
+        rules: Vec<PathBuf>,
+
+        /// Target backend (e.g. test)
+        #[arg(short, long)]
+        target: String,
+
+        /// Output format (backend-specific, default: "default")
+        #[arg(short, long, default_value = "default")]
+        format: String,
+
+        /// Processing pipeline YAML file(s) (repeatable)
+        #[arg(short = 'p', long = "pipeline")]
+        pipeline: Vec<PathBuf>,
+
+        /// Skip pipeline requirement check
+        #[arg(long)]
+        without_pipeline: bool,
+
+        /// Skip unsupported rules instead of failing
+        #[arg(short, long)]
+        skip_unsupported: bool,
+
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Backend options as key=value pairs (repeatable)
+        #[arg(short = 'O', long = "option")]
+        backend_options: Vec<String>,
+    },
+
+    /// List available conversion targets (backends)
+    ListTargets,
+
+    /// List available output formats for a target
+    ListFormats {
+        /// Target backend name
+        target: String,
+    },
 }
 
 fn main() {
@@ -419,6 +462,27 @@ fn main() {
             input_format,
             syslog_tz,
         ),
+        Commands::Convert {
+            rules,
+            target,
+            format,
+            pipeline,
+            without_pipeline,
+            skip_unsupported,
+            output,
+            backend_options,
+        } => cmd_convert(
+            rules,
+            target,
+            format,
+            pipeline,
+            without_pipeline,
+            skip_unsupported,
+            output,
+            backend_options,
+        ),
+        Commands::ListTargets => cmd_list_targets(),
+        Commands::ListFormats { target } => cmd_list_formats(target),
     }
 }
 
@@ -1975,6 +2039,154 @@ impl Painter {
 
     fn cyan(&self, s: &str) -> String {
         self.paint("36", s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Convert subcommand
+// ---------------------------------------------------------------------------
+
+fn get_backend(target: &str) -> Box<dyn rsigma_convert::Backend> {
+    match target {
+        "test" => Box::new(rsigma_convert::backends::test::TextQueryTestBackend::new()),
+        "test_mandatory_pipeline" => {
+            Box::new(rsigma_convert::backends::test::MandatoryPipelineTestBackend::new())
+        }
+        _ => {
+            eprintln!("Unknown target: {target}");
+            eprintln!("Available targets: test");
+            process::exit(1);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_convert(
+    rules: Vec<PathBuf>,
+    target: String,
+    format: String,
+    pipeline_paths: Vec<PathBuf>,
+    without_pipeline: bool,
+    skip_unsupported: bool,
+    output: Option<PathBuf>,
+    _backend_options: Vec<String>,
+) {
+    let collection = load_collection_multi(&rules);
+    let pipelines = load_pipelines(&pipeline_paths);
+    let backend = get_backend(&target);
+
+    if backend.requires_pipeline() && pipelines.is_empty() && !without_pipeline {
+        eprintln!(
+            "Backend '{}' requires a pipeline. Use -p or --without-pipeline.",
+            target
+        );
+        process::exit(1);
+    }
+
+    if !backend.formats().iter().any(|(f, _)| *f == format) {
+        eprintln!("Unknown format '{format}' for backend '{target}'");
+        eprintln!(
+            "Available: {}",
+            backend
+                .formats()
+                .iter()
+                .map(|(f, d)| format!("{f} ({d})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        process::exit(1);
+    }
+
+    let result =
+        rsigma_convert::convert_collection(backend.as_ref(), &collection, &pipelines, &format);
+    match result {
+        Ok(output_data) => {
+            for (rule_title, error) in &output_data.errors {
+                if skip_unsupported {
+                    eprintln!("Warning: rule '{rule_title}' skipped: {error}");
+                } else {
+                    eprintln!("Error: rule '{rule_title}' failed: {error}");
+                }
+            }
+            if !skip_unsupported && !output_data.errors.is_empty() {
+                process::exit(1);
+            }
+            let all_queries: Vec<&str> = output_data
+                .queries
+                .iter()
+                .flat_map(|r| r.queries.iter().map(|q| q.as_str()))
+                .collect();
+            let output_str = all_queries.join("\n");
+            write_output(&output_str, output.as_deref());
+        }
+        Err(e) => {
+            eprintln!("Conversion failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_list_targets() {
+    println!("Available conversion targets:");
+    println!("  test  - Backend-neutral test backend");
+}
+
+fn cmd_list_formats(target: String) {
+    let backend = get_backend(&target);
+    println!("Available formats for '{target}':");
+    for (name, desc) in backend.formats() {
+        println!("  {name}  - {desc}");
+    }
+}
+
+fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
+    let mut collection = SigmaCollection::new();
+    for path in paths {
+        if path.is_dir() {
+            match parse_sigma_directory(path) {
+                Ok(dir_collection) => {
+                    collection.rules.extend(dir_collection.rules);
+                    collection.correlations.extend(dir_collection.correlations);
+                    collection.filters.extend(dir_collection.filters);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing directory {}: {e}", path.display());
+                    process::exit(1);
+                }
+            }
+        } else if path.is_file() {
+            match parse_sigma_file(path) {
+                Ok(file_collection) => {
+                    collection.rules.extend(file_collection.rules);
+                    collection.correlations.extend(file_collection.correlations);
+                    collection.filters.extend(file_collection.filters);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing {}: {e}", path.display());
+                    process::exit(1);
+                }
+            }
+        } else {
+            eprintln!("Path not found: {}", path.display());
+            process::exit(1);
+        }
+    }
+    if collection.rules.is_empty() && collection.correlations.is_empty() {
+        eprintln!("No rules found in specified path(s)");
+        process::exit(1);
+    }
+    collection
+}
+
+fn write_output(content: &str, output: Option<&std::path::Path>) {
+    match output {
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, content) {
+                eprintln!("Error writing to {}: {e}", path.display());
+                process::exit(1);
+            }
+        }
+        None => println!("{content}"),
     }
 }
 
