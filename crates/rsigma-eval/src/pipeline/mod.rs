@@ -1131,6 +1131,28 @@ pub fn apply_pipelines(pipelines: &[Pipeline], rule: &mut SigmaRule) -> Result<(
     Ok(())
 }
 
+/// Apply multiple pipelines to a rule, returning the merged [`PipelineState`].
+///
+/// Unlike [`apply_pipelines`], this function accumulates state from all pipelines
+/// into a single `PipelineState` so that conversion backends can read values set
+/// by `SetState` and `QueryExpressionPlaceholders` transformations.
+pub fn apply_pipelines_with_state(
+    pipelines: &[Pipeline],
+    rule: &mut SigmaRule,
+) -> Result<PipelineState> {
+    let mut merged = PipelineState::default();
+    for pipeline in pipelines {
+        let mut state = PipelineState::new(pipeline.vars.clone());
+        pipeline.apply(rule, &mut state)?;
+        for (k, v) in state.state {
+            merged.state.insert(k, v);
+        }
+        merged.applied_items.extend(state.applied_items);
+        merged.vars.extend(state.vars);
+    }
+    Ok(merged)
+}
+
 /// Apply multiple pipelines to a correlation rule in priority order.
 pub fn apply_pipelines_to_correlation(
     pipelines: &[Pipeline],

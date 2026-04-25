@@ -117,6 +117,7 @@ pub use error::{EvalError, Result};
 pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, PlainEvent};
 pub use matcher::CompiledMatcher;
 pub use pipeline::{
-    Pipeline, apply_pipelines, merge_pipelines, parse_pipeline, parse_pipeline_file,
+    Pipeline, apply_pipelines, apply_pipelines_with_state, merge_pipelines, parse_pipeline,
+    parse_pipeline_file,
 };
 pub use result::{FieldMatch, MatchResult};

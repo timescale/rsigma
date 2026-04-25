@@ -1,0 +1,21 @@
+[package]
+name = "rsigma-convert"
+description = "Sigma rule conversion engine — convert rules to backend-native query strings"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+rsigma-parser = { path = "../rsigma-parser", version = "0.7.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.7.0" }
+thiserror = "2"
+serde_json = "1"
+serde_yaml = "0.9"
+regex = "1"
+ipnet = "2"
+log = "0.4"
+base64 = "0.22"

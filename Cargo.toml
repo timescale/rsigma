@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/rsigma-parser",
     "crates/rsigma-eval",
+    "crates/rsigma-convert",
     "crates/rsigma-runtime",
     "crates/rsigma-cli",
     "crates/rsigma-lsp",

@@ -2914,6 +2914,7 @@ dependencies = [
  "notify",
  "predicates",
  "prometheus",
+ "rsigma-convert",
  "rsigma-eval",
  "rsigma-parser",
  "rsigma-runtime",
@@ -2930,6 +2931,21 @@ dependencies = [
  "ureq",
  "yamlpatch",
  "yamlpath",
+]
+
+[[package]]
+name = "rsigma-convert"
+version = "0.7.0"
+dependencies = [
+ "base64",
+ "ipnet",
+ "log",
+ "regex",
+ "rsigma-eval",
+ "rsigma-parser",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
