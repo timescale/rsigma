@@ -1,0 +1,7 @@
+title: ILIKE Contains Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection

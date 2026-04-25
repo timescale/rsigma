@@ -1,0 +1,147 @@
+# OCSF-based processing pipeline for PostgreSQL/TimescaleDB security events schema.
+#
+# Maps common Sigma rule field names (Windows Sysmon, generic process creation,
+# network connection, authentication) to the OCSF-normalized column names used
+# in the reference TimescaleDB `security_events` schema.
+#
+# Usage:
+#   rsigma convert -t postgres -p pipelines/ocsf_postgres.yml rules/
+
+name: ocsf_postgres
+priority: 10
+
+transformations:
+  # ---- Process Creation (Sysmon EventID 1, category: process_creation) ----
+  - id: process_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: process_command_line
+      Image: process_file_path
+      OriginalFileName: process_original_name
+      ParentImage: parent_process_file_path
+      ParentCommandLine: parent_process_command_line
+      User: actor_user_name
+      IntegrityLevel: process_integrity_level
+      Hashes: process_file_hash
+      CurrentDirectory: process_current_directory
+      ProcessId: process_pid
+      ParentProcessId: parent_process_pid
+      Company: process_file_company
+      Description: process_file_description
+      Product: process_file_product
+      FileVersion: process_file_version
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+
+  # ---- Network Connection (Sysmon EventID 3, category: network_connection) ----
+  - id: network_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: src_ip
+      SourcePort: src_port
+      DestinationIp: dst_ip
+      DestinationPort: dst_port
+      DestinationHostname: dst_hostname
+      Protocol: network_protocol
+      Initiated: network_direction
+      Image: process_file_path
+      User: actor_user_name
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  # ---- File events (Sysmon EventID 11, category: file_event) ----
+  - id: file_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file_path
+      Image: process_file_path
+      User: actor_user_name
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  # ---- Registry events (Sysmon EventID 12/13/14, category: registry_event) ----
+  - id: registry_fields
+    type: field_name_mapping
+    mapping:
+      TargetObject: registry_key
+      Details: registry_value
+      Image: process_file_path
+      EventType: event_type
+    rule_conditions:
+      - type: logsource
+        category: registry_event
+
+  # ---- DNS queries (Sysmon EventID 22, category: dns_query) ----
+  - id: dns_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: dns_query_name
+      QueryResults: dns_answer
+      Image: process_file_path
+      QueryStatus: dns_response_code
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+
+  # ---- Authentication / Login (category: authentication) ----
+  - id: auth_fields
+    type: field_name_mapping
+    mapping:
+      TargetUserName: actor_user_name
+      TargetDomainName: actor_user_domain
+      LogonType: auth_logon_type
+      IpAddress: src_ip
+      IpPort: src_port
+      WorkstationName: src_hostname
+      SubjectUserName: subject_user_name
+      SubjectDomainName: subject_user_domain
+      AuthenticationPackageName: auth_package
+      TargetServerName: dst_hostname
+    rule_conditions:
+      - type: logsource
+        category: authentication
+
+  # ---- Proxy / Web (category: proxy) ----
+  - id: proxy_fields
+    type: field_name_mapping
+    mapping:
+      c-uri: http_url
+      c-useragent: http_user_agent
+      cs-method: http_method
+      r-dns: dst_hostname
+      cs-host: http_host
+      cs-referrer: http_referrer
+      sc-status: http_status_code
+      src_ip: src_ip
+      dst_ip: dst_ip
+    rule_conditions:
+      - type: logsource
+        category: proxy
+
+  # ---- Firewall (category: firewall) ----
+  - id: firewall_fields
+    type: field_name_mapping
+    mapping:
+      src_ip: src_ip
+      dst_ip: dst_ip
+      src_port: src_port
+      dst_port: dst_port
+      action: action
+    rule_conditions:
+      - type: logsource
+        category: firewall
+
+  # ---- Global: EventID mapping (always applies) ----
+  - id: event_id
+    type: field_name_mapping
+    mapping:
+      EventID: event_id
+
+  # ---- Set target table in pipeline state ----
+  - id: set_table
+    type: set_state
+    key: table
+    value: security_events

@@ -1,0 +1,11 @@
+title: Multi-Field Detection
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\cmd.exe'
+        CommandLine|contains:
+            - '/c'
+            - '/k'
+    condition: selection

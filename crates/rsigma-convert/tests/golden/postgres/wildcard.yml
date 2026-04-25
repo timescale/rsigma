@@ -1,0 +1,7 @@
+title: Wildcard Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine: '*cmd*whoami*'
+    condition: selection

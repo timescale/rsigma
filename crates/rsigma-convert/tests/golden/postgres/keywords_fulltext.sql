@@ -1,0 +1,1 @@
+SELECT * FROM security_events WHERE to_tsvector('simple', ROW(*)::text) @@ to_tsquery('simple', 'whoami') OR to_tsvector('simple', ROW(*)::text) @@ to_tsquery('simple', 'ipconfig')

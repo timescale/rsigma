@@ -1,0 +1,7 @@
+title: LIKE Case-Sensitive Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains|cased: Whoami
+    condition: selection

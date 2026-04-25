@@ -1,0 +1,1 @@
+SELECT * FROM security_events WHERE "CommandLine" = 'whoami'

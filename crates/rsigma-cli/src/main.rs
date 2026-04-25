@@ -2048,13 +2048,16 @@ impl Painter {
 
 fn get_backend(target: &str) -> Box<dyn rsigma_convert::Backend> {
     match target {
+        "postgres" | "postgresql" | "pg" => {
+            Box::new(rsigma_convert::backends::postgres::PostgresBackend::new())
+        }
         "test" => Box::new(rsigma_convert::backends::test::TextQueryTestBackend::new()),
         "test_mandatory_pipeline" => {
             Box::new(rsigma_convert::backends::test::MandatoryPipelineTestBackend::new())
         }
         _ => {
             eprintln!("Unknown target: {target}");
-            eprintln!("Available targets: test");
+            eprintln!("Available targets: postgres, test");
             process::exit(1);
         }
     }
@@ -2128,7 +2131,8 @@ fn cmd_convert(
 
 fn cmd_list_targets() {
     println!("Available conversion targets:");
-    println!("  test  - Backend-neutral test backend");
+    println!("  postgres  - PostgreSQL/TimescaleDB (aliases: postgresql, pg)");
+    println!("  test      - Backend-neutral test backend");
 }
 
 fn cmd_list_formats(target: String) {

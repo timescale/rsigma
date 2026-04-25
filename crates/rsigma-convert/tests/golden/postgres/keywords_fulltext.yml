@@ -1,0 +1,8 @@
+title: Full-Text Search Keywords Test
+logsource:
+    category: test
+detection:
+    keywords:
+        - whoami
+        - ipconfig
+    condition: keywords

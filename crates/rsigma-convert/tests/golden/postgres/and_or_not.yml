@@ -1,0 +1,9 @@
+title: AND OR NOT Conditions
+logsource:
+    category: test
+detection:
+    selection:
+        FieldA: val1
+    filter:
+        FieldB: val2
+    condition: selection and not filter

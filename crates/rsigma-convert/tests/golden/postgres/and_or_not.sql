@@ -1,0 +1,1 @@
+SELECT * FROM security_events WHERE "FieldA" = 'val1' AND NOT "FieldB" = 'val2'

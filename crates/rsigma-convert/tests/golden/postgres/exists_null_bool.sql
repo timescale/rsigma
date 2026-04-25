@@ -1,0 +1,1 @@
+SELECT * FROM security_events WHERE "FieldA" IS NOT NULL AND "FieldB" IS NULL AND "Enabled" = true
