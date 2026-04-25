@@ -284,9 +284,12 @@ impl Transformation {
                 Ok(true)
             }
 
-            Transformation::QueryExpressionPlaceholders { .. } => {
-                // No-op for eval mode
-                Ok(false)
+            Transformation::QueryExpressionPlaceholders { expression } => {
+                state.set_state(
+                    "query_expression_template".to_string(),
+                    serde_json::Value::String(expression.clone()),
+                );
+                Ok(true)
             }
 
             Transformation::SetState { key, value } => {
@@ -2374,14 +2377,16 @@ mod tests {
     }
 
     #[test]
-    fn test_query_expression_placeholders_noop() {
+    fn test_query_expression_placeholders_stores_in_state() {
         let mut rule = make_test_rule();
         let mut state = PipelineState::default();
         let t = Transformation::QueryExpressionPlaceholders {
             expression: "{field}={value}".to_string(),
         };
         let result = t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
-        assert!(!result); // no-op returns false
+        assert!(result);
+        let stored = state.get_state("query_expression_template").unwrap();
+        assert_eq!(stored.as_str().unwrap(), "{field}={value}");
     }
 
     // =========================================================================
