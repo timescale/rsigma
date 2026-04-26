@@ -1,10 +1,29 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use rsigma_eval::pipeline::state::PipelineState;
 use rsigma_parser::*;
 
 use crate::error::{ConvertError, Result};
 use crate::state::{ConversionState, ConvertResult};
+
+/// Process-wide cache for compiled regexes keyed by pattern string.
+static REGEX_CACHE: Mutex<Option<HashMap<&'static str, regex::Regex>>> = Mutex::new(None);
+
+fn get_cached_regex(pattern: &'static str) -> Option<regex::Regex> {
+    let mut guard = REGEX_CACHE.lock().unwrap();
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if let Some(re) = cache.get(pattern) {
+        return Some(re.clone());
+    }
+    match regex::Regex::new(pattern) {
+        Ok(re) => {
+            cache.insert(pattern, re.clone());
+            Some(re)
+        }
+        Err(_) => None,
+    }
+}
 
 // =============================================================================
 // Token precedence
@@ -354,7 +373,7 @@ pub fn text_escape_and_quote_field(cfg: &TextQueryConfig, field: &str) -> String
 
     if let Some(esc) = cfg.field_escape
         && let Some(pat) = cfg.field_escape_pattern
-        && let Ok(re) = regex::Regex::new(pat)
+        && let Some(re) = get_cached_regex(pat)
     {
         escaped = re
             .replace_all(&escaped, |_: &regex::Captures| esc)
@@ -364,7 +383,7 @@ pub fn text_escape_and_quote_field(cfg: &TextQueryConfig, field: &str) -> String
     if let Some(quote) = cfg.field_quote {
         let should_quote = match cfg.field_quote_pattern {
             Some(pat) => {
-                let matches = regex::Regex::new(pat)
+                let matches = get_cached_regex(pat)
                     .map(|re| re.is_match(&escaped))
                     .unwrap_or(false);
                 if cfg.field_quote_pattern_negation {
@@ -421,7 +440,7 @@ pub fn text_convert_value_str(cfg: &TextQueryConfig, value: &SigmaString) -> Str
     if !has_wildcards {
         let should_quote = match cfg.str_quote_pattern {
             Some(pat) => {
-                let matches = regex::Regex::new(pat)
+                let matches = get_cached_regex(pat)
                     .map(|re| re.is_match(&result))
                     .unwrap_or(false);
                 if cfg.str_quote_pattern_negation {
