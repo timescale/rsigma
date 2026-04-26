@@ -1,0 +1,14 @@
+target/
+.git/
+.github/
+editors/
+*.md
+LICENSE
+
+# Secrets and credentials -- must never enter build context
+.env
+.env.*
+*.key
+*.pem
+*.p12
+credentials.*

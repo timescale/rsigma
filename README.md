@@ -24,6 +24,35 @@ cargo install rsigma
 cargo install --path crates/rsigma-lsp
 ```
 
+### Docker
+
+Multi-arch images (linux/amd64, linux/arm64) are published to GHCR on every release.
+
+```bash
+docker pull ghcr.io/timescale/rsigma:latest
+docker run --rm ghcr.io/timescale/rsigma:latest --help
+```
+
+Run with full runtime hardening:
+
+```bash
+docker run --rm \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  -v /path/to/rules:/rules:ro \
+  ghcr.io/timescale/rsigma:latest validate /rules/
+```
+
+Verify the image signature:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'github.com/timescale/rsigma' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/timescale/rsigma:latest
+```
+
 ## Quick Start
 
 Evaluate events against Sigma rules from the command line:

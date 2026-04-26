@@ -1,0 +1,185 @@
+name: Docker image
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-22.04-arm
+            platform: linux/arm64
+
+    permissions:
+      contents: read # checkout
+      packages: write # push image by digest to GHCR
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: build
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          sbom: true
+          provenance: mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${BUILD_DIGEST}"
+          touch "/tmp/digests/${digest#sha256:}"
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  scan:
+    name: Vulnerability scan
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read # checkout (implicit)
+      packages: read # pull image for scanning
+      security-events: write # upload SARIF results
+
+    steps:
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download amd64 digest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: digests-amd64
+          path: /tmp/digests
+
+      - name: Resolve digest
+        id: resolve
+        run: echo "digest=sha256:$(ls /tmp/digests)" >> "${GITHUB_OUTPUT}"
+
+      - uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        id: grype
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.resolve.outputs.digest }}
+          fail-build: true
+          severity-cutoff: critical
+          output-format: sarif
+
+      - uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+
+  push:
+    name: Create manifest and sign
+    needs: [build, scan]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read # checkout (implicit)
+      packages: write # push multi-arch manifest to GHCR
+      id-token: write # cosign keyless signing via Sigstore OIDC
+      attestations: write # SLSA provenance attestation
+
+    steps:
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digests-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=rsigma
+            org.opencontainers.image.description=Sigma detection toolkit: parser, evaluator, converter, streaming daemon
+            org.opencontainers.image.licenses=MIT
+
+      - name: Create multi-arch manifest
+        id: manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "${META_JSON}") \
+            $(printf "${REGISTRY}/${IMAGE_NAME}@sha256:%s " *)
+
+          digest=$(docker buildx imagetools inspect \
+            "$(jq -cr '.tags[0]' <<< "${META_JSON}")" \
+            --format '{{.Manifest.Digest}}')
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+        env:
+          META_JSON: ${{ steps.meta.outputs.json }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign image with cosign
+        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${MANIFEST_DIGEST}"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          MANIFEST_DIGEST: ${{ steps.manifest.outputs.digest }}
