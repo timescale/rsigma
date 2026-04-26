@@ -166,6 +166,8 @@ When all referenced rules share the same table, the simpler single-table approac
 
 Per-rule schemas are also tracked: if different detection rules set different schemas (via `postgres.schema` custom attribute or `set_state key: schema` in the pipeline), each leg of the UNION ALL uses the correct `schema.table`.
 
+> **Important:** The multi-table `UNION ALL` uses `SELECT *` in each leg, so PostgreSQL requires all referenced tables to have the same column count and compatible column types. This works well when tables share a normalized event schema. If your tables have different column layouts, either normalize them through pipeline field-mappings or use a single-table approach with a discriminator column (e.g. `rule_name`) instead.
+
 ### Reference schema
 
 A reference TimescaleDB schema is provided at [`schema/timescaledb_security_events.sql`](./schema/timescaledb_security_events.sql) with hypertable setup, indexes (B-tree, GIN for full-text and JSONB), compression, retention policies, and an example continuous aggregate.

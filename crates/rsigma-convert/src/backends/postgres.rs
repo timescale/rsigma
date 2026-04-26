@@ -854,6 +854,15 @@ impl PostgresBackend {
     /// CTE filtering on `rule_name IN (...)`. When rules target different tables
     /// (from `_rule_tables` pipeline state), produces a `UNION ALL` CTE with one
     /// leg per rule.
+    ///
+    /// **Schema compatibility requirement:** The multi-table path uses
+    /// `SELECT * ... UNION ALL SELECT * ...`. PostgreSQL requires all legs of a
+    /// `UNION ALL` to produce the same number of columns with compatible types.
+    /// This works when all referenced tables share an identical schema (e.g. a
+    /// normalized event schema). If the tables have different column layouts the
+    /// query will fail at execution time. Callers should ensure that pipeline
+    /// field-mappings normalize the schemas, or use a single-table approach with
+    /// a discriminator column instead.
     #[allow(clippy::too_many_arguments)]
     fn build_temporal_query(
         &self,
