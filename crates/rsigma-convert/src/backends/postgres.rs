@@ -414,7 +414,7 @@ impl Backend for PostgresBackend {
         _state: &mut ConversionState,
     ) -> Result<String> {
         let f = self.field_expr(field);
-        if value.fract() == 0.0 {
+        if value.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&value) {
             Ok(format!("{f} = {}", value as i64))
         } else {
             Ok(format!("{f} = {value}"))
@@ -488,11 +488,12 @@ impl Backend for PostgresBackend {
                 )));
             }
         };
-        let val_str = if value.fract() == 0.0 {
-            (value as i64).to_string()
-        } else {
-            value.to_string()
-        };
+        let val_str =
+            if value.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&value) {
+                (value as i64).to_string()
+            } else {
+                value.to_string()
+            };
         Ok(format!("{f} {op_token} {val_str}"))
     }
 
