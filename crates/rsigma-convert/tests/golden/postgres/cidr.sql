@@ -1,1 +1,1 @@
-SELECT * FROM security_events WHERE "SourceIP"::inet <<= '10.0.0.0/8'::cidr
+SELECT * FROM security_events WHERE ("SourceIP")::inet <<= '10.0.0.0/8'::cidr

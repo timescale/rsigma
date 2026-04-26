@@ -74,8 +74,8 @@ pub static POSTGRES_CONFIG: TextQueryConfig = TextQueryConfig {
     re_escape: &[],
     re_escape_escape_char: None,
 
-    cidr_expression: Some("{field}::inet <<= {value}::cidr"),
-    not_cidr_expression: Some("NOT ({field}::inet <<= {value}::cidr)"),
+    cidr_expression: Some("({field})::inet <<= {value}::cidr"),
+    not_cidr_expression: Some("NOT (({field})::inet <<= {value}::cidr)"),
 
     field_null_expression: "{field} IS NULL",
     field_exists_expression: Some("{field} IS NOT NULL"),
@@ -442,7 +442,7 @@ impl Backend for PostgresBackend {
     ) -> Result<ConvertResult> {
         let f = self.field_expr(field);
         Ok(ConvertResult::Query(format!(
-            "{f}::inet <<= '{cidr}'::cidr"
+            "({f})::inet <<= '{cidr}'::cidr"
         )))
     }
 
@@ -1201,7 +1201,9 @@ detection:
         );
         assert_eq!(
             queries,
-            vec![r#"SELECT * FROM security_events WHERE "SourceIP"::inet <<= '10.0.0.0/8'::cidr"#]
+            vec![
+                r#"SELECT * FROM security_events WHERE ("SourceIP")::inet <<= '10.0.0.0/8'::cidr"#
+            ]
         );
     }
 
@@ -1460,6 +1462,30 @@ detection:
         assert_eq!(
             queries,
             vec!["SELECT * FROM security_events WHERE metadata->>'CommandLine' = 'whoami'"]
+        );
+    }
+
+    #[test]
+    fn test_jsonb_cidr() {
+        let mut backend = PostgresBackend::new();
+        backend.json_field = Some("metadata".to_string());
+        let queries = convert_with(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        SourceIP|cidr: '10.0.0.0/8'
+    condition: selection
+"#,
+            &backend,
+        );
+        assert_eq!(
+            queries,
+            vec![
+                "SELECT * FROM security_events WHERE (metadata->>'SourceIP')::inet <<= '10.0.0.0/8'::cidr"
+            ]
         );
     }
 
