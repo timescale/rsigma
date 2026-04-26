@@ -636,12 +636,20 @@ impl Backend for PostgresBackend {
         _state: &ConversionState,
         output_format: &str,
     ) -> Result<String> {
-        let view_name = || match &rule.id {
-            Some(id) => format!("sigma_{}", id.replace('-', "_")),
-            None => format!(
-                "sigma_{}",
-                rule.title.to_lowercase().replace([' ', '-'], "_")
-            ),
+        let view_name = || {
+            let raw = match &rule.id {
+                Some(id) => id.replace('-', "_"),
+                None => rule.title.to_lowercase().replace([' ', '-'], "_"),
+            };
+            let sanitized: String = raw
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if sanitized.is_empty() {
+                "sigma_rule".to_string()
+            } else {
+                format!("sigma_{sanitized}")
+            }
         };
 
         match output_format {
@@ -1538,6 +1546,31 @@ detection:
             vec![
                 r#"CREATE OR REPLACE VIEW sigma_12345678_1234_1234_1234_123456789abc AS SELECT * FROM security_events WHERE "FieldA" = 'val1'"#
             ]
+        );
+    }
+
+    #[test]
+    fn test_view_format_title_sanitization() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: "Suspicious Process: cmd.exe /c (T1059.003)"
+logsource:
+    category: test
+detection:
+    selection:
+        FieldA: val1
+    condition: selection
+"#,
+        )
+        .unwrap();
+        let backend = PostgresBackend::new();
+        let queries = backend
+            .convert_rule(&collection.rules[0], "view", &PipelineState::default())
+            .unwrap();
+        assert!(
+            queries[0].starts_with(
+                "CREATE OR REPLACE VIEW sigma_suspicious_process_cmdexe_c_t1059003 AS"
+            )
         );
     }
 
