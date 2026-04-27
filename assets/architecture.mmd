@@ -1,0 +1,59 @@
+flowchart TD
+    YAML["YAML input"]
+    SERDE["serde_yaml"]
+    EVENTS["Log events"]
+    OUTPUT["MatchResult · CorrelationResult\nrule title · id · level · tags\nmatched selections · field matches\naggregated values · optional events"]
+    QUERIES["SQL · SPL · KQL · Lucene"]
+    EDITOR["Editor diagnostics + code actions"]
+
+    subgraph rsigma-parser
+        direction TB
+        PARSE["parser.rs (YAML → AST)"] -->|"SigmaRule · CorrelationRule\nFilterRule · SigmaCollection"| PEST["sigma.pest (PEG grammar)\ncondition.rs (Pratt parser)"]
+        PARSE --> VALUE["value.rs\nSigmaStr · wildcards · timespan"]
+        PARSE --> AST["ast.rs\nAST types · modifiers · enums"]
+    end
+
+    subgraph rsigma-eval
+        direction TB
+        ETRAIT["Event trait\nJsonEvent · KvEvent · PlainEvent"]
+        ETRAIT --> EPIPE["pipeline/\nPipeline · conditions\ntransformations · state · finalizers"]
+        EPIPE --> ECOMP["compiler.rs → CompiledRule"]
+        ECOMP --> EENG["engine.rs → Engine (stateless)"]
+        EENG --> ECORR["correlation.rs\nsliding windows · group-by\nchaining · suppression"]
+        ECORR --> ECUST["rsigma.* custom attributes"]
+    end
+
+    subgraph rsigma-convert
+        direction TB
+        CBACK["Backend trait\npluggable query generation"]
+        CBACK --> CTQC["TextQueryConfig\n~90 fields for text query backends"]
+        CTQC --> CWALK["Condition walker\ndeferred exprs · conversion state"]
+        CWALK --> CENDS["backends/\nTextQueryTest · PostgreSQL/TimescaleDB"]
+    end
+
+    subgraph rsigma-lsp
+        direction TB
+        LSERV["LSP server over stdio\ntower-lsp"]
+        LSERV --> LDIAG["diagnostics\nlint + parse + compile"]
+        LDIAG --> LFEAT["completions · hover\ndocument symbols"]
+        LFEAT --> LEDIT["Editors\nVSCode · Neovim · Helix · Zed"]
+    end
+
+    subgraph rsigma-runtime
+        direction TB
+        RINPUT["input/ format adapters:\nJSON · syslog · logfmt* · CEF*\nplain text · auto-detect\nraw line → EventInputDecoded"]
+        RINPUT --> RPROC["LogProcessor\nbatch evaluation · ArcSwap hot-reload\nMetricsHook · EventFilter"]
+        RPROC --> RENG["RuntimeEngine\nwraps Engine + CorrelationEngine\nwith rule loading"]
+        RENG --> RIO["io/\nEventSource (stdin · HTTP · NATS)\nSink (stdout · file · NATS)"]
+    end
+
+    YAML -->|"Raw YAML Value"| SERDE
+    SERDE --> PARSE
+    PEST --> ETRAIT
+    PEST --> CBACK
+    PEST --> LSERV
+    ECUST --> RENG
+    EVENTS --> RINPUT
+    RIO --> OUTPUT
+    CENDS --> QUERIES
+    LEDIT --> EDITOR
