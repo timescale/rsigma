@@ -205,21 +205,21 @@ See [`examples/jsonl_stdin.rs`](crates/rsigma-runtime/examples/jsonl_stdin.rs) a
 
 Everything starts with a Sigma rule in YAML format:
 
-- **Parsing.** `serde_yaml` deserializes the YAML into a raw value, then `rsigma-parser` turns it into a strongly-typed AST. A PEG grammar (`sigma.pest`) handles the document structure while a Pratt parser (`condition.rs`) handles condition expressions. Supporting modules define value types (`value.rs`: `SigmaStr`, wildcards, timespans) and AST nodes (`ast.rs`: modifiers, enums). The result is a `SigmaRule`, `CorrelationRule`, `FilterRule`, or `SigmaCollection`.
+- **Parsing:** `serde_yaml` deserializes the YAML into a raw value, then `rsigma-parser` turns it into a strongly-typed AST. A PEG grammar (`sigma.pest`) handles the document structure while a Pratt parser (`condition.rs`) handles condition expressions. Supporting modules define value types (`value.rs`: `SigmaStr`, wildcards, timespans) and AST nodes (`ast.rs`: modifiers, enums). The result is a `SigmaRule`, `CorrelationRule`, `FilterRule`, or `SigmaCollection`.
 
 From there, the AST can go in three directions depending on what you need:
 
-- **Evaluation.** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
+- **Evaluation:** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
 
-- **Conversion.** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. The PostgreSQL/TimescaleDB backend is the primary concrete implementation, generating SQL for historical threat hunting.
+- **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. The PostgreSQL/TimescaleDB backend is the primary concrete implementation, generating SQL for historical threat hunting.
 
-- **Editor support.** `rsigma-lsp` provides an LSP server over stdio (via `tower-lsp`) with real-time diagnostics (lint + parse + compile errors), completions, hover documentation, document symbols, and code actions. Works with VSCode, Neovim, Helix, Zed, and any LSP-capable editor.
+- **Editor support:** `rsigma-lsp` provides an LSP server over stdio (via `tower-lsp`) with real-time diagnostics (lint + parse + compile errors), completions, hover documentation, document symbols, and code actions. Works with VSCode, Neovim, Helix, Zed, and any LSP-capable editor.
 
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
-- **Input.** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. Sources include stdin, HTTP POST, and NATS JetStream.
-- **Processing.** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
-- **Output.** Sinks write detection results to stdout, files, or NATS. Multiple sinks can run in fan-out. The output is `MatchResult` and `CorrelationResult`, containing rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
+- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. Sources include stdin, HTTP POST, and NATS JetStream.
+- **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
+- **Output:** Sinks write detection results to stdout, files, or NATS. Multiple sinks can run in fan-out. The output is `MatchResult` and `CorrelationResult`, containing rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
 
 Feature-gated items are marked with \* in the diagram.
 
