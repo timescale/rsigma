@@ -287,19 +287,22 @@ fn apply_correlation_transformation(
             // threshold field: error if multiple alternatives
             if let rsigma_parser::CorrelationCondition::Threshold { ref mut field, .. } =
                 corr.condition
-                && let Some(f) = field.as_ref()
-                && let Some(alts) = mapping.get(f.as_str())
+                && let Some(fields) = field.as_mut()
             {
-                if alts.len() > 1 {
-                    return Err(EvalError::InvalidModifiers(format!(
-                        "field_name_mapping one-to-many cannot be applied to \
-                         correlation condition field reference ('{}' maps to \
-                         {} alternatives)",
-                        f,
-                        alts.len(),
-                    )));
+                for f in fields.iter_mut() {
+                    if let Some(alts) = mapping.get(f.as_str()) {
+                        if alts.len() > 1 {
+                            return Err(EvalError::InvalidModifiers(format!(
+                                "field_name_mapping one-to-many cannot be applied to \
+                                 correlation condition field reference ('{}' maps to \
+                                 {} alternatives)",
+                                f,
+                                alts.len(),
+                            )));
+                        }
+                        *f = alts[0].clone();
+                    }
                 }
-                *field = Some(alts[0].clone());
             }
 
             Ok(true)
@@ -370,10 +373,13 @@ fn remap_correlation_fields(corr: &mut CorrelationRule, mapper: impl Fn(&str) ->
     }
 
     if let rsigma_parser::CorrelationCondition::Threshold { ref mut field, .. } = corr.condition
-        && let Some(f) = field.as_ref()
-        && let Some(new_name) = mapper(f)
+        && let Some(fields) = field.as_mut()
     {
-        *field = Some(new_name);
+        for f in fields.iter_mut() {
+            if let Some(new_name) = mapper(f) {
+                *f = new_name;
+            }
+        }
     }
 }
 
@@ -1947,11 +1953,15 @@ transformations:
             author: None,
             date: None,
             modified: None,
+            related: vec![],
             references: vec![],
             taxonomy: None,
+            license: None,
             tags: vec![],
+            fields: vec![],
             falsepositives: vec![],
             level: None,
+            scope: vec![],
             correlation_type: rsigma_parser::CorrelationType::EventCount,
             rules: vec!["rule_a".to_string()],
             group_by: vec!["SourceIP".to_string(), "DestinationIP".to_string()],
@@ -1959,6 +1969,7 @@ transformations:
             condition: rsigma_parser::CorrelationCondition::Threshold {
                 predicates: vec![(rsigma_parser::ConditionOperator::Gte, 10)],
                 field: None,
+                percentile: None,
             },
             aliases: vec![rsigma_parser::FieldAlias {
                 alias: "src_ip".to_string(),
@@ -2068,7 +2079,8 @@ transformations:
         let mut corr = make_test_correlation();
         corr.condition = rsigma_parser::CorrelationCondition::Threshold {
             predicates: vec![(rsigma_parser::ConditionOperator::Gte, 5)],
-            field: Some("UserName".to_string()),
+            field: Some(vec!["UserName".to_string()]),
+            percentile: None,
         };
         let mut state = PipelineState::new(pipeline.vars.clone());
         let err = pipeline
@@ -2185,7 +2197,8 @@ transformations:
         let mut corr = make_test_correlation();
         corr.condition = rsigma_parser::CorrelationCondition::Threshold {
             predicates: vec![(rsigma_parser::ConditionOperator::Gte, 5)],
-            field: Some("UserName".to_string()),
+            field: Some(vec!["UserName".to_string()]),
+            percentile: None,
         };
 
         let mut state = PipelineState::new(pipeline.vars.clone());
@@ -2194,7 +2207,7 @@ transformations:
             .unwrap();
 
         if let rsigma_parser::CorrelationCondition::Threshold { field, .. } = &corr.condition {
-            assert_eq!(field.as_deref(), Some("user.name"));
+            assert_eq!(field.as_deref(), Some(["user.name".to_string()].as_slice()));
         } else {
             panic!("Expected Threshold");
         }

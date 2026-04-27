@@ -108,10 +108,14 @@ impl GroupByField {
 /// Compiled threshold condition with one or more predicates (supports ranges).
 #[derive(Debug, Clone)]
 pub struct CompiledCondition {
-    /// Optional field name for value_count, value_sum, value_avg, value_percentile.
-    pub field: Option<String>,
+    /// Optional field name(s) for value_count, value_sum, value_avg, value_percentile.
+    /// When multiple fields are present, value_count counts distinct tuples.
+    pub field: Option<Vec<String>>,
     /// One or more predicates to satisfy (all must be true for the condition to match).
     pub predicates: Vec<(ConditionOperator, f64)>,
+    /// Percentile rank (0-100) for `value_percentile` type.
+    /// `None` means use the default (50).
+    pub percentile: Option<u64>,
 }
 
 impl CompiledCondition {
@@ -666,12 +670,7 @@ impl WindowState {
                     return None;
                 }
                 values.sort_by(|a, b| a.partial_cmp(b).expect("NaN filtered"));
-                // Extract the percentile rank from the condition's first predicate
-                let percentile_rank = condition
-                    .predicates
-                    .first()
-                    .map(|(_, threshold)| *threshold)
-                    .unwrap_or(50.0);
+                let percentile_rank = condition.percentile.map(|p| p as f64).unwrap_or(50.0);
                 let pval = percentile_linear_interp(&values, percentile_rank);
                 return Some(pval);
             }
@@ -894,13 +893,18 @@ fn compile_condition(
     corr_type: CorrelationType,
 ) -> Result<(CompiledCondition, Option<ConditionExpr>)> {
     match cond {
-        CorrelationCondition::Threshold { predicates, field } => Ok((
+        CorrelationCondition::Threshold {
+            predicates,
+            field,
+            percentile,
+        } => Ok((
             CompiledCondition {
                 field: field.clone(),
                 predicates: predicates
                     .iter()
                     .map(|(op, count)| (*op, *count as f64))
                     .collect(),
+                percentile: *percentile,
             },
             None,
         )),
@@ -913,6 +917,7 @@ fn compile_condition(
                         CompiledCondition {
                             field: None,
                             predicates: vec![(ConditionOperator::Gte, 1.0)],
+                            percentile: None,
                         },
                         Some(expr.clone()),
                     ))
@@ -979,6 +984,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 100.0)],
+            percentile: None,
         };
         assert!(!cond.check(99.0));
         assert!(cond.check(100.0));
@@ -993,6 +999,7 @@ mod tests {
                 (ConditionOperator::Gt, 100.0),
                 (ConditionOperator::Lte, 200.0),
             ],
+            percentile: None,
         };
         assert!(!cond.check(100.0));
         assert!(cond.check(101.0));
@@ -1009,6 +1016,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 5.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::EventCount, &[], None),
@@ -1027,6 +1035,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 5.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::EventCount, &[], None),
@@ -1043,8 +1052,9 @@ mod tests {
         state.push_value_count(1003, "user3".to_string());
 
         let cond = CompiledCondition {
-            field: Some("User".to_string()),
+            field: Some(vec!["User".to_string()]),
             predicates: vec![(ConditionOperator::Gte, 3.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::ValueCount, &[], None),
@@ -1061,6 +1071,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 2.0)],
+            percentile: None,
         };
         assert!(
             state
@@ -1092,6 +1103,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 3.0)],
+            percentile: None,
         };
         assert!(
             state
@@ -1111,6 +1123,7 @@ mod tests {
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 2.0)],
+            percentile: None,
         };
         assert!(
             state
@@ -1126,8 +1139,9 @@ mod tests {
         state.push_numeric(1001, 600.0);
 
         let cond = CompiledCondition {
-            field: Some("bytes_sent".to_string()),
+            field: Some(vec!["bytes_sent".to_string()]),
             predicates: vec![(ConditionOperator::Gt, 1000.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::ValueSum, &[], None),
@@ -1143,8 +1157,9 @@ mod tests {
         state.push_numeric(1002, 300.0);
 
         let cond = CompiledCondition {
-            field: Some("bytes".to_string()),
+            field: Some(vec!["bytes".to_string()]),
             predicates: vec![(ConditionOperator::Gte, 200.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::ValueAvg, &[], None),
@@ -1160,8 +1175,9 @@ mod tests {
         state.push_numeric(1002, 30.0);
 
         let cond = CompiledCondition {
-            field: Some("latency".to_string()),
+            field: Some(vec!["latency".to_string()]),
             predicates: vec![(ConditionOperator::Gte, 20.0)],
+            percentile: None,
         };
         assert_eq!(
             state.check_condition(&cond, CorrelationType::ValueMedian, &[], None),
@@ -1289,6 +1305,7 @@ level: high
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 1.0)],
+            percentile: None,
         };
         let expr = ConditionExpr::And(vec![
             ConditionExpr::Identifier("rule_a".to_string()),
@@ -1363,9 +1380,9 @@ level: high
         }
 
         let cond = CompiledCondition {
-            field: Some("latency".to_string()),
-            // The condition threshold is used as the percentile rank
+            field: Some(vec!["latency".to_string()]),
             predicates: vec![(ConditionOperator::Lte, 50.0)],
+            percentile: None,
         };
         // 50th percentile of 1..100 should be ~50.5
         let result = state.check_condition(&cond, CorrelationType::ValuePercentile, &[], None);
@@ -1403,8 +1420,9 @@ level: high
     fn test_value_percentile_empty_window() {
         let state = WindowState::new_for(CorrelationType::ValuePercentile);
         let cond = CompiledCondition {
-            field: Some("latency".to_string()),
+            field: Some(vec!["latency".to_string()]),
             predicates: vec![(ConditionOperator::Lte, 50.0)],
+            percentile: None,
         };
         // Empty window should return None
         assert!(
@@ -1477,6 +1495,7 @@ level: high
         let cond = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 2.0)],
+            percentile: None,
         };
         // Without extended expr: 2 of 3 rules fired, meets gte 2
         assert_eq!(
@@ -1488,6 +1507,7 @@ level: high
         let cond3 = CompiledCondition {
             field: None,
             predicates: vec![(ConditionOperator::Gte, 3.0)],
+            percentile: None,
         };
         assert!(
             state
@@ -1721,11 +1741,15 @@ level: high
             author: None,
             date: None,
             modified: None,
+            related: vec![],
             references: vec![],
             taxonomy: None,
+            license: None,
             tags: vec![],
+            fields: vec![],
             falsepositives: vec![],
             level: Some(Level::High),
+            scope: vec![],
             correlation_type: CorrelationType::EventCount,
             rules: vec!["rule-1".to_string()],
             group_by: vec!["User".to_string()],
@@ -1733,6 +1757,7 @@ level: high
             condition: CorrelationCondition::Threshold {
                 predicates: vec![(ConditionOperator::Gte, 5)],
                 field: None,
+                percentile: None,
             },
             aliases: vec![],
             generate: false,

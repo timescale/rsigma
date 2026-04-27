@@ -862,7 +862,8 @@ impl CorrelationEngine {
                 state.push_event_count(ts);
             }
             CorrelationType::ValueCount => {
-                if let Some(ref field_name) = corr.condition.field
+                if let Some(ref fields) = corr.condition.field
+                    && let Some(field_name) = fields.first()
                     && let Some(val) = event.get_field(field_name)
                     && let Some(s) = value_to_string_for_count(&val)
                 {
@@ -876,7 +877,8 @@ impl CorrelationEngine {
             | CorrelationType::ValueAvg
             | CorrelationType::ValuePercentile
             | CorrelationType::ValueMedian => {
-                if let Some(ref field_name) = corr.condition.field
+                if let Some(ref fields) = corr.condition.field
+                    && let Some(field_name) = fields.first()
                     && let Some(val) = event.get_field(field_name)
                     && let Some(n) = value_to_f64_ev(&val)
                 {

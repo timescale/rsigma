@@ -630,12 +630,16 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         "date",
         "description",
         "falsepositives",
+        "fields",
         "generate",
         "id",
         "level",
+        "license",
         "modified",
         "name",
         "references",
+        "related",
+        "scope",
         "status",
         "tags",
         "taxonomy",
@@ -652,11 +656,15 @@ fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
+        related: parse_related(m.get(val_key("related"))),
         references: get_str_list(m, "references"),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
+        license: get_str(m, "license").map(|s| s.to_string()),
         tags: get_str_list(m, "tags"),
+        fields: get_str_list(m, "fields"),
         falsepositives: get_str_list(m, "falsepositives"),
         level: get_str(m, "level").and_then(|s| s.parse().ok()),
+        scope: get_str_list(m, "scope"),
         correlation_type,
         rules,
         group_by,
@@ -706,9 +714,29 @@ fn parse_correlation_condition(
                 ));
             }
 
-            let field = get_str(cm, "field").map(|s| s.to_string());
+            let field = match cm.get(val_key("field")) {
+                Some(Value::String(s)) => Some(vec![s.clone()]),
+                Some(Value::Sequence(seq)) => {
+                    let fields: Vec<String> = seq
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                    if fields.is_empty() {
+                        None
+                    } else {
+                        Some(fields)
+                    }
+                }
+                _ => None,
+            };
 
-            Ok(CorrelationCondition::Threshold { predicates, field })
+            let percentile = cm.get(val_key("percentile")).and_then(|v| v.as_u64());
+
+            Ok(CorrelationCondition::Threshold {
+                predicates,
+                field,
+                percentile,
+            })
         }
         Some(Value::String(expr_str)) => {
             // Extended condition for temporal types: "rule_a and rule_b"
@@ -722,6 +750,7 @@ fn parse_correlation_condition(
                     Ok(CorrelationCondition::Threshold {
                         predicates: vec![(ConditionOperator::Gte, 1)],
                         field: None,
+                        percentile: None,
                     })
                 }
                 _ => Err(SigmaParserError::InvalidCorrelation(
@@ -807,18 +836,52 @@ fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
         .map(parse_logsource)
         .transpose()?;
 
+    let standard_filter_keys: &[&str] = &[
+        "author",
+        "custom_attributes",
+        "date",
+        "description",
+        "falsepositives",
+        "fields",
+        "filter",
+        "id",
+        "level",
+        "license",
+        "logsource",
+        "modified",
+        "name",
+        "references",
+        "related",
+        "scope",
+        "status",
+        "tags",
+        "taxonomy",
+        "title",
+    ];
+    let custom_attributes = collect_custom_attributes(m, standard_filter_keys);
+
     Ok(FilterRule {
         title,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
+        taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
         status: get_str(m, "status").and_then(|s| s.parse().ok()),
         description: get_str(m, "description").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
+        related: parse_related(m.get(val_key("related"))),
+        license: get_str(m, "license").map(|s| s.to_string()),
+        references: get_str_list(m, "references"),
+        tags: get_str_list(m, "tags"),
+        fields: get_str_list(m, "fields"),
+        falsepositives: get_str_list(m, "falsepositives"),
+        level: get_str(m, "level").and_then(|s| s.parse().ok()),
+        scope: get_str_list(m, "scope"),
         logsource,
         rules,
         detection,
+        custom_attributes,
     })
 }
 
@@ -1506,7 +1569,9 @@ correlation:
         let corr = &collection.correlations[0];
 
         match &corr.condition {
-            CorrelationCondition::Threshold { predicates, field } => {
+            CorrelationCondition::Threshold {
+                predicates, field, ..
+            } => {
                 assert_eq!(predicates.len(), 2);
                 // Check we got both operators (order doesn't matter, but they come from iteration)
                 let has_gt = predicates
@@ -1554,9 +1619,14 @@ correlation:
         let corr = &collection.correlations[0];
 
         match &corr.condition {
-            CorrelationCondition::Threshold { predicates, field } => {
+            CorrelationCondition::Threshold {
+                predicates, field, ..
+            } => {
                 assert_eq!(predicates.len(), 2);
-                assert_eq!(field.as_deref(), Some("TargetUser"));
+                assert_eq!(
+                    field.as_deref(),
+                    Some(["TargetUser".to_string()].as_slice())
+                );
             }
             _ => panic!("Expected threshold condition"),
         }

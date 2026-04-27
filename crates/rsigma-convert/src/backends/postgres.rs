@@ -713,7 +713,9 @@ impl Backend for PostgresBackend {
         let having_clause = self.build_having_clause(&rule.condition)?;
 
         let field_from_condition = match &rule.condition {
-            CorrelationCondition::Threshold { field, .. } => field.clone(),
+            CorrelationCondition::Threshold { field, .. } => {
+                field.as_ref().and_then(|f| f.first().cloned())
+            }
             _ => None,
         };
         let value_field = field_from_condition.as_deref().or_else(|| {
@@ -801,7 +803,12 @@ impl Backend for PostgresBackend {
                 let percentile = if rule.correlation_type == CorrelationType::ValueMedian {
                     0.5
                 } else {
-                    0.95
+                    match &rule.condition {
+                        CorrelationCondition::Threshold { percentile, .. } => {
+                            percentile.map(|p| p as f64 / 100.0).unwrap_or(0.95)
+                        }
+                        _ => 0.95,
+                    }
                 };
                 let agg = format!("PERCENTILE_CONT({percentile}) WITHIN GROUP (ORDER BY {field})");
                 format!(

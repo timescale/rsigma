@@ -72,6 +72,7 @@ impl FromStr for Level {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RelationType {
+    Correlation,
     Derived,
     Obsolete,
     Merged,
@@ -83,6 +84,7 @@ impl FromStr for RelationType {
     type Err = ();
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
+            "correlation" => Ok(RelationType::Correlation),
             "derived" => Ok(RelationType::Derived),
             "obsolete" => Ok(RelationType::Obsolete),
             "merged" => Ok(RelationType::Merged),
@@ -524,8 +526,12 @@ pub enum CorrelationCondition {
     Threshold {
         /// One or more (operator, value) predicates. All must be satisfied.
         predicates: Vec<(ConditionOperator, u64)>,
-        /// Optional field reference (required for `value_count` type).
-        field: Option<String>,
+        /// Optional field reference(s) (required for `value_count` type).
+        /// A single string is normalized to a one-element vec.
+        field: Option<Vec<String>>,
+        /// Percentile rank (0-100) for `value_percentile` type.
+        /// Defaults to 50 if not specified.
+        percentile: Option<u64>,
     },
     /// Extended boolean condition for temporal types: `"rule_a and rule_b"`
     Extended(ConditionExpr),
@@ -557,11 +563,15 @@ pub struct CorrelationRule {
     pub author: Option<String>,
     pub date: Option<String>,
     pub modified: Option<String>,
+    pub related: Vec<Related>,
     pub references: Vec<String>,
     pub taxonomy: Option<String>,
+    pub license: Option<String>,
     pub tags: Vec<String>,
+    pub fields: Vec<String>,
     pub falsepositives: Vec<String>,
     pub level: Option<Level>,
+    pub scope: Vec<String>,
 
     // Correlation-specific fields
     pub correlation_type: CorrelationType,
@@ -596,17 +606,30 @@ pub struct FilterRule {
     pub title: String,
     pub id: Option<String>,
     pub name: Option<String>,
+    pub taxonomy: Option<String>,
     pub status: Option<Status>,
     pub description: Option<String>,
     pub author: Option<String>,
     pub date: Option<String>,
     pub modified: Option<String>,
+    pub related: Vec<Related>,
+    pub license: Option<String>,
+    pub references: Vec<String>,
+    pub tags: Vec<String>,
+    pub fields: Vec<String>,
+    pub falsepositives: Vec<String>,
+    pub level: Option<Level>,
+    pub scope: Vec<String>,
     pub logsource: Option<LogSource>,
 
     /// Rules this filter applies to (by ID or name).
     pub rules: Vec<String>,
     /// The filter detection section.
     pub detection: Detections,
+
+    /// Custom attributes attached to the filter rule.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub custom_attributes: HashMap<String, serde_yaml::Value>,
 }
 
 // =============================================================================

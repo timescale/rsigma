@@ -541,7 +541,14 @@ const VALID_STATUSES: &[&str] = &[
 const VALID_LEVELS: &[&str] = &["informational", "low", "medium", "high", "critical"];
 
 /// Valid related types.
-const VALID_RELATED_TYPES: &[&str] = &["derived", "obsolete", "merged", "renamed", "similar"];
+const VALID_RELATED_TYPES: &[&str] = &[
+    "correlation",
+    "derived",
+    "obsolete",
+    "merged",
+    "renamed",
+    "similar",
+];
 
 /// Valid correlation types.
 const VALID_CORRELATION_TYPES: &[&str] = &[
@@ -603,14 +610,31 @@ const KNOWN_KEYS_DETECTION: &[&str] = &[
 /// Extra top-level keys valid for correlation rules.
 const KNOWN_KEYS_CORRELATION: &[&str] = &[
     "correlation",
-    "level",
-    "generate",
-    "falsepositives",
     "custom_attributes",
+    "falsepositives",
+    "fields",
+    "generate",
+    "level",
+    "license",
+    "related",
+    "scope",
 ];
 
 /// Extra top-level keys valid for filter rules.
-const KNOWN_KEYS_FILTER: &[&str] = &["logsource", "filter"];
+const KNOWN_KEYS_FILTER: &[&str] = &[
+    "custom_attributes",
+    "falsepositives",
+    "fields",
+    "filter",
+    "level",
+    "license",
+    "logsource",
+    "references",
+    "related",
+    "scope",
+    "tags",
+    "taxonomy",
+];
 
 /// Tag pattern: `^[a-z0-9_-]+\.[a-z0-9._-]+$`
 fn is_valid_tag(s: &str) -> bool {
