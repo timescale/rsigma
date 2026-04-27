@@ -315,6 +315,7 @@ A [Mermaid version](assets/architecture.mmd) of this diagram is also available.
 - [Sigma Specification V2.1.0](https://github.com/SigmaHQ/sigma-specification): formal specification
 - [sigma-rust](https://github.com/jopohl/sigma-rust): Pratt parsing approach
 - [sigmars](https://github.com/crowdalert/sigmars): correlation support patterns
+- [sigma_engine](https://github.com/SigmaHQ/sigma_engine): official SigmaHQ Rust library for parsing and matching Sigma rules against events
 
 ## Releasing
 
