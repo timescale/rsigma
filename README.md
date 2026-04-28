@@ -124,6 +124,12 @@ rsigma convert -r rules/ -t postgres -f view
 # Generate TimescaleDB continuous aggregates
 rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f continuous_aggregate
 
+# Custom backend options (table, schema, timestamp field, etc.)
+rsigma convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+
+# Sliding window correlation format (per-row detection using window functions)
+rsigma convert -r rules/ -t postgres -f sliding_window
+
 # List available conversion backends
 rsigma list-targets
 

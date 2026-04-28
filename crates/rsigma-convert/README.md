@@ -97,6 +97,19 @@ for result in &output.queries {
 | `view` | `CREATE OR REPLACE VIEW sigma_{id} AS SELECT ...` |
 | `timescaledb` | Queries with `time_bucket()` for TimescaleDB optimization |
 | `continuous_aggregate` | `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)` |
+| `sliding_window` | Correlation queries using window functions for per-row sliding detection |
+
+### SELECT column selection
+
+When a Sigma rule specifies `fields:`, the backend emits `SELECT field1, field2, ...` instead of `SELECT *`. Function calls (e.g. `count(*)`) pass through unchanged, and `field as alias` is supported with both sides quoted independently.
+
+### CLI backend options
+
+Backend configuration can be set via `-O key=value` flags on the CLI, which are wired through to `PostgresBackend::from_options`. Recognized keys: `table`, `schema`, `database`, `timestamp_field`, `json_field`, `case_sensitive_re`.
+
+```bash
+rsigma convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+```
 
 ### Custom table, schema, and database
 
@@ -104,7 +117,8 @@ The target table and schema can be set at three levels (highest precedence first
 
 1. **Rule-level `custom_attributes`**: `postgres.table`, `postgres.schema`, `postgres.database`
 2. **Pipeline state**: `set_state` with `key: table`, `key: schema`
-3. **Backend defaults**: `PostgresBackend.table`, `.schema`, `.database`
+3. **CLI backend options**: `-O table=...`, `-O schema=...`, `-O database=...`
+4. **Backend defaults**: `PostgresBackend.table`, `.schema`, `.database`
 
 Example rule with custom attributes:
 
@@ -234,6 +248,23 @@ The PostgreSQL backend (`PostgresBackend`) leverages native PostgreSQL features 
 | keywords | `to_tsvector() @@ plainto_tsquery()` |
 
 Correlation rules are converted to SQL using `GROUP BY` / `HAVING` for aggregation types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`) and CTEs for temporal correlation. Multi-table temporal correlations automatically generate `UNION ALL` CTEs when referenced rules target different tables.
+
+Non-temporal correlations support CTE-based pre-filtering: when the correlation references detection rules that were converted in the same collection, the backend wraps their queries in a `WITH combined_events AS (q1 UNION ALL q2 ...)` CTE so the aggregate only counts events matching the detection logic.
+
+The `sliding_window` output format uses SQL window functions for `event_count` correlations, producing a per-row sliding window that emits every event crossing the threshold:
+
+```sql
+WITH combined_events AS (...),
+event_counts AS (
+    SELECT *, COUNT(*) OVER (
+        PARTITION BY "User"
+        ORDER BY time
+        RANGE BETWEEN INTERVAL '300 seconds' PRECEDING AND CURRENT ROW
+    ) AS correlation_event_count
+    FROM combined_events
+)
+SELECT * FROM event_counts WHERE correlation_event_count >= 5
+```
 
 ### Configuration
 
