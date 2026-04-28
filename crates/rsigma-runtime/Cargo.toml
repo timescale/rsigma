@@ -17,8 +17,8 @@ cef = []
 evtx = ["dep:evtx"]
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.7.0" }
-rsigma-eval = { path = "../rsigma-eval", version = "0.7.0", features = ["parallel"] }
+rsigma-parser = { path = "../rsigma-parser", version = "0.8.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.8.0", features = ["parallel"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "io-std"] }
 serde_json = "1"
 thiserror = "2"
