@@ -767,12 +767,22 @@ impl Backend for PostgresBackend {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        // Per-rule converted queries for CTE-based pre-filtering
+        let rule_queries: HashMap<String, String> = pipeline_state
+            .state
+            .get("_rule_queries")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let (cte_prefix, source_table, time_filter) =
+            self.build_correlation_source(&rule.rules, &rule_queries, &table, ts, window_secs);
+
         let query = match rule.correlation_type {
             CorrelationType::EventCount => {
                 format!(
-                    "SELECT {group_by_select}COUNT(*) AS event_count \
-                     FROM {table} \
-                     WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'\
+                    "{cte_prefix}SELECT {group_by_select}COUNT(*) AS event_count \
+                     FROM {source_table}\
+                     {time_filter}\
                      {group_by_clause} \
                      HAVING {having_clause}",
                     having_clause = having_clause.replace("{agg}", "COUNT(*)")
@@ -784,9 +794,9 @@ impl Backend for PostgresBackend {
                     .unwrap_or_else(|| "'unknown_field'".to_string());
                 let agg = format!("COUNT(DISTINCT {field})");
                 format!(
-                    "SELECT {group_by_select}{agg} AS value_count \
-                     FROM {table} \
-                     WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'\
+                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_count \
+                     FROM {source_table}\
+                     {time_filter}\
                      {group_by_clause} \
                      HAVING {having_clause}",
                     having_clause = having_clause.replace("{agg}", &agg)
@@ -810,9 +820,9 @@ impl Backend for PostgresBackend {
                     .unwrap_or_else(|| "'unknown_field'".to_string());
                 let agg = format!("SUM({field})");
                 format!(
-                    "SELECT {group_by_select}{agg} AS value_sum \
-                     FROM {table} \
-                     WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'\
+                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_sum \
+                     FROM {source_table}\
+                     {time_filter}\
                      {group_by_clause} \
                      HAVING {having_clause}",
                     having_clause = having_clause.replace("{agg}", &agg)
@@ -824,9 +834,9 @@ impl Backend for PostgresBackend {
                     .unwrap_or_else(|| "'unknown_field'".to_string());
                 let agg = format!("AVG({field})");
                 format!(
-                    "SELECT {group_by_select}{agg} AS value_avg \
-                     FROM {table} \
-                     WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'\
+                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_avg \
+                     FROM {source_table}\
+                     {time_filter}\
                      {group_by_clause} \
                      HAVING {having_clause}",
                     having_clause = having_clause.replace("{agg}", &agg)
@@ -848,10 +858,10 @@ impl Backend for PostgresBackend {
                 };
                 let agg = format!("PERCENTILE_CONT({percentile}) WITHIN GROUP (ORDER BY {field})");
                 format!(
-                    "SELECT {group_by_select}\
+                    "{cte_prefix}SELECT {group_by_select}\
                      {agg} AS pct_value \
-                     FROM {table} \
-                     WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'\
+                     FROM {source_table}\
+                     {time_filter}\
                      {group_by_clause} \
                      HAVING {having_clause}",
                     having_clause = having_clause.replace("{agg}", &agg)
@@ -888,6 +898,40 @@ impl PostgresBackend {
             return format!("{quoted_expr} AS {quoted_alias}");
         }
         self.field_expr(field)
+    }
+
+    /// Build the CTE prefix and source for non-temporal correlations.
+    ///
+    /// When per-rule converted queries are available (from `_rule_queries`
+    /// injected by `convert_collection`), wraps them in a
+    /// `WITH combined_events AS (q1 UNION ALL q2 ...)` CTE. The aggregate
+    /// query then reads from `combined_events` instead of the raw table.
+    ///
+    /// When no per-rule queries are available, falls back to the original
+    /// behavior: scan the full table with a time-window filter.
+    ///
+    /// Returns `(cte_prefix, source_table, time_filter)`.
+    fn build_correlation_source(
+        &self,
+        rule_refs: &[String],
+        rule_queries: &HashMap<String, String>,
+        default_table: &str,
+        ts: &str,
+        window_secs: u64,
+    ) -> (String, String, String) {
+        let matched: Vec<&str> = rule_refs
+            .iter()
+            .filter_map(|r| rule_queries.get(r).map(|q| q.as_str()))
+            .collect();
+
+        if matched.is_empty() {
+            let time_filter = format!(" WHERE {ts} >= NOW() - INTERVAL '{window_secs} seconds'");
+            (String::new(), default_table.to_string(), time_filter)
+        } else {
+            let union = matched.join(" UNION ALL ");
+            let cte = format!("WITH combined_events AS ({union}) ");
+            (cte, "combined_events".to_string(), String::new())
+        }
     }
 
     /// Build HAVING clause from correlation condition predicates.
@@ -2478,6 +2522,178 @@ detection:
         assert_eq!(
             queries,
             vec!["SELECT * FROM security_events WHERE action = 'login'"]
+        );
+    }
+
+    // --- CTE-based pre-filtering for non-temporal correlations ---
+
+    #[test]
+    fn test_cte_prefilter_event_count() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: High Event Count
+correlation:
+    type: event_count
+    rules:
+        - rule_a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 100
+"#,
+        )
+        .unwrap();
+        let backend = PostgresBackend::new();
+        let mut pipeline_state = PipelineState::default();
+
+        let rule_queries = serde_json::json!({
+            "rule_a": "SELECT * FROM security_events WHERE action = 'login'"
+        });
+        pipeline_state.set_state("_rule_queries".to_string(), rule_queries);
+
+        let queries = backend
+            .convert_correlation_rule(&collection.correlations[0], "default", &pipeline_state)
+            .unwrap();
+        let q = &queries[0];
+        assert!(
+            q.starts_with("WITH combined_events AS ("),
+            "should use CTE: {q}"
+        );
+        assert!(
+            q.contains("FROM combined_events"),
+            "should read from CTE: {q}"
+        );
+        assert!(
+            q.contains("action = 'login'"),
+            "should include rule's WHERE clause: {q}"
+        );
+        assert!(
+            !q.contains("NOW()"),
+            "CTE path should not add time filter: {q}"
+        );
+    }
+
+    #[test]
+    fn test_cte_prefilter_multi_rule_union() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: Multi Rule Count
+correlation:
+    type: event_count
+    rules:
+        - rule_a
+        - rule_b
+    group-by:
+        - User
+    timespan: 10m
+    condition:
+        gte: 5
+"#,
+        )
+        .unwrap();
+        let backend = PostgresBackend::new();
+        let mut pipeline_state = PipelineState::default();
+
+        let rule_queries = serde_json::json!({
+            "rule_a": "SELECT * FROM events WHERE EventID = 4625",
+            "rule_b": "SELECT * FROM events WHERE EventID = 4624"
+        });
+        pipeline_state.set_state("_rule_queries".to_string(), rule_queries);
+
+        let queries = backend
+            .convert_correlation_rule(&collection.correlations[0], "default", &pipeline_state)
+            .unwrap();
+        let q = &queries[0];
+        assert!(
+            q.contains("UNION ALL"),
+            "multi-rule should use UNION ALL: {q}"
+        );
+        assert!(
+            q.contains("EventID = 4625"),
+            "should include rule_a's condition: {q}"
+        );
+        assert!(
+            q.contains("EventID = 4624"),
+            "should include rule_b's condition: {q}"
+        );
+    }
+
+    #[test]
+    fn test_cte_prefilter_fallback_without_queries() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: Fallback Count
+correlation:
+    type: event_count
+    rules:
+        - rule_a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 10
+"#,
+        )
+        .unwrap();
+        let backend = PostgresBackend::new();
+        let pipeline_state = PipelineState::default();
+
+        let queries = backend
+            .convert_correlation_rule(&collection.correlations[0], "default", &pipeline_state)
+            .unwrap();
+        let q = &queries[0];
+        assert!(
+            !q.contains("WITH combined_events"),
+            "no CTE without _rule_queries: {q}"
+        );
+        assert!(
+            q.contains("FROM security_events"),
+            "should use default table: {q}"
+        );
+        assert!(
+            q.contains("NOW() - INTERVAL"),
+            "should have time filter: {q}"
+        );
+    }
+
+    #[test]
+    fn test_cte_prefilter_value_count() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: Value Count CTE
+correlation:
+    type: value_count
+    rules:
+        - rule_a
+    group-by:
+        - SourceIp
+    timespan: 15m
+    condition:
+        field: User
+        gte: 3
+"#,
+        )
+        .unwrap();
+        let backend = PostgresBackend::new();
+        let mut pipeline_state = PipelineState::default();
+
+        let rule_queries = serde_json::json!({
+            "rule_a": "SELECT * FROM events WHERE action = 'auth'"
+        });
+        pipeline_state.set_state("_rule_queries".to_string(), rule_queries);
+
+        let queries = backend
+            .convert_correlation_rule(&collection.correlations[0], "default", &pipeline_state)
+            .unwrap();
+        let q = &queries[0];
+        assert!(
+            q.starts_with("WITH combined_events AS ("),
+            "value_count should use CTE: {q}"
+        );
+        assert!(
+            q.contains("COUNT(DISTINCT"),
+            "should have value_count aggregate: {q}"
         );
     }
 

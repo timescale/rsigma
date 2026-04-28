@@ -32,6 +32,7 @@ pub fn convert_collection(
     let mut output = ConversionOutput::new();
     let mut rule_table_map: HashMap<String, String> = HashMap::new();
     let mut rule_schema_map: HashMap<String, String> = HashMap::new();
+    let mut rule_query_map: HashMap<String, String> = HashMap::new();
 
     for rule in &collection.rules {
         let mut rule = rule.clone();
@@ -71,6 +72,12 @@ pub fn convert_collection(
 
         match backend.convert_rule(&rule, output_format, &pipeline_state) {
             Ok(queries) => {
+                if let Some(q) = queries.first() {
+                    if let Some(id) = &rule.id {
+                        rule_query_map.insert(id.clone(), q.clone());
+                    }
+                    rule_query_map.insert(rule.title.clone(), q.clone());
+                }
                 output.queries.push(ConversionResult {
                     rule_title: rule.title.clone(),
                     rule_id: rule.id.clone(),
@@ -101,6 +108,11 @@ pub fn convert_collection(
                 let map_value = serde_json::to_value(&rule_schema_map)
                     .unwrap_or(serde_json::Value::Object(Default::default()));
                 pipeline_state.set_state("_rule_schemas".to_string(), map_value);
+            }
+            if !rule_query_map.is_empty() {
+                let map_value = serde_json::to_value(&rule_query_map)
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                pipeline_state.set_state("_rule_queries".to_string(), map_value);
             }
 
             match backend.convert_correlation_rule(&corr, output_format, &pipeline_state) {
