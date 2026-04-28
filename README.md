@@ -316,6 +316,8 @@ A [Mermaid version](assets/architecture.mmd) of this diagram is also available.
 - [sigma-rust](https://github.com/jopohl/sigma-rust): Pratt parsing approach
 - [sigmars](https://github.com/crowdalert/sigmars): correlation support patterns
 - [sigma_engine](https://github.com/SigmaHQ/sigma_engine): official SigmaHQ Rust library for parsing and matching Sigma rules against events
+- [pySigma-backend-sqlite](https://github.com/SigmaHQ/pySigma-backend-sqlite): SQLite backend for pySigma (inspiration for the PostgreSQL backend)
+- [pySigma-backend-athena](https://github.com/SigmaHQ/pySigma-backend-athena): AWS Athena backend for pySigma (SELECT fields, CTE-based correlation, sliding window patterns)
 
 ## Releasing
 

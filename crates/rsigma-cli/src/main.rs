@@ -2046,10 +2046,13 @@ impl Painter {
 // Convert subcommand
 // ---------------------------------------------------------------------------
 
-fn get_backend(target: &str) -> Box<dyn rsigma_convert::Backend> {
+fn get_backend(
+    target: &str,
+    options: &std::collections::HashMap<String, String>,
+) -> Box<dyn rsigma_convert::Backend> {
     match target {
         "postgres" | "postgresql" | "pg" => {
-            Box::new(rsigma_convert::backends::postgres::PostgresBackend::new())
+            Box::new(rsigma_convert::backends::postgres::PostgresBackend::from_options(options))
         }
         "test" => Box::new(rsigma_convert::backends::test::TextQueryTestBackend::new()),
         "test_mandatory_pipeline" => {
@@ -2072,11 +2075,19 @@ fn cmd_convert(
     without_pipeline: bool,
     skip_unsupported: bool,
     output: Option<PathBuf>,
-    _backend_options: Vec<String>,
+    backend_options: Vec<String>,
 ) {
     let collection = load_collection_multi(&rules);
     let pipelines = load_pipelines(&pipeline_paths);
-    let backend = get_backend(&target);
+
+    let options: std::collections::HashMap<String, String> = backend_options
+        .iter()
+        .filter_map(|opt| {
+            opt.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
+        .collect();
+    let backend = get_backend(&target, &options);
 
     if backend.requires_pipeline() && pipelines.is_empty() && !without_pipeline {
         eprintln!(
@@ -2136,7 +2147,7 @@ fn cmd_list_targets() {
 }
 
 fn cmd_list_formats(target: String) {
-    let backend = get_backend(&target);
+    let backend = get_backend(&target, &std::collections::HashMap::new());
     println!("Available formats for '{target}':");
     for (name, desc) in backend.formats() {
         println!("  {name}  - {desc}");

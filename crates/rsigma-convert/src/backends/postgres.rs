@@ -146,6 +146,35 @@ impl PostgresBackend {
         }
     }
 
+    /// Create a backend from CLI-style key=value option pairs.
+    ///
+    /// Recognized keys: `table`, `schema`, `database`, `timestamp_field`,
+    /// `json_field`, `case_sensitive_re` (true/false).
+    /// Unknown keys are silently ignored so forward-compatible options can be
+    /// added without breaking existing invocations.
+    pub fn from_options(options: &HashMap<String, String>) -> Self {
+        let mut backend = Self::new();
+        if let Some(v) = options.get("table") {
+            backend.table = v.clone();
+        }
+        if let Some(v) = options.get("schema") {
+            backend.schema = Some(v.clone());
+        }
+        if let Some(v) = options.get("database") {
+            backend.database = Some(v.clone());
+        }
+        if let Some(v) = options.get("timestamp_field") {
+            backend.timestamp_field = v.clone();
+        }
+        if let Some(v) = options.get("json_field") {
+            backend.json_field = Some(v.clone());
+        }
+        if let Some(v) = options.get("case_sensitive_re") {
+            backend.case_sensitive_re = v == "true";
+        }
+        backend
+    }
+
     /// Resolve the fully qualified table name `[schema.]table` using this
     /// precedence for each component:
     ///
@@ -600,23 +629,30 @@ impl Backend for PostgresBackend {
             .get_state_str("_output_format")
             .is_some_and(|f| f == "timescaledb" || f == "continuous_aggregate");
 
+        let base_cols = if rule.fields.is_empty() {
+            "*".to_string()
+        } else {
+            rule.fields
+                .iter()
+                .map(|f| self.format_select_field(f))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
         let select_cols = if is_timescaledb {
             format!(
-                "time_bucket('1 hour', {}) AS bucket, *",
-                self.timestamp_field
+                "time_bucket('1 hour', {}) AS bucket, {}",
+                self.timestamp_field, base_cols
             )
         } else {
-            "*".to_string()
+            base_cols
         };
 
         let custom_tmpl = state.get_state_str("query_expression_template");
 
         let effective_tmpl = match custom_tmpl {
             Some(t) => t.to_string(),
-            None if is_timescaledb => {
-                format!("SELECT {select_cols} FROM {{table}} WHERE {{query}}")
-            }
-            None => self.config.query_expression.to_string(),
+            None => format!("SELECT {select_cols} FROM {{table}} WHERE {{query}}"),
         };
 
         let mut result = effective_tmpl.replace("{query}", &query);
@@ -828,6 +864,32 @@ impl Backend for PostgresBackend {
 }
 
 impl PostgresBackend {
+    /// Format a field name for use in a SELECT column list.
+    ///
+    /// Inspired by the pySigma Athena backend's `_format_select_field`:
+    /// - Expressions containing parentheses (function calls) pass through unchanged
+    /// - `field as alias` is split and both sides are quoted independently
+    /// - Plain field names are quoted via `field_expr`
+    fn format_select_field(&self, field: &str) -> String {
+        if field == "*" {
+            return "*".to_string();
+        }
+        if field.contains('(') && field.contains(')') {
+            return field.to_string();
+        }
+        if let Some((expr, alias)) = field.split_once(" as ") {
+            let quoted_expr = self.field_expr(expr.trim());
+            let quoted_alias = self.field_expr(alias.trim());
+            return format!("{quoted_expr} AS {quoted_alias}");
+        }
+        if let Some((expr, alias)) = field.split_once(" AS ") {
+            let quoted_expr = self.field_expr(expr.trim());
+            let quoted_alias = self.field_expr(alias.trim());
+            return format!("{quoted_expr} AS {quoted_alias}");
+        }
+        self.field_expr(field)
+    }
+
     /// Build HAVING clause from correlation condition predicates.
     /// Uses `{agg}` as placeholder for the aggregate expression.
     fn build_having_clause(&self, cond: &CorrelationCondition) -> Result<String> {
@@ -1824,6 +1886,82 @@ detection:
         assert_eq!(backend.resolve_table(&attrs, &state), "security_events");
     }
 
+    // --- Backend options (from_options) ---
+
+    #[test]
+    fn test_from_options_table() {
+        let mut opts = HashMap::new();
+        opts.insert("table".to_string(), "events".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        assert_eq!(backend.table, "events");
+    }
+
+    #[test]
+    fn test_from_options_schema() {
+        let mut opts = HashMap::new();
+        opts.insert("schema".to_string(), "siem".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        assert_eq!(backend.schema, Some("siem".to_string()));
+    }
+
+    #[test]
+    fn test_from_options_timestamp_field() {
+        let mut opts = HashMap::new();
+        opts.insert("timestamp_field".to_string(), "time_dt".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        assert_eq!(backend.timestamp_field, "time_dt");
+    }
+
+    #[test]
+    fn test_from_options_json_field() {
+        let mut opts = HashMap::new();
+        opts.insert("json_field".to_string(), "metadata".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        assert_eq!(backend.json_field, Some("metadata".to_string()));
+    }
+
+    #[test]
+    fn test_from_options_case_sensitive_re() {
+        let mut opts = HashMap::new();
+        opts.insert("case_sensitive_re".to_string(), "true".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        assert!(backend.case_sensitive_re);
+    }
+
+    #[test]
+    fn test_from_options_empty_uses_defaults() {
+        let opts = HashMap::new();
+        let backend = PostgresBackend::from_options(&opts);
+        assert_eq!(backend.table, "security_events");
+        assert_eq!(backend.timestamp_field, "time");
+        assert_eq!(backend.json_field, None);
+        assert!(!backend.case_sensitive_re);
+        assert_eq!(backend.schema, None);
+    }
+
+    #[test]
+    fn test_from_options_affects_query_output() {
+        let mut opts = HashMap::new();
+        opts.insert("table".to_string(), "my_events".to_string());
+        let backend = PostgresBackend::from_options(&opts);
+        let queries = convert_with(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+"#,
+            &backend,
+        );
+        assert_eq!(
+            queries,
+            vec!["SELECT * FROM my_events WHERE action = 'login'"]
+        );
+    }
+
     // --- Custom attributes in detection rules ---
 
     #[test]
@@ -2229,6 +2367,117 @@ correlation:
         assert!(
             q.contains("rule_name IN ('rule_a', 'rule_b')"),
             "expected single-table approach in: {q}"
+        );
+    }
+
+    // --- SELECT column selection from Sigma `fields` attribute ---
+
+    #[test]
+    fn test_select_fields_basic() {
+        let queries = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+fields:
+    - user_id
+    - action
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec!["SELECT user_id, action FROM security_events WHERE action = 'login'"]
+        );
+    }
+
+    #[test]
+    fn test_select_fields_with_alias() {
+        let queries = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+fields:
+    - CommandLine as cmd
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec![r#"SELECT "CommandLine" AS cmd FROM security_events WHERE action = 'login'"#]
+        );
+    }
+
+    #[test]
+    fn test_select_fields_with_function_passthrough() {
+        let queries = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+fields:
+    - count(*)
+    - user_id
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec!["SELECT count(*), user_id FROM security_events WHERE action = 'login'"]
+        );
+    }
+
+    #[test]
+    fn test_select_fields_quoted_mixed_case() {
+        let queries = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+fields:
+    - EventID
+    - SourceIp
+    - action
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec![
+                r#"SELECT "EventID", "SourceIp", action FROM security_events WHERE action = 'login'"#
+            ]
+        );
+    }
+
+    #[test]
+    fn test_select_fields_empty_defaults_to_star() {
+        let queries = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec!["SELECT * FROM security_events WHERE action = 'login'"]
         );
     }
 
