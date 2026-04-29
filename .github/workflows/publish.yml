@@ -54,6 +54,18 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
+      - name: Publish rsigma-convert
+        run: |
+          echo "::notice::Publishing rsigma-convert (dry-run: ${DRY_RUN})"
+          cargo publish ${DRY_RUN} -p rsigma-convert || echo "::warning::rsigma-convert already published or failed"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
+
+      - name: Wait for crates.io index update
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
       - name: Publish rsigma-runtime
         run: |
           echo "::notice::Publishing rsigma-runtime (dry-run: ${DRY_RUN})"

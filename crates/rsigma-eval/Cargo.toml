@@ -13,7 +13,7 @@ homepage.workspace = true
 parallel = ["rayon"]
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.8.0" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.8.1" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml = "0.9"
