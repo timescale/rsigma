@@ -53,11 +53,13 @@ pub mod processor;
 pub use engine::{EngineStats, RuntimeEngine};
 pub use error::RuntimeError;
 pub use input::{EventInputDecoded, InputFormat, parse_line};
-pub use io::{EventSource, FileSink, Sink, StdinSource, StdoutSink, spawn_source};
+pub use io::{
+    AckToken, EventSource, FileSink, RawEvent, Sink, StdinSource, StdoutSink, spawn_source,
+};
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use processor::{EventFilter, LogProcessor};
 
 pub use rsigma_eval::ProcessResult;
 
 #[cfg(feature = "nats")]
-pub use io::{NatsSink, NatsSource};
+pub use io::{NatsConnectConfig, NatsSink, NatsSource, ReplayPolicy};

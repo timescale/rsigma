@@ -39,4 +39,11 @@ impl FileSink {
         self.writer.flush()?;
         Ok(())
     }
+
+    /// Write a pre-serialized JSON string directly to the file.
+    pub fn send_raw(&mut self, json: &str) -> Result<(), RuntimeError> {
+        writeln!(self.writer, "{json}")?;
+        self.writer.flush()?;
+        Ok(())
+    }
 }

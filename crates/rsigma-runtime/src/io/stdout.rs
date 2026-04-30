@@ -43,4 +43,12 @@ impl StdoutSink {
 
         Ok(())
     }
+
+    /// Write a pre-serialized JSON string directly to stdout.
+    pub fn send_raw(&self, json: &str) -> Result<(), RuntimeError> {
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        writeln!(out, "{json}")?;
+        Ok(())
+    }
 }

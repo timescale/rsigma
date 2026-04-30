@@ -1,6 +1,6 @@
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use super::EventSource;
+use super::{AckToken, EventSource, RawEvent};
 
 /// Reads events from stdin, one per line.
 ///
@@ -25,10 +25,15 @@ impl StdinSource {
 }
 
 impl EventSource for StdinSource {
-    async fn recv(&mut self) -> Option<String> {
+    async fn recv(&mut self) -> Option<RawEvent> {
         loop {
             match self.lines.next_line().await {
-                Ok(Some(line)) if !line.trim().is_empty() => return Some(line),
+                Ok(Some(line)) if !line.trim().is_empty() => {
+                    return Some(RawEvent {
+                        payload: line,
+                        ack_token: AckToken::Noop,
+                    });
+                }
                 Ok(Some(_)) => continue,
                 Ok(None) => return None,
                 Err(e) => {

@@ -24,6 +24,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Parse a single Sigma YAML file and print the AST as JSON
     Parse {
@@ -199,6 +200,12 @@ enum Commands {
         #[arg(long = "drain-timeout", default_value = "5")]
         drain_timeout: u64,
 
+        /// Dead-letter queue target for events that fail processing.
+        /// Accepts same schemes as --output: stdout, file://<path>, nats://<host>:<port>/<subject>.
+        /// When not set, failed events are logged and discarded.
+        #[arg(long = "dlq")]
+        dlq: Option<String>,
+
         /// Input log format for event parsing.
         /// auto: try JSON → syslog → plain (default).
         /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
@@ -210,6 +217,74 @@ enum Commands {
         /// Only used when --input-format is syslog or auto. Defaults to UTC.
         #[arg(long = "syslog-tz", default_value = "+00:00")]
         syslog_tz: String,
+
+        /// NATS credentials file (.creds) for JWT + NKey authentication.
+        /// Also reads from NATS_CREDS environment variable.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-creds", env = "NATS_CREDS")]
+        nats_creds: Option<PathBuf>,
+
+        /// NATS authentication token. Also reads from NATS_TOKEN.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-token", env = "NATS_TOKEN", conflicts_with = "nats_creds")]
+        nats_token: Option<String>,
+
+        /// NATS username (requires --nats-password). Also reads from NATS_USER.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-user", env = "NATS_USER", requires = "nats_password", conflicts_with_all = ["nats_creds", "nats_token"])]
+        nats_user: Option<String>,
+
+        /// NATS password (requires --nats-user). Also reads from NATS_PASSWORD.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-password", env = "NATS_PASSWORD", requires = "nats_user")]
+        nats_password: Option<String>,
+
+        /// NATS NKey seed for authentication. Also reads from NATS_NKEY.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-nkey", env = "NATS_NKEY", conflicts_with_all = ["nats_creds", "nats_token", "nats_user"])]
+        nats_nkey: Option<String>,
+
+        /// TLS client certificate for mutual TLS with NATS.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-tls-cert", requires = "nats_tls_key")]
+        nats_tls_cert: Option<PathBuf>,
+
+        /// TLS client private key for mutual TLS with NATS.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-tls-key", requires = "nats_tls_cert")]
+        nats_tls_key: Option<PathBuf>,
+
+        /// Require TLS for NATS connections.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "nats-require-tls")]
+        nats_require_tls: bool,
+
+        /// Replay from a specific JetStream sequence number.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-sequence", conflicts_with_all = ["replay_from_time", "replay_from_latest"])]
+        replay_from_sequence: Option<u64>,
+
+        /// Replay from a specific timestamp (ISO 8601, e.g. 2024-01-15T10:00:00Z).
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-time", conflicts_with_all = ["replay_from_sequence", "replay_from_latest"])]
+        replay_from_time: Option<String>,
+
+        /// Start from the latest message, skipping stream history.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-latest", conflicts_with_all = ["replay_from_sequence", "replay_from_time"])]
+        replay_from_latest: bool,
+
+        /// Clear correlation state when replaying (auto-enabled with --replay-from-*).
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "clear-state")]
+        clear_state: bool,
+
+        /// Consumer group name for NATS JetStream load balancing.
+        /// Multiple daemon instances using the same group name share the
+        /// workload via a single durable pull consumer.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "consumer-group", env = "RSIGMA_CONSUMER_GROUP")]
+        consumer_group: Option<String>,
     },
 
     /// Evaluate events against Sigma rules
@@ -371,32 +446,102 @@ fn main() {
             buffer_size,
             batch_size,
             drain_timeout,
+            dlq,
             input_format,
             syslog_tz,
-        } => cmd_daemon(
-            rules,
-            pipelines,
-            jq,
-            jsonpath,
-            include_event,
-            pretty,
-            api_addr,
-            suppress,
-            action,
-            no_detections,
-            correlation_event_mode,
-            max_correlation_events,
-            timestamp_fields,
-            state_db,
-            state_save_interval,
-            input,
-            output,
-            buffer_size,
-            batch_size,
-            drain_timeout,
-            input_format,
-            syslog_tz,
-        ),
+            #[cfg(feature = "daemon-nats")]
+            nats_creds,
+            #[cfg(feature = "daemon-nats")]
+            nats_token,
+            #[cfg(feature = "daemon-nats")]
+            nats_user,
+            #[cfg(feature = "daemon-nats")]
+            nats_password,
+            #[cfg(feature = "daemon-nats")]
+            nats_nkey,
+            #[cfg(feature = "daemon-nats")]
+            nats_tls_cert,
+            #[cfg(feature = "daemon-nats")]
+            nats_tls_key,
+            #[cfg(feature = "daemon-nats")]
+            nats_require_tls,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_sequence,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_time,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_latest,
+            #[cfg(feature = "daemon-nats")]
+            clear_state,
+            #[cfg(feature = "daemon-nats")]
+            consumer_group,
+        } => {
+            #[cfg(feature = "daemon-nats")]
+            let nats_auth = NatsAuthArgs {
+                nats_creds,
+                nats_token,
+                nats_user,
+                nats_password,
+                nats_nkey,
+                nats_tls_cert,
+                nats_tls_key,
+                nats_require_tls,
+            };
+            #[cfg(feature = "daemon-nats")]
+            let replay_policy = if let Some(seq) = replay_from_sequence {
+                rsigma_runtime::ReplayPolicy::FromSequence(seq)
+            } else if let Some(ref ts) = replay_from_time {
+                let t =
+                    time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Invalid --replay-from-time '{ts}': {e}");
+                            process::exit(1);
+                        });
+                rsigma_runtime::ReplayPolicy::FromTime(t)
+            } else if replay_from_latest {
+                rsigma_runtime::ReplayPolicy::Latest
+            } else {
+                rsigma_runtime::ReplayPolicy::Resume
+            };
+
+            #[cfg(feature = "daemon-nats")]
+            let clear_correlation_state =
+                clear_state || !matches!(replay_policy, rsigma_runtime::ReplayPolicy::Resume);
+
+            cmd_daemon(
+                rules,
+                pipelines,
+                jq,
+                jsonpath,
+                include_event,
+                pretty,
+                api_addr,
+                suppress,
+                action,
+                no_detections,
+                correlation_event_mode,
+                max_correlation_events,
+                timestamp_fields,
+                state_db,
+                state_save_interval,
+                input,
+                output,
+                buffer_size,
+                batch_size,
+                drain_timeout,
+                dlq,
+                input_format,
+                syslog_tz,
+                #[cfg(feature = "daemon-nats")]
+                nats_auth,
+                #[cfg(feature = "daemon-nats")]
+                replay_policy,
+                #[cfg(feature = "daemon-nats")]
+                clear_correlation_state,
+                #[cfg(feature = "daemon-nats")]
+                consumer_group,
+            )
+        }
         Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
         Commands::Validate {
             path,
@@ -485,6 +630,18 @@ fn main() {
 // Daemon subcommand
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "daemon-nats")]
+struct NatsAuthArgs {
+    nats_creds: Option<PathBuf>,
+    nats_token: Option<String>,
+    nats_user: Option<String>,
+    nats_password: Option<String>,
+    nats_nkey: Option<String>,
+    nats_tls_cert: Option<PathBuf>,
+    nats_tls_key: Option<PathBuf>,
+    nats_require_tls: bool,
+}
+
 #[cfg(feature = "daemon")]
 #[allow(clippy::too_many_arguments)]
 fn cmd_daemon(
@@ -508,8 +665,13 @@ fn cmd_daemon(
     buffer_size: usize,
     batch_size: usize,
     drain_timeout: u64,
+    dlq: Option<String>,
     input_format: String,
     syslog_tz: String,
+    #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
+    #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
+    #[cfg(feature = "daemon-nats")] clear_correlation_state: bool,
+    #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -539,6 +701,19 @@ fn cmd_daemon(
         process::exit(1);
     });
 
+    #[cfg(feature = "daemon-nats")]
+    let nats_config = rsigma_runtime::NatsConnectConfig {
+        credentials_file: nats_auth.nats_creds,
+        token: nats_auth.nats_token,
+        username: nats_auth.nats_user,
+        password: nats_auth.nats_password,
+        nkey: nats_auth.nats_nkey,
+        tls_client_cert: nats_auth.nats_tls_cert,
+        tls_client_key: nats_auth.nats_tls_key,
+        require_tls: nats_auth.nats_require_tls,
+        ..Default::default()
+    };
+
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
@@ -554,7 +729,16 @@ fn cmd_daemon(
         buffer_size,
         batch_size,
         drain_timeout,
+        dlq,
         input_format: parsed_input_format,
+        #[cfg(feature = "daemon-nats")]
+        nats_config,
+        #[cfg(feature = "daemon-nats")]
+        replay_policy,
+        #[cfg(feature = "daemon-nats")]
+        clear_correlation_state,
+        #[cfg(feature = "daemon-nats")]
+        consumer_group,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

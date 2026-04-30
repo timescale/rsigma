@@ -22,6 +22,7 @@ pub struct Metrics {
     pub back_pressure_events: IntCounter,
     pub pipeline_latency: Histogram,
     pub batch_size_histogram: Histogram,
+    pub dlq_events: IntCounter,
 }
 
 impl Metrics {
@@ -120,6 +121,11 @@ impl Metrics {
                 ]),
         )
         .unwrap();
+        let dlq_events = IntCounter::with_opts(Opts::new(
+            "rsigma_dlq_events_total",
+            "Events routed to dead-letter queue",
+        ))
+        .unwrap();
 
         registry
             .register(Box::new(events_processed.clone()))
@@ -163,6 +169,7 @@ impl Metrics {
         registry
             .register(Box::new(batch_size_histogram.clone()))
             .unwrap();
+        registry.register(Box::new(dlq_events.clone())).unwrap();
 
         Metrics {
             registry,
@@ -182,6 +189,7 @@ impl Metrics {
             back_pressure_events,
             pipeline_latency,
             batch_size_histogram,
+            dlq_events,
         }
     }
 

@@ -1,12 +1,14 @@
 use async_nats::jetstream;
+use async_nats::jetstream::consumer::DeliverPolicy;
 use tokio_stream::StreamExt;
 
-use super::EventSource;
+use super::nats_config::NatsConnectConfig;
+use super::{AckToken, EventSource, RawEvent};
 
 /// Derive a NATS-safe name by combining a prefix with the subject.
 /// Replaces characters not allowed in NATS stream/consumer names (`.`, `>`, `*`)
 /// with dashes and strips trailing dashes.
-fn derive_nats_name(prefix: &str, subject: &str) -> String {
+pub(crate) fn derive_nats_name(prefix: &str, subject: &str) -> String {
     let sanitized: String = subject
         .chars()
         .map(|c| match c {
@@ -17,12 +19,26 @@ fn derive_nats_name(prefix: &str, subject: &str) -> String {
     format!("{}-{}", prefix, sanitized.trim_end_matches('-'))
 }
 
-/// NATS JetStream consumer that yields events as JSON strings.
+/// Controls where the NATS consumer starts reading from in the stream.
+#[derive(Debug, Clone, Default)]
+pub enum ReplayPolicy {
+    /// Resume from the last acked position (durable consumer default).
+    #[default]
+    Resume,
+    /// Start from a specific stream sequence number.
+    FromSequence(u64),
+    /// Start from a specific timestamp (ISO 8601).
+    FromTime(time::OffsetDateTime),
+    /// Start from the latest message, skipping history.
+    Latest,
+}
+
+/// NATS JetStream consumer that yields events.
 ///
-/// Uses at-most-once delivery: messages are acked immediately on receive,
-/// before the engine processes them. If the daemon crashes between ack and
-/// processing, the event is lost. At-least-once delivery requires a feedback
-/// channel from engine to source (deferred to Level 2).
+/// Uses at-least-once delivery: messages are held until the downstream
+/// pipeline (engine + sink) confirms successful processing, then acked
+/// via the `AckToken`. If the daemon crashes before ack, NATS redelivers
+/// the message after `ack_wait` expires.
 pub struct NatsSource {
     messages: jetstream::consumer::pull::Stream,
 }
@@ -30,14 +46,25 @@ pub struct NatsSource {
 impl NatsSource {
     /// Connect to NATS and subscribe to a JetStream stream via pull consumer.
     ///
-    /// `url` is the NATS server URL (e.g. "nats://localhost:4222").
+    /// Uses `NatsConnectConfig` for authentication and TLS settings.
     /// `subject` is the subject filter (e.g. "hel.events.>").
-    pub async fn connect(url: &str, subject: &str) -> Result<Self, async_nats::Error> {
-        let client = async_nats::connect(url).await?;
+    /// `replay` controls where the consumer starts reading from.
+    /// `consumer_group` overrides the auto-derived consumer name so multiple
+    /// daemon instances can share a single durable consumer for load balancing.
+    pub async fn connect(
+        config: &NatsConnectConfig,
+        subject: &str,
+        replay: &ReplayPolicy,
+        consumer_group: Option<&str>,
+    ) -> Result<Self, async_nats::Error> {
+        let client = config.connect().await?;
         let jetstream = jetstream::new(client);
 
         let stream_name = derive_nats_name("rsigma", subject);
-        let consumer_name = derive_nats_name("rsigma-daemon", subject);
+        let consumer_name = match consumer_group {
+            Some(group) => group.to_string(),
+            None => derive_nats_name("rsigma-daemon", subject),
+        };
 
         let stream = jetstream
             .get_or_create_stream(jetstream::stream::Config {
@@ -47,12 +74,22 @@ impl NatsSource {
             })
             .await?;
 
+        let deliver_policy = match replay {
+            ReplayPolicy::Resume => DeliverPolicy::All,
+            ReplayPolicy::FromSequence(seq) => DeliverPolicy::ByStartSequence {
+                start_sequence: *seq,
+            },
+            ReplayPolicy::FromTime(time) => DeliverPolicy::ByStartTime { start_time: *time },
+            ReplayPolicy::Latest => DeliverPolicy::Last,
+        };
+
         let consumer = stream
             .get_or_create_consumer(
                 &consumer_name,
                 jetstream::consumer::pull::Config {
                     durable_name: Some(consumer_name.clone()),
                     filter_subject: subject.to_string(),
+                    deliver_policy,
                     ..Default::default()
                 },
             )
@@ -65,16 +102,16 @@ impl NatsSource {
 }
 
 impl EventSource for NatsSource {
-    async fn recv(&mut self) -> Option<String> {
+    async fn recv(&mut self) -> Option<RawEvent> {
         loop {
             match self.messages.next().await {
                 Some(Ok(msg)) => {
                     let payload = String::from_utf8_lossy(&msg.payload).to_string();
-                    if let Err(e) = msg.ack().await {
-                        tracing::warn!(error = %e, "Failed to ack NATS message");
-                    }
                     if !payload.trim().is_empty() {
-                        return Some(payload);
+                        return Some(RawEvent {
+                            payload,
+                            ack_token: AckToken::Nats(Box::new(msg)),
+                        });
                     }
                 }
                 Some(Err(e)) => {
