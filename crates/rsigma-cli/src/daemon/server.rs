@@ -59,6 +59,10 @@ pub struct DaemonConfig {
     pub dlq: Option<String>,
     #[cfg(feature = "daemon-nats")]
     pub nats_config: rsigma_runtime::NatsConnectConfig,
+    #[cfg(feature = "daemon-nats")]
+    pub replay_policy: rsigma_runtime::ReplayPolicy,
+    #[cfg(feature = "daemon-nats")]
+    pub clear_correlation_state: bool,
     pub drain_timeout: u64,
     pub input_format: InputFormat,
 }
@@ -108,8 +112,16 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     }
 
-    // Restore correlation state from SQLite (after rules are loaded)
-    if let Some(ref store) = state_store {
+    // Restore correlation state from SQLite (after rules are loaded).
+    // When replaying (--replay-from-*), skip restoration to avoid double-counting.
+    #[allow(unused_mut)]
+    let mut skip_state_restore = false;
+    #[cfg(feature = "daemon-nats")]
+    if config.clear_correlation_state {
+        skip_state_restore = true;
+        tracing::info!("Correlation state cleared for replay mode");
+    }
+    if !skip_state_restore && let Some(ref store) = state_store {
         match store.load().await {
             Ok(Some(snapshot)) => {
                 if processor.import_state(&snapshot) {
@@ -275,7 +287,9 @@ pub async fn run_daemon(config: DaemonConfig) {
             let (url, subject) = parse_nats_url(input);
             let mut nats_cfg = config.nats_config.clone();
             nats_cfg.url = url.clone();
-            match rsigma_runtime::NatsSource::connect(&nats_cfg, &subject).await {
+            match rsigma_runtime::NatsSource::connect(&nats_cfg, &subject, &config.replay_policy)
+                .await
+            {
                 Ok(source) => {
                     let h = spawn_source(
                         source,

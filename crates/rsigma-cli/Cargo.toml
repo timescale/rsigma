@@ -12,7 +12,7 @@ homepage.workspace = true
 [features]
 default = ["daemon"]
 daemon = ["rsigma-runtime", "tokio", "axum", "prometheus", "notify", "rusqlite"]
-daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream"]
+daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time"]
 logfmt = ["rsigma-runtime/logfmt"]
 cef = ["rsigma-runtime/cef"]
 evtx = ["rsigma-runtime/evtx"]
@@ -46,6 +46,7 @@ notify = { version = "8.2", optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 async-nats = { version = "0.47", optional = true }
 tokio-stream = { version = "0.1", optional = true }
+time = { version = "0.3", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

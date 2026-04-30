@@ -62,4 +62,4 @@ pub use processor::{EventFilter, LogProcessor};
 pub use rsigma_eval::ProcessResult;
 
 #[cfg(feature = "nats")]
-pub use io::{NatsConnectConfig, NatsSink, NatsSource};
+pub use io::{NatsConnectConfig, NatsSink, NatsSource, ReplayPolicy};

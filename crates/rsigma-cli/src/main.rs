@@ -258,6 +258,26 @@ enum Commands {
         #[cfg(feature = "daemon-nats")]
         #[arg(long = "nats-require-tls")]
         nats_require_tls: bool,
+
+        /// Replay from a specific JetStream sequence number.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-sequence", conflicts_with_all = ["replay_from_time", "replay_from_latest"])]
+        replay_from_sequence: Option<u64>,
+
+        /// Replay from a specific timestamp (ISO 8601, e.g. 2024-01-15T10:00:00Z).
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-time", conflicts_with_all = ["replay_from_sequence", "replay_from_latest"])]
+        replay_from_time: Option<String>,
+
+        /// Start from the latest message, skipping stream history.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "replay-from-latest", conflicts_with_all = ["replay_from_sequence", "replay_from_time"])]
+        replay_from_latest: bool,
+
+        /// Clear correlation state when replaying (auto-enabled with --replay-from-*).
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "clear-state")]
+        clear_state: bool,
     },
 
     /// Evaluate events against Sigma rules
@@ -438,6 +458,14 @@ fn main() {
             nats_tls_key,
             #[cfg(feature = "daemon-nats")]
             nats_require_tls,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_sequence,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_time,
+            #[cfg(feature = "daemon-nats")]
+            replay_from_latest,
+            #[cfg(feature = "daemon-nats")]
+            clear_state,
         } => {
             #[cfg(feature = "daemon-nats")]
             let nats_auth = NatsAuthArgs {
@@ -450,6 +478,27 @@ fn main() {
                 nats_tls_key,
                 nats_require_tls,
             };
+            #[cfg(feature = "daemon-nats")]
+            let replay_policy = if let Some(seq) = replay_from_sequence {
+                rsigma_runtime::ReplayPolicy::FromSequence(seq)
+            } else if let Some(ref ts) = replay_from_time {
+                let t =
+                    time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Invalid --replay-from-time '{ts}': {e}");
+                            process::exit(1);
+                        });
+                rsigma_runtime::ReplayPolicy::FromTime(t)
+            } else if replay_from_latest {
+                rsigma_runtime::ReplayPolicy::Latest
+            } else {
+                rsigma_runtime::ReplayPolicy::Resume
+            };
+
+            #[cfg(feature = "daemon-nats")]
+            let clear_correlation_state =
+                clear_state || !matches!(replay_policy, rsigma_runtime::ReplayPolicy::Resume);
+
             cmd_daemon(
                 rules,
                 pipelines,
@@ -476,6 +525,10 @@ fn main() {
                 syslog_tz,
                 #[cfg(feature = "daemon-nats")]
                 nats_auth,
+                #[cfg(feature = "daemon-nats")]
+                replay_policy,
+                #[cfg(feature = "daemon-nats")]
+                clear_correlation_state,
             )
         }
         Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
@@ -605,6 +658,8 @@ fn cmd_daemon(
     input_format: String,
     syslog_tz: String,
     #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
+    #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
+    #[cfg(feature = "daemon-nats")] clear_correlation_state: bool,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -666,6 +721,10 @@ fn cmd_daemon(
         input_format: parsed_input_format,
         #[cfg(feature = "daemon-nats")]
         nats_config,
+        #[cfg(feature = "daemon-nats")]
+        replay_policy,
+        #[cfg(feature = "daemon-nats")]
+        clear_correlation_state,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

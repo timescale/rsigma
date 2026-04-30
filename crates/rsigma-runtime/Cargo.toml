@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = []
-nats = ["async-nats", "tokio-stream"]
+nats = ["async-nats", "tokio-stream", "time"]
 logfmt = []
 cef = []
 evtx = ["dep:evtx"]
@@ -30,6 +30,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # optional
 tokio-stream = { version = "0.1", optional = true }
 async-nats = { version = "0.47", optional = true }
+time = { version = "0.3", optional = true }
 evtx = { version = "0.11", optional = true }
 
 [dev-dependencies]

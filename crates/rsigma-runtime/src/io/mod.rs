@@ -14,7 +14,7 @@ pub use nats_config::NatsConnectConfig;
 #[cfg(feature = "nats")]
 pub use nats_sink::NatsSink;
 #[cfg(feature = "nats")]
-pub use nats_source::NatsSource;
+pub use nats_source::{NatsSource, ReplayPolicy};
 pub use stdin::StdinSource;
 pub use stdout::StdoutSink;
 
