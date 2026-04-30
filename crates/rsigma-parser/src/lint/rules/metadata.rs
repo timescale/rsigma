@@ -62,7 +62,7 @@ fn extract_date_string(raw: &Value) -> Option<String> {
 }
 
 /// Validate a UUID string (any version, hyphenated form).
-fn is_valid_uuid(s: &str) -> bool {
+pub(crate) fn is_valid_uuid(s: &str) -> bool {
     if s.len() != 36 {
         return false;
     }

@@ -139,7 +139,7 @@ pub(crate) fn lint_detection_rule(m: &serde_yaml::Mapping, warnings: &mut Vec<Li
                 }
 
                 if let Some(id) = get_str(item_map, "id")
-                    && !is_valid_uuid_inline(id)
+                    && !super::metadata::is_valid_uuid(id)
                 {
                     warnings.push(warning(
                         LintRule::InvalidRelatedId,
@@ -324,22 +324,6 @@ pub(crate) fn lint_logsource(m: &serde_yaml::Mapping, warnings: &mut Vec<LintWar
             }
         }
     }
-}
-
-/// Inline UUID validation (avoids cross-module dependency on metadata).
-fn is_valid_uuid_inline(s: &str) -> bool {
-    if s.len() != 36 {
-        return false;
-    }
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 5 {
-        return false;
-    }
-    let expected_lens = [8, 4, 4, 4, 12];
-    parts
-        .iter()
-        .zip(expected_lens.iter())
-        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Extract bare identifiers from a condition expression (excluding keywords
