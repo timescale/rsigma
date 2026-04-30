@@ -49,16 +49,22 @@ impl NatsSource {
     /// Uses `NatsConnectConfig` for authentication and TLS settings.
     /// `subject` is the subject filter (e.g. "hel.events.>").
     /// `replay` controls where the consumer starts reading from.
+    /// `consumer_group` overrides the auto-derived consumer name so multiple
+    /// daemon instances can share a single durable consumer for load balancing.
     pub async fn connect(
         config: &NatsConnectConfig,
         subject: &str,
         replay: &ReplayPolicy,
+        consumer_group: Option<&str>,
     ) -> Result<Self, async_nats::Error> {
         let client = config.connect().await?;
         let jetstream = jetstream::new(client);
 
         let stream_name = derive_nats_name("rsigma", subject);
-        let consumer_name = derive_nats_name("rsigma-daemon", subject);
+        let consumer_name = match consumer_group {
+            Some(group) => group.to_string(),
+            None => derive_nats_name("rsigma-daemon", subject),
+        };
 
         let stream = jetstream
             .get_or_create_stream(jetstream::stream::Config {

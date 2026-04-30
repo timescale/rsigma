@@ -278,6 +278,13 @@ enum Commands {
         #[cfg(feature = "daemon-nats")]
         #[arg(long = "clear-state")]
         clear_state: bool,
+
+        /// Consumer group name for NATS JetStream load balancing.
+        /// Multiple daemon instances using the same group name share the
+        /// workload via a single durable pull consumer.
+        #[cfg(feature = "daemon-nats")]
+        #[arg(long = "consumer-group", env = "RSIGMA_CONSUMER_GROUP")]
+        consumer_group: Option<String>,
     },
 
     /// Evaluate events against Sigma rules
@@ -466,6 +473,8 @@ fn main() {
             replay_from_latest,
             #[cfg(feature = "daemon-nats")]
             clear_state,
+            #[cfg(feature = "daemon-nats")]
+            consumer_group,
         } => {
             #[cfg(feature = "daemon-nats")]
             let nats_auth = NatsAuthArgs {
@@ -529,6 +538,8 @@ fn main() {
                 replay_policy,
                 #[cfg(feature = "daemon-nats")]
                 clear_correlation_state,
+                #[cfg(feature = "daemon-nats")]
+                consumer_group,
             )
         }
         Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
@@ -660,6 +671,7 @@ fn cmd_daemon(
     #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] clear_correlation_state: bool,
+    #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -725,6 +737,8 @@ fn cmd_daemon(
         replay_policy,
         #[cfg(feature = "daemon-nats")]
         clear_correlation_state,
+        #[cfg(feature = "daemon-nats")]
+        consumer_group,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
