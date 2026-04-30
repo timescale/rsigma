@@ -516,6 +516,76 @@ fn eval_custom_timestamp_field() {
 }
 
 // ---------------------------------------------------------------------------
+// eval subcommand — input formats
+// ---------------------------------------------------------------------------
+
+#[test]
+fn eval_syslog_input_format() {
+    let syslog_rule = temp_file(
+        ".yml",
+        r#"
+title: Sudo Usage
+id: 00000000-0000-0000-0000-000000000099
+status: test
+logsource:
+    product: linux
+    service: auth
+detection:
+    keywords:
+        - 'sudo'
+    condition: keywords
+level: low
+"#,
+    );
+    let events = "<38>Apr 25 14:30:00 web01 sudo: admin : TTY=pts/0 ; COMMAND=/bin/bash\n";
+    let output = rsigma()
+        .args([
+            "eval",
+            "--rules",
+            syslog_rule.path().to_str().unwrap(),
+            "--input-format",
+            "syslog",
+        ])
+        .write_stdin(events)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"{"rule_title":"Sudo Usage","rule_id":"00000000-0000-0000-0000-000000000099","level":"low","tags":[],"matched_selections":["keywords"],"matched_fields":[]}"#);
+}
+
+#[test]
+fn eval_plain_input_format() {
+    let plain_rule = temp_file(
+        ".yml",
+        r#"
+title: Error Detected
+id: 00000000-0000-0000-0000-000000000097
+status: test
+logsource:
+    category: application
+detection:
+    keywords:
+        - 'CRITICAL ERROR'
+    condition: keywords
+level: high
+"#,
+    );
+    let output = rsigma()
+        .args([
+            "eval",
+            "--rules",
+            plain_rule.path().to_str().unwrap(),
+            "--input-format",
+            "plain",
+        ])
+        .write_stdin("CRITICAL ERROR in module X\n")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"{"rule_title":"Error Detected","rule_id":"00000000-0000-0000-0000-000000000097","level":"high","tags":[],"matched_selections":["keywords"],"matched_fields":[]}"#);
+}
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

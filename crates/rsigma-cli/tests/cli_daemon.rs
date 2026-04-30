@@ -435,3 +435,116 @@ fn daemon_streaming_custom_buffer_size() {
         "small buffer-size should still produce output: {stdout}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Input format tests
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_syslog_input_format() {
+    let syslog_rule = r#"
+title: Sudo Usage
+id: 00000000-0000-0000-0000-000000000099
+status: test
+logsource:
+    product: linux
+    service: auth
+detection:
+    keywords:
+        - 'sudo'
+    condition: keywords
+level: low
+"#;
+    let rule = temp_file(".yml", syslog_rule);
+    let syslog_line = "<38>Apr 25 14:30:00 web01 sudo: admin : TTY=pts/0 ; COMMAND=/bin/bash";
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--input-format",
+            "syslog",
+        ])
+        .write_stdin(format!("{syslog_line}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"{"rule_title":"Sudo Usage","rule_id":"00000000-0000-0000-0000-000000000099","level":"low","tags":[],"matched_selections":["keywords"],"matched_fields":[]}"#);
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_auto_format_detects_syslog() {
+    let syslog_rule = r#"
+title: Sudo Usage
+id: 00000000-0000-0000-0000-000000000098
+status: test
+logsource:
+    product: linux
+    service: auth
+detection:
+    keywords:
+        - 'sudo'
+    condition: keywords
+level: low
+"#;
+    let rule = temp_file(".yml", syslog_rule);
+    let syslog_line = "<38>Apr 25 14:30:00 web01 sudo: admin : TTY=pts/0 ; COMMAND=/bin/bash";
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--input-format",
+            "auto",
+        ])
+        .write_stdin(format!("{syslog_line}\n"))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"{"rule_title":"Sudo Usage","rule_id":"00000000-0000-0000-0000-000000000098","level":"low","tags":[],"matched_selections":["keywords"],"matched_fields":[]}"#);
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_plain_input_format() {
+    let plain_rule = r#"
+title: Error Detected
+id: 00000000-0000-0000-0000-000000000097
+status: test
+logsource:
+    category: application
+detection:
+    keywords:
+        - 'CRITICAL ERROR'
+    condition: keywords
+level: high
+"#;
+    let rule = temp_file(".yml", plain_rule);
+
+    let output = rsigma()
+        .args([
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--input-format",
+            "plain",
+        ])
+        .write_stdin("CRITICAL ERROR in module X\n")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"{"rule_title":"Error Detected","rule_id":"00000000-0000-0000-0000-000000000097","level":"high","tags":[],"matched_selections":["keywords"],"matched_fields":[]}"#);
+}
