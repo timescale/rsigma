@@ -119,6 +119,10 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 |----------|------|---------|-------------|
 | `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s), applied in priority order |
+| `--input` | string | `"stdin"` | Event input source: `stdin`, `http`, or `nats://<host>:<port>/<subject>` |
+| `--output` | repeatable | `["stdout"]` | Detection output sink (fan-out): `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>` |
+| `--input-format` | string | `"auto"` | Input log format: `auto`, `json`, `syslog`, `plain`, `logfmt`\*, `cef`\* |
+| `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |
 | `--jq` | string | none | jq filter to extract event payload (conflicts with `--jsonpath`) |
 | `--jsonpath` | string | none | JSONPath (RFC 9535) query (conflicts with `--jq`) |
 | `--include-event` | flag | `false` | Include full event JSON in each detection match |
@@ -130,8 +134,34 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
 | `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
 | `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction |
+| `--buffer-size` | integer | **10000** | Bounded channel capacity for source-to-engine and engine-to-sink queues |
+| `--batch-size` | integer | **1** | Maximum events per engine lock acquisition (reduces mutex overhead under load) |
+| `--drain-timeout` | integer | **5** | Seconds to wait for in-flight events to drain on shutdown |
+| `--dlq` | string | none | Dead-letter queue: `stdout`, `file://<path>`, or `nats://<host>:<port>/<subject>` |
 | `--state-db` | path | none | Path to SQLite database for persisting correlation state across restarts |
 | `--state-save-interval` | integer | **30** | Seconds between periodic state snapshots (only with `--state-db`) |
+| `--clear-state` | flag | `false` | Clear correlation state on startup (conflicts with `--keep-state`) |
+| `--keep-state` | flag | `false` | Force restore correlation state on startup, even during replay (conflicts with `--clear-state`) |
+| `--timestamp-fallback` | string | `"wallclock"` | `wallclock` (substitute current time) or `skip` (omit from correlation) when events lack parseable timestamps |
+
+**NATS flags** (require `daemon-nats` feature):
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--replay-from-sequence` | integer | none | Replay from a specific JetStream stream sequence number |
+| `--replay-from-time` | string | none | Replay from a timestamp (ISO 8601, e.g. `2026-01-15T10:00:00Z`) |
+| `--replay-from-latest` | flag | `false` | Start from the latest message, skipping stream history |
+| `--consumer-group` | string | none | Shared durable consumer name for load balancing across daemon instances (env: `RSIGMA_CONSUMER_GROUP`) |
+| `--nats-creds` | path | none | Credentials file (`.creds`) for JWT + NKey auth (env: `NATS_CREDS`) |
+| `--nats-token` | string | none | Authentication token (env: `NATS_TOKEN`) |
+| `--nats-user` | string | none | Username (requires `--nats-password`, env: `NATS_USER`) |
+| `--nats-password` | string | none | Password (requires `--nats-user`, env: `NATS_PASSWORD`) |
+| `--nats-nkey` | string | none | NKey seed (env: `NATS_NKEY`) |
+| `--nats-tls-cert` | path | none | Client certificate for mutual TLS (requires `--nats-tls-key`) |
+| `--nats-tls-key` | path | none | Client private key for mutual TLS (requires `--nats-tls-cert`) |
+| `--nats-require-tls` | flag | `false` | Require TLS on NATS connections |
+
+\* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
 
 **Usage:**
 
@@ -139,8 +169,57 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 # Basic daemon: stream events, detect, output matches
 hel run | rsigma daemon -r rules/ -p ecs.yml
 
+# Accept events via HTTP POST instead of stdin
+rsigma daemon -r rules/ --input http
+# Then: curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
+
+# NATS JetStream source and sink
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
+
+# Fan-out: write detections to both stdout and a file
+hel run | rsigma daemon -r rules/ --output stdout --output file:///tmp/detections.ndjson
+
+# NATS with authentication (credentials file)
+rsigma daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
+
+# NATS with token auth (via environment variable)
+NATS_TOKEN=secret rsigma daemon -r rules/ --input nats://localhost:4222/events.>
+
+# NATS with mutual TLS
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+  --nats-tls-cert /etc/rsigma/client.pem --nats-tls-key /etc/rsigma/client-key.pem --nats-require-tls
+
+# Dead-letter queue for failed events
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+  --dlq file:///var/log/rsigma-dlq.ndjson
+
+# Replay from a specific stream sequence
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 42
+
+# Replay from a point in time
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
+
+# Start from the latest message, ignoring history
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-latest
+
+# Consumer groups for horizontal scaling
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
+
 # With SQLite state persistence (correlation state survives restarts)
 hel run | rsigma daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db
+
+# Force clear state on startup (ignore any saved state)
+rsigma daemon -r rules/ --state-db ./state.db --clear-state
+
+# Force restore state during replay (forward catch-up scenario)
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+  --state-db ./state.db --replay-from-sequence 1001 --keep-state
+
+# Skip events without timestamps for correlation (forensic replay)
+rsigma daemon -r rules/ --timestamp-fallback skip
+
+# Tune pipeline: micro-batch 64 events per lock, 50K buffer, 10s drain on shutdown
+rsigma daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
 
 # With all options
 rsigma daemon \
@@ -163,6 +242,7 @@ rsigma daemon \
 | `/api/v1/status` | GET | Full daemon status (rules, state entries, counters, uptime) |
 | `/api/v1/rules` | GET | Rule counts and rules path |
 | `/api/v1/reload` | POST | Trigger a manual rule reload |
+| `/api/v1/events` | POST | Ingest events (NDJSON body, one event per line). Only available with `--input http` |
 
 **Hot-reload triggers:**
 
@@ -185,12 +265,23 @@ rsigma daemon \
 | `rsigma_reloads_failed_total` | counter | Failed rule reload attempts |
 | `rsigma_event_processing_seconds` | histogram | Per-event processing latency |
 | `rsigma_uptime_seconds` | gauge | Daemon uptime in seconds |
+| `rsigma_dlq_events_total` | counter | Events routed to the dead-letter queue |
 
 **Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
 
 **State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts. For example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
 
-**Feature flag:** the daemon subcommand requires the `daemon` feature (enabled by default). To build without daemon dependencies: `cargo build --no-default-features`.
+**State restore during replay:** when restarting with a NATS replay flag (`--replay-from-sequence`, `--replay-from-time`, `--replay-from-latest`), the daemon automatically decides whether to restore or clear correlation state based on the replay direction. The last-acked NATS stream sequence and timestamp are stored in SQLite alongside the snapshot. If the replay starts after the stored position (forward catch-up), state is restored safely. If the replay starts at or before the stored position (backward replay or forensic investigation), state is cleared to prevent double-counting. Use `--keep-state` to override the automatic decision and always restore, or `--clear-state` to always start fresh.
+
+**Timestamp fallback:** the `--timestamp-fallback` flag controls how correlation windows handle events without parseable timestamp fields. The default `wallclock` substitutes the current time (suitable for live streaming). The `skip` mode omits the event from correlation state updates while still firing stateless detections, which prevents wall-clock times from corrupting temporal windows during forensic replay of historical data.
+
+**At-least-once delivery:** when using NATS JetStream input, messages are held in an `AckToken` until the sink confirms delivery. If the daemon crashes before acknowledging, NATS redelivers the message after the consumer's `ack_wait` expires.
+
+**Dead-letter queue:** events that fail processing (parse errors, sink delivery failures) are routed to the `--dlq` target instead of being silently discarded. Each DLQ entry is a JSON object containing `original_event`, `error`, and `timestamp`.
+
+**Consumer groups:** the `--consumer-group` flag sets a shared durable consumer name. Multiple daemon instances using the same group pull from a single JetStream consumer, and NATS distributes messages for load balancing. When not specified, the consumer name is derived from the subject.
+
+**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. To build without daemon dependencies: `cargo build --no-default-features`.
 
 ### `eval`: Evaluate events against rules
 
@@ -395,6 +486,8 @@ All subcommands that accept a directory path scan recursively for `.yml` and `.y
 | `rsigma eval -e @path` | NDJSON file | Reads the file line-by-line as NDJSON (same behavior as stdin) |
 | `rsigma eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped. Exits after EOF |
 | `rsigma daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
+| `rsigma daemon --input http` | NDJSON via HTTP POST | Events sent to `POST /api/v1/events`. Stays alive, exposes all APIs |
+| `rsigma daemon --input nats://...` | NATS JetStream | Subscribes to a JetStream subject. At-least-once delivery with deferred ack |
 | `rsigma stdin` | Single YAML document | Parses as Sigma YAML → outputs AST as JSON |
 
 Event filters (`--jq`/`--jsonpath`) are applied to every event regardless of input mode.
@@ -461,6 +554,12 @@ The `event` field is present only when `--include-event` is set.
 |----------|-------|----------|
 | `NO_COLOR` | `lint` only | When set, disables color output regardless of `--color` setting |
 | `RUST_LOG` | `daemon` only | Log level filter (e.g. `info`, `debug`, `rsigma=debug`). Default: `info` |
+| `NATS_CREDS` | `daemon` | NATS credentials file path (alternative to `--nats-creds`) |
+| `NATS_TOKEN` | `daemon` | NATS authentication token (alternative to `--nats-token`) |
+| `NATS_USER` | `daemon` | NATS username (alternative to `--nats-user`) |
+| `NATS_PASSWORD` | `daemon` | NATS password (alternative to `--nats-password`) |
+| `NATS_NKEY` | `daemon` | NATS NKey seed (alternative to `--nats-nkey`) |
+| `RSIGMA_CONSUMER_GROUP` | `daemon` | Consumer group name (alternative to `--consumer-group`) |
 
 ## Exit Codes
 

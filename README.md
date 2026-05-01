@@ -97,6 +97,34 @@ rsigma daemon -r rules/ --input http
 # NATS JetStream source and sink (requires daemon-nats feature)
 rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
 
+# NATS with credentials file authentication
+rsigma daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
+
+# NATS with mutual TLS
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+  --nats-tls-cert client.pem --nats-tls-key client-key.pem --nats-require-tls
+
+# Dead-letter queue for events that fail processing
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --dlq file:///var/log/rsigma-dlq.ndjson
+
+# Replay from a specific stream sequence
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 42
+
+# Replay from a point in time
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
+
+# Replay with automatic state restore (forward catch-up)
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 1001 --state-db state.db
+
+# Force restore correlation state during replay (overrides automatic decision)
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 1 --state-db state.db --keep-state
+
+# Consumer groups for horizontal scaling (multiple instances share workload)
+rsigma daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
+
+# Skip events without timestamps for correlation (useful for forensic replay)
+rsigma daemon -r rules/ --timestamp-fallback skip
+
 # Tune pipeline: micro-batch 64 events per lock, 50K buffer, 10s drain on shutdown
 rsigma daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
 
