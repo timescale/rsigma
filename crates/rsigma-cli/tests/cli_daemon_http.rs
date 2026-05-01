@@ -195,7 +195,10 @@ fn reload_triggers_successfully() {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    assert_eq!(status, 200, "reload should succeed after retries, got {status}");
+    assert_eq!(
+        status, 200,
+        "reload should succeed after retries, got {status}"
+    );
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["status"], "reload_triggered");
 }
