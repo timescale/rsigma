@@ -4,8 +4,9 @@
 //! the daemon binary with `--input nats://... --output nats://...`, publishes
 //! events through NATS, and verifies detection output on NATS subjects.
 //!
-//! IMPORTANT: Core NATS pub/sub is fire-and-forget so the output subscriber
-//! must be created BEFORE events are published to avoid missing messages.
+//! IMPORTANT: The test subscribers use core NATS pub/sub (not JetStream consumers),
+//! which is fire-and-forget, so each output subscriber must be created BEFORE
+//! events are published to avoid missing messages.
 
 #![cfg(feature = "daemon-nats")]
 

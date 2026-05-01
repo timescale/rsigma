@@ -19,3 +19,10 @@ regex = "1"
 ipnet = "2"
 log = "0.4"
 base64 = "0.22"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+insta = "1.46"
