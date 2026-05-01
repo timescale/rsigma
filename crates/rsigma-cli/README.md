@@ -305,6 +305,10 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
 | `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
 | `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction (prepended to the default list) |
+| `--input-format` | string | `"auto"` | Input log format: `auto`, `json`, `syslog`, `plain`, `logfmt`\*, `cef`\* |
+| `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |
+
+\* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
 
 **Basic evaluation:**
 
@@ -386,37 +390,53 @@ Convert Sigma rules into query strings for a specific backend (SQL, SPL, KQL, Lu
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
+| `<rules>` | positional, repeatable | required | Path(s) to Sigma rule file(s) or directory |
 | `--target` / `-t` | string | required | Backend target name (see `list-targets`) |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s) |
 | `--format` / `-f` | string | `"default"` | Output format (see `list-formats`) |
+| `-O` / `--option` | repeatable | `[]` | Backend options as `key=value` pairs (e.g. `-O table=logs -O schema=public`) |
+| `--output` / `-o` | path | stdout | Write output to a file instead of stdout |
+| `--skip-unsupported` / `-s` | flag | `false` | Skip unsupported rules instead of failing |
+| `--without-pipeline` | flag | `false` | Skip pipeline requirement check |
 
 Available backends: `test`, `postgres` (aliases: `postgresql`, `pg`).
 
 ```bash
 # Convert rules using the test backend
-rsigma convert -r rules/ -t test
+rsigma convert rules/ -t test
 
 # Convert with a pipeline and specific output format
-rsigma convert -r rules/ -t test -p pipelines/ecs.yml -f state
+rsigma convert rules/ -t test -p pipelines/ecs.yml -f state
 
 # Convert a single rule
-rsigma convert -r rule.yml -t test
+rsigma convert rule.yml -t test
 
 # Convert to PostgreSQL SQL
-rsigma convert -r rules/ -t postgres
+rsigma convert rules/ -t postgres
 
 # Convert to PostgreSQL with OCSF field mapping (single table)
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml
+rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
 
 # Convert with per-logsource table routing (multi-table)
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
+rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
 
 # Generate PostgreSQL views
-rsigma convert -r rules/ -t postgres -f view
+rsigma convert rules/ -t postgres -f view
 
 # Generate TimescaleDB continuous aggregates
-rsigma convert -r rules/ -t postgres -f continuous_aggregate
+rsigma convert rules/ -t postgres -f continuous_aggregate
+
+# Custom backend options (table, schema, timestamp field, etc.)
+rsigma convert rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+
+# JSONB mode: access fields inside a JSONB column
+rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+
+# Skip rules that the backend does not support
+rsigma convert rules/ -t postgres --skip-unsupported
+
+# Write output to a file
+rsigma convert rules/ -t postgres -o queries.sql
 ```
 
 ### `list-targets`: List available conversion backends
@@ -436,10 +456,10 @@ List the output formats supported by a specific backend.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--target` / `-t` | string | required | Backend target name |
+| `<target>` | positional | required | Backend target name |
 
 ```bash
-rsigma list-formats -t postgres
+rsigma list-formats postgres
 # Output:
 #   default              Plain PostgreSQL SQL
 #   view                 CREATE OR REPLACE VIEW for each rule

@@ -144,40 +144,40 @@ rsigma eval -r rules/ --input-format logfmt < app.log
 rsigma eval -r rules/ --input-format cef < arcsight.log
 
 # Convert rules to backend-native queries
-rsigma convert -r rules/ -t test
+rsigma convert rules/ -t test
 
 # Convert with a processing pipeline and specific output format
-rsigma convert -r rules/ -t test -p pipelines/ecs.yml -f state
+rsigma convert rules/ -t test -p pipelines/ecs.yml -f state
 
 # Convert to PostgreSQL SQL
-rsigma convert -r rules/ -t postgres
+rsigma convert rules/ -t postgres
 
 # Convert to PostgreSQL with OCSF field mapping pipeline (single table)
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml
+rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
 
 # Convert with per-logsource table routing (multi-table)
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
+rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
 
 # Generate PostgreSQL views for each rule
-rsigma convert -r rules/ -t postgres -f view
+rsigma convert rules/ -t postgres -f view
 
 # Generate TimescaleDB continuous aggregates
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f continuous_aggregate
+rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres.yml -f continuous_aggregate
 
 # Custom backend options (table, schema, timestamp field, etc.)
-rsigma convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+rsigma convert rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
 
 # JSONB mode: access fields inside a JSONB column (supports nested paths properly)
-rsigma convert -r rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
 
 # Sliding window correlation format (per-row detection using window functions)
-rsigma convert -r rules/ -t postgres -f sliding_window
+rsigma convert rules/ -t postgres -f sliding_window
 
 # List available conversion backends
 rsigma list-targets
 
 # List available output formats for a backend
-rsigma list-formats -t postgres
+rsigma list-formats postgres
 ```
 
 Or use the library directly:
