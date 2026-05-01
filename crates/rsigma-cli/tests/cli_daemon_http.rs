@@ -102,10 +102,15 @@ fn http_get(url: &str) -> (u16, String) {
 }
 
 fn http_post(url: &str, body: &str) -> (u16, String) {
-    let resp = ureq::post(url).send(body).expect("HTTP POST failed");
-    let status = resp.status().as_u16();
-    let body = resp.into_body().read_to_string().unwrap();
-    (status, body)
+    match ureq::post(url).send(body) {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let body = resp.into_body().read_to_string().unwrap();
+            (status, body)
+        }
+        Err(ureq::Error::StatusCode(code)) => (code, String::new()),
+        Err(e) => panic!("HTTP POST failed: {e}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +183,19 @@ fn reload_triggers_successfully() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let daemon = spawn_http_daemon(rule.path().to_str().unwrap());
 
-    let (status, body) = http_post(&daemon.url("/api/v1/reload"), "");
-    assert_eq!(status, 200);
+    // The file watcher may fill the reload channel on startup (especially on
+    // macOS where FSEvents fires multiple events). Retry until the debounce
+    // drains the channel and a slot opens.
+    let mut status = 0;
+    let mut body = String::new();
+    for _ in 0..10 {
+        (status, body) = http_post(&daemon.url("/api/v1/reload"), "");
+        if status == 200 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert_eq!(status, 200, "reload should succeed after retries, got {status}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["status"], "reload_triggered");
 }
