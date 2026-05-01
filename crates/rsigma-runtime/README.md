@@ -42,6 +42,7 @@ See the [examples](examples/) directory for complete working programs.
 |------|-------------|
 | `logfmt` | Enable logfmt input adapter |
 | `cef` | Enable CEF (ArcSight) input adapter |
+| `evtx` | Enable EVTX (Windows Event Log) input adapter |
 | `nats` | Enable NATS JetStream source and sink |
 
 ## License

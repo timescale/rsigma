@@ -384,6 +384,40 @@ rsigma eval -r rules/ --no-detections < events.ndjson
 rsigma eval -r rules/ --timestamp-field time < events.ndjson
 ```
 
+### Custom rule attributes
+
+Sigma rules can include `rsigma.*` custom attributes to override CLI defaults on a per-rule basis. These attributes are set in the rule YAML under `custom_attributes` (or via pipeline `SetCustomAttribute` transformations) and take precedence over engine-level settings.
+
+| Attribute | Applies to | Description |
+|-----------|-----------|-------------|
+| `rsigma.include_event` | detection rules | `"true"` or `"false"`, include the matched event in detection output |
+| `rsigma.suppress` | correlation rules | Suppression window (e.g. `"5m"`, `"1h"`), overrides `--suppress` |
+| `rsigma.action` | correlation rules | `"alert"` or `"reset"`, overrides `--action` |
+| `rsigma.correlation_event_mode` | correlation rules | `"none"`, `"full"`, or `"refs"`, overrides `--correlation-event-mode` |
+| `rsigma.max_correlation_events` | correlation rules | Integer as string (e.g. `"25"`), overrides `--max-correlation-events` |
+
+Example rule YAML:
+
+```yaml
+title: Brute Force Detection
+logsource:
+    product: okta
+    service: system
+correlation:
+    type: event_count
+    rules: failed_login
+    group-by: actor.displayName
+    timespan: 5m
+    condition:
+        gte: 10
+custom_attributes:
+    rsigma.suppress: "10m"
+    rsigma.action: "reset"
+    rsigma.correlation_event_mode: "refs"
+    rsigma.max_correlation_events: "50"
+level: high
+```
+
 ### `convert`: Convert rules to backend-native queries
 
 Convert Sigma rules into query strings for a specific backend (SQL, SPL, KQL, Lucene, etc.).
@@ -465,6 +499,7 @@ rsigma list-formats postgres
 #   view                 CREATE OR REPLACE VIEW for each rule
 #   timescaledb          TimescaleDB-optimized queries with time_bucket()
 #   continuous_aggregate CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)
+#   sliding_window       Correlation queries using window functions for per-row sliding detection
 ```
 
 ### `condition`: Parse a condition expression
@@ -580,6 +615,24 @@ The `event` field is present only when `--include-event` is set.
 | `NATS_PASSWORD` | `daemon` | NATS password (alternative to `--nats-password`) |
 | `NATS_NKEY` | `daemon` | NATS NKey seed (alternative to `--nats-nkey`) |
 | `RSIGMA_CONSUMER_GROUP` | `daemon` | Consumer group name (alternative to `--consumer-group`) |
+
+## Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `daemon` | **on** | Enables the `daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) |
+| `daemon-nats` | off | Enables NATS JetStream input/output, authentication, replay, and consumer groups (implies `daemon`) |
+| `logfmt` | off | Enables `logfmt` input format in `daemon` and `eval` |
+| `cef` | off | Enables CEF (ArcSight) input format in `daemon` and `eval` |
+| `evtx` | off | Enables EVTX (Windows Event Log) input format |
+
+```bash
+# Build with all features
+cargo build --release --features daemon-nats,logfmt,cef,evtx
+
+# Build without daemon (parser, eval, convert, lint only)
+cargo build --release --no-default-features
+```
 
 ## Exit Codes
 
