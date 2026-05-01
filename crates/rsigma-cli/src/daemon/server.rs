@@ -197,7 +197,8 @@ pub async fn run_daemon(config: DaemonConfig) {
             tracing::error!(addr = %config.api_addr, error = %e, "Failed to bind API server");
             std::process::exit(1);
         });
-    tracing::info!(addr = %config.api_addr, "API server listening");
+    let actual_addr = listener.local_addr().unwrap_or(config.api_addr);
+    tracing::info!(addr = %actual_addr, "API server listening");
 
     // Spawn SIGHUP listener
     let sighup_tx = reload_tx.clone();
