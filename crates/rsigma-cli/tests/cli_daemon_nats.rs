@@ -167,7 +167,10 @@ async fn daemon_nats_single_detection() {
     let output = format!("{nats_url}/e2e.cli.output.single");
 
     let client = async_nats::connect(&nats_url).await.unwrap();
-    let mut output_sub = client.subscribe("e2e.cli.output.single".to_string()).await.unwrap();
+    let mut output_sub = client
+        .subscribe("e2e.cli.output.single".to_string())
+        .await
+        .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
         "daemon",
@@ -182,8 +185,18 @@ async fn daemon_nats_single_detection() {
     ]);
     daemon.wait_for_ready("Sink started");
 
-    publish_and_flush(&client, "e2e.cli.input.single", r#"{"CommandLine":"run malware.exe"}"#).await;
-    publish_and_flush(&client, "e2e.cli.input.single", r#"{"CommandLine":"notepad.exe"}"#).await;
+    publish_and_flush(
+        &client,
+        "e2e.cli.input.single",
+        r#"{"CommandLine":"run malware.exe"}"#,
+    )
+    .await;
+    publish_and_flush(
+        &client,
+        "e2e.cli.input.single",
+        r#"{"CommandLine":"notepad.exe"}"#,
+    )
+    .await;
 
     let msgs = collect_messages(&mut output_sub, 1, Duration::from_secs(10)).await;
     assert_eq!(msgs.len(), 1, "expected 1 detection, got {}", msgs.len());
@@ -201,7 +214,10 @@ async fn daemon_nats_no_match_no_output() {
     let output = format!("{nats_url}/e2e.cli.output.benign");
 
     let client = async_nats::connect(&nats_url).await.unwrap();
-    let mut output_sub = client.subscribe("e2e.cli.output.benign".to_string()).await.unwrap();
+    let mut output_sub = client
+        .subscribe("e2e.cli.output.benign".to_string())
+        .await
+        .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
         "daemon",
@@ -216,11 +232,24 @@ async fn daemon_nats_no_match_no_output() {
     ]);
     daemon.wait_for_ready("Sink started");
 
-    publish_and_flush(&client, "e2e.cli.input.benign", r#"{"CommandLine":"notepad.exe"}"#).await;
-    publish_and_flush(&client, "e2e.cli.input.benign", r#"{"CommandLine":"calc.exe"}"#).await;
+    publish_and_flush(
+        &client,
+        "e2e.cli.input.benign",
+        r#"{"CommandLine":"notepad.exe"}"#,
+    )
+    .await;
+    publish_and_flush(
+        &client,
+        "e2e.cli.input.benign",
+        r#"{"CommandLine":"calc.exe"}"#,
+    )
+    .await;
 
     let msgs = collect_messages(&mut output_sub, 1, Duration::from_secs(3)).await;
-    assert!(msgs.is_empty(), "benign events should produce no output, got: {msgs:?}");
+    assert!(
+        msgs.is_empty(),
+        "benign events should produce no output, got: {msgs:?}"
+    );
 }
 
 #[tokio::test]
@@ -233,7 +262,10 @@ async fn daemon_nats_correlation() {
     let output = format!("{nats_url}/e2e.cli.output.corr");
 
     let client = async_nats::connect(&nats_url).await.unwrap();
-    let mut output_sub = client.subscribe("e2e.cli.output.corr".to_string()).await.unwrap();
+    let mut output_sub = client
+        .subscribe("e2e.cli.output.corr".to_string())
+        .await
+        .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
         "daemon",
@@ -275,8 +307,14 @@ async fn daemon_nats_fanout() {
     let output_b = format!("{nats_url}/e2e.cli.output.fanout.b");
 
     let client = async_nats::connect(&nats_url).await.unwrap();
-    let mut sub_a = client.subscribe("e2e.cli.output.fanout.a".to_string()).await.unwrap();
-    let mut sub_b = client.subscribe("e2e.cli.output.fanout.b".to_string()).await.unwrap();
+    let mut sub_a = client
+        .subscribe("e2e.cli.output.fanout.a".to_string())
+        .await
+        .unwrap();
+    let mut sub_b = client
+        .subscribe("e2e.cli.output.fanout.b".to_string())
+        .await
+        .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
         "daemon",
@@ -293,12 +331,20 @@ async fn daemon_nats_fanout() {
     ]);
     daemon.wait_for_ready("Sink started");
 
-    publish_and_flush(&client, "e2e.cli.input.fanout", r#"{"CommandLine":"malware.exe"}"#).await;
+    publish_and_flush(
+        &client,
+        "e2e.cli.input.fanout",
+        r#"{"CommandLine":"malware.exe"}"#,
+    )
+    .await;
 
     let msgs_a = collect_messages(&mut sub_a, 1, Duration::from_secs(10)).await;
     let msgs_b = collect_messages(&mut sub_b, 1, Duration::from_secs(10)).await;
 
     assert_eq!(msgs_a.len(), 1, "sink A should receive detection");
     assert_eq!(msgs_b.len(), 1, "sink B should receive detection");
-    assert_eq!(msgs_a[0], msgs_b[0], "both sinks should get identical output");
+    assert_eq!(
+        msgs_a[0], msgs_b[0],
+        "both sinks should get identical output"
+    );
 }
