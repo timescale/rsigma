@@ -914,3 +914,137 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_clear_always_skips() {
+        let result = decide_state_restore(
+            StateRestoreMode::ForceClear,
+            Some(SourcePosition {
+                sequence: 100,
+                timestamp: 1000,
+            }),
+            #[cfg(feature = "daemon-nats")]
+            &rsigma_runtime::ReplayPolicy::Resume,
+        );
+        assert!(!result);
+    }
+
+    #[test]
+    fn force_keep_always_restores() {
+        let result = decide_state_restore(
+            StateRestoreMode::ForceKeep,
+            None,
+            #[cfg(feature = "daemon-nats")]
+            &rsigma_runtime::ReplayPolicy::Latest,
+        );
+        assert!(result);
+    }
+
+    #[cfg(feature = "daemon-nats")]
+    mod nats_auto {
+        use super::*;
+        use rsigma_runtime::ReplayPolicy;
+
+        #[test]
+        fn resume_restores() {
+            assert!(decide_state_restore(
+                StateRestoreMode::Auto,
+                None,
+                &ReplayPolicy::Resume,
+            ));
+        }
+
+        #[test]
+        fn latest_skips() {
+            assert!(!decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::Latest,
+            ));
+        }
+
+        #[test]
+        fn forward_sequence_restores() {
+            assert!(decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::FromSequence(101),
+            ));
+        }
+
+        #[test]
+        fn backward_sequence_skips() {
+            assert!(!decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::FromSequence(50),
+            ));
+        }
+
+        #[test]
+        fn equal_sequence_skips() {
+            assert!(!decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::FromSequence(100),
+            ));
+        }
+
+        #[test]
+        fn forward_time_restores() {
+            let future = time::OffsetDateTime::from_unix_timestamp(2000).unwrap();
+            assert!(decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::FromTime(future),
+            ));
+        }
+
+        #[test]
+        fn backward_time_skips() {
+            let past = time::OffsetDateTime::from_unix_timestamp(500).unwrap();
+            assert!(!decide_state_restore(
+                StateRestoreMode::Auto,
+                Some(SourcePosition {
+                    sequence: 100,
+                    timestamp: 1000,
+                }),
+                &ReplayPolicy::FromTime(past),
+            ));
+        }
+
+        #[test]
+        fn no_stored_position_skips_on_replay() {
+            assert!(!decide_state_restore(
+                StateRestoreMode::Auto,
+                None,
+                &ReplayPolicy::FromSequence(42),
+            ));
+        }
+    }
+
+    #[cfg(not(feature = "daemon-nats"))]
+    #[test]
+    fn auto_without_nats_restores() {
+        assert!(decide_state_restore(StateRestoreMode::Auto, None));
+    }
+}

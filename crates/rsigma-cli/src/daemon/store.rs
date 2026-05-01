@@ -159,3 +159,131 @@ impl SqliteStateStore {
         .map_err(|e| format!("spawn_blocking: {e}"))?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn empty_snapshot() -> CorrelationSnapshot {
+        CorrelationSnapshot {
+            version: 1,
+            windows: HashMap::new(),
+            last_alert: HashMap::new(),
+            event_buffers: HashMap::new(),
+            event_ref_buffers: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn round_trip_without_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        let snap = empty_snapshot();
+        store.save(&snap, None).await.unwrap();
+
+        let (loaded, pos) = store.load().await.unwrap().unwrap();
+        assert_eq!(loaded.version, 1);
+        assert!(pos.is_none());
+    }
+
+    #[tokio::test]
+    async fn round_trip_with_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        let snap = empty_snapshot();
+        let pos = SourcePosition {
+            sequence: 42,
+            timestamp: 1714500000,
+        };
+        store.save(&snap, Some(&pos)).await.unwrap();
+
+        let (loaded, loaded_pos) = store.load().await.unwrap().unwrap();
+        assert_eq!(loaded.version, 1);
+        let p = loaded_pos.unwrap();
+        assert_eq!(p.sequence, 42);
+        assert_eq!(p.timestamp, 1714500000);
+    }
+
+    #[tokio::test]
+    async fn position_updates_on_subsequent_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        let snap = empty_snapshot();
+        let pos1 = SourcePosition {
+            sequence: 10,
+            timestamp: 1000,
+        };
+        store.save(&snap, Some(&pos1)).await.unwrap();
+
+        let pos2 = SourcePosition {
+            sequence: 50,
+            timestamp: 5000,
+        };
+        store.save(&snap, Some(&pos2)).await.unwrap();
+
+        let (_, loaded_pos) = store.load().await.unwrap().unwrap();
+        let p = loaded_pos.unwrap();
+        assert_eq!(p.sequence, 50);
+        assert_eq!(p.timestamp, 5000);
+    }
+
+    #[tokio::test]
+    async fn migration_from_old_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Create old-format database without source position columns.
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA journal_mode = WAL;
+                CREATE TABLE rsigma_correlation_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    snapshot TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                "#,
+            )
+            .unwrap();
+            let snap = empty_snapshot();
+            let json = serde_json::to_string(&snap).unwrap();
+            conn.execute(
+                "INSERT INTO rsigma_correlation_state (id, snapshot, updated_at) VALUES (1, ?1, ?2)",
+                rusqlite::params![&json, 1000i64],
+            )
+            .unwrap();
+        }
+
+        // Open with SqliteStateStore, which should auto-migrate.
+        let store = SqliteStateStore::open(&db_path).unwrap();
+        let (loaded, pos) = store.load().await.unwrap().unwrap();
+        assert_eq!(loaded.version, 1);
+        assert!(pos.is_none(), "old rows should have NULL source columns");
+
+        // Saving with position should work on the migrated schema.
+        let new_pos = SourcePosition {
+            sequence: 99,
+            timestamp: 9999,
+        };
+        store.save(&loaded, Some(&new_pos)).await.unwrap();
+        let (_, loaded_pos) = store.load().await.unwrap().unwrap();
+        assert_eq!(loaded_pos.unwrap().sequence, 99);
+    }
+
+    #[tokio::test]
+    async fn empty_database_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        assert!(store.load().await.unwrap().is_none());
+    }
+}
