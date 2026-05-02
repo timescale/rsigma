@@ -217,7 +217,7 @@ fn convert_invalid_target() {
     assert!(!output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
     Unknown target: nonexistent_backend
-    Available targets: postgres, test
+    Available targets: postgres, lynxdb, test
     ");
 }
 
@@ -294,6 +294,7 @@ fn list_targets() {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
     Available conversion targets:
       postgres  - PostgreSQL/TimescaleDB (aliases: postgresql, pg)
+      lynxdb    - LynxDB log analytics engine
       test      - Backend-neutral test backend
     ");
 }
@@ -324,6 +325,6 @@ fn list_formats_invalid_target() {
     assert!(!output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
     Unknown target: nonexistent
-    Available targets: postgres, test
+    Available targets: postgres, lynxdb, test
     ");
 }

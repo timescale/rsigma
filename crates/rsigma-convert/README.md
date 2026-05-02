@@ -17,6 +17,7 @@ The crate provides a generic conversion framework that any backend can plug into
 - **Deferred expressions** through the `DeferredExpression` trait and `DeferredTextExpression` for backends that need post-query appendages (e.g. Splunk `| regex`, `| where`).
 - **Test backend** with `TextQueryTestBackend` and `MandatoryPipelineTestBackend` for backend-neutral foundation testing.
 - **PostgreSQL/TimescaleDB backend** with native `ILIKE`, regex (`~*`), CIDR (`inet`/`cidr`), full-text search (`tsvector`/`tsquery`), JSONB field access, correlation via CTEs and window functions, and TimescaleDB-specific output formats (continuous aggregates, `time_bucket` queries, view generation).
+- **LynxDB backend** generating SPL2-compatible `FROM <index> | search ...` queries with glob wildcards, deferred `| where` clauses for regex and CIDR, `CASE()` case-sensitive matching, and correct parenthesization for LynxDB's non-standard boolean precedence (`NOT > OR > AND`).
 
 ## Backends
 
@@ -24,6 +25,7 @@ The crate provides a generic conversion framework that any backend can plug into
 |---------|-------------|-------------|
 | Test | `test` | Backend-neutral text queries for foundation testing |
 | PostgreSQL | `postgres`, `postgresql`, `pg` | Native PostgreSQL SQL with TimescaleDB support |
+| LynxDB | `lynxdb` | SPL2-compatible search queries for LynxDB log analytics engine |
 
 ## Usage
 
@@ -87,6 +89,61 @@ for result in &output.queries {
         // Output: SELECT * FROM security_events WHERE "CommandLine" ILIKE '%whoami%'
     }
 }
+```
+
+### LynxDB backend
+
+```rust
+use rsigma_parser::parse_sigma_yaml;
+use rsigma_convert::{convert_collection, Backend};
+use rsigma_convert::backends::lynxdb::LynxDbBackend;
+
+let yaml = r#"
+title: Detect Whoami
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+
+let collection = parse_sigma_yaml(yaml).unwrap();
+let backend = LynxDbBackend::new();
+
+let output = convert_collection(&backend, &collection, &[], "default").unwrap();
+for result in &output.queries {
+    for query in &result.queries {
+        println!("{query}");
+        // Output: FROM main | search CommandLine=*"whoami"*
+    }
+}
+```
+
+### LynxDB output formats
+
+| Format | Description |
+|--------|-------------|
+| `default` | Full query with index prefix: `FROM main \| search ...` |
+| `minimal` | Search expression only (no `FROM` prefix), useful for the LynxDB API `q` parameter |
+
+### LynxDB index selection
+
+The target index defaults to `main`. Set it via pipeline state:
+
+```yaml
+# In a pipeline YAML
+transformations:
+  - type: set_state
+    key: index
+    value: security_logs
+```
+
+```bash
+rsigma convert -r rules/ -t lynxdb -p pipeline.yml
+# Output: FROM security_logs | search ...
 ```
 
 ### PostgreSQL output formats
@@ -231,7 +288,7 @@ For text-based query backends (the vast majority), create a `TextQueryConfig` wi
 3. Override specific methods for backend-specific behavior (e.g. deferred regex for Splunk, SQL-specific CIDR handling for PostgreSQL).
 4. Register your backend in the CLI's `get_backend()` registry.
 
-See `backends/test.rs` for a complete reference implementation and `backends/postgres.rs` for a production backend with SQL-specific overrides.
+See `backends/test.rs` for a complete reference implementation, `backends/postgres.rs` for a production backend with SQL-specific overrides, and `backends/lynxdb/` for a `TextQueryConfig`-based backend with deferred expressions and custom precedence handling.
 
 ## PostgreSQL Backend Details
 
@@ -306,6 +363,47 @@ This matches the nested traversal behavior of the evaluation engine (`rsigma-eva
 ```bash
 # Convert rules with JSONB field access against a "data" column
 rsigma convert -r rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+```
+
+## LynxDB Backend Details
+
+The LynxDB backend (`LynxDbBackend`) generates SPL2/Lynx Flow queries for the [LynxDB](https://github.com/proximax-storage/lynxdb) log analytics engine. It produces `FROM <index> | search <predicates>` queries with deferred `| where` clauses for operations that LynxDB's search syntax does not natively support.
+
+| Sigma Modifier | LynxDB Query |
+|----------------|-------------|
+| `contains` | `field=*"value"*` |
+| `startswith` | `field="value"*` |
+| `endswith` | `field=*"value"` |
+| `re` | `\| where field=~"pattern"` (deferred) |
+| `cidr` | `\| where cidrmatch("cidr", field)` (deferred) |
+| `cased` (exact) | `field=CASE("value")` |
+| wildcards (`*`) | `field="va*lue"` (glob) |
+| wildcards (`?`) | `\| where field=~"va.lue"` (deferred, converted to regex) |
+| `exists` | `field=*` |
+| `null` | `NOT field=*` |
+| keywords | `"value"` (unbound search) |
+
+### Boolean precedence
+
+LynxDB's parser uses non-standard boolean operator precedence: `NOT > OR > AND`. This differs from most query languages where AND binds tighter than OR. The backend explicitly parenthesizes AND groups to preserve Sigma's intended logic:
+
+```
+Sigma: A AND B OR C    (intended: (A AND B) OR C)
+Query: (A AND B) OR C  (explicit parens prevent misparse as A AND (B OR C))
+```
+
+### Deferred expressions
+
+Regex patterns, CIDR matches, and single-character wildcard (`?`) patterns cannot be expressed in LynxDB's `search` syntax and are instead emitted as `| where` pipeline stages appended after the search clause:
+
+```
+FROM main | search status=500 | where Path=~"/api/.*"
+```
+
+When a detection contains only deferred expressions, the search clause uses `*` (match all) followed by the deferred stages:
+
+```
+FROM main | search * | where SourceIP=~"^10\.0\." | where cidrmatch("192.168.1.0/24", DestIP)
 ```
 
 ## License

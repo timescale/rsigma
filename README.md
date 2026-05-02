@@ -173,6 +173,15 @@ rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O tim
 # Sliding window correlation format (per-row detection using window functions)
 rsigma convert rules/ -t postgres -f sliding_window
 
+# Convert to LynxDB search queries
+rsigma convert rules/ -t lynxdb
+
+# Convert to LynxDB with a pipeline (custom index)
+rsigma convert rules/ -t lynxdb -p pipeline.yml
+
+# LynxDB minimal format (search expression only, for the API q parameter)
+rsigma convert rules/ -t lynxdb -f minimal
+
 # List available conversion backends
 rsigma list-targets
 
@@ -260,7 +269,7 @@ From there, the AST can go in three directions depending on what you need:
 
 - **Evaluation:** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
 
-- **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. The PostgreSQL/TimescaleDB backend is the primary concrete implementation, generating SQL for historical threat hunting.
+- **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. Concrete implementations include PostgreSQL/TimescaleDB (SQL for historical threat hunting) and LynxDB (SPL2-compatible search queries for log analytics).
 
 - **Editor support:** `rsigma-lsp` provides an LSP server over stdio (via `tower-lsp`) with real-time diagnostics (lint + parse + compile errors), completions, hover documentation, document symbols, and code actions. Works with VSCode, Neovim, Helix, Zed, and any LSP-capable editor.
 
@@ -320,8 +329,9 @@ Feature-gated items are marked with \* in the diagram.
     │                         │   │  backends/ ──>      │   │  Helix, Zed, ...   │
     │  correlation.rs ──>     │   │    TextQueryTest,   │   └────────────────────┘
     │    sliding windows,     │   │    PostgreSQL/      │
-    │    group-by, chaining,  │   │    TimescaleDB      │
-    │    suppression, events  │   └─────────────────────┘
+    │    group-by, chaining,  │   │    TimescaleDB,     │
+    │    suppression, events  │   │    LynxDB           │
+    │                         │   └─────────────────────┘
     │                         │
     │  rsigma.* custom        │
     │    attributes           │

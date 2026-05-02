@@ -11,13 +11,14 @@ fn get_backend(
         "postgres" | "postgresql" | "pg" => {
             Box::new(rsigma_convert::backends::postgres::PostgresBackend::from_options(options))
         }
+        "lynxdb" => Box::new(rsigma_convert::backends::lynxdb::LynxDbBackend::new()),
         "test" => Box::new(rsigma_convert::backends::test::TextQueryTestBackend::new()),
         "test_mandatory_pipeline" => {
             Box::new(rsigma_convert::backends::test::MandatoryPipelineTestBackend::new())
         }
         _ => {
             eprintln!("Unknown target: {target}");
-            eprintln!("Available targets: postgres, test");
+            eprintln!("Available targets: postgres, lynxdb, test");
             process::exit(1);
         }
     }
@@ -100,6 +101,7 @@ pub(crate) fn cmd_convert(
 pub(crate) fn cmd_list_targets() {
     println!("Available conversion targets:");
     println!("  postgres  - PostgreSQL/TimescaleDB (aliases: postgresql, pg)");
+    println!("  lynxdb    - LynxDB log analytics engine");
     println!("  test      - Backend-neutral test backend");
 }
 
