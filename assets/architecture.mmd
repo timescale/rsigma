@@ -28,7 +28,7 @@ flowchart TD
         CBACK["Backend trait\npluggable query generation"]
         CBACK --> CTQC["TextQueryConfig\n~90 fields for text query backends"]
         CTQC --> CWALK["Condition walker\ndeferred exprs · conversion state"]
-        CWALK --> CENDS["backends/\nTextQueryTest · PostgreSQL/TimescaleDB"]
+        CWALK --> CENDS["backends/\nTextQueryTest · PostgreSQL/TimescaleDB\nLynxDB"]
     end
 
     subgraph rsigma-lsp
@@ -44,7 +44,7 @@ flowchart TD
         RINPUT["input/ format adapters:\nJSON · syslog · logfmt* · CEF*\nplain text · auto-detect\nraw line → EventInputDecoded"]
         RINPUT --> RPROC["LogProcessor\nbatch evaluation · ArcSwap hot-reload\nMetricsHook · EventFilter"]
         RPROC --> RENG["RuntimeEngine\nwraps Engine + CorrelationEngine\nwith rule loading"]
-        RENG --> RIO["io/\nEventSource (stdin · HTTP · NATS)\nSink (stdout · file · NATS)"]
+        RENG --> RIO["io/\nEventSource (stdin · HTTP · NATS)\nOTLP* (HTTP + gRPC)\nSink (stdout · file · NATS)"]
     end
 
     YAML -->|"Raw YAML Value"| SERDE
