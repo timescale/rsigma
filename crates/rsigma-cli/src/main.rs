@@ -432,6 +432,30 @@ enum Commands {
         /// Target backend name
         target: String,
     },
+
+    /// List all fields referenced by Sigma rules
+    ///
+    /// Extracts field names from detection blocks, correlation group-by/condition
+    /// fields, filter detections, and rule metadata. Optionally applies pipelines
+    /// to show post-mapping field names.
+    Fields {
+        /// Path to a Sigma rule file or directory of rules
+        #[arg(short, long)]
+        rules: PathBuf,
+
+        /// Processing pipeline YAML file(s) to apply (can be specified multiple times).
+        /// When provided, fields are shown after pipeline transformations.
+        #[arg(short = 'p', long = "pipeline")]
+        pipelines: Vec<PathBuf>,
+
+        /// Exclude fields from filter rules
+        #[arg(long)]
+        no_filters: bool,
+
+        /// Output as JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -642,6 +666,12 @@ fn main() {
         ),
         Commands::ListTargets => commands::cmd_list_targets(),
         Commands::ListFormats { target } => commands::cmd_list_formats(target),
+        Commands::Fields {
+            rules,
+            pipelines,
+            no_filters,
+            json,
+        } => commands::cmd_fields(rules, pipelines, no_filters, json),
     }
 }
 

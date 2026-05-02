@@ -8,7 +8,7 @@ A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detect
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
 | [`rsigma-convert`](crates/rsigma-convert/) | Transform rules into backend-native query strings |
 | [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
-| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, and running a detection daemon |
+| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, field catalog, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 
 > [!TIP]
@@ -176,6 +176,12 @@ rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O tim
 
 # LynxDB search queries
 rsigma convert rules/ -t lynxdb
+
+# List all fields referenced by a ruleset
+rsigma fields -r rules/
+
+# Show fields after pipeline mapping
+rsigma fields -r rules/ -p ecs.yml --json
 
 # List available backends and formats
 rsigma list-targets

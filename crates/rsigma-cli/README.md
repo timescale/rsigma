@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma` is a command-line interface for parsing, validating, linting, evaluating, converting, and running [Sigma](https://github.com/SigmaHQ/sigma) detection rules as a long-running daemon.
+`rsigma` is a command-line interface for parsing, validating, linting, evaluating, converting, inspecting field usage, and running [Sigma](https://github.com/SigmaHQ/sigma) detection rules as a long-running daemon.
 
 This binary is part of the [rsigma workspace].
 
@@ -32,6 +32,9 @@ rsigma convert -r rules/ -t test
 
 # Convert to PostgreSQL SQL
 rsigma convert -r rules/ -t postgres
+
+# List all fields referenced by rules (with optional pipeline mapping)
+rsigma fields -r rules/ -p pipelines/ecs.yml
 
 # List available conversion backends
 rsigma list-targets
@@ -543,6 +546,49 @@ rsigma list-formats postgres
 #   continuous_aggregate CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)
 #   sliding_window       Correlation queries using window functions for per-row sliding detection
 ```
+
+### `fields`: List all fields referenced by Sigma rules
+
+Extract and display every field name referenced across detection rules, correlation rules, filter rules, and rule metadata. Useful for building a field catalog, auditing pipeline coverage, or understanding which fields a ruleset depends on.
+
+When pipelines are provided, fields are shown after pipeline transformations (field name mappings, prefixes, suffixes), so you can verify that your pipeline maps every field your rules need.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | path | required | Path to a Sigma rule file or directory |
+| `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s). When provided, fields are shown after transformations |
+| `--no-filters` | flag | `false` | Exclude fields contributed by filter rules |
+| `--json` | flag | `false` | Output as JSON instead of a table |
+
+**Field sources:** each field is annotated with where it was found:
+
+| Source | Description |
+|--------|-------------|
+| `detection` | Field names from detection block items (`selection`, `filter`, etc.) |
+| `correlation` | `group-by` fields, `condition.field`, and alias mapping values |
+| `filter` | Fields from filter rule detection blocks |
+| `metadata` | Fields listed in the rule's `fields:` metadata section |
+
+```bash
+# List all fields in a ruleset
+rsigma fields -r rules/
+
+# Show fields after ECS pipeline mapping
+rsigma fields -r rules/ -p pipelines/ecs.yml
+
+# Exclude filter-contributed fields
+rsigma fields -r rules/ --no-filters
+
+# JSON output for scripting
+rsigma fields -r rules/ --json
+
+# Pipe JSON to jq for further analysis
+rsigma fields -r rules/ --json | jq '.fields[] | select(.sources[] == "detection") | .field'
+```
+
+**Table output** writes field data to stdout and a summary line to stderr, so you can pipe the table or redirect it without mixing in summary text.
+
+**JSON output** includes a `summary` object (rule/correlation/filter counts, unique fields, pipelines applied), a `fields` array, and when pipelines are applied, a `pipeline_mappings` array showing each field name transformation.
 
 ### `condition`: Parse a condition expression
 
