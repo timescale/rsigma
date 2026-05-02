@@ -5,6 +5,8 @@ pub mod nats_config;
 mod nats_sink;
 #[cfg(feature = "nats")]
 mod nats_source;
+#[cfg(feature = "otlp")]
+pub mod otlp;
 mod stdin;
 mod stdout;
 

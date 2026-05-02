@@ -53,6 +53,9 @@ struct AppState {
     start_time: Instant,
     /// Channel for HTTP event ingestion. Set when --input is http.
     event_tx: Option<mpsc::Sender<RawEvent>>,
+    /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
+    #[cfg(feature = "daemon-otlp")]
+    otlp_event_tx: mpsc::Sender<RawEvent>,
 }
 
 #[derive(Clone)]
@@ -195,6 +198,9 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    #[cfg(feature = "daemon-otlp")]
+    let otlp_event_tx = event_tx.clone();
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -202,6 +208,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_event_tx,
     };
 
     let app = Router::new()
@@ -211,8 +219,12 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/rules", get(list_rules))
         .route("/api/v1/status", get(status))
         .route("/api/v1/reload", post(trigger_reload))
-        .route("/api/v1/events", post(ingest_events))
-        .with_state(app_state);
+        .route("/api/v1/events", post(ingest_events));
+
+    #[cfg(feature = "daemon-otlp")]
+    let app = app.route("/v1/logs", post(otlp_http_logs));
+
+    let app = app.with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(config.api_addr)
         .await
@@ -221,6 +233,21 @@ pub async fn run_daemon(config: DaemonConfig) {
             std::process::exit(1);
         });
     let actual_addr = listener.local_addr().unwrap_or(config.api_addr);
+
+    #[cfg(feature = "daemon-otlp")]
+    let otlp_routes = {
+        let grpc_service = rsigma_runtime::LogsServiceServer::new(OtlpLogsGrpcService {
+            event_tx: event_tx.clone(),
+            metrics: metrics.clone(),
+        })
+        .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
+        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
+        tonic::service::Routes::from(app).add_service(grpc_service)
+    };
+
+    #[cfg(feature = "daemon-otlp")]
+    tracing::info!(addr = %actual_addr, "API server listening (HTTP/2 + gRPC)");
+    #[cfg(not(feature = "daemon-otlp"))]
     tracing::info!(addr = %actual_addr, "API server listening");
 
     // Spawn SIGHUP listener
@@ -301,7 +328,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let (ack_tx, mut ack_rx) = mpsc::channel::<AckToken>(buffer_size);
 
     // Select source based on --input flag
-    let source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
+    #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
+    let mut source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
             let h = spawn_source(
                 StdinSource::new(),
@@ -363,6 +391,20 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    // When a finite source (stdin/NATS) completes but OTLP handlers still hold
+    // event_tx clones, event_rx.recv() would block forever. This notify signals
+    // the engine to close its receiver so it drains remaining events and exits.
+    #[cfg(feature = "daemon-otlp")]
+    let source_done_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    #[cfg(feature = "daemon-otlp")]
+    if let Some(h) = source_handle.take() {
+        let done = source_done_notify.clone();
+        tokio::spawn(async move {
+            let _ = h.await;
+            done.notify_one();
+        });
+    }
+
     // Engine task: reads RawEvents, evaluates rules, sends results + ack tokens
     // to the sink channel. Events with no detections are acked immediately.
     // Parse errors are routed to the DLQ.
@@ -374,14 +416,47 @@ pub async fn run_daemon(config: DaemonConfig) {
     let engine_ack_tx = ack_tx.clone();
     let engine_dlq_tx = dlq_tx.clone();
     let dlq_enabled = config.dlq.is_some();
-    let mut engine_handle = tokio::spawn(async move {
+    #[cfg(feature = "daemon-otlp")]
+    let engine_source_done = source_done_notify;
+    let engine_handle = tokio::spawn(async move {
         let filter_fn = move |v: &serde_json::Value| crate::apply_event_filter(v, &event_filter);
+        #[cfg(feature = "daemon-otlp")]
+        let source_done = engine_source_done;
+        #[cfg(feature = "daemon-otlp")]
+        let mut source_finished = false;
         loop {
             let pipeline_start = std::time::Instant::now();
 
-            let first = match event_rx.recv().await {
-                Some(raw_event) => raw_event,
-                None => break,
+            let first = {
+                #[cfg(feature = "daemon-otlp")]
+                {
+                    if source_finished {
+                        match event_rx.recv().await {
+                            Some(e) => e,
+                            None => break,
+                        }
+                    } else {
+                        tokio::select! {
+                            event = event_rx.recv() => match event {
+                                Some(e) => e,
+                                None => break,
+                            },
+                            _ = source_done.notified() => {
+                                source_finished = true;
+                                event_rx.close();
+                                match event_rx.recv().await {
+                                    Some(e) => e,
+                                    None => break,
+                                }
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(feature = "daemon-otlp"))]
+                match event_rx.recv().await {
+                    Some(raw_event) => raw_event,
+                    None => break,
+                }
             };
             engine_metrics.on_input_queue_depth_change(-1);
 
@@ -542,15 +617,40 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let drain_duration = std::time::Duration::from_secs(config.drain_timeout);
 
-    let shutdown_triggered = tokio::select! {
-        result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "HTTP server error");
+    #[cfg(feature = "daemon-otlp")]
+    let mut serve_handle = {
+        let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+        tokio::spawn(async move {
+            if let Err(e) = tonic::transport::Server::builder()
+                .accept_http1(true)
+                .serve_with_incoming_shutdown(otlp_routes, incoming, async {
+                    tokio::signal::ctrl_c().await.ok();
+                    tracing::info!("Shutdown signal received");
+                })
+                .await
+            {
+                tracing::error!(error = %e, "server error");
             }
-            true
+        })
+    };
+    #[cfg(not(feature = "daemon-otlp"))]
+    let mut serve_handle = tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Shutdown signal received");
+            })
+            .await
+        {
+            tracing::error!(error = %e, "server error");
         }
-        _ = &mut engine_handle => {
+    });
+
+    let shutdown_triggered = tokio::select! {
+        _ = &mut serve_handle => true,
+        _ = engine_handle => {
             tracing::info!("Streaming pipeline complete");
+            serve_handle.abort();
             false
         }
     };
@@ -563,7 +663,6 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
 
         let drain = async {
-            let _ = engine_handle.await;
             let _ = sink_handle.await;
             let _ = dlq_handle.await;
             let _ = ack_handle.await;
@@ -647,13 +746,6 @@ async fn build_sink(
         "Unsupported output sink (supported: stdout, file://<path>, nats://)"
     );
     std::process::exit(1);
-}
-
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for ctrl+c");
-    tracing::info!("Shutdown signal received");
 }
 
 /// Parse a nats:// URL into (server_url, subject).
@@ -913,6 +1005,208 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
         Json(serde_json::json!({ "accepted": accepted })),
     )
         .into_response()
+}
+
+/// Accept OTLP logs via HTTP POST (protobuf or JSON encoding).
+///
+/// Decodes `ExportLogsServiceRequest` from the request body, flattens each
+/// `LogRecord` into a JSON `RawEvent`, and forwards it to the engine pipeline.
+/// Always mounted on `/v1/logs` when the `daemon-otlp` feature is compiled in.
+///
+/// Per the OTLP/HTTP spec, both `application/x-protobuf` and
+/// `application/json` content types are supported. When no Content-Type is
+/// provided, protobuf is assumed (spec default). Gzip content encoding is
+/// supported and transparently decompressed.
+#[cfg(feature = "daemon-otlp")]
+async fn otlp_http_logs(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/x-protobuf");
+
+    let is_proto = content_type.starts_with("application/x-protobuf")
+        || content_type.starts_with("application/protobuf");
+    let is_json = content_type.starts_with("application/json");
+    let encoding = if is_proto { "protobuf" } else { "json" };
+
+    if !is_proto && !is_json {
+        state
+            .metrics
+            .otlp_errors
+            .with_label_values(&["http", "unsupported_content_type"])
+            .inc();
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(serde_json::json!({
+                "error": format!(
+                    "unsupported content-type: {content_type} \
+                     (expected application/x-protobuf or application/json)"
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    let body = match otlp_maybe_decompress(&headers, body) {
+        Ok(b) => b,
+        Err(e) => {
+            state
+                .metrics
+                .otlp_errors
+                .with_label_values(&["http", "decompression"])
+                .inc();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("decompression error: {e}")
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let request = if is_proto {
+        use prost::Message;
+        match rsigma_runtime::ExportLogsServiceRequest::decode(body) {
+            Ok(req) => req,
+            Err(e) => {
+                state
+                    .metrics
+                    .otlp_errors
+                    .with_label_values(&["http", "decode"])
+                    .inc();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("protobuf decode error: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        match serde_json::from_slice::<rsigma_runtime::ExportLogsServiceRequest>(&body) {
+            Ok(req) => req,
+            Err(e) => {
+                state
+                    .metrics
+                    .otlp_errors
+                    .with_label_values(&["http", "decode"])
+                    .inc();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("JSON decode error: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    state
+        .metrics
+        .otlp_requests
+        .with_label_values(&["http", encoding])
+        .inc();
+
+    let raw_events = rsigma_runtime::logs_request_to_raw_events(&request);
+    state
+        .metrics
+        .otlp_log_records
+        .inc_by(raw_events.len() as u64);
+
+    for event in raw_events {
+        if state.otlp_event_tx.send(event).await.is_err() {
+            state
+                .metrics
+                .otlp_errors
+                .with_label_values(&["http", "channel_closed"])
+                .inc();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "event channel closed"
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "partialSuccess": {
+                "rejectedLogRecords": 0,
+                "errorMessage": ""
+            }
+        })),
+    )
+        .into_response()
+}
+
+#[cfg(feature = "daemon-otlp")]
+fn otlp_maybe_decompress(
+    headers: &axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<axum::body::Bytes, std::io::Error> {
+    let content_encoding = headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if content_encoding == "gzip" {
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed)?;
+        Ok(axum::body::Bytes::from(decompressed))
+    } else {
+        Ok(body)
+    }
+}
+
+#[cfg(feature = "daemon-otlp")]
+struct OtlpLogsGrpcService {
+    event_tx: mpsc::Sender<RawEvent>,
+    metrics: Arc<Metrics>,
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[tonic::async_trait]
+impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
+    async fn export(
+        &self,
+        request: tonic::Request<rsigma_runtime::ExportLogsServiceRequest>,
+    ) -> Result<tonic::Response<rsigma_runtime::ExportLogsServiceResponse>, tonic::Status> {
+        self.metrics
+            .otlp_requests
+            .with_label_values(&["grpc", "protobuf"])
+            .inc();
+
+        let raw_events = rsigma_runtime::logs_request_to_raw_events(&request.into_inner());
+        self.metrics
+            .otlp_log_records
+            .inc_by(raw_events.len() as u64);
+
+        for event in raw_events {
+            self.event_tx.send(event).await.map_err(|_| {
+                self.metrics
+                    .otlp_errors
+                    .with_label_values(&["grpc", "channel_closed"])
+                    .inc();
+                tonic::Status::unavailable("event channel closed")
+            })?;
+        }
+
+        Ok(tonic::Response::new(
+            rsigma_runtime::ExportLogsServiceResponse::default(),
+        ))
+    }
 }
 
 #[cfg(test)]

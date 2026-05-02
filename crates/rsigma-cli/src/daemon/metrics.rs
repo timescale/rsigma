@@ -26,6 +26,12 @@ pub struct Metrics {
     pub dlq_events: IntCounter,
     pub detection_matches_by_rule: IntCounterVec,
     pub correlation_matches_by_rule: IntCounterVec,
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_requests: IntCounterVec,
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_log_records: IntCounter,
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_errors: IntCounterVec,
 }
 
 impl Metrics {
@@ -196,6 +202,37 @@ impl Metrics {
             .register(Box::new(correlation_matches_by_rule.clone()))
             .unwrap();
 
+        #[cfg(feature = "daemon-otlp")]
+        let otlp_requests = IntCounterVec::new(
+            Opts::new(
+                "rsigma_otlp_requests_total",
+                "OTLP export requests received",
+            ),
+            &["transport", "encoding"],
+        )
+        .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        let otlp_log_records = IntCounter::with_opts(Opts::new(
+            "rsigma_otlp_log_records_total",
+            "Log records ingested via OTLP",
+        ))
+        .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        let otlp_errors = IntCounterVec::new(
+            Opts::new("rsigma_otlp_errors_total", "OTLP request errors"),
+            &["transport", "reason"],
+        )
+        .unwrap();
+
+        #[cfg(feature = "daemon-otlp")]
+        {
+            registry.register(Box::new(otlp_requests.clone())).unwrap();
+            registry
+                .register(Box::new(otlp_log_records.clone()))
+                .unwrap();
+            registry.register(Box::new(otlp_errors.clone())).unwrap();
+        }
+
         Metrics {
             registry,
             events_processed,
@@ -217,6 +254,12 @@ impl Metrics {
             dlq_events,
             detection_matches_by_rule,
             correlation_matches_by_rule,
+            #[cfg(feature = "daemon-otlp")]
+            otlp_requests,
+            #[cfg(feature = "daemon-otlp")]
+            otlp_log_records,
+            #[cfg(feature = "daemon-otlp")]
+            otlp_errors,
         }
     }
 

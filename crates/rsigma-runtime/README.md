@@ -8,6 +8,7 @@ Streaming runtime for [rsigma](https://github.com/timescale/rsigma) — input fo
 - **`LogProcessor`**: batch evaluation pipeline with atomic engine swap via `ArcSwap`, `MetricsHook` for pluggable metrics, and `EventFilter` for JSON payload extraction.
 - **`RuntimeEngine`**: wraps `Engine` and `CorrelationEngine` with rule loading, reload, and correlation state management.
 - **I/O**: `EventSource` trait (stdin, HTTP, NATS) and `Sink` enum (stdout, file, NATS) with fan-out support.
+- **OTLP**: `LogRecord`-to-JSON conversion for OpenTelemetry log ingestion (feature-gated under `otlp`). Resource and log attributes are flattened for direct Sigma rule matching.
 
 ## Usage
 
@@ -44,6 +45,7 @@ See the [examples](examples/) directory for complete working programs.
 | `cef` | Enable CEF (ArcSight) input adapter |
 | `evtx` | Enable EVTX (Windows Event Log) input adapter |
 | `nats` | Enable NATS JetStream source and sink |
+| `otlp` | Enable OTLP log ingestion types and `LogRecord`-to-JSON conversion |
 
 ## License
 

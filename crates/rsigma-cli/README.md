@@ -243,6 +243,36 @@ rsigma daemon \
 | `/api/v1/rules` | GET | Rule counts and rules path |
 | `/api/v1/reload` | POST | Trigger a manual rule reload |
 | `/api/v1/events` | POST | Ingest events (NDJSON body, one event per line). Only available with `--input http` |
+| `/v1/logs` | POST | OTLP log ingestion (`application/x-protobuf` or `application/json`, gzip supported). Requires `daemon-otlp` feature |
+
+**OTLP log ingestion** (requires `daemon-otlp` feature):
+
+When built with `daemon-otlp`, the daemon accepts [OpenTelemetry Protocol (OTLP)](https://opentelemetry.io/docs/specs/otlp/) log export requests on `/v1/logs` (HTTP) and via gRPC on the same port. The endpoint is always active regardless of `--input`. This lets you point any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) at rsigma for real-time detection.
+
+Both transports support gzip compression. OTLP `LogRecord` fields are flattened to JSON: resource attributes are prefixed with `resource.`, log attributes are unprefixed, and key-value map bodies are flattened to top-level fields for direct Sigma rule matching.
+
+```bash
+# Send OTLP logs via protobuf
+curl -X POST http://localhost:9090/v1/logs \
+  -H 'Content-Type: application/x-protobuf' \
+  --data-binary @export_logs_request.pb
+
+# Send OTLP logs via JSON
+curl -X POST http://localhost:9090/v1/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"resourceLogs":[...]}'
+
+# Grafana Alloy config (forward to rsigma)
+# otelcol.exporter.otlphttp "rsigma" {
+#   client { endpoint = "http://rsigma:9090" }
+# }
+
+# Vector config
+# [sinks.rsigma]
+# type = "http"
+# uri = "http://rsigma:9090/v1/logs"
+# encoding.codec = "native"  # protobuf
+```
 
 **Hot-reload triggers:**
 
@@ -273,6 +303,9 @@ rsigma daemon \
 | `rsigma_back_pressure_events_total` | counter | | Times a source was blocked on a full event channel |
 | `rsigma_uptime_seconds` | gauge | | Daemon uptime in seconds |
 | `rsigma_dlq_events_total` | counter | | Events routed to the dead-letter queue |
+| `rsigma_otlp_requests_total` | counter | `transport`, `encoding` | OTLP export requests received (requires `daemon-otlp`) |
+| `rsigma_otlp_log_records_total` | counter | | Log records ingested via OTLP (requires `daemon-otlp`) |
+| `rsigma_otlp_errors_total` | counter | `transport`, `reason` | OTLP request errors (requires `daemon-otlp`) |
 
 The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Grafana or other Prometheus-based tools. A single PromQL query like `increase(rsigma_detection_matches_by_rule_total[5m]) > 0` produces separate alert instances for each `{rule_title, level}` combination. The aggregate counters (`_total`) remain for lightweight total-throughput monitoring.
 
@@ -290,7 +323,7 @@ The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Gra
 
 **Consumer groups:** the `--consumer-group` flag sets a shared durable consumer name. Multiple daemon instances using the same group pull from a single JetStream consumer, and NATS distributes messages for load balancing. When not specified, the consumer name is derived from the subject.
 
-**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. To build without daemon dependencies: `cargo build --no-default-features`.
+**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. To build without daemon dependencies: `cargo build --no-default-features`.
 
 ### `eval`: Evaluate events against rules
 
@@ -552,6 +585,7 @@ All subcommands that accept a directory path scan recursively for `.yml` and `.y
 | `rsigma daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
 | `rsigma daemon --input http` | NDJSON via HTTP POST | Events sent to `POST /api/v1/events`. Stays alive, exposes all APIs |
 | `rsigma daemon --input nats://...` | NATS JetStream | Subscribes to a JetStream subject. At-least-once delivery with deferred ack |
+| OTLP (any `--input` mode) | OTLP protobuf/JSON via HTTP POST or gRPC | Agents send `ExportLogsServiceRequest` to `/v1/logs` (HTTP) or the gRPC `LogsService/Export` endpoint. Requires `daemon-otlp` feature |
 | `rsigma stdin` | Single YAML document | Parses as Sigma YAML → outputs AST as JSON |
 
 Event filters (`--jq`/`--jsonpath`) are applied to every event regardless of input mode.
@@ -631,13 +665,14 @@ The `event` field is present only when `--include-event` is set.
 |------|---------|-------------|
 | `daemon` | **on** | Enables the `daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) |
 | `daemon-nats` | off | Enables NATS JetStream input/output, authentication, replay, and consumer groups (implies `daemon`) |
+| `daemon-otlp` | off | Enables OTLP log ingestion via HTTP (protobuf/JSON) and gRPC on `/v1/logs` (implies `daemon`) |
 | `logfmt` | off | Enables `logfmt` input format in `daemon` and `eval` |
 | `cef` | off | Enables CEF (ArcSight) input format in `daemon` and `eval` |
 | `evtx` | off | Enables EVTX (Windows Event Log) input format |
 
 ```bash
 # Build with all features
-cargo build --release --features daemon-nats,logfmt,cef,evtx
+cargo build --release --features daemon-nats,daemon-otlp,logfmt,cef,evtx
 
 # Build without daemon (parser, eval, convert, lint only)
 cargo build --release --no-default-features
