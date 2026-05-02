@@ -26,7 +26,7 @@ fn resolve_event_source(event_json: Option<String>) -> EventSource {
             let path = PathBuf::from(&s[1..]);
             if !path.exists() {
                 eprintln!("Event file not found: {}", path.display());
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             }
             EventSource::NdjsonFile(path)
         }
@@ -35,6 +35,7 @@ fn resolve_event_source(event_json: Option<String>) -> EventSource {
     }
 }
 
+/// Returns `true` if any detection or correlation matched.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_eval(
     rules_path: PathBuf,
@@ -52,7 +53,7 @@ pub(crate) fn cmd_eval(
     timestamp_fields: Vec<String>,
     input_format: String,
     syslog_tz: String,
-) {
+) -> bool {
     let collection = crate::load_collection(&rules_path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
     let has_correlations = !collection.correlations.is_empty();
@@ -83,7 +84,7 @@ pub(crate) fn cmd_eval(
             include_event,
             &input_format,
             &syslog_tz,
-        );
+        )
     } else {
         cmd_eval_detection_only(
             collection,
@@ -95,11 +96,11 @@ pub(crate) fn cmd_eval(
             include_event,
             &input_format,
             &syslog_tz,
-        );
+        )
     }
 }
 
-/// Evaluation with correlations (stateful).
+/// Evaluation with correlations (stateful). Returns `true` if any match fired.
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval_with_correlations(
     collection: SigmaCollection,
@@ -112,7 +113,7 @@ fn cmd_eval_with_correlations(
     include_event: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
-) {
+) -> bool {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
     for p in pipelines {
@@ -120,7 +121,7 @@ fn cmd_eval_with_correlations(
     }
     if let Err(e) = engine.add_collection(&collection) {
         eprintln!("Error compiling rules: {e}");
-        process::exit(1);
+        process::exit(crate::exit_code::RULE_ERROR);
     }
 
     eprintln!(
@@ -136,10 +137,11 @@ fn cmd_eval_with_correlations(
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("Invalid JSON event: {e}");
-                    process::exit(1);
+                    process::exit(crate::exit_code::RULE_ERROR);
                 }
             };
 
+            let mut had_matches = false;
             for payload in crate::apply_event_filter(&value, event_filter) {
                 let event = JsonEvent::borrow(&payload);
                 let result = engine.process_event(&event);
@@ -148,6 +150,7 @@ fn cmd_eval_with_correlations(
                 if total == 0 {
                     eprintln!("No matches.");
                 } else {
+                    had_matches = true;
                     for m in &result.detections {
                         crate::print_json(m, pretty);
                     }
@@ -156,11 +159,12 @@ fn cmd_eval_with_correlations(
                     }
                 }
             }
+            had_matches
         }
         EventSource::NdjsonFile(path) => {
             let file = File::open(&path).unwrap_or_else(|e| {
                 eprintln!("Error opening event file '{}': {e}", path.display());
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             });
             let reader = BufReader::new(file);
             let (det_count, corr_count, line_num) = eval_stream_corr(
@@ -174,6 +178,7 @@ fn cmd_eval_with_correlations(
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
             );
+            det_count > 0 || corr_count > 0
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
@@ -188,6 +193,7 @@ fn cmd_eval_with_correlations(
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
             );
+            det_count > 0 || corr_count > 0
         }
     }
 }
@@ -331,7 +337,7 @@ fn eval_line_corr_json(
     }
 }
 
-/// Evaluation without correlations (stateless, original behavior).
+/// Evaluation without correlations (stateless). Returns `true` if any match fired.
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval_detection_only(
     collection: SigmaCollection,
@@ -343,7 +349,7 @@ fn cmd_eval_detection_only(
     include_event: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
-) {
+) -> bool {
     let mut engine = Engine::new();
     engine.set_include_event(include_event);
     for p in pipelines {
@@ -351,7 +357,7 @@ fn cmd_eval_detection_only(
     }
     if let Err(e) = engine.add_collection(&collection) {
         eprintln!("Error compiling rules: {e}");
-        process::exit(1);
+        process::exit(crate::exit_code::RULE_ERROR);
     }
 
     eprintln!(
@@ -366,10 +372,11 @@ fn cmd_eval_detection_only(
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("Invalid JSON event: {e}");
-                    process::exit(1);
+                    process::exit(crate::exit_code::RULE_ERROR);
                 }
             };
 
+            let mut had_matches = false;
             let payloads = crate::apply_event_filter(&value, event_filter);
             if payloads.is_empty() {
                 eprintln!("No matches.");
@@ -381,17 +388,19 @@ fn cmd_eval_detection_only(
                     if matches.is_empty() {
                         eprintln!("No matches.");
                     } else {
+                        had_matches = true;
                         for m in &matches {
                             crate::print_json(m, pretty);
                         }
                     }
                 }
             }
+            had_matches
         }
         EventSource::NdjsonFile(path) => {
             let file = File::open(&path).unwrap_or_else(|e| {
                 eprintln!("Error opening event file '{}': {e}", path.display());
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             });
             let reader = BufReader::new(file);
             let (match_count, line_num) = eval_stream_detect(
@@ -403,6 +412,7 @@ fn cmd_eval_detection_only(
                 syslog_tz_str,
             );
             eprintln!("Processed {line_num} events, {match_count} matches.");
+            match_count > 0
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
@@ -415,6 +425,7 @@ fn cmd_eval_detection_only(
                 syslog_tz_str,
             );
             eprintln!("Processed {line_num} events, {match_count} matches.");
+            match_count > 0
         }
     }
 }

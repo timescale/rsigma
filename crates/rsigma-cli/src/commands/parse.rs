@@ -12,7 +12,7 @@ pub(crate) fn cmd_parse(path: PathBuf, pretty: bool) {
         }
         Err(e) => {
             eprintln!("Error parsing {}: {e}", path.display());
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 }
@@ -22,7 +22,7 @@ pub(crate) fn cmd_condition(expr: String) {
         Ok(ast) => crate::print_json(&ast, true),
         Err(e) => {
             eprintln!("Condition parse error: {e}");
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 }
@@ -31,7 +31,7 @@ pub(crate) fn cmd_stdin(pretty: bool) {
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
         eprintln!("Error reading stdin: {e}");
-        process::exit(1);
+        process::exit(crate::exit_code::RULE_ERROR);
     }
 
     match parse_sigma_yaml(&input) {
@@ -41,7 +41,7 @@ pub(crate) fn cmd_stdin(pretty: bool) {
         }
         Err(e) => {
             eprintln!("Parse error: {e}");
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 }

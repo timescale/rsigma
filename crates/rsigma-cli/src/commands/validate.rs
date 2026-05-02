@@ -60,12 +60,12 @@ pub(crate) fn cmd_validate(path: PathBuf, verbose: bool, pipeline_paths: Vec<Pat
             }
 
             if parse_errors > 0 || !compile_errors.is_empty() {
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             }
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 }

@@ -93,7 +93,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let state_store = config.state_db.as_ref().map(|path| {
         let store = SqliteStateStore::open(path).unwrap_or_else(|e| {
             tracing::error!(error = %e, path = %path.display(), "Failed to open state database");
-            std::process::exit(1);
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
         });
         tracing::info!(path = %path.display(), "State database opened");
         Arc::new(store)
@@ -126,7 +126,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to load initial rules");
-            std::process::exit(1);
+            std::process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 
@@ -230,7 +230,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .await
         .unwrap_or_else(|e| {
             tracing::error!(addr = %config.api_addr, error = %e, "Failed to bind API server");
-            std::process::exit(1);
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
         });
     let actual_addr = listener.local_addr().unwrap_or(config.api_addr);
 
@@ -368,7 +368,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, url = url, "Failed to connect NATS source");
-                    std::process::exit(1);
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
                 }
             }
         }
@@ -377,7 +377,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 input = other,
                 "Unsupported input source (supported: stdin, http, nats://)"
             );
-            std::process::exit(1);
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
     };
 
@@ -719,7 +719,7 @@ async fn build_sink(
             }
             Err(e) => {
                 tracing::error!(path = %path.display(), error = %e, "Failed to open file sink");
-                std::process::exit(1);
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
             }
         };
     }
@@ -736,7 +736,7 @@ async fn build_sink(
             }
             Err(e) => {
                 tracing::error!(error = %e, url = url, "Failed to connect NATS sink");
-                std::process::exit(1);
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
             }
         };
     }
@@ -745,7 +745,7 @@ async fn build_sink(
         output = spec,
         "Unsupported output sink (supported: stdout, file://<path>, nats://)"
     );
-    std::process::exit(1);
+    std::process::exit(crate::exit_code::CONFIG_ERROR);
 }
 
 /// Parse a nats:// URL into (server_url, subject).

@@ -87,6 +87,7 @@ Run 66 built-in lint rules with optional JSON schema validation.
 | `--config` | path | none | Explicit path to `.rsigma-lint.yml` (otherwise auto-discovered by walking ancestor directories) |
 | `--exclude` | string | none | Glob pattern for paths to skip (repeatable, relative to lint root) |
 | `--fix` | flag | `false` | Automatically apply safe fixes (lowercase keys, correct typos, remove duplicates, etc.) |
+| `--fail-level` | string | `"error"` | Minimum severity for non-zero exit: `error` (default), `warning`, or `info` |
 
 ```bash
 rsigma lint path/to/rules/                     # lint all rules
@@ -99,6 +100,8 @@ rsigma lint rules/ --config my-lint.yml        # explicit config file
 rsigma lint rules/ --exclude "config/**"       # skip non-rule files
 rsigma lint rules/ --exclude "config/**" --exclude "**/unsupported/**"  # multiple patterns
 rsigma lint rules/ --fix                       # auto-fix safe issues
+rsigma lint rules/ --fail-level warning        # CI: fail on warnings too
+rsigma lint rules/ --fail-level info           # CI: fail on any finding
 ```
 
 **Lint output summary format:**
@@ -352,6 +355,7 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction (prepended to the default list) |
 | `--input-format` | string | `"auto"` | Input log format: `auto`, `json`, `syslog`, `plain`, `logfmt`\*, `cef`\* |
 | `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |
+| `--fail-on-detection` | flag | `false` | Exit with code 1 when any detection or correlation fires. Useful for CI/CD pipelines |
 
 \* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
 
@@ -728,8 +732,27 @@ cargo build --release --no-default-features
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success (no errors found for lint; matches may or may not exist for eval) |
-| `1` | Error: parse failure, validation error, lint errors found, missing required argument, invalid argument value |
+| `0` | Success. For `eval`: events processed (detections may or may not have fired, unless `--fail-on-detection` is set). For `lint`: no findings at the configured `--fail-level`. For `validate`: all rules parsed and compiled. |
+| `1` | Findings. For `eval --fail-on-detection`: at least one detection or correlation fired. For `lint`: at least one finding at or above `--fail-level` severity. |
+| `2` | Rule error. A Sigma rule could not be parsed, compiled, or converted. |
+| `3` | Configuration error. A pipeline file could not be loaded, a CLI argument was invalid, or the tool was otherwise misconfigured. |
+
+### CI/CD flags
+
+Use `--fail-on-detection` with `eval` to fail a CI pipeline when a detection rule matches:
+
+```bash
+rsigma eval -r rules/ --fail-on-detection -e @test-events.ndjson
+echo $?  # 0 = no detections, 1 = detections fired, 2 = rule error, 3 = config error
+```
+
+Use `--fail-level` with `lint` to control the minimum severity that triggers a non-zero exit:
+
+```bash
+rsigma lint rules/ --fail-level warning   # exit 1 on warnings or errors
+rsigma lint rules/ --fail-level info      # exit 1 on any finding
+rsigma lint rules/                        # default: exit 1 only on errors
+```
 
 ## License
 
