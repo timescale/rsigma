@@ -6,6 +6,13 @@ use std::time::SystemTime;
 use rsigma_parser::lint::{self, FileLintResult, LintConfig};
 use serde::Deserialize;
 
+/// Counts returned by `cmd_lint` so the caller can decide the exit code.
+pub(crate) struct LintCounts {
+    pub errors: usize,
+    pub warnings: usize,
+    pub infos: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_lint(
     path: PathBuf,
@@ -16,7 +23,7 @@ pub(crate) fn cmd_lint(
     lint_config_path: Option<PathBuf>,
     exclude: Vec<String>,
     apply_fix: bool,
-) {
+) -> LintCounts {
     let p = Painter::new(color);
 
     // 0. Build lint config from file + CLI flags
@@ -28,7 +35,7 @@ pub(crate) fn cmd_lint(
             Ok(r) => r,
             Err(e) => {
                 eprintln!("Error: {e}");
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             }
         }
     } else {
@@ -36,7 +43,7 @@ pub(crate) fn cmd_lint(
             Ok(r) => vec![r],
             Err(e) => {
                 eprintln!("Error: {e}");
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             }
         }
     };
@@ -181,8 +188,10 @@ pub(crate) fn cmd_lint(
         }
     }
 
-    if total_errors > 0 {
-        process::exit(1);
+    LintCounts {
+        errors: total_errors,
+        warnings: total_warnings,
+        infos: total_infos,
     }
 }
 
@@ -224,7 +233,7 @@ fn resolve_schema(schema_arg: &str) -> String {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error reading schema file '{schema_arg}': {e}");
-                process::exit(1);
+                process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
     }
@@ -257,7 +266,7 @@ fn resolve_default_schema() -> String {
         Ok(response) => {
             let body = response.into_body().read_to_string().unwrap_or_else(|e| {
                 eprintln!("Error reading schema response: {e}");
-                process::exit(1);
+                process::exit(crate::exit_code::CONFIG_ERROR);
             });
 
             // Cache it
@@ -278,7 +287,7 @@ fn resolve_default_schema() -> String {
                 content
             } else {
                 eprintln!("Error downloading schema: {e}");
-                process::exit(1);
+                process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
     }
@@ -291,13 +300,13 @@ fn run_schema_validation(path: &std::path::Path, schema_arg: &str) -> Vec<FileLi
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error parsing schema JSON: {e}");
-            process::exit(1);
+            process::exit(crate::exit_code::CONFIG_ERROR);
         }
     };
 
     let validator = jsonschema::validator_for(&schema_value).unwrap_or_else(|e| {
         eprintln!("Error compiling JSON schema: {e}");
-        process::exit(1);
+        process::exit(crate::exit_code::CONFIG_ERROR);
     });
 
     let mut results = Vec::new();
@@ -444,7 +453,7 @@ fn build_lint_config(
             }
             Err(e) => {
                 eprintln!("Error loading lint config '{}': {e}", explicit.display());
-                process::exit(1);
+                process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
     } else if let Some(found) = LintConfig::find_in_ancestors(path) {

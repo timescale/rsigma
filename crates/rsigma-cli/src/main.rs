@@ -1,6 +1,7 @@
 mod commands;
 #[cfg(feature = "daemon")]
 mod daemon;
+pub(crate) mod exit_code;
 mod fix;
 
 use std::path::PathBuf;
@@ -106,6 +107,14 @@ enum Commands {
         /// Applies format-preserving fixes to files on disk.
         #[arg(long)]
         fix: bool,
+
+        /// Minimum severity that causes a non-zero exit code.
+        /// 'error' (default): exit 1 only when errors are found.
+        /// 'warning': exit 1 when warnings or errors are found.
+        /// 'info': exit 1 when any findings (info, warning, error) are found.
+        #[arg(long = "fail-level", default_value = "error",
+               value_parser = ["error", "warning", "info"])]
+        fail_level: String,
     },
 
     /// Run as a long-running daemon with hot-reload, health checks, and metrics
@@ -388,6 +397,11 @@ enum Commands {
         /// Only used when --input-format is syslog or auto. Defaults to UTC.
         #[arg(long = "syslog-tz", default_value = "+00:00")]
         syslog_tz: String,
+
+        /// Exit with code 1 when any detection or correlation fires.
+        /// Useful in CI/CD pipelines to fail a build on detection.
+        #[arg(long = "fail-on-detection")]
+        fail_on_detection: bool,
     },
 
     /// Convert Sigma rules to backend-native queries
@@ -534,7 +548,7 @@ fn main() {
                     time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
                         .unwrap_or_else(|e| {
                             eprintln!("Invalid --replay-from-time '{ts}': {e}");
-                            process::exit(1);
+                            process::exit(exit_code::CONFIG_ERROR);
                         });
                 rsigma_runtime::ReplayPolicy::FromTime(t)
             } else if replay_from_latest {
@@ -600,16 +614,27 @@ fn main() {
             lint_config,
             exclude,
             fix: apply_fix,
-        } => commands::cmd_lint(
-            path,
-            schema,
-            verbose,
-            &color,
-            disable,
-            lint_config,
-            exclude,
-            apply_fix,
-        ),
+            fail_level,
+        } => {
+            let counts = commands::cmd_lint(
+                path,
+                schema,
+                verbose,
+                &color,
+                disable,
+                lint_config,
+                exclude,
+                apply_fix,
+            );
+            let should_fail = match fail_level.as_str() {
+                "info" => counts.errors > 0 || counts.warnings > 0 || counts.infos > 0,
+                "warning" => counts.errors > 0 || counts.warnings > 0,
+                _ => counts.errors > 0,
+            };
+            if should_fail {
+                process::exit(exit_code::FINDINGS);
+            }
+        }
         Commands::Condition { expr } => commands::cmd_condition(expr),
         Commands::Stdin { pretty } => commands::cmd_stdin(pretty),
         Commands::Eval {
@@ -628,23 +653,29 @@ fn main() {
             timestamp_fields,
             input_format,
             syslog_tz,
-        } => commands::cmd_eval(
-            rules,
-            event,
-            pretty,
-            pipelines,
-            jq,
-            jsonpath,
-            suppress,
-            action,
-            no_detections,
-            include_event,
-            correlation_event_mode,
-            max_correlation_events,
-            timestamp_fields,
-            input_format,
-            syslog_tz,
-        ),
+            fail_on_detection,
+        } => {
+            let had_matches = commands::cmd_eval(
+                rules,
+                event,
+                pretty,
+                pipelines,
+                jq,
+                jsonpath,
+                suppress,
+                action,
+                no_detections,
+                include_event,
+                correlation_event_mode,
+                max_correlation_events,
+                timestamp_fields,
+                input_format,
+                syslog_tz,
+            );
+            if fail_on_detection && had_matches {
+                process::exit(exit_code::FINDINGS);
+            }
+        }
         Commands::Convert {
             rules,
             target,
@@ -749,7 +780,7 @@ fn cmd_daemon(
 
     let addr: std::net::SocketAddr = api_addr.parse().unwrap_or_else(|e| {
         eprintln!("Invalid API address '{api_addr}': {e}");
-        process::exit(1);
+        process::exit(exit_code::CONFIG_ERROR);
     });
 
     #[cfg(feature = "daemon-nats")]
@@ -796,7 +827,7 @@ fn cmd_daemon(
         .build()
         .unwrap_or_else(|e| {
             eprintln!("Failed to create Tokio runtime: {e}");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         });
 
     rt.block_on(daemon::run_daemon(config));
@@ -816,7 +847,7 @@ pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
             }
             Err(e) => {
                 eprintln!("Error loading pipeline {}: {e}", path.display());
-                process::exit(1);
+                process::exit(exit_code::CONFIG_ERROR);
             }
         }
     }
@@ -830,7 +861,7 @@ pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Error loading rules from {}: {e}", path.display());
-                process::exit(1);
+                process::exit(exit_code::RULE_ERROR);
             }
         }
     } else {
@@ -838,7 +869,7 @@ pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Error loading rule {}: {e}", path.display());
-                process::exit(1);
+                process::exit(exit_code::RULE_ERROR);
             }
         }
     };
@@ -872,7 +903,7 @@ pub(crate) fn print_json(value: &impl serde::Serialize, pretty: bool) {
         Ok(j) => println!("{j}"),
         Err(e) => {
             eprintln!("JSON serialization error: {e}");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         }
     }
 }
@@ -908,7 +939,7 @@ pub(crate) fn parse_input_format(format_str: &str, syslog_tz: &str) -> rsigma_ru
             eprintln!("  (with logfmt feature): logfmt");
             #[cfg(feature = "cef")]
             eprintln!("  (with cef feature): cef");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         }
     }
 }
@@ -927,22 +958,22 @@ fn parse_tz_offset(s: &str) -> i32 {
         (-1i32, rest)
     } else {
         eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
-        process::exit(1);
+        process::exit(exit_code::CONFIG_ERROR);
     };
 
     let parts: Vec<&str> = rest.split(':').collect();
     if parts.len() != 2 {
         eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
-        process::exit(1);
+        process::exit(exit_code::CONFIG_ERROR);
     }
 
     let hours: i32 = parts[0].parse().unwrap_or_else(|_| {
         eprintln!("Invalid timezone offset hours: '{}'", parts[0]);
-        process::exit(1);
+        process::exit(exit_code::CONFIG_ERROR);
     });
     let minutes: i32 = parts[1].parse().unwrap_or_else(|_| {
         eprintln!("Invalid timezone offset minutes: '{}'", parts[1]);
-        process::exit(1);
+        process::exit(exit_code::CONFIG_ERROR);
     });
 
     sign * (hours * 3600 + minutes * 60)
@@ -970,16 +1001,16 @@ pub(crate) fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -
         let (parsed, errs) = jaq_parse::parse(&jq_expr, jaq_parse::main());
         if !errs.is_empty() {
             eprintln!("Invalid jq filter: {:?}", errs);
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         }
         let Some(parsed) = parsed else {
             eprintln!("Invalid jq filter: failed to parse '{jq_expr}'");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         };
         let filter = defs.compile(parsed);
         if !defs.errs.is_empty() {
             eprintln!("jq compilation errors ({} error(s))", defs.errs.len());
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         }
         EventFilter::Jq(filter)
     } else if let Some(jp_expr) = jsonpath {
@@ -988,7 +1019,7 @@ pub(crate) fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -
             Ok(path) => EventFilter::JsonPath(path),
             Err(e) => {
                 eprintln!("Invalid JSONPath: {e}");
-                process::exit(1);
+                process::exit(exit_code::CONFIG_ERROR);
             }
         }
     } else {
@@ -1010,7 +1041,7 @@ pub(crate) fn build_correlation_config(
         Ok(ts) => ts.seconds,
         Err(e) => {
             eprintln!("Invalid suppress duration '{s}': {e}");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         }
     });
 
@@ -1018,7 +1049,7 @@ pub(crate) fn build_correlation_config(
         .map(|s| {
             s.parse::<CorrelationAction>().unwrap_or_else(|e| {
                 eprintln!("{e}");
-                process::exit(1);
+                process::exit(exit_code::CONFIG_ERROR);
             })
         })
         .unwrap_or_default();
@@ -1027,7 +1058,7 @@ pub(crate) fn build_correlation_config(
         .parse::<CorrelationEventMode>()
         .unwrap_or_else(|e| {
             eprintln!("{e}");
-            process::exit(1);
+            process::exit(exit_code::CONFIG_ERROR);
         });
 
     let ts_fallback = match timestamp_fallback {

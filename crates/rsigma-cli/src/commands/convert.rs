@@ -19,7 +19,7 @@ fn get_backend(
         _ => {
             eprintln!("Unknown target: {target}");
             eprintln!("Available targets: postgres, lynxdb, test");
-            process::exit(1);
+            process::exit(crate::exit_code::CONFIG_ERROR);
         }
     }
 }
@@ -52,7 +52,7 @@ pub(crate) fn cmd_convert(
             "Backend '{}' requires a pipeline. Use -p or --without-pipeline.",
             target
         );
-        process::exit(1);
+        process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
     if !backend.formats().iter().any(|(f, _)| *f == format) {
@@ -66,7 +66,7 @@ pub(crate) fn cmd_convert(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        process::exit(1);
+        process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
     let result =
@@ -81,7 +81,7 @@ pub(crate) fn cmd_convert(
                 }
             }
             if !skip_unsupported && !output_data.errors.is_empty() {
-                process::exit(1);
+                process::exit(crate::exit_code::RULE_ERROR);
             }
             let all_queries: Vec<&str> = output_data
                 .queries
@@ -93,7 +93,7 @@ pub(crate) fn cmd_convert(
         }
         Err(e) => {
             eprintln!("Conversion failed: {e}");
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
 }
@@ -125,7 +125,7 @@ fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
                 }
                 Err(e) => {
                     eprintln!("Error parsing directory {}: {e}", path.display());
-                    process::exit(1);
+                    process::exit(crate::exit_code::RULE_ERROR);
                 }
             }
         } else if path.is_file() {
@@ -137,17 +137,17 @@ fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
                 }
                 Err(e) => {
                     eprintln!("Error parsing {}: {e}", path.display());
-                    process::exit(1);
+                    process::exit(crate::exit_code::RULE_ERROR);
                 }
             }
         } else {
             eprintln!("Path not found: {}", path.display());
-            process::exit(1);
+            process::exit(crate::exit_code::RULE_ERROR);
         }
     }
     if collection.rules.is_empty() && collection.correlations.is_empty() {
         eprintln!("No rules found in specified path(s)");
-        process::exit(1);
+        process::exit(crate::exit_code::RULE_ERROR);
     }
     collection
 }
@@ -157,7 +157,7 @@ fn write_output(content: &str, output: Option<&std::path::Path>) {
         Some(path) => {
             if let Err(e) = std::fs::write(path, content) {
                 eprintln!("Error writing to {}: {e}", path.display());
-                process::exit(1);
+                process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
         None => println!("{content}"),
