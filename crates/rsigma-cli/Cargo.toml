@@ -13,7 +13,7 @@ homepage.workspace = true
 default = ["daemon"]
 daemon = ["rsigma-runtime", "tokio", "axum", "prometheus", "notify", "rusqlite"]
 daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time"]
-daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2"]
+daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2", "tokio-stream"]
 logfmt = ["rsigma-runtime/logfmt"]
 cef = ["rsigma-runtime/cef"]
 evtx = ["rsigma-runtime/evtx"]
@@ -65,3 +65,6 @@ testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["nats"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 serde_json = "1"
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic", "logs", "with-serde"] }
+prost = "0.14"
+flate2 = "1"

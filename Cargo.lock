@@ -3532,6 +3532,7 @@ dependencies = [
  "jaq-parse",
  "jsonschema",
  "notify",
+ "opentelemetry-proto",
  "predicates",
  "prometheus",
  "prost",

@@ -226,32 +226,27 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let app = app.with_state(app_state);
 
-    #[cfg(feature = "daemon-otlp")]
-    let tonic_router = {
-        let grpc_service = rsigma_runtime::LogsServiceServer::new(OtlpLogsGrpcService {
-            event_tx: event_tx.clone(),
-            metrics: metrics.clone(),
-        })
-        .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
-        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
-        let routes = tonic::service::Routes::from(app).add_service(grpc_service);
-        let mut server = tonic::transport::Server::builder();
-        server.add_routes(routes)
-    };
-
-    #[cfg(not(feature = "daemon-otlp"))]
     let listener = tokio::net::TcpListener::bind(config.api_addr)
         .await
         .unwrap_or_else(|e| {
             tracing::error!(addr = %config.api_addr, error = %e, "Failed to bind API server");
             std::process::exit(1);
         });
-
-    #[cfg(not(feature = "daemon-otlp"))]
     let actual_addr = listener.local_addr().unwrap_or(config.api_addr);
 
     #[cfg(feature = "daemon-otlp")]
-    tracing::info!(addr = %config.api_addr, "API server listening (HTTP/2 + gRPC)");
+    let otlp_routes = {
+        let grpc_service = rsigma_runtime::LogsServiceServer::new(OtlpLogsGrpcService {
+            event_tx: event_tx.clone(),
+            metrics: metrics.clone(),
+        })
+        .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
+        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
+        tonic::service::Routes::from(app).add_service(grpc_service)
+    };
+
+    #[cfg(feature = "daemon-otlp")]
+    tracing::info!(addr = %actual_addr, "API server listening (HTTP/2 + gRPC)");
     #[cfg(not(feature = "daemon-otlp"))]
     tracing::info!(addr = %actual_addr, "API server listening");
 
@@ -575,7 +570,12 @@ pub async fn run_daemon(config: DaemonConfig) {
     let drain_duration = std::time::Duration::from_secs(config.drain_timeout);
 
     #[cfg(feature = "daemon-otlp")]
-    let serve_future = tonic_router.serve_with_shutdown(config.api_addr, shutdown_signal());
+    let serve_future = {
+        let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+        tonic::transport::Server::builder()
+            .accept_http1(true)
+            .serve_with_incoming_shutdown(otlp_routes, incoming, shutdown_signal())
+    };
     #[cfg(not(feature = "daemon-otlp"))]
     let serve_future = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
 
