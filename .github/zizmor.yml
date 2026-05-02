@@ -1,0 +1,6 @@
+rules:
+  superfluous-actions:
+    ignore:
+      - audit.yml
+      - ci.yml
+      - publish.yml
