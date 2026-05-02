@@ -260,3 +260,31 @@ fn ingest_updates_status_counters() {
         "detection_matches should be at least 1 for matching event"
     );
 }
+
+#[test]
+fn metrics_include_per_rule_labels_after_detection() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let daemon = spawn_http_daemon(rule.path().to_str().unwrap());
+
+    http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"CommandLine":"malware.exe"}"#,
+    );
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    let (status, body) = http_get(&daemon.url("/metrics"));
+    assert_eq!(status, 200);
+    assert!(
+        body.contains("rsigma_detection_matches_by_rule_total"),
+        "metrics should contain per-rule detection counter"
+    );
+    assert!(
+        body.contains(r#"rule_title="Test Rule""#),
+        "metrics should contain rule_title label"
+    );
+    assert!(
+        body.contains(r#"level="high""#),
+        "metrics should contain level label"
+    );
+}

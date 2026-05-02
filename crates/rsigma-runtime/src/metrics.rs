@@ -24,6 +24,17 @@ pub trait MetricsHook: Send + Sync {
     fn observe_pipeline_latency(&self, seconds: f64);
     /// Report current correlation state entry count.
     fn set_correlation_state_entries(&self, count: u64);
+
+    /// A single detection rule matched. Labels enable per-rule Prometheus counters.
+    fn on_detection_match_detail(&self, _rule_title: &str, _level: &str) {}
+    /// A single correlation rule matched. Labels enable per-rule Prometheus counters.
+    fn on_correlation_match_detail(
+        &self,
+        _rule_title: &str,
+        _level: &str,
+        _correlation_type: &str,
+    ) {
+    }
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

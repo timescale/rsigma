@@ -1,5 +1,6 @@
 use prometheus::{
-    Gauge, Histogram, HistogramOpts, IntCounter, IntGauge, Opts, Registry, TextEncoder,
+    Gauge, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
+    TextEncoder,
 };
 use rsigma_runtime::MetricsHook;
 
@@ -23,6 +24,8 @@ pub struct Metrics {
     pub pipeline_latency: Histogram,
     pub batch_size_histogram: Histogram,
     pub dlq_events: IntCounter,
+    pub detection_matches_by_rule: IntCounterVec,
+    pub correlation_matches_by_rule: IntCounterVec,
 }
 
 impl Metrics {
@@ -126,6 +129,22 @@ impl Metrics {
             "Events routed to dead-letter queue",
         ))
         .unwrap();
+        let detection_matches_by_rule = IntCounterVec::new(
+            Opts::new(
+                "rsigma_detection_matches_by_rule_total",
+                "Detection matches per rule",
+            ),
+            &["rule_title", "level"],
+        )
+        .unwrap();
+        let correlation_matches_by_rule = IntCounterVec::new(
+            Opts::new(
+                "rsigma_correlation_matches_by_rule_total",
+                "Correlation matches per rule",
+            ),
+            &["rule_title", "level", "correlation_type"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(events_processed.clone()))
@@ -170,6 +189,12 @@ impl Metrics {
             .register(Box::new(batch_size_histogram.clone()))
             .unwrap();
         registry.register(Box::new(dlq_events.clone())).unwrap();
+        registry
+            .register(Box::new(detection_matches_by_rule.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_matches_by_rule.clone()))
+            .unwrap();
 
         Metrics {
             registry,
@@ -190,6 +215,8 @@ impl Metrics {
             pipeline_latency,
             batch_size_histogram,
             dlq_events,
+            detection_matches_by_rule,
+            correlation_matches_by_rule,
         }
     }
 
@@ -254,5 +281,79 @@ impl MetricsHook for Metrics {
 
     fn set_correlation_state_entries(&self, count: u64) {
         self.correlation_state_entries.set(count as i64);
+    }
+
+    fn on_detection_match_detail(&self, rule_title: &str, level: &str) {
+        self.detection_matches_by_rule
+            .with_label_values(&[rule_title, level])
+            .inc();
+    }
+
+    fn on_correlation_match_detail(&self, rule_title: &str, level: &str, correlation_type: &str) {
+        self.correlation_matches_by_rule
+            .with_label_values(&[rule_title, level, correlation_type])
+            .inc();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detection_matches_by_rule_labels() {
+        let m = Metrics::new();
+        m.on_detection_match_detail("Detect Whoami", "medium");
+        m.on_detection_match_detail("Detect Whoami", "medium");
+        m.on_detection_match_detail("Suspicious Login", "high");
+
+        assert_eq!(
+            m.detection_matches_by_rule
+                .with_label_values(&["Detect Whoami", "medium"])
+                .get(),
+            2
+        );
+        assert_eq!(
+            m.detection_matches_by_rule
+                .with_label_values(&["Suspicious Login", "high"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn correlation_matches_by_rule_labels() {
+        let m = Metrics::new();
+        m.on_correlation_match_detail("Brute Force", "high", "event_count");
+        m.on_correlation_match_detail("Brute Force", "high", "event_count");
+        m.on_correlation_match_detail("Lateral Movement", "critical", "temporal");
+
+        assert_eq!(
+            m.correlation_matches_by_rule
+                .with_label_values(&["Brute Force", "high", "event_count"])
+                .get(),
+            2
+        );
+        assert_eq!(
+            m.correlation_matches_by_rule
+                .with_label_values(&["Lateral Movement", "critical", "temporal"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn labeled_counters_appear_in_encoded_output() {
+        let m = Metrics::new();
+        m.on_detection_match_detail("Test Rule", "high");
+        m.on_correlation_match_detail("Corr Rule", "medium", "event_count");
+
+        let output = m.encode();
+        assert!(output.contains("rsigma_detection_matches_by_rule_total"));
+        assert!(output.contains(r#"rule_title="Test Rule""#));
+        assert!(output.contains(r#"level="high""#));
+        assert!(output.contains("rsigma_correlation_matches_by_rule_total"));
+        assert!(output.contains(r#"rule_title="Corr Rule""#));
+        assert!(output.contains(r#"correlation_type="event_count""#));
     }
 }

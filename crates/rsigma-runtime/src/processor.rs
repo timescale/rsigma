@@ -123,6 +123,20 @@ impl LogProcessor {
             self.metrics
                 .on_correlation_matches(result.correlations.len() as u64);
 
+            for det in &result.detections {
+                let level_str = det.level.as_ref().map_or("unknown", |l| l.as_str());
+                self.metrics
+                    .on_detection_match_detail(&det.rule_title, level_str);
+            }
+            for cor in &result.correlations {
+                let level_str = cor.level.as_ref().map_or("unknown", |l| l.as_str());
+                self.metrics.on_correlation_match_detail(
+                    &cor.rule_title,
+                    level_str,
+                    cor.correlation_type.as_str(),
+                );
+            }
+
             line_results[*line_idx].detections.extend(result.detections);
             line_results[*line_idx]
                 .correlations
@@ -206,6 +220,20 @@ impl LogProcessor {
                 .on_detection_matches(result.detections.len() as u64);
             self.metrics
                 .on_correlation_matches(result.correlations.len() as u64);
+
+            for det in &result.detections {
+                let level_str = det.level.as_ref().map_or("unknown", |l| l.as_str());
+                self.metrics
+                    .on_detection_match_detail(&det.rule_title, level_str);
+            }
+            for cor in &result.correlations {
+                let level_str = cor.level.as_ref().map_or("unknown", |l| l.as_str());
+                self.metrics.on_correlation_match_detail(
+                    &cor.rule_title,
+                    level_str,
+                    cor.correlation_type.as_str(),
+                );
+            }
 
             line_results[*line_idx].detections.extend(result.detections);
             line_results[*line_idx]

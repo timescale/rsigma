@@ -54,6 +54,18 @@ pub enum Level {
     Critical,
 }
 
+impl Level {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Level::Informational => "informational",
+            Level::Low => "low",
+            Level::Medium => "medium",
+            Level::High => "high",
+            Level::Critical => "critical",
+        }
+    }
+}
+
 impl FromStr for Level {
     type Err = ();
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
@@ -467,6 +479,21 @@ pub enum CorrelationType {
     ValueAvg,
     ValuePercentile,
     ValueMedian,
+}
+
+impl CorrelationType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CorrelationType::EventCount => "event_count",
+            CorrelationType::ValueCount => "value_count",
+            CorrelationType::Temporal => "temporal",
+            CorrelationType::TemporalOrdered => "temporal_ordered",
+            CorrelationType::ValueSum => "value_sum",
+            CorrelationType::ValueAvg => "value_avg",
+            CorrelationType::ValuePercentile => "value_percentile",
+            CorrelationType::ValueMedian => "value_median",
+        }
+    }
 }
 
 impl FromStr for CorrelationType {

@@ -252,20 +252,29 @@ rsigma daemon \
 
 **Prometheus metrics:**
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `rsigma_events_processed_total` | counter | Total events processed |
-| `rsigma_detection_matches_total` | counter | Total detection matches |
-| `rsigma_correlation_matches_total` | counter | Total correlation matches |
-| `rsigma_events_parse_errors_total` | counter | JSON parse errors on input |
-| `rsigma_detection_rules_loaded` | gauge | Number of detection rules loaded |
-| `rsigma_correlation_rules_loaded` | gauge | Number of correlation rules loaded |
-| `rsigma_correlation_state_entries` | gauge | Active correlation state entries |
-| `rsigma_reloads_total` | counter | Total rule reload attempts |
-| `rsigma_reloads_failed_total` | counter | Failed rule reload attempts |
-| `rsigma_event_processing_seconds` | histogram | Per-event processing latency |
-| `rsigma_uptime_seconds` | gauge | Daemon uptime in seconds |
-| `rsigma_dlq_events_total` | counter | Events routed to the dead-letter queue |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_events_processed_total` | counter | | Total events processed |
+| `rsigma_detection_matches_total` | counter | | Total detection matches (aggregate) |
+| `rsigma_detection_matches_by_rule_total` | counter | `rule_title`, `level` | Detection matches per rule |
+| `rsigma_correlation_matches_total` | counter | | Total correlation matches (aggregate) |
+| `rsigma_correlation_matches_by_rule_total` | counter | `rule_title`, `level`, `correlation_type` | Correlation matches per rule |
+| `rsigma_events_parse_errors_total` | counter | | JSON parse errors on input |
+| `rsigma_detection_rules_loaded` | gauge | | Number of detection rules loaded |
+| `rsigma_correlation_rules_loaded` | gauge | | Number of correlation rules loaded |
+| `rsigma_correlation_state_entries` | gauge | | Active correlation state entries |
+| `rsigma_reloads_total` | counter | | Total rule reload attempts |
+| `rsigma_reloads_failed_total` | counter | | Failed rule reload attempts |
+| `rsigma_event_processing_seconds` | histogram | | Per-event processing latency |
+| `rsigma_pipeline_latency_seconds` | histogram | | End-to-end latency from event dequeue to sink send |
+| `rsigma_batch_size` | histogram | | Number of events processed per batch |
+| `rsigma_input_queue_depth` | gauge | | Current events buffered in source-to-engine channel |
+| `rsigma_output_queue_depth` | gauge | | Current results buffered in engine-to-sink channel |
+| `rsigma_back_pressure_events_total` | counter | | Times a source was blocked on a full event channel |
+| `rsigma_uptime_seconds` | gauge | | Daemon uptime in seconds |
+| `rsigma_dlq_events_total` | counter | | Events routed to the dead-letter queue |
+
+The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Grafana or other Prometheus-based tools. A single PromQL query like `increase(rsigma_detection_matches_by_rule_total[5m]) > 0` produces separate alert instances for each `{rule_title, level}` combination. The aggregate counters (`_total`) remain for lightweight total-throughput monitoring.
 
 **Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
 
