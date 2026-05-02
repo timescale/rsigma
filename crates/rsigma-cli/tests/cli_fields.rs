@@ -456,7 +456,10 @@ fn fields_json_with_filter() {
     assert_eq!(json["summary"]["total_filters"], 1);
 
     let fields = json["fields"].as_array().unwrap();
-    let target_user = fields.iter().find(|f| f["field"] == "TargetUserName").unwrap();
+    let target_user = fields
+        .iter()
+        .find(|f| f["field"] == "TargetUserName")
+        .unwrap();
     assert_eq!(target_user["rule_count"], 3);
     let sources = target_user["sources"].as_array().unwrap();
     assert!(sources.iter().any(|s| s == "filter"));
