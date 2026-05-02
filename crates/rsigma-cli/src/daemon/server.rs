@@ -53,6 +53,9 @@ struct AppState {
     start_time: Instant,
     /// Channel for HTTP event ingestion. Set when --input is http.
     event_tx: Option<mpsc::Sender<RawEvent>>,
+    /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
+    #[cfg(feature = "daemon-otlp")]
+    otlp_event_tx: mpsc::Sender<RawEvent>,
 }
 
 #[derive(Clone)]
@@ -195,6 +198,9 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    #[cfg(feature = "daemon-otlp")]
+    let otlp_event_tx = event_tx.clone();
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -202,6 +208,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_event_tx,
     };
 
     let app = Router::new()
@@ -211,8 +219,12 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/rules", get(list_rules))
         .route("/api/v1/status", get(status))
         .route("/api/v1/reload", post(trigger_reload))
-        .route("/api/v1/events", post(ingest_events))
-        .with_state(app_state);
+        .route("/api/v1/events", post(ingest_events));
+
+    #[cfg(feature = "daemon-otlp")]
+    let app = app.route("/v1/logs", post(otlp_http_logs));
+
+    let app = app.with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(config.api_addr)
         .await
@@ -911,6 +923,77 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
     (
         StatusCode::OK,
         Json(serde_json::json!({ "accepted": accepted })),
+    )
+        .into_response()
+}
+
+/// Accept OTLP logs via HTTP POST (protobuf encoding).
+///
+/// Decodes `ExportLogsServiceRequest` from the request body, flattens each
+/// `LogRecord` into a JSON `RawEvent`, and forwards it to the engine pipeline.
+/// Always mounted on `/v1/logs` when the `daemon-otlp` feature is compiled in.
+#[cfg(feature = "daemon-otlp")]
+async fn otlp_http_logs(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    use prost::Message;
+
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/x-protobuf");
+
+    let request = if content_type.starts_with("application/x-protobuf")
+        || content_type.starts_with("application/protobuf")
+    {
+        match rsigma_runtime::ExportLogsServiceRequest::decode(body) {
+            Ok(req) => req,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("protobuf decode error: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(serde_json::json!({
+                "error": format!("unsupported content-type: {content_type} (expected application/x-protobuf)")
+            })),
+        )
+            .into_response();
+    };
+
+    let raw_events = rsigma_runtime::logs_request_to_raw_events(&request);
+
+    for event in raw_events {
+        if state.otlp_event_tx.send(event).await.is_err() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "event channel closed"
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // OTLP spec: return empty ExportLogsServiceResponse as protobuf or JSON
+    // based on the request content-type. For simplicity, always return JSON.
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "partialSuccess": {
+                "rejectedLogRecords": 0,
+                "errorMessage": ""
+            }
+        })),
     )
         .into_response()
 }
