@@ -1,6 +1,6 @@
 # RSigma
 
-A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, and plain text, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. pySigma-compatible processing pipelines handle field mapping and backend configuration. A conversion engine transforms rules into backend-native query strings (SQL, SPL, KQL, Lucene, etc.) via a pluggable backend trait. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP (OpenTelemetry Protocol) logs, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to rsigma via HTTP or gRPC for detection. pySigma-compatible processing pipelines handle field mapping and backend configuration. A conversion engine transforms rules into backend-native query strings (SQL, SPL, KQL, Lucene, etc.) via a pluggable backend trait. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
 
 | Crate | Description |
 |-------|-------------|
@@ -93,6 +93,12 @@ hel run | rsigma daemon -r rules/ --output stdout --output file:///tmp/detection
 # Accept events via HTTP POST instead of stdin
 rsigma daemon -r rules/ --input http
 # Then: curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
+
+# Accept OTLP logs from any OpenTelemetry-compatible agent (requires daemon-otlp feature)
+# Supports protobuf + JSON encoding, gzip compression, and gRPC on the same port
+rsigma daemon -r rules/ --input http
+# Then: curl -X POST http://localhost:9090/v1/logs -H 'Content-Type: application/json' -d '{"resourceLogs":[...]}'
+# Works with Grafana Alloy, Vector, Fluent Bit, OTel Collector, and other OTLP exporters
 
 # NATS JetStream source and sink (requires daemon-nats feature)
 rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
@@ -275,7 +281,7 @@ From there, the AST can go in three directions depending on what you need:
 
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
-- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. Sources include stdin, HTTP POST, and NATS JetStream.
+- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
 - **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
 - **Output:** Sinks write detection results to stdout, files, or NATS. Multiple sinks can run in fan-out. The output is `MatchResult` and `CorrelationResult`, containing rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
 
@@ -354,6 +360,7 @@ Feature-gated items are marked with \* in the diagram.
     │    CorrelationEngine with rule loading   │
     │                                          │
     │  io/ ──> EventSource (stdin, HTTP, NATS) │
+    │          OTLP* (HTTP + gRPC)             │
     │          Sink (stdout, file, NATS)       │
     └──────────────────────────────────────────┘
               │                (* = feature-gated)
