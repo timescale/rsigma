@@ -1,5 +1,12 @@
 # RSigma
 
+[![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rsigma.svg)](https://crates.io/crates/rsigma)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88.0-blue)](https://github.com/timescale/rsigma/blob/main/Cargo.toml)
+[![Docker](https://img.shields.io/badge/ghcr.io-rsigma-blue?logo=docker)](https://ghcr.io/timescale/rsigma)
+[![GitHub Release](https://img.shields.io/github/v/release/timescale/rsigma)](https://github.com/timescale/rsigma/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
 The RSigma project is a complete Rust toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP.
 
 RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
