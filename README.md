@@ -1,6 +1,14 @@
 # RSigma
 
-A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detection standard, including parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP. RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It accepts JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP (OpenTelemetry Protocol) logs, with auto-detection by default, and runs detection and stateful correlation logic in-process with memory-efficient compressed event storage. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to rsigma via HTTP or gRPC for detection. pySigma-compatible processing pipelines handle field mapping and backend configuration. A conversion engine transforms rules into backend-native query strings (SQL, SPL, KQL, Lucene, etc.) via a pluggable backend trait. No external SIEM required. A built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification with four severity levels, a full suppression system, and auto-fix support (`--fix`) for 13 safe rules. An LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+The RSigma project is a complete Rust toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP.
+
+RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
+
+You can send events in many formats, including JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP (OpenTelemetry Protocol), with auto-detection by default. pySigma-compatible processing pipelines handle field mapping and backend configuration. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to RSigma via HTTP or gRPC for detection.
+
+For rule quality and editor integration, a built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+
+## Crates
 
 | Crate | Description |
 |-------|-------------|
@@ -27,6 +35,21 @@ A complete Rust toolkit for the [Sigma](https://github.com/SigmaHQ/sigma) detect
 >   *"Accurately evaluating the full spectrum of what Sigma rules can express is quite complex, it's pretty neat to read about how RSigma handles all of these conditional expressions, correlating across rules, etc."*
 > - [Detection Engineering Weekly #154](https://www.detectionengineering.net/i/195467950/state-of-the-art) (April 2026)
 >   *"RSigma is not a SIEM, but it's an impressive feat to build a self-contained Rust binary that operates much like one. For teams doing pre-SIEM rule validation or forensics, it's a solid plug-and-play option."*
+
+## Supported Features
+
+* Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
+* Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
+* Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP logs with format auto-detection
+* pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
+* Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
+* Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
+* NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
+* OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
+* Built-in linter with 66 checks, four severity levels, a full suppression system, and auto-fix (`--fix`) for 13 safe rules
+* LSP server with real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
+* Multi-arch Docker images (linux/amd64, linux/arm64) with cosign signatures, SBOM, and SLSA Build L3 provenance
+* Cross-platform binaries for Linux, macOS, and Windows on amd64 and arm64
 
 ## Installation
 
