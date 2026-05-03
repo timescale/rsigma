@@ -10,8 +10,8 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.8.1" }
-rsigma-eval = { path = "../rsigma-eval", version = "0.8.1" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.9.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.9.0" }
 thiserror = "2"
 serde_json = "1"
 serde_yaml = "0.9"
