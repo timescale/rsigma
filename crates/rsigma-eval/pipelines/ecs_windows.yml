@@ -1,0 +1,174 @@
+# ECS (Elastic Common Schema) field mapping for Windows log sources.
+#
+# Maps generic Sigma / Sysmon field names to ECS field names as produced by
+# Winlogbeat >= 7 and Elastic Agent. Use this pipeline when evaluating Sigma
+# rules against ECS-formatted Windows events.
+#
+# Derived from pySigma-backend-elasticsearch ecs_windows pipeline.
+#
+# Usage:
+#   rsigma eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
+#   rsigma daemon -r rules/ -p ecs_windows
+
+name: ecs_windows
+priority: 20
+
+transformations:
+  # -- Process creation (Sysmon EventID 1) --
+  - id: ecs_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+      Image: process.executable
+      OriginalFileName: process.pe.original_file_name
+      CurrentDirectory: process.working_directory
+      ProcessGuid: process.entity_id
+      ProcessId: process.pid
+      ParentProcessGuid: process.parent.entity_id
+      ParentProcessId: process.parent.pid
+      ParentImage: process.parent.executable
+      ParentCommandLine: process.parent.command_line
+      User: user.name
+      IntegrityLevel: winlog.event_data.IntegrityLevel
+      Hashes: winlog.event_data.Hashes
+      Company: process.pe.company
+      Description: process.pe.description
+      Product: process.pe.product
+      FileVersion: process.pe.file_version
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+
+  # -- Network connection (Sysmon EventID 3) --
+  - id: ecs_network_connection_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: source.ip
+      SourceHostname: source.domain
+      SourcePort: source.port
+      DestinationIp: destination.ip
+      DestinationHostname: destination.domain
+      DestinationPort: destination.port
+      DestinationPortName: network.protocol
+      Protocol: network.transport
+      Image: process.executable
+      User: user.name
+      ProcessId: process.pid
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  # -- Image/DLL load (Sysmon EventID 7) --
+  - id: ecs_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: file.path
+      Image: process.executable
+      Signed: file.code_signature.signed
+      SignatureStatus: file.code_signature.status
+      Signature: file.code_signature.subject_name
+      Imphash: file.pe.imphash
+      Company: file.pe.company
+      Description: file.pe.description
+      Product: file.pe.product
+      FileVersion: file.pe.file_version
+      OriginalFileName: file.pe.original_file_name
+    rule_conditions:
+      - type: logsource
+        category: image_load
+
+  # -- File events (Sysmon EventID 11) --
+  - id: ecs_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file.path
+      Image: process.executable
+      User: user.name
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  # -- Registry events (Sysmon EventID 12/13/14) --
+  - id: ecs_registry_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetObject: registry.path
+      Details: winlog.event_data.Details
+      Image: process.executable
+      EventType: winlog.event_data.EventType
+    rule_conditions:
+      - type: logsource
+        category: registry_event
+
+  # -- DNS query (Sysmon EventID 22) --
+  - id: ecs_dns_query_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: dns.question.name
+      QueryStatus: sysmon.dns.status
+      Image: process.executable
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+
+  # -- Pipe created (Sysmon EventID 17/18) --
+  - id: ecs_pipe_created_fields
+    type: field_name_mapping
+    mapping:
+      PipeName: file.name
+      Image: process.executable
+    rule_conditions:
+      - type: logsource
+        category: pipe_created
+
+  # -- Driver load (Sysmon EventID 6) --
+  - id: ecs_driver_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: file.path
+      Signed: file.code_signature.signed
+      SignatureStatus: file.code_signature.status
+      Signature: file.code_signature.subject_name
+      Imphash: file.pe.imphash
+    rule_conditions:
+      - type: logsource
+        category: driver_load
+
+  # -- Create remote thread (Sysmon EventID 8) --
+  - id: ecs_create_remote_thread_fields
+    type: field_name_mapping
+    mapping:
+      SourceImage: process.executable
+      SourceProcessId: process.pid
+      TargetImage: winlog.event_data.TargetImage
+      TargetProcessId: winlog.event_data.TargetProcessId
+      StartFunction: winlog.event_data.StartFunction
+    rule_conditions:
+      - type: logsource
+        category: create_remote_thread
+
+  # -- Process access (Sysmon EventID 10) --
+  - id: ecs_process_access_fields
+    type: field_name_mapping
+    mapping:
+      SourceImage: process.executable
+      SourceProcessId: process.pid
+      TargetImage: winlog.event_data.TargetImage
+      TargetProcessId: winlog.event_data.TargetProcessId
+      GrantedAccess: winlog.event_data.GrantedAccess
+      CallTrace: winlog.event_data.CallTrace
+    rule_conditions:
+      - type: logsource
+        category: process_access
+
+  # -- Global Windows field mappings (apply to all Windows rules) --
+  - id: ecs_windows_global_fields
+    type: field_name_mapping
+    mapping:
+      EventID: event.code
+      Channel: winlog.channel
+      Provider_Name: winlog.provider_name
+      ComputerName: winlog.computer_name
+    rule_conditions:
+      - type: logsource
+        product: windows

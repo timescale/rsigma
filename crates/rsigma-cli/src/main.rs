@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEventMode, Pipeline, parse_pipeline_file,
+    resolve_builtin_pipeline,
 };
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file};
 use serde_json_path::JsonPath;
@@ -46,7 +47,7 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
-        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
     },
@@ -128,7 +129,7 @@ enum Commands {
         #[arg(short, long)]
         rules: PathBuf,
 
-        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
 
@@ -329,7 +330,7 @@ enum Commands {
         #[arg(long)]
         pretty: bool,
 
-        /// Processing pipeline YAML file(s) to apply (can be specified multiple times)
+        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
 
@@ -417,7 +418,7 @@ enum Commands {
         #[arg(short, long, default_value = "default")]
         format: String,
 
-        /// Processing pipeline YAML file(s) (repeatable)
+        /// Processing pipeline(s) (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths
         #[arg(short = 'p', long = "pipeline")]
         pipeline: Vec<PathBuf>,
 
@@ -457,7 +458,7 @@ enum Commands {
         #[arg(short, long)]
         rules: PathBuf,
 
-        /// Processing pipeline YAML file(s) to apply (can be specified multiple times).
+        /// Processing pipeline(s) to apply (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths.
         /// When provided, fields are shown after pipeline transformations.
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
@@ -796,10 +797,15 @@ fn cmd_daemon(
         ..Default::default()
     };
 
+    let file_pipeline_paths: Vec<PathBuf> = pipeline_paths
+        .into_iter()
+        .filter(|p| resolve_builtin_pipeline(p.to_str().unwrap_or("")).is_none())
+        .collect();
+
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
-        pipeline_paths,
+        pipeline_paths: file_pipeline_paths,
         corr_config,
         include_event,
         pretty,
@@ -841,14 +847,31 @@ fn cmd_daemon(
 pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
     let mut pipelines = Vec::new();
     for path in paths {
-        match parse_pipeline_file(path) {
-            Ok(p) => {
-                eprintln!("Loaded pipeline: {} (priority {})", p.name, p.priority);
-                pipelines.push(p);
+        let name = path.to_str().unwrap_or("");
+        if let Some(result) = resolve_builtin_pipeline(name) {
+            match result {
+                Ok(p) => {
+                    eprintln!(
+                        "Loaded builtin pipeline: {} (priority {})",
+                        p.name, p.priority
+                    );
+                    pipelines.push(p);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing builtin pipeline '{name}': {e}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
             }
-            Err(e) => {
-                eprintln!("Error loading pipeline {}: {e}", path.display());
-                process::exit(exit_code::CONFIG_ERROR);
+        } else {
+            match parse_pipeline_file(path) {
+                Ok(p) => {
+                    eprintln!("Loaded pipeline: {} (priority {})", p.name, p.priority);
+                    pipelines.push(p);
+                }
+                Err(e) => {
+                    eprintln!("Error loading pipeline {}: {e}", path.display());
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
             }
         }
     }

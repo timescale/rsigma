@@ -35,6 +35,7 @@
 //! assert_eq!(pipeline.name, "Sysmon Field Mapping");
 //! ```
 
+pub mod builtin;
 pub mod conditions;
 pub mod finalizers;
 mod parsing;
