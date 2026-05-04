@@ -22,10 +22,13 @@ rsigma eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
 cat events.ndjson | rsigma eval -r path/to/rules/
 
 # Long-running daemon with hot-reload, health checks, and Prometheus metrics
-hel run | rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
+hel run | rsigma daemon -r rules/ -p ecs_windows --api-addr 0.0.0.0:9090
 
-# With a processing pipeline for field mapping
-rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
+# With a builtin pipeline (no external file needed)
+rsigma eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
+
+# Or use a custom pipeline YAML file
+rsigma eval -r rules/ -p pipelines/custom.yml -e '{"src_ip": "10.0.0.1"}'
 
 # Convert rules to backend-native queries
 rsigma convert -r rules/ -t test
@@ -34,7 +37,7 @@ rsigma convert -r rules/ -t test
 rsigma convert -r rules/ -t postgres
 
 # List all fields referenced by rules (with optional pipeline mapping)
-rsigma fields -r rules/ -p pipelines/ecs.yml
+rsigma fields -r rules/ -p ecs_windows
 
 # List available conversion backends
 rsigma list-targets
@@ -691,10 +694,13 @@ The `event` field is present only when `--include-event` is set.
 
 ## Pipeline Loading
 
-- Each `-p PATH` loads one pipeline file.
+- Each `-p NAME_OR_PATH` loads one pipeline. The argument is first checked against builtin names; if no builtin matches, it is treated as a file path.
+- **Builtin pipelines** (no external file needed):
+  - `ecs_windows` -- maps Sigma/Sysmon field names to Elastic Common Schema (ECS) fields (e.g. `CommandLine` becomes `process.command_line`). Use with Winlogbeat/Elastic Agent output.
+  - `sysmon` -- adds Sysmon `EventID` conditions for logsource routing. Use when evaluating against raw Sysmon JSON that includes `EventID`.
 - Pipelines are sorted by `priority` (ascending); lower priority runs first.
 - All pipelines are applied in sequence to each rule before compilation.
-- In daemon mode, pipeline files are watched for changes and re-read on reload (alongside rules). If a pipeline file becomes invalid, the reload fails and the previous configuration stays active.
+- In daemon mode, pipeline files are watched for changes and re-read on reload (alongside rules). Builtin pipelines are embedded at compile time and are not file-watched. If a pipeline file becomes invalid, the reload fails and the previous configuration stays active.
 - `merge_pipelines` is not used by the CLI; each pipeline remains separate with its own state.
 
 ## Environment Variables

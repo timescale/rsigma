@@ -1,0 +1,236 @@
+# Sysmon logsource routing pipeline.
+#
+# Maps generic Sigma log source categories (process_creation, network_connection,
+# etc.) to Sysmon EventIDs by adding EventID conditions. Use this pipeline when
+# evaluating Sigma rules against raw Sysmon JSON events that include the EventID
+# field but do not have pre-routed logsource metadata.
+#
+# This pipeline does NOT rename fields (Sigma Windows rules already use Sysmon
+# field names). It only adds EventID conditions so that logsource-scoped rules
+# match the correct event types.
+#
+# Derived from pySigma-pipeline-sysmon.
+#
+# Usage:
+#   rsigma eval -r rules/ -p sysmon -e '{"EventID": 1, "Image": "cmd.exe", ...}'
+#   rsigma daemon -r rules/ -p sysmon
+
+name: sysmon
+priority: 10
+
+transformations:
+  - id: sysmon_process_creation
+    type: add_condition
+    conditions:
+      EventID: 1
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+        product: windows
+
+  - id: sysmon_file_change
+    type: add_condition
+    conditions:
+      EventID: 2
+    rule_conditions:
+      - type: logsource
+        category: file_change
+        product: windows
+
+  - id: sysmon_network_connection
+    type: add_condition
+    conditions:
+      EventID: 3
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+        product: windows
+
+  - id: sysmon_process_termination
+    type: add_condition
+    conditions:
+      EventID: 5
+    rule_conditions:
+      - type: logsource
+        category: process_termination
+        product: windows
+
+  - id: sysmon_driver_load
+    type: add_condition
+    conditions:
+      EventID: 6
+    rule_conditions:
+      - type: logsource
+        category: driver_load
+        product: windows
+
+  - id: sysmon_image_load
+    type: add_condition
+    conditions:
+      EventID: 7
+    rule_conditions:
+      - type: logsource
+        category: image_load
+        product: windows
+
+  - id: sysmon_create_remote_thread
+    type: add_condition
+    conditions:
+      EventID: 8
+    rule_conditions:
+      - type: logsource
+        category: create_remote_thread
+        product: windows
+
+  - id: sysmon_raw_access_thread
+    type: add_condition
+    conditions:
+      EventID: 9
+    rule_conditions:
+      - type: logsource
+        category: raw_access_thread
+        product: windows
+
+  - id: sysmon_process_access
+    type: add_condition
+    conditions:
+      EventID: 10
+    rule_conditions:
+      - type: logsource
+        category: process_access
+        product: windows
+
+  - id: sysmon_file_event
+    type: add_condition
+    conditions:
+      EventID: 11
+    rule_conditions:
+      - type: logsource
+        category: file_event
+        product: windows
+
+  - id: sysmon_registry_add
+    type: add_condition
+    conditions:
+      EventID: 12
+    rule_conditions:
+      - type: logsource
+        category: registry_add
+        product: windows
+
+  - id: sysmon_registry_delete
+    type: add_condition
+    conditions:
+      EventID: 12
+    rule_conditions:
+      - type: logsource
+        category: registry_delete
+        product: windows
+
+  - id: sysmon_registry_set
+    type: add_condition
+    conditions:
+      EventID: 13
+    rule_conditions:
+      - type: logsource
+        category: registry_set
+        product: windows
+
+  - id: sysmon_registry_rename
+    type: add_condition
+    conditions:
+      EventID: 14
+    rule_conditions:
+      - type: logsource
+        category: registry_rename
+        product: windows
+
+  - id: sysmon_create_stream_hash
+    type: add_condition
+    conditions:
+      EventID: 15
+    rule_conditions:
+      - type: logsource
+        category: create_stream_hash
+        product: windows
+
+  - id: sysmon_pipe_created
+    type: add_condition
+    conditions:
+      EventID: 17
+    rule_conditions:
+      - type: logsource
+        category: pipe_created
+        product: windows
+
+  - id: sysmon_dns_query
+    type: add_condition
+    conditions:
+      EventID: 22
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+        product: windows
+
+  - id: sysmon_file_delete
+    type: add_condition
+    conditions:
+      EventID: 23
+    rule_conditions:
+      - type: logsource
+        category: file_delete
+        product: windows
+
+  - id: sysmon_clipboard_capture
+    type: add_condition
+    conditions:
+      EventID: 24
+    rule_conditions:
+      - type: logsource
+        category: clipboard_capture
+        product: windows
+
+  - id: sysmon_process_tampering
+    type: add_condition
+    conditions:
+      EventID: 25
+    rule_conditions:
+      - type: logsource
+        category: process_tampering
+        product: windows
+
+  - id: sysmon_file_delete_detected
+    type: add_condition
+    conditions:
+      EventID: 26
+    rule_conditions:
+      - type: logsource
+        category: file_delete_detected
+        product: windows
+
+  - id: sysmon_file_block_executable
+    type: add_condition
+    conditions:
+      EventID: 27
+    rule_conditions:
+      - type: logsource
+        category: file_block_executable
+        product: windows
+
+  - id: sysmon_file_executable_detected
+    type: add_condition
+    conditions:
+      EventID: 29
+    rule_conditions:
+      - type: logsource
+        category: file_executable_detected
+        product: windows
+
+  # Change logsource to sysmon service for all matched categories
+  - id: sysmon_logsource
+    type: change_logsource
+    product: windows
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        product: windows
