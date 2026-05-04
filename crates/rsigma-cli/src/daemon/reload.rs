@@ -4,8 +4,12 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 /// Watches a path for file changes and sends reload signals via a channel.
+///
+/// In addition to the rules path, optionally watches pipeline file paths.
+/// Any YAML change in watched paths triggers a reload signal.
 pub fn spawn_file_watcher(
     rules_path: &Path,
+    pipeline_paths: &[&Path],
     reload_tx: mpsc::Sender<()>,
 ) -> Option<RecommendedWatcher> {
     let tx = reload_tx.clone();
@@ -40,6 +44,19 @@ pub fn spawn_file_watcher(
     }
 
     tracing::info!(path = %rules_path.display(), "Watching rules directory for changes");
+
+    for path in pipeline_paths {
+        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "Could not watch pipeline file"
+            );
+        } else {
+            tracing::info!(path = %path.display(), "Watching pipeline file for changes");
+        }
+    }
+
     Some(watcher)
 }
 

@@ -244,26 +244,31 @@ impl LogProcessor {
         line_results
     }
 
-    /// Reload rules without blocking in-flight event processing.
+    /// Reload rules (and pipelines) without blocking in-flight event processing.
     ///
     /// Builds a fresh `RuntimeEngine` with the same configuration as the
-    /// current one, loads rules into it, imports the old engine's correlation
-    /// state, and atomically swaps. In-flight batches that already hold an
-    /// `Arc` to the old engine finish undisturbed.
+    /// current one, re-reads pipeline files from disk (if paths are set),
+    /// loads rules into it, imports the old engine's correlation state, and
+    /// atomically swaps. In-flight batches that already hold an `Arc` to
+    /// the old engine finish undisturbed.
+    ///
+    /// If pipeline or rule loading fails, the old engine remains active.
     pub fn reload_rules(&self) -> Result<crate::engine::EngineStats, String> {
-        let (old_state, rules_path, pipelines, corr_config, include_event) = {
+        let (old_state, rules_path, pipelines, pipeline_paths, corr_config, include_event) = {
             let snapshot = self.engine.load();
             let old = snapshot.lock().unwrap();
             (
                 old.export_state(),
                 old.rules_path().to_path_buf(),
                 old.pipelines().to_vec(),
+                old.pipeline_paths().to_vec(),
                 old.corr_config().clone(),
                 old.include_event(),
             )
         };
 
         let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
+        new_engine.set_pipeline_paths(pipeline_paths);
         let stats = new_engine.load_rules()?;
 
         if let Some(state) = old_state
@@ -538,6 +543,172 @@ detection:
             !proc.process_batch_lines(&batch2, &identity_filter)[0]
                 .detections
                 .is_empty()
+        );
+
+        std::mem::forget(dir);
+    }
+
+    #[test]
+    fn reload_re_reads_pipelines_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Rule uses the generic Sigma field name "SourceIP".
+        // The pipeline maps it to what the events actually contain.
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        SourceIP: "10.0.0.1"
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        // Pipeline maps the rule's SourceIP field to "src_ip" (event field)
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(
+            &pipeline_path,
+            r#"
+name: Initial Pipeline
+priority: 10
+transformations:
+  - id: rename_field
+    type: field_name_mapping
+    mapping:
+      SourceIP: src_ip
+"#,
+        )
+        .unwrap();
+
+        let pipelines = vec![rsigma_eval::parse_pipeline_file(&pipeline_path).unwrap()];
+        let mut engine = RuntimeEngine::new(
+            rule_path.clone(),
+            pipelines,
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_pipeline_paths(vec![pipeline_path.clone()]);
+        engine.load_rules().unwrap();
+        let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+        // Event uses "src_ip" which the pipeline mapped from SourceIP
+        let batch = vec![r#"{"src_ip": "10.0.0.1"}"#.to_string()];
+        assert!(
+            !proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty(),
+            "src_ip should match because pipeline mapped SourceIP -> src_ip"
+        );
+
+        // Update pipeline to map SourceIP to a different event field name
+        std::fs::write(
+            &pipeline_path,
+            r#"
+name: Updated Pipeline
+priority: 10
+transformations:
+  - id: rename_field
+    type: field_name_mapping
+    mapping:
+      SourceIP: source.ip
+"#,
+        )
+        .unwrap();
+
+        proc.reload_rules().unwrap();
+
+        // src_ip no longer the target, should not match
+        assert!(
+            proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty(),
+            "after pipeline reload, src_ip should no longer match"
+        );
+
+        // source.ip is now the mapped name, should match
+        let batch2 = vec![r#"{"source.ip": "10.0.0.1"}"#.to_string()];
+        assert!(
+            !proc.process_batch_lines(&batch2, &identity_filter)[0]
+                .detections
+                .is_empty(),
+            "after pipeline reload, source.ip should match"
+        );
+
+        std::mem::forget(dir);
+    }
+
+    #[test]
+    fn reload_with_broken_pipeline_keeps_old_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        SourceIP: "10.0.0.1"
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(
+            &pipeline_path,
+            r#"
+name: Working Pipeline
+priority: 10
+transformations:
+  - id: rename_field
+    type: field_name_mapping
+    mapping:
+      SourceIP: src_ip
+"#,
+        )
+        .unwrap();
+
+        let pipelines = vec![rsigma_eval::parse_pipeline_file(&pipeline_path).unwrap()];
+        let mut engine = RuntimeEngine::new(
+            rule_path.clone(),
+            pipelines,
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_pipeline_paths(vec![pipeline_path.clone()]);
+        engine.load_rules().unwrap();
+        let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+        // Verify initial state works (SourceIP mapped to src_ip)
+        let batch = vec![r#"{"src_ip": "10.0.0.1"}"#.to_string()];
+        assert!(
+            !proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty()
+        );
+
+        // Write broken YAML to the pipeline file
+        std::fs::write(&pipeline_path, "{{{{ invalid yaml !!!!").unwrap();
+
+        // Reload should fail
+        let result = proc.reload_rules();
+        assert!(result.is_err(), "reload with broken pipeline should fail");
+
+        // Old engine should still be active and working
+        assert!(
+            !proc.process_batch_lines(&batch, &identity_filter)[0]
+                .detections
+                .is_empty(),
+            "old engine should still work after failed reload"
         );
 
         std::mem::forget(dir);

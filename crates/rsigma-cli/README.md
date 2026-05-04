@@ -116,7 +116,7 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 
 Run rsigma as a long-running daemon that continuously reads NDJSON from stdin, evaluates against rules, writes matches to stdout, and exposes health/metrics/management APIs over HTTP.
 
-Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-reload: adding, modifying, or removing `.yml`/`.yaml` files in the rules directory triggers an automatic reload. SIGHUP and the `/api/v1/reload` endpoint also trigger reloads. The daemon is designed for production deployment behind a log collector (e.g. `hel run | rsigma daemon ...`) or an event bus.
+Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-reload: adding, modifying, or removing `.yml`/`.yaml` files in the rules directory or any pipeline file passed via `-p` triggers an automatic reload (rules and pipelines are re-read together). SIGHUP and the `/api/v1/reload` endpoint also trigger reloads. The daemon is designed for production deployment behind a log collector (e.g. `hel run | rsigma daemon ...`) or an event bus.
 
 > [!TIP]
 > Correlation rules also work in `eval` mode within a single run (via stdin or `@file`), but daemon mode is recommended for continuous stateful tracking with hot-reload and state persistence.
@@ -694,6 +694,7 @@ The `event` field is present only when `--include-event` is set.
 - Each `-p PATH` loads one pipeline file.
 - Pipelines are sorted by `priority` (ascending); lower priority runs first.
 - All pipelines are applied in sequence to each rule before compilation.
+- In daemon mode, pipeline files are watched for changes and re-read on reload (alongside rules). If a pipeline file becomes invalid, the reload fails and the previous configuration stays active.
 - `merge_pipelines` is not used by the CLI; each pipeline remains separate with its own state.
 
 ## Environment Variables

@@ -799,6 +799,7 @@ fn cmd_daemon(
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
+        pipeline_paths,
         corr_config,
         include_event,
         pretty,

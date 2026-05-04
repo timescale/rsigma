@@ -62,6 +62,7 @@ struct AppState {
 pub struct DaemonConfig {
     pub rules_path: PathBuf,
     pub pipelines: Vec<Pipeline>,
+    pub pipeline_paths: Vec<PathBuf>,
     pub corr_config: CorrelationConfig,
     pub include_event: bool,
     pub pretty: bool,
@@ -99,12 +100,13 @@ pub async fn run_daemon(config: DaemonConfig) {
         Arc::new(store)
     });
 
-    let engine = RuntimeEngine::new(
+    let mut engine = RuntimeEngine::new(
         config.rules_path.clone(),
         config.pipelines.clone(),
         config.corr_config.clone(),
         config.include_event,
     );
+    engine.set_pipeline_paths(config.pipeline_paths.clone());
     let processor = Arc::new(LogProcessor::new(engine, metrics.clone()));
 
     // Initial rule load
@@ -176,12 +178,15 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let (reload_tx, mut reload_rx) = mpsc::channel::<()>(4);
 
-    // File watcher for hot-reload
+    // File watcher for hot-reload (rules + pipeline files)
+    let pipeline_watch_paths: Vec<&std::path::Path> =
+        config.pipeline_paths.iter().map(|p| p.as_path()).collect();
     let _watcher = if config.rules_path.is_dir() {
-        reload::spawn_file_watcher(&config.rules_path, reload_tx.clone())
+        reload::spawn_file_watcher(&config.rules_path, &pipeline_watch_paths, reload_tx.clone())
     } else {
         reload::spawn_file_watcher(
             config.rules_path.parent().unwrap_or(&config.rules_path),
+            &pipeline_watch_paths,
             reload_tx.clone(),
         )
     };
@@ -267,7 +272,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             while reload_rx.try_recv().is_ok() {}
 
             reload_metrics.reloads_total.inc();
-            tracing::info!("Reloading rules...");
+            tracing::info!("Reloading rules and pipelines...");
 
             match reload_processor.reload_rules() {
                 Ok(stats) => {
@@ -275,7 +280,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                         detection_rules = stats.detection_rules,
                         correlation_rules = stats.correlation_rules,
                         path = %reload_processor.rules_path().display(),
-                        "Rules reloaded"
+                        "Rules and pipelines reloaded"
                     );
                     reload_metrics
                         .detection_rules_loaded

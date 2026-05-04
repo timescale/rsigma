@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rsigma_eval::event::Event;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, Pipeline, ProcessResult,
+    parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -11,6 +12,7 @@ use rsigma_parser::SigmaCollection;
 pub struct RuntimeEngine {
     engine: EngineVariant,
     pipelines: Vec<Pipeline>,
+    pipeline_paths: Vec<PathBuf>,
     rules_path: std::path::PathBuf,
     corr_config: CorrelationConfig,
     include_event: bool,
@@ -38,10 +40,25 @@ impl RuntimeEngine {
         RuntimeEngine {
             engine: EngineVariant::DetectionOnly(Engine::new()),
             pipelines,
+            pipeline_paths: Vec::new(),
             rules_path,
             corr_config,
             include_event,
         }
+    }
+
+    /// Set the pipeline file paths used for hot-reload.
+    ///
+    /// When paths are set, `load_rules()` re-reads pipeline YAML from disk
+    /// before rebuilding the engine. This enables pipeline hot-reload
+    /// alongside rule hot-reload.
+    pub fn set_pipeline_paths(&mut self, paths: Vec<PathBuf>) {
+        self.pipeline_paths = paths;
+    }
+
+    /// Return the pipeline file paths (used by the daemon to set up watchers).
+    pub fn pipeline_paths(&self) -> &[PathBuf] {
+        &self.pipeline_paths
     }
 
     /// Load (or reload) rules from the configured path.
@@ -49,7 +66,16 @@ impl RuntimeEngine {
     /// On reload, correlation state is exported before replacing the engine
     /// and re-imported after, so in-flight windows and suppression state
     /// survive rule changes (entries for removed correlations are dropped).
+    ///
+    /// If pipeline paths are set (via [`set_pipeline_paths`](Self::set_pipeline_paths)),
+    /// pipelines are re-read from disk before rebuilding the engine. If any
+    /// pipeline file fails to parse, the entire reload is aborted and the
+    /// old engine remains active.
     pub fn load_rules(&mut self) -> Result<EngineStats, String> {
+        if !self.pipeline_paths.is_empty() {
+            self.pipelines = reload_pipelines(&self.pipeline_paths)?;
+        }
+
         let previous_state = self.export_state();
         let collection = load_collection(&self.rules_path)?;
         let has_correlations = !collection.correlations.is_empty();
@@ -189,4 +215,16 @@ fn load_collection(path: &Path) -> Result<SigmaCollection, String> {
     }
 
     Ok(collection)
+}
+
+/// Re-read and parse all pipeline files from disk, sorted by priority.
+fn reload_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, String> {
+    let mut pipelines = Vec::with_capacity(paths.len());
+    for path in paths {
+        let pipeline = parse_pipeline_file(path)
+            .map_err(|e| format!("Error reloading pipeline {}: {e}", path.display()))?;
+        pipelines.push(pipeline);
+    }
+    pipelines.sort_by_key(|p| p.priority);
+    Ok(pipelines)
 }
