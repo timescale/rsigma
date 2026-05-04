@@ -279,6 +279,17 @@ fn apply_correlation_transformation(
                     if alias_names.contains(field_name.as_str()) {
                         vec![field_name.clone()]
                     } else if let Some(alts) = mapping.get(field_name.as_str()) {
+                        if alts.len() > 1 {
+                            log::warn!(
+                                "correlation '{}': group_by field '{}' has a one-to-many \
+                                 mapping ({} alternatives: {:?}); expanding all — \
+                                 correlation grouping may be broader than intended",
+                                corr.title,
+                                field_name,
+                                alts.len(),
+                                alts,
+                            );
+                        }
                         alts.clone()
                     } else {
                         vec![field_name.clone()]
