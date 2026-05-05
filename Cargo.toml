@@ -8,6 +8,7 @@ members = [
     "crates/rsigma-cli",
     "crates/rsigma-lsp",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.9.0"

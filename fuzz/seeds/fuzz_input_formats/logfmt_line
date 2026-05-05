@@ -1,0 +1,1 @@
+level=info msg="request completed" method=GET path=/api/users status=200 duration=12.5ms

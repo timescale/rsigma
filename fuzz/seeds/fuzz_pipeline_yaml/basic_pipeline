@@ -1,0 +1,8 @@
+name: test_pipeline
+priority: 10
+transformations:
+  - id: field_mapping
+    type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+      Image: process.executable
