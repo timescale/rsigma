@@ -263,7 +263,11 @@ impl Timespan {
         if s.len() < 2 {
             return Err(SigmaParserError::InvalidTimespan(s.to_string()));
         }
-        let (count_str, unit_str) = s.split_at(s.len() - 1);
+        let split_pos = match s.char_indices().next_back() {
+            Some((idx, _)) => idx,
+            None => return Err(SigmaParserError::InvalidTimespan(s.to_string())),
+        };
+        let (count_str, unit_str) = s.split_at(split_pos);
         let count: u64 = count_str
             .parse()
             .map_err(|_| SigmaParserError::InvalidTimespan(s.to_string()))?;
@@ -279,10 +283,14 @@ impl Timespan {
             _ => return Err(SigmaParserError::InvalidTimespan(s.to_string())),
         };
 
+        let seconds = count
+            .checked_mul(multiplier)
+            .ok_or_else(|| SigmaParserError::InvalidTimespan(s.to_string()))?;
+
         Ok(Timespan {
             count,
             unit,
-            seconds: count * multiplier,
+            seconds,
             original: s.to_string(),
         })
     }
@@ -386,5 +394,20 @@ mod tests {
         assert!(Timespan::parse("x").is_err());
         assert!(Timespan::parse("1x").is_err());
         assert!(Timespan::parse("").is_err());
+    }
+
+    #[test]
+    fn test_timespan_multibyte_utf8_no_panic() {
+        // Previously panicked with "byte index is not a char boundary"
+        assert!(Timespan::parse("1\u{00e9}").is_err());
+        assert!(Timespan::parse("\u{1f600}s").is_err());
+        assert!(Timespan::parse("5\u{00fc}").is_err());
+    }
+
+    #[test]
+    fn test_timespan_overflow_no_panic() {
+        // Previously panicked with "attempt to multiply with overflow" in debug builds
+        assert!(Timespan::parse("99999999999999999d").is_err());
+        assert!(Timespan::parse("999999999999999999h").is_err());
     }
 }
