@@ -49,10 +49,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: nightly
-          components: llvm-tools-preview
+      - name: Install nightly toolchain
+        run: |
+          rustup toolchain install nightly --profile minimal --component llvm-tools-preview
+          rustup default nightly
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
