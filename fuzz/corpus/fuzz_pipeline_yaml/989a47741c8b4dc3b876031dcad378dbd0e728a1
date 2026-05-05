@@ -1,8 +1,0 @@
-name: nested_pipeline
-transformations:
-  - type: nest
-    itormations:
-  - type: nest
-    items: source.ip
-      - t
-    it: "/"

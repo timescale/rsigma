@@ -1,5 +1,0 @@
-nqme: conditional_pipeline
-trans!formations:
-  - type: field_name_mapping
-    mappintID: [ve pattern: ".*sysmon.*"*    field_namens:
-      -

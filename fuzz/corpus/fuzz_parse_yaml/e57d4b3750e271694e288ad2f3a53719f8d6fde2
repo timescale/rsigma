@@ -1,9 +1,0 @@
-title: Simple Test Rule
-status: test
-logsource:
-    category: prdows
-detection:
-    seleoticn:
-        Image|endswith: '\cmd.exe'
-    conditinn: selection
-level: medium

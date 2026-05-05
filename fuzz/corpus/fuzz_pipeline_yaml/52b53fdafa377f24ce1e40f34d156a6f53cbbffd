@@ -1,8 +1,0 @@
-name: test_pipeline
-priority: 10
-transformations:
-  - id: field_mappjng
-    type: field_((((((((((((((((name_mapping
-    mapping:
-      CommandLine: proce]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]s.command_line
-      Image: process.executable

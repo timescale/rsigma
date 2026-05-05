@@ -1,5 +1,0 @@
-name: nested_pipelin%
-tations:
-  -  !:
-  -  !  it nested_pipelations:
-  -  !      replaclacement: "/"

@@ -1,7 +1,0 @@
-name: conditiopenl_aipline
-transformations:
-  -line  - type: field_name_mapping
- ?   mname: nested_apping:
-      EventID: event.code
-nl_aipline
-transf typipelipe: ne

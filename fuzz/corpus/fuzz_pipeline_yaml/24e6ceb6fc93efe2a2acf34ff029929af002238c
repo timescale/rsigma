@@ -1,7 +1,0 @@
-name: conditine
-transformations:
-  - type: field_name_mapping
-    mapping:
-      Even: event.code
-    detection_item_conditions:
-      - type: match_stri      - EventID*          - Comman

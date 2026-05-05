@@ -1,3 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: field_name_ma-2222

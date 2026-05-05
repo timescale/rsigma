@@ -1,8 +1,0 @@
--name: nested_pipeline
-transforns:
-  -y       mapping:
-   mations: test_pipeline
-p  - type:      -90000461150129type: ficesf.executab:
-  -riority: 10
-trg:
-         - type:nt: "/"

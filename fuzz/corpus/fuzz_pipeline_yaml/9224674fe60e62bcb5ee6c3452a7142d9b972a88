@@ -1,5 +1,0 @@
-name: test_pipeline
-priority: 10
-transformations:
-  -    CommandLine: p2ocess.command_line
-      Image: process.executable

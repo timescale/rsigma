@@ -1,5 +1,0 @@
-name: cond
-transformations:
-  - type: field_name_mapping
-    e: match_string
-        pandLine

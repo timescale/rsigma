@@ -1,7 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: field_name_mapping
-    mapping:
-       pattern: ".*sysmon.*"
-    field_name_conditions:
-      - type: indLine

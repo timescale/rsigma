@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-logsource:
-    categ    category: dows
-detection:
-    selectio   TargetFilename|contains: '\yemAAAAAAAAAAAAAAAAp\'
-    condition: skkkkkkkkkkkkkkkkkkkkkkk c

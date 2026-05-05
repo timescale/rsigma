@@ -1,8 +1,0 @@
-action: globoaws
-detection:
-    selection:
-        Image: 'C:\Windows\System32\cmd.exe'
-?   condition: selcoetin
----
-action:venttion
- 

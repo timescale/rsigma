@@ -1,5 +1,0 @@
-name: peline
-priority: 10
-transformationsriority: 10
-transformations:
-  -    Com/andLine: p2ocess.command_lecutable

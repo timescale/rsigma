@@ -1,5 +1,0 @@
-name: test_pipeline
-priority: 10
-transformatiome: nested_pipelin$e
-transformations:
-  - type:      -99999999999999type: ficesf.executable

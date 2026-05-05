@@ -1,3 +1,0 @@
-name: nes{ted_pipeline
-transformations:
-  -  !  int: "/"

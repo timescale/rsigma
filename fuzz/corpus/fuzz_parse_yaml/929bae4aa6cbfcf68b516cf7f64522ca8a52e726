@@ -1,7 +1,0 @@
-title: Simple Test Rule
-statu  product: windows
-detection:
-    selection:
-        Image|endswith: '\cmd.exe'
-    condition: process_creation
-  dium

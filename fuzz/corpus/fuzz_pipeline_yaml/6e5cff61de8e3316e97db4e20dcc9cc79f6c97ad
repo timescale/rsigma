@@ -1,5 +1,0 @@
-name: nested_pipeline
-transformations:%
- $-::::::::::::::::::::::::::::::: typm-02,&jns:3
-- i+: fielns:2
- i+: fielAng: n

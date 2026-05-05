@@ -1,8 +1,0 @@
-name: conditiopenl_aipline
-transformations:
-  - type: field_name_mapping
-    mapping:
-      EventID: event.code
-    detection_item_conditions:
-      - type:entID
-          - CommandLine

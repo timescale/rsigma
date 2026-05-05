@@ -1,4 +1,0 @@
-name: test_pipeline
-priority: 10
-transformations:
-  - id: field__pipeline򏍖ottrald_nam_mass.executable

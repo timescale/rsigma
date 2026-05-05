@@ -1,8 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-lproduct: windowl
-detection:
-    selecti      TarZetFilename|contains: '\tempL'
-    condition: s2kkkkkkkkkkkkkkkkkkkkkkkkkkkkk]kokkk+kkkkkkkkkelectkon

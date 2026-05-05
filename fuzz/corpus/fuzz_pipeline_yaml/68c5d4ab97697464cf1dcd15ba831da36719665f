@@ -1,6 +1,0 @@
-name: conditiopenl_aipline
-transformations:
-  - type: field_name_mapping
-    mapping:
-     pattern: ".*sysmon.*  
-dLine

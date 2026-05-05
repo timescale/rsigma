@@ -1,7 +1,0 @@
-name: test_pipeline
-priority: 10
-transformations:
-  !)- 
-    type: fealdni_me_mapping
-    mapping:
-      CommandLine: ocess.e xecutable

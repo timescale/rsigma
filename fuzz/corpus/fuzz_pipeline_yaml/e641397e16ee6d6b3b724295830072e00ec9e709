@@ -1,6 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: figld_name_man
-q ipp p a mping::
-$     - type: match_string
-        pand

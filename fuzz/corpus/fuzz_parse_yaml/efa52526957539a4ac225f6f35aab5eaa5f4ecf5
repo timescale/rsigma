@@ -1,9 +1,0 @@
-action: global
-title: Glt
----
-logsourct: windows
-detection:
-    selection:
-        TargetFains: '\temegorytitle: Simple Test Rule
-status: file_: evp\'
-    condition: selection

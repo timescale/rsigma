@@ -1,11 +1,0 @@
-name: nestepipinline
-transformatgons:
-  - type:
->
-. nest
-    items:
-      - type: rie
-transformations:
-  - type: nest
- line
-tms:

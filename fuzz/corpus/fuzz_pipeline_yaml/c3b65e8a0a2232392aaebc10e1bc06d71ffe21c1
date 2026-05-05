@@ -1,7 +1,0 @@
-name: test_pipeline
-priority: 10
-transformations:
-  - id: field_mappjng
-    type: field_((((((((((((((((name_mapping
-    m: test_pipeline򏍖oty: 10
-trald_nam_mass.executable

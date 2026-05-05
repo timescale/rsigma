@@ -1,4 +1,0 @@
-nameioj_item_conditions:
-      -   field;:
-          - ElentID
-          - CommandLine

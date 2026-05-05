@@ -1,4 +1,0 @@
-name: nested_pipeline
-transform- type:nsteations:
-  - type:nste 
-    ipel  - type:nstemap     replacement: "/"

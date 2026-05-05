@@ -1,8 +1,0 @@
-title: Simple Test windows
-detection:
-    selecti!on:
-        Image: 'C:\Windows\System80\cmd.exe'
-    condition: sehectIon
----
-on: {{n: selection
--9999999999999999999999 com

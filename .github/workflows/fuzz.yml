@@ -68,8 +68,10 @@ jobs:
       - name: Run fuzzer
         working-directory: fuzz
         run: |
+          mkdir -p corpus/${{ matrix.target }}
           DURATION="${{ github.event.inputs.duration || '180' }}"
-          cargo +nightly fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            corpus/${{ matrix.target }} seeds/${{ matrix.target }} -- \
             -max_total_time="$DURATION" \
             -timeout=10 \
             -max_len=${{ matrix.max_len }}

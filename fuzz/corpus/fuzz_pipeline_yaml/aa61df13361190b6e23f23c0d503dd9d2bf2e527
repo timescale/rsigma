@@ -1,7 +1,0 @@
-name: nested_pipeline
-trname: test_pipeline
-pririty: 10
-transformations:
-  & id: field_mapping
-    type: field_name_mapping
-    m  roc

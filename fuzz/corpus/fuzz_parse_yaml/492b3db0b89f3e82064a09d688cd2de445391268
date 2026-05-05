@@ -1,9 +1,0 @@
-action: global
-title: Global Ritle
-stat1s: test
----
-logrource:
- uct: windows
-detection:
-    seleename|contains: '\temp\'
-    condition: selection

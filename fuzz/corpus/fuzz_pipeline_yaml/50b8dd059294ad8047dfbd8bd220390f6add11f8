@@ -1,5 +1,0 @@
->#(pormations:
-  - type: nest
-    items:
-      - type: fip
-      - type^

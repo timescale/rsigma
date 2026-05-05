@@ -1,9 +1,0 @@
-title: Simple Test Rule
-status: test
-logtource:
-    category:t: windows
-detection:
-    selection:
-        Image|endswith: '\cmd.xee'
-    condition: selection
-level: medium

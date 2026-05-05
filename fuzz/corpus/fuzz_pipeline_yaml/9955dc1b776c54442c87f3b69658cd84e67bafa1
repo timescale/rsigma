@@ -1,5 +1,0 @@
--nname: test_pipeline
-priority: 10
-transformations:
-  -ޖכ: field_mapping
-   n

@@ -1,5 +1,0 @@
-name: tes4_pipeline
-priority: 10ftron
-asrmations:
-  - i(d: fieess.~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~command_line
-      Image: process.executable

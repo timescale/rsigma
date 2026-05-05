@@ -1,8 +1,0 @@
-name: nested_pipeline
-transformati''''''''''ons:
-  -y pet:nste 
-    items:
-      - type: field__mapping
-        mapping:
-         - type: replace_string
-        reg"

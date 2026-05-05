@@ -1,7 +1,0 @@
-action: globaows
-detection:
-    selection:
-        Bmagatus: test
-logsction:
-    selection:
-        Image|endswith: (\cmd.etitxl

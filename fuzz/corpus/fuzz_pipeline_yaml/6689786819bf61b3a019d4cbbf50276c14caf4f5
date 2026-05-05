@@ -1,8 +1,0 @@
-name: conditionaleline
-transformations:
-  - type: field_name_mapping
-    mapping:
-      Evping:
-      EventID: event.code
-      detection_item]_conditions:
-      - type: match Even- CommandLine

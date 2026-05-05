@@ -1,7 +1,0 @@
-action: global
-title: Global Title
-staycondition: selection
-&--
-acactition: reset
----
-titleon: glo:bT S

@@ -1,6 +1,0 @@
--name: nested_pipeline
-transforns:
-  -y       mapping:
-   mations:
-  -y       mapping:
-         - type:nt: "/"

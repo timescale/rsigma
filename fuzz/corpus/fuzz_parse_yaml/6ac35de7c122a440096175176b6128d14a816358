@@ -1,7 +1,0 @@
-action: glo
----
-logsource:
-    categ    category: file_eveot
-    ction:
-    selection:
-      & '  cndition: selection

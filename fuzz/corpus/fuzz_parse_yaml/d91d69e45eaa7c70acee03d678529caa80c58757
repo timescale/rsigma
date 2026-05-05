@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-lproduct: windowl
-detection:
-    selection:
-        TargetFilename|contains: '\temp\'
-    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk+kkkkkkkkkelectkon

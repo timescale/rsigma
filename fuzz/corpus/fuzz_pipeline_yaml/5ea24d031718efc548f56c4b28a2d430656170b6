@@ -1,5 +1,0 @@
-name: test_pipeline
-priority: 11
-transformations:
-  ' id: fie2ocess.command_line
-     e

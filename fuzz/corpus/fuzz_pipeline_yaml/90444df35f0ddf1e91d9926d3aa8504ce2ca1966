@@ -1,5 +1,0 @@
-name: nesTed_pipeline
-transformations:
-  - type: nest
-    items:
-      - type: fielmappa

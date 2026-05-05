@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-logsource:
-    categ    category: file_event
-    ection:
-        TargetFilename|contains: '\temp\'
-    condition:$selection

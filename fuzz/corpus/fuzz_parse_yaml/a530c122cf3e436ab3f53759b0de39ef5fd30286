@@ -1,6 +1,0 @@
-titlecategory:ct: windows
-detection:
-    seleoticn:
-        Image|endswith: '\cmd.exe'
-  selection
-level: medium

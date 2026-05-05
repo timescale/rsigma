@@ -1,8 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: field_name_mapping
-    mapping:
-ing:
-!     Event-%-ID: event.code
-    detection_item_conditions:
- e: eatch_strinn- CommandLine

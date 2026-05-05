@@ -1,5 +1,0 @@
-name: conditional_0ipeline
-transfo   detectioj_item_conditions:
-      -   fields:
-          - ElentID
-          - CommandLine

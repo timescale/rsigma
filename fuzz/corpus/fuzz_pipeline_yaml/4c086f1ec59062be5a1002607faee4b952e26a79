@@ -1,6 +1,0 @@
-name:
-  - type:e: nest
-    items:
-      - type: field_name_mapping
-        map      regex: "\\name: coni\d\+"
-  i o@ 

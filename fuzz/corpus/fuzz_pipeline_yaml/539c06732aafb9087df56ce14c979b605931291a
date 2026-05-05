@@ -1,5 +1,0 @@
-name: conditional_pipeline
-trmations:
-  - type: field_name_mapping
-    mapping:
-      EventID: eve pattern: condit   -

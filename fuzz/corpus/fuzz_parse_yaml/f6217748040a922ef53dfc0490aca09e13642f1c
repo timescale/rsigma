@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-logsourprodu^t: windows
-detection:
-    selection:
-        Image: 'C:\Windows\System32\cmd.exe'
- !$$$n$4$$$$st**********;;;;;;;   ;cond;it;

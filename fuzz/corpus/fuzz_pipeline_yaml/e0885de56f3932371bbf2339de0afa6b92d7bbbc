@@ -1,5 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: field_name_mapping
-    e: match_string
-        pandLine

@@ -1,9 +1,0 @@
-'   mapping:
- /        src: source.is_tig
-           mapping:
- /        src: source.is_tig
-        regex: "\\\\+"
- ty     regex: "\\\\+"
- typ regex: "\\\\+"
- type:nste 
-`   ipelin*

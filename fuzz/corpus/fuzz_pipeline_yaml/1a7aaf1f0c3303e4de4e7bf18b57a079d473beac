@@ -1,6 +1,0 @@
-name: nestepipeline
-transformat[i%ons:
-  - type: nest
-    items:
-      +- type: field_name_^mapping
-        ma

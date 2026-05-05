@@ -1,9 +1,0 @@
-title: Simple Test Rule
-status: test
-logsource:
-    category: process_creation
-    pr~oduct: windows
-detection:
-  itinn: &eaction: {{{{{{{{{{{{{{{1{-{{{{{{{{{
-.exe'
-    cocti{{{{{{{{{{{{{{o{{

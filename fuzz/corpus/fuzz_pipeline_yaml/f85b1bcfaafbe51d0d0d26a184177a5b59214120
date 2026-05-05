@@ -1,5 +1,0 @@
-name: conditional_pipeline
-transformations:
-  - type: field_name_maiping
-    mapping:
-      Evename: n0ondi

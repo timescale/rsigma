@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: tes*[t
----
-logsource:
-    category: process_creation
-   #p;rodurocess_ws
-detection:
-    seltion

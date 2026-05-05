@@ -1,9 +1,0 @@
-action: global
-title: Global Title
-status: test
----
-logsource:
-    categ    category: file_event
-    product: windowAAAAAAAAA¾Ap\'
-    condition: skkkrgetFilename|cemAWAAAAAAAAAAAA¾Ap\'
-    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk c

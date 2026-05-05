@@ -1,6 +1,0 @@
-actisour0e:
-    category: file_event
-    prohtFilename|contains: ٪temp\'
-    cond: no  
-    TargetFilename|contains: ٪temp\'
-    condition: selection

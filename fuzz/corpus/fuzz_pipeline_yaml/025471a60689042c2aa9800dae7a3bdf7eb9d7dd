@@ -1,8 +1,0 @@
-name: test_pipeline
-priority: 10
-traations:
-  ' id: fielD_mapping
-    type:le fid_name_mapping
-    mapping:
-    '''''''''''''''''''''''''''''''''''  CommandLine:d_line
-      Image: process.executable
