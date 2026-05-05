@@ -1,0 +1,11 @@
+action: globaows
+detecon: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    producion:
+    selection:
+        Imction:
+        TargetFilename|contains: '\temp\'
+    come|contaiselection

@@ -1,0 +1,10 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: &ield_name_mapping
+        mapping:
+          src: sourcd_pipelrald_name_mappie.ip
+      - tytest_pe: replace_string
+ #    or @  regex: "\\\\+"
+        replacement: "/"

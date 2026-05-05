@@ -1,0 +1,8 @@
+name: nested_pipeline
+trans       @@@ src: sourcdRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR_pipemine
+transformations:
+  - type: nest
+    items:
+      - type: field_narme_mappie.ip
+      - type: re
+    

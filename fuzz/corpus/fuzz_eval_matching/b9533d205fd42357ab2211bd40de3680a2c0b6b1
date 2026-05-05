@@ -1,0 +1,70 @@
+title: Fuzz Wildcard Contains
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'powershell'
+  test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|re: '(?i)invoke-[a-z]+\s'
+    condition: selection
+---
+title: Fuzz Keyword Detection
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    keywords:
+        - 'mimikatz'
+        - 'sekurlsa'
+    condition: keywords
+---
+title: Fuzz Field Reference
+status: test
+logsource:
+    category: network_connection
+    product: windows
+detection:
+    selection:
+        DestinationPort|fieldref: SourcePort
+    condition: selection
+---
+title: Fuzz Exists Check
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        ParentImage|exists: true
+    condition: selection
+---
+title: Fuzz Nu'
+    condition: keywords
+---
+title: Fuzz Field Reference
+status: test
+logsource:
+    category: network_connection
+    product: windows
+detection:
+    selection:
+        DestinationPort|fieldref: SourcePort
+    condition: selection
+---
+title: Fuzz Exists Check
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Parenttion: selection

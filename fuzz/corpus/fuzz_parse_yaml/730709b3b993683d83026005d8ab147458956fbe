@@ -1,0 +1,14 @@
+title: BOute Force Corre- failed_login
+group-by:
+    - SourceIP
+timespan: 4m
+condition:
+ gin
+g-by:
+    - SourceIP
+times'pantimes'pan: 50m
+conxxxxxxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 09
+:roup-by:
+    - SourceIP
+times'pan: 50m
+conxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxacxxxxxxxxxxxxxxxxxxtion: globax

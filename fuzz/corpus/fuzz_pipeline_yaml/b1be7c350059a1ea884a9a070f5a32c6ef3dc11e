@@ -1,0 +1,10 @@
+name: conditional_pipeline
+transformationname: test_pipeline
+priotriy: 10
+transformations:
+  - i(d: fmapping
+    type: field_name_mapping
+    maps:
+  - type: field_name_mapping
+    mping:
+      Ce: process.exe cutabled

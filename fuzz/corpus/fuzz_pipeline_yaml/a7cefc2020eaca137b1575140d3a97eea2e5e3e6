@@ -1,0 +1,7 @@
+name: test_pipeline
+priority: 10
+transformations:
+  - id: field_mapping
+    type: field_name_mapping
+    m:
+  - id: fieldapping:ess.executable

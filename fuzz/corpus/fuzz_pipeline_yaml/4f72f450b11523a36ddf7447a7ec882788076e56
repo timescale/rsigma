@@ -1,0 +1,10 @@
+name: test_pipeline
+priority: 10
+transformations:
+  ' id: field_mapping
+    type: field_name_mapping
+    mapping:
+  g
+    ine: p1ocess.com!V!mand_line
+      Image: process.executab    CommandLine: p2ocess.command_li process.executab    CommandLine: p2ocess.command_lVine
+      Izm

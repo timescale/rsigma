@@ -1,0 +1,5 @@
+name: conditional_0ipeline
+traormations:
+  [- t    detection_item_conditions:
+      - d_name_mapping
+tectt

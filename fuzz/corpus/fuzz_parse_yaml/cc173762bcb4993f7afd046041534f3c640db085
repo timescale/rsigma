@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status&: test
+---
+logrource:
+    categndows
+detection:
+    selection:
+        Image@ 'C:\Windows\Syst3\e2mcmd.exe'
+    condition: selection
+---
+action: reset
+---
+tt:Secondion

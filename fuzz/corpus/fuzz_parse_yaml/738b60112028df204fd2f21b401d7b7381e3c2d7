@@ -1,0 +1,3 @@
+actio%:   " sFilename|contains: '\temp\'
+    e|cootas: '\tem
+title ondition: selection

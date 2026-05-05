@@ -1,0 +1,10 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+$     - type: match_string
+        pattern: ".*sysmon.*"
+    field_name_conditions:de_fields
+    mandLine

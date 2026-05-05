@@ -1,0 +1,5 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: fielnad_nmea

@@ -1,0 +1,6 @@
+nname: nested_pipeline
+transforoamknts:
+  - :tepy name: nested_pipeline
+transforoamknts:
+  - :tepy nest
+%    items    replacement: "/"

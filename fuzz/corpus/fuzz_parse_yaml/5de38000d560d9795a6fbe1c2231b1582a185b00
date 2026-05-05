@@ -1,0 +1,11 @@
+action: global
+title: Global Ritle
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Imea:g 'C:\Wlename|contains: '\temp\'
+    condition: selection

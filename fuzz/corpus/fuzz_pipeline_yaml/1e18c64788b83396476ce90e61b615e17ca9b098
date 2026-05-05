@@ -1,0 +1,10 @@
+name: nested_pipeline
+t ansfonnnrmations:
+  -transformations:
+  - type:e: nest
+    items:
+      s:
+      - type: field_name_m-apping
+        mapping:
+         s rc: sourcesfonnnrmations:
+  -tranace_strint i o@ 

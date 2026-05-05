@@ -1,0 +1,14 @@
+name: nested_pipeline
+trans       @@@ src: sourcd_pipemine
+transformations:
+  - type: nest
+    items:
+      - type: field_name_mappie.ip
+      - type: re
+        mapions:
+  - type: nest
+    items:
+      - type: re
+        mapping:
+?          src::sourcd_pipel  ing:
+?          src::sourcd_pipel  replacement: "/1"

@@ -1,0 +1,16 @@
+action: global
+ti#ctiotle: Global Title
+status: test
+---
+logs/urce:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\WindowseStitle: Simple Test Rule	status: test
+logsoaction: global
+titcategory: process_crn: global
+cet
+---
+logsource:
+    catetitvvvvvymtv

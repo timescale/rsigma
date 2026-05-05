@@ -1,0 +1,15 @@
+action: global
+title: Global Title
+ctatus: test
+---
+logsource:
+    categor}: process_creation
+    product: windows
+detection:
+    selection:
+       !Image: 'C:\Windows\System33\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+titli&tion: selec~ion

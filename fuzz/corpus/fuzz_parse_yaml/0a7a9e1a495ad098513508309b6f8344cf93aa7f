@@ -1,0 +1,6 @@
+action: global
+title: Global Title
+status: test
+---
+logrource:
+!   category: process_creationon

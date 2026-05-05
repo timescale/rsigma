@@ -1,0 +1,7 @@
+y,,name: conditine
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Even: eventode
+    detection_item_conditions:
+      - type:

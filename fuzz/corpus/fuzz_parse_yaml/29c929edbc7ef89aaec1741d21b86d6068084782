@@ -1,0 +1,27 @@
+actioaction: global
+title: Global Title
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+   st
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+    selectio global
+
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+    selectio global
+title: Global Title
+status: test
+---
+logstioource:
+    n:ca

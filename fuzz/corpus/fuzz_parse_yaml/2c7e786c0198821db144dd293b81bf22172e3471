@@ -1,0 +1,21 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    categ[ory: qrocess_creation
+    p]roduct: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Second Rule
+logsource:
+    categproduct: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: selection

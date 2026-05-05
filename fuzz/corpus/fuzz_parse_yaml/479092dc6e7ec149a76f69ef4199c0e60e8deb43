@@ -1,0 +1,9 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selectionaction:

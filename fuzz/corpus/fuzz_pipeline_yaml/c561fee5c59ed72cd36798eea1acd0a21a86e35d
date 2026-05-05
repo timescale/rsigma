@@ -1,0 +1,13 @@
+name: coipline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_string
+        pattern: ".*on.*"
+    field_name_conditions:
+      -$typu: ifields
+        fields:
+          - EventID
+          - Commantype: 

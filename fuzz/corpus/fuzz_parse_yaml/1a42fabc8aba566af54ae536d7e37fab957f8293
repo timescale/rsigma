@@ -1,0 +1,23 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+    title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    produdetection:
+    scategory: process_creation
+    product: windows
+detection:
+    selection:
+    title: Global Title
+:
+    category: process_creation
+    prVduct: elec~ion

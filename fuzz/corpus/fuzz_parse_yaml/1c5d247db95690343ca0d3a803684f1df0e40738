@@ -1,0 +1,22 @@
+action: global
+title: Global Titl Title]
+status: test
+---
+logsource:
+    category: set
+---
+title: Second Rule
+logsource:
+    categpr#oduct: windows
+detec--,logsource:
+    category: set
+---
+title: Second Rule
+logsource:
+    categproduct
+---
+logsource:
+  n:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: selection

@@ -1,0 +1,8 @@
+name: conditiopenl_aipline
+transform:tions:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+      fields:
+          - EventID
+          - Commantype: 

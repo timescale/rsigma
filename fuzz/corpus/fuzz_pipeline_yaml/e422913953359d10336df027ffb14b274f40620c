@@ -1,0 +1,5 @@
+name: nested_pipeline
+transformationsransformqtions:
+  - typ%: nest
+    items:
+      - type: &ield_n`m"/"

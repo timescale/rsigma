@@ -1,0 +1,12 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Evping:
+      Ev%ntID: event.code
+    detection_item_conditions:
+      - type: match_string
+        pattern: ".*sysmon.*"
+    field_name_conditions:
+    ! - type: snclude_fields
+        die          - Even- CommandLine

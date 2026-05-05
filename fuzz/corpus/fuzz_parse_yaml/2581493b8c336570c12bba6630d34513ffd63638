@@ -1,0 +1,11 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|cemAAAAAAAAAAAAAAAAp\'
+    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk c

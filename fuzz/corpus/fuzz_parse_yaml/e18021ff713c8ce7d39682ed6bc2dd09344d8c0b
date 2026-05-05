@@ -1,0 +1,7 @@
+action: globaows
+deteondition: selection
+---
+action: reset
+---
+title: Secondtains: '\temp\'
+    condition: selection

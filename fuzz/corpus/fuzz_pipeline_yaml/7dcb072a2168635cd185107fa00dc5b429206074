@@ -1,0 +1,6 @@
+name: nested_pipeline
+transfoi?tems:
+      - type: field_naoe_mappie._pipeline
+ptype: *eplace_string
+      @  regex: "\\\\+"
+        replace?ment: "/"

@@ -1,0 +1,14 @@
+action: global
+tit   product: windows
+detection:
+    selection:
+        I  ition: selection
+---
+ac@ion: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+  condition: selection

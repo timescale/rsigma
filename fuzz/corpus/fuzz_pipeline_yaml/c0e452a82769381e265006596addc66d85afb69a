@@ -1,0 +1,12 @@
+name: nested_pipeline
+transformations:
+  - typpeline
+transformations:
+  - type:e: nest
+    items:
+      - type: field_name_mapping
+        mapping:
+         s rc: source.ip
+      - type: repl1ace_string
+        regex: "\\name: condi\\+"
+     t i o 

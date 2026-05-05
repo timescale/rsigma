@@ -1,0 +1,13 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Evping:
+      - type: match_string
+        pattern: ".*sysmon.*"
+    field_name_conditions:
+      - type: include_fmon.*"
+    field_name_conditions:
+      - type: include_fields
+        fields:
+          - Even- CommandLine

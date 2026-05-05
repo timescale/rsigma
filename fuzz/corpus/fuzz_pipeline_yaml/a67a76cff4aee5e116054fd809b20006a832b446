@@ -1,0 +1,9 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+   #mapping:
+    ormations:
+  - type: f!~{{{{{{{{{{{{nme{{{{{{{{{{{ield_name_mapping
+   #mappeld_name_mapping
+   #mapping:
+      EventI*sy

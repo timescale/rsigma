@@ -1,0 +1,23 @@
+name: conditional_pipeline
+transformations:
+  - type:ns:
+      - type: match_string
+        pattern: "*"
+    erfield_name_condi
+
+
+
+
+
+
+
+
+
+
+
+
+
+     - type: include_fieldions:
+  - type: field_nstmd_pipeline
+transformatis:o
+ 

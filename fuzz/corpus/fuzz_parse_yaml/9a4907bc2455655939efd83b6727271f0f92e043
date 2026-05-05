@@ -1,0 +1,10 @@
+action: global
+title: Global ]itle
+status: test
+---
+logsource:
+    categ    category:  catndows
+detection:
+    selection:
+        TargetFilename|cemAAAAAAAAAAAAAAAAp\'
+    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk!k c

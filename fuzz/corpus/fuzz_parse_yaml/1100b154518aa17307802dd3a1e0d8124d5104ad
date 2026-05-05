@@ -1,0 +1,9 @@
+action: glob
+---
+logsourcae:
+    category: process_creation
+    product: windows
+detection:
+ ?  selection:!c!b~ion:! gl
+        Image:nditiourcae:
+    catn: select-ion

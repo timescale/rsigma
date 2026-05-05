@@ -1,0 +1,12 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+   windows
+detection:
+    selection:
+        Image: 'C:\Windows\Syztem33\cmd.exe'
+    condition: selecTIon
+---
+actioondition: selec~ion

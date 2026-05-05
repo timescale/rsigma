@@ -1,0 +1,12 @@
+name: conditional_piteline
+transformations:
+  - type: field_name_mapping
+   #mapping:
+me: conditional_piteline
+trans    ormations:
+  - tean:m condiype    ormatiformations:
+  - type: field_name_mapping
+   #mapping:
+    ormations:
+  - tean:m condiype    ormations:
+  - tean:m condiype: f_eltionald__pinamp

@@ -1,0 +1,5 @@
+name: conipeline
+transformations:
+! -typ : efi conipeline
+trantions:
+! -typ : efi conipelinsf  

@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: tes*[t
+---
+logsource:(    category: process_creation
+   #p;roduct: windows
+detection:
+    selecgory: process_creation
+    poduct: windows
+detectio:
+    category: [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[process_creation
+   #p;roduct:$windows
+detectn:
+    seltion

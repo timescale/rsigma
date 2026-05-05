@@ -1,0 +1,11 @@
+action: global
+title: Global Title
+statuus: testt
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains  TargetFilename|contains: 'mp\'
+    cndition: selection

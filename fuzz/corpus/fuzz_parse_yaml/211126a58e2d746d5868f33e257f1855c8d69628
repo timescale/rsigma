@@ -1,0 +1,13 @@
+action: global
+title: Global Title
+statuson:
+    seleelectaon:
+    title: Global Title
+status: test
+---
+logsource:ion: selection
+---
+action: reset
+---
+title: Semp\'
+    condition: selec~ion

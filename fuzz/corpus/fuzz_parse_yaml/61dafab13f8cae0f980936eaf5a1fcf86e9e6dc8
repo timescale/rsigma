@@ -1,0 +1,10 @@
+action: global
+title: Global Title
+status: test
+---
+logsoacte:
+    category: procesdows
+detection:
+    selection:
+        Image: 'C:\Windows\Systemta32\cmd.ixe'
+    condition: 

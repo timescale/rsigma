@@ -1,0 +1,12 @@
+name: cOnditiopenl_aipline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_sstsmon.*"
+    field_name_conditions:
+      - typu: include_fields
+        fields:
+          - EventID
+          - Commantype: 

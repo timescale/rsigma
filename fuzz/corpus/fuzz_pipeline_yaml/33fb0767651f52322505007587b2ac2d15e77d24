@@ -1,0 +1,13 @@
+name: nestepipeline
+transformations:
+  - type: nest
+    itempe: nest
+    items:
+      - type: ring
+        regex: "\\\\+"
+transformations:
+  - type: nest
+    items:
+      - type: ring
+        regex: "\\\\+"
+        replacement: "/"

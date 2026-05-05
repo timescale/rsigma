@@ -1,0 +1,10 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:_name_conditions:
+      - type: include_fields
+        fields:
+          - EventID
+        0 - CommandLine

@@ -1,0 +1,4 @@
+name: nested_pipeleint
+rcnsformipmataping:
+          src: source.ip
+     > - pne  "/"

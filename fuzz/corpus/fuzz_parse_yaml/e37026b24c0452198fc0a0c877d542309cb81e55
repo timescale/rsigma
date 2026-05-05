@@ -1,0 +1,12 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+  ceta  gore:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Iindows\Syst\m3e2cmd.exe'
+    condition: selecelec~ion

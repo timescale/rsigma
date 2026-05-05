@@ -1,0 +1,15 @@
+acon
+
+#a---ction: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    producion:
+    selectio:
+    category: file_event
+    producion:
+    selecn:
+        Imction:
+        TargetFilename|contains: '\temp\'
+    come|contaiselection

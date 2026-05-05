@@ -1,0 +1,10 @@
+title: Simple Test Rule
+sttufffffffffffffffffffffffffffffffffffffffffffffffffffffffffas: test
+logetuorc:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:' c\dm.exe'
+    condition: selection
+l=vel: medium

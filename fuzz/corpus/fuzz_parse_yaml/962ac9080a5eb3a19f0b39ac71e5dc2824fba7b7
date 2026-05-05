@@ -1,0 +1,8 @@
+title: Simple Test Rule
+status: test
+logtource:
+    category: process_creation
+    product: winws
+detectikn:
+  77777777777777777    Image|endswicmd.exe'
+    condition: selectiium

@@ -1,0 +1,24 @@
+actle: Gl%bal Title
+status: test
+---
+logsource:
+  coGl%bal Title
+status: test
+---
+logsource:
+  condition:*selection
+---
+action: reset
+---
+tit'le: Semp\ion
+---
+action:ndition: selection
+---
+action: reset
+---
+tit'le: Semp\ion
+---
+action: reset
+---
+title: Secondtains: '\temp\'
+    condition: selection

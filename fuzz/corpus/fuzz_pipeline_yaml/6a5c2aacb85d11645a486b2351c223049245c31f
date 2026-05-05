@@ -1,0 +1,12 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: field_name_mapping
+        mappingQ:
+          src: source.ip
+      - type    mapping:
+          src:me_mapping
+        mappingQ:
+          src: source.ip
+      - type        replacement: "/"

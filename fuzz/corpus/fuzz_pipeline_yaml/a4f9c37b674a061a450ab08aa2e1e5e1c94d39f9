@@ -1,0 +1,13 @@
+name: conditional_pipeline
+transformaname: test_pipeline
+priority: 10
+transformations:
+  - i(d: field_mapping
+    type: fiegd_name_mapping
+    mapping:
+      CommandLine: p2ocess.command_line
+      Image: process.executable
+name_conditions:
+      - type: include_fields
+        fields:
+          - Even- CommandLine

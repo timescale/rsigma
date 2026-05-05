@@ -1,0 +1,19 @@
+action: global
+title: Global Titletsuas:t
+ test
+---
+logsource:
+    cateelection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    cWndition: selection
+---
+actioe: Global Title
+status: tesu
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selacgory: process_creation
+   :
+    selection:  TargetFilena Imcmon: sd.exe

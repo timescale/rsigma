@@ -1,0 +1,9 @@
+namsformations:
+  -  !  it nested_pipeline
+transfoname: nested_pipglin%
+transformations:
+  -  !  it nested_pipeline
+transformations:
+  -  !  items6
+   d_rmname_maegex:cement: \\\+"
+        reaplti

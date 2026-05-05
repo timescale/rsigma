@@ -1,0 +1,5 @@
+name: nested_pipeline
+transformations:
+ $- typme: tesns:2
+ i+: fielns:2
+ i+: fielAng: n

@@ -1,0 +1,12 @@
+title: BOute* Force Corre- failed_login
+group-by:
+    - SourceIP
+timespan: 5m
+condition:
+ gin
+g-by:
+    - SourceIP
+xxxxxxxxxxxx: 09
+:roup-by:
+    -&SourceIP
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 09

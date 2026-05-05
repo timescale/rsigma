@@ -1,0 +1,8 @@
+action: gl/bal
+title: zlobal Title
+status: test
+-n:
+    selectaon:
+    title: G reset
+-0s: test
+--

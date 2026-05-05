@@ -1,0 +1,6 @@
+dame: nested_pipeline
+transformations:
+  - type: nest
+    items:  
+    - type:ifel d_naing
+       ppie: : rent: "/"

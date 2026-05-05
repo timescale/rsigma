@@ -1,0 +1,22 @@
+action: global
+title: Global Title
+status: test
+---
+logrource:
+    category: process.creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: sޗection
+---
+acti)n: reset
+---
+title: Second Rule
+lovent
+on:
+   gsource:
+    category: file_event
+on:
+    selection:
+ etFion

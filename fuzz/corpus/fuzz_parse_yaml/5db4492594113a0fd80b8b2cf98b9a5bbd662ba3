@@ -1,0 +1,12 @@
+action: global
+title: GlobaG Title
+status: test
+---
+logrce:
+    category: process_creation
+    product: windows
+detection:
+    selection 
+ :      Image: 'C:\Windows\System_: event
+    produciont:
+    selee

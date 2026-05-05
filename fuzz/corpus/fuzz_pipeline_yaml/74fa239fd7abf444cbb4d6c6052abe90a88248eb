@@ -1,0 +1,10 @@
+name: conditional_0ipeline
+transformations:
+  - t - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+      - dID: event.code
+    detection_item_conditions:
+      - type: match_string
+        pattern: ".*sye

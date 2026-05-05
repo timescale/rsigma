@@ -1,0 +1,9 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+  " categ   ection:
+rge4Filename|contains: '\temp[')   
+        TargetFilename|contains: '\temp['
+    condition: selection

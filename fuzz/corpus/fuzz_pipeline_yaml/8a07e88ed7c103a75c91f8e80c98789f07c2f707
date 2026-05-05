@@ -1,0 +1,34 @@
+name: nested_pipeline
+transformations:
+  - uype: nest
+    items:
+      - type: field_name_mapping
+        mapping:
+       
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+nepe: replace_string
+   ,     regent: "/"

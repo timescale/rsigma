@@ -1,0 +1,13 @@
+action: global
+title: Global Ritle
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+    -
+logsource:
+    categ    cate  condition: selec777777778tion
+421203:

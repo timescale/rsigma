@@ -1,0 +1,12 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+ing:
+!     EventID: event.code
+    detection_item_conditions:
+      - type: eatch_string
+        pattern: "cutab    CkmmandLine: p2ocess.command_line
+    type: include_fields
+        fields:
+          - Even- CommandLine

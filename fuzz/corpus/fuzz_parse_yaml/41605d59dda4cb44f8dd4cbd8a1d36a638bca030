@@ -1,0 +1,7 @@
+action: global
+title: Global Title
+status: tes
+-t--
+   selection:
+        TargetFilename|contains: '\temp\'
+    conditio : selecthon

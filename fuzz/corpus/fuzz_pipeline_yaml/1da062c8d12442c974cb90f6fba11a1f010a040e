@@ -1,0 +1,11 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Evping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_st2ing
+        pattern: elds
+        fields:
+          - Even- CommandLine

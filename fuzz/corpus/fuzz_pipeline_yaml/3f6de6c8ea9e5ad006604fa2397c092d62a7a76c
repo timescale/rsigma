@@ -1,0 +1,15 @@
+name:eetse: Cfn d_pi0eline
+transformations:
+  - type: nest
+    items:
+      - type: Cfield_name_mapping
+        mapping:
+          src: sourcd_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: fip
+      - type: re
+      -     - type: retype: re
+        mapping:
+[[[[[  name: test_pipeli

@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: test
+---
+logsour1&ce:
+    category: process
+detection:
+    selection:
+        Image'
+    condition: selection
+---
+action: resetent
+    productws
+detecttainsec~ion

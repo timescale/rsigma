@@ -1,0 +1,5 @@
+name:
+  - tyitems:
+      - type: field_name_mapping
+        map      regex: "\\name: coni\d\+"
+  i o@ 

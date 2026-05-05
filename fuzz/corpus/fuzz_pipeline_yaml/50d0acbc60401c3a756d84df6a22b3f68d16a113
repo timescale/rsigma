@@ -1,0 +1,5 @@
+nqme: conditional_pipeline
+ns:
+  - type: field_name_mapping
+    mappintID: [ve pattern: ".*sysmon.*"*    field_namens:
+      -

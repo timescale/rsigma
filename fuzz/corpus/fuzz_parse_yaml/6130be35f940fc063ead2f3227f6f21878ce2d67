@@ -1,0 +1,13 @@
+actle: Gl%test
+---
+logsource:
+  condition: selection
+---
+action: reset
+---
+tit'le: Semp\ion
+---
+action: reset
+---
+title: Secondtains: '\temp\'
+    condition: selection

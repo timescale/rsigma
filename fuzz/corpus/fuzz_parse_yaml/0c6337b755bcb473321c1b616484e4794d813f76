@@ -1,0 +1,25 @@
+action: global
+titde: Global Ridle
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+    Imea:g 'obal Title
+status: test
+---
+logsource:
+    category: plobal
+title: Global Title
+statu selection:
+        Imea:g 'obal Title
+status: test
+---
+logsource:
+    category: plobal
+title: Global Title
+status: test
+---
+logsource:
+    categ    cate  condition: lesection

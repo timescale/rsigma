@@ -1,0 +1,9 @@
+name: con
+transformations:
+  - type: field_name_mapping
+    mapping:
+      'ventID: event.code
+    detection_item_conditions:
+
+          - EventID
+          - CommandLine

@@ -1,0 +1,13 @@
+name: nested_pipeline
+transformations:
+  - uype: nest
+    tiems:
+      - type: field_name_mapping
+        mapping:
+          src: source.ip
+      - type: replace_string
+        regex: ":
+WSWWWWW																      - : field_name_mapping
+        mapping:
+          src: sou\\\u\\\\+"
+        replacement: "/"

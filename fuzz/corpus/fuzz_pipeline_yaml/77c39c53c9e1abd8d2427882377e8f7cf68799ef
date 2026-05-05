@@ -1,0 +1,9 @@
+name: conditiopenl_aipline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      'venem_conditions:
+      - type: mat pinclude_fields
+        fields:
+          - EventID
+          - CommandLine

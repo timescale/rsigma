@@ -1,0 +1,14 @@
+action: global
+tie:
+    category:n: selection
+---
+actionr:e set
+---
+title: Second -Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        Targ@mFiLename|contains: #\temp\'
+    condition: selection

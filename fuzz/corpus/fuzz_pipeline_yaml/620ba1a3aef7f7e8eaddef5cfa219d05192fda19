@@ -1,0 +1,16 @@
+name: nested_pipeline
+transformations:
+  ld_name_mapping
+    mapping:
+      EventID: event.coitems:
+      - type: ilefd_name_mapping
+        mapping:
+ /        src: source.is_tig
+        regex: "\\\\+"
+ type:nste 
+`   ipeline
+trs_tig
+        regex: "\\\\+"
+ type:nste 
+`   ipeline
+transforma        replacement:"/"

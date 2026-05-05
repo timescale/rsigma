@@ -1,0 +1,12 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+  ceta  gore:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: sele  elec*~ion

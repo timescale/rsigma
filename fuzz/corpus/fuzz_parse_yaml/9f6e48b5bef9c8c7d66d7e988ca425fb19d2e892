@@ -1,0 +1,11 @@
+action:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{%%%%%%%%{{{{{{{{{{{{{global
+tdtle: Globt ilTlae
+status: test
+---
+logsource:
+ action: g[

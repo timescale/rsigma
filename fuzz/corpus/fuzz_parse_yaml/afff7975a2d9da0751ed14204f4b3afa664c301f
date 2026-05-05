@@ -1,0 +1,22 @@
+action: global
+title: Global Title
+stauts: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\dwnsoWi\System78\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        Targ@tFilename|contains: '\temp\'
+    condition: selection

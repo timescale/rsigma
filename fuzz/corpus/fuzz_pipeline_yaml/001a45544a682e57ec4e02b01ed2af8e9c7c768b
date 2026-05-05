@@ -1,0 +1,9 @@
+name: conditio0alnp_ieline
+1transformations:
+  - typentID: event.code
+    detection_item_conditions:
+      - type: }atch_string
+        pattern: ".nappingy 
+  pt*sysmon.*"
+  eems2
+ 

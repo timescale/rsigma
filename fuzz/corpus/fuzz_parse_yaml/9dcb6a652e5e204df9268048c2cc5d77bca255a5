@@ -1,0 +1,9 @@
+action: global
+title: Global e
+status: test
+---
+logrource:
+!   categor: process_le
+status: test
+---
+logrource

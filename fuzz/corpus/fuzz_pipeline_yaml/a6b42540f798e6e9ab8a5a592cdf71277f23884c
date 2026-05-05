@@ -1,0 +1,4 @@
+name: nested_pipeline
+transformations:
+*s1
+ [[[!___  _!

@@ -1,0 +1,9 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    product: ion
+    product: windows
+detectge|endsw: '\cmd.exe'
+    conditinn: selection
+leve  condium

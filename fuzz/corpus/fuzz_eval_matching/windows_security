@@ -1,0 +1,1 @@
+{"EventID":4688,"CommandLine":"powershell.exe -enc abc","Image":"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","ParentImage":"C:\\Windows\\explorer.exe","User":"DOMAIN\\user"}

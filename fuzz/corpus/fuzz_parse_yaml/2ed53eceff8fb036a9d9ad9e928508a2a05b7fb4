@@ -1,0 +1,20 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    categore:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System31\cmd.exe'
+    condition: ?election
+---
+action: reset
+ion
+    product: windoction:
+  ction:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condit        TargetFilename|contains: '\temp\'
+  elec~ion

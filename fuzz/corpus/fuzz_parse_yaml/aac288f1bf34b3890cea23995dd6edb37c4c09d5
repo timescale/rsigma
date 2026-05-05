@@ -1,0 +1,14 @@
+action: globad
+titn: selection
+---
+action:
+    sename|contaile: Glo:bal Title
+statusD teste:
+    category: process_creation
+    product: /   Imagen
+---
+action:
+    selection:
+        TargetFilename|containtection:
+    ss: '\temp\'
+    condition: se'ec~ion

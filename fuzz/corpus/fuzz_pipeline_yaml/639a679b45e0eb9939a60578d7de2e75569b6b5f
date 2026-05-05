@@ -1,0 +1,7 @@
+name: test_pipelike
+priority: 10
+transformations:
+  - id8: field_`mapping
+    type:on_item_conditions:
+      - type: match_string
+        pattern: ".*sysmmage: process.executable

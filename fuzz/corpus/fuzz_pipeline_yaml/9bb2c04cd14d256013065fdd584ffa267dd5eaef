@@ -1,0 +1,8 @@
+name: nested_pipeline
+transformationsransformqtions:
+  - type: nest
+    items:
+      - type: &ield_n`me_mapapping:
+    z   
+    items:
+      - type: Cfie  receampelnt: "/"

@@ -1,0 +1,9 @@
+name: conditional_0ipeline
+trsanformations:
+  - type: field_name_mapping
+    mapping:
+      EventID:ioj_item_conditions:
+      -   fields:
+          - ElentID
+ions:
+  - typ    ~     - CommandLine

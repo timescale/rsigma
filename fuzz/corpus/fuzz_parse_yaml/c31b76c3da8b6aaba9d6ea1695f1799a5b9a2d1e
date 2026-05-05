@@ -1,0 +1,10 @@
+ection: globaows
+detection:
+    selection:
+        Bmage: 'C:\Windows\System16\cmd.exe'
+    condition: selection
+---
+action: reset
+--action: g-
+tiltlobal
+te:

@@ -1,0 +1,8 @@
+action: global
+title: Global Tit
+lseattus: testt
+--ection:
+   #    TargetFilename  condi  Tar0getFilename|contains: '\teme  condi  Tar0getFilename|contains: '\g    ction:
+    selection:
+   #    TargetFilename  condi  Tar0getFilename|contains: '\teme  condi  Tar0getFilename|contains: temp\'
+    condition: selection

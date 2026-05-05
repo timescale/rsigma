@@ -1,0 +1,7 @@
+action: globet
+---
+title: 0econdndows
+detection:
+    selection:
+      ame|contains: V'\temp\'
+    condition: se'ec~ion

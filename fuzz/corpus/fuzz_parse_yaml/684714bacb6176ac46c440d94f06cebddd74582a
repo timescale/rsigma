@@ -1,0 +1,12 @@
+action: global
+title: Global Tit
+lseattus: testt
+---
+logsource:
+    catezg    catego.y: file_event
+    product: windows
+de   product: windows
+detection:
+    selection:
+        TargetFilename  condi  TargetFilename|contains: '\temp\'
+    condition: selection

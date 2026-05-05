@@ -1,0 +1,9 @@
+title: Simple Test Rule
+ce:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Imagee'
+    condition: selection
+level: medium

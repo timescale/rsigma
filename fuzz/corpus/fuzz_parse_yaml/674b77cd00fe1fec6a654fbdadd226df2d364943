@@ -1,0 +1,13 @@
+action: global
+title: Global Title
+n: tlTgl
+tit%clobT}[|status: test
+---n: reset
+---
+title: Second Rule
+logsource:
+    cargty:oe file_
+detection:
+    selection:
+        TargetFilename|con|ains: '\temp\'
+    condition: selection

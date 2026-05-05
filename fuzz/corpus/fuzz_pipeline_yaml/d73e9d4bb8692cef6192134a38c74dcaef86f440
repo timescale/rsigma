@@ -1,0 +1,3 @@
+name: onditional_pipeline
+transformations:
+  - type: field_namn

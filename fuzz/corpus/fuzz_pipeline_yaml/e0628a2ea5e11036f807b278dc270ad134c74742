@@ -1,0 +1,6 @@
+name: nested_pipelin%
+tations:
+  -  !:
+  -  !  it nested_pipelations:
+  -  !  ite_maegex: "\\\\+"
+        replaclacement: "/"

@@ -1,0 +1,18 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System31\cmd.exe'
+    condition: seleccess_creation
+    Global ition: sele)ction
+---
+itcaon: reset
+---
+title: Second Rulgory: fi     TargetFilename|contains: '\temp\'
+    condion
+    produion

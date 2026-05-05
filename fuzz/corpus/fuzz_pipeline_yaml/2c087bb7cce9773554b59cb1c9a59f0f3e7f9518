@@ -1,0 +1,7 @@
+name: cal_pipeline
+transformations:
+  - type: field_name_mapping
+   #mapping:
+    ormations:
+  - type: field_name_mapping
+   #mappi_nam 

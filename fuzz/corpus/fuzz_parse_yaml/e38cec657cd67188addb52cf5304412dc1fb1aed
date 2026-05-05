@@ -1,0 +1,16 @@
+action: global
+title: Global Title
+status: test
+---
+
+detection:
+    selection:
+        Image'
+    condition: selection
+---
+actionectitle: Simple Test Rule
+statust: test
+lo oduct: windows
+detection:
+    selection:
+ 

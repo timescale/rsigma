@@ -1,0 +1,22 @@
+action: global
+title: Global Title
+status: test
+---
+logsourZe:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: selection

@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+statustion:
+     reset
+---
+title: Second Rule
+logsource:
+    category: filehevent
+    product: windows
+detection:
+    selection:
+      on:
+        tains: '\temp\'
+    condittion

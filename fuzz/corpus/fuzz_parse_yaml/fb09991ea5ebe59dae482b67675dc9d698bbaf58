@@ -1,0 +1,11 @@
+action: global
+title: Gt
+---
+logsource:
+    category: process_creation
+    product: [-[-
+ 
+   windows
+detection:
+    selection:
+title:      m32\cSm

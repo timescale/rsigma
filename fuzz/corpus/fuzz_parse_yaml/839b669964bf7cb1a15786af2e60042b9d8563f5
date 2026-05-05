@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: tes*[t
+---
+logsource:
+    category: process_creation
+   #p;roduct: windows
+detection:
+    selecitle: Global Title
+status: test
+---
+logsource:uct: windows
+detection:
+    selecitle: Globalltion

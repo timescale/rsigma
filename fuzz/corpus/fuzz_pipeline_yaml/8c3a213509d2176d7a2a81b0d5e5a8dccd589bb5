@@ -1,0 +1,13 @@
+name: test_pipeline
+priorityformatiome: nested_pipeline
+transformations:
+  - type: nest
+    ns:
+  - id: field_mapping
+    ty: 10
+transformatiome: nested_pipeline
+transformations:
+  - type: nest
+    ns:
+  - id: field_mapping
+    type: ficess.executable

@@ -1,0 +1,4 @@
+ame: tespipeline
+priority: !-
+transfo(mations:
+  - one

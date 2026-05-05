@@ -1,0 +1,12 @@
+title: Simple T Global Title
+status: test
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: selectiith:"'\cmd.exe'
+    condition: selection
+level: medium

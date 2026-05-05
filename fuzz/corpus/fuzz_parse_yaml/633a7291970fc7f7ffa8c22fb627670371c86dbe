@@ -1,0 +1,17 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: plobal
+title: Global Title
+status: test
+---
+logsource:
+    categ    category:ion:
+     ducImction:
+        TargetFilename|contains: '\temp\'
+    condit fiion: global
+title: t: action: {{{{{{{{ion: {{{{{{{{{{{{{{{{{{{{{{X 'lBbal windows
+detection:
+    selectioni

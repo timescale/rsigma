@@ -1,0 +1,26 @@
+action: global
+title: Global Title
+status: test
+---
+logsourcction: global
+title: Global Title
+status: test
+---
+logsource:
+    category: procet
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+       !I    condition: selection
+---
+ac@ion: reset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+  condition: selection

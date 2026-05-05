@@ -1,0 +1,6 @@
+tion
+---
+action:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: se'ec~ion

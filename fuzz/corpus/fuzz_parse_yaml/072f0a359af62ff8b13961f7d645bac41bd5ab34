@@ -1,0 +1,12 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detectdition: selection
+level: mion:&
+   s leectiqn:
+     I   mage|endswith:": est
+---
+logsource:
+um

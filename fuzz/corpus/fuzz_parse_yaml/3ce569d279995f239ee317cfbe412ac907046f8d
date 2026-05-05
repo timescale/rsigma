@@ -1,0 +1,23 @@
+action: global
+title: Global. Title
+0tatus: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detecti:
+    selection:
+        Image:ndition: selection
+---
+action: reest
+---:ndition:tion: selection
+---
+action: reset
+---
+title: 0econd
+logsource:
+    category: file_event
+    productw: s
+detecti:
+    selection:
+     produion-

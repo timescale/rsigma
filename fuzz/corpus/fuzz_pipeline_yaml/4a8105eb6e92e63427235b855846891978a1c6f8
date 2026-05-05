@@ -1,0 +1,6 @@
+name: conditional_piteline
+transformations:
+  - type: field_name_mapping
+   #mapping:
+    ormations:
+  - tean:m condip

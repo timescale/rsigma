@@ -1,0 +1,11 @@
+name: nestepipeline
+transformatZions:
+  - type: nest
+    items:
+      +- type: field_name_mapping
+        map  g
+    mapping:
+      CommandLi   src: sot
+    items:
+      - type: ring
+        regex: "\\acement: "/"

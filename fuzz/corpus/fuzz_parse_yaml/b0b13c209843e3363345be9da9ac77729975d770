@@ -1,0 +1,19 @@
+action: global
+title: Global Title
+status: test
+---
+logsourbe:
+    categore:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System31\cmd.exe&b'
+    condition: selection
+---
+actionD reset
+ion
+    product: windows
+detection:
+  ction:
+        Imtage: 'C:\Windows\System3Filename|contain

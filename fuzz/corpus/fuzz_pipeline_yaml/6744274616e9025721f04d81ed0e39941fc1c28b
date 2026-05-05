@@ -1,0 +1,7 @@
+name: conditional_pipeline
+transformaname: 10
+tr: process.executable
+na:me_conditions:
+      - tyority: 10de_fields
+   fields:
+          - Even- CommandLine

@@ -1,0 +1,13 @@
+name: conditional_pipeline
+ons:
+  - type: field nest
+    items:
+      - type: field_name_mapping
+        mapping:
+          src: source.ip
+      - type    mapping:
+         : ".*sysmon.*"
+    field_ - type: include_fields
+        fields:
+          - EventID
+        5 - CommandLine

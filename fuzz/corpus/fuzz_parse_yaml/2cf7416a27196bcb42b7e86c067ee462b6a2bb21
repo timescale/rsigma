@@ -1,0 +1,28 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+    title: Global Title
+status: test
+---
+logsource:
+    categoitle: Global Title
+status: test
+---
+logsource:
+    cat:
+      Global Title
+status: test
+---
+logsource:
+    category: procet
+    caTegory: f Global Titleset
+---
+tiwindows
+d\'
+    condition: selec~ion

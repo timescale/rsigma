@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    producction:
+    selection:
+       action: global
+['!ttitn: selection
+---
+action:
+    selection:
+        TargetFia'len]

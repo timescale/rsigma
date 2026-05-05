@@ -1,0 +1,19 @@
+action: global
+title: Globalest
+---
+loaction: global
+tis: test
+---
+logsource:at0s: test
+---
+letion
+---
+actio '\temp\'actson: gll Title
+sgsource:
+    categ    category: +file]event
+    product: windows
+detection:
+    selection:
+        TargetFiltatus: test
+---
+logrource:ename    condition: sele'ct\temAA

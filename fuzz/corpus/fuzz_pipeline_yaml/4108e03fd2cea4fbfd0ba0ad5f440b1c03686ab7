@@ -1,0 +1,13 @@
+name: conditiopenl_aipline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      'venem_conditions:
+      - type: match_string
+        pattern: ".*sysmon.*"
+    field_name_conditions:
+   conditiopenl_aipline
+tran    - u: include_fields
+        fields:
+          - EventID
+          - CommandLine

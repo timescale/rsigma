@@ -1,0 +1,12 @@
+name: test_pipeline
+priority: 10
+traiome: nested_pipeline
+transformations:
+  - type: nest
+    ns:
+  - id: field_mepping
+    type: field_name_mapping
+    mapransform- type:nsteations:
+  - type:nste 
+    nest
+   ess.executable

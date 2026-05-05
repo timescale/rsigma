@@ -1,0 +1,12 @@
+name: nc=doitional_pipeline
+transformations:
+  - -type: field_name_mapping
+    mapping:
+      EventI*sysmon.*"
+    field_namion_item_conditions:
+      - type: match_string
+        patditions:
+      - type: include_fields
+        fieldname: nested_pipeline
+transformati: %
+ 

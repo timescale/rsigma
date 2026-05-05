@@ -1,0 +1,6 @@
+action: globl
+title: Glob
+status: teetFilename|contains:\t 'emp\'
+    condition:$selectional Title
+sta!tection:
+    """""""""action: g""lo"""

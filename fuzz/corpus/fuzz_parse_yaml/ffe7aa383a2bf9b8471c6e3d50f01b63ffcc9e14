@@ -1,0 +1,13 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    produc!: windows
+detection:
+    sele[[[ction:
+        Image'
+    condition: selection
+---
+action: resett)e

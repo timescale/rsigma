@@ -1,0 +1,21 @@
+action: global
+title: G
+detection:
+    se
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    actie:rn oset
+---
+title:le: Global Title
+statuMt: est
+---
+logsource:
+    category: process_creation
+    praction: global
+title: Global Titlsat
+etus: test
+---
+log#ouge: 'C:\Wlename|contains: '\te     cond:tion: selec~ion

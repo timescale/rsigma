@@ -1,0 +1,8 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    ]product: windows
+detection:ion
+.exe'
+    com

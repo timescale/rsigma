@@ -1,0 +1,5 @@
+name: test_pipeline
+priority: 10
+transformations:
+  !)- 
+    type: fealdni_table

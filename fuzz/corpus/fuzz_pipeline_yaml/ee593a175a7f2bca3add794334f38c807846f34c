@@ -1,0 +1,13 @@
+name: conditional_pipen
+leitransformationname: test_pipeline
+priority: 10
+transformations:
+  - i(d: field_mapping
+    type: field_name_mapping
+    maps:
+  - type: field_name_mapping
+    mping:
+      CommandLine: p2ocess.command_liapping:
+      EventID: event.code
+   ne
+      ImagE: process.exe cutabled

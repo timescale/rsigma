@@ -1,0 +1,9 @@
+action: gobal
+title: Global Titst
+---
+logsource:
+ roduct: windows
+detection:
+    selection:
+        Image: ''
+    condition: se'ec~ion

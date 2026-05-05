@@ -1,0 +1,20 @@
+action: global
+title: zlobal Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+    title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    Global ition: sele)ction
+---
+action: reset
+---
+title: Second Rule
+logsoa

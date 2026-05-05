@@ -1,0 +1,13 @@
+title: Simple Test Rule
+status: test
+logsource:roduct: windows
+detection:
+    seleoticn:
+        Image|endswi
+    category: process_creation
+    product: windows
+detection:
+    seleoticn:
+        Image|endswith: '\cmd.exe'
+    conditinn: selection
+level: medium

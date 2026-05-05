@@ -1,0 +1,10 @@
+title: Simple Test Rule
+status: test
+logsource:
+    ce_event
+    prtest
+---
+logsource:
+    cbtegoreImcti
+ o: n   :
+        Imagum

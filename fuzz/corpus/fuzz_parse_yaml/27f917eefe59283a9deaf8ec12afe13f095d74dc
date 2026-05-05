@@ -1,0 +1,10 @@
+title: Brtte Force Correlation
+name: brute_force
+type: event_count
+rules:
+    - failed_login
+grodddddddddddddddddddddddddddddddddup-by:
+    - SourceIP
+timespan: 4m
+condition:
+    gte: 10

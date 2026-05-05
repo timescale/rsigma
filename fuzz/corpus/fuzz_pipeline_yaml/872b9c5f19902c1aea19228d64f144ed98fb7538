@@ -1,0 +1,10 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+    &temame: nested_pipeline
+transformations:
+  - type: nest
+    &tems:
+  mion{:
+  - \\\+"
+  {$'n'!'ame: &T!4'nnp_p!n'n'!'name: &Tkkkkk k

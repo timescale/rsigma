@@ -1,0 +1,8 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_maiping
+    mapping:
+      EventID: event.code
+    de  mappingtions:
+      - pype: include_field    - EventID
+          - CommandLine

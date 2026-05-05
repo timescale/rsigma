@@ -1,0 +1,12 @@
+action: global
+title: Glmbal Title
+status: test
+---
+logsource:
+    category: processndows
+detection:
+    se    producion:
+    selection:
+        Imction:
+        TargetFilename|contains: '\temp\'
+    condition: selection

@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: te_creation
+   #p;roduct: windows
+detection:
+    selecgory: process_creation
+    ptio:
+    #ategory: process_creat  selecgory: process_creation
+    ptio:
+    #ategory: process_creation
+   #p;roduction
+   #p;roduct: windows
+detec;tn:
+    seltion

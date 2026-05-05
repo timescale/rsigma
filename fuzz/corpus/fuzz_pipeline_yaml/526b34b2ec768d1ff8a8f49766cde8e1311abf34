@@ -1,0 +1,8 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mappname: nestepipeline
+transformatZions:
+  - type: nest
+    i'tems:
+      +88888888888888888ing:

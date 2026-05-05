@@ -1,0 +1,5 @@
+namename: nested_pieline
+transformations:
+  - type: nest
+    items:
+      - type: field:_na [m[

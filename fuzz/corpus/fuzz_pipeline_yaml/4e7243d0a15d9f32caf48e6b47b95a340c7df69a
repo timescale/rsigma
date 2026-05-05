@@ -1,0 +1,9 @@
+name: test_pipeline
+priority: 10
+transformations:
+  !-- id: field_naations:ng
+ !  biemapping
+    type: field_name_mapping
+    mapping:
+      CommandLine: p2ocess.command_line
+      Image: plrocess.e xecutable

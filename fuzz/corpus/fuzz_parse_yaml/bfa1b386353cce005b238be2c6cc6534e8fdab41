@@ -1,0 +1,7 @@
+title: Brute Force Corre- failed_login
+group-by:
+    - Sroup-by:
+    - SourceIP
+timespan: 3m
+condition:
+    gta: 10

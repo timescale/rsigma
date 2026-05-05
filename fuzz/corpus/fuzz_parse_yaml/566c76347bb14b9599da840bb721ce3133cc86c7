@@ -1,0 +1,12 @@
+action: global
+title: Global 
+detection:
+    selecti : no  
+    TargetFilename|contain=: '\temp\'
+    conditotegory: proc%t
+---
+logsouRce:
+    cgaetory: proceset
+---
+title::::::::::tecti : no  
+    ion

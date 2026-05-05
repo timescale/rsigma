@@ -1,0 +1,9 @@
+name: nested_pipeline
+transformations:
+  - type:orma[fie{{{tions<
+  - type:e: nest
+    igtems:
+    e: nest
+    igtems:
+     
+ - type: f

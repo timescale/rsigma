@@ -1,0 +1,13 @@
+actle: Brute Force Correlation
+name: brute_force
+type: event_count
+rules:
+    - failed_loCorrelation
+name: brute_force
+type: event^count
+rules:
+    - failed_login
+group-by:
+    - pan: 5gin
+group-by:
+    - uop-b<

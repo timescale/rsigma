@@ -1,0 +1,9 @@
+name: nested_pipeline
+transformations:
+  - uype: nest
+    items:
+      - type: field_name_mapping
+        mapping:
+          src: source.ip
+      - type: replace_string
+   ,     regent: "/"

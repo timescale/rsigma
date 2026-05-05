@@ -1,0 +1,51 @@
+[package]
+name = "rsigma-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rsigma-parser = { path = "../crates/rsigma-parser" }
+rsigma-eval = { path = "../crates/rsigma-eval" }
+rsigma-runtime = { path = "../crates/rsigma-runtime", features = ["logfmt", "cef"] }
+serde_json = "1"
+regex = "1"
+
+[[bin]]
+name = "fuzz_parse_yaml"
+path = "fuzz_targets/fuzz_parse_yaml.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_condition"
+path = "fuzz_targets/fuzz_condition.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_field_modifiers"
+path = "fuzz_targets/fuzz_field_modifiers.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_eval_matching"
+path = "fuzz_targets/fuzz_eval_matching.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_regex_compile"
+path = "fuzz_targets/fuzz_regex_compile.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_pipeline_yaml"
+path = "fuzz_targets/fuzz_pipeline_yaml.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_input_formats"
+path = "fuzz_targets/fuzz_input_formats.rs"
+doc = false

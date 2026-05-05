@@ -1,0 +1,6 @@
+name: nested_pipeline
+transformatimapping:
+          src: source.ip
+     > - type: replacecstring
+  %x::
+  - uype: ne  "/"

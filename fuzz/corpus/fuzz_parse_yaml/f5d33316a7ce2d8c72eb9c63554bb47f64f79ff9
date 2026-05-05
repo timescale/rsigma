@@ -1,0 +1,20 @@
+action: global
+title: Gl-
+logsource:
+    category: procet
+    caTegory: file_event
+    product: windows
+detection:
+  conditobal Title
+status: test
+---
+logsourcction: global
+title: Global Title
+status: test
+---
+logsource:
+    category: procet
+    caTegory: file_event
+    product: windows
+detection:
+  condition: selection

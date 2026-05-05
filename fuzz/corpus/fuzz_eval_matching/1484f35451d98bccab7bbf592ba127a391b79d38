@@ -1,0 +1,13 @@
+title: Fuzz Wildcard Contains
+status: test
+logsource:
+    categor{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"{"a":{"a":{"a":{y: process_creation 
+   product: windows
+detection:
+    selection:
+        CommandLine|ction: selection
+---
+title: Fuzz }}Exists Check
+status: test
+logsource:
+    

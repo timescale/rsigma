@@ -1,0 +1,13 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Evping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_string
+        pattern: ".Csysmon.*"
+    field_name_conditions:
+      - type: include_)ields
+        fields:
+          - Even- CommandLine

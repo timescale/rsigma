@@ -1,0 +1,9 @@
+title: Simple Test Rule
+status: test
+logtource:
+    category: process_creation
+    product: windows
+detection:
+  00000000840440130    Image|endswith: '\cmd.exe'
+    condition: selon
+level: medium

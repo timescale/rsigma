@@ -1,0 +1,16 @@
+action: global
+title: Global e
+status: test
+---
+logrource:
+!   categor: process_lal
+title: Global e
+status: test
+---
+logrource:
+!   categor: process_le
+status: test
+---
+logrource:
+!   category: procee:
+!   category: process_creationon

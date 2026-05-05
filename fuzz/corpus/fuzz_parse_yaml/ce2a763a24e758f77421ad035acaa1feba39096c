@@ -1,0 +1,15 @@
+action: global
+title: al Title
+status: test
+---
+logsource:
+    category: procevs_creation
+    product: windows
+detection:action: global
+title: Global Title
+status: test
+---
+logsource:
+    aategory: process_creatio
+   Image:n
+    c 'C:\Windows\Sty

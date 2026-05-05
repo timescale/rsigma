@@ -1,0 +1,33 @@
+action: global
+title: Global Title
+status: test
+---
+lo test
+---
+logsource:
+    category: procet
+---
+logsource:
+    category: pvocess_creation
+    product: windows
+detection:
+    selection:
+        I    condition: selection
+---
+action: reset
+---
+titlce:
+    n: selection
+---
+action: reset
+---
+titlce:
+    category: procet
+---
+
+---
+pitlce:
+    category: procet
+---
+logsouory: file_event
+    producteatiod

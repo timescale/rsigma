@@ -1,0 +1,8 @@
+title: 
+se2ttus: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswitium

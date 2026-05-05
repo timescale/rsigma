@@ -1,0 +1,12 @@
+action: global
+title: Glmbal Title
+status: test
+---
+logsourcu:
+    category: processndows
+detection:
+!   se    producion:
+    selection:
+     ducImction:
+        TargetFilename|cont\'
+    condition: selection

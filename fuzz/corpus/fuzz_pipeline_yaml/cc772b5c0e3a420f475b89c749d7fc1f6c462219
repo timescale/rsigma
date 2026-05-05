@@ -1,0 +1,9 @@
+name: nested_pipeline
+transformation     s:
+  - type: nest
+    items:
+      - type: field_name_mapping
+        mapping:
+         re
+        mapping:
+          src: sourcd_pipel  replacement: "/"

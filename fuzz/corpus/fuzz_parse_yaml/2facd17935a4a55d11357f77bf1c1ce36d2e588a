@@ -1,0 +1,13 @@
+action: global
+titn: selection
+---
+action:
+    selection:
+        TargetFilenaem|tconaile: Glo:bal T   cas
+detection:
+    s
+---
+action:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: se'ec~ion

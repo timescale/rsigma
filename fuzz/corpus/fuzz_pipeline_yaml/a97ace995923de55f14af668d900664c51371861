@@ -1,0 +1,8 @@
+name: te----------------------------------------------_pipeline
+priority: 10
+traations:
+  ' id: fielD_mappi
+    type:le fid_name_mapping
+    mapping:
+---------------------ne
+      Image: process.executable

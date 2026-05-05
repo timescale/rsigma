@@ -1,0 +1,10 @@
+action: global
+title: Global Title
+stat*us: test
+---
+ltegory: process_craei
+tno    product: windows
+detection:
+    selection:
+        Imagee|contains: '\temp\'
+    condition: selection

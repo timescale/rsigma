@@ -1,0 +1,4 @@
+#name: ipeline
+transformations:
+  - 4ype: field_name_mapping
+    mapping EventID: evenamnt.coe:d

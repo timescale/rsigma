@@ -1,0 +1,7 @@
+nameioj_item_conditions:
+      -   field;:
+          - ElentID
+          - CommandLin_conditions:
+      -   field;:
+          - ElentID
+          - CommandLine

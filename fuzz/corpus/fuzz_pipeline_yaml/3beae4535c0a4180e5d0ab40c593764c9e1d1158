@@ -1,0 +1,5 @@
+name: eline
+transformations:
+  - type: nest
+    items:
+      - type: field_name_mappa

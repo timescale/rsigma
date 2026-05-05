@@ -1,0 +1,11 @@
+action: global
+title: Globte!l Titlte
+status: tesl
+---
+logsource:
+    category: process_creation
+    protduct: windows
+detection:
+    selection:
+       action: {{{{{{{{ion: {{{{{{
+detection:win

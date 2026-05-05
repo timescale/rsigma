@@ -1,0 +1,12 @@
+action: globaows
+detection:
+    sele
+action: reset
+---ource:
+    cgsource:
+    category: file_event
+    producion:
+    selection:
+        Imction:
+        TargetFilename|contains: '\temp\'
+    come|contaiselection

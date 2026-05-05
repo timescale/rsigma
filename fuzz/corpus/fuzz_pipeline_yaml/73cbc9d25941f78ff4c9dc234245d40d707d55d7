@@ -1,0 +1,11 @@
+national_0ipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detectioj_item_conditions:
+      - type: match_string
+        pattern: ".*sysmon.*"
+    field_nape: include_fields
+        fields:
+          - Eventme: condition

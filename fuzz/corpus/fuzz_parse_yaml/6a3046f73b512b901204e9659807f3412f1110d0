@@ -1,0 +1,20 @@
+action: global
+title: Global Title
+statuection:
+    selection:
+        I    condition: selection
+---
+ac@ion: reset
+---
+title: Second Rule
+logsource:
+    cti: Global Title
+statuection:
+    selection:
+        I    condition: selection
+---
+ac@ion: re: file_event
+    p
+louct: windows
+detection:
+  condition: selection

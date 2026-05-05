@@ -1,0 +1,12 @@
+action: global
+title: Global Title
+status: testt
+---
+logsource:
+    categ     product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condi  T   TargetFilename|contains: '\temp\'
+    condi  TargetFilename|contains: '\temp\'
+    condition: selection

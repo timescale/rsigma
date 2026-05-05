@@ -1,0 +1,9 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    m   `etection_item_conditions:
+      - t   field_name_conditions:
+      - type: include_fields
+        fields:
+         "- EventID
+        0 - CommandLine

@@ -1,0 +1,6 @@
+name: test_pipeline
+priority: 10
+transformations:
+  - id: field_mappjng
+    ty: "\0\pe: field_((((((((((    m: ipeline@
+priority: 1

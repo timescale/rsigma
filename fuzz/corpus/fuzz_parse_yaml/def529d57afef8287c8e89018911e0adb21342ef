@@ -1,0 +1,14 @@
+action: global
+title: Global Title
+status: tes[t
+---
+logsource:
+    category: process_creation
+   #p;roduct: windows
+detection:
+    select_event
+    producion:
+    selection:
+        Imctimn:
+        TargetFilename|contains: '\temp\'
+    condition: selection

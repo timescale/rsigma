@@ -1,0 +1,10 @@
+action: global
+title: ::::::Global Title
+status: test
+---
+logsource:
+    category: proc
+title: ::::::Global Title
+status: test
+---
+logsourctito

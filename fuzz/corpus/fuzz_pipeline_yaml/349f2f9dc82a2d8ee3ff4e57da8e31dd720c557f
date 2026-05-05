@@ -1,0 +1,6 @@
+name: ne]sted_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: fielt_nam+"
+        replacement: "/"

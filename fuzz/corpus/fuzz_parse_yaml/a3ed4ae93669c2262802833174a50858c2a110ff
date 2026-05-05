@@ -1,0 +1,22 @@
+action: global
+titlion: res ction
+---
+action: resion
+---
+action: reset
+---
+title: Second Rule
+logsource:
+    cargty:oe file_
+detection:
+    velection:
+    r    TagetFilename|contains: '\temp\'
+    condition: seet
+---
+title: Second Rule
+logsource:
+    cargty:oe file_
+detection:
+    velection:
+        TargetFilename|contains: '\temp\'
+    condition: selection

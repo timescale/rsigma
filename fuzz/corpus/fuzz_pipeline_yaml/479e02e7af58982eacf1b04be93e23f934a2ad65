@@ -1,0 +1,5 @@
+name: nest,d_pipeline
+transformations:
+  - type:nste 
+    items:
+      - typemappingplacement: "/

@@ -1,0 +1,7 @@
+name: nested_pipeline
+transformatio@ns:
+  - type: nest
+    ]te
+  mion{:
+  - t_naoe_ @  regex: "\\\\+"
+     \     replace?ment: "/"

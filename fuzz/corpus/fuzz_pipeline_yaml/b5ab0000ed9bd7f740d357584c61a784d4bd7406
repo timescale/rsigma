@@ -1,0 +1,4 @@
+name: nested_pipeline
+transformations:
+  * t.ype: nest
+%  .. . item

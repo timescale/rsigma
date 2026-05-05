@@ -1,0 +1,18 @@
+action: global
+title: lbGo!l Title
+status: tesl
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+       action: {{{{{{{{ion: {{{{{{
+detection:
+ *  seacton: global
+t: test
+-l: test
+---
+lotitle: Simple t RulegsourS!-':ce
+t: test
+-l:lery tes: ptro

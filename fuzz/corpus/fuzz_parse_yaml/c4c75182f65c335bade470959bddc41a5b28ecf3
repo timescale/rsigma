@@ -1,0 +1,16 @@
+actioaction: global
+title: Global Title
+status: test
+---
+logrource:
+    ryatus: test
+---
+logsource:
+    categ    category: file_event
+    product: windows
+detection:
+ global Tit!ta-'X']dle
+status: test
+---
+logstioource:
+    n:ca

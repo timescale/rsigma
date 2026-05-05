@@ -1,0 +1,11 @@
+action: global
+title: Global Title
+staus: test
+---
+logsource:
+    categ    category: file]event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temAAAAAAAAAAAAAAAAp\'
+    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk productkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkelection

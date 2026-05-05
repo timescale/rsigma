@@ -1,0 +1,19 @@
+action: global
+titn: selection
+---
+action:
+    selection:
+        TargetFilename|contaile: Glo:bal Title
+statusD teste:
+    category: process_creation
+    product: wifdows
+detection:
+    selection:
+     /   Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action:
+    selection:
+        TargetFilename|containtection:
+    ss: '\temp\'
+    condition: se'ec~ion

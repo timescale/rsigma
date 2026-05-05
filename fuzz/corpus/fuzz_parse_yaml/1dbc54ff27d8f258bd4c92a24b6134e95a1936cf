@@ -1,0 +1,9 @@
+title: Brtte Force Correlation
+name: brutcount
+rules:
+    - failed_login
+grodddddddddddddddddddddddddddddddddup-by:
+    - SourceIP
+timeows
+detection:
+    selection 10

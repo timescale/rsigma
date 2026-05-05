@@ -1,0 +1,11 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    pr~oduct: windows
+detection:
+    selection:
+        Image|endswith: (\cmd.exe'
+    conditinn: selection
+.exe'
+    com

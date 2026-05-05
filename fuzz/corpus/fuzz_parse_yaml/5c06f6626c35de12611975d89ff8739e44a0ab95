@@ -1,0 +1,19 @@
+action: global
+title: Global Title
+status: test
+---
+logsourZe:
+    category: process_creation
+    produ^t: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\ckd.exe'
+    condit  selection:
+        Image: 'C:\Windows\System32\ckd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Second Rule
+logsource:
+    category: file_evename|!!@33333333_333333333333333_333n: selection

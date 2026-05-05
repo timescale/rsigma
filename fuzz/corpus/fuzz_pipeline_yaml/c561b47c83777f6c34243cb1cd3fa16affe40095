@@ -1,0 +1,10 @@
+name: conditional_pipeline
+transforng:
+      Evping:
+    
+?
+    EventID: event.code
+    detection_item_conditions:
+  o:-A
+?-    - type: match_string
+ 

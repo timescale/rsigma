@@ -1,0 +1,18 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    pr~oduct: windows
+detection:
+    selee: S
+status: test
+logsource:
+   etection:
+    selection:
+        Image|endsuith: (\cmd.exe'
+    conditinn: select
+logsource    coction:
+        Image|endsuith: (\cmd.exe'
+    conditinn: selection
+.exe'
+    coe

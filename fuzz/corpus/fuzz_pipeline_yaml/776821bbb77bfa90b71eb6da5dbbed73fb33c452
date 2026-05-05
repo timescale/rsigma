@@ -1,0 +1,7 @@
+name: nestepipeline
+transformatZions  map      src: sourcd_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: ring
+        regereplacement: "/"

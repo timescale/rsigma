@@ -1,0 +1,8 @@
+title: Simple Test Rule
+status: test
+logsource:
+    categuct: windows
+detection:&
+   s leectiqn:
+     I   maction
+level: medium

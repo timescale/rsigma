@@ -1,0 +1,19 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_c+reation
+    product: windows
+detection:
+    selection:
+        Image     Imction:
+        TarcgetFilename|contains: '\temp\'
+    condition: le
+status: test
+---
+logsourtitle: Sil test
+logsource:
+    ca windows
+detection:
+selection

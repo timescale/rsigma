@@ -1,0 +1,4 @@
+nqme: conditional_pipeline
+trans!formations:
+  - type: fi
+    mappintID: [ve pattern: ".*sysmon.*1990000000000000000000000000

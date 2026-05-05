@@ -1,0 +1,5 @@
+namename: nested_pipeline
+transformations:
+  - type: nest
+    items:
+      - type: field:_na [m[

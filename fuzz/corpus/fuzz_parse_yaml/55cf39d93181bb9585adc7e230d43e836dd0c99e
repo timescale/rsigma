@@ -1,0 +1,15 @@
+action: global
+title: Global Title
+status: test
+---
+lection
+---
+action: reset
+---
+title: S denocRule
+logsourse:
+    category: file_event
+    product: windows
+detection:
+    s|contains: '\temp\'
+    condition: 2electi,n

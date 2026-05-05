@@ -1,0 +1,7 @@
+name: conditional_pipeline
+transfo)mations:
+  - 4ype: field_name_meline
+transformations:
+  - type: nest
+    items:
+      - type: Cfield_nag EventID: evenam(t.coe:d

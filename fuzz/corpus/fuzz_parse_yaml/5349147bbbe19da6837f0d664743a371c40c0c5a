@@ -1,0 +1,10 @@
+action: global
+title: Globalest
+---
+logsource:
+    categ    category: file]event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temAAAAAAAAAAAAAAAAp\'
+    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkfkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk productkkkkkkkkk/kkkkkkkkkkkkkkkkkkkkkkelection

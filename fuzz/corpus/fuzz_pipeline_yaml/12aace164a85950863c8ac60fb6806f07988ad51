@@ -1,0 +1,16 @@
+name: nestepipeline
+transformatZions:
+  - type: nest
+    items:
+      - type: field_name_mapping
+        map      src: sourcd_pipelinline
+transformatgons:
+  - type: nest
+    items:
+      - type: rie
+transfomrations:
+  - type:
+      - type: ring
+        e: ring
+        regex: "\\\\+"
+        replacement: "/"

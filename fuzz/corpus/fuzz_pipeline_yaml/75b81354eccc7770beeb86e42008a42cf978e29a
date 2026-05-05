@@ -1,0 +1,14 @@
+'!@@@@@@@@@A@@@
+- 
+-ame: test_pipeline
+priority: 10
+transformatiome: nested_pipeline
+transformations:
+ utable
+
+-@@@@@@P@@@@@@@@@@@@@@@@ - type: nest
+    ns:
+  - id: field_mapping
+    type: ficess.executable
+
+-@@@@@@P@@@@@@@@@@@@@@@@@@Qn-

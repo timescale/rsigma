@@ -1,0 +1,11 @@
+name: nestepipeline
+tran{formations:
+  - type: nest
+    itempe: nest
+    items:
+      - type: ring
+        regex: "\\\\+"
+        replacemens:
+      - type: field_namem_apping
+        ma       regex: "\\\\+"
+        replacement: "/"

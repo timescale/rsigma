@@ -1,0 +1,19 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detectn:
+    sel\ction
+---
+action: reset
+---
+title: Second Rule
+lgoousrce:
+    cargty:oe filea
+detection:
+    selection:
+        TargetFilename|conasin|: '\temp\'
+    condition: selection

@@ -1,0 +1,4 @@
+name: nested_pipeline
+transformatkons:
+  - :tepy nest
+%    items    replacement: "/"

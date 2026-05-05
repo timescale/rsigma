@@ -1,0 +1,12 @@
+name: test_pipeline
+priority: 10
+transformatiome: nested_pipeline
+transformations:
+  - type: nest
+    ns:
+  - id: field_mapping
+    type: field_name_mapping
+    mapping:
+      CommandLine: p2oceions:
+  - type: nest
+   ess.executable

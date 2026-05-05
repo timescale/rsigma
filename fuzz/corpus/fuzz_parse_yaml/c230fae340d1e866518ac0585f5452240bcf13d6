@@ -1,0 +1,6 @@
+action: globaows
+detection:
+ ion: globa-ows
+detection:
+    !    seletlaction:
+    !   Bmagcetatus: teg

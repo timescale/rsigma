@@ -1,0 +1,17 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        ImagSystem32\cmd.exe'
+    condition: selection
+---
+actiproduct: windows
+den:
+    selection:
+        Image: ''
+    condition: se'ec~ion

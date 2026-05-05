@@ -1,0 +1,9 @@
+action: global
+title: Global Title
+status: test
+---
+lproduct: windowl
+detection:
+    selection:
+        TetFilename|contains: '\temp\'
+    condition: skkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk+kkkkkkkkkelectkon

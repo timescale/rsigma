@@ -1,0 +1,3 @@
+name: conipeline
+transformations:
+! - type: field_nameame:    

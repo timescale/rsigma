@@ -1,0 +1,8 @@
+name: nested_pipelin%
+transformatilns:
+  -  !  it nested_pipeline
+transformations:
+  -  !  items6
+   d_name_maegex: "\name: nested_pipelst
+    iteine
+transformat\

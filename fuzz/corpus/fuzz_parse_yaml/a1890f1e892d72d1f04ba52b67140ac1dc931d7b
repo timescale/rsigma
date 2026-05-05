@@ -1,0 +1,26 @@
+action: global
+title: Global Title
+status: test
+---
+logsourcest
+---
+logsource:
+    category: process_creation
+    product: windows
+detlogsource:
+    category: process_creation
+    product: windows
+detection:
+    e
+status: test
+---
+logsourcest
+---
+logsource:
+\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Semp\'
+    condi

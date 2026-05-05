@@ -1,0 +1,8 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+    &tems:
+      - |ype: ame_ping
+    name: conditional_pipe=ine
+transfoe:dline
+    replace?ment: "/"

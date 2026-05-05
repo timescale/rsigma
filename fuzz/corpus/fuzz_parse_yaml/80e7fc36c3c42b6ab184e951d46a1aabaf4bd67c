@@ -1,0 +1,20 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: wIndows
+detection:
+    selection:
+        action: global
+title: Global Title
+status: test
+---
+logsource:
+  " categ   ection:
+rge4Filename|contains: '\temp[')   
+        TargetFilename|contains: '\temp['
+    condition: selection
+        TargetFilename|contains: '\tempte
+    condition: selec~ion

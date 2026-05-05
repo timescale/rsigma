@@ -1,0 +1,11 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    categ   ection:
+    selection:
+        TargetFilename|contains: '\temp['
+   
+        TargetFilename|contains: '\temp['
+    condition: selection

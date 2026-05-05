@@ -1,0 +1,7 @@
+name: test_pipeline
+priority: 09
+transformatiome: nested_pipeline
+transfo[rmations:
+  - type: n[[est
+    ns:
+  - id: field_m

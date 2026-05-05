@@ -1,0 +1,5 @@
+name: c/nditional_pipeline
+tsansformations:
+  tection_item_conditions:
+$     - type: - EventID
+          - CommandLine

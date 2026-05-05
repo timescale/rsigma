@@ -1,0 +1,11 @@
+title: Simple Test Rule
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+       ndswith: '\cmd.exe'
+    conditinn: selection
+.exe'
+    com

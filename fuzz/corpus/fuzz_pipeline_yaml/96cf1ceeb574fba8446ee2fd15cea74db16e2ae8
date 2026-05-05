@@ -1,0 +1,8 @@
+name: nestepipeline
+transformations:
+  - type: nest
+    items:
+      - type: field_name_mapping
+        map      s  items:
+      - type: ring
+    cement: "/"

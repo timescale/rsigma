@@ -1,0 +1,17 @@
+action: global
+title: Global Title
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: Seoion:
+        T`rgetFileqame|contains: '\temp\'
+    condition: selection

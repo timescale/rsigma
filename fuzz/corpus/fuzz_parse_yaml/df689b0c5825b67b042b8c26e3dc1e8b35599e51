@@ -1,0 +1,14 @@
+action: global
+title: ::::::Global Title
+status: test
+---
+logsource:
+    category: proc
+title: ::::::Global Title
+status: test
+---
+logsourctitle: :::::ory: pro: test
+---
+logsource:
+    category: proc::Global tus: te
+title: ::::o

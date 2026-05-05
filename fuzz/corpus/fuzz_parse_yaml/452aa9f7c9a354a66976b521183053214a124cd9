@@ -1,0 +1,27 @@
+action: global
+title: Global Title
+status: te
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selectiol:
+    titi] actle: Global Title
+statust: est
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    se
+---
+logsource:
+    category: process_creation
+---
+logsource:
+    c
+detection:
+    actie:rn oset
+---
+title' Semp\'
+    condition: selec~ion

@@ -1,0 +1,4 @@
+name': nested_pipeli0e
+transformations:
+  -(type: nest
+ {src: so}rcd_"/"

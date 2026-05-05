@@ -1,0 +1,10 @@
+action: !lobal
+tititle: 0econd Rule
+logsource:
+roduct: windows
+detection:
+    selection:
+        Targetion: !lobal
+tititle: 0econd Rule
+logsource:
+rgory: process_creatigsou

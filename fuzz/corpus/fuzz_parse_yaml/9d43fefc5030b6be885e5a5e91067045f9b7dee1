@@ -1,0 +1,11 @@
+title: Brute Force Corre- failed_login
+group-by:
+    - SP
+timespan: 5m
+condition:
+ gin
+group-by:
+    - SourceIP
+timespan: 2m
+condition:
+    gte: 11

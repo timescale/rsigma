@@ -1,0 +1,10 @@
+title: Brute Force Correlation
+name: brute_[!!taXforce
+type: event_count
+rules:
+    - failed_login
+group-by:
+    - 0000000000000000000000000000000000000000ount
+rules:
+ 
+    gte: 10

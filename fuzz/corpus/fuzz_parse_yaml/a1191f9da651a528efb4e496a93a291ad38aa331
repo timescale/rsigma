@@ -1,0 +1,9 @@
+action: globaows
+detection:
+    selection:
+        Bmage: 'C:\Windows\System32\cmd.exe'
+    conditigsource:ondition: selection;---
+action: rewet
+---
+title: Second e|contains: '\temp\'
+    condition: selection

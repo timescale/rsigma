@@ -1,0 +1,7 @@
+name: conditional_pipeline
+transformations:
+  - -type: field_name_mapping
+    mappinname: test_pipeline
+priority: 10
+transformations:
+  - id: fielg*ommandLisny

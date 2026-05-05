@@ -1,0 +1,10 @@
+action: global
+title: Gpobal Title
+status: test
+---
+logsource:
+    category: procesoducti:w ndows
+detection:
+    se    producion:
+    sta2ins: '\@temp\'
+    condition:   sele#ti

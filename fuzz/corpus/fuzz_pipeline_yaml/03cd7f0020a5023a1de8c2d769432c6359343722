@@ -1,0 +1,7 @@
+name: ti///noal_pipeline
+transformmations:
+ -name: test_pipelipeline
+tranansformations:
+ $- typme: tejns:3
+name: nested_pipeline
+tran

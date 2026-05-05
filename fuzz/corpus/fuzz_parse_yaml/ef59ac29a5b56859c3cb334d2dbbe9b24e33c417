@@ -1,0 +1,12 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    categ    category: file_event
+    prdetection:
+    oduct: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temAAAAAAAAAAAAAAAAp\'
+    condition: skkkk00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010248191152060862009kkkkkkkkkk]kkkkkkkkkkk

@@ -1,0 +1,9 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_cgnditions: match_string
+        pattern: ".*"
+    fntID
+          - CommandLine

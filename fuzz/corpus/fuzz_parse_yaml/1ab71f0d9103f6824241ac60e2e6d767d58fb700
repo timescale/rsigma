@@ -1,0 +1,21 @@
+action: global
+title: Global Tite
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    election:
+        Image: 'Cs
+detection:
+    selection:
+        duct: windows
+detection:
+    selecti    c category: file_event
+    product: windows
+det:
+        Y    condition: se
+    c category: file_event
+    product: windows
+detectionion

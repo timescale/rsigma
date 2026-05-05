@@ -1,0 +1,5 @@
+name: nested_pipeline
+transformations:
+  - type: nest
+ {src: sourcd_pipeline
+transformaeplacement: "/"

@@ -1,0 +1,9 @@
+name:
+  - type:e: nest
+    items:
+      - type: field_name_mapping
+        mapping:
+         s rc: source.ip
+      - type: repl1ace_string
+        regex: "\\name: coni\d\+"
+     t i o@ 

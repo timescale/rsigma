@@ -1,0 +1,17 @@
+actiaction: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System33\cmd.exe'
+    condition: selectIon
+---
+on: {{n:title: Simple Test Rule
+sttufffffffffffffffffffffffffffffffffffffffffffffffffffffffffas: tesol
+tgetuorc:
+    category: process_creation
+    product

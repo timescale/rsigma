@@ -1,0 +1,11 @@
+name: test_pipeline
+priority: 10
+transformations:
+  - id: field_mapping
+    type: field_name_mapping
+    mapping:
+ me_maiping
+    mapping:
+      EventID: event.code
+ ess.comline
+      Image: $roce|utable

@@ -1,0 +1,14 @@
+/Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/deps/serde-43ef2b3adabd9df2.d: /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/build/serde-6ca3711d947c689a/out/private.rs
+
+/Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/deps/libserde-43ef2b3adabd9df2.rlib: /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/build/serde-6ca3711d947c689a/out/private.rs
+
+/Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/deps/libserde-43ef2b3adabd9df2.rmeta: /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/build/serde-6ca3711d947c689a/out/private.rs
+
+/Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/mostafa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/build/serde-6ca3711d947c689a/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/mostafa/projects/rsigma/fuzz/target/aarch64-apple-darwin/release/build/serde-6ca3711d947c689a/out

@@ -1,0 +1,6 @@
+name: nested_pipeline
+!n-transformations:
+  - type: nest
+    items:
+   t name: nested_pipeline
+transfor- {

@@ -1,0 +1,21 @@
+(itle: Brute Force Cforceglobal
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detecwion:
+    selection:
+    title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    produdettion:
+    seleoticn:
+        Im
+type: event_count
+rules:
+    - ofndition:
+$   gte: 20

@@ -1,0 +1,18 @@
+action: global
+title: Global Title
+status: test
+---
+logrour:
+    category: process_creAtion
+    product: windows
+detectio=:
+    selection:
+        Image: 'C:\Windows\System16\cm:.exe'
+    condition:urce:
+    oduct: windows
+detection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+--e|contains: '\temp\'
+    condition: selection

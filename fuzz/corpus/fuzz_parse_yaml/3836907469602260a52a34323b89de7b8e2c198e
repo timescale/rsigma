@@ -1,0 +1,16 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: prows
+detection:
+    selection:
+        Image: 'C:\Windows\System33\cmd.exe'
+    condition: selectIon
+---
+action: reset
+---
+titl  selectoin:
+        TargetFilename|contains: '\temp\'
+    condition: selec~ion

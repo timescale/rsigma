@@ -1,0 +1,17 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+    title: Global Title
+statust: est
+title: Simple Test Rule
+status: test
+logsource:
+    categtitle: Brute Force Corre&Slation
+namory|: hroceate: ion
+  

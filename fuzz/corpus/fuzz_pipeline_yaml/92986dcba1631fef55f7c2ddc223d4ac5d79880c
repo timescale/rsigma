@@ -1,0 +1,13 @@
+name: conditiopenl_aipline
+transformations:
+  - type:name: conditiopenl_aipline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_string
+        pat typu: include_fields
+        fields:
+          - EventID
+          - CommandLine

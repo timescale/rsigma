@@ -1,0 +1,8 @@
+name: conditional_pipeline
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Evpild_name_conditions:
+      - type: include_fields
+        fields:
+          - Even- CommandLine

@@ -1,0 +1,20 @@
+action: global
+title: Global Title
+status: test
+---
+logrource:
+!   category: process_cre2ation
+    pus: test
+---
+logrource:
+!   category: process_creation
+    product: windows
+detectroduct: windows
+detection:
+    select\Wlename|contai    pus: test
+---
+logrource:
+!   category: process_creation
+  selection:
+        Image|endswith: '\cmd.exe'
+    c

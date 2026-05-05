@@ -1,0 +1,17 @@
+action: globad
+titn: selection
+---
+action:
+    sename|contaile: Glo:bal Title
+sta product: /   Imagen
+---
+action:
+    selection:
+        Taation
+    product: /   Imagen
+---
+action:
+    selection:
+    rgetFilename|containtection:
+    ss: '\temp\'
+    condition: se'ec~ion

@@ -1,0 +1,13 @@
+title: Brute Force Corre- failin
+group-by:
+    - Sroup-by:
+    - SourceIP
+timespan: 3m
+condition:
+   ed_login
+group-by:
+    - Sroup-by:
+    - SourceIP
+timespan: 3m
+condition:
+    gta: 10

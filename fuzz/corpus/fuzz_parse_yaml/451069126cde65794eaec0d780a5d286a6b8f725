@@ -1,0 +1,14 @@
+actioaction: global
+title: Global Title
+status: test
+---
+logrource:
+    category: process_creation
+    product: windows
+detection:
+    selecn: global
+title: Global Title
+status: test
+---
+logstioource:
+    cat  catengor

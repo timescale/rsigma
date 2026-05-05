@@ -1,0 +1,11 @@
+action: global
+tistatus: test
+---
+logsource:
+    category: p  
+  
+e:
+e: 
+ !
+   Windows\System31\cmd.exe'
+    condi se'ec~ion

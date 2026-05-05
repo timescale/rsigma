@@ -1,0 +1,19 @@
+action: global
+titLe: Global Title
+status: test
+---
+logsource:
+    category: process_creation
+    product: windows
+dettitle: Simple Test Rul (\cmd.exeonpows
+detec'tionection:
+    selection:
+        Image: 'C:\Windows\System32\cmd.exe'
+    cWndition: selection
+---
+actioe: Global Title
+status: te~t
+---
+logso:
+   s urce:
+   l ec

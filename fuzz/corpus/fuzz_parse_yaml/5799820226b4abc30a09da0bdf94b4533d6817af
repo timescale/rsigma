@@ -1,0 +1,22 @@
+action: gl6bal
+title: Global Title
+status: test
+---
+logsource:
+    category: process_craei
+tno    product: windows
+detection:
+    selection:
+        Image* 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action: reset
+---
+title: S denocRule
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    condition: selecti,n

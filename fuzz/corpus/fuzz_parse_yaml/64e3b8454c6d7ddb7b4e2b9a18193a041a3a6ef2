@@ -1,0 +1,16 @@
+action: global
+titn: selection
+---
+action:
+    selection:!!@27099628_33337099628_3333333333_3333333_33ac333333_3333333_33ac3category: process_creat&on
+    product: wifdows
+detection:
+    selection:
+     /   Image: 'C:\Windows\System32\cmd.exe'
+    condition: selection
+---
+action:
+    selection:
+        TargetFilename|containtection:
+    ss: '\temp\'
+    condition: se'ec~ion

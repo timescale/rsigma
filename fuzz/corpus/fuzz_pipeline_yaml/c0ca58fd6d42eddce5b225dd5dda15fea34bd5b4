@@ -1,0 +1,7 @@
+-name: nested_pipeline
+transformations:
+  -y pet:nste 
+    iteeline
+transformations:
+  -y pet:nste 
+ ent: "/"

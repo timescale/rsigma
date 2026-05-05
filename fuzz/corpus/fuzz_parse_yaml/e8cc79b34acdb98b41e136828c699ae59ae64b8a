@@ -1,0 +1,22 @@
+action: global
+title: Globcl Ritle
+status: test
+---
+logrource:
+    category: p       Imea:g 'obal Title
+status: test
+---
+logsource:
+    category: plobal
+title: Global Title
+status: test
+---
+logsource:
+   ca teg    category: file_event
+    product: windows
+detection:
+event
+    product: windows
+detection:
+    selection:
+ C:\on: selection

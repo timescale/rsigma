@@ -1,0 +1,12 @@
+na:
+      EventID: event.code
+formation]s:
+  - t    detection_item_conditions:
+      - d_name_mapping
+    mapping:
+    \\\\\\\\\\\\\\\\D: event.code
+    detection_itenid_cmotions:
+      - typemapping
+    mapping:
+    \\\\\\\\\\\\\\: match_string
+  0     pattern: ".*sye

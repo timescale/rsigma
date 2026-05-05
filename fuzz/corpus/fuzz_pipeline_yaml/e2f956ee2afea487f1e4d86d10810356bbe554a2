@@ -1,0 +1,11 @@
+name: conditional_0ipeline
+transformations:
+  - type: Field_name_mapping
+    mapping:
+      EventID: event.code
+    detection_item_conditions:
+      - type: match_stri   mapping:
+          src: source.ip
+      - type: replacename: conditiopenl_aipline
+tr_stringa
+   n

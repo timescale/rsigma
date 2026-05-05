@@ -1,0 +1,20 @@
+action: global
+title: Global Title
+status: test
+---
+logsource:
+  0ocategory: proc%t
+---
+logsource:
+    category: proceset
+---
+title: Second Rule
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains: '\temp\'
+    cotegory: file_event
+    product: windows
+detndition: selection
