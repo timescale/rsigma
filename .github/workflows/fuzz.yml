@@ -12,6 +12,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
@@ -67,14 +71,17 @@ jobs:
 
       - name: Run fuzzer
         working-directory: fuzz
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+          FUZZ_MAX_LEN: ${{ matrix.max_len }}
+          FUZZ_DURATION: ${{ github.event.inputs.duration || '180' }}
         run: |
-          mkdir -p corpus/${{ matrix.target }}
-          DURATION="${{ github.event.inputs.duration || '180' }}"
-          cargo +nightly fuzz run ${{ matrix.target }} \
-            corpus/${{ matrix.target }} seeds/${{ matrix.target }} -- \
-            -max_total_time="$DURATION" \
+          mkdir -p "corpus/${FUZZ_TARGET}"
+          cargo +nightly fuzz run "${FUZZ_TARGET}" \
+            "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}" -- \
+            -max_total_time="${FUZZ_DURATION}" \
             -timeout=10 \
-            -max_len=${{ matrix.max_len }}
+            -max_len="${FUZZ_MAX_LEN}"
 
       - name: Upload crash artifacts
         if: failure()
