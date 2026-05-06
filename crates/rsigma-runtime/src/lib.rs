@@ -64,6 +64,9 @@ pub use rsigma_eval::ProcessResult;
 #[cfg(feature = "nats")]
 pub use io::{NatsConnectConfig, NatsSink, NatsSource, ReplayPolicy};
 
+#[cfg(feature = "evtx")]
+pub use input::evtx::{EvtxError, EvtxFileReader};
+
 #[cfg(feature = "otlp")]
 pub use io::otlp::{
     ExportLogsServiceRequest, ExportLogsServiceResponse, LogsService, LogsServiceServer,

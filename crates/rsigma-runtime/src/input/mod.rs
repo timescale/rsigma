@@ -15,6 +15,8 @@ use serde_json::Value;
 mod auto;
 #[cfg(feature = "cef")]
 mod cef;
+#[cfg(feature = "evtx")]
+pub mod evtx;
 mod json;
 #[cfg(feature = "logfmt")]
 mod logfmt;

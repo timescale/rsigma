@@ -344,7 +344,7 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
-| `--event` / `-e` | string | none | A single event as a JSON string, or `@path` to read NDJSON from a file. If omitted, reads NDJSON from stdin |
+| `--event` / `-e` | string | none | A single event as a JSON string, or `@path` to read from a file. Supports NDJSON files and `.evtx` (Windows Event Log) files (requires `evtx` feature). If omitted, reads NDJSON from stdin |
 | `--pretty` | flag | **false** | Pretty-print JSON output |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s), applied in priority order |
 | `--jq` | string | none | jq filter to extract event payload (conflicts with `--jsonpath`) |
@@ -360,7 +360,7 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |
 | `--fail-on-detection` | flag | `false` | Exit with code 1 when any detection or correlation fires. Useful for CI/CD pipelines |
 
-\* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
+\* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature, `evtx` requires the `evtx` feature.
 
 **Basic evaluation:**
 
@@ -384,6 +384,18 @@ The `@file` syntax is equivalent to piping the file via stdin but avoids the pip
 # These are equivalent:
 rsigma eval -r rules/ -e @events.ndjson
 cat events.ndjson | rsigma eval -r rules/
+```
+
+**EVTX (Windows Event Log) files** (requires `evtx` feature):
+
+Files with a `.evtx` extension are automatically detected and parsed as binary Windows Event Log files. Each record is converted to JSON and evaluated against the loaded rules.
+
+```bash
+# Evaluate Sigma rules against a Windows Event Log file
+rsigma eval -r rules/ -e @security.evtx
+
+# With a pipeline and pretty output
+rsigma eval -r rules/ -p sysmon.yml -e @Microsoft-Windows-Sysmon.evtx --pretty
 ```
 
 **Event extraction (jq / JSONPath):**
@@ -634,6 +646,7 @@ All subcommands that accept a directory path scan recursively for `.yml` and `.y
 |------|-------------|----------|
 | `rsigma eval -e '...'` | Inline JSON string | Parses the string as a single JSON object and evaluates it |
 | `rsigma eval -e @path` | NDJSON file | Reads the file line-by-line as NDJSON (same behavior as stdin) |
+| `rsigma eval -e @path.evtx` | EVTX binary file | Parses the binary Windows Event Log file and evaluates each record (requires `evtx` feature) |
 | `rsigma eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped. Exits after EOF |
 | `rsigma daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
 | `rsigma daemon --input http` | NDJSON via HTTP POST | Events sent to `POST /api/v1/events`. Stays alive, exposes all APIs |
