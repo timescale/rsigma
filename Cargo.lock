@@ -3563,7 +3563,7 @@ dependencies = [
  "ureq",
  "yaml_serde",
  "yamlpatch",
- "yamlpath",
+ "yamlpath 1.24.1",
 ]
 
 [[package]]
@@ -4930,6 +4930,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-iter"
+version = "1.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6f90e647c44106848cae33ec24309a2cea64de58066dc279731812be5aa6faf"
+dependencies = [
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5773,7 +5782,7 @@ dependencies = [
  "serde_yaml",
  "subfeature",
  "thiserror 2.0.18",
- "yamlpath",
+ "yamlpath 0.34.0",
 ]
 
 [[package]]
@@ -5787,7 +5796,22 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tree-sitter",
- "tree-sitter-iter",
+ "tree-sitter-iter 0.0.3",
+ "tree-sitter-yaml",
+]
+
+[[package]]
+name = "yamlpath"
+version = "1.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dfc10af3a0b762c85fe94c3d9e00343078bef7048793a652430393faa50e47e"
+dependencies = [
+ "line-index",
+ "self_cell",
+ "serde",
+ "thiserror 2.0.18",
+ "tree-sitter",
+ "tree-sitter-iter 1.24.1",
  "tree-sitter-yaml",
 ]
 
