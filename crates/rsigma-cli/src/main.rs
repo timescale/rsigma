@@ -315,13 +315,16 @@ enum Commands {
     ///
     /// Load rules from a file or directory, then evaluate JSON events.
     /// Events can be provided as a single JSON string (--event) or as
-    /// NDJSON (newline-delimited JSON) from stdin.
+    /// NDJSON (newline-delimited JSON) from stdin. Files with a .evtx
+    /// extension are parsed as Windows Event Log files (requires the
+    /// evtx feature).
     Eval {
         /// Path to a Sigma rule file or directory of rules
         #[arg(short, long)]
         rules: PathBuf,
 
-        /// A single event as a JSON string, or @path to read NDJSON from a file.
+        /// A single event as a JSON string, or @path to read from a file.
+        /// Supports NDJSON files and .evtx (Windows Event Log) files.
         /// If omitted, reads NDJSON from stdin.
         #[arg(short, long)]
         event: Option<String>,

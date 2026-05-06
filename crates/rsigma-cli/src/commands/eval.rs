@@ -14,12 +14,16 @@ enum EventSource {
     SingleJson(String),
     /// NDJSON from a file (e.g. `-e @events.ndjson`).
     NdjsonFile(PathBuf),
+    /// EVTX binary file (e.g. `-e @security.evtx`).
+    #[cfg(feature = "evtx")]
+    EvtxFile(PathBuf),
     /// NDJSON from stdin (no `--event` flag).
     Stdin,
 }
 
 /// Resolve the `--event` argument into an `EventSource`.
-/// Detects `@path` prefix for file-based input.
+/// Detects `@path` prefix for file-based input. Files with a `.evtx`
+/// extension are routed to the EVTX adapter (requires the `evtx` feature).
 fn resolve_event_source(event_json: Option<String>) -> EventSource {
     match event_json {
         Some(s) if s.starts_with('@') => {
@@ -27,6 +31,13 @@ fn resolve_event_source(event_json: Option<String>) -> EventSource {
             if !path.exists() {
                 eprintln!("Event file not found: {}", path.display());
                 process::exit(crate::exit_code::RULE_ERROR);
+            }
+            #[cfg(feature = "evtx")]
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("evtx"))
+            {
+                return EventSource::EvtxFile(path);
             }
             EventSource::NdjsonFile(path)
         }
@@ -177,6 +188,15 @@ fn cmd_eval_with_correlations(
             );
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+            );
+            det_count > 0 || corr_count > 0
+        }
+        #[cfg(feature = "evtx")]
+        EventSource::EvtxFile(path) => {
+            let (det_count, corr_count, rec_count) =
+                eval_evtx_corr(&mut engine, &path, event_filter, pretty);
+            eprintln!(
+                "Processed {rec_count} EVTX records, {det_count} detection matches, {corr_count} correlation matches."
             );
             det_count > 0 || corr_count > 0
         }
@@ -414,6 +434,12 @@ fn cmd_eval_detection_only(
             eprintln!("Processed {line_num} events, {match_count} matches.");
             match_count > 0
         }
+        #[cfg(feature = "evtx")]
+        EventSource::EvtxFile(path) => {
+            let (match_count, rec_count) = eval_evtx_detect(&engine, &path, event_filter, pretty);
+            eprintln!("Processed {rec_count} EVTX records, {match_count} matches.");
+            match_count > 0
+        }
         EventSource::Stdin => {
             let stdin = io::stdin();
             let (match_count, line_num) = eval_stream_detect(
@@ -538,4 +564,92 @@ fn eval_line_detect_json(
             crate::print_json(m, pretty);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// EVTX file evaluation
+// ---------------------------------------------------------------------------
+
+/// Evaluate all records from an EVTX file through the correlation engine.
+/// Returns (det_count, corr_count, record_count).
+#[cfg(feature = "evtx")]
+fn eval_evtx_corr(
+    engine: &mut CorrelationEngine,
+    path: &std::path::Path,
+    event_filter: &EventFilter,
+    pretty: bool,
+) -> (u64, u64, u64) {
+    let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
+        eprintln!("Error opening EVTX file '{}': {e}", path.display());
+        process::exit(crate::exit_code::RULE_ERROR);
+    });
+
+    let mut rec_count = 0u64;
+    let mut det_count = 0u64;
+    let mut corr_count = 0u64;
+
+    for record in reader.records() {
+        rec_count += 1;
+        let value = match record {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error reading EVTX record {rec_count}: {e}");
+                continue;
+            }
+        };
+
+        for payload in crate::apply_event_filter(&value, event_filter) {
+            let event = JsonEvent::borrow(&payload);
+            let result = engine.process_event(&event);
+            for m in &result.detections {
+                det_count += 1;
+                crate::print_json(m, pretty);
+            }
+            for m in &result.correlations {
+                corr_count += 1;
+                crate::print_json(m, pretty);
+            }
+        }
+    }
+
+    (det_count, corr_count, rec_count)
+}
+
+/// Evaluate all records from an EVTX file through the detection engine.
+/// Returns (match_count, record_count).
+#[cfg(feature = "evtx")]
+fn eval_evtx_detect(
+    engine: &Engine,
+    path: &std::path::Path,
+    event_filter: &EventFilter,
+    pretty: bool,
+) -> (u64, u64) {
+    let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
+        eprintln!("Error opening EVTX file '{}': {e}", path.display());
+        process::exit(crate::exit_code::RULE_ERROR);
+    });
+
+    let mut rec_count = 0u64;
+    let mut match_count = 0u64;
+
+    for record in reader.records() {
+        rec_count += 1;
+        let value = match record {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error reading EVTX record {rec_count}: {e}");
+                continue;
+            }
+        };
+
+        for payload in crate::apply_event_filter(&value, event_filter) {
+            let event = JsonEvent::borrow(&payload);
+            for m in &engine.evaluate(&event) {
+                match_count += 1;
+                crate::print_json(m, pretty);
+            }
+        }
+    }
+
+    (match_count, rec_count)
 }
