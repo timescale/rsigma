@@ -39,6 +39,7 @@ pub mod builtin;
 pub mod conditions;
 pub mod finalizers;
 mod parsing;
+pub mod sources;
 pub mod state;
 pub mod transformations;
 
@@ -77,6 +78,10 @@ pub struct Pipeline {
     pub transformations: Vec<TransformationItem>,
     /// Finalizers (stored for YAML compat; eval-mode ignores them).
     pub finalizers: Vec<Finalizer>,
+    /// Dynamic source declarations from the `sources` section.
+    pub sources: Vec<sources::DynamicSource>,
+    /// Template references (`${source.*}`) found during parsing.
+    pub source_refs: Vec<sources::SourceRef>,
 }
 
 /// A single transformation with its gating conditions.
@@ -208,6 +213,17 @@ impl Pipeline {
         }
 
         Ok(())
+    }
+
+    /// Returns `true` if this pipeline declares any dynamic sources or contains
+    /// `${source.*}` template references.
+    pub fn is_dynamic(&self) -> bool {
+        !self.sources.is_empty() || !self.source_refs.is_empty()
+    }
+
+    /// Returns a slice of all source references found during parsing.
+    pub fn dynamic_references(&self) -> &[sources::SourceRef] {
+        &self.source_refs
     }
 
     fn check_correlation_conditions(

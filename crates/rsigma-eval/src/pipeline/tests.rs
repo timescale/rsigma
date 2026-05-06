@@ -237,6 +237,8 @@ fn test_merge_pipelines_sorts_by_priority() {
             vars: HashMap::new(),
             transformations: vec![],
             finalizers: vec![],
+            sources: vec![],
+            source_refs: vec![],
         },
         Pipeline {
             name: "A".to_string(),
@@ -244,6 +246,8 @@ fn test_merge_pipelines_sorts_by_priority() {
             vars: HashMap::new(),
             transformations: vec![],
             finalizers: vec![],
+            sources: vec![],
+            source_refs: vec![],
         },
         Pipeline {
             name: "B".to_string(),
@@ -251,6 +255,8 @@ fn test_merge_pipelines_sorts_by_priority() {
             vars: HashMap::new(),
             transformations: vec![],
             finalizers: vec![],
+            sources: vec![],
+            source_refs: vec![],
         },
     ];
 
@@ -979,4 +985,633 @@ transformations:
     apply_pipelines_to_correlation(&[pipeline], &mut corr).unwrap();
 
     assert_eq!(corr.group_by[0], "source.ip");
+}
+
+// =============================================================================
+// Dynamic pipeline tests
+// =============================================================================
+
+#[test]
+fn test_static_pipeline_is_not_dynamic() {
+    let yaml = r#"
+name: Static Pipeline
+priority: 10
+vars:
+  admin_emails:
+    - admin@example.com
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(!pipeline.is_dynamic());
+    assert!(pipeline.sources.is_empty());
+    assert!(pipeline.source_refs.is_empty());
+}
+
+#[test]
+fn test_parse_http_source() {
+    let yaml = r#"
+name: Dynamic Pipeline
+priority: 10
+sources:
+  - id: admin_emails
+    type: http
+    url: https://api.internal/v1/admin-emails
+    format: json
+    extract: ".emails[]"
+    refresh: 5m
+    timeout: 10s
+    on_error: use_cached
+    required: true
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.is_dynamic());
+    assert_eq!(pipeline.sources.len(), 1);
+
+    let src = &pipeline.sources[0];
+    assert_eq!(src.id, "admin_emails");
+    assert!(src.required);
+    assert_eq!(src.timeout, Some(std::time::Duration::from_secs(10)));
+    assert_eq!(src.on_error, sources::ErrorPolicy::UseCached);
+
+    match &src.refresh {
+        sources::RefreshPolicy::Interval(d) => {
+            assert_eq!(*d, std::time::Duration::from_secs(300));
+        }
+        other => panic!("expected Interval, got {other:?}"),
+    }
+
+    match &src.source_type {
+        sources::SourceType::Http {
+            url,
+            format,
+            extract,
+            ..
+        } => {
+            assert_eq!(url, "https://api.internal/v1/admin-emails");
+            assert_eq!(*format, sources::DataFormat::Json);
+            assert_eq!(extract.as_deref(), Some(".emails[]"));
+        }
+        other => panic!("expected Http, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_command_source() {
+    let yaml = r#"
+name: Command Source Pipeline
+sources:
+  - id: ioc_domains
+    type: command
+    command: ["/usr/local/bin/fetch-iocs", "--type", "domain"]
+    format: lines
+    refresh: 30m
+    on_error: fail
+    required: false
+    default: []
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    assert_eq!(src.id, "ioc_domains");
+    assert!(!src.required);
+    assert_eq!(src.on_error, sources::ErrorPolicy::Fail);
+
+    match &src.source_type {
+        sources::SourceType::Command {
+            command, format, ..
+        } => {
+            assert_eq!(
+                command,
+                &[
+                    "/usr/local/bin/fetch-iocs".to_string(),
+                    "--type".to_string(),
+                    "domain".to_string()
+                ]
+            );
+            assert_eq!(*format, sources::DataFormat::Lines);
+        }
+        other => panic!("expected Command, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_file_source() {
+    let yaml = r#"
+name: File Source Pipeline
+sources:
+  - id: watchlist
+    type: file
+    path: /etc/rsigma/watchlist.json
+    format: json
+    refresh: watch
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    assert_eq!(src.id, "watchlist");
+    assert_eq!(src.refresh, sources::RefreshPolicy::Watch);
+
+    match &src.source_type {
+        sources::SourceType::File { path, format } => {
+            assert_eq!(path, std::path::Path::new("/etc/rsigma/watchlist.json"));
+            assert_eq!(*format, sources::DataFormat::Json);
+        }
+        other => panic!("expected File, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_nats_source() {
+    let yaml = r#"
+name: NATS Source Pipeline
+sources:
+  - id: threat_intel
+    type: nats
+    subject: rsigma.sources.threat-intel
+    format: json
+    extract: ".iocs"
+    refresh: push
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    assert_eq!(src.id, "threat_intel");
+    assert_eq!(src.refresh, sources::RefreshPolicy::Push);
+
+    match &src.source_type {
+        sources::SourceType::Nats {
+            subject, format, ..
+        } => {
+            assert_eq!(subject, "rsigma.sources.threat-intel");
+            assert_eq!(*format, sources::DataFormat::Json);
+        }
+        other => panic!("expected Nats, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_on_demand_refresh() {
+    let yaml = r#"
+name: On Demand Pipeline
+sources:
+  - id: compromised
+    type: http
+    url: https://api.internal/v1/compromised
+    refresh: on_demand
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert_eq!(
+        pipeline.sources[0].refresh,
+        sources::RefreshPolicy::OnDemand
+    );
+}
+
+#[test]
+fn test_detect_source_refs_in_vars() {
+    let yaml = r#"
+name: Ref Detection
+sources:
+  - id: admin_emails
+    type: http
+    url: https://api.internal/v1/emails
+    format: json
+  - id: env_config
+    type: http
+    url: https://cmdb.internal/v1/config
+    format: json
+vars:
+  admin_emails: "${source.admin_emails}"
+  log_index: "${source.env_config.log_index}"
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.is_dynamic());
+    assert_eq!(pipeline.source_refs.len(), 2);
+
+    let ref0 = &pipeline.source_refs[0];
+    assert_eq!(ref0.source_id, "admin_emails");
+    assert_eq!(ref0.sub_path, None);
+    assert_eq!(ref0.raw_template, "${source.admin_emails}");
+    assert!(matches!(ref0.location, sources::RefLocation::Var { .. }));
+
+    let ref1 = &pipeline.source_refs[1];
+    assert_eq!(ref1.source_id, "env_config");
+    assert_eq!(ref1.sub_path.as_deref(), Some("log_index"));
+}
+
+#[test]
+fn test_detect_source_refs_in_transformation_fields() {
+    let yaml = r#"
+name: Transform Refs
+sources:
+  - id: env_config
+    type: http
+    url: https://cmdb.internal/v1/config
+    format: json
+transformations:
+  - type: field_name_mapping
+    mapping: "${source.env_config.field_mapping}"
+  - type: add_condition
+    conditions:
+      ParentImage: "${source.env_config.critical_binaries}"
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.is_dynamic());
+
+    let mapping_refs: Vec<_> = pipeline
+        .source_refs
+        .iter()
+        .filter(|r| matches!(&r.location, sources::RefLocation::TransformationField { field_name, .. } if field_name == "mapping"))
+        .collect();
+    assert_eq!(mapping_refs.len(), 1);
+    assert_eq!(mapping_refs[0].source_id, "env_config");
+    assert_eq!(mapping_refs[0].sub_path.as_deref(), Some("field_mapping"));
+
+    let cond_refs: Vec<_> = pipeline
+        .source_refs
+        .iter()
+        .filter(|r| matches!(&r.location, sources::RefLocation::TransformationField { field_name, .. } if field_name.contains("conditions")))
+        .collect();
+    assert_eq!(cond_refs.len(), 1);
+    assert_eq!(cond_refs[0].sub_path.as_deref(), Some("critical_binaries"));
+}
+
+#[test]
+fn test_detect_include_directive() {
+    let yaml = r#"
+name: Include Pipeline
+sources:
+  - id: extra_transforms
+    type: http
+    url: https://compliance.internal/v1/transforms
+    format: yaml
+transformations:
+  - include: "${source.extra_transforms}"
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.is_dynamic());
+
+    let include_refs: Vec<_> = pipeline
+        .source_refs
+        .iter()
+        .filter(|r| matches!(r.location, sources::RefLocation::Include { .. }))
+        .collect();
+    assert_eq!(include_refs.len(), 1);
+    assert_eq!(include_refs[0].source_id, "extra_transforms");
+}
+
+#[test]
+fn test_cross_validation_undeclared_source_fails() {
+    let yaml = r#"
+name: Bad Refs Pipeline
+sources:
+  - id: declared_source
+    type: http
+    url: https://api.internal/v1/data
+vars:
+  emails: "${source.undeclared_source}"
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("undeclared_source"), "got: {err_msg}");
+}
+
+#[test]
+fn test_cross_validation_declared_source_passes() {
+    let yaml = r#"
+name: Good Refs Pipeline
+sources:
+  - id: my_source
+    type: http
+    url: https://api.internal/v1/data
+    format: json
+vars:
+  data: "${source.my_source}"
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_unknown_source_type_fails() {
+    let yaml = r#"
+name: Bad Source Type
+sources:
+  - id: bad
+    type: ftp
+    url: ftp://example.com/data
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("unknown type"), "got: {err_msg}");
+}
+
+#[test]
+fn test_source_missing_id_fails() {
+    let yaml = r#"
+name: Missing ID
+sources:
+  - type: http
+    url: https://api.internal/v1/data
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("'id'"), "got: {err_msg}");
+}
+
+#[test]
+fn test_http_source_missing_url_fails() {
+    let yaml = r#"
+name: Missing URL
+sources:
+  - id: no_url
+    type: http
+    format: json
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("'url'"), "got: {err_msg}");
+}
+
+#[test]
+fn test_command_source_missing_command_fails() {
+    let yaml = r#"
+name: Missing Command
+sources:
+  - id: no_cmd
+    type: command
+    format: lines
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("non-empty 'command'"), "got: {err_msg}");
+}
+
+#[test]
+fn test_required_defaults_to_true() {
+    let yaml = r#"
+name: Default Required
+sources:
+  - id: src
+    type: http
+    url: https://api.internal/v1/data
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.sources[0].required);
+}
+
+#[test]
+fn test_default_format_is_json() {
+    let yaml = r#"
+name: Default Format
+sources:
+  - id: src
+    type: http
+    url: https://api.internal/v1/data
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    match &pipeline.sources[0].source_type {
+        sources::SourceType::Http { format, .. } => {
+            assert_eq!(*format, sources::DataFormat::Json);
+        }
+        _ => panic!("expected Http"),
+    }
+}
+
+#[test]
+fn test_default_refresh_is_once() {
+    let yaml = r#"
+name: Default Refresh
+sources:
+  - id: src
+    type: http
+    url: https://api.internal/v1/data
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert_eq!(pipeline.sources[0].refresh, sources::RefreshPolicy::Once);
+}
+
+#[test]
+fn test_default_error_policy_is_use_cached() {
+    let yaml = r#"
+name: Default Error Policy
+sources:
+  - id: src
+    type: http
+    url: https://api.internal/v1/data
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert_eq!(
+        pipeline.sources[0].on_error,
+        sources::ErrorPolicy::UseCached
+    );
+}
+
+#[test]
+fn test_multiple_sources_and_refs() {
+    let yaml = r#"
+name: Multi Source
+priority: 5
+sources:
+  - id: emails
+    type: http
+    url: https://api.internal/v1/emails
+    format: json
+    refresh: 5m
+  - id: config
+    type: file
+    path: /etc/rsigma/config.yaml
+    format: yaml
+    refresh: watch
+    required: false
+vars:
+  admin_emails: "${source.emails}"
+  log_level: "${source.config.log_level}"
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(pipeline.is_dynamic());
+    assert_eq!(pipeline.sources.len(), 2);
+    assert_eq!(pipeline.source_refs.len(), 2);
+    assert_eq!(pipeline.dynamic_references().len(), 2);
+}
+
+#[test]
+fn test_source_status_tracking() {
+    let mut state = PipelineState::new(HashMap::new());
+    state.init_sources(["src_a".to_string(), "src_b".to_string()]);
+
+    assert!(!state.all_sources_resolved());
+    assert_eq!(state.pending_sources().len(), 2);
+
+    state.mark_source_resolved("src_a");
+    assert!(!state.all_sources_resolved());
+    assert_eq!(state.pending_sources(), vec!["src_b"]);
+
+    state.mark_source_resolved("src_b");
+    assert!(state.all_sources_resolved());
+    assert!(state.pending_sources().is_empty());
+}
+
+#[test]
+fn test_source_status_failed() {
+    let mut state = PipelineState::new(HashMap::new());
+    state.init_sources(["src_a".to_string()]);
+
+    state.mark_source_failed("src_a");
+    assert_eq!(
+        state.source_status("src_a"),
+        Some(sources::SourceStatus::Failed)
+    );
+    assert!(!state.all_sources_resolved());
+}
+
+#[test]
+fn test_no_sources_no_refs_pipeline_not_dynamic() {
+    let yaml = r#"
+name: Plain Pipeline
+transformations:
+  - type: field_name_prefix
+    prefix: "log."
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    assert!(!pipeline.is_dynamic());
+    assert!(pipeline.sources.is_empty());
+    assert!(pipeline.source_refs.is_empty());
+}
+
+#[test]
+fn test_parse_multiple_refresh_durations() {
+    let test_cases = [
+        ("1h", std::time::Duration::from_secs(3600)),
+        ("30m", std::time::Duration::from_secs(1800)),
+        ("10s", std::time::Duration::from_secs(10)),
+        ("500ms", std::time::Duration::from_millis(500)),
+    ];
+
+    for (duration_str, expected) in test_cases {
+        let yaml = format!(
+            r#"
+name: Duration Test
+sources:
+  - id: src
+    type: http
+    url: https://api.internal/data
+    refresh: {duration_str}
+transformations:
+  - type: value_placeholders
+"#
+        );
+        let pipeline = parse_pipeline(&yaml).unwrap();
+        match &pipeline.sources[0].refresh {
+            sources::RefreshPolicy::Interval(d) => {
+                assert_eq!(*d, expected, "failed for '{duration_str}'");
+            }
+            other => panic!("expected Interval for '{duration_str}', got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_source_with_headers() {
+    let yaml = r#"
+name: Headers Pipeline
+sources:
+  - id: auth_source
+    type: http
+    url: https://api.internal/v1/data
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+      Accept: application/json
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    match &pipeline.sources[0].source_type {
+        sources::SourceType::Http { headers, .. } => {
+            assert_eq!(headers.len(), 2);
+            assert_eq!(headers.get("Authorization").unwrap(), "Bearer ${API_TOKEN}");
+            assert_eq!(headers.get("Accept").unwrap(), "application/json");
+        }
+        _ => panic!("expected Http"),
+    }
+}
+
+#[test]
+fn test_source_with_http_method() {
+    let yaml = r#"
+name: POST Source
+sources:
+  - id: post_source
+    type: http
+    url: https://api.internal/v1/query
+    method: POST
+    format: json
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    match &pipeline.sources[0].source_type {
+        sources::SourceType::Http { method, .. } => {
+            assert_eq!(method.as_deref(), Some("POST"));
+        }
+        _ => panic!("expected Http"),
+    }
+}
+
+#[test]
+fn test_source_with_default_value() {
+    let yaml = r#"
+name: Default Value
+sources:
+  - id: optional
+    type: http
+    url: https://api.internal/v1/data
+    on_error: use_default
+    required: false
+    default:
+      - fallback_value
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    assert_eq!(src.on_error, sources::ErrorPolicy::UseDefault);
+    assert!(src.default.is_some());
 }

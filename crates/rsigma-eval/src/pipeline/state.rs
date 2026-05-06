@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::sources::SourceStatus;
+
 /// Mutable state carried through a pipeline's application to one or more rules.
 #[derive(Debug, Clone, Default)]
 pub struct PipelineState {
@@ -25,6 +27,9 @@ pub struct PipelineState {
 
     /// Pipeline variables from the `vars` section, used for placeholder expansion.
     pub vars: HashMap<String, Vec<String>>,
+
+    /// Resolution status of each dynamic source (keyed by source ID).
+    pub source_status: HashMap<String, SourceStatus>,
 }
 
 impl PipelineState {
@@ -80,5 +85,46 @@ impl PipelineState {
     /// Reset per-detection-item tracking.
     pub fn reset_detection_item(&mut self) {
         self.detection_item_applied.clear();
+    }
+
+    /// Initialize source status tracking for a set of source IDs.
+    /// All sources start in `Pending` state.
+    pub fn init_sources(&mut self, source_ids: impl IntoIterator<Item = String>) {
+        for id in source_ids {
+            self.source_status.insert(id, SourceStatus::Pending);
+        }
+    }
+
+    /// Mark a source as successfully resolved.
+    pub fn mark_source_resolved(&mut self, id: &str) {
+        self.source_status
+            .insert(id.to_string(), SourceStatus::Resolved);
+    }
+
+    /// Mark a source as failed.
+    pub fn mark_source_failed(&mut self, id: &str) {
+        self.source_status
+            .insert(id.to_string(), SourceStatus::Failed);
+    }
+
+    /// Get the resolution status of a source.
+    pub fn source_status(&self, id: &str) -> Option<SourceStatus> {
+        self.source_status.get(id).copied()
+    }
+
+    /// Returns `true` if all tracked sources have been resolved.
+    pub fn all_sources_resolved(&self) -> bool {
+        self.source_status
+            .values()
+            .all(|s| *s == SourceStatus::Resolved)
+    }
+
+    /// Returns source IDs that are still pending resolution.
+    pub fn pending_sources(&self) -> Vec<&str> {
+        self.source_status
+            .iter()
+            .filter(|(_, status)| **status == SourceStatus::Pending)
+            .map(|(id, _)| id.as_str())
+            .collect()
     }
 }

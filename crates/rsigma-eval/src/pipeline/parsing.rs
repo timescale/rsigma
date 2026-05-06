@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use regex::Regex;
 use rsigma_parser::{SigmaString, SigmaValue};
@@ -10,6 +12,9 @@ use super::conditions::{
     DetectionItemCondition, FieldMatcher, FieldNameCondition, NamedRuleCondition, RuleCondition,
 };
 use super::finalizers::Finalizer;
+use super::sources::{
+    DataFormat, DynamicSource, ErrorPolicy, RefLocation, RefreshPolicy, SourceRef, SourceType,
+};
 use super::transformations::Transformation;
 use super::{Pipeline, TransformationItem};
 
@@ -62,12 +67,24 @@ fn parse_pipeline_value(value: &serde_yaml::Value) -> Result<Pipeline> {
         Vec::new()
     };
 
+    let sources = if let Some(items) = obj.get(ykey("sources")) {
+        parse_sources(items)?
+    } else {
+        Vec::new()
+    };
+
+    let source_refs = scan_source_refs(obj);
+
+    validate_source_refs(&sources, &source_refs)?;
+
     Ok(Pipeline {
         name,
         priority,
         vars,
         transformations,
         finalizers,
+        sources,
+        source_refs,
     })
 }
 
@@ -113,7 +130,13 @@ fn parse_transformation_item(value: &serde_yaml::Value) -> Result<Transformation
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let transformation = parse_transformation(obj)?;
+    // Handle `include` directives as a special transformation type
+    let transformation = if let Some(include_val) = obj.get(ykey("include")) {
+        let template = include_val.as_str().unwrap_or("").to_string();
+        Transformation::Include { template }
+    } else {
+        parse_transformation(obj)?
+    };
 
     let rule_conditions = if let Some(conds) = obj.get(ykey("rule_conditions")) {
         parse_rule_conditions(conds)?
@@ -814,4 +837,387 @@ fn parse_finalizers(value: &serde_yaml::Value) -> Vec<Finalizer> {
     } else {
         Vec::new()
     }
+}
+
+// =============================================================================
+// Dynamic source parsing
+// =============================================================================
+
+/// Parse the `sources` section of a pipeline YAML.
+fn parse_sources(value: &serde_yaml::Value) -> Result<Vec<DynamicSource>> {
+    let items = value
+        .as_sequence()
+        .ok_or_else(|| EvalError::InvalidModifiers("sources must be a sequence".to_string()))?;
+
+    items.iter().map(parse_dynamic_source).collect()
+}
+
+/// Parse a single dynamic source declaration.
+fn parse_dynamic_source(value: &serde_yaml::Value) -> Result<DynamicSource> {
+    let obj = value
+        .as_mapping()
+        .ok_or_else(|| EvalError::InvalidModifiers("source must be a mapping".to_string()))?;
+
+    let id = obj
+        .get(ykey("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| EvalError::InvalidModifiers("source must have an 'id' field".to_string()))?
+        .to_string();
+
+    let type_str = obj
+        .get(ykey("type"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            EvalError::InvalidModifiers(format!("source '{id}' must have a 'type' field"))
+        })?;
+
+    let format = parse_data_format(obj.get(ykey("format")));
+    let extract = obj
+        .get(ykey("extract"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let source_type = match type_str {
+        "http" => {
+            let url = obj
+                .get(ykey("url"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    EvalError::InvalidModifiers(format!(
+                        "source '{id}' of type 'http' must have a 'url' field"
+                    ))
+                })?
+                .to_string();
+            let method = obj
+                .get(ykey("method"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let headers = parse_string_headers(obj.get(ykey("headers")));
+            SourceType::Http {
+                url,
+                method,
+                headers,
+                format,
+                extract,
+            }
+        }
+        "command" => {
+            let command = parse_command_field(obj.get(ykey("command")))?;
+            if command.is_empty() {
+                return Err(EvalError::InvalidModifiers(format!(
+                    "source '{id}' of type 'command' must have a non-empty 'command' field"
+                )));
+            }
+            SourceType::Command {
+                command,
+                format,
+                extract,
+            }
+        }
+        "file" => {
+            let path = obj
+                .get(ykey("path"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    EvalError::InvalidModifiers(format!(
+                        "source '{id}' of type 'file' must have a 'path' field"
+                    ))
+                })?;
+            SourceType::File {
+                path: PathBuf::from(path),
+                format,
+            }
+        }
+        "nats" => {
+            let url = obj
+                .get(ykey("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let subject = obj
+                .get(ykey("subject"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    EvalError::InvalidModifiers(format!(
+                        "source '{id}' of type 'nats' must have a 'subject' field"
+                    ))
+                })?
+                .to_string();
+            SourceType::Nats {
+                url,
+                subject,
+                format,
+                extract,
+            }
+        }
+        other => {
+            return Err(EvalError::InvalidModifiers(format!(
+                "source '{id}' has unknown type: '{other}'"
+            )));
+        }
+    };
+
+    let refresh = parse_refresh_policy(obj.get(ykey("refresh")));
+    let timeout = parse_duration_field(obj.get(ykey("timeout")));
+    let on_error = parse_error_policy(obj.get(ykey("on_error")));
+    let required = obj
+        .get(ykey("required"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let default = obj.get(ykey("default")).cloned();
+
+    Ok(DynamicSource {
+        id,
+        source_type,
+        refresh,
+        timeout,
+        on_error,
+        required,
+        default,
+    })
+}
+
+fn parse_data_format(value: Option<&serde_yaml::Value>) -> DataFormat {
+    match value.and_then(|v| v.as_str()) {
+        Some("json") => DataFormat::Json,
+        Some("yaml" | "yml") => DataFormat::Yaml,
+        Some("lines") => DataFormat::Lines,
+        Some("csv") => DataFormat::Csv,
+        _ => DataFormat::Json,
+    }
+}
+
+fn parse_refresh_policy(value: Option<&serde_yaml::Value>) -> RefreshPolicy {
+    match value.and_then(|v| v.as_str()) {
+        Some("once") => RefreshPolicy::Once,
+        Some("watch") => RefreshPolicy::Watch,
+        Some("push") => RefreshPolicy::Push,
+        Some("on_demand") => RefreshPolicy::OnDemand,
+        Some(s) => {
+            if let Some(dur) = parse_duration_str(s) {
+                RefreshPolicy::Interval(dur)
+            } else {
+                RefreshPolicy::Once
+            }
+        }
+        None => RefreshPolicy::Once,
+    }
+}
+
+fn parse_error_policy(value: Option<&serde_yaml::Value>) -> ErrorPolicy {
+    match value.and_then(|v| v.as_str()) {
+        Some("use_cached") => ErrorPolicy::UseCached,
+        Some("fail") => ErrorPolicy::Fail,
+        Some("use_default") => ErrorPolicy::UseDefault,
+        _ => ErrorPolicy::UseCached,
+    }
+}
+
+fn parse_duration_field(value: Option<&serde_yaml::Value>) -> Option<Duration> {
+    value.and_then(|v| v.as_str()).and_then(parse_duration_str)
+}
+
+/// Parse a duration string like "5m", "30s", "1h", "24h", "500ms".
+fn parse_duration_str(s: &str) -> Option<Duration> {
+    let s = s.trim();
+    if let Some(ms) = s.strip_suffix("ms") {
+        ms.parse::<u64>().ok().map(Duration::from_millis)
+    } else if let Some(secs) = s.strip_suffix('s') {
+        secs.parse::<u64>().ok().map(Duration::from_secs)
+    } else if let Some(mins) = s.strip_suffix('m') {
+        mins.parse::<u64>()
+            .ok()
+            .map(|m| Duration::from_secs(m * 60))
+    } else if let Some(hours) = s.strip_suffix('h') {
+        hours
+            .parse::<u64>()
+            .ok()
+            .map(|h| Duration::from_secs(h * 3600))
+    } else {
+        s.parse::<u64>().ok().map(Duration::from_secs)
+    }
+}
+
+fn parse_string_headers(value: Option<&serde_yaml::Value>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Some(serde_yaml::Value::Mapping(m)) = value {
+        for (k, v) in m {
+            if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
+                map.insert(key.to_string(), val.to_string());
+            }
+        }
+    }
+    map
+}
+
+fn parse_command_field(value: Option<&serde_yaml::Value>) -> Result<Vec<String>> {
+    match value {
+        Some(serde_yaml::Value::Sequence(seq)) => Ok(seq
+            .iter()
+            .filter_map(|item| item.as_str().map(String::from))
+            .collect()),
+        Some(serde_yaml::Value::String(s)) => Ok(vec![s.clone()]),
+        _ => Ok(Vec::new()),
+    }
+}
+
+// =============================================================================
+// Cross-validation
+// =============================================================================
+
+/// Validate that every `${source.*}` reference and `include` target names a
+/// declared source. Returns an error listing all undeclared source IDs.
+fn validate_source_refs(sources: &[DynamicSource], refs: &[SourceRef]) -> Result<()> {
+    if refs.is_empty() {
+        return Ok(());
+    }
+
+    let declared: std::collections::HashSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
+
+    let undeclared: Vec<&str> = refs
+        .iter()
+        .filter(|r| !declared.contains(r.source_id.as_str()))
+        .map(|r| r.source_id.as_str())
+        .collect::<std::collections::HashSet<&str>>()
+        .into_iter()
+        .collect();
+
+    if undeclared.is_empty() {
+        Ok(())
+    } else {
+        Err(EvalError::InvalidModifiers(format!(
+            "pipeline references undeclared source(s): {}",
+            undeclared.join(", ")
+        )))
+    }
+}
+
+// =============================================================================
+// Template reference scanning
+// =============================================================================
+
+/// Regex matching `${source.<id>}` or `${source.<id>.<sub_path>}` templates.
+fn source_ref_regex() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"\$\{source\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z0-9_.]+))?\}")
+            .expect("source ref regex is valid")
+    })
+}
+
+/// Scan the entire pipeline YAML for `${source.*}` template references and
+/// `include` directives, returning all found references.
+fn scan_source_refs(obj: &serde_yaml::Mapping) -> Vec<SourceRef> {
+    let mut refs = Vec::new();
+
+    // Scan vars
+    if let Some(serde_yaml::Value::Mapping(vars)) = obj.get(ykey("vars")) {
+        for (k, v) in vars {
+            if let (Some(var_name), Some(s)) = (k.as_str(), yaml_value_as_str(v)) {
+                for cap in source_ref_regex().captures_iter(s) {
+                    refs.push(SourceRef {
+                        source_id: cap[1].to_string(),
+                        sub_path: cap.get(2).map(|m| m.as_str().to_string()),
+                        location: RefLocation::Var {
+                            var_name: var_name.to_string(),
+                        },
+                        raw_template: cap[0].to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Scan transformations
+    if let Some(serde_yaml::Value::Sequence(transforms)) = obj.get(ykey("transformations")) {
+        for (idx, item) in transforms.iter().enumerate() {
+            if let Some(mapping) = item.as_mapping() {
+                // Check for `include` directive
+                if let Some(include_val) = mapping.get(ykey("include"))
+                    && let Some(s) = yaml_value_as_str(include_val)
+                {
+                    for cap in source_ref_regex().captures_iter(s) {
+                        refs.push(SourceRef {
+                            source_id: cap[1].to_string(),
+                            sub_path: cap.get(2).map(|m| m.as_str().to_string()),
+                            location: RefLocation::Include {
+                                transform_index: idx,
+                            },
+                            raw_template: cap[0].to_string(),
+                        });
+                    }
+                }
+
+                // Scan all other string values in the mapping
+                for (field_key, field_val) in mapping {
+                    let field_name = match field_key.as_str() {
+                        Some(name) if name != "include" => name,
+                        _ => continue,
+                    };
+                    scan_yaml_value_for_refs(field_val, idx, field_name, &mut refs);
+                }
+            }
+        }
+    }
+
+    // Scan finalizers
+    if let Some(serde_yaml::Value::Sequence(finalizers)) = obj.get(ykey("finalizers")) {
+        for (idx, item) in finalizers.iter().enumerate() {
+            if let Some(mapping) = item.as_mapping() {
+                for (field_key, field_val) in mapping {
+                    if let Some(field_name) = field_key.as_str() {
+                        scan_yaml_value_for_refs(field_val, idx, field_name, &mut refs);
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
+/// Recursively scan a YAML value for `${source.*}` references.
+fn scan_yaml_value_for_refs(
+    value: &serde_yaml::Value,
+    transform_index: usize,
+    field_name: &str,
+    refs: &mut Vec<SourceRef>,
+) {
+    match value {
+        serde_yaml::Value::String(s) => {
+            for cap in source_ref_regex().captures_iter(s) {
+                refs.push(SourceRef {
+                    source_id: cap[1].to_string(),
+                    sub_path: cap.get(2).map(|m| m.as_str().to_string()),
+                    location: RefLocation::TransformationField {
+                        transform_index,
+                        field_name: field_name.to_string(),
+                    },
+                    raw_template: cap[0].to_string(),
+                });
+            }
+        }
+        serde_yaml::Value::Mapping(m) => {
+            for (k, v) in m {
+                let nested_field = if let Some(key) = k.as_str() {
+                    format!("{field_name}.{key}")
+                } else {
+                    field_name.to_string()
+                };
+                scan_yaml_value_for_refs(v, transform_index, &nested_field, refs);
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            for item in seq {
+                scan_yaml_value_for_refs(item, transform_index, field_name, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Helper to get a string from a YAML value (including tagged strings).
+fn yaml_value_as_str(value: &serde_yaml::Value) -> Option<&str> {
+    value.as_str()
 }
