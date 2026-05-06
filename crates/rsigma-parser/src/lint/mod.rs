@@ -1681,4 +1681,38 @@ EventID: 4624
             .collect();
         assert_eq!(rule_results.len(), 1);
     }
+
+    #[test]
+    fn all_lint_keys_are_cached() {
+        const ALL_LINT_KEYS: &[&str] = &[
+            "action",
+            "author",
+            "condition",
+            "correlation",
+            "date",
+            "description",
+            "detection",
+            "field",
+            "filter",
+            "generate",
+            "group-by",
+            "id",
+            "level",
+            "logsource",
+            "modified",
+            "name",
+            "rules",
+            "selection",
+            "status",
+            "tags",
+            "taxonomy",
+            "timeframe",
+            "timespan",
+            "title",
+            "type",
+        ];
+        for key_str in ALL_LINT_KEYS {
+            assert!(KEY_CACHE.contains_key(key_str), "key not cached: {key_str}");
+        }
+    }
 }
