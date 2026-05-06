@@ -35,7 +35,7 @@ jsonschema = "0.42"
 ureq = "3"
 dirs = "6"
 yamlpath = "0.34"
-yamlpatch = "0.12"
+yamlpatch = "1.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }

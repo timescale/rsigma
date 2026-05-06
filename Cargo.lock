@@ -3563,7 +3563,7 @@ dependencies = [
  "ureq",
  "yaml_serde",
  "yamlpatch",
- "yamlpath",
+ "yamlpath 0.34.0",
 ]
 
 [[package]]
@@ -4354,9 +4354,9 @@ dependencies = [
 
 [[package]]
 name = "subfeature"
-version = "0.0.4"
+version = "1.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46cafa37a988fbf02105b92826360798f64d97378034f09bafabc8fd6ad0a13a"
+checksum = "0ce89b340c4df706a70c1f25834c10a768fc11afeb69c832e4aa182d3158fac1"
 dependencies = [
  "memchr",
  "regex",
@@ -4925,6 +4925,15 @@ name = "tree-sitter-iter"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3127a537873850938a6b47ab023454be1a7c8f63bd699c95fc7b0dfa47964254"
+dependencies = [
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-iter"
+version = "1.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6f90e647c44106848cae33ec24309a2cea64de58066dc279731812be5aa6faf"
 dependencies = [
  "tree-sitter",
 ]
@@ -5762,9 +5771,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpatch"
-version = "0.12.0"
+version = "1.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "161da658a316f0c1cd94875d49e4a63eaa25f7a2acf28d0a2429b78a0b8d845a"
+checksum = "5afc92d2beb7a811cbda1fc0db34b6afaa3f4218c3da792ffc5dc633b26b723a"
 dependencies = [
  "indexmap 2.14.0",
  "line-index",
@@ -5773,7 +5782,7 @@ dependencies = [
  "serde_yaml",
  "subfeature",
  "thiserror 2.0.18",
- "yamlpath",
+ "yamlpath 1.24.1",
 ]
 
 [[package]]
@@ -5787,7 +5796,22 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tree-sitter",
- "tree-sitter-iter",
+ "tree-sitter-iter 0.0.3",
+ "tree-sitter-yaml",
+]
+
+[[package]]
+name = "yamlpath"
+version = "1.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dfc10af3a0b762c85fe94c3d9e00343078bef7048793a652430393faa50e47e"
+dependencies = [
+ "line-index",
+ "self_cell",
+ "serde",
+ "thiserror 2.0.18",
+ "tree-sitter",
+ "tree-sitter-iter 1.24.1",
  "tree-sitter-yaml",
 ]
 
