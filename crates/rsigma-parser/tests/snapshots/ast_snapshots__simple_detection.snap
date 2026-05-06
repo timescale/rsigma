@@ -1,0 +1,80 @@
+---
+source: crates/rsigma-parser/tests/ast_snapshots.rs
+expression: "&collection.rules[0]"
+---
+SigmaRule {
+    title: "Simple Detection",
+    logsource: LogSource {
+        category: Some(
+            "process_creation",
+        ),
+        product: Some(
+            "windows",
+        ),
+        service: None,
+        definition: None,
+        custom: {},
+    },
+    detection: Detections {
+        named: {
+            "selection": AllOf(
+                [
+                    DetectionItem {
+                        field: FieldSpec {
+                            name: Some(
+                                "CommandLine",
+                            ),
+                            modifiers: [
+                                Contains,
+                            ],
+                        },
+                        values: [
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "powershell",
+                                        ),
+                                    ],
+                                    original: "powershell",
+                                },
+                            ),
+                        ],
+                    },
+                ],
+            ),
+        },
+        conditions: [
+            Identifier(
+                "selection",
+            ),
+        ],
+        condition_strings: [
+            "selection",
+        ],
+        timeframe: None,
+    },
+    id: Some(
+        "12345678-1234-1234-1234-123456789012",
+    ),
+    name: None,
+    related: [],
+    taxonomy: None,
+    status: Some(
+        Test,
+    ),
+    description: None,
+    license: None,
+    author: None,
+    references: [],
+    date: None,
+    modified: None,
+    fields: [],
+    falsepositives: [],
+    level: Some(
+        High,
+    ),
+    tags: [],
+    scope: [],
+    custom_attributes: {},
+}

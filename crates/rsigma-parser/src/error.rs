@@ -20,6 +20,7 @@ impl fmt::Display for SourceLocation {
 
 /// Errors that can occur during Sigma rule parsing.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SigmaParserError {
     #[error("YAML parsing error: {0}")]
     Yaml(#[from] serde_yaml::Error),

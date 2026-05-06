@@ -1,0 +1,55 @@
+---
+source: crates/rsigma-parser/tests/ast_snapshots.rs
+expression: "&collection.correlations[0]"
+---
+CorrelationRule {
+    title: "Brute Force Correlation",
+    id: None,
+    name: Some(
+        "brute_force",
+    ),
+    status: Some(
+        Experimental,
+    ),
+    description: None,
+    author: None,
+    date: None,
+    modified: None,
+    related: [],
+    references: [],
+    taxonomy: None,
+    license: None,
+    tags: [],
+    fields: [],
+    falsepositives: [],
+    level: Some(
+        High,
+    ),
+    scope: [],
+    correlation_type: EventCount,
+    rules: [
+        "Base Rule",
+    ],
+    group_by: [
+        "SourceIP",
+    ],
+    timespan: Timespan {
+        count: 5,
+        unit: Minute,
+        seconds: 300,
+        original: "5m",
+    },
+    condition: Threshold {
+        predicates: [
+            (
+                Gte,
+                10,
+            ),
+        ],
+        field: None,
+        percentile: None,
+    },
+    aliases: [],
+    generate: false,
+    custom_attributes: {},
+}

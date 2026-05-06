@@ -1,0 +1,25 @@
+---
+source: crates/rsigma-parser/tests/ast_snapshots.rs
+expression: "&rule.detection.conditions"
+---
+[
+    And(
+        [
+            Or(
+                [
+                    Identifier(
+                        "sel1",
+                    ),
+                    Identifier(
+                        "sel2",
+                    ),
+                ],
+            ),
+            Not(
+                Identifier(
+                    "filter",
+                ),
+            ),
+        ],
+    ),
+]

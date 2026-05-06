@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConvertError {
     #[error("backend does not support modifier: {0}")]
     UnsupportedModifier(String),
