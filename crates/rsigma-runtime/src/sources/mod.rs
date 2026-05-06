@@ -9,6 +9,7 @@ pub mod command;
 pub mod extract;
 pub mod file;
 pub mod http;
+pub mod include;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod refresh;
@@ -203,15 +204,31 @@ impl SourceResolver for DefaultSourceResolver {
 /// Resolve all sources in a pipeline, returning a map of source_id -> resolved data.
 ///
 /// Applies error policies: `use_cached`, `use_default`, or `fail`.
-/// On `fail`, returns the first error encountered.
+/// Required sources with `Fail` policy propagate errors immediately.
+/// Optional sources (required=false) that fail are logged and skipped
+/// with a Null fallback value.
 pub async fn resolve_all(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],
 ) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
     let mut resolved = std::collections::HashMap::new();
     for source in sources {
-        let value = resolver.resolve(source).await?;
-        resolved.insert(source.id.clone(), value.data);
+        match resolver.resolve(source).await {
+            Ok(value) => {
+                resolved.insert(source.id.clone(), value.data);
+            }
+            Err(e) => {
+                if source.required {
+                    return Err(e);
+                }
+                tracing::warn!(
+                    source_id = %source.id,
+                    error = %e,
+                    "Optional source resolution failed, using null"
+                );
+                resolved.insert(source.id.clone(), serde_json::Value::Null);
+            }
+        }
     }
     Ok(resolved)
 }

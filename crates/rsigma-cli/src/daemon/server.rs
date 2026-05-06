@@ -110,17 +110,34 @@ pub async fn run_daemon(config: DaemonConfig) {
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
 
-    for pipeline in &config.pipelines {
-        if pipeline.is_dynamic() {
-            for source in &pipeline.sources {
-                tracing::warn!(
-                    pipeline = %pipeline.name,
-                    source_id = %source.id,
-                    refresh = ?source.refresh,
-                    required = source.required,
-                    "Dynamic source detected -- source resolution not yet supported"
-                );
-            }
+    // Set up dynamic source resolver if any pipeline has dynamic sources
+    let has_dynamic = config.pipelines.iter().any(|p| p.is_dynamic());
+    let mut sources_trigger_tx_val: Option<
+        mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
+    > = None;
+
+    if has_dynamic {
+        let resolver = Arc::new(rsigma_runtime::DefaultSourceResolver::new());
+        engine.set_source_resolver(resolver.clone());
+
+        // Resolve dynamic sources at startup (blocks on required sources)
+        if let Err(e) = engine.resolve_dynamic_pipelines().await {
+            tracing::error!(error = %e, "Failed to resolve required dynamic sources at startup");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+
+        // Collect all dynamic sources for the refresh scheduler
+        let all_sources: Vec<_> = config
+            .pipelines
+            .iter()
+            .filter(|p| p.is_dynamic())
+            .flat_map(|p| p.sources.iter().cloned())
+            .collect();
+
+        if !all_sources.is_empty() {
+            let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
+            sources_trigger_tx_val = Some(scheduler.trigger_sender());
+            scheduler.run(all_sources, resolver);
         }
     }
 
@@ -234,7 +251,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
-        sources_trigger_tx: None,
+        sources_trigger_tx: sources_trigger_tx_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
     };

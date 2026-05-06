@@ -57,7 +57,7 @@ pub use conditions::{
     eval_condition_expr,
 };
 pub use finalizers::Finalizer;
-pub use parsing::{parse_pipeline, parse_pipeline_file};
+pub use parsing::{parse_pipeline, parse_pipeline_file, parse_transformation_items};
 pub use state::PipelineState;
 pub use transformations::Transformation;
 

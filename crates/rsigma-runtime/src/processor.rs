@@ -264,6 +264,7 @@ impl LogProcessor {
             corr_config,
             include_event,
             resolver,
+            allow_remote_include,
         ) = {
             let snapshot = self.engine.load();
             let old = snapshot.lock();
@@ -275,11 +276,13 @@ impl LogProcessor {
                 old.corr_config().clone(),
                 old.include_event(),
                 old.source_resolver().cloned(),
+                old.allow_remote_include(),
             )
         };
 
         let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
         new_engine.set_pipeline_paths(pipeline_paths);
+        new_engine.set_allow_remote_include(allow_remote_include);
         if let Some(resolver) = resolver {
             new_engine.set_source_resolver(resolver);
         }

@@ -20,6 +20,7 @@ pub struct RuntimeEngine {
     corr_config: CorrelationConfig,
     include_event: bool,
     source_resolver: Option<Arc<dyn SourceResolver>>,
+    allow_remote_include: bool,
 }
 
 enum EngineVariant {
@@ -49,6 +50,7 @@ impl RuntimeEngine {
             corr_config,
             include_event,
             source_resolver: None,
+            allow_remote_include: false,
         }
     }
 
@@ -63,6 +65,16 @@ impl RuntimeEngine {
     /// Get the source resolver, if one is configured.
     pub fn source_resolver(&self) -> Option<&Arc<dyn SourceResolver>> {
         self.source_resolver.as_ref()
+    }
+
+    /// Allow `include` directives to reference HTTP/NATS sources.
+    pub fn set_allow_remote_include(&mut self, allow: bool) {
+        self.allow_remote_include = allow;
+    }
+
+    /// Whether remote includes are allowed.
+    pub fn allow_remote_include(&self) -> bool {
+        self.allow_remote_include
     }
 
     /// Set the pipeline file paths used for hot-reload.
@@ -94,7 +106,13 @@ impl RuntimeEngine {
             if pipeline.is_dynamic() {
                 match sources::resolve_all(resolver.as_ref(), &pipeline.sources).await {
                     Ok(resolved_data) => {
-                        let expanded = TemplateExpander::expand(pipeline, &resolved_data);
+                        let mut expanded = TemplateExpander::expand(pipeline, &resolved_data);
+                        // Expand include directives
+                        sources::include::expand_includes(
+                            &mut expanded,
+                            &resolved_data,
+                            self.allow_remote_include,
+                        )?;
                         resolved_pipelines.push(expanded);
                     }
                     Err(e) => {
@@ -134,8 +152,10 @@ impl RuntimeEngine {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 let pipelines = std::mem::take(&mut self.pipelines);
                 let resolver = self.source_resolver.clone().unwrap();
-                let resolved =
-                    handle.block_on(async { resolve_pipelines_async(&resolver, &pipelines).await });
+                let allow_remote = self.allow_remote_include;
+                let resolved = handle.block_on(async {
+                    resolve_pipelines_async(&resolver, &pipelines, allow_remote).await
+                });
                 match resolved {
                     Ok(p) => self.pipelines = p,
                     Err(e) => {
@@ -305,6 +325,7 @@ fn reload_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, String> {
 async fn resolve_pipelines_async(
     resolver: &Arc<dyn SourceResolver>,
     pipelines: &[Pipeline],
+    allow_remote_include: bool,
 ) -> Result<Vec<Pipeline>, String> {
     let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
     for pipeline in pipelines {
@@ -317,7 +338,8 @@ async fn resolve_pipelines_async(
                         pipeline.name
                     )
                 })?;
-            let expanded = TemplateExpander::expand(pipeline, &resolved_data);
+            let mut expanded = TemplateExpander::expand(pipeline, &resolved_data);
+            sources::include::expand_includes(&mut expanded, &resolved_data, allow_remote_include)?;
             resolved_pipelines.push(expanded);
         } else {
             resolved_pipelines.push(pipeline.clone());

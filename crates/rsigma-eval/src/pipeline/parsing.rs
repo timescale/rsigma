@@ -112,7 +112,8 @@ fn parse_vars(value: Option<&serde_yaml::Value>) -> HashMap<String, Vec<String>>
     vars
 }
 
-fn parse_transformation_items(value: &serde_yaml::Value) -> Result<Vec<TransformationItem>> {
+/// Parse a YAML value as a sequence of transformation items.
+pub fn parse_transformation_items(value: &serde_yaml::Value) -> Result<Vec<TransformationItem>> {
     let items = value.as_sequence().ok_or_else(|| {
         EvalError::InvalidModifiers("transformations must be a sequence".to_string())
     })?;
