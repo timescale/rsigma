@@ -107,6 +107,21 @@ pub async fn run_daemon(config: DaemonConfig) {
         config.include_event,
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
+
+    for pipeline in &config.pipelines {
+        if pipeline.is_dynamic() {
+            for source in &pipeline.sources {
+                tracing::warn!(
+                    pipeline = %pipeline.name,
+                    source_id = %source.id,
+                    refresh = ?source.refresh,
+                    required = source.required,
+                    "Dynamic source detected -- source resolution not yet supported"
+                );
+            }
+        }
+    }
+
     let processor = Arc::new(LogProcessor::new(engine, metrics.clone()));
 
     // Initial rule load

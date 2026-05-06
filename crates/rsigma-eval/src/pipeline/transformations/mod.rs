@@ -163,6 +163,14 @@ pub enum Transformation {
     Nest {
         items: Vec<super::TransformationItem>,
     },
+
+    /// Unresolved dynamic include directive.
+    ///
+    /// Represents `include: "${source.name}"` in the pipeline YAML. This is a
+    /// placeholder that will be expanded into actual transformations when
+    /// dynamic sources are resolved (Phase 2). At evaluation time, it is a
+    /// no-op.
+    Include { template: String },
 }
 
 // =============================================================================
@@ -482,6 +490,8 @@ impl Transformation {
                 }
                 Ok(true)
             }
+
+            Transformation::Include { .. } => Ok(false),
         }
     }
 }
