@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = []
-nats = ["async-nats", "tokio-stream", "time"]
+nats = ["async-nats", "tokio-stream", "time", "futures"]
 otlp = ["opentelemetry-proto", "prost"]
 logfmt = []
 cef = []
@@ -36,10 +36,12 @@ jaq-interpret = "1.5.0"
 jaq-parse = "1.0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
+notify = "8.2"
 
 # optional
 tokio-stream = { version = "0.1", optional = true }
 async-nats = { version = "0.47", optional = true }
+futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.11", optional = true, default-features = false }
 opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }

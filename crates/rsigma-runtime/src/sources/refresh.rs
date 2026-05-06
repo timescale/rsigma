@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rsigma_eval::pipeline::sources::{DynamicSource, RefreshPolicy};
+use rsigma_eval::pipeline::sources::{DynamicSource, RefreshPolicy, SourceType};
 use tokio::sync::{mpsc, watch};
 
 use super::{SourceResolver, resolve_all};
@@ -21,6 +21,12 @@ pub enum RefreshTrigger {
     All,
     /// Re-resolve a specific source by ID.
     Single(String),
+    /// A NATS push message arrived with pre-parsed data for a specific source.
+    #[cfg(feature = "nats")]
+    NatsPush {
+        source_id: String,
+        data: serde_json::Value,
+    },
 }
 
 /// Notification sent when sources have been refreshed.
@@ -104,7 +110,7 @@ impl RefreshScheduler {
         trigger_tx: mpsc::Sender<RefreshTrigger>,
         result_tx: watch::Sender<Option<RefreshResult>>,
     ) {
-        // Spawn interval timers that send triggers
+        // Spawn interval timers
         for source in &sources {
             if let RefreshPolicy::Interval(duration) = &source.refresh {
                 let tx = trigger_tx.clone();
@@ -123,11 +129,68 @@ impl RefreshScheduler {
             }
         }
 
+        // Spawn NATS push subscriptions
+        #[cfg(feature = "nats")]
+        for source in &sources {
+            if source.refresh == RefreshPolicy::Push
+                && let SourceType::Nats {
+                    url,
+                    subject,
+                    format,
+                    extract: extract_expr,
+                } = &source.source_type
+            {
+                let tx = trigger_tx.clone();
+                let id = source.id.clone();
+                let url = url.clone();
+                let subject = subject.clone();
+                let format = *format;
+                let extract_expr = extract_expr.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        nats_push_loop(&url, &subject, format, extract_expr.as_deref(), &id, &tx)
+                            .await
+                    {
+                        tracing::error!(
+                            source_id = %id,
+                            error = %e,
+                            "NATS push subscription failed"
+                        );
+                    }
+                });
+            }
+        }
+
+        // Spawn file watchers for Watch policy sources
+        for source in &sources {
+            if source.refresh == RefreshPolicy::Watch
+                && let SourceType::File { path, .. } = &source.source_type
+            {
+                let tx = trigger_tx.clone();
+                let id = source.id.clone();
+                let path = path.clone();
+                tokio::spawn(async move {
+                    file_watch_loop(&path, &id, &tx).await;
+                });
+            }
+        }
+
         // Main loop: wait for triggers and resolve
         while let Some(trigger) = trigger_rx.recv().await {
+            // Handle NATS push with pre-parsed data (no re-resolution needed)
+            #[cfg(feature = "nats")]
+            if let RefreshTrigger::NatsPush { source_id, data } = trigger {
+                let mut resolved = HashMap::new();
+                resolved.insert(source_id, data);
+                let _ = result_tx.send(Some(RefreshResult { resolved }));
+                continue;
+            }
+
             let to_resolve: Vec<&DynamicSource> = match &trigger {
                 RefreshTrigger::All => sources.iter().collect(),
                 RefreshTrigger::Single(id) => sources.iter().filter(|s| s.id == *id).collect(),
+                #[cfg(feature = "nats")]
+                RefreshTrigger::NatsPush { .. } => unreachable!(),
             };
 
             if to_resolve.is_empty() {
@@ -144,10 +207,7 @@ impl RefreshScheduler {
                     let _ = result_tx.send(Some(RefreshResult { resolved }));
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Background source refresh failed"
-                    );
+                    tracing::warn!(error = %e, "Background source refresh failed");
                 }
             }
         }
@@ -157,5 +217,123 @@ impl RefreshScheduler {
 impl Default for RefreshScheduler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Subscribe to a NATS subject and forward parsed messages as triggers.
+#[cfg(feature = "nats")]
+async fn nats_push_loop(
+    url: &str,
+    subject: &str,
+    format: rsigma_eval::pipeline::sources::DataFormat,
+    extract_expr: Option<&str>,
+    source_id: &str,
+    trigger_tx: &mpsc::Sender<RefreshTrigger>,
+) -> Result<(), String> {
+    use futures::StreamExt;
+
+    let client = async_nats::connect(url)
+        .await
+        .map_err(|e| format!("NATS connect failed: {e}"))?;
+
+    let mut subscriber = client
+        .subscribe(subject.to_string())
+        .await
+        .map_err(|e| format!("NATS subscribe failed: {e}"))?;
+
+    tracing::info!(
+        source_id = %source_id,
+        subject = %subject,
+        "NATS push subscription active"
+    );
+
+    while let Some(msg) = subscriber.next().await {
+        match super::nats::parse_nats_message(&msg.payload, format, extract_expr) {
+            Ok(data) => {
+                let trigger = RefreshTrigger::NatsPush {
+                    source_id: source_id.to_string(),
+                    data,
+                };
+                if trigger_tx.send(trigger).await.is_err() {
+                    break;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    source_id = %source_id,
+                    error = %e,
+                    "Failed to parse NATS push message"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Watch a file for changes and send refresh triggers.
+async fn file_watch_loop(
+    path: &std::path::Path,
+    source_id: &str,
+    trigger_tx: &mpsc::Sender<RefreshTrigger>,
+) {
+    use notify::{Event, EventKind, RecommendedWatcher, Watcher};
+    use tokio::sync::mpsc as tokio_mpsc;
+
+    let (notify_tx, mut notify_rx) = tokio_mpsc::channel::<()>(4);
+
+    let _watcher = {
+        let tx = notify_tx.clone();
+        match RecommendedWatcher::new(
+            move |res: Result<Event, notify::Error>| {
+                if let Ok(event) = res
+                    && matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
+                {
+                    let _ = tx.try_send(());
+                }
+            },
+            notify::Config::default(),
+        ) {
+            Ok(mut w) => {
+                if let Err(e) = w.watch(path, notify::RecursiveMode::NonRecursive) {
+                    tracing::warn!(
+                        source_id = %source_id,
+                        path = %path.display(),
+                        error = %e,
+                        "Could not watch source file"
+                    );
+                    return;
+                }
+                tracing::info!(
+                    source_id = %source_id,
+                    path = %path.display(),
+                    "Watching source file for changes"
+                );
+                Some(w)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    source_id = %source_id,
+                    error = %e,
+                    "Could not create file watcher for source"
+                );
+                return;
+            }
+        }
+    };
+
+    while notify_rx.recv().await.is_some() {
+        // Debounce: wait a short period for additional changes
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Drain any queued notifications
+        while notify_rx.try_recv().is_ok() {}
+
+        if trigger_tx
+            .send(RefreshTrigger::Single(source_id.to_string()))
+            .await
+            .is_err()
+        {
+            break;
+        }
     }
 }

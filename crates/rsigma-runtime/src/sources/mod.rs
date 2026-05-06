@@ -9,6 +9,8 @@ pub mod command;
 pub mod extract;
 pub mod file;
 pub mod http;
+#[cfg(feature = "nats")]
+pub mod nats;
 pub mod refresh;
 pub mod template;
 
@@ -136,12 +138,18 @@ impl SourceResolver for DefaultSourceResolver {
                 )
                 .await
             }
+            #[cfg(feature = "nats")]
+            SourceType::Nats {
+                url,
+                subject,
+                format,
+                extract: extract_expr,
+            } => nats::resolve_nats_initial(url, subject, *format, extract_expr.as_deref()).await,
+            #[cfg(not(feature = "nats"))]
             SourceType::Nats { .. } => {
                 return Err(SourceError {
                     source_id: source.id.clone(),
-                    kind: SourceErrorKind::Fetch(
-                        "NATS source resolution not yet implemented".into(),
-                    ),
+                    kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
             }
         };
