@@ -226,7 +226,7 @@ impl WindowState {
                 if values.is_empty() {
                     return None;
                 }
-                values.sort_by(|a, b| a.partial_cmp(b).expect("NaN filtered"));
+                values.sort_by(|a, b| a.total_cmp(b));
                 let percentile_rank = condition.percentile.map(|p| p as f64).unwrap_or(50.0);
                 let pval = percentile_linear_interp(&values, percentile_rank);
                 return Some(pval);
@@ -243,7 +243,7 @@ impl WindowState {
                     if values.is_empty() {
                         return None;
                     }
-                    values.sort_by(|a, b| a.partial_cmp(b).expect("NaN filtered"));
+                    values.sort_by(|a, b| a.total_cmp(b));
                     let mid = values.len() / 2;
                     if values.len().is_multiple_of(2) && values.len() >= 2 {
                         (values[mid - 1] + values[mid]) / 2.0
