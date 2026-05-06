@@ -11,7 +11,9 @@ mod correlation;
 mod tests;
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use rsigma_eval::pipeline::state::PipelineState;
 use rsigma_parser::*;
 
@@ -20,6 +22,16 @@ use crate::condition::convert_condition_expr;
 use crate::convert::{default_convert_detection, default_convert_detection_item};
 use crate::error::{ConvertError, Result};
 use crate::state::{ConversionState, ConvertResult};
+
+fn validate_sql_identifier(s: &str) -> Result<()> {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_$]*$").unwrap());
+    if RE.is_match(s) {
+        Ok(())
+    } else {
+        Err(ConvertError::InvalidIdentifier(s.to_string()))
+    }
+}
 
 // =============================================================================
 // PostgreSQL TextQueryConfig
@@ -188,12 +200,13 @@ impl PostgresBackend {
         &self,
         custom_attrs: &HashMap<String, serde_yaml::Value>,
         state: &HashMap<String, serde_json::Value>,
-    ) -> String {
+    ) -> Result<String> {
         let table = custom_attrs
             .get("postgres.table")
             .and_then(|v| v.as_str())
             .or(state.get("table").and_then(|v| v.as_str()))
             .unwrap_or(&self.table);
+        validate_sql_identifier(table)?;
 
         let schema = custom_attrs
             .get("postgres.schema")
@@ -202,9 +215,11 @@ impl PostgresBackend {
             .or(self.schema.as_deref())
             .filter(|s| !s.is_empty());
 
-        match schema {
-            Some(s) => format!("{s}.{table}"),
-            None => table.to_string(),
+        if let Some(s) = schema {
+            validate_sql_identifier(s)?;
+            Ok(format!("{s}.{table}"))
+        } else {
+            Ok(table.to_string())
         }
     }
 
@@ -215,35 +230,45 @@ impl PostgresBackend {
         table: &str,
         state: &HashMap<String, serde_json::Value>,
         per_rule_schema: Option<&str>,
-    ) -> String {
+    ) -> Result<String> {
+        validate_sql_identifier(table)?;
+
         let schema = per_rule_schema
             .or(state.get("schema").and_then(|v| v.as_str()))
             .or(self.schema.as_deref())
             .filter(|s| !s.is_empty());
 
-        match schema {
-            Some(s) => format!("{s}.{table}"),
-            None => table.to_string(),
+        if let Some(s) = schema {
+            validate_sql_identifier(s)?;
+            Ok(format!("{s}.{table}"))
+        } else {
+            Ok(table.to_string())
         }
     }
 
-    fn field_expr(&self, field: &str) -> String {
+    fn field_expr(&self, field: &str) -> Result<String> {
         match &self.json_field {
             Some(json_col) if field.contains('.') => {
                 let parts: Vec<&str> = field.split('.').collect();
                 let last = parts.len() - 1;
                 let mut expr = json_col.clone();
                 for (i, part) in parts.iter().enumerate() {
+                    validate_sql_identifier(part)?;
+                    let escaped = part.replace('\'', "''");
                     if i == last {
-                        expr.push_str(&format!("->>'{part}'"));
+                        expr.push_str(&format!("->>'{escaped}'"));
                     } else {
-                        expr.push_str(&format!("->'{part}'"));
+                        expr.push_str(&format!("->'{escaped}'"));
                     }
                 }
-                expr
+                Ok(expr)
             }
-            Some(json_col) => format!("{json_col}->>'{field}'"),
-            None => text_escape_and_quote_field(self.config, field),
+            Some(json_col) => {
+                validate_sql_identifier(field)?;
+                let escaped = field.replace('\'', "''");
+                Ok(format!("{json_col}->>'{escaped}'"))
+            }
+            None => Ok(text_escape_and_quote_field(self.config, field)),
         }
     }
 
@@ -405,6 +430,7 @@ impl Backend for PostgresBackend {
 
     fn escape_and_quote_field(&self, field: &str) -> String {
         self.field_expr(field)
+            .unwrap_or_else(|_| text_escape_and_quote_field(self.config, field))
     }
 
     fn convert_value_str(&self, value: &SigmaString, _state: &ConversionState) -> String {
@@ -424,7 +450,7 @@ impl Backend for PostgresBackend {
         modifiers: &[Modifier],
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let is_cased = modifiers.contains(&Modifier::Cased);
         let is_contains = modifiers.contains(&Modifier::Contains);
         let is_startswith = modifiers.contains(&Modifier::StartsWith);
@@ -463,7 +489,7 @@ impl Backend for PostgresBackend {
         value: f64,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         if value.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&value) {
             Ok(format!("{f} = {}", value as i64))
         } else {
@@ -477,7 +503,7 @@ impl Backend for PostgresBackend {
         value: bool,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let v = if value {
             self.config.bool_true
         } else {
@@ -487,7 +513,7 @@ impl Backend for PostgresBackend {
     }
 
     fn convert_field_eq_null(&self, field: &str, _state: &mut ConversionState) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         Ok(format!("{f} IS NULL"))
     }
 
@@ -498,7 +524,7 @@ impl Backend for PostgresBackend {
         flags: &[Modifier],
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let escaped_pattern = self.escape_sql_str(pattern);
         let is_cased = flags.contains(&Modifier::Cased) || self.case_sensitive_re;
         let op = if is_cased { "~" } else { "~*" };
@@ -513,7 +539,7 @@ impl Backend for PostgresBackend {
         cidr: &str,
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         Ok(ConvertResult::Query(format!(
             "({f})::inet <<= '{cidr}'::cidr"
         )))
@@ -526,7 +552,7 @@ impl Backend for PostgresBackend {
         value: f64,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let op_token = match op {
             Modifier::Lt => "<",
             Modifier::Lte => "<=",
@@ -553,7 +579,7 @@ impl Backend for PostgresBackend {
         exists: bool,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         if exists {
             Ok(format!("{f} IS NOT NULL"))
         } else {
@@ -568,7 +594,7 @@ impl Backend for PostgresBackend {
         _id: &str,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let resolved = expr.replace("{field}", &f);
         Ok(resolved)
     }
@@ -579,8 +605,8 @@ impl Backend for PostgresBackend {
         field2: &str,
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f1 = self.field_expr(field1);
-        let f2 = self.field_expr(field2);
+        let f1 = self.field_expr(field1)?;
+        let f2 = self.field_expr(field2)?;
         Ok(ConvertResult::Query(format!("{f1} = {f2}")))
     }
 
@@ -622,7 +648,7 @@ impl Backend for PostgresBackend {
                 "AND IN-list not supported for PostgreSQL".into(),
             ));
         }
-        let f = self.field_expr(field);
+        let f = self.field_expr(field)?;
         let items: Vec<String> = values
             .iter()
             .map(|v| match v {
@@ -644,7 +670,7 @@ impl Backend for PostgresBackend {
         query: String,
         state: &ConversionState,
     ) -> Result<String> {
-        let qualified = self.resolve_table(&rule.custom_attributes, &state.processing_state);
+        let qualified = self.resolve_table(&rule.custom_attributes, &state.processing_state)?;
 
         let is_timescaledb = state
             .get_state_str("_output_format")
@@ -656,7 +682,7 @@ impl Backend for PostgresBackend {
             rule.fields
                 .iter()
                 .map(|f| self.format_select_field(f))
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>>>()?
                 .join(", ")
         };
 
@@ -745,13 +771,16 @@ impl Backend for PostgresBackend {
         output_format: &str,
         pipeline_state: &PipelineState,
     ) -> Result<Vec<String>> {
-        let table = self.resolve_table(&rule.custom_attributes, &pipeline_state.state);
+        let table = self.resolve_table(&rule.custom_attributes, &pipeline_state.state)?;
         let ts = &self.timestamp_field;
         let use_time_bucket =
             output_format == "timescaledb" || output_format == "continuous_aggregate";
 
-        let mut group_by_cols: Vec<String> =
-            rule.group_by.iter().map(|g| self.field_expr(g)).collect();
+        let mut group_by_cols: Vec<String> = rule
+            .group_by
+            .iter()
+            .map(|g| self.field_expr(g))
+            .collect::<Result<_>>()?;
         if use_time_bucket {
             group_by_cols.insert(0, format!("time_bucket('1 hour', {ts})"));
         }
@@ -820,9 +849,10 @@ impl Backend for PostgresBackend {
                 )
             }
             CorrelationType::ValueCount => {
-                let field = value_field
-                    .map(|f| self.field_expr(f))
-                    .unwrap_or_else(|| "'unknown_field'".to_string());
+                let field = match value_field {
+                    Some(f) => self.field_expr(f)?,
+                    None => "'unknown_field'".to_string(),
+                };
                 let agg = format!("COUNT(DISTINCT {field})");
                 format!(
                     "{cte_prefix}SELECT {group_by_select}{agg} AS value_count \
@@ -846,9 +876,10 @@ impl Backend for PostgresBackend {
                     pipeline_state,
                 )?,
             CorrelationType::ValueSum => {
-                let field = value_field
-                    .map(|f| self.field_expr(f))
-                    .unwrap_or_else(|| "'unknown_field'".to_string());
+                let field = match value_field {
+                    Some(f) => self.field_expr(f)?,
+                    None => "'unknown_field'".to_string(),
+                };
                 let agg = format!("SUM({field})");
                 format!(
                     "{cte_prefix}SELECT {group_by_select}{agg} AS value_sum \
@@ -860,9 +891,10 @@ impl Backend for PostgresBackend {
                 )
             }
             CorrelationType::ValueAvg => {
-                let field = value_field
-                    .map(|f| self.field_expr(f))
-                    .unwrap_or_else(|| "'unknown_field'".to_string());
+                let field = match value_field {
+                    Some(f) => self.field_expr(f)?,
+                    None => "'unknown_field'".to_string(),
+                };
                 let agg = format!("AVG({field})");
                 format!(
                     "{cte_prefix}SELECT {group_by_select}{agg} AS value_avg \
@@ -874,9 +906,10 @@ impl Backend for PostgresBackend {
                 )
             }
             CorrelationType::ValuePercentile | CorrelationType::ValueMedian => {
-                let field = value_field
-                    .map(|f| self.field_expr(f))
-                    .unwrap_or_else(|| "'unknown_field'".to_string());
+                let field = match value_field {
+                    Some(f) => self.field_expr(f)?,
+                    None => "'unknown_field'".to_string(),
+                };
                 let percentile = if rule.correlation_type == CorrelationType::ValueMedian {
                     0.5
                 } else {

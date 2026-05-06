@@ -12,22 +12,22 @@ impl super::PostgresBackend {
     /// - Expressions containing parentheses (function calls) pass through unchanged
     /// - `field as alias` is split and both sides are quoted independently
     /// - Plain field names are quoted via `field_expr`
-    pub(super) fn format_select_field(&self, field: &str) -> String {
+    pub(super) fn format_select_field(&self, field: &str) -> Result<String> {
         if field == "*" {
-            return "*".to_string();
+            return Ok("*".to_string());
         }
         if field.contains('(') && field.contains(')') {
-            return field.to_string();
+            return Ok(field.to_string());
         }
         if let Some((expr, alias)) = field.split_once(" as ") {
-            let quoted_expr = self.field_expr(expr.trim());
-            let quoted_alias = self.field_expr(alias.trim());
-            return format!("{quoted_expr} AS {quoted_alias}");
+            let quoted_expr = self.field_expr(expr.trim())?;
+            let quoted_alias = self.field_expr(alias.trim())?;
+            return Ok(format!("{quoted_expr} AS {quoted_alias}"));
         }
         if let Some((expr, alias)) = field.split_once(" AS ") {
-            let quoted_expr = self.field_expr(expr.trim());
-            let quoted_alias = self.field_expr(alias.trim());
-            return format!("{quoted_expr} AS {quoted_alias}");
+            let quoted_expr = self.field_expr(expr.trim())?;
+            let quoted_alias = self.field_expr(alias.trim())?;
+            return Ok(format!("{quoted_expr} AS {quoted_alias}"));
         }
         self.field_expr(field)
     }
@@ -98,7 +98,10 @@ impl super::PostgresBackend {
         let partition_clause = if group_by.is_empty() {
             String::new()
         } else {
-            let cols: Vec<String> = group_by.iter().map(|g| self.field_expr(g)).collect();
+            let cols: Vec<String> = group_by
+                .iter()
+                .map(|g| self.field_expr(g))
+                .collect::<Result<_>>()?;
             format!("PARTITION BY {} ", cols.join(", "))
         };
 
@@ -238,7 +241,7 @@ impl super::PostgresBackend {
             let raw_table = rule_tables.get(rule_ref).map(|s| s.as_str());
             let per_rule_schema = rule_schemas.get(rule_ref).map(|s| s.as_str());
             let qualified = match raw_table {
-                Some(t) => self.qualify_table_name(t, &pipeline_state.state, per_rule_schema),
+                Some(t) => self.qualify_table_name(t, &pipeline_state.state, per_rule_schema)?,
                 None => default_table.to_string(),
             };
             table_to_rules

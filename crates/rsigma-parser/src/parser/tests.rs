@@ -1329,3 +1329,44 @@ correlation:
     let collection = parse_sigma_yaml(yaml).unwrap();
     assert!(collection.correlations[0].generate);
 }
+
+#[test]
+fn deep_merge_handles_deeply_nested_global() {
+    use serde_yaml::Value;
+
+    fn nested_map(depth: usize) -> Value {
+        let mut v = Value::String("leaf".into());
+        for i in (0..depth).rev() {
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(Value::String(format!("k{i}")), v);
+            v = Value::Mapping(map);
+        }
+        v
+    }
+
+    let result = super::deep_merge(nested_map(200), nested_map(200));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("maximum depth"),
+        "expected MergeTooDeep, got: {err}"
+    );
+}
+
+#[test]
+fn deep_merge_succeeds_at_reasonable_depth() {
+    use serde_yaml::Value;
+
+    fn nested_map(depth: usize) -> Value {
+        let mut v = Value::String("leaf".into());
+        for i in (0..depth).rev() {
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(Value::String(format!("k{i}")), v);
+            v = Value::Mapping(map);
+        }
+        v
+    }
+
+    let result = super::deep_merge(nested_map(10), nested_map(10));
+    assert!(result.is_ok());
+}
