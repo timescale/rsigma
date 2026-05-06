@@ -3648,6 +3648,7 @@ dependencies = [
  "criterion",
  "evtx",
  "opentelemetry-proto",
+ "parking_lot",
  "prost",
  "rand 0.9.4",
  "rsigma-eval",
