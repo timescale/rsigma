@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use rsigma_eval::{CorrelationConfig, Engine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;

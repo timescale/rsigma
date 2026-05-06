@@ -7,7 +7,7 @@
 mod datagen;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use rand::Rng;
+use rand::RngExt;
 use rsigma_eval::{CorrelationConfig, CorrelationEngine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
 

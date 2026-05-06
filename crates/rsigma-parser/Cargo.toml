@@ -22,7 +22,7 @@ thiserror = "2"
 [dev-dependencies]
 criterion = "0.5"
 insta = "1.46"
-rand = "0.9"
+rand = "0.10"
 tempfile = "3"
 
 [[bench]]
