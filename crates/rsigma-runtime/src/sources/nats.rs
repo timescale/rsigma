@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use rsigma_eval::pipeline::sources::DataFormat;
+use rsigma_eval::pipeline::sources::{DataFormat, ExtractExpr};
 
 use super::extract::apply_extract;
 use super::file::parse_data;
@@ -19,7 +19,7 @@ pub async fn resolve_nats_initial(
     url: &str,
     subject: &str,
     format: DataFormat,
-    extract_expr: Option<&str>,
+    extract_expr: Option<&ExtractExpr>,
 ) -> Result<ResolvedValue, SourceError> {
     use futures::StreamExt;
 
@@ -65,7 +65,7 @@ pub async fn resolve_nats_initial(
 pub fn parse_nats_message(
     payload: &[u8],
     format: DataFormat,
-    extract_expr: Option<&str>,
+    extract_expr: Option<&ExtractExpr>,
 ) -> Result<serde_json::Value, SourceError> {
     let raw = std::str::from_utf8(payload).map_err(|e| SourceError {
         source_id: String::new(),

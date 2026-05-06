@@ -43,23 +43,42 @@ pub enum SourceType {
         method: Option<String>,
         headers: HashMap<String, String>,
         format: DataFormat,
-        extract: Option<String>,
+        extract: Option<ExtractExpr>,
     },
     /// Run a local command and capture its stdout.
     Command {
         command: Vec<String>,
         format: DataFormat,
-        extract: Option<String>,
+        extract: Option<ExtractExpr>,
     },
     /// Read data from a local file.
-    File { path: PathBuf, format: DataFormat },
+    File {
+        path: PathBuf,
+        format: DataFormat,
+        extract: Option<ExtractExpr>,
+    },
     /// Subscribe to a NATS subject for push-based updates.
     Nats {
         url: String,
         subject: String,
         format: DataFormat,
-        extract: Option<String>,
+        extract: Option<ExtractExpr>,
     },
+}
+
+/// An extraction expression applied to source data after parsing.
+///
+/// Supports two syntax forms in YAML:
+/// - Plain string: always jq (the common case): `extract: ".emails[]"`
+/// - Structured object: explicit language: `extract: { expr: "$.emails[*]", type: jsonpath }`
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtractExpr {
+    /// A jq expression (default). Evaluated via jaq.
+    Jq(String),
+    /// A JSONPath expression. Evaluated via serde_json_path.
+    JsonPath(String),
+    /// A CEL (Common Expression Language) expression. Evaluated via cel-interpreter.
+    Cel(String),
 }
 
 /// How often a source should be refreshed.

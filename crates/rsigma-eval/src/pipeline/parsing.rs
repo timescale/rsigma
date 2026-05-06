@@ -13,7 +13,8 @@ use super::conditions::{
 };
 use super::finalizers::Finalizer;
 use super::sources::{
-    DataFormat, DynamicSource, ErrorPolicy, RefLocation, RefreshPolicy, SourceRef, SourceType,
+    DataFormat, DynamicSource, ErrorPolicy, ExtractExpr, RefLocation, RefreshPolicy, SourceRef,
+    SourceType,
 };
 use super::transformations::Transformation;
 use super::{Pipeline, TransformationItem};
@@ -873,10 +874,7 @@ fn parse_dynamic_source(value: &serde_yaml::Value) -> Result<DynamicSource> {
         })?;
 
     let format = parse_data_format(obj.get(ykey("format")));
-    let extract = obj
-        .get(ykey("extract"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let extract = parse_extract_expr(obj.get(ykey("extract")), &id)?;
 
     let source_type = match type_str {
         "http" => {
@@ -927,6 +925,7 @@ fn parse_dynamic_source(value: &serde_yaml::Value) -> Result<DynamicSource> {
             SourceType::File {
                 path: PathBuf::from(path),
                 format,
+                extract,
             }
         }
         "nats" => {
@@ -976,6 +975,56 @@ fn parse_dynamic_source(value: &serde_yaml::Value) -> Result<DynamicSource> {
         required,
         default,
     })
+}
+
+/// Parse an `extract` field which can be either:
+/// - A plain string (always treated as jq): `extract: ".emails[]"`
+/// - A structured mapping: `extract: { expr: "$.emails[*]", type: jsonpath }`
+fn parse_extract_expr(
+    value: Option<&serde_yaml::Value>,
+    source_id: &str,
+) -> Result<Option<ExtractExpr>> {
+    let Some(val) = value else {
+        return Ok(None);
+    };
+
+    if let Some(s) = val.as_str() {
+        return Ok(Some(ExtractExpr::Jq(s.to_string())));
+    }
+
+    if let Some(map) = val.as_mapping() {
+        let expr = map
+            .get(ykey("expr"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                EvalError::InvalidModifiers(format!(
+                    "source '{source_id}': extract object must have an 'expr' field"
+                ))
+            })?
+            .to_string();
+
+        let extract_type = map
+            .get(ykey("type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("jq");
+
+        let extract_expr = match extract_type {
+            "jq" => ExtractExpr::Jq(expr),
+            "jsonpath" => ExtractExpr::JsonPath(expr),
+            "cel" => ExtractExpr::Cel(expr),
+            other => {
+                return Err(EvalError::InvalidModifiers(format!(
+                    "source '{source_id}': unknown extract type '{other}' (expected: jq, jsonpath, cel)"
+                )));
+            }
+        };
+
+        return Ok(Some(extract_expr));
+    }
+
+    Err(EvalError::InvalidModifiers(format!(
+        "source '{source_id}': 'extract' must be a string or mapping"
+    )))
 }
 
 fn parse_data_format(value: Option<&serde_yaml::Value>) -> DataFormat {

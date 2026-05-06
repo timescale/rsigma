@@ -148,7 +148,7 @@ impl RefreshScheduler {
                 let extract_expr = extract_expr.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        nats_push_loop(&url, &subject, format, extract_expr.as_deref(), &id, &tx)
+                        nats_push_loop(&url, &subject, format, extract_expr.as_ref(), &id, &tx)
                             .await
                     {
                         tracing::error!(
@@ -226,7 +226,7 @@ async fn nats_push_loop(
     url: &str,
     subject: &str,
     format: rsigma_eval::pipeline::sources::DataFormat,
-    extract_expr: Option<&str>,
+    extract_expr: Option<&rsigma_eval::pipeline::sources::ExtractExpr>,
     source_id: &str,
     trigger_tx: &mpsc::Sender<RefreshTrigger>,
 ) -> Result<(), String> {

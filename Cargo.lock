@@ -103,6 +103,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "antlr4rust"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093d520274bfff7278d776f7ea12981a0a0a6f96db90964658e0f38fc6e9a6a6"
+dependencies = [
+ "better_any",
+ "bit-set",
+ "byteorder",
+ "lazy_static",
+ "murmur3",
+ "once_cell",
+ "parking_lot",
+ "typed-arena",
+ "uuid",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -316,6 +333,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "better_any"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4372b9543397a4b86050cc5e7ee36953edf4bac9518e8a774c2da694977fb6e4"
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -525,6 +548,22 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "cel"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a40f338a8c3505921000b609279775792c07cc21f97a3011578c0c5e1738ae"
+dependencies = [
+ "antlr4rust",
+ "chrono",
+ "lazy_static",
+ "nom 7.1.3",
+ "pastey",
+ "regex",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2237,6 +2276,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonpath-rust"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633a7320c4bb672863a3782e89b9094ad70285e097ff6832cddd0ec615beadfa"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "regex",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2471,6 +2523,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "murmur3"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a198f9589efc03f544388dfc4a19fe8af4323662b62f598b8dcfdac62c14771c"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]
@@ -2800,6 +2861,12 @@ dependencies = [
  "structmeta",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "pastey"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5a797f0e07bdf071d15742978fc3128ec6c22891c31a3a931513263904c982a"
 
 [[package]]
 name = "pem-rfc7468"
@@ -3708,6 +3775,7 @@ dependencies = [
  "arc-swap",
  "async-nats",
  "async-trait",
+ "cel",
  "chrono",
  "criterion",
  "csv",
@@ -3715,6 +3783,7 @@ dependencies = [
  "futures",
  "jaq-interpret",
  "jaq-parse",
+ "jsonpath-rust",
  "notify",
  "opentelemetry-proto",
  "parking_lot",
@@ -5010,6 +5079,12 @@ dependencies = [
  "pin-project-lite",
  "tokio",
 ]
+
+[[package]]
+name = "typed-arena"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"

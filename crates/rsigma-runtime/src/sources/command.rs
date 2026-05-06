@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use rsigma_eval::pipeline::sources::DataFormat;
+use rsigma_eval::pipeline::sources::{DataFormat, ExtractExpr};
 
 use super::extract::apply_extract;
 use super::file::parse_data;
@@ -12,7 +12,7 @@ use super::{ResolvedValue, SourceError, SourceErrorKind};
 pub async fn resolve_command(
     command: &[String],
     format: DataFormat,
-    extract_expr: Option<&str>,
+    extract_expr: Option<&ExtractExpr>,
 ) -> Result<ResolvedValue, SourceError> {
     if command.is_empty() {
         return Err(SourceError {
