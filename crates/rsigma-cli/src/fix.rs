@@ -50,7 +50,7 @@ fn apply_single_fix_patch(
         FixPatch::ReplaceValue { path, new_value } => {
             let yp = yamlpatch::Patch {
                 route: json_pointer_to_route(path),
-                operation: yamlpatch::Op::Replace(serde_yaml::Value::String(new_value.clone())),
+                operation: yamlpatch::Op::Replace(yamlpatch_yaml::Value::String(new_value.clone())),
             };
             yamlpatch::apply_yaml_patches(doc, &[yp]).map_err(|e| e.to_string())
         }
@@ -229,7 +229,7 @@ mod tests {
         let route = json_pointer_to_route("/status");
         let patch = yamlpatch::Patch {
             route,
-            operation: yamlpatch::Op::Replace(serde_yaml::Value::String(
+            operation: yamlpatch::Op::Replace(yamlpatch_yaml::Value::String(
                 "experimental".to_string(),
             )),
         };

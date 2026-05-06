@@ -42,7 +42,22 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - run: cargo check --workspace --all-targets --all-features
+      - run: cargo check --workspace --all-targets --all-features --locked
+
+  msrv:
+    name: MSRV (1.88.0)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read repo
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.88.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo check --workspace --all-features --locked
 
   fmt:
     name: Format
@@ -73,7 +88,7 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -92,7 +107,7 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --all-features --locked
 
   coverage:
     name: Coverage
@@ -113,7 +128,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Generate coverage
         run: |
-          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
           echo '## Coverage Report' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov report --summary-only 2>&1 >> "$GITHUB_STEP_SUMMARY"
@@ -133,8 +148,20 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Build rsigma
-        run: cargo build --release --all-features -p rsigma
+        run: cargo build --release --all-features --locked -p rsigma
       - name: Clone SigmaHQ rules
         run: git clone --depth 1 https://github.com/SigmaHQ/sigma.git /tmp/sigma
       - name: Validate and compile all Sigma rules
         run: ./target/release/rsigma validate /tmp/sigma/rules/ --verbose
+
+  semver:
+    name: Semver Checks (informational)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read repo
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: obi1kenobi/cargo-semver-checks-action@5b298c9520f7096a4683c0bd981a7ac5a7e249ae # v2.8
+    continue-on-error: true

@@ -1,0 +1,31 @@
+[advisories]
+ignore = [
+    # encoding 0.2.33 (RUSTSEC-2021-0153) -- unmaintained, pulled transitively
+    # via evtx. No safe upgrade available; tracked for removal when evtx drops
+    # the encoding dependency.
+    "RUSTSEC-2021-0153",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

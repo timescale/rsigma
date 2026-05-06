@@ -2355,6 +2355,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+
+[[package]]
 name = "line-index"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3555,6 +3561,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "yaml_serde",
  "yamlpatch",
  "yamlpath",
 ]
@@ -3571,12 +3578,12 @@ dependencies = [
  "rsigma-eval",
  "rsigma-parser",
  "serde_json",
- "serde_yaml",
  "testcontainers",
  "testcontainers-modules",
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3596,8 +3603,8 @@ dependencies = [
  "rsigma-parser",
  "serde",
  "serde_json",
- "serde_yaml",
  "thiserror 2.0.18",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3626,9 +3633,9 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "serde_json",
- "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -5738,6 +5745,19 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix",
+]
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08c7c1b1a6a7c8a6b2741a6c21a4f8918e51899b111cfa08d1288202656e3975"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
