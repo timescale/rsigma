@@ -1,0 +1,122 @@
+---
+source: crates/rsigma-parser/tests/ast_snapshots.rs
+expression: "&collection.rules[0]"
+---
+SigmaRule {
+    title: "Multi-value Detection",
+    logsource: LogSource {
+        category: Some(
+            "proxy",
+        ),
+        product: Some(
+            "generic",
+        ),
+        service: None,
+        definition: None,
+        custom: {},
+    },
+    detection: Detections {
+        named: {
+            "selection": AllOf(
+                [
+                    DetectionItem {
+                        field: FieldSpec {
+                            name: Some(
+                                "c-uri",
+                            ),
+                            modifiers: [
+                                Contains,
+                                All,
+                            ],
+                        },
+                        values: [
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "/api/admin",
+                                        ),
+                                    ],
+                                    original: "/api/admin",
+                                },
+                            ),
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "token=",
+                                        ),
+                                    ],
+                                    original: "token=",
+                                },
+                            ),
+                        ],
+                    },
+                    DetectionItem {
+                        field: FieldSpec {
+                            name: Some(
+                                "cs-method",
+                            ),
+                            modifiers: [],
+                        },
+                        values: [
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "POST",
+                                        ),
+                                    ],
+                                    original: "POST",
+                                },
+                            ),
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "PUT",
+                                        ),
+                                    ],
+                                    original: "PUT",
+                                },
+                            ),
+                        ],
+                    },
+                ],
+            ),
+        },
+        conditions: [
+            Identifier(
+                "selection",
+            ),
+        ],
+        condition_strings: [
+            "selection",
+        ],
+        timeframe: None,
+    },
+    id: None,
+    name: None,
+    related: [],
+    taxonomy: None,
+    status: Some(
+        Test,
+    ),
+    description: None,
+    license: None,
+    author: None,
+    references: [],
+    date: None,
+    modified: None,
+    fields: [],
+    falsepositives: [],
+    level: Some(
+        Critical,
+    ),
+    tags: [
+        "attack.initial_access",
+        "attack.t1190",
+    ],
+    scope: [],
+    custom_attributes: {},
+}

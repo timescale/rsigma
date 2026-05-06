@@ -1,0 +1,71 @@
+---
+source: crates/rsigma-parser/tests/ast_snapshots.rs
+expression: "&collection.filters[0]"
+---
+FilterRule {
+    title: "Exclude Known Good",
+    id: None,
+    name: None,
+    taxonomy: None,
+    status: None,
+    description: None,
+    author: None,
+    date: None,
+    modified: None,
+    related: [],
+    license: None,
+    references: [],
+    tags: [],
+    fields: [],
+    falsepositives: [],
+    level: None,
+    scope: [],
+    logsource: None,
+    rules: Specific(
+        [
+            "12345678-1234-1234-1234-123456789012",
+        ],
+    ),
+    detection: Detections {
+        named: {
+            "selection": AllOf(
+                [
+                    DetectionItem {
+                        field: FieldSpec {
+                            name: Some(
+                                "CommandLine",
+                            ),
+                            modifiers: [
+                                Contains,
+                            ],
+                        },
+                        values: [
+                            String(
+                                SigmaString {
+                                    parts: [
+                                        Plain(
+                                            "expected_tool.exe",
+                                        ),
+                                    ],
+                                    original: "expected_tool.exe",
+                                },
+                            ),
+                        ],
+                    },
+                ],
+            ),
+        },
+        conditions: [
+            Not(
+                Identifier(
+                    "selection",
+                ),
+            ),
+        ],
+        condition_strings: [
+            "not selection",
+        ],
+        timeframe: None,
+    },
+    custom_attributes: {},
+}
