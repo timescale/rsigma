@@ -7,7 +7,12 @@ use rsigma_eval::parse_pipeline_file;
 use rsigma_runtime::DefaultSourceResolver;
 use rsigma_runtime::sources::SourceResolver;
 
-pub fn cmd_resolve(pipeline_paths: Vec<PathBuf>, source_filter: Option<String>, pretty: bool) {
+pub fn cmd_resolve(
+    pipeline_paths: Vec<PathBuf>,
+    source_filter: Option<String>,
+    pretty: bool,
+    dry_run: bool,
+) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -16,10 +21,15 @@ pub fn cmd_resolve(pipeline_paths: Vec<PathBuf>, source_filter: Option<String>, 
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         });
 
-    rt.block_on(async { resolve_async(pipeline_paths, source_filter, pretty).await });
+    rt.block_on(async { resolve_async(pipeline_paths, source_filter, pretty, dry_run).await });
 }
 
-async fn resolve_async(pipeline_paths: Vec<PathBuf>, source_filter: Option<String>, pretty: bool) {
+async fn resolve_async(
+    pipeline_paths: Vec<PathBuf>,
+    source_filter: Option<String>,
+    pretty: bool,
+    dry_run: bool,
+) {
     let mut all_sources = Vec::new();
 
     for path in &pipeline_paths {
@@ -56,6 +66,35 @@ async fn resolve_async(pipeline_paths: Vec<PathBuf>, source_filter: Option<Strin
             eprintln!("No dynamic sources found in the provided pipelines.");
         }
         std::process::exit(crate::exit_code::RULE_ERROR);
+    }
+
+    if dry_run {
+        let items: Vec<_> = all_sources
+            .iter()
+            .map(|(pipeline_name, source)| {
+                serde_json::json!({
+                    "pipeline": pipeline_name,
+                    "source_id": &source.id,
+                    "source_type": format!("{:?}", source.source_type).split('{').next().unwrap_or("unknown").trim(),
+                    "required": source.required,
+                    "refresh": format!("{:?}", source.refresh),
+                })
+            })
+            .collect();
+
+        let output = if items.len() == 1 {
+            items.into_iter().next().unwrap()
+        } else {
+            serde_json::Value::Array(items)
+        };
+
+        let json_str = if pretty {
+            serde_json::to_string_pretty(&output).unwrap()
+        } else {
+            serde_json::to_string(&output).unwrap()
+        };
+        println!("{json_str}");
+        return;
     }
 
     let resolver = Arc::new(DefaultSourceResolver::new());

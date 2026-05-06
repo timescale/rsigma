@@ -479,6 +479,10 @@ enum Commands {
         /// Pretty-print JSON output
         #[arg(long)]
         pretty: bool,
+
+        /// Show what would be resolved without performing resolution
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
 
     /// List all fields referenced by Sigma rules
@@ -744,7 +748,8 @@ fn main() {
             pipelines,
             source,
             pretty,
-        } => commands::cmd_resolve(pipelines, source, pretty),
+            dry_run,
+        } => commands::cmd_resolve(pipelines, source, pretty, dry_run),
     }
 }
 
