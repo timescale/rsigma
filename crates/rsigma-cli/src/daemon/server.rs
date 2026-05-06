@@ -176,6 +176,10 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     }
 
+    // Bounded channel acts as backpressure for reload requests. Capacity 4
+    // allows the file watcher, SIGHUP handler, and HTTP endpoint to queue
+    // reloads without blocking, while the consumer debounces with a 500ms
+    // sleep + try_recv drain, collapsing bursts into a single reload.
     let (reload_tx, mut reload_rx) = mpsc::channel::<()>(4);
 
     // File watcher for hot-reload (rules + pipeline files)
@@ -628,10 +632,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         tokio::spawn(async move {
             if let Err(e) = tonic::transport::Server::builder()
                 .accept_http1(true)
-                .serve_with_incoming_shutdown(otlp_routes, incoming, async {
-                    tokio::signal::ctrl_c().await.ok();
-                    tracing::info!("Shutdown signal received");
-                })
+                .serve_with_incoming_shutdown(otlp_routes, incoming, shutdown_signal())
                 .await
             {
                 tracing::error!(error = %e, "server error");
@@ -641,10 +642,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(not(feature = "daemon-otlp"))]
     let mut serve_handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                tokio::signal::ctrl_c().await.ok();
-                tracing::info!("Shutdown signal received");
-            })
+            .with_graceful_shutdown(shutdown_signal())
             .await
         {
             tracing::error!(error = %e, "server error");
@@ -703,6 +701,26 @@ pub async fn run_daemon(config: DaemonConfig) {
             Err(e) => tracing::error!(error = %e, "Failed to save state on shutdown"),
         }
     }
+}
+
+/// Wait for either SIGINT (Ctrl+C) or SIGTERM, then log and return.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    ctrl_c.await.ok();
+
+    tracing::info!("Shutdown signal received");
 }
 
 /// Build a single Sink from an output spec string.
@@ -983,10 +1001,22 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
         }
     };
 
+    const MAX_LINE_BYTES: usize = 1_048_576; // 1 MB
+
     let mut accepted = 0u64;
     for line in body.lines() {
         if line.trim().is_empty() {
             continue;
+        }
+        if line.len() > MAX_LINE_BYTES {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(serde_json::json!({
+                    "error": "line exceeds maximum size",
+                    "max_bytes": MAX_LINE_BYTES,
+                })),
+            )
+                .into_response();
         }
         let raw_event = RawEvent {
             payload: line.to_string(),

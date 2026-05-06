@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
@@ -67,7 +69,7 @@ impl LogProcessor {
         event_filter: &EventFilter,
     ) -> Vec<ProcessResult> {
         let engine_guard = self.engine.load();
-        let mut engine = engine_guard.lock().unwrap();
+        let mut engine = engine_guard.lock();
 
         // Phase 1: Parse JSON and apply event filters, tracking line origin.
         let mut parsed: Vec<(usize, Vec<serde_json::Value>)> = Vec::with_capacity(batch.len());
@@ -162,7 +164,7 @@ impl LogProcessor {
         event_filter: Option<&EventFilter>,
     ) -> Vec<ProcessResult> {
         let engine_guard = self.engine.load();
-        let mut engine = engine_guard.lock().unwrap();
+        let mut engine = engine_guard.lock();
 
         // Phase 1: Parse each line into decoded events, tracking line origin.
         // For JSON with an event_filter, one line can produce multiple events.
@@ -256,7 +258,7 @@ impl LogProcessor {
     pub fn reload_rules(&self) -> Result<crate::engine::EngineStats, String> {
         let (old_state, rules_path, pipelines, pipeline_paths, corr_config, include_event) = {
             let snapshot = self.engine.load();
-            let old = snapshot.lock().unwrap();
+            let old = snapshot.lock();
             (
                 old.export_state(),
                 old.rules_path().to_path_buf(),
@@ -286,7 +288,7 @@ impl LogProcessor {
     /// Return the rules path from the current engine.
     pub fn rules_path(&self) -> std::path::PathBuf {
         let snapshot = self.engine.load();
-        let engine = snapshot.lock().unwrap();
+        let engine = snapshot.lock();
         engine.rules_path().to_path_buf()
     }
 
@@ -298,21 +300,21 @@ impl LogProcessor {
     /// Export correlation state from the current engine.
     pub fn export_state(&self) -> Option<rsigma_eval::CorrelationSnapshot> {
         let snapshot = self.engine.load();
-        let engine = snapshot.lock().unwrap();
+        let engine = snapshot.lock();
         engine.export_state()
     }
 
     /// Import correlation state into the current engine.
     pub fn import_state(&self, snapshot: &rsigma_eval::CorrelationSnapshot) -> bool {
         let guard = self.engine.load();
-        let mut engine = guard.lock().unwrap();
+        let mut engine = guard.lock();
         engine.import_state(snapshot)
     }
 
     /// Return summary statistics about the current engine.
     pub fn stats(&self) -> crate::engine::EngineStats {
         let snapshot = self.engine.load();
-        let engine = snapshot.lock().unwrap();
+        let engine = snapshot.lock();
         engine.stats()
     }
 }
