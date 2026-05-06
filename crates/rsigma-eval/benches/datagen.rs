@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// Fixed seed for reproducible benchmarks.
 const SEED: u64 = 0xDEAD_BEEF_CAFE;
