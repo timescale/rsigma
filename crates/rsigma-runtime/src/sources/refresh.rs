@@ -271,6 +271,56 @@ async fn nats_push_loop(
     Ok(())
 }
 
+/// The default NATS control subject for triggering source re-resolution.
+pub const NATS_CONTROL_SUBJECT: &str = "rsigma.control.resolve";
+
+/// Subscribe to the NATS control subject and forward re-resolution triggers.
+///
+/// Messages with an empty payload trigger re-resolution of all sources.
+/// Messages with a non-empty payload are treated as a source ID to re-resolve.
+#[cfg(feature = "nats")]
+pub async fn nats_control_loop(
+    url: &str,
+    subject: &str,
+    trigger_tx: mpsc::Sender<RefreshTrigger>,
+) -> Result<(), String> {
+    use futures::StreamExt;
+
+    let client = async_nats::connect(url)
+        .await
+        .map_err(|e| format!("NATS control connect failed: {e}"))?;
+
+    let mut subscriber = client
+        .subscribe(subject.to_string())
+        .await
+        .map_err(|e| format!("NATS control subscribe failed: {e}"))?;
+
+    tracing::info!(
+        subject = %subject,
+        "NATS control subscription active for source re-resolution"
+    );
+
+    while let Some(msg) = subscriber.next().await {
+        let payload = String::from_utf8_lossy(&msg.payload);
+        let payload = payload.trim();
+
+        let trigger = if payload.is_empty() {
+            tracing::debug!("NATS control: triggering all sources");
+            RefreshTrigger::All
+        } else {
+            tracing::debug!(source_id = %payload, "NATS control: triggering single source");
+            RefreshTrigger::Single(payload.to_string())
+        };
+
+        if trigger_tx.send(trigger).await.is_err() {
+            tracing::debug!("NATS control loop: trigger channel closed, exiting");
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 /// Watch a file for changes and send refresh triggers.
 async fn file_watch_loop(
     path: &std::path::Path,

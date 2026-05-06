@@ -146,6 +146,27 @@ pub async fn run_daemon(config: DaemonConfig) {
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
             sources_trigger_tx_val = Some(scheduler.trigger_sender());
+
+            // Spawn NATS control subject listener for remote re-resolution triggers
+            #[cfg(feature = "daemon-nats")]
+            {
+                let nats_url = config.nats_config.url.clone();
+                let trigger_tx = scheduler.trigger_sender();
+                tokio::spawn(async move {
+                    let subject = rsigma_runtime::sources::refresh::NATS_CONTROL_SUBJECT;
+                    if let Err(e) = rsigma_runtime::sources::refresh::nats_control_loop(
+                        &nats_url, subject, trigger_tx,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "NATS control subject listener failed"
+                        );
+                    }
+                });
+            }
+
             scheduler.run(all_sources, resolver);
         }
     }
