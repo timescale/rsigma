@@ -567,3 +567,46 @@ fn cache_sqlite_invalidate_persists() {
         assert!(cache.is_empty());
     }
 }
+
+#[test]
+fn cache_ttl_expiration() {
+    use std::time::Duration;
+    use std::thread;
+
+    let cache = SourceCache::with_ttl(Duration::from_millis(50));
+    cache.store("src1", &serde_json::json!("fresh"));
+
+    // Immediately accessible
+    assert_eq!(cache.get("src1").unwrap(), serde_json::json!("fresh"));
+
+    // Wait for TTL to expire
+    thread::sleep(Duration::from_millis(60));
+    assert!(cache.get("src1").is_none());
+}
+
+#[test]
+fn cache_ttl_evict_expired() {
+    use std::time::Duration;
+    use std::thread;
+
+    let cache = SourceCache::with_ttl(Duration::from_millis(50));
+    cache.store("src1", &serde_json::json!("a"));
+    cache.store("src2", &serde_json::json!("b"));
+
+    thread::sleep(Duration::from_millis(60));
+
+    // Entries still in map (len counts all, including expired)
+    assert_eq!(cache.len(), 2);
+
+    // Evict removes expired entries
+    cache.evict_expired();
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn cache_no_ttl_never_expires() {
+    let cache = SourceCache::new();
+    cache.store("src1", &serde_json::json!("persistent"));
+    assert_eq!(cache.ttl(), None);
+    assert_eq!(cache.get("src1").unwrap(), serde_json::json!("persistent"));
+}

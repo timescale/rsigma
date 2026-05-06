@@ -22,6 +22,11 @@ impl InstrumentedResolver {
             metrics,
         }
     }
+
+    /// Access the underlying cache for invalidation operations.
+    pub fn cache(&self) -> &rsigma_runtime::sources::cache::SourceCache {
+        self.inner.cache()
+    }
 }
 
 #[async_trait::async_trait]

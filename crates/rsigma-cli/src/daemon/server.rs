@@ -7,7 +7,7 @@ use std::time::Instant;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use rsigma_runtime::{
@@ -55,6 +55,8 @@ struct AppState {
     event_tx: Option<mpsc::Sender<RawEvent>>,
     /// Channel for on-demand source resolution triggers.
     sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    /// The instrumented source resolver (provides cache access for invalidation API).
+    source_resolver: Option<Arc<super::instrumented_resolver::InstrumentedResolver>>,
     /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
     #[cfg(feature = "daemon-otlp")]
     otlp_event_tx: mpsc::Sender<RawEvent>,
@@ -116,10 +118,14 @@ pub async fn run_daemon(config: DaemonConfig) {
         mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
     > = None;
 
+    let mut source_resolver_val: Option<Arc<super::instrumented_resolver::InstrumentedResolver>> =
+        None;
+
     if has_dynamic {
-        let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = Arc::new(
-            super::instrumented_resolver::InstrumentedResolver::new(metrics.clone()),
-        );
+        let instrumented =
+            Arc::new(super::instrumented_resolver::InstrumentedResolver::new(metrics.clone()));
+        source_resolver_val = Some(instrumented.clone());
+        let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = instrumented;
         engine.set_source_resolver(resolver.clone());
 
         // Resolve dynamic sources at startup (blocks on required sources)
@@ -254,6 +260,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         start_time,
         event_tx: http_event_tx,
         sources_trigger_tx: sources_trigger_tx_val,
+        source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
     };
@@ -271,6 +278,10 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route(
             "/api/v1/sources/resolve/{source_id}",
             post(resolve_source_by_id),
+        )
+        .route(
+            "/api/v1/sources/cache/{source_id}",
+            delete(invalidate_source_cache),
         );
 
     #[cfg(feature = "daemon-otlp")]
@@ -1093,6 +1104,24 @@ async fn resolve_source_by_id(
             Json(serde_json::json!({ "status": "resolve_already_pending" })),
         ),
     }
+}
+
+async fn invalidate_source_cache(
+    State(state): State<AppState>,
+    axum::extract::Path(source_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let Some(resolver) = &state.source_resolver else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no dynamic sources configured" })),
+        );
+    };
+
+    resolver.cache().invalidate(&source_id);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "invalidated", "source_id": source_id })),
+    )
 }
 
 /// Accept events via HTTP POST for processing.
