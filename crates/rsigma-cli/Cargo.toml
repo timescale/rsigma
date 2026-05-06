@@ -43,7 +43,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "now"] 
 # daemon mode dependencies
 tokio = { version = "1", features = ["full"], optional = true }
 axum = { version = "0.8", features = ["json"], optional = true }
-prometheus = { version = "0.13", default-features = false, optional = true }
+prometheus = { version = "0.14", default-features = false, optional = true }
 notify = { version = "8.2", optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 async-nats = { version = "0.47", optional = true }
