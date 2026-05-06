@@ -898,7 +898,10 @@ fn test_resolve_table_defaults() {
     let backend = PostgresBackend::new();
     let attrs = HashMap::new();
     let state = HashMap::new();
-    assert_eq!(backend.resolve_table(&attrs, &state), "security_events");
+    assert_eq!(
+        backend.resolve_table(&attrs, &state).unwrap(),
+        "security_events"
+    );
 }
 
 #[test]
@@ -908,7 +911,7 @@ fn test_resolve_table_backend_schema() {
     let attrs = HashMap::new();
     let state = HashMap::new();
     assert_eq!(
-        backend.resolve_table(&attrs, &state),
+        backend.resolve_table(&attrs, &state).unwrap(),
         "audit.security_events"
     );
 }
@@ -919,7 +922,10 @@ fn test_resolve_table_state_overrides_default() {
     let attrs = HashMap::new();
     let mut state = HashMap::new();
     state.insert("table".to_string(), serde_json::json!("process_events"));
-    assert_eq!(backend.resolve_table(&attrs, &state), "process_events");
+    assert_eq!(
+        backend.resolve_table(&attrs, &state).unwrap(),
+        "process_events"
+    );
 }
 
 #[test]
@@ -930,7 +936,7 @@ fn test_resolve_table_state_with_backend_schema() {
     let mut state = HashMap::new();
     state.insert("table".to_string(), serde_json::json!("process_events"));
     assert_eq!(
-        backend.resolve_table(&attrs, &state),
+        backend.resolve_table(&attrs, &state).unwrap(),
         "audit.process_events"
     );
 }
@@ -943,7 +949,10 @@ fn test_resolve_table_state_schema_overrides_backend() {
     let mut state = HashMap::new();
     state.insert("table".to_string(), serde_json::json!("process_events"));
     state.insert("schema".to_string(), serde_json::json!("siem"));
-    assert_eq!(backend.resolve_table(&attrs, &state), "siem.process_events");
+    assert_eq!(
+        backend.resolve_table(&attrs, &state).unwrap(),
+        "siem.process_events"
+    );
 }
 
 #[test]
@@ -962,7 +971,10 @@ fn test_resolve_table_custom_attrs_override_all() {
     let mut state = HashMap::new();
     state.insert("table".to_string(), serde_json::json!("pipeline_events"));
     state.insert("schema".to_string(), serde_json::json!("siem"));
-    assert_eq!(backend.resolve_table(&attrs, &state), "custom.my_events");
+    assert_eq!(
+        backend.resolve_table(&attrs, &state).unwrap(),
+        "custom.my_events"
+    );
 }
 
 #[test]
@@ -974,7 +986,7 @@ fn test_resolve_table_custom_table_only() {
         serde_yaml::Value::String("my_events".to_string()),
     );
     let state = HashMap::new();
-    assert_eq!(backend.resolve_table(&attrs, &state), "my_events");
+    assert_eq!(backend.resolve_table(&attrs, &state).unwrap(), "my_events");
 }
 
 #[test]
@@ -988,7 +1000,10 @@ fn test_resolve_table_empty_schema_treated_as_none() {
     );
     let state = HashMap::new();
     // Empty schema in custom_attrs removes the schema prefix
-    assert_eq!(backend.resolve_table(&attrs, &state), "security_events");
+    assert_eq!(
+        backend.resolve_table(&attrs, &state).unwrap(),
+        "security_events"
+    );
 }
 
 // --- Backend options (from_options) ---
@@ -1969,4 +1984,68 @@ correlation:
         q.contains("FROM security_events"),
         "event_count uses default table: {q}"
     );
+}
+
+// --- SQL injection prevention ---
+
+#[test]
+fn field_expr_rejects_quote_in_field_name() {
+    let mut backend = PostgresBackend::new();
+    backend.json_field = Some("metadata".to_string());
+    let result = backend.field_expr("field'; DROP TABLE users --");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("invalid SQL identifier"));
+}
+
+#[test]
+fn field_expr_rejects_quote_in_dotted_path() {
+    let mut backend = PostgresBackend::new();
+    backend.json_field = Some("metadata".to_string());
+    let result = backend.field_expr("process.name'; DROP TABLE x --");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("invalid SQL identifier"));
+}
+
+#[test]
+fn resolve_table_rejects_quote_in_table_name() {
+    let backend = PostgresBackend::new();
+    let custom_attrs = HashMap::new();
+    let mut state = HashMap::new();
+    state.insert(
+        "table".to_string(),
+        serde_json::Value::String("events'; DROP TABLE x --".into()),
+    );
+    let result = backend.resolve_table(&custom_attrs, &state);
+    assert!(result.is_err());
+}
+
+#[test]
+fn resolve_table_rejects_quote_in_schema_name() {
+    let backend = PostgresBackend::new();
+    let custom_attrs = HashMap::new();
+    let mut state = HashMap::new();
+    state.insert(
+        "schema".to_string(),
+        serde_json::Value::String("public'; DROP TABLE x --".into()),
+    );
+    let result = backend.resolve_table(&custom_attrs, &state);
+    assert!(result.is_err());
+}
+
+#[test]
+fn legitimate_dotted_json_path_still_works() {
+    let mut backend = PostgresBackend::new();
+    backend.json_field = Some("metadata".to_string());
+    let result = backend.field_expr("process.name").unwrap();
+    assert_eq!(result, "metadata->'process'->>'name'");
+}
+
+#[test]
+fn legitimate_dotted_json_path_three_levels() {
+    let mut backend = PostgresBackend::new();
+    backend.json_field = Some("data".to_string());
+    let result = backend.field_expr("a.b.c").unwrap();
+    assert_eq!(result, "data->'a'->'b'->>'c'");
 }

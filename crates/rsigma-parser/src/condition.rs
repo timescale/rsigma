@@ -28,6 +28,9 @@ struct SigmaConditionParser;
 // Public API
 // ---------------------------------------------------------------------------
 
+const MAX_CONDITION_LEN: usize = 64 * 1024;
+const MAX_CONDITION_DEPTH: usize = 64;
+
 /// Parse a Sigma condition expression string into an AST.
 ///
 /// # Examples
@@ -39,6 +42,13 @@ struct SigmaConditionParser;
 /// println!("{expr}");
 /// ```
 pub fn parse_condition(input: &str) -> Result<ConditionExpr> {
+    if input.len() > MAX_CONDITION_LEN {
+        return Err(SigmaParserError::ConditionTooLong(
+            input.len(),
+            MAX_CONDITION_LEN,
+        ));
+    }
+
     let pairs = SigmaConditionParser::parse(Rule::condition, input).map_err(|e| {
         let loc = extract_pest_location(&e);
         SigmaParserError::Condition(e.to_string(), loc)
@@ -59,7 +69,8 @@ pub fn parse_condition(input: &str) -> Result<ConditionExpr> {
         .find(|p| p.as_rule() == Rule::expr)
         .ok_or_else(|| SigmaParserError::Condition("missing expr in condition".into(), None))?;
 
-    parse_expr(expr_pair, &pratt)
+    let depth = std::cell::Cell::new(0usize);
+    parse_expr(expr_pair, &pratt, &depth)
 }
 
 fn extract_pest_location(err: &pest::error::Error<Rule>) -> Option<SourceLocation> {
@@ -93,7 +104,20 @@ fn location_from_pair(pair: &Pair<'_, Rule>) -> Option<SourceLocation> {
     })
 }
 
-fn parse_expr(pair: Pair<'_, Rule>, pratt: &PrattParser<Rule>) -> Result<ConditionExpr> {
+fn parse_expr(
+    pair: Pair<'_, Rule>,
+    pratt: &PrattParser<Rule>,
+    depth: &std::cell::Cell<usize>,
+) -> Result<ConditionExpr> {
+    let current = depth.get();
+    if current > MAX_CONDITION_DEPTH {
+        return Err(SigmaParserError::Condition(
+            format!("condition nesting exceeds maximum depth ({MAX_CONDITION_DEPTH})"),
+            None,
+        ));
+    }
+    depth.set(current + 1);
+
     // The Pratt parser closures cannot return Result, so we collect all
     // errors in a shared RefCell and report them after parsing completes.
     let errors: std::cell::RefCell<Vec<PrattError>> = std::cell::RefCell::new(Vec::new());
@@ -110,7 +134,7 @@ fn parse_expr(pair: Pair<'_, Rule>, pratt: &PrattParser<Rule>) -> Result<Conditi
                     });
                     ConditionExpr::Identifier(String::new())
                 }),
-                Rule::expr => parse_expr(primary, pratt).unwrap_or_else(|e| {
+                Rule::expr => parse_expr(primary, pratt, depth).unwrap_or_else(|e| {
                     errors.borrow_mut().push(PrattError {
                         message: e.to_string(),
                         location: e.location().or(loc),
@@ -154,6 +178,8 @@ fn parse_expr(pair: Pair<'_, Rule>, pratt: &PrattParser<Rule>) -> Result<Conditi
             }
         })
         .parse(pair.into_inner());
+
+    depth.set(depth.get().saturating_sub(1));
 
     let collected = errors.into_inner();
     if !collected.is_empty() {
@@ -729,5 +755,24 @@ mod tests {
     fn test_nested_empty_parens_fails() {
         let err = parse_condition("selection and ()").unwrap_err();
         assert!(matches!(err, SigmaParserError::Condition(_, _)));
+    }
+
+    #[test]
+    fn condition_too_long_returns_error() {
+        let big = "a".repeat(MAX_CONDITION_LEN + 1);
+        let err = parse_condition(&big).unwrap_err();
+        assert!(
+            matches!(err, SigmaParserError::ConditionTooLong(_, _)),
+            "expected ConditionTooLong, got: {err}"
+        );
+    }
+
+    #[test]
+    fn moderate_condition_still_parses() {
+        let expr = parse_condition("((((((((((a and b))))))))))").unwrap();
+        match expr {
+            ConditionExpr::And(children) => assert_eq!(children.len(), 2),
+            other => panic!("expected And, got {other:?}"),
+        }
     }
 }

@@ -29,6 +29,9 @@ pub enum ConvertError {
     #[error("rule conversion failed: {0}")]
     RuleConversion(String),
 
+    #[error("invalid SQL identifier: {0}")]
+    InvalidIdentifier(String),
+
     #[error("pipeline error: {0}")]
     Pipeline(#[from] rsigma_eval::error::EvalError),
 }

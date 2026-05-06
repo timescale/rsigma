@@ -56,6 +56,12 @@ pub enum SigmaParserError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("YAML merge exceeds maximum depth ({0})")]
+    MergeTooDeep(usize),
+
+    #[error("Condition string too long ({0} bytes, max {1})")]
+    ConditionTooLong(usize, usize),
 }
 
 impl SigmaParserError {

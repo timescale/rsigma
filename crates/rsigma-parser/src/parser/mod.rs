@@ -89,11 +89,11 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
                         if let Some(m) = repeat_val.as_mapping_mut() {
                             m.remove(Value::String("action".to_string()));
                         }
-                        let merged_repeat = deep_merge(prev.clone(), repeat_val);
+                        let merged_repeat = deep_merge(prev.clone(), repeat_val)?;
 
                         // Apply global template if present
                         let final_val = if let Some(ref global_val) = global {
-                            deep_merge(global_val.clone(), merged_repeat)
+                            deep_merge(global_val.clone(), merged_repeat)?
                         } else {
                             merged_repeat
                         };
@@ -130,7 +130,7 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
 
         // Merge with global template if present
         let merged = if let Some(ref global_val) = global {
-            deep_merge(global_val.clone(), value)
+            deep_merge(global_val.clone(), value)?
         } else {
             value
         };
@@ -326,20 +326,44 @@ pub(super) fn get_str_list(m: &serde_yaml::Mapping, key: &str) -> Vec<String> {
 
 /// Deep-merge two YAML values (src overrides dest, recursively for mappings).
 ///
+/// Uses an explicit work-stack to avoid unbounded recursion from crafted input.
+/// Returns `MergeTooDeep` if nesting exceeds `MAX_DEPTH`.
+///
 /// Reference: pySigma collection.py deep_dict_update
-fn deep_merge(dest: Value, src: Value) -> Value {
-    match (dest, src) {
-        (Value::Mapping(mut dest_map), Value::Mapping(src_map)) => {
-            for (k, v) in src_map {
-                let merged = if let Some(existing) = dest_map.remove(&k) {
-                    deep_merge(existing, v)
-                } else {
-                    v
-                };
-                dest_map.insert(k, merged);
-            }
-            Value::Mapping(dest_map)
+fn deep_merge(dest: Value, src: Value) -> crate::error::Result<Value> {
+    const MAX_DEPTH: usize = 64;
+
+    let (mut root_dest, root_src) = match (dest, src) {
+        (Value::Mapping(d), Value::Mapping(s)) => (d, s),
+        (_, src) => return Ok(src),
+    };
+
+    fn merge_level(
+        dest: &mut serde_yaml::Mapping,
+        src: serde_yaml::Mapping,
+        depth: usize,
+    ) -> crate::error::Result<()> {
+        if depth > MAX_DEPTH {
+            return Err(crate::error::SigmaParserError::MergeTooDeep(MAX_DEPTH));
         }
-        (_, src) => src, // non-mapping: source wins
+        for (k, v) in src {
+            if let Some(existing) = dest.remove(&k) {
+                match (existing, v) {
+                    (Value::Mapping(mut d), Value::Mapping(s)) => {
+                        merge_level(&mut d, s, depth + 1)?;
+                        dest.insert(k, Value::Mapping(d));
+                    }
+                    (_, src_val) => {
+                        dest.insert(k, src_val);
+                    }
+                }
+            } else {
+                dest.insert(k, v);
+            }
+        }
+        Ok(())
     }
+
+    merge_level(&mut root_dest, root_src, 0)?;
+    Ok(Value::Mapping(root_dest))
 }
