@@ -1,5 +1,5 @@
 use prometheus::{
-    Gauge, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
+    Gauge, GaugeVec, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
     TextEncoder,
 };
 use rsigma_runtime::MetricsHook;
@@ -30,6 +30,7 @@ pub struct Metrics {
     pub source_resolve_errors: IntCounterVec,
     pub source_resolve_latency: Histogram,
     pub source_cache_hits: IntCounter,
+    pub source_last_resolved: GaugeVec,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_requests: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
@@ -235,6 +236,14 @@ impl Metrics {
             "Times cached source data was served on resolution failure",
         ))
         .unwrap();
+        let source_last_resolved = GaugeVec::new(
+            Opts::new(
+                "rsigma_source_last_resolved_timestamp",
+                "Unix timestamp of last successful resolution per source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(source_resolves_total.clone()))
@@ -247,6 +256,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(source_cache_hits.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(source_last_resolved.clone()))
             .unwrap();
 
         #[cfg(feature = "daemon-otlp")]
@@ -305,6 +317,7 @@ impl Metrics {
             source_resolve_errors,
             source_resolve_latency,
             source_cache_hits,
+            source_last_resolved,
             #[cfg(feature = "daemon-otlp")]
             otlp_requests,
             #[cfg(feature = "daemon-otlp")]

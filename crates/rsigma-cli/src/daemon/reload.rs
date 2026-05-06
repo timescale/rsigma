@@ -60,9 +60,12 @@ pub fn spawn_file_watcher(
     Some(watcher)
 }
 
-/// Set up a SIGHUP handler that sends reload signals.
+/// Set up a SIGHUP handler that sends reload signals and source re-resolution triggers.
 #[cfg(unix)]
-pub async fn sighup_listener(reload_tx: mpsc::Sender<()>) {
+pub async fn sighup_listener(
+    reload_tx: mpsc::Sender<()>,
+    sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+) {
     use tokio::signal::unix::{SignalKind, signal};
 
     let mut sig = match signal(SignalKind::hangup()) {
@@ -75,13 +78,18 @@ pub async fn sighup_listener(reload_tx: mpsc::Sender<()>) {
 
     loop {
         sig.recv().await;
-        tracing::info!("SIGHUP received, triggering reload");
+        tracing::info!("SIGHUP received, triggering reload and source re-resolution");
         let _ = reload_tx.try_send(());
+        if let Some(tx) = &sources_trigger_tx {
+            let _ = tx.try_send(rsigma_runtime::sources::refresh::RefreshTrigger::All);
+        }
     }
 }
 
 #[cfg(not(unix))]
-pub async fn sighup_listener(_reload_tx: mpsc::Sender<()>) {
-    // No-op on non-Unix platforms
+pub async fn sighup_listener(
+    _reload_tx: mpsc::Sender<()>,
+    _sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+) {
     std::future::pending::<()>().await;
 }

@@ -50,6 +50,11 @@ enum Commands {
         /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
         #[arg(short = 'p', long = "pipeline")]
         pipelines: Vec<PathBuf>,
+
+        /// Also resolve dynamic pipeline sources during validation.
+        /// Sources must be reachable (file/command/HTTP) for validation to pass.
+        #[arg(long = "resolve-sources")]
+        resolve_sources: bool,
     },
 
     /// Parse a condition expression and print the AST
@@ -309,6 +314,12 @@ enum Commands {
         #[cfg(feature = "daemon-nats")]
         #[arg(long = "consumer-group", env = "RSIGMA_CONSUMER_GROUP")]
         consumer_group: Option<String>,
+
+        /// Allow include directives to reference remote (HTTP/NATS) sources.
+        /// By default, includes are restricted to local sources (file/command)
+        /// for security. Use this flag to opt in to remote include resolution.
+        #[arg(long = "allow-remote-include")]
+        allow_remote_include: bool,
     },
 
     /// Evaluate events against Sigma rules
@@ -468,6 +479,10 @@ enum Commands {
         /// Pretty-print JSON output
         #[arg(long)]
         pretty: bool,
+
+        /// Show what would be resolved without performing resolution
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
 
     /// List all fields referenced by Sigma rules
@@ -551,6 +566,7 @@ fn main() {
             timestamp_fallback,
             #[cfg(feature = "daemon-nats")]
             consumer_group,
+            allow_remote_include,
         } => {
             #[cfg(feature = "daemon-nats")]
             let nats_auth = NatsAuthArgs {
@@ -620,6 +636,7 @@ fn main() {
                 replay_policy,
                 #[cfg(feature = "daemon-nats")]
                 consumer_group,
+                allow_remote_include,
             )
         }
         Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
@@ -627,7 +644,8 @@ fn main() {
             path,
             verbose,
             pipelines,
-        } => commands::cmd_validate(path, verbose, pipelines),
+            resolve_sources,
+        } => commands::cmd_validate(path, verbose, pipelines, resolve_sources),
         Commands::Lint {
             path,
             schema,
@@ -730,7 +748,8 @@ fn main() {
             pipelines,
             source,
             pretty,
-        } => commands::cmd_resolve(pipelines, source, pretty),
+            dry_run,
+        } => commands::cmd_resolve(pipelines, source, pretty, dry_run),
     }
 }
 
@@ -781,6 +800,7 @@ fn cmd_daemon(
     #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
+    allow_remote_include: bool,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -854,6 +874,7 @@ fn cmd_daemon(
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         state_restore_mode,
+        allow_remote_include,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

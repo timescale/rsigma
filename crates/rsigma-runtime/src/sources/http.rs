@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use rsigma_eval::pipeline::sources::DataFormat;
+use rsigma_eval::pipeline::sources::{DataFormat, ExtractExpr};
 
 use super::extract::apply_extract;
 use super::file::parse_data;
@@ -15,7 +15,7 @@ pub async fn resolve_http(
     method: Option<&str>,
     headers: &HashMap<String, String>,
     format: DataFormat,
-    extract_expr: Option<&str>,
+    extract_expr: Option<&ExtractExpr>,
     timeout: Option<Duration>,
 ) -> Result<ResolvedValue, SourceError> {
     let client = reqwest::Client::builder()

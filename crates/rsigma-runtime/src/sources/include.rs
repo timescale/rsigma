@@ -10,6 +10,9 @@ use rsigma_eval::pipeline::sources::SourceType;
 use rsigma_eval::pipeline::transformations::Transformation;
 use rsigma_eval::{Pipeline, TransformationItem};
 
+/// Maximum include nesting depth (prevents cycles).
+const MAX_INCLUDE_DEPTH: usize = 1;
+
 /// Expand all `Include` transformations in a pipeline.
 ///
 /// For each `Include { template }`, the template references a source ID.
@@ -18,11 +21,29 @@ use rsigma_eval::{Pipeline, TransformationItem};
 ///
 /// Security: if `allow_remote_include` is false, includes referencing HTTP or NATS
 /// sources produce an error.
+///
+/// Recursive includes are not allowed (max depth 1). If an included fragment
+/// itself contains `Include` directives, expansion fails with an error.
 pub fn expand_includes(
     pipeline: &mut Pipeline,
     resolved: &HashMap<String, serde_json::Value>,
     allow_remote_include: bool,
 ) -> Result<(), String> {
+    expand_includes_with_depth(pipeline, resolved, allow_remote_include, 0)
+}
+
+fn expand_includes_with_depth(
+    pipeline: &mut Pipeline,
+    resolved: &HashMap<String, serde_json::Value>,
+    allow_remote_include: bool,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_INCLUDE_DEPTH {
+        return Err(
+            "recursive includes are not allowed (max depth 1); included content cannot itself contain include directives".to_string()
+        );
+    }
+
     let mut expanded_transformations = Vec::new();
     let mut had_include = false;
 
@@ -48,6 +69,17 @@ pub fn expand_includes(
 
             if let Some(data) = resolved.get(&source_id) {
                 let items = parse_transformation_array(data)?;
+
+                // Check for nested includes (depth enforcement)
+                for parsed_item in &items {
+                    if matches!(parsed_item.transformation, Transformation::Include { .. }) {
+                        return Err(format!(
+                            "included content from source '{}' contains nested include directives; recursive includes are not allowed (max depth 1)",
+                            source_id
+                        ));
+                    }
+                }
+
                 expanded_transformations.extend(items);
             } else {
                 return Err(format!(
@@ -117,5 +149,43 @@ mod tests {
     #[test]
     fn extract_source_id_plain_string() {
         assert_eq!(extract_source_id("my_source"), "my_source");
+    }
+
+    #[test]
+    fn nested_include_rejected() {
+        let mut pipeline = Pipeline {
+            name: "test".to_string(),
+            priority: 0,
+            vars: HashMap::new(),
+            transformations: vec![TransformationItem {
+                id: None,
+                transformation: Transformation::Include {
+                    template: "${source.transforms}".to_string(),
+                },
+                rule_conditions: vec![],
+                rule_cond_expr: None,
+                detection_item_conditions: vec![],
+                field_name_conditions: vec![],
+                field_name_cond_not: false,
+            }],
+            finalizers: vec![],
+            sources: vec![],
+            source_refs: vec![],
+        };
+
+        // The resolved source data contains an include directive itself
+        let nested_yaml = serde_json::json!([
+            {"type": "include", "include": "${source.other}"}
+        ]);
+        let mut resolved = HashMap::new();
+        resolved.insert("transforms".to_string(), nested_yaml);
+
+        let result = expand_includes(&mut pipeline, &resolved, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("nested include") || err.contains("recursive"),
+            "error should mention nesting: {err}"
+        );
     }
 }

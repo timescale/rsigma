@@ -118,25 +118,29 @@ impl Default for DefaultSourceResolver {
 impl SourceResolver for DefaultSourceResolver {
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
         let result = match &source.source_type {
-            SourceType::File { path, format } => file::resolve_file(path, *format, None).await,
+            SourceType::File {
+                path,
+                format,
+                extract,
+            } => file::resolve_file(path, *format, extract.as_ref()).await,
             SourceType::Command {
                 command,
                 format,
-                extract: extract_expr,
-            } => command::resolve_command(command, *format, extract_expr.as_deref()).await,
+                extract,
+            } => command::resolve_command(command, *format, extract.as_ref()).await,
             SourceType::Http {
                 url,
                 method,
                 headers,
                 format,
-                extract: extract_expr,
+                extract,
             } => {
                 http::resolve_http(
                     url,
                     method.as_deref(),
                     headers,
                     *format,
-                    extract_expr.as_deref(),
+                    extract.as_ref(),
                     source.timeout,
                 )
                 .await
@@ -146,8 +150,8 @@ impl SourceResolver for DefaultSourceResolver {
                 url,
                 subject,
                 format,
-                extract: extract_expr,
-            } => nats::resolve_nats_initial(url, subject, *format, extract_expr.as_deref()).await,
+                extract,
+            } => nats::resolve_nats_initial(url, subject, *format, extract.as_ref()).await,
             #[cfg(not(feature = "nats"))]
             SourceType::Nats { .. } => {
                 return Err(SourceError {
@@ -215,13 +219,28 @@ pub async fn resolve_all(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],
 ) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
+    resolve_all_with_state(resolver, sources, None).await
+}
+
+/// Like [`resolve_all`] but also updates a [`PipelineState`] with source resolution status.
+pub async fn resolve_all_with_state(
+    resolver: &dyn SourceResolver,
+    sources: &[DynamicSource],
+    mut state: Option<&mut rsigma_eval::pipeline::state::PipelineState>,
+) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
     let mut resolved = std::collections::HashMap::new();
     for source in sources {
         match resolver.resolve(source).await {
             Ok(value) => {
                 resolved.insert(source.id.clone(), value.data);
+                if let Some(s) = state.as_deref_mut() {
+                    s.mark_source_resolved(&source.id);
+                }
             }
             Err(e) => {
+                if let Some(s) = state.as_deref_mut() {
+                    s.mark_source_failed(&source.id);
+                }
                 if source.required {
                     return Err(e);
                 }

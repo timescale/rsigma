@@ -153,8 +153,10 @@ impl RuntimeEngine {
                 let pipelines = std::mem::take(&mut self.pipelines);
                 let resolver = self.source_resolver.clone().unwrap();
                 let allow_remote = self.allow_remote_include;
-                let resolved = handle.block_on(async {
-                    resolve_pipelines_async(&resolver, &pipelines, allow_remote).await
+                let resolved = tokio::task::block_in_place(|| {
+                    handle.block_on(async {
+                        resolve_pipelines_async(&resolver, &pipelines, allow_remote).await
+                    })
                 });
                 match resolved {
                     Ok(p) => self.pipelines = p,

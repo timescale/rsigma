@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use rsigma_eval::Pipeline;
 use rsigma_eval::pipeline::sources::{
-    DataFormat, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType,
+    DataFormat, DynamicSource, ErrorPolicy, ExtractExpr, RefreshPolicy, SourceType,
 };
 use rsigma_runtime::sources::cache::SourceCache;
 use rsigma_runtime::sources::file::resolve_file;
@@ -27,16 +27,103 @@ async fn file_source_json() {
 }
 
 #[tokio::test]
-async fn file_source_json_with_extract() {
+async fn file_source_json_with_extract_jq() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.json");
     std::fs::write(&path, r#"{"emails": ["a@b.com", "c@d.com"]}"#).unwrap();
 
-    let result = resolve_file(&path, DataFormat::Json, Some(".emails[]"))
+    let extract = ExtractExpr::Jq(".emails[]".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract))
         .await
         .unwrap();
     let expected = serde_json::json!(["a@b.com", "c@d.com"]);
     assert_eq!(result.data, expected);
+}
+
+#[tokio::test]
+async fn file_source_json_with_extract_jsonpath() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"emails": ["a@b.com", "c@d.com"]}"#).unwrap();
+
+    let extract = ExtractExpr::JsonPath("$.emails[*]".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract))
+        .await
+        .unwrap();
+    let expected = serde_json::json!(["a@b.com", "c@d.com"]);
+    assert_eq!(result.data, expected);
+}
+
+#[tokio::test]
+async fn file_source_json_with_extract_jsonpath_single() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"name": "rsigma", "version": 9}"#).unwrap();
+
+    let extract = ExtractExpr::JsonPath("$.name".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract))
+        .await
+        .unwrap();
+    assert_eq!(result.data, serde_json::json!("rsigma"));
+}
+
+#[tokio::test]
+async fn file_source_json_with_extract_cel() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"emails": ["a@b.com", "c@d.com"], "count": 2}"#).unwrap();
+
+    let extract = ExtractExpr::Cel("data.count".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract))
+        .await
+        .unwrap();
+    assert_eq!(result.data, serde_json::json!(2));
+}
+
+#[tokio::test]
+async fn file_source_json_with_extract_cel_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"items": [1, 2, 3, 4, 5]}"#).unwrap();
+
+    let extract = ExtractExpr::Cel("data.items.filter(x, x > 3)".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract))
+        .await
+        .unwrap();
+    assert_eq!(result.data, serde_json::json!([4, 5]));
+}
+
+#[tokio::test]
+async fn extract_invalid_jq_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"x": 1}"#).unwrap();
+
+    let extract = ExtractExpr::Jq("invalid[[[".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract)).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn extract_invalid_jsonpath_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"x": 1}"#).unwrap();
+
+    let extract = ExtractExpr::JsonPath("$[invalid".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract)).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn extract_invalid_cel_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, r#"{"x": 1}"#).unwrap();
+
+    let extract = ExtractExpr::Cel("invalid(((syntax".to_string());
+    let result = resolve_file(&path, DataFormat::Json, Some(&extract)).await;
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -142,8 +229,9 @@ async fn command_source_with_extract() {
         format!("type {}", path.to_str().unwrap()),
     ];
 
+    let extract = ExtractExpr::Jq(".items[]".to_string());
     let result =
-        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, Some(".items[]"))
+        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, Some(&extract))
             .await
             .unwrap();
 
@@ -216,6 +304,7 @@ async fn resolver_file_source_end_to_end() {
         source_type: SourceType::File {
             path: path.clone(),
             format: DataFormat::Json,
+            extract: None,
         },
         refresh: RefreshPolicy::Once,
         timeout: None,
@@ -246,6 +335,7 @@ async fn resolver_use_cached_on_failure() {
         source_type: SourceType::File {
             path: "/nonexistent/file.json".into(),
             format: DataFormat::Json,
+            extract: None,
         },
         refresh: RefreshPolicy::Once,
         timeout: None,
@@ -270,6 +360,7 @@ async fn resolver_use_default_on_failure() {
         source_type: SourceType::File {
             path: "/nonexistent/file.json".into(),
             format: DataFormat::Json,
+            extract: None,
         },
         refresh: RefreshPolicy::Once,
         timeout: None,
@@ -291,6 +382,7 @@ async fn resolver_fail_policy_returns_error() {
         source_type: SourceType::File {
             path: "/nonexistent/file.json".into(),
             format: DataFormat::Json,
+            extract: None,
         },
         refresh: RefreshPolicy::Once,
         timeout: None,
@@ -341,6 +433,7 @@ async fn end_to_end_dynamic_pipeline_resolution() {
             source_type: SourceType::File {
                 path: emails_path,
                 format: DataFormat::Json,
+                extract: None,
             },
             refresh: RefreshPolicy::Once,
             timeout: None,
@@ -353,6 +446,7 @@ async fn end_to_end_dynamic_pipeline_resolution() {
             source_type: SourceType::File {
                 path: config_path,
                 format: DataFormat::Json,
+                extract: None,
             },
             refresh: RefreshPolicy::Once,
             timeout: None,
@@ -472,4 +566,47 @@ fn cache_sqlite_invalidate_persists() {
         assert!(cache.get("src1").is_none());
         assert!(cache.is_empty());
     }
+}
+
+#[test]
+fn cache_ttl_expiration() {
+    use std::thread;
+    use std::time::Duration;
+
+    let cache = SourceCache::with_ttl(Duration::from_millis(50));
+    cache.store("src1", &serde_json::json!("fresh"));
+
+    // Immediately accessible
+    assert_eq!(cache.get("src1").unwrap(), serde_json::json!("fresh"));
+
+    // Wait for TTL to expire
+    thread::sleep(Duration::from_millis(60));
+    assert!(cache.get("src1").is_none());
+}
+
+#[test]
+fn cache_ttl_evict_expired() {
+    use std::thread;
+    use std::time::Duration;
+
+    let cache = SourceCache::with_ttl(Duration::from_millis(50));
+    cache.store("src1", &serde_json::json!("a"));
+    cache.store("src2", &serde_json::json!("b"));
+
+    thread::sleep(Duration::from_millis(60));
+
+    // Entries still in map (len counts all, including expired)
+    assert_eq!(cache.len(), 2);
+
+    // Evict removes expired entries
+    cache.evict_expired();
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn cache_no_ttl_never_expires() {
+    let cache = SourceCache::new();
+    cache.store("src1", &serde_json::json!("persistent"));
+    assert_eq!(cache.ttl(), None);
+    assert_eq!(cache.get("src1").unwrap(), serde_json::json!("persistent"));
 }

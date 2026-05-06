@@ -1052,7 +1052,10 @@ transformations:
         } => {
             assert_eq!(url, "https://api.internal/v1/admin-emails");
             assert_eq!(*format, sources::DataFormat::Json);
-            assert_eq!(extract.as_deref(), Some(".emails[]"));
+            assert_eq!(
+                *extract,
+                Some(sources::ExtractExpr::Jq(".emails[]".to_string()))
+            );
         }
         other => panic!("expected Http, got {other:?}"),
     }
@@ -1117,9 +1120,14 @@ transformations:
     assert_eq!(src.refresh, sources::RefreshPolicy::Watch);
 
     match &src.source_type {
-        sources::SourceType::File { path, format } => {
+        sources::SourceType::File {
+            path,
+            format,
+            extract,
+        } => {
             assert_eq!(path, std::path::Path::new("/etc/rsigma/watchlist.json"));
             assert_eq!(*format, sources::DataFormat::Json);
+            assert_eq!(*extract, None);
         }
         other => panic!("expected File, got {other:?}"),
     }
@@ -1153,6 +1161,115 @@ transformations:
         }
         other => panic!("expected Nats, got {other:?}"),
     }
+}
+
+#[test]
+fn test_parse_extract_structured_jsonpath() {
+    let yaml = r#"
+name: JSONPath Extract Pipeline
+sources:
+  - id: config
+    type: http
+    url: https://api.internal/v1/config
+    format: json
+    extract:
+      expr: "$.settings[*]"
+      type: jsonpath
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    match &src.source_type {
+        sources::SourceType::Http { extract, .. } => {
+            assert_eq!(
+                *extract,
+                Some(sources::ExtractExpr::JsonPath("$.settings[*]".to_string()))
+            );
+        }
+        other => panic!("expected Http, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_extract_structured_cel() {
+    let yaml = r#"
+name: CEL Extract Pipeline
+sources:
+  - id: emails
+    type: file
+    path: /etc/rsigma/emails.json
+    format: json
+    extract:
+      expr: "data.emails.filter(e, e.endsWith('@corp.com'))"
+      type: cel
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    match &src.source_type {
+        sources::SourceType::File { extract, .. } => {
+            assert_eq!(
+                *extract,
+                Some(sources::ExtractExpr::Cel(
+                    "data.emails.filter(e, e.endsWith('@corp.com'))".to_string()
+                ))
+            );
+        }
+        other => panic!("expected File, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_extract_structured_jq_explicit() {
+    let yaml = r#"
+name: Explicit JQ Extract Pipeline
+sources:
+  - id: data
+    type: http
+    url: https://api.internal/v1/data
+    format: json
+    extract:
+      expr: ".items[] | select(.active)"
+      type: jq
+transformations:
+  - type: value_placeholders
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let src = &pipeline.sources[0];
+    match &src.source_type {
+        sources::SourceType::Http { extract, .. } => {
+            assert_eq!(
+                *extract,
+                Some(sources::ExtractExpr::Jq(
+                    ".items[] | select(.active)".to_string()
+                ))
+            );
+        }
+        other => panic!("expected Http, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_extract_unknown_type_errors() {
+    let yaml = r#"
+name: Bad Extract Pipeline
+sources:
+  - id: data
+    type: http
+    url: https://api.internal/v1/data
+    format: json
+    extract:
+      expr: "something"
+      type: xpath
+transformations:
+  - type: value_placeholders
+"#;
+    let result = parse_pipeline(yaml);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("xpath"), "error should mention 'xpath': {err}");
 }
 
 #[test]

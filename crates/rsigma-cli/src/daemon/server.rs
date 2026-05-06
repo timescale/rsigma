@@ -7,7 +7,7 @@ use std::time::Instant;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use rsigma_runtime::{
@@ -55,6 +55,8 @@ struct AppState {
     event_tx: Option<mpsc::Sender<RawEvent>>,
     /// Channel for on-demand source resolution triggers.
     sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    /// The instrumented source resolver (provides cache access for invalidation API).
+    source_resolver: Option<Arc<super::instrumented_resolver::InstrumentedResolver>>,
     /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
     #[cfg(feature = "daemon-otlp")]
     otlp_event_tx: mpsc::Sender<RawEvent>,
@@ -86,6 +88,7 @@ pub struct DaemonConfig {
     pub state_restore_mode: StateRestoreMode,
     pub drain_timeout: u64,
     pub input_format: InputFormat,
+    pub allow_remote_include: bool,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -109,6 +112,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         config.include_event,
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
+    engine.set_allow_remote_include(config.allow_remote_include);
 
     // Set up dynamic source resolver if any pipeline has dynamic sources
     let has_dynamic = config.pipelines.iter().any(|p| p.is_dynamic());
@@ -116,10 +120,15 @@ pub async fn run_daemon(config: DaemonConfig) {
         mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
     > = None;
 
+    let mut source_resolver_val: Option<Arc<super::instrumented_resolver::InstrumentedResolver>> =
+        None;
+
     if has_dynamic {
-        let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = Arc::new(
-            super::instrumented_resolver::InstrumentedResolver::new(metrics.clone()),
-        );
+        let instrumented = Arc::new(super::instrumented_resolver::InstrumentedResolver::new(
+            metrics.clone(),
+        ));
+        source_resolver_val = Some(instrumented.clone());
+        let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = instrumented;
         engine.set_source_resolver(resolver.clone());
 
         // Resolve dynamic sources at startup (blocks on required sources)
@@ -139,7 +148,48 @@ pub async fn run_daemon(config: DaemonConfig) {
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
             sources_trigger_tx_val = Some(scheduler.trigger_sender());
+
+            // Spawn NATS control subject listener for remote re-resolution triggers
+            #[cfg(feature = "daemon-nats")]
+            {
+                let nats_url = config.nats_config.url.clone();
+                let trigger_tx = scheduler.trigger_sender();
+                tokio::spawn(async move {
+                    let subject = rsigma_runtime::sources::refresh::NATS_CONTROL_SUBJECT;
+                    if let Err(e) = rsigma_runtime::sources::refresh::nats_control_loop(
+                        &nats_url, subject, trigger_tx,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "NATS control subject listener failed"
+                        );
+                    }
+                });
+            }
+
+            // Collect optional source IDs for background retry
+            let optional_source_ids: Vec<String> = all_sources
+                .iter()
+                .filter(|s| !s.required)
+                .map(|s| s.id.clone())
+                .collect();
+
+            let bg_trigger_tx = scheduler.trigger_sender();
             scheduler.run(all_sources, resolver);
+
+            // Spawn background retry for optional sources that may have failed at startup
+            if !optional_source_ids.is_empty() {
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    for id in optional_source_ids {
+                        let _ = bg_trigger_tx
+                            .send(rsigma_runtime::sources::refresh::RefreshTrigger::Single(id))
+                            .await;
+                    }
+                });
+            }
         }
     }
 
@@ -253,7 +303,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
-        sources_trigger_tx: sources_trigger_tx_val,
+        sources_trigger_tx: sources_trigger_tx_val.clone(),
+        source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
     };
@@ -271,6 +322,10 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route(
             "/api/v1/sources/resolve/{source_id}",
             post(resolve_source_by_id),
+        )
+        .route(
+            "/api/v1/sources/cache/{source_id}",
+            delete(invalidate_source_cache),
         );
 
     #[cfg(feature = "daemon-otlp")]
@@ -302,10 +357,11 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(not(feature = "daemon-otlp"))]
     tracing::info!(addr = %actual_addr, "API server listening");
 
-    // Spawn SIGHUP listener
-    let sighup_tx = reload_tx.clone();
+    // Spawn SIGHUP listener (triggers both rule reload and source re-resolution)
+    let sighup_reload_tx = reload_tx.clone();
+    let sighup_sources_tx = sources_trigger_tx_val.clone();
     tokio::spawn(async move {
-        reload::sighup_listener(sighup_tx).await;
+        reload::sighup_listener(sighup_reload_tx, sighup_sources_tx).await;
     });
 
     // Spawn reload handler — uses LogProcessor::reload_rules for atomic hot-reload
@@ -993,10 +1049,64 @@ struct StatusResponse {
     detection_matches: u64,
     correlation_matches: u64,
     uptime_seconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dynamic_sources: Option<DynamicSourcesSummary>,
+}
+
+#[derive(Serialize)]
+struct DynamicSourcesSummary {
+    total: usize,
+    resolves_total: u64,
+    errors_total: u64,
+    cache_hits: u64,
 }
 
 async fn status(State(state): State<AppState>) -> impl IntoResponse {
     let stats = state.processor.stats();
+
+    let dynamic_sources = state.source_resolver.as_ref().map(|_| {
+        use prometheus::core::Collector;
+        let resolves: u64 = state
+            .metrics
+            .source_resolves_total
+            .collect()
+            .first()
+            .map(|mf| {
+                mf.get_metric()
+                    .iter()
+                    .map(|m| m.get_counter().get_value() as u64)
+                    .sum()
+            })
+            .unwrap_or(0);
+        let errors: u64 = state
+            .metrics
+            .source_resolve_errors
+            .collect()
+            .first()
+            .map(|mf| {
+                mf.get_metric()
+                    .iter()
+                    .map(|m| m.get_counter().get_value() as u64)
+                    .sum()
+            })
+            .unwrap_or(0);
+        let cache_hits = state.metrics.source_cache_hits.get();
+        let total = state
+            .metrics
+            .source_last_resolved
+            .collect()
+            .first()
+            .map(|mf| mf.get_metric().len())
+            .unwrap_or(0);
+
+        DynamicSourcesSummary {
+            total,
+            resolves_total: resolves,
+            errors_total: errors,
+            cache_hits,
+        }
+    });
+
     let resp = StatusResponse {
         status: if state.health.is_ready() {
             "running".to_string()
@@ -1010,6 +1120,7 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
         detection_matches: state.metrics.detection_matches.get(),
         correlation_matches: state.metrics.correlation_matches.get(),
         uptime_seconds: state.start_time.elapsed().as_secs_f64(),
+        dynamic_sources,
     };
     Json(resp)
 }
@@ -1093,6 +1204,24 @@ async fn resolve_source_by_id(
             Json(serde_json::json!({ "status": "resolve_already_pending" })),
         ),
     }
+}
+
+async fn invalidate_source_cache(
+    State(state): State<AppState>,
+    axum::extract::Path(source_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let Some(resolver) = &state.source_resolver else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no dynamic sources configured" })),
+        );
+    };
+
+    resolver.cache().invalidate(&source_id);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "invalidated", "source_id": source_id })),
+    )
 }
 
 /// Accept events via HTTP POST for processing.
