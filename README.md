@@ -11,7 +11,7 @@ The RSigma project is a complete Rust toolkit for the [Sigma](https://sigmahq.io
 
 RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
 
-You can send events in many formats, including JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP (OpenTelemetry Protocol), with auto-detection by default. pySigma-compatible processing pipelines handle field mapping and backend configuration. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to RSigma via HTTP or gRPC for detection.
+You can send events in many formats, including JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP (OpenTelemetry Protocol), with auto-detection by default. pySigma-compatible processing pipelines handle field mapping and backend configuration. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to RSigma via HTTP or gRPC for detection.
 
 For rule quality and editor integration, a built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
 
@@ -19,7 +19,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 
 * Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
 * Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
-* Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, plain text, and OTLP logs with format auto-detection
+* Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
 * Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
 * Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
@@ -183,6 +183,9 @@ rsigma eval -r rules/ --input-format logfmt < app.log
 
 # CEF / ArcSight (requires cef feature)
 rsigma eval -r rules/ --input-format cef < arcsight.log
+
+# EVTX / Windows Event Log (requires evtx feature)
+rsigma eval -r rules/ -e @security.evtx
 ```
 
 ### Rule Conversion
@@ -286,7 +289,7 @@ for result in &results {
 }
 ```
 
-Input formats are selected via `--input-format` on the CLI or `InputFormat` in the library. Auto-detect (the default) tries JSON → syslog → plain text. Feature-gated formats: `logfmt`, `cef`.
+Input formats are selected via `--input-format` on the CLI or `InputFormat` in the library. Auto-detect (the default) tries JSON, syslog, and plain text. Feature-gated formats: `logfmt`, `cef`, `evtx`. EVTX files (`.evtx`) are binary and auto-detected by file extension when using the `@path` syntax.
 
 See [`examples/jsonl_stdin.rs`](crates/rsigma-runtime/examples/jsonl_stdin.rs) and [`examples/tail_syslog.rs`](crates/rsigma-runtime/examples/tail_syslog.rs) for complete working examples.
 
@@ -306,7 +309,7 @@ From there, the AST can go in three directions depending on what you need:
 
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
-- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
+- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. EVTX\* files are parsed directly from binary via `EvtxFileReader`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
 - **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
 - **Output:** Sinks write detection results to stdout, files, or NATS. Multiple sinks can run in fan-out. The output is `MatchResult` and `CorrelationResult`, containing rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
 
@@ -374,7 +377,7 @@ Feature-gated items are marked with \* in the diagram.
     │                                          │
     │  input/ ──> format adapters:             │
     │    JSON, syslog, logfmt*, CEF*,          │
-    │    plain text, auto-detect               │
+    │    EVTX*, plain text, auto-detect        │
     │    ↓ raw line → EventInputDecoded        │
     │                                          │
     │  LogProcessor ──> batch evaluation       │

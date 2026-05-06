@@ -41,7 +41,7 @@ flowchart TD
 
     subgraph rsigma-runtime
         direction TB
-        RINPUT["input/ format adapters:\nJSON · syslog · logfmt* · CEF*\nplain text · auto-detect\nraw line → EventInputDecoded"]
+        RINPUT["input/ format adapters:\nJSON · syslog · logfmt* · CEF* · EVTX*\nplain text · auto-detect\nraw line → EventInputDecoded"]
         RINPUT --> RPROC["LogProcessor\nbatch evaluation · ArcSwap hot-reload\nMetricsHook · EventFilter"]
         RPROC --> RENG["RuntimeEngine\nwraps Engine + CorrelationEngine\nwith rule loading"]
         RENG --> RIO["io/\nEventSource (stdin · HTTP · NATS)\nOTLP* (HTTP + gRPC)\nSink (stdout · file · NATS)"]
