@@ -1,0 +1,4 @@
+hostname,ip,role
+srv1,10.0.0.1,web
+srv2,10.0.0.2,db
+srv3,10.0.0.3,cache

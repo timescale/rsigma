@@ -1,0 +1,26 @@
+name: edge-cases
+priority: 0
+sources:
+  - id: ""
+    type: file
+    path: /dev/null
+    format: json
+  - id: "a b c"
+    type: file
+    path: ../../../etc/passwd
+    format: lines
+  - id: "${source.self_ref}"
+    type: file
+    path: /tmp/test
+    format: yaml
+    extract: ".[]"
+    refresh: interval 0s
+    timeout: 0s
+    on_error: use_cached
+    required: true
+    default: null
+vars:
+  test: "${source.}"
+  test2: "${source..nested..path}"
+  test3: "${source.a b c}"
+transformations: []

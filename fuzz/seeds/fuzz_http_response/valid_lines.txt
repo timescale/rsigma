@@ -1,0 +1,3 @@
+admin@corp.com
+user@corp.com
+root@corp.com
