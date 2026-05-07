@@ -52,7 +52,7 @@ prost = { version = "0.14", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
-criterion = "0.5"
+criterion = "0.8"
 rand = "0.10"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["nats"] }
