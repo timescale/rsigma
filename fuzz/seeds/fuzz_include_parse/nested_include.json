@@ -1,0 +1,4 @@
+[
+  {"type": "include", "include": "${source.other}"},
+  {"type": "field_name_mapping", "mapping": {"a": "b"}}
+]

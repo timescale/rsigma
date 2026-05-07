@@ -1,0 +1,30 @@
+name: dynamic_allowlist
+priority: 10
+sources:
+  - id: admin_emails
+    type: file
+    path: /etc/rsigma/admin_emails.json
+    format: json
+    extract: ".emails[]"
+    refresh: interval 60s
+    on_error: use_cached
+    required: true
+  - id: ip_blocklist
+    type: file
+    path: /var/lib/rsigma/blocklist.txt
+    format: lines
+    refresh: watch
+    on_error: use_default
+    required: false
+    default:
+      - "10.0.0.1"
+vars:
+  admin_emails: "${source.admin_emails}"
+  blocked_ips: "${source.ip_blocklist}"
+transformations:
+  - id: add-admin-field
+    type: add_condition
+    conditions:
+      - type: include
+        field_name: TargetUserName
+        values: "${source.admin_emails}"

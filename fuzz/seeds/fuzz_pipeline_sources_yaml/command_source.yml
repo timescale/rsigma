@@ -1,0 +1,28 @@
+name: asset_inventory
+priority: 5
+sources:
+  - id: assets
+    type: command
+    command: /usr/local/bin/fetch-assets --format json
+    format: json
+    extract: ".hosts[].hostname"
+    refresh: interval 120s
+    on_error: use_default
+    required: false
+    default: []
+  - id: csv_data
+    type: file
+    path: /data/users.csv
+    format: csv
+    refresh: once
+    on_error: fail
+    required: true
+vars:
+  known_hosts: "${source.assets}"
+transformations:
+  - id: filter-known
+    type: add_condition
+    conditions:
+      - type: include
+        field_name: Hostname
+        values: "${source.assets}"

@@ -1,0 +1,9 @@
+- type: field_name_mapping
+  mapping:
+    EventID: event_id
+    ComputerName: hostname
+- type: drop_detection_item
+  conditions:
+    - type: match_string
+      field_name: Provider_Name
+      pattern: "Microsoft-*"

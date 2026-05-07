@@ -1,0 +1,32 @@
+name: threat_intel
+priority: 20
+sources:
+  - id: threat_feed
+    type: http
+    url: https://api.example.com/v1/indicators
+    method: GET
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+      Accept: application/json
+    format: json
+    extract:
+      expr: "$.indicators[*].value"
+      type: jsonpath
+    refresh: interval 300s
+    timeout: 30s
+    on_error: use_cached
+    required: true
+  - id: env_config
+    type: http
+    url: https://config.internal/rsigma/env.yaml
+    format: yaml
+    extract:
+      expr: "data.field_mappings"
+      type: cel
+    refresh: interval 3600s
+    on_error: fail
+    required: true
+vars:
+  threat_indicators: "${source.threat_feed}"
+  log_index: "${source.env_config.log_index}"
+transformations: []

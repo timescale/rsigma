@@ -1,0 +1,27 @@
+name: shared_transforms
+priority: 15
+sources:
+  - id: common_transforms
+    type: file
+    path: /etc/rsigma/transforms.json
+    format: json
+    refresh: watch
+    on_error: fail
+    required: true
+  - id: nats_push
+    type: nats
+    url: nats://localhost:4222
+    subject: rsigma.sources.rules
+    format: json
+    refresh: push
+    on_error: use_cached
+    required: false
+transformations:
+  - type: include
+    include: "${source.common_transforms}"
+  - id: after-include
+    type: drop_detection_item
+    conditions:
+      - type: match_string
+        field_name: Provider_Name
+        pattern: "Microsoft-Windows-*"

@@ -44,6 +44,20 @@ jobs:
             max_len: 4096
           - target: fuzz_input_formats
             max_len: 4096
+          - target: fuzz_pipeline_sources_yaml
+            max_len: 8192
+          - target: fuzz_extract_jq
+            max_len: 4096
+          - target: fuzz_extract_jsonpath
+            max_len: 4096
+          - target: fuzz_extract_cel
+            max_len: 4096
+          - target: fuzz_template_expand
+            max_len: 4096
+          - target: fuzz_include_parse
+            max_len: 8192
+          - target: fuzz_http_response
+            max_len: 65536
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
