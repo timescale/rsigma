@@ -1,0 +1,24 @@
+[
+  {
+    "pipeline": "dynamic-extract-languages",
+    "source_id": "jq_extract",
+    "status": "ok",
+    "data": [
+      "admin@corp.example.com",
+      "root@corp.example.com",
+      "soc-team@corp.example.com"
+    ]
+  },
+  {
+    "pipeline": "dynamic-extract-languages",
+    "source_id": "jsonpath_extract",
+    "status": "ok",
+    "data": "process.command_line"
+  },
+  {
+    "pipeline": "dynamic-extract-languages",
+    "source_id": "cel_extract",
+    "status": "ok",
+    "data": 3
+  }
+]

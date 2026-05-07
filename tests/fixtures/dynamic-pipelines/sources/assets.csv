@@ -1,0 +1,6 @@
+hostname,ip,role,criticality
+dc01,10.0.0.1,domain_controller,critical
+web01,10.0.0.10,web_server,high
+db01,10.0.0.20,database,critical
+app01,10.0.0.30,application,medium
+jump01,10.0.0.40,jump_host,high

@@ -1,0 +1,16 @@
+{
+  "pipeline": "dynamic-field-mapping",
+  "source_id": "field_map",
+  "status": "ok",
+  "data": {
+    "CommandLine": "process.command_line",
+    "ParentCommandLine": "process.parent.command_line",
+    "Image": "process.executable",
+    "ParentImage": "process.parent.executable",
+    "User": "user.name",
+    "ComputerName": "host.name",
+    "SourceIp": "source.ip",
+    "DestinationIp": "destination.ip",
+    "DestinationPort": "destination.port"
+  }
+}

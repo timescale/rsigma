@@ -1,0 +1,4 @@
+environment: production
+log_index: security-events-prod
+retention_days: 90
+field_prefix: winlog.event_data

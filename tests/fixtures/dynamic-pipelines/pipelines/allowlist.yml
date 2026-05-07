@@ -1,0 +1,27 @@
+name: dynamic-allowlist
+priority: 20
+sources:
+  - id: admin_emails
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/admin_emails.json
+    format: json
+    extract: ".emails"
+    refresh: once
+    on_error: fail
+    required: true
+  - id: blocked_ips
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/ip_blocklist.txt
+    format: lines
+    refresh: once
+    on_error: use_default
+    required: false
+    default:
+      - "0.0.0.0"
+
+vars:
+  admin_emails: "${source.admin_emails}"
+  blocked_ips: "${source.blocked_ips}"
+
+transformations:
+  - type: value_placeholders

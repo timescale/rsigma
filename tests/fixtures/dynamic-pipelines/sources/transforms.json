@@ -1,0 +1,9 @@
+[
+  {
+    "type": "field_name_mapping",
+    "mapping": {
+      "EventID": "event.code",
+      "Provider_Name": "event.provider"
+    }
+  }
+]

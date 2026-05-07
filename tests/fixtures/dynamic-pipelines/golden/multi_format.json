@@ -1,0 +1,74 @@
+[
+  {
+    "pipeline": "dynamic-multi-format",
+    "source_id": "json_data",
+    "status": "ok",
+    "data": {
+      "emails": [
+        "admin@corp.example.com",
+        "root@corp.example.com",
+        "soc-team@corp.example.com"
+      ]
+    }
+  },
+  {
+    "pipeline": "dynamic-multi-format",
+    "source_id": "yaml_data",
+    "status": "ok",
+    "data": {
+      "environment": "production",
+      "log_index": "security-events-prod",
+      "retention_days": 90,
+      "field_prefix": "winlog.event_data"
+    }
+  },
+  {
+    "pipeline": "dynamic-multi-format",
+    "source_id": "csv_data",
+    "status": "ok",
+    "data": [
+      {
+        "hostname": "dc01",
+        "ip": "10.0.0.1",
+        "role": "domain_controller",
+        "criticality": "critical"
+      },
+      {
+        "hostname": "web01",
+        "ip": "10.0.0.10",
+        "role": "web_server",
+        "criticality": "high"
+      },
+      {
+        "hostname": "db01",
+        "ip": "10.0.0.20",
+        "role": "database",
+        "criticality": "critical"
+      },
+      {
+        "hostname": "app01",
+        "ip": "10.0.0.30",
+        "role": "application",
+        "criticality": "medium"
+      },
+      {
+        "hostname": "jump01",
+        "ip": "10.0.0.40",
+        "role": "jump_host",
+        "criticality": "high"
+      }
+    ]
+  },
+  {
+    "pipeline": "dynamic-multi-format",
+    "source_id": "lines_data",
+    "status": "ok",
+    "data": [
+      "192.168.1.100",
+      "10.0.0.50",
+      "172.16.0.99",
+      "203.0.113.42",
+      "198.51.100.7"
+    ]
+  }
+]

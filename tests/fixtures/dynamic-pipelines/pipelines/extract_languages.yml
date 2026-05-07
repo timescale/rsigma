@@ -1,0 +1,37 @@
+name: dynamic-extract-languages
+priority: 10
+sources:
+  - id: jq_extract
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/admin_emails.json
+    format: json
+    extract: ".emails"
+    refresh: once
+    on_error: fail
+    required: true
+  - id: jsonpath_extract
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/field_mappings.json
+    format: json
+    extract:
+      expr: "$.windows_sysmon.CommandLine"
+      type: jsonpath
+    refresh: once
+    on_error: fail
+    required: true
+  - id: cel_extract
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/admin_emails.json
+    format: json
+    extract:
+      expr: "size(data.emails)"
+      type: cel
+    refresh: once
+    on_error: fail
+    required: true
+
+vars:
+  admin_emails: "${source.jq_extract}"
+
+transformations:
+  - type: value_placeholders
