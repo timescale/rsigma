@@ -60,3 +60,7 @@ testcontainers-modules = { version = "0.15", features = ["nats"] }
 [[bench]]
 name = "runtime_throughput"
 harness = false
+
+[[bench]]
+name = "dynamic_pipelines"
+harness = false
