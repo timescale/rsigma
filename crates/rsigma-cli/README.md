@@ -70,10 +70,12 @@ Parse and compile all rules in a directory, reporting errors.
 | `path` | positional | required | Path to a directory of Sigma YAML files |
 | `--verbose` / `-v` | flag | `false` | Show details for each file (parse errors, compile errors) |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s) to apply before compilation |
+| `--resolve-sources` | flag | `false` | Also resolve dynamic pipeline sources during validation. Sources must be reachable (file/command/HTTP) for validation to pass |
 
 ```bash
 rsigma validate path/to/rules/ -v              # verbose output
 rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
+rsigma validate rules/ -p dynamic.yml --resolve-sources  # validate + test source resolution
 ```
 
 ### `lint`: Lint rules against the Sigma specification
@@ -152,6 +154,7 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 | `--clear-state` | flag | `false` | Clear correlation state on startup (conflicts with `--keep-state`) |
 | `--keep-state` | flag | `false` | Force restore correlation state on startup, even during replay (conflicts with `--clear-state`) |
 | `--timestamp-fallback` | string | `"wallclock"` | `wallclock` (substitute current time) or `skip` (omit from correlation) when events lack parseable timestamps |
+| `--allow-remote-include` | flag | `false` | Allow `include` directives in dynamic pipelines to reference remote (HTTP/NATS) sources. Local sources (file/command) are always permitted |
 
 **NATS flags** (require `daemon-nats` feature):
 
@@ -252,6 +255,9 @@ rsigma daemon \
 | `/api/v1/rules` | GET | Rule counts and rules path |
 | `/api/v1/reload` | POST | Trigger a manual rule reload |
 | `/api/v1/events` | POST | Ingest events (NDJSON body, one event per line). Only available with `--input http` |
+| `/api/v1/sources` | GET | List dynamic sources and their resolution status |
+| `/api/v1/sources/resolve` | POST | Trigger re-resolution of all dynamic sources (or specific ones via request body) |
+| `/api/v1/sources/cache/{source_id}` | DELETE | Invalidate the cached value for a specific source |
 | `/v1/logs` | POST | OTLP log ingestion (`application/x-protobuf` or `application/json`, gzip supported). Requires `daemon-otlp` feature |
 
 **OTLP log ingestion** (requires `daemon-otlp` feature):
@@ -286,8 +292,10 @@ curl -X POST http://localhost:9090/v1/logs \
 **Hot-reload triggers:**
 
 - File system changes to `.yml`/`.yaml` files in the rules directory (debounced 500ms)
-- `SIGHUP` signal (Unix only)
+- `SIGHUP` signal (Unix only) -- triggers both rule reload and dynamic source re-resolution
 - `POST /api/v1/reload`
+- `POST /api/v1/sources/resolve` -- re-resolves dynamic sources without reloading rules
+- NATS control subject `rsigma.control.resolve` (when using NATS sources) -- payload can be empty (resolve all) or `{"source_id": "..."}` (resolve one)
 
 **Prometheus metrics:**
 
@@ -312,6 +320,11 @@ curl -X POST http://localhost:9090/v1/logs \
 | `rsigma_back_pressure_events_total` | counter | | Times a source was blocked on a full event channel |
 | `rsigma_uptime_seconds` | gauge | | Daemon uptime in seconds |
 | `rsigma_dlq_events_total` | counter | | Events routed to the dead-letter queue |
+| `rsigma_source_resolves_total` | counter | `source_id` | Total dynamic source resolution attempts |
+| `rsigma_source_resolve_errors_total` | counter | `source_id` | Total dynamic source resolution failures |
+| `rsigma_source_resolve_latency_seconds` | histogram | | Source resolution latency |
+| `rsigma_source_cache_hits_total` | counter | | Times a cached value was served instead of fetching fresh |
+| `rsigma_source_last_resolved_timestamp` | gauge | `source_id` | Unix timestamp of last successful resolution per source |
 | `rsigma_otlp_requests_total` | counter | `transport`, `encoding` | OTLP export requests received (requires `daemon-otlp`) |
 | `rsigma_otlp_log_records_total` | counter | | Log records ingested via OTLP (requires `daemon-otlp`) |
 | `rsigma_otlp_errors_total` | counter | `transport`, `reason` | OTLP request errors (requires `daemon-otlp`) |
@@ -609,6 +622,54 @@ rsigma fields -r rules/ --json | jq '.fields[] | select(.sources[] == "detection
 
 **JSON output** includes a `summary` object (rule/correlation/filter counts, unique fields, pipelines applied), a `fields` array, and when pipelines are applied, a `pipeline_mappings` array showing each field name transformation.
 
+### `resolve`: Test dynamic source resolution
+
+Resolve all dynamic sources declared in the given pipeline(s) and print the resulting data as JSON. Useful for testing pipeline source configuration without running the daemon.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--pipeline` / `-p` | repeatable | required | Processing pipeline(s) containing dynamic sources |
+| `--source` / `-s` | string | none | Resolve only a specific source by ID |
+| `--pretty` | flag | `false` | Pretty-print JSON output |
+| `--dry-run` | flag | `false` | Show what would be resolved (source metadata) without performing resolution |
+
+```bash
+# Resolve all sources in a dynamic pipeline
+rsigma resolve -p pipelines/dynamic.yml --pretty
+
+# Resolve a specific source by ID
+rsigma resolve -p pipelines/dynamic.yml --source threat_intel
+
+# Dry-run: list sources and metadata without fetching
+rsigma resolve -p pipelines/dynamic.yml --dry-run
+
+# Test multiple pipelines at once
+rsigma resolve -p pipeline1.yml -p pipeline2.yml
+```
+
+**Output format (normal mode):**
+
+```json
+{
+  "pipeline": "dynamic_example",
+  "source_id": "field_map",
+  "status": "ok",
+  "data": { "CommandLine": "process.command_line", "User": "user.name" }
+}
+```
+
+**Output format (dry-run mode):**
+
+```json
+{
+  "pipeline": "dynamic_example",
+  "source_id": "field_map",
+  "source_type": "File",
+  "required": true,
+  "refresh": "Watch"
+}
+```
+
 ### `condition`: Parse a condition expression
 
 Parse a Sigma condition expression and output the AST as pretty-printed JSON. Output is always pretty-printed.
@@ -715,6 +776,134 @@ The `event` field is present only when `--include-event` is set.
 - All pipelines are applied in sequence to each rule before compilation.
 - In daemon mode, pipeline files are watched for changes and re-read on reload (alongside rules). Builtin pipelines are embedded at compile time and are not file-watched. If a pipeline file becomes invalid, the reload fails and the previous configuration stays active.
 - `merge_pipelines` is not used by the CLI; each pipeline remains separate with its own state.
+
+## Dynamic Pipelines
+
+Dynamic pipelines extend static Sigma pipelines with external data sources. Any string, list, or mapping value in the pipeline YAML can contain `${source.<id>}` template references that are resolved at runtime.
+
+### Source declaration
+
+Add a `sources` section to your pipeline YAML:
+
+```yaml
+name: dynamic_threat_intel
+sources:
+  - id: ip_blocklist
+    type: http
+    url: https://feeds.example.com/blocklist.json
+    format: json
+    extract: ".ips"
+    refresh: 300s
+    timeout: 10s
+    on_error: use_cached
+    required: true
+
+  - id: field_config
+    type: file
+    path: /etc/rsigma/fields.json
+    format: json
+    refresh: watch
+
+  - id: enrichment_rules
+    type: command
+    command: ["generate-transformations", "--format", "json"]
+    format: json
+    refresh: once
+
+transformations:
+  - id: map_fields
+    type: field_name_mapping
+    mapping: ${source.field_config}
+
+  - id: block_known_bad
+    type: add_condition
+    conditions:
+      - field: DestinationIp
+        value: ${source.ip_blocklist}
+
+  - include: ${source.enrichment_rules}
+```
+
+### Source types
+
+| Type | Description |
+|------|-------------|
+| `file` | Read from a local file. Supports `refresh: watch` for automatic reload on change |
+| `http` | Fetch from an HTTP endpoint. Supports `method`, `headers`, `timeout` |
+| `command` | Run a local command and capture stdout |
+| `nats` | Subscribe to a NATS subject for push-based updates (requires `daemon-nats` feature) |
+
+### Data formats
+
+| Format | Description |
+|--------|-------------|
+| `json` | Parsed with serde_json |
+| `yaml` | Parsed with serde_yaml |
+| `lines` | One value per line (produces a JSON array of strings) |
+| `csv` | Comma-separated values |
+
+### Extraction languages
+
+After parsing the source data, an optional `extract` expression selects a subset:
+
+```yaml
+# jq (default) -- plain string is always jq
+extract: ".indicators[].ip"
+
+# JSONPath -- structured syntax
+extract:
+  type: jsonpath
+  expr: "$.indicators[*].ip"
+
+# CEL (Common Expression Language) -- structured syntax
+extract:
+  type: cel
+  expr: "data.indicators.filter(i, i.severity > 7)"
+```
+
+| Language | Syntax | Library |
+|----------|--------|---------|
+| jq | Plain string or `{ type: jq, expr: "..." }` | jaq |
+| JSONPath | `{ type: jsonpath, expr: "..." }` | jsonpath-rust |
+| CEL | `{ type: cel, expr: "..." }` | cel-rust |
+
+### Refresh policies
+
+| Policy | Behavior |
+|--------|----------|
+| `once` | Fetch at startup only |
+| `<duration>` (e.g. `300s`, `5m`) | Re-fetch on a fixed interval |
+| `watch` | Watch the file for changes (file sources only) |
+| `push` | Updated on each incoming NATS message (NATS sources only) |
+| `on_demand` | Fetch at startup, then only when triggered via API or SIGHUP |
+
+### Error policies
+
+| Policy | Behavior |
+|--------|----------|
+| `use_cached` | Serve the last successfully fetched value on failure |
+| `fail` | For required sources: block startup. For optional sources: log and use null |
+| `use_default` | Fall back to the `default` value declared in the source config |
+
+### Include directives
+
+The `include` transformation type injects an entire block of transformations from a resolved source:
+
+```yaml
+transformations:
+  - include: ${source.dynamic_transforms}
+```
+
+The source must resolve to a JSON array of transformation objects. Nested includes are rejected (max depth 1). Remote sources (HTTP/NATS) require `--allow-remote-include` for security.
+
+### Startup behavior
+
+- **Required sources** (`required: true`, the default): the daemon blocks until resolution succeeds. If `on_error: fail`, it exits on failure.
+- **Optional sources** (`required: false`): if resolution fails at startup, the daemon starts with a null fallback and retries in the background.
+
+### Caching
+
+Resolved values are cached in memory (and optionally SQLite). The cache supports TTL-based expiration. The `use_cached` error policy serves stale data from the cache when a fresh fetch fails. Cache entries can be invalidated per-source via `DELETE /api/v1/sources/cache/{source_id}`.
 
 ## Environment Variables
 

@@ -21,6 +21,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
 * Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
+* Dynamic pipelines: populate any pipeline value from external sources (HTTP, files, commands, NATS) with template expansion, auto-refresh, and data extraction via jq, JSONPath, or CEL
 * Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
 * Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
 * NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
@@ -188,6 +189,51 @@ rsigma eval -r rules/ --input-format cef < arcsight.log
 rsigma eval -r rules/ -e @security.evtx
 ```
 
+### Dynamic Pipelines
+
+Standard Sigma pipelines are static: every value is hardcoded in YAML. RSigma extends this with dynamic pipelines where external data sources feed into any part of a pipeline via `${source.*}` template references. This means field mappings, condition values, and even entire transformation blocks can be populated from live APIs, configuration files, commands, or NATS subjects.
+
+```yaml
+# pipeline.yml with dynamic sources
+name: dynamic_example
+sources:
+  - id: threat_intel
+    type: http
+    url: https://intel.example.com/v1/iocs
+    format: json
+    extract: ".indicators[].ip"
+    refresh: 300s
+    timeout: 10s
+    on_error: use_cached
+
+  - id: field_map
+    type: file
+    path: /etc/rsigma/fields.json
+    format: json
+    refresh: watch
+
+transformations:
+  - id: map_fields
+    type: field_name_mapping
+    mapping: ${source.field_map}
+
+  - id: block_known_bad
+    type: add_condition
+    conditions:
+      - field: DestinationIp
+        value: ${source.threat_intel}
+```
+
+```bash
+# Test source resolution offline
+rsigma resolve -p pipeline.yml --pretty
+
+# Run the daemon with a dynamic pipeline
+rsigma daemon -r rules/ -p pipeline.yml
+```
+
+Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
+
 ### Rule Conversion
 
 Convert Sigma rules into backend-native queries for historical threat hunting.
@@ -301,7 +347,7 @@ Everything starts with a Sigma rule in YAML format:
 
 From there, the AST can go in three directions depending on what you need:
 
-- **Evaluation:** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
+- **Evaluation:** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Dynamic pipelines extend this with `${source.*}` template references that are resolved at runtime from external data sources. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
 
 - **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. Concrete implementations include PostgreSQL/TimescaleDB (SQL for historical threat hunting) and LynxDB (SPL2-compatible search queries for log analytics).
 
@@ -310,6 +356,7 @@ From there, the AST can go in three directions depending on what you need:
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
 - **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. EVTX\* files are parsed directly from binary via `EvtxFileReader`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
+- **Dynamic sources:** `SourceResolver` fetches data from files, commands, HTTP APIs, and NATS subjects. Resolved values are injected into pipelines via `TemplateExpander`. A `SourceCache` (in-memory + optional SQLite) provides fallback data. `RefreshScheduler` manages auto-refresh (interval, file watch, NATS push, on-demand). Extraction supports jq, JSONPath, and CEL.
 - **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
 - **Output:** Sinks write detection results to stdout, files, or NATS. Multiple sinks can run in fan-out. The output is `MatchResult` and `CorrelationResult`, containing rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
 
