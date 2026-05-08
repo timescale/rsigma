@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rsigma_eval::pipeline::sources::{DataFormat, DynamicSource, ErrorPolicy, ExtractExpr};
 use rsigma_eval::{CorrelationConfig, Pipeline};
 use rsigma_runtime::sources::extract::apply_extract;

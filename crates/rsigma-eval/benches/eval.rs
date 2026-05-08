@@ -5,7 +5,9 @@
 
 mod datagen;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rsigma_eval::{Engine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
 
