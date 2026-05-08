@@ -28,8 +28,8 @@ pub async fn resolve_command(
     .await
 }
 
-/// Inner implementation with configurable limits (for testing).
-pub(crate) async fn resolve_command_with_limit(
+/// Same as [`resolve_command`] but with a configurable stdout size limit.
+pub async fn resolve_command_with_limit(
     command: &[String],
     format: DataFormat,
     extract_expr: Option<&ExtractExpr>,

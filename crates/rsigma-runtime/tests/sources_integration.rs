@@ -615,3 +615,81 @@ fn cache_no_ttl_never_expires() {
     assert_eq!(cache.ttl(), None);
     assert_eq!(cache.get("src1").unwrap(), serde_json::json!("persistent"));
 }
+
+// =============================================================================
+// Security hardening tests
+// =============================================================================
+
+#[tokio::test]
+async fn command_source_timeout_kills_child() {
+    #[cfg(unix)]
+    let cmd = vec!["sleep".to_string(), "60".to_string()];
+    #[cfg(windows)]
+    let cmd = vec![
+        "cmd".to_string(),
+        "/C".to_string(),
+        "timeout /T 60 /NOBREAK".to_string(),
+    ];
+
+    let result = rsigma_runtime::sources::command::resolve_command(
+        &cmd,
+        DataFormat::Json,
+        None,
+        Some(std::time::Duration::from_millis(100)),
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err().kind,
+        rsigma_runtime::SourceErrorKind::Timeout
+    ));
+}
+
+#[tokio::test]
+async fn command_source_stdout_size_limit() {
+    #[cfg(unix)]
+    {
+        // Generate more than 100 bytes of stdout with a tiny limit
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "yes | head -n 200".to_string(),
+        ];
+        let result = rsigma_runtime::sources::command::resolve_command_with_limit(
+            &cmd,
+            DataFormat::Lines,
+            None,
+            Some(std::time::Duration::from_secs(5)),
+            100, // 100 byte cap
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err().kind,
+            rsigma_runtime::SourceErrorKind::ResourceLimit(_)
+        ));
+    }
+}
+
+#[cfg(feature = "nats")]
+#[test]
+fn nats_payload_size_rejected() {
+    let oversized = vec![b'x'; 11 * 1024 * 1024]; // 11 MB
+    let result =
+        rsigma_runtime::sources::nats::parse_nats_message(&oversized, DataFormat::Json, None);
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err().kind,
+        rsigma_runtime::SourceErrorKind::ResourceLimit(_)
+    ));
+}
+
+#[cfg(feature = "nats")]
+#[test]
+fn nats_payload_within_limit_accepted() {
+    let small = br#"{"key": "value"}"#;
+    let result = rsigma_runtime::sources::nats::parse_nats_message(small, DataFormat::Json, None);
+    assert!(result.is_ok());
+}
