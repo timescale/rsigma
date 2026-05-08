@@ -115,7 +115,17 @@ impl RefreshScheduler {
             if let RefreshPolicy::Interval(duration) = &source.refresh {
                 let tx = trigger_tx.clone();
                 let id = source.id.clone();
-                let interval = *duration;
+                let interval = if *duration < super::MIN_REFRESH_INTERVAL {
+                    tracing::warn!(
+                        source_id = %id,
+                        configured = ?duration,
+                        clamped_to = ?super::MIN_REFRESH_INTERVAL,
+                        "Refresh interval below minimum, clamping to floor"
+                    );
+                    super::MIN_REFRESH_INTERVAL
+                } else {
+                    *duration
+                };
                 tokio::spawn(async move {
                     let mut timer = tokio::time::interval(interval);
                     timer.tick().await; // skip immediate first tick
