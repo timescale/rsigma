@@ -6,7 +6,22 @@ use rsigma_eval::pipeline::sources::{DataFormat, ExtractExpr};
 
 use super::extract::apply_extract;
 use super::file::parse_data;
-use super::{ResolvedValue, SourceError, SourceErrorKind};
+use super::{MAX_SOURCE_RESPONSE_BYTES, ResolvedValue, SourceError, SourceErrorKind};
+
+/// Check that a NATS payload does not exceed the size limit.
+fn check_payload_size(payload: &[u8], max_bytes: usize) -> Result<(), SourceError> {
+    if payload.len() > max_bytes {
+        return Err(SourceError {
+            source_id: String::new(),
+            kind: SourceErrorKind::ResourceLimit(format!(
+                "NATS message payload ({} bytes) exceeds {} byte limit",
+                payload.len(),
+                max_bytes
+            )),
+        });
+    }
+    Ok(())
+}
 
 /// Resolve a NATS source by connecting and fetching the latest message.
 ///
@@ -36,9 +51,9 @@ pub async fn resolve_nats_initial(
             kind: SourceErrorKind::Fetch(format!("failed to subscribe to '{subject}': {e}")),
         })?;
 
-    // Wait up to 1 second for an initial message
     let data = match tokio::time::timeout(std::time::Duration::from_secs(1), sub.next()).await {
         Ok(Some(msg)) => {
+            check_payload_size(&msg.payload, MAX_SOURCE_RESPONSE_BYTES)?;
             let raw = std::str::from_utf8(&msg.payload).map_err(|e| SourceError {
                 source_id: String::new(),
                 kind: SourceErrorKind::Parse(format!("NATS message is not valid UTF-8: {e}")),
@@ -61,12 +76,15 @@ pub async fn resolve_nats_initial(
 }
 
 /// Parse a raw NATS message payload into a resolved value.
+///
+/// Rejects payloads exceeding `MAX_SOURCE_RESPONSE_BYTES`.
 #[cfg(feature = "nats")]
 pub fn parse_nats_message(
     payload: &[u8],
     format: DataFormat,
     extract_expr: Option<&ExtractExpr>,
 ) -> Result<serde_json::Value, SourceError> {
+    check_payload_size(payload, MAX_SOURCE_RESPONSE_BYTES)?;
     let raw = std::str::from_utf8(payload).map_err(|e| SourceError {
         source_id: String::new(),
         kind: SourceErrorKind::Parse(format!("NATS message is not valid UTF-8: {e}")),
