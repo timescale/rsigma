@@ -136,7 +136,7 @@ impl SourceResolver for DefaultSourceResolver {
                 command,
                 format,
                 extract,
-            } => command::resolve_command(command, *format, extract.as_ref()).await,
+            } => command::resolve_command(command, *format, extract.as_ref(), source.timeout).await,
             SourceType::Http {
                 url,
                 method,

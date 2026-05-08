@@ -206,9 +206,10 @@ async fn command_source_echo_json() {
         format!("type {}", path.to_str().unwrap()),
     ];
 
-    let result = rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, None)
-        .await
-        .unwrap();
+    let result =
+        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, None, None)
+            .await
+            .unwrap();
 
     let expected = serde_json::json!({"status": "ok", "count": 42});
     assert_eq!(result.data, expected);
@@ -230,10 +231,14 @@ async fn command_source_with_extract() {
     ];
 
     let extract = ExtractExpr::Jq(".items[]".to_string());
-    let result =
-        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, Some(&extract))
-            .await
-            .unwrap();
+    let result = rsigma_runtime::sources::command::resolve_command(
+        &cmd,
+        DataFormat::Json,
+        Some(&extract),
+        None,
+    )
+    .await
+    .unwrap();
 
     let expected = serde_json::json!([1, 2, 3]);
     assert_eq!(result.data, expected);
@@ -241,7 +246,6 @@ async fn command_source_with_extract() {
 
 #[tokio::test]
 async fn command_source_lines() {
-    // Use a cross-platform approach: write to a temp file and cat it
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("lines.txt");
     std::fs::write(&path, "line1\nline2\nline3\n").unwrap();
@@ -255,9 +259,10 @@ async fn command_source_lines() {
         format!("type {}", path.to_str().unwrap()),
     ];
 
-    let result = rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Lines, None)
-        .await
-        .unwrap();
+    let result =
+        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Lines, None, None)
+            .await
+            .unwrap();
 
     let expected = serde_json::json!(["line1", "line2", "line3"]);
     assert_eq!(result.data, expected);
@@ -271,7 +276,7 @@ async fn command_source_failing_command() {
     let cmd = vec!["cmd".to_string(), "/C".to_string(), "exit 1".to_string()];
 
     let result =
-        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, None).await;
+        rsigma_runtime::sources::command::resolve_command(&cmd, DataFormat::Json, None, None).await;
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -284,7 +289,7 @@ async fn command_source_failing_command() {
 #[tokio::test]
 async fn command_source_empty_command() {
     let result =
-        rsigma_runtime::sources::command::resolve_command(&[], DataFormat::Json, None).await;
+        rsigma_runtime::sources::command::resolve_command(&[], DataFormat::Json, None, None).await;
 
     assert!(result.is_err());
 }
