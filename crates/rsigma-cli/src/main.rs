@@ -917,13 +917,7 @@ pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
                     if p.is_dynamic() {
                         let source_ids: Vec<&str> =
                             p.sources.iter().map(|s| s.id.as_str()).collect();
-                        eprintln!(
-                            "  warn: pipeline '{}' has {} dynamic source(s) ({}) \
-                             -- source resolution not yet supported",
-                            p.name,
-                            p.sources.len(),
-                            source_ids.join(", ")
-                        );
+                        eprintln!("  dynamic source(s): {}", source_ids.join(", "));
                     }
                     pipelines.push(p);
                 }

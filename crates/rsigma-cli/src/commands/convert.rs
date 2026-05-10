@@ -38,6 +38,14 @@ pub(crate) fn cmd_convert(
     let collection = load_collection_multi(&rules);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
+    if pipelines.iter().any(|p| p.is_dynamic()) {
+        eprintln!(
+            "  note: dynamic sources are not resolved by `rsigma convert`. \
+             Use `rsigma resolve` to inspect sources or `rsigma daemon` to evaluate \
+             events with dynamic pipelines."
+        );
+    }
+
     let options: std::collections::HashMap<String, String> = backend_options
         .iter()
         .filter_map(|opt| {

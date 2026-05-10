@@ -21,6 +21,14 @@ pub(crate) fn cmd_fields(
     let collection = crate::load_collection(&path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
+    if pipelines.iter().any(|p| p.is_dynamic()) {
+        eprintln!(
+            "  note: dynamic sources are not resolved by `rsigma fields`. \
+             Use `rsigma resolve` to inspect sources or `rsigma daemon` to evaluate \
+             events with dynamic pipelines."
+        );
+    }
+
     let report = build_report(&collection, &pipelines, no_filters);
 
     if json {

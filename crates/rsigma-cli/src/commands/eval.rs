@@ -67,6 +67,15 @@ pub(crate) fn cmd_eval(
 ) -> bool {
     let collection = crate::load_collection(&rules_path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
+
+    if pipelines.iter().any(|p| p.is_dynamic()) {
+        eprintln!(
+            "  note: dynamic sources are not resolved by `rsigma eval`. \
+             Use `rsigma resolve` to inspect sources or `rsigma daemon` to evaluate \
+             events with dynamic pipelines."
+        );
+    }
+
     let has_correlations = !collection.correlations.is_empty();
 
     let event_filter = crate::build_event_filter(jq, jsonpath);
