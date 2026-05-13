@@ -8,8 +8,14 @@
 //! from each `FieldSpec` and produces the appropriate `CompiledMatcher` variant.
 
 mod helpers;
+mod optimizer;
 #[cfg(test)]
 mod tests;
+
+// Test-only re-export so equivalence proptests in other modules can drive
+// the optimizer directly.
+#[cfg(test)]
+pub(crate) use optimizer::optimize_any_of as optimize_any_of_for_test;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -324,15 +330,8 @@ pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
                 .iter()
                 .map(|v| compile_value_default(v, ci))
                 .collect::<Result<Vec<_>>>()?;
-            let matcher = if matchers.len() == 1 {
-                // SAFETY: length checked above
-                matchers
-                    .into_iter()
-                    .next()
-                    .unwrap_or(CompiledMatcher::AnyOf(vec![]))
-            } else {
-                CompiledMatcher::AnyOf(matchers)
-            };
+            // Keywords are OR-semantics; safe to apply AnyOf optimizer.
+            let matcher = optimizer::optimize_any_of(matchers);
             Ok(CompiledDetection::Keywords(matcher))
         }
     }
@@ -371,17 +370,23 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
         item.values.iter().map(|v| compile_value(v, &ctx)).collect();
     let matchers = matchers?;
 
-    // Combine multiple values: |all → AND, default → OR
-    let combined = if matchers.len() == 1 {
-        // SAFETY: length checked above
-        matchers
-            .into_iter()
-            .next()
-            .unwrap_or(CompiledMatcher::AnyOf(vec![]))
-    } else if ctx.all {
-        CompiledMatcher::AllOf(matchers)
+    // Combine multiple values: |all → AND, default → OR.
+    //
+    // CRITICAL invariant: the optimizer is only applied to the OR (`AnyOf`)
+    // branch. `AllOf` MUST keep its `Vec<Contains>` intact: collapsing
+    // `AllOf(Contains(...))` into `AhoCorasickSet` would silently flip the
+    // semantics from "all patterns must match" to "any matches".
+    let combined = if ctx.all {
+        if matchers.len() == 1 {
+            matchers
+                .into_iter()
+                .next()
+                .unwrap_or(CompiledMatcher::AllOf(vec![]))
+        } else {
+            CompiledMatcher::AllOf(matchers)
+        }
     } else {
-        CompiledMatcher::AnyOf(matchers)
+        optimizer::optimize_any_of(matchers)
     };
 
     Ok(CompiledDetectionItem {

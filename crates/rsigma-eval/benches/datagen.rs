@@ -201,6 +201,60 @@ pub fn gen_single_rule(rng: &mut StdRng, id: usize) -> String {
     )
 }
 
+/// Generate a single rule with `n_patterns` plain `|contains` values on
+/// `CommandLine`. Used by the AC threshold sweep and contains-heavy throughput
+/// benchmarks.
+///
+/// Pattern bytes are uniform random lowercase ASCII to avoid coincidental
+/// matches with `COMMAND_LINES` literal corpus.
+pub fn gen_contains_heavy_rule(rng: &mut StdRng, id: usize, n_patterns: usize) -> String {
+    let mut values = String::new();
+    for _ in 0..n_patterns {
+        let len = rng.random_range(4..12);
+        let word: String = (0..len)
+            .map(|_| (rng.random_range(b'a'..=b'z')) as char)
+            .collect();
+        values.push_str(&format!("            - '{word}'\n"));
+    }
+    format!(
+        "title: Contains Heavy {id}\n\
+         id: contains-heavy-{id:06}\n\
+         logsource:\n\
+         \x20   product: windows\n\
+         \x20   category: process_creation\n\
+         detection:\n\
+         \x20   selection:\n\
+         \x20       CommandLine|contains:\n\
+         {values}\
+         \x20   condition: selection\n\
+         level: medium\n"
+    )
+}
+
+/// Generate `n` contains-heavy rules, each with the same `n_patterns` count.
+pub fn gen_n_contains_heavy_rules(n: usize, n_patterns: usize) -> String {
+    let mut rng = rng();
+    let mut docs = Vec::with_capacity(n);
+    for i in 0..n {
+        docs.push(gen_contains_heavy_rule(&mut rng, i, n_patterns));
+    }
+    docs.join("---\n")
+}
+
+/// Generate a synthetic event with a `CommandLine` of approximately
+/// `cmdline_len` bytes. Used by the threshold sweep to vary haystack length.
+pub fn gen_event_with_cmdline_len(rng: &mut StdRng, cmdline_len: usize) -> serde_json::Value {
+    let cmdline: String = (0..cmdline_len)
+        .map(|_| (rng.random_range(b'a'..=b'z')) as char)
+        .collect();
+    serde_json::json!({
+        "User": "admin",
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": cmdline,
+        "EventType": "process_create",
+    })
+}
+
 /// Generate a single wildcard-heavy rule.
 pub fn gen_wildcard_rule(rng: &mut StdRng, id: usize) -> String {
     let num_items = rng.random_range(2..=5);

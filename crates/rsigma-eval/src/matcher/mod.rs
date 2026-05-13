@@ -7,8 +7,9 @@
 mod helpers;
 mod matching;
 
-pub use helpers::{parse_expand_template, sigma_string_to_regex};
+pub use helpers::{ascii_lowercase_cow, parse_expand_template, sigma_string_to_regex};
 
+use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 use crate::event::Event;
@@ -44,6 +45,26 @@ pub enum CompiledMatcher {
     },
     /// Compiled regex pattern (flags baked in at compile time).
     Regex(Regex),
+
+    /// Multi-pattern substring match via Aho-Corasick automaton.
+    ///
+    /// Built by the optimizer when an `AnyOf` group contains
+    /// `AHO_CORASICK_THRESHOLD` or more plain `Contains` matchers with the
+    /// same case sensitivity. Replaces the sequential O(N * haystack_len)
+    /// scan of `AnyOf([Contains, ...])` with a single linear pass.
+    ///
+    /// **Invariant**: this variant only encodes `AnyOf` (OR) semantics.
+    /// `AllOf(Contains)` (`|all` modifier) MUST NOT be collapsed into this
+    /// variant - the optimizer enforces this.
+    ///
+    /// **Case insensitivity**: when `case_insensitive` is true, needles are
+    /// stored pre-lowered (matching the `Contains` invariant) and the hot
+    /// path lowers the haystack via [`ascii_lowercase_cow`] before searching.
+    /// The `AhoCorasick` automaton itself is built case-sensitively.
+    AhoCorasickSet {
+        automaton: AhoCorasick,
+        case_insensitive: bool,
+    },
 
     // -- Network --
     /// CIDR network match for IP addresses.

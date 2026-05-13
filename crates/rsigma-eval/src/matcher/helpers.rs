@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::IpAddr;
 
 use chrono::{Datelike, Timelike};
@@ -5,6 +6,30 @@ use ipnet::IpNet;
 
 use super::{ExpandPart, TimePart};
 use crate::event::{Event, EventValue};
+
+/// Lowercase a `&str` with minimal allocation, falling back to full Unicode case
+/// folding only when the input contains non-ASCII bytes.
+///
+/// Three-tier fast path:
+/// 1. Pure ASCII with no uppercase letters: returns `Cow::Borrowed(s)` (zero allocation).
+/// 2. Pure ASCII with some uppercase: allocates once and folds via `make_ascii_lowercase`.
+/// 3. Contains non-ASCII: falls through to `s.to_lowercase()` (full Unicode).
+///
+/// **Correctness note**: the first branch must require BOTH `s.is_ascii()` AND
+/// no ASCII-uppercase bytes. A naive `s.bytes().all(|b| !b.is_ascii_uppercase())`
+/// alone returns `true` for non-ASCII input (whose continuation bytes are not
+/// in `0x41..=0x5A`), which would silently skip Unicode case folding.
+pub fn ascii_lowercase_cow(s: &str) -> Cow<'_, str> {
+    if s.is_ascii() && s.bytes().all(|b| !b.is_ascii_uppercase()) {
+        return Cow::Borrowed(s);
+    }
+    if s.is_ascii() {
+        let mut buf = s.to_owned();
+        buf.make_ascii_lowercase();
+        return Cow::Owned(buf);
+    }
+    Cow::Owned(s.to_lowercase())
+}
 
 /// Try to extract a string representation from an [`EventValue`] and apply a predicate.
 ///
@@ -395,6 +420,80 @@ mod proptests {
             let re = regex::Regex::new(&pattern).unwrap();
             let s = c.to_string();
             prop_assert!(re.is_match(&s), "? should match single char: {:?}", s);
+        }
+    }
+
+    // =========================================================================
+    // ascii_lowercase_cow correctness
+    // =========================================================================
+
+    proptest! {
+        #[test]
+        fn ascii_lowercase_cow_correct(s in ".{0,40}") {
+            let expected = s.to_lowercase();
+            let cow = ascii_lowercase_cow(&s);
+            prop_assert_eq!(
+                cow.as_ref(),
+                expected.as_str(),
+                "ascii_lowercase_cow disagrees with std to_lowercase on {:?}",
+                s
+            );
+        }
+
+        #[test]
+        fn ascii_lowercase_cow_borrows_when_already_lower_ascii(s in "[a-z0-9 _.,/-]{0,40}") {
+            let cow = ascii_lowercase_cow(&s);
+            // Pure ASCII with no uppercase must hit the zero-alloc branch.
+            prop_assert!(matches!(cow, std::borrow::Cow::Borrowed(_)));
+        }
+    }
+
+    #[test]
+    fn ascii_lowercase_cow_handles_unicode_uppercase() {
+        // Regression: a non-ASCII string with no ASCII-uppercase bytes must NOT
+        // be returned as Borrowed without lowercasing the non-ASCII chars.
+        let inputs = ["Ärzte", "ΣΊΓΜΑ", "Über", "España", "ÉCOLE"];
+        for input in inputs {
+            let cow = ascii_lowercase_cow(input);
+            assert_eq!(
+                cow.as_ref(),
+                input.to_lowercase(),
+                "ascii_lowercase_cow failed Unicode lowering for {input:?}"
+            );
+        }
+    }
+
+    // =========================================================================
+    // AhoCorasickSet equivalence with AnyOf(Contains)
+    // =========================================================================
+
+    proptest! {
+        #[test]
+        fn ac_agrees_with_anyof_contains(
+            needles in prop::collection::vec("[a-z0-9._/]{1,12}", 8..=20),
+            haystack in "[[:print:]]{0,80}",
+        ) {
+            // Build both forms from the same needles. They MUST produce identical
+            // results on every haystack.
+            let ci_contains: Vec<CompiledMatcher> = needles.iter().map(|n| {
+                CompiledMatcher::Contains {
+                    value: n.to_lowercase(),
+                    case_insensitive: true,
+                }
+            }).collect();
+
+            let unoptimized = CompiledMatcher::AnyOf(ci_contains.clone());
+            let optimized = crate::compiler::optimize_any_of_for_test(ci_contains);
+
+            let event_json = json!({});
+            let event = JsonEvent::borrow(&event_json);
+            let value = EventValue::Str(haystack.clone().into());
+
+            prop_assert_eq!(
+                optimized.matches(&value, &event),
+                unoptimized.matches(&value, &event),
+                "AC vs AnyOf(Contains) disagree on haystack {:?}", haystack
+            );
         }
     }
 }

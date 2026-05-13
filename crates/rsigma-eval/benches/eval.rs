@@ -187,6 +187,95 @@ fn bench_eval_batch(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: contains-heavy rules — N plain |contains needles on CommandLine
+// ---------------------------------------------------------------------------
+
+fn bench_eval_contains_heavy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eval_contains_heavy");
+    group.sample_size(40);
+
+    let event_values = datagen::gen_event_values(1000);
+    let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
+
+    for n_patterns in [5, 10, 20, 50, 100, 200] {
+        let yaml = datagen::gen_n_contains_heavy_rules(1, n_patterns);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = rsigma_eval::Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        group.throughput(criterion::Throughput::Elements(events.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("patterns", n_patterns),
+            &(&engine, &events),
+            |b, (engine, events)| {
+                b.iter(|| {
+                    let mut total = 0usize;
+                    for event in *events {
+                        total += engine.evaluate(black_box(event)).len();
+                    }
+                    black_box(total);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark: AC threshold sweep — find the cross-over between
+// AnyOf(Contains) and AhoCorasickSet across haystack lengths.
+// ---------------------------------------------------------------------------
+
+fn bench_eval_ac_threshold_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eval_ac_threshold_sweep");
+    group.sample_size(30);
+
+    let mut rng = datagen::rng();
+    // Pre-generate one event per haystack length so each pattern-count run
+    // sees the same haystack distribution.
+    let events_per_len: Vec<(usize, Vec<JsonEvent<'_>>)> = [100usize, 1024, 8 * 1024, 64 * 1024]
+        .into_iter()
+        .map(|len| {
+            let values: Vec<serde_json::Value> = (0..50)
+                .map(|_| datagen::gen_event_with_cmdline_len(&mut rng, len))
+                .collect();
+            (len, values)
+        })
+        .map(|(len, values)| {
+            let leaked: &'static [serde_json::Value] = Box::leak(values.into_boxed_slice());
+            let events: Vec<JsonEvent<'_>> = leaked.iter().map(JsonEvent::borrow).collect();
+            (len, events)
+        })
+        .collect();
+
+    for n_patterns in [1usize, 2, 4, 8, 16, 32] {
+        let yaml = datagen::gen_n_contains_heavy_rules(1, n_patterns);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = rsigma_eval::Engine::new();
+        engine.add_collection(&collection).unwrap();
+
+        for (len, events) in &events_per_len {
+            let label = format!("p{n_patterns}_h{len}");
+            group.throughput(criterion::Throughput::Elements(events.len() as u64));
+            group.bench_with_input(
+                BenchmarkId::new("sweep", &label),
+                &(&engine, events),
+                |b, (engine, events)| {
+                    b.iter(|| {
+                        let mut total = 0usize;
+                        for event in *events {
+                            total += engine.evaluate(black_box(event)).len();
+                        }
+                        black_box(total);
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: regex-heavy rules
 // ---------------------------------------------------------------------------
 
@@ -230,6 +319,8 @@ criterion_group!(
     bench_eval_single_event,
     bench_eval_throughput,
     bench_eval_batch,
+    bench_eval_contains_heavy,
+    bench_eval_ac_threshold_sweep,
     bench_eval_wildcard_heavy,
     bench_eval_regex_heavy,
 );

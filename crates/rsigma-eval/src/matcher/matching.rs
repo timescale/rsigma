@@ -1,6 +1,7 @@
 use super::CompiledMatcher;
 use super::helpers::{
-    expand_template, extract_timestamp_part, match_cidr, match_numeric_value, match_str_value,
+    ascii_lowercase_cow, expand_template, extract_timestamp_part, match_cidr, match_numeric_value,
+    match_str_value,
 };
 use crate::event::{Event, EventValue};
 
@@ -57,6 +58,17 @@ impl CompiledMatcher {
             }),
 
             CompiledMatcher::Regex(re) => match_str_value(value, |s| re.is_match(s)),
+
+            CompiledMatcher::AhoCorasickSet {
+                automaton,
+                case_insensitive,
+            } => match_str_value(value, |s| {
+                if *case_insensitive {
+                    automaton.is_match(ascii_lowercase_cow(s).as_ref())
+                } else {
+                    automaton.is_match(s)
+                }
+            }),
 
             // -- Network --
             CompiledMatcher::Cidr(net) => match_cidr(value, net),
@@ -189,6 +201,16 @@ impl CompiledMatcher {
                 }
             }
             CompiledMatcher::Regex(re) => re.is_match(s),
+            CompiledMatcher::AhoCorasickSet {
+                automaton,
+                case_insensitive,
+            } => {
+                if *case_insensitive {
+                    automaton.is_match(ascii_lowercase_cow(s).as_ref())
+                } else {
+                    automaton.is_match(s)
+                }
+            }
             CompiledMatcher::Not(inner) => !inner.matches_str(s),
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches_str(s)),
             CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches_str(s)),
