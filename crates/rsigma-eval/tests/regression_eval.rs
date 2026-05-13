@@ -211,3 +211,82 @@ detection:
 
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn bloom_prefilter_preserves_match_results() {
+    // The bloom pre-filter is purely an optimization: enabling or disabling
+    // it must never change which rules fire on any event.
+    let mut engine = engine_from(CONTAINS_HEAVY_RULES);
+
+    let events = vec![
+        json!({"EventType": "login", "Image": "C:/Windows/System32/explorer.exe"}),
+        json!({"Image": "C:/Tools/MIMIKATZ.exe", "CommandLine": "mimikatz.exe sekurlsa::logonpasswords"}),
+        json!({"Image": "C:/Windows/System32/powershell.exe", "CommandLine": "powershell.exe -enc aHR0cHM6Ly9ldmls"}),
+        json!({"Image": "/usr/bin/whoami", "CommandLine": "whoami /all"}),
+        json!({"Image": "/usr/bin/notepad.exe", "CommandLine": "notepad readme.txt"}),
+        // Pure-digit event: bloom should reject every substring item.
+        json!({"Image": "0000000000", "CommandLine": "0000111122223333"}),
+        json!({}),
+    ];
+
+    engine.set_bloom_prefilter(false);
+    let no_bloom = evaluate_corpus(&engine, &events);
+
+    engine.set_bloom_prefilter(true);
+    let with_bloom = evaluate_corpus(&engine, &events);
+
+    assert_eq!(
+        no_bloom, with_bloom,
+        "bloom pre-filter changed match output"
+    );
+}
+
+#[test]
+fn bloom_prefilter_handles_condition_negation() {
+    // The condition `selection and not other` evaluates `other` first and
+    // negates the result. When `other` is a positive substring detection
+    // and the bloom verdict is `DefinitelyNoMatch`, the bloom short-circuits
+    // `other` to false; the negation flips it to true. This is the correct
+    // behavior at the Sigma semantic layer because the bloom only short-
+    // circuits cases where the underlying matcher would have returned false.
+    let yaml = r#"
+title: Selection Without Substring
+id: selection-without-substring
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        EventType: 'process_create'
+    other:
+        CommandLine|contains: 'whoami'
+    condition: selection and not other
+level: medium
+"#;
+    let mut engine = engine_from(yaml);
+    engine.set_bloom_prefilter(true);
+
+    let events = vec![
+        // No 'whoami' in CommandLine -> `other` false -> rule fires.
+        json!({"EventType": "process_create", "CommandLine": "notepad foo"}),
+        // 'whoami' present -> `other` true -> rule does NOT fire.
+        json!({"EventType": "process_create", "CommandLine": "exec whoami"}),
+        // Pure digits -> bloom rejects `other`'s substring -> `other` false
+        // -> rule fires (the bloom-driven rejection is the right answer).
+        json!({"EventType": "process_create", "CommandLine": "0123456789"}),
+    ];
+    let actual = evaluate_corpus(&engine, &events);
+
+    let expected: Vec<Vec<String>> = vec![
+        vec!["Selection Without Substring".into()],
+        Vec::<String>::new(),
+        vec!["Selection Without Substring".into()],
+    ];
+
+    assert_eq!(actual, expected);
+
+    // Also assert the result is identical without bloom.
+    engine.set_bloom_prefilter(false);
+    let no_bloom = evaluate_corpus(&engine, &events);
+    assert_eq!(no_bloom, expected);
+}

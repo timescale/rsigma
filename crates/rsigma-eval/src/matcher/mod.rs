@@ -64,6 +64,11 @@ pub enum CompiledMatcher {
     AhoCorasickSet {
         automaton: AhoCorasick,
         case_insensitive: bool,
+        /// Pre-lowered needles in the same order they were fed to
+        /// [`AhoCorasick::new`]. Retained so downstream consumers (e.g. the
+        /// engine's per-field bloom builder) can recover the pattern set
+        /// without parsing the automaton's internal state.
+        needles: Vec<String>,
     },
 
     /// Multi-pattern regex match via [`regex::RegexSet`].

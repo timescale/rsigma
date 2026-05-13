@@ -3729,6 +3729,7 @@ dependencies = [
 name = "rsigma-eval"
 version = "0.10.0"
 dependencies = [
+ "ahash",
  "aho-corasick",
  "base64",
  "chrono",

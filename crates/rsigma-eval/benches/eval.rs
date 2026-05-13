@@ -312,6 +312,67 @@ fn bench_eval_regex_set_heavy(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: bloom rejection — many substring-only rules vs events that
+// guaranteed-do-not-match any pattern. Measures the fast-reject path.
+// ---------------------------------------------------------------------------
+
+fn bench_eval_bloom_rejection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eval_bloom_rejection");
+    group.sample_size(20);
+
+    // 1000 events that contain only digits — guaranteed not to share any
+    // trigram with the alphabetical needles in `STRING_VALUES`.
+    let event_values = datagen::gen_non_matching_events(1000);
+    let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
+
+    for n_rules in [100, 500, 1000, 5000] {
+        let yaml = datagen::gen_n_substring_only_rules(n_rules);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+
+        // Default engine: bloom pre-filter off.
+        let mut off_engine = rsigma_eval::Engine::new();
+        off_engine.add_collection(&collection).unwrap();
+        // Bloom-enabled engine: same rules.
+        let mut on_engine = rsigma_eval::Engine::new();
+        on_engine.add_collection(&collection).unwrap();
+        on_engine.set_bloom_prefilter(true);
+
+        group.throughput(criterion::Throughput::Elements(events.len() as u64));
+
+        let off_label = format!("{n_rules}r_bloom_off");
+        group.bench_with_input(
+            BenchmarkId::new("default", &off_label),
+            &(&off_engine, &events),
+            |b, (engine, events)| {
+                b.iter(|| {
+                    let mut total = 0usize;
+                    for event in *events {
+                        total += engine.evaluate(black_box(event)).len();
+                    }
+                    black_box(total);
+                });
+            },
+        );
+
+        let on_label = format!("{n_rules}r_bloom_on");
+        group.bench_with_input(
+            BenchmarkId::new("bloom_prefilter", &on_label),
+            &(&on_engine, &events),
+            |b, (engine, events)| {
+                b.iter(|| {
+                    let mut total = 0usize;
+                    for event in *events {
+                        total += engine.evaluate(black_box(event)).len();
+                    }
+                    black_box(total);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: regex-heavy rules
 // ---------------------------------------------------------------------------
 
@@ -358,6 +419,7 @@ criterion_group!(
     bench_eval_contains_heavy,
     bench_eval_ac_threshold_sweep,
     bench_eval_regex_set_heavy,
+    bench_eval_bloom_rejection,
     bench_eval_wildcard_heavy,
     bench_eval_regex_heavy,
 );

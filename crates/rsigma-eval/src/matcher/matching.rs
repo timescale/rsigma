@@ -80,6 +80,7 @@ impl CompiledMatcher {
             CompiledMatcher::AhoCorasickSet {
                 automaton,
                 case_insensitive,
+                ..
             } => match_str_value(value, |s| {
                 if *case_insensitive {
                     automaton.is_match(ascii_lowercase_cow(s).as_ref())
@@ -226,6 +227,7 @@ impl CompiledMatcher {
             CompiledMatcher::AhoCorasickSet {
                 automaton,
                 case_insensitive: true,
+                ..
             } => automaton.is_match(lowered_str),
             CompiledMatcher::RegexSetMatch { set, mode } => {
                 regex_set_matches(set, *mode, lowered_str)
@@ -300,6 +302,7 @@ impl CompiledMatcher {
             CompiledMatcher::AhoCorasickSet {
                 automaton,
                 case_insensitive,
+                ..
             } => {
                 if *case_insensitive {
                     automaton.is_match(ascii_lowercase_cow(s).as_ref())

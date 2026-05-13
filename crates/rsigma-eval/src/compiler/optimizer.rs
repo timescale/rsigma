@@ -269,6 +269,7 @@ fn consume_contains(result: &mut Vec<CompiledMatcher>, needles: Vec<String>, ci:
         result.push(CompiledMatcher::AhoCorasickSet {
             automaton,
             case_insensitive: ci,
+            needles,
         });
         return;
     }

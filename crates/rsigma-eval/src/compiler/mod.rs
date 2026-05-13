@@ -87,6 +87,11 @@ pub struct CompiledDetectionItem {
     pub matcher: CompiledMatcher,
     /// If `Some(true)`, field must exist; `Some(false)`, must not exist.
     pub exists: Option<bool>,
+    /// Pre-computed flag set when the matcher is a positive substring
+    /// assertion eligible for bloom-filter pre-filtering. Recomputing the
+    /// recursive `is_positive_substring_matcher` walk for every event would
+    /// dominate the eval cost on rule sets where most items don't qualify.
+    pub bloom_eligible: bool,
 }
 
 // =============================================================================
@@ -268,10 +273,40 @@ fn validate_condition_refs(
 }
 
 /// Evaluate a compiled rule against an event, returning a `MatchResult` if it matches.
+///
+/// This is the public entry point for one-shot rule evaluation. It does no
+/// bloom pre-filtering; every detection item is evaluated directly. Engines
+/// that maintain a [`crate::engine::bloom_index::FieldBloomIndex`] should
+/// instead call [`evaluate_rule_with_bloom`].
 pub fn evaluate_rule(rule: &CompiledRule, event: &impl Event) -> Option<MatchResult> {
+    evaluate_rule_with_bloom(rule, event, &crate::engine::bloom_index::NoBloom)
+}
+
+/// Evaluate a compiled rule against an event with bloom pre-filtering.
+///
+/// `bloom` provides per-field verdicts for positive substring matchers.
+/// When `bloom.verdict_for_field(field)` returns `DefinitelyNoMatch`, any
+/// positive substring item targeting that field is short-circuited to
+/// `false` without invoking its matcher. The pre-filter is purely an
+/// optimization: it never changes the eval result vs `evaluate_rule`.
+pub(crate) fn evaluate_rule_with_bloom<E, B>(
+    rule: &CompiledRule,
+    event: &E,
+    bloom: &B,
+) -> Option<MatchResult>
+where
+    E: Event,
+    B: crate::engine::bloom_index::BloomLookup,
+{
     for condition in &rule.conditions {
         let mut matched_selections = Vec::new();
-        if eval_condition(condition, &rule.detections, event, &mut matched_selections) {
+        if eval_condition_with_bloom(
+            condition,
+            &rule.detections,
+            event,
+            &mut matched_selections,
+            bloom,
+        ) {
             let matched_fields =
                 collect_field_matches(&matched_selections, &rule.detections, event);
 
@@ -355,6 +390,7 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
             field: item.field.name.clone(),
             matcher: CompiledMatcher::Exists(expect),
             exists: Some(expect),
+            bloom_eligible: false,
         });
     }
 
@@ -389,10 +425,14 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
         optimizer::optimize_any_of(matchers)
     };
 
+    let bloom_eligible = item.field.name.is_some()
+        && crate::engine::bloom_index::is_positive_substring_matcher(&combined);
+
     Ok(CompiledDetectionItem {
         field: item.field.name.clone(),
         matcher: combined,
         exists: None,
+        bloom_eligible,
     })
 }
 
@@ -710,10 +750,35 @@ pub fn eval_condition(
     event: &impl Event,
     matched_selections: &mut Vec<String>,
 ) -> bool {
+    eval_condition_with_bloom(
+        expr,
+        detections,
+        event,
+        matched_selections,
+        &crate::engine::bloom_index::NoBloom,
+    )
+}
+
+/// Bloom-aware version of [`eval_condition`].
+///
+/// Identical to `eval_condition` except that positive substring leaves are
+/// short-circuited to `false` when the bloom proves no pattern can match
+/// the event's field value.
+pub(crate) fn eval_condition_with_bloom<E, B>(
+    expr: &ConditionExpr,
+    detections: &HashMap<String, CompiledDetection>,
+    event: &E,
+    matched_selections: &mut Vec<String>,
+    bloom: &B,
+) -> bool
+where
+    E: Event,
+    B: crate::engine::bloom_index::BloomLookup,
+{
     match expr {
         ConditionExpr::Identifier(name) => {
             if let Some(det) = detections.get(name) {
-                let result = eval_detection(det, event);
+                let result = eval_detection_with_bloom(det, event, bloom);
                 if result {
                     matched_selections.push(name.clone());
                 }
@@ -725,13 +790,15 @@ pub fn eval_condition(
 
         ConditionExpr::And(exprs) => exprs
             .iter()
-            .all(|e| eval_condition(e, detections, event, matched_selections)),
+            .all(|e| eval_condition_with_bloom(e, detections, event, matched_selections, bloom)),
 
         ConditionExpr::Or(exprs) => exprs
             .iter()
-            .any(|e| eval_condition(e, detections, event, matched_selections)),
+            .any(|e| eval_condition_with_bloom(e, detections, event, matched_selections, bloom)),
 
-        ConditionExpr::Not(inner) => !eval_condition(inner, detections, event, matched_selections),
+        ConditionExpr::Not(inner) => {
+            !eval_condition_with_bloom(inner, detections, event, matched_selections, bloom)
+        }
 
         ConditionExpr::Selector {
             quantifier,
@@ -751,7 +818,7 @@ pub fn eval_condition(
             let mut match_count = 0u64;
             for name in &matching_names {
                 if let Some(det) = detections.get(*name)
-                    && eval_detection(det, event)
+                    && eval_detection_with_bloom(det, event, bloom)
                 {
                     match_count += 1;
                     matched_selections.push((*name).clone());
@@ -767,19 +834,43 @@ pub fn eval_condition(
     }
 }
 
-/// Evaluate a compiled detection against an event.
-fn eval_detection(detection: &CompiledDetection, event: &impl Event) -> bool {
+/// Evaluate a compiled detection item against an event without bloom
+/// pre-filtering. Used only by the in-crate compiler tests; the production
+/// paths run through `eval_detection_item_with_bloom` from
+/// `evaluate_rule_with_bloom`.
+#[cfg(test)]
+fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool {
+    eval_detection_item_with_bloom(item, event, &crate::engine::bloom_index::NoBloom)
+}
+
+/// Evaluate a compiled detection against an event with a bloom lookup.
+fn eval_detection_with_bloom<E, B>(detection: &CompiledDetection, event: &E, bloom: &B) -> bool
+where
+    E: Event,
+    B: crate::engine::bloom_index::BloomLookup,
+{
     match detection {
-        CompiledDetection::AllOf(items) => {
-            items.iter().all(|item| eval_detection_item(item, event))
-        }
-        CompiledDetection::AnyOf(dets) => dets.iter().any(|d| eval_detection(d, event)),
+        CompiledDetection::AllOf(items) => items
+            .iter()
+            .all(|item| eval_detection_item_with_bloom(item, event, bloom)),
+        CompiledDetection::AnyOf(dets) => dets
+            .iter()
+            .any(|d| eval_detection_with_bloom(d, event, bloom)),
         CompiledDetection::Keywords(matcher) => matcher.matches_keyword(event),
     }
 }
 
-/// Evaluate a single compiled detection item against an event.
-fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool {
+/// Evaluate a single detection item with bloom pre-filtering.
+///
+/// When the matcher targets a single field and is a positive substring
+/// matcher (not under negation), the bloom verdict is consulted first. A
+/// `DefinitelyNoMatch` verdict guarantees the matcher would return `false`,
+/// so we return early without invoking it.
+fn eval_detection_item_with_bloom<E, B>(item: &CompiledDetectionItem, event: &E, bloom: &B) -> bool
+where
+    E: Event,
+    B: crate::engine::bloom_index::BloomLookup,
+{
     if let Some(expect_exists) = item.exists {
         if let Some(field) = &item.field {
             let exists = event.get_field(field).is_some_and(|v| !v.is_null());
@@ -791,6 +882,12 @@ fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool
     match &item.field {
         Some(field_name) => {
             if let Some(value) = event.get_field(field_name) {
+                if item.bloom_eligible
+                    && bloom.verdict_for_field(field_name)
+                        == crate::engine::bloom_index::BloomVerdict::DefinitelyNoMatch
+                {
+                    return false;
+                }
                 item.matcher.matches(&value, event)
             } else {
                 matches!(item.matcher, CompiledMatcher::Null)
@@ -836,7 +933,7 @@ fn collect_detection_fields(
         }
         CompiledDetection::AnyOf(dets) => {
             for d in dets {
-                if eval_detection(d, event) {
+                if eval_detection_with_bloom(d, event, &crate::engine::bloom_index::NoBloom) {
                     collect_detection_fields(d, event, out);
                 }
             }

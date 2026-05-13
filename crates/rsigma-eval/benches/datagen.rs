@@ -340,6 +340,80 @@ pub fn gen_regex_rule(rng: &mut StdRng, id: usize) -> String {
     )
 }
 
+/// Generate a single rule whose detection items use only `|contains`
+/// against a randomly-chosen field, with one needle per item.
+///
+/// Differs from `gen_single_rule` in that EVERY rule produced here is
+/// substring-only, so the rule index marks them all unindexable. This is
+/// the worst case for the engine without bloom pre-filtering and the best
+/// case for measuring bloom-rejection benefits.
+pub fn gen_substring_only_rule(rng: &mut StdRng, id: usize) -> String {
+    let num_items = rng.random_range(1..=3);
+    let mut detection = String::new();
+    detection.push_str("    selection:\n");
+    let mut used_fields = std::collections::HashSet::new();
+    for _ in 0..num_items {
+        let field = FIELD_NAMES[rng.random_range(0..FIELD_NAMES.len())];
+        if !used_fields.insert(field) {
+            continue;
+        }
+        let val = STRING_VALUES[rng.random_range(0..STRING_VALUES.len())];
+        let modifier = match rng.random_range(0..3u8) {
+            0 => "|contains",
+            1 => "|startswith",
+            _ => "|endswith",
+        };
+        detection.push_str(&format!("        {field}{modifier}: '{val}'\n"));
+    }
+    format!(
+        "title: Substring Rule {id}\n\
+         id: substring-rule-{id:06}\n\
+         logsource:\n\
+         \x20   product: windows\n\
+         \x20   category: process_creation\n\
+         detection:\n\
+         {detection}\
+         \x20   condition: selection\n\
+         level: medium\n"
+    )
+}
+
+/// Generate `n` substring-only rules (see [`gen_substring_only_rule`]).
+pub fn gen_n_substring_only_rules(n: usize) -> String {
+    let mut rng = rng();
+    let mut docs = Vec::with_capacity(n);
+    for i in 0..n {
+        docs.push(gen_substring_only_rule(&mut rng, i));
+    }
+    docs.join("---\n")
+}
+
+/// Generate a synthetic event whose string fields contain ONLY digits and
+/// punctuation, guaranteeing no overlap with `STRING_VALUES`. Useful for
+/// the bloom rejection benchmark where every event must be a guaranteed
+/// non-match against the rule corpus.
+pub fn gen_non_matching_event(rng: &mut StdRng) -> serde_json::Value {
+    let cmdline: String = (0..rng.random_range(20..60))
+        .map(|_| (rng.random_range(b'0'..=b'9')) as char)
+        .collect();
+    serde_json::json!({
+        "User": "0000",
+        "Image": "/0000/0000/0000",
+        "CommandLine": cmdline,
+        "ParentImage": "/0000/0000/0000",
+        "SourceIp": "10.0.0.0",
+        "DestinationPort": 0,
+        "EventType": "0000",
+        "ProcessName": "/0000/0000/0000",
+        "OriginalFileName": "0000",
+    })
+}
+
+pub fn gen_non_matching_events(n: usize) -> Vec<serde_json::Value> {
+    let mut rng = rng();
+    (0..n).map(|_| gen_non_matching_event(&mut rng)).collect()
+}
+
 /// Generate a multi-document YAML string with `n` detection rules.
 pub fn gen_n_rules(n: usize) -> String {
     let mut rng = rng();

@@ -4,6 +4,7 @@
 //! against them. It supports optional logsource-based pre-filtering to
 //! reduce the number of rules evaluated per event.
 
+pub(crate) mod bloom_index;
 mod filters;
 #[cfg(test)]
 mod tests;
@@ -12,12 +13,16 @@ use rsigma_parser::{
     ConditionExpr, FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule,
 };
 
-use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule};
+use crate::compiler::{
+    CompiledRule, compile_detection, compile_rule, evaluate_rule, evaluate_rule_with_bloom,
+};
 use crate::error::Result;
 use crate::event::Event;
 use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::MatchResult;
 use crate::rule_index::RuleIndex;
+
+use bloom_index::{BloomCache, FieldBloomIndex};
 
 use filters::{filter_logsource_contains, logsource_matches, rewrite_condition_identifiers};
 
@@ -68,6 +73,17 @@ pub struct Engine {
     /// Inverted index mapping `(field, exact_value)` to candidate rule indices.
     /// Rebuilt after every rule mutation (add, filter).
     rule_index: RuleIndex,
+    /// Per-field bloom filter over positive substring needles. Rebuilt
+    /// alongside `rule_index`. Consulted only when `bloom_prefilter` is
+    /// enabled.
+    bloom_index: FieldBloomIndex,
+    /// Toggle for bloom pre-filtering. Off by default: the per-event probe
+    /// overhead exceeds the savings on rule sets where most events overlap
+    /// with at least one needle's trigrams. Workloads with many substring
+    /// rules and mostly-non-matching events (e.g. high-volume telemetry
+    /// streams against an active threat-intel ruleset) opt in via
+    /// [`Engine::set_bloom_prefilter`].
+    bloom_prefilter: bool,
 }
 
 impl Engine {
@@ -79,6 +95,8 @@ impl Engine {
             include_event: false,
             filter_counter: 0,
             rule_index: RuleIndex::empty(),
+            bloom_index: FieldBloomIndex::empty(),
+            bloom_prefilter: false,
         }
     }
 
@@ -90,7 +108,32 @@ impl Engine {
             include_event: false,
             filter_counter: 0,
             rule_index: RuleIndex::empty(),
+            bloom_index: FieldBloomIndex::empty(),
+            bloom_prefilter: false,
         }
+    }
+
+    /// Enable or disable bloom-filter pre-filtering of positive substring
+    /// detection items.
+    ///
+    /// When enabled, `evaluate*` short-circuits any positive substring
+    /// matcher (`Contains` / `StartsWith` / `EndsWith` / `AhoCorasickSet`,
+    /// alone or wrapped in `CaseInsensitiveGroup`) whose field cannot
+    /// possibly contain a needle trigram.
+    ///
+    /// Disabled by default. The per-event probe (trigram extraction +
+    /// double hashing) costs ~1 µs on a typical CommandLine field, which
+    /// outweighs the savings on rule sets where most events overlap with
+    /// at least one needle. Enable for workloads that pair many substring
+    /// rules with mostly-non-matching events; benchmark with
+    /// `eval_bloom_rejection` before flipping it on in production.
+    pub fn set_bloom_prefilter(&mut self, enabled: bool) {
+        self.bloom_prefilter = enabled;
+    }
+
+    /// Returns whether bloom pre-filtering is currently enabled.
+    pub fn bloom_prefilter_enabled(&self) -> bool {
+        self.bloom_prefilter
     }
 
     /// Set global `include_event` — when `true`, all match results include
@@ -261,17 +304,48 @@ impl Engine {
         self.rebuild_index();
     }
 
-    /// Rebuild the inverted index from the current rule set.
+    /// Rebuild every per-engine index from the current rule set.
+    ///
+    /// Called after every rule mutation. Both the inverted index and the
+    /// per-field bloom filter must reflect the same view of the rules,
+    /// so they share a single rebuild path.
     fn rebuild_index(&mut self) {
         self.rule_index = RuleIndex::build(&self.rules);
+        self.bloom_index = FieldBloomIndex::build(&self.rules);
     }
 
     /// Evaluate an event against candidate rules using the inverted index.
     pub fn evaluate<E: Event>(&self, event: &E) -> Vec<MatchResult> {
+        if self.bloom_prefilter {
+            self.evaluate_with_bloom_path(event)
+        } else {
+            self.evaluate_no_bloom_path(event)
+        }
+    }
+
+    fn evaluate_no_bloom_path<E: Event>(&self, event: &E) -> Vec<MatchResult> {
+        // The public `evaluate_rule` is not generic over `BloomLookup`, so
+        // the no-bloom hot path lowers to straight-line code identical to
+        // the pre-bloom engine.
         let mut results = Vec::new();
         for idx in self.rule_index.candidates(event) {
             let rule = &self.rules[idx];
             if let Some(mut m) = evaluate_rule(rule, event) {
+                if self.include_event && m.event.is_none() {
+                    m.event = Some(event.to_json());
+                }
+                results.push(m);
+            }
+        }
+        results
+    }
+
+    fn evaluate_with_bloom_path<E: Event>(&self, event: &E) -> Vec<MatchResult> {
+        let bloom = BloomCache::new(&self.bloom_index, event);
+        let mut results = Vec::new();
+        for idx in self.rule_index.candidates(event) {
+            let rule = &self.rules[idx];
+            if let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom) {
                 if self.include_event && m.event.is_none() {
                     m.event = Some(event.to_json());
                 }
@@ -291,11 +365,44 @@ impl Engine {
         event: &E,
         event_logsource: &LogSource,
     ) -> Vec<MatchResult> {
+        if self.bloom_prefilter {
+            self.evaluate_with_logsource_with_bloom(event, event_logsource)
+        } else {
+            self.evaluate_with_logsource_no_bloom(event, event_logsource)
+        }
+    }
+
+    fn evaluate_with_logsource_no_bloom<E: Event>(
+        &self,
+        event: &E,
+        event_logsource: &LogSource,
+    ) -> Vec<MatchResult> {
         let mut results = Vec::new();
         for idx in self.rule_index.candidates(event) {
             let rule = &self.rules[idx];
             if logsource_matches(&rule.logsource, event_logsource)
                 && let Some(mut m) = evaluate_rule(rule, event)
+            {
+                if self.include_event && m.event.is_none() {
+                    m.event = Some(event.to_json());
+                }
+                results.push(m);
+            }
+        }
+        results
+    }
+
+    fn evaluate_with_logsource_with_bloom<E: Event>(
+        &self,
+        event: &E,
+        event_logsource: &LogSource,
+    ) -> Vec<MatchResult> {
+        let bloom = BloomCache::new(&self.bloom_index, event);
+        let mut results = Vec::new();
+        for idx in self.rule_index.candidates(event) {
+            let rule = &self.rules[idx];
+            if logsource_matches(&rule.logsource, event_logsource)
+                && let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom)
             {
                 if self.include_event && m.event.is_none() {
                     m.event = Some(event.to_json());
