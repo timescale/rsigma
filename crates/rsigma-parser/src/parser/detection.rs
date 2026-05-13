@@ -250,6 +250,12 @@ pub fn parse_field_spec(key: &str) -> Result<FieldSpec> {
 
     let mut modifiers = Vec::new();
     for &mod_str in &parts[1..] {
+        // Sigma reserves `not` for condition expressions; it is not a value
+        // modifier. Catch this idiom up front so the diagnostic explains
+        // the workaround instead of just saying "unknown modifier".
+        if mod_str == "not" {
+            return Err(SigmaParserError::NotIsNotAModifier);
+        }
         let m = mod_str
             .parse::<Modifier>()
             .map_err(|_| SigmaParserError::UnknownModifier(mod_str.to_string()))?;

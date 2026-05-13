@@ -31,6 +31,17 @@ pub enum SigmaParserError {
     #[error("Unknown modifier '{0}'")]
     UnknownModifier(String),
 
+    /// Reserved when a user writes `field|not: value` or
+    /// `field|contains|not: value` as if `not` were a value modifier.
+    /// Sigma does not support a `|not` modifier; negation is expressed at
+    /// the condition level (`not selection` or `selection and not filter`).
+    #[error(
+        "`not` is not a value modifier in Sigma; express negation in the \
+         condition (e.g. `not selection`) or move the inverted check into a \
+         separate detection used as a filter (e.g. `selection and not other`)"
+    )]
+    NotIsNotAModifier,
+
     #[error("Invalid field specification: {0}")]
     InvalidFieldSpec(String),
 

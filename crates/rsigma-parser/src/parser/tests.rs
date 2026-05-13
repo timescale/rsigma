@@ -302,6 +302,30 @@ fn test_unknown_modifier_error() {
     assert!(result.is_err());
 }
 
+#[test]
+fn test_not_modifier_is_rejected_with_guidance() {
+    // `field|not: value` is a common mistranslation of pySigma's
+    // `not selection` condition idiom. The parser must reject it with a
+    // dedicated error pointing the user at the correct workaround.
+    let leaf = parse_field_spec("field|not");
+    assert!(matches!(
+        leaf,
+        Err(crate::error::SigmaParserError::NotIsNotAModifier)
+    ));
+
+    // Also rejected when `not` is composed after another modifier.
+    let composed = parse_field_spec("CommandLine|contains|not");
+    assert!(matches!(
+        composed,
+        Err(crate::error::SigmaParserError::NotIsNotAModifier)
+    ));
+
+    // The error message names both alternatives so users can act on it.
+    let msg = format!("{}", composed.unwrap_err());
+    assert!(msg.contains("not selection"), "msg was: {msg}");
+    assert!(msg.contains("filter"), "msg was: {msg}");
+}
+
 // ── Field modifier edge cases ────────────────────────────────────────
 
 #[test]
