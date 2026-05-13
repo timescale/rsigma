@@ -365,6 +365,29 @@ transformations:
     value: 5m
 ```
 
+## Bloom Pre-Filter (Opt-In)
+
+The engine can build a per-field bloom filter at rule-load time over every positive substring needle (`Contains` / `StartsWith` / `EndsWith` / `AhoCorasickSet`). When enabled, `Engine::evaluate` short-circuits any positive substring detection item whose field value cannot possibly contain a needle trigram, skipping the matcher entirely.
+
+**Off by default.** The per-event probe (trigram extraction + double hashing) costs ~1 µs on a typical CommandLine field. On rule sets where most events overlap with at least one needle, the probe is pure overhead. The bloom only pays off on substring-heavy rule sets paired with mostly-non-matching events (e.g. high-volume telemetry against an active threat-intel ruleset).
+
+```rust
+let mut engine = Engine::new();
+engine.set_bloom_prefilter(true);
+// Optional: tighten or relax the 1 MB default budget.
+engine.set_bloom_max_bytes(2 * 1024 * 1024);
+engine.add_collection(&collection)?;
+```
+
+CLI equivalents on `rsigma eval` and `rsigma daemon`:
+
+```
+--bloom-prefilter              # enable
+--bloom-max-bytes <BYTES>      # override 1 MB default
+```
+
+Always benchmark against representative events before flipping it on; the `eval_bloom_rejection` Criterion group in `crates/rsigma-eval/benches/eval.rs` reports throughput with both default-off and bloom-on engines so you can size the win on your corpus.
+
 ## Constants and Limits
 
 | Constant | Value | Purpose |

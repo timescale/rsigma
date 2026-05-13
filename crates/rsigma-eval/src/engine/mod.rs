@@ -84,6 +84,10 @@ pub struct Engine {
     /// streams against an active threat-intel ruleset) opt in via
     /// [`Engine::set_bloom_prefilter`].
     bloom_prefilter: bool,
+    /// Memory budget the bloom builder is allowed to consume across all
+    /// per-field filters. `None` means use the crate default
+    /// (`bloom_index::DEFAULT_MAX_TOTAL_BYTES`, 1 MB).
+    bloom_max_bytes: Option<usize>,
 }
 
 impl Engine {
@@ -97,6 +101,7 @@ impl Engine {
             rule_index: RuleIndex::empty(),
             bloom_index: FieldBloomIndex::empty(),
             bloom_prefilter: false,
+            bloom_max_bytes: None,
         }
     }
 
@@ -110,6 +115,7 @@ impl Engine {
             rule_index: RuleIndex::empty(),
             bloom_index: FieldBloomIndex::empty(),
             bloom_prefilter: false,
+            bloom_max_bytes: None,
         }
     }
 
@@ -134,6 +140,27 @@ impl Engine {
     /// Returns whether bloom pre-filtering is currently enabled.
     pub fn bloom_prefilter_enabled(&self) -> bool {
         self.bloom_prefilter
+    }
+
+    /// Set the memory budget for the per-field bloom index.
+    ///
+    /// Must be called **before** `add_collection` / `add_rule` for the new
+    /// budget to take effect on the existing rule set; otherwise it is
+    /// applied at the next index rebuild. The default budget is 1 MB,
+    /// shared across all per-field filters. Lower the cap on memory-
+    /// constrained deployments; raise it for large rule sets where the
+    /// default starts evicting useful filters.
+    pub fn set_bloom_max_bytes(&mut self, max_bytes: usize) {
+        self.bloom_max_bytes = Some(max_bytes);
+        if !self.rules.is_empty() {
+            self.rebuild_index();
+        }
+    }
+
+    /// Returns the configured bloom memory budget, if one has been set
+    /// explicitly. `None` means the crate default (1 MB) is in use.
+    pub fn bloom_max_bytes(&self) -> Option<usize> {
+        self.bloom_max_bytes
     }
 
     /// Set global `include_event` — when `true`, all match results include
@@ -311,7 +338,10 @@ impl Engine {
     /// so they share a single rebuild path.
     fn rebuild_index(&mut self) {
         self.rule_index = RuleIndex::build(&self.rules);
-        self.bloom_index = FieldBloomIndex::build(&self.rules);
+        self.bloom_index = match self.bloom_max_bytes {
+            Some(budget) => FieldBloomIndex::build_with_budget(&self.rules, budget),
+            None => FieldBloomIndex::build(&self.rules),
+        };
     }
 
     /// Evaluate an event against candidate rules using the inverted index.

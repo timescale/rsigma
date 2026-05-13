@@ -79,6 +79,66 @@ fn eval_single_event_match() {
 }
 
 #[test]
+fn eval_bloom_prefilter_flag_is_accepted() {
+    // Smoke test: --bloom-prefilter must be accepted and produce the same
+    // match output as the default path. Bloom is purely an optimization;
+    // results must be identical.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--bloom-prefilter",
+            "--event",
+            r#"{"CommandLine": "download malware.exe"}"#,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Test Rule"));
+}
+
+#[test]
+fn eval_bloom_prefilter_with_max_bytes() {
+    // --bloom-max-bytes pairs with --bloom-prefilter; both must be accepted.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--bloom-prefilter",
+            "--bloom-max-bytes",
+            "131072", // 128 KB
+            "--event",
+            r#"{"CommandLine": "download malware.exe"}"#,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Test Rule"));
+}
+
+#[test]
+fn eval_bloom_prefilter_rejects_non_matching_event() {
+    // Pure-digit event cannot share trigrams with the alphabetical needles
+    // in the test rule. Bloom rejects, --bloom-prefilter must produce
+    // identical (no-match) output.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--bloom-prefilter",
+            "--event",
+            r#"{"CommandLine": "0123456789"}"#,
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No matches"));
+}
+
+#[test]
 fn eval_single_event_no_match() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()

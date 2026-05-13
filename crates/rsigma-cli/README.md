@@ -145,6 +145,8 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 | `--correlation-event-mode` | string | `"none"` | `none`, `full`, or `refs` |
 | `--max-correlation-events` | integer | **10** | Max events stored per correlation window |
 | `--timestamp-field` | repeatable | `[]` | Event field(s) for timestamp extraction |
+| `--bloom-prefilter` | flag | `false` | Enable bloom-filter pre-filtering of positive substring matchers (workload-dependent; see `crates/rsigma-eval/README.md`) |
+| `--bloom-max-bytes` | integer | **1048576** | Memory budget for the bloom index (no effect without `--bloom-prefilter`) |
 | `--buffer-size` | integer | **10000** | Bounded channel capacity for source-to-engine and engine-to-sink queues |
 | `--batch-size` | integer | **1** | Maximum events per engine lock acquisition (reduces mutex overhead under load) |
 | `--drain-timeout` | integer | **5** | Seconds to wait for in-flight events to drain on shutdown |
@@ -372,6 +374,8 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--input-format` | string | `"auto"` | Input log format: `auto`, `json`, `syslog`, `plain`, `logfmt`\*, `cef`\* |
 | `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |
 | `--fail-on-detection` | flag | `false` | Exit with code 1 when any detection or correlation fires. Useful for CI/CD pipelines |
+| `--bloom-prefilter` | flag | `false` | Enable bloom-filter pre-filtering of positive substring matchers (see `crates/rsigma-eval/README.md` for the trade-off) |
+| `--bloom-max-bytes` | integer | **1048576** | Memory budget for the bloom index (no effect without `--bloom-prefilter`) |
 
 \* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature, `evtx` requires the `evtx` feature.
 

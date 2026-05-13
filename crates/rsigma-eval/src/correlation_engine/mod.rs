@@ -104,6 +104,19 @@ impl CorrelationEngine {
         self.engine.set_include_event(include);
     }
 
+    /// Forward to [`crate::Engine::set_bloom_prefilter`] on the inner
+    /// detection engine. Off by default; the optimization helps only on
+    /// substring-heavy rule sets paired with mostly-non-matching events.
+    pub fn set_bloom_prefilter(&mut self, enabled: bool) {
+        self.engine.set_bloom_prefilter(enabled);
+    }
+
+    /// Forward to [`crate::Engine::set_bloom_max_bytes`] on the inner
+    /// detection engine.
+    pub fn set_bloom_max_bytes(&mut self, max_bytes: usize) {
+        self.engine.set_bloom_max_bytes(max_bytes);
+    }
+
     /// Set the global correlation event mode.
     ///
     /// - `None`: no event storage (default)

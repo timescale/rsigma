@@ -320,6 +320,28 @@ enum Commands {
         /// for security. Use this flag to opt in to remote include resolution.
         #[arg(long = "allow-remote-include")]
         allow_remote_include: bool,
+
+        /// Enable bloom-filter pre-filtering of positive substring matchers.
+        ///
+        /// Off by default. When enabled, the engine builds a per-field bloom
+        /// over every rule's `|contains` / `|startswith` / `|endswith`
+        /// needles and short-circuits items whose field value cannot
+        /// possibly contain a needle trigram. The probe costs ~1 µs per
+        /// event, so this only pays off on rule sets where most events do
+        /// NOT match any pattern (e.g. high-volume telemetry against
+        /// substring-heavy threat-intel rules). Run the
+        /// `eval_bloom_rejection` benchmark on representative data before
+        /// flipping this on in production.
+        #[arg(long = "bloom-prefilter")]
+        bloom_prefilter: bool,
+
+        /// Memory budget (in bytes) for the bloom index. Defaults to 1 MB
+        /// (1048576). Lower the cap on memory-constrained deployments;
+        /// raise it for very large rule sets where the default starts
+        /// evicting useful filters. Has no effect unless
+        /// `--bloom-prefilter` is set.
+        #[arg(long = "bloom-max-bytes")]
+        bloom_max_bytes: Option<usize>,
     },
 
     /// Evaluate events against Sigma rules
@@ -417,6 +439,16 @@ enum Commands {
         /// Useful in CI/CD pipelines to fail a build on detection.
         #[arg(long = "fail-on-detection")]
         fail_on_detection: bool,
+
+        /// Enable bloom-filter pre-filtering of positive substring matchers.
+        /// See `rsigma daemon --help` for the trade-off.
+        #[arg(long = "bloom-prefilter")]
+        bloom_prefilter: bool,
+
+        /// Memory budget (in bytes) for the bloom index. Defaults to 1 MB.
+        /// No effect unless `--bloom-prefilter` is set.
+        #[arg(long = "bloom-max-bytes")]
+        bloom_max_bytes: Option<usize>,
     },
 
     /// Convert Sigma rules to backend-native queries
@@ -567,6 +599,8 @@ fn main() {
             #[cfg(feature = "daemon-nats")]
             consumer_group,
             allow_remote_include,
+            bloom_prefilter,
+            bloom_max_bytes,
         } => {
             #[cfg(feature = "daemon-nats")]
             let nats_auth = NatsAuthArgs {
@@ -637,6 +671,8 @@ fn main() {
                 #[cfg(feature = "daemon-nats")]
                 consumer_group,
                 allow_remote_include,
+                bloom_prefilter,
+                bloom_max_bytes,
             )
         }
         Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
@@ -695,6 +731,8 @@ fn main() {
             input_format,
             syslog_tz,
             fail_on_detection,
+            bloom_prefilter,
+            bloom_max_bytes,
         } => {
             let had_matches = commands::cmd_eval(
                 rules,
@@ -712,6 +750,8 @@ fn main() {
                 timestamp_fields,
                 input_format,
                 syslog_tz,
+                bloom_prefilter,
+                bloom_max_bytes,
             );
             if fail_on_detection && had_matches {
                 process::exit(exit_code::FINDINGS);
@@ -801,6 +841,8 @@ fn cmd_daemon(
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
     allow_remote_include: bool,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
 ) {
     // Set up structured logging
     tracing_subscriber::fmt()
@@ -875,6 +917,8 @@ fn cmd_daemon(
         consumer_group,
         state_restore_mode,
         allow_remote_include,
+        bloom_prefilter,
+        bloom_max_bytes,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

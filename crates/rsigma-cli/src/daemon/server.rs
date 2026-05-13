@@ -89,6 +89,12 @@ pub struct DaemonConfig {
     pub drain_timeout: u64,
     pub input_format: InputFormat,
     pub allow_remote_include: bool,
+    /// Enable opt-in bloom-filter pre-filtering of positive substring
+    /// matchers. Off by default; benefit is workload-dependent.
+    pub bloom_prefilter: bool,
+    /// Optional override for the bloom memory budget (bytes). `None` means
+    /// the crate default (1 MB).
+    pub bloom_max_bytes: Option<usize>,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -113,6 +119,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
     engine.set_allow_remote_include(config.allow_remote_include);
+    engine.set_bloom_prefilter(config.bloom_prefilter);
+    if let Some(budget) = config.bloom_max_bytes {
+        engine.set_bloom_max_bytes(budget);
+    }
 
     // Set up dynamic source resolver if any pipeline has dynamic sources
     let has_dynamic = config.pipelines.iter().any(|p| p.is_dynamic());

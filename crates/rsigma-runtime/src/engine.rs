@@ -21,6 +21,12 @@ pub struct RuntimeEngine {
     include_event: bool,
     source_resolver: Option<Arc<dyn SourceResolver>>,
     allow_remote_include: bool,
+    /// Opt-in bloom-filter pre-filtering of positive substring matchers.
+    /// Forwarded to the inner detection engine on every rule reload.
+    bloom_prefilter: bool,
+    /// Optional override for the bloom memory budget in bytes. `None`
+    /// means use the eval crate default.
+    bloom_max_bytes: Option<usize>,
 }
 
 enum EngineVariant {
@@ -51,7 +57,22 @@ impl RuntimeEngine {
             include_event,
             source_resolver: None,
             allow_remote_include: false,
+            bloom_prefilter: false,
+            bloom_max_bytes: None,
         }
+    }
+
+    /// Enable or disable bloom-filter pre-filtering on the inner detection
+    /// engine. Off by default. Applies on the next `load_rules()`; pre-load
+    /// callers should set this before calling `load_rules()`.
+    pub fn set_bloom_prefilter(&mut self, enabled: bool) {
+        self.bloom_prefilter = enabled;
+    }
+
+    /// Override the bloom memory budget on the inner detection engine.
+    /// Applies on the next `load_rules()`.
+    pub fn set_bloom_max_bytes(&mut self, max_bytes: usize) {
+        self.bloom_max_bytes = Some(max_bytes);
     }
 
     /// Set a source resolver for dynamic pipeline sources.
@@ -177,6 +198,10 @@ impl RuntimeEngine {
         if has_correlations {
             let mut engine = CorrelationEngine::new(self.corr_config.clone());
             engine.set_include_event(self.include_event);
+            if let Some(budget) = self.bloom_max_bytes {
+                engine.set_bloom_max_bytes(budget);
+            }
+            engine.set_bloom_prefilter(self.bloom_prefilter);
             for p in &self.pipelines {
                 engine.add_pipeline(p.clone());
             }
@@ -198,6 +223,10 @@ impl RuntimeEngine {
         } else {
             let mut engine = Engine::new();
             engine.set_include_event(self.include_event);
+            if let Some(budget) = self.bloom_max_bytes {
+                engine.set_bloom_max_bytes(budget);
+            }
+            engine.set_bloom_prefilter(self.bloom_prefilter);
             for p in &self.pipelines {
                 engine.add_pipeline(p.clone());
             }

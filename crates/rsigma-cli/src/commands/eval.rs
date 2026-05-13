@@ -64,6 +64,8 @@ pub(crate) fn cmd_eval(
     timestamp_fields: Vec<String>,
     input_format: String,
     syslog_tz: String,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
 ) -> bool {
     let collection = crate::load_collection(&rules_path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
@@ -104,6 +106,8 @@ pub(crate) fn cmd_eval(
             include_event,
             &input_format,
             &syslog_tz,
+            bloom_prefilter,
+            bloom_max_bytes,
         )
     } else {
         cmd_eval_detection_only(
@@ -116,6 +120,8 @@ pub(crate) fn cmd_eval(
             include_event,
             &input_format,
             &syslog_tz,
+            bloom_prefilter,
+            bloom_max_bytes,
         )
     }
 }
@@ -133,9 +139,15 @@ fn cmd_eval_with_correlations(
     include_event: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
+    if let Some(budget) = bloom_max_bytes {
+        engine.set_bloom_max_bytes(budget);
+    }
+    engine.set_bloom_prefilter(bloom_prefilter);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -378,9 +390,15 @@ fn cmd_eval_detection_only(
     include_event: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
 ) -> bool {
     let mut engine = Engine::new();
     engine.set_include_event(include_event);
+    if let Some(budget) = bloom_max_bytes {
+        engine.set_bloom_max_bytes(budget);
+    }
+    engine.set_bloom_prefilter(bloom_prefilter);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
