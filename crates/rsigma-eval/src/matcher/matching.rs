@@ -1,8 +1,8 @@
-use super::CompiledMatcher;
 use super::helpers::{
     ascii_lowercase_cow, expand_template, extract_timestamp_part, match_cidr, match_numeric_value,
     match_str_value,
 };
+use super::{CompiledMatcher, GroupMode};
 use crate::event::{Event, EventValue};
 
 impl CompiledMatcher {
@@ -150,6 +150,77 @@ impl CompiledMatcher {
             // -- Composite --
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches(value, event)),
             CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches(value, event)),
+
+            CompiledMatcher::CaseInsensitiveGroup { children, mode } => {
+                match_str_value(value, |s| {
+                    let lowered = ascii_lowercase_cow(s);
+                    match mode {
+                        GroupMode::Any => children
+                            .iter()
+                            .any(|c| c.matches_pre_lowered(lowered.as_ref())),
+                        GroupMode::All => children
+                            .iter()
+                            .all(|c| c.matches_pre_lowered(lowered.as_ref())),
+                    }
+                })
+            }
+        }
+    }
+
+    /// Match a haystack that has already been Unicode-lowercased.
+    ///
+    /// **Precondition**: `lowered_str` was produced by `ascii_lowercase_cow`
+    /// (or an equivalent full-Unicode lowercaser) AND every child of the
+    /// surrounding [`CompiledMatcher::CaseInsensitiveGroup`] is pre-lowerable
+    /// (see `compiler::optimizer::is_pre_lowerable`).
+    ///
+    /// This method is internal to the crate. Optimizer bugs that violate the
+    /// precondition trip a `debug_assert!`; in release the conservative
+    /// fallback (`false`) avoids producing a false positive but may miss a
+    /// match.
+    ///
+    /// No `event` parameter: pre-lowerable matchers are pure string predicates
+    /// that never reference cross-event state. If a future event-aware matcher
+    /// becomes pre-lowerable, the signature gains `event` then.
+    pub(crate) fn matches_pre_lowered(&self, lowered_str: &str) -> bool {
+        match self {
+            CompiledMatcher::Contains {
+                value,
+                case_insensitive: true,
+            } => lowered_str.contains(value.as_str()),
+            CompiledMatcher::StartsWith {
+                value,
+                case_insensitive: true,
+            } => lowered_str.starts_with(value.as_str()),
+            CompiledMatcher::EndsWith {
+                value,
+                case_insensitive: true,
+            } => lowered_str.ends_with(value.as_str()),
+            CompiledMatcher::Exact {
+                value,
+                case_insensitive: true,
+            } => lowered_str == value,
+            CompiledMatcher::Regex(re) => re.is_match(lowered_str),
+            CompiledMatcher::AhoCorasickSet {
+                automaton,
+                case_insensitive: true,
+            } => automaton.is_match(lowered_str),
+
+            CompiledMatcher::Not(inner) => !inner.matches_pre_lowered(lowered_str),
+            CompiledMatcher::AnyOf(ms) => ms.iter().any(|m| m.matches_pre_lowered(lowered_str)),
+            CompiledMatcher::AllOf(ms) => ms.iter().all(|m| m.matches_pre_lowered(lowered_str)),
+            CompiledMatcher::CaseInsensitiveGroup { children, mode } => match mode {
+                GroupMode::Any => children.iter().any(|c| c.matches_pre_lowered(lowered_str)),
+                GroupMode::All => children.iter().all(|c| c.matches_pre_lowered(lowered_str)),
+            },
+
+            other => {
+                debug_assert!(
+                    false,
+                    "matches_pre_lowered called with non-pre-lowerable matcher: {other:?}"
+                );
+                false
+            }
         }
     }
 
@@ -214,6 +285,17 @@ impl CompiledMatcher {
             CompiledMatcher::Not(inner) => !inner.matches_str(s),
             CompiledMatcher::AnyOf(matchers) => matchers.iter().any(|m| m.matches_str(s)),
             CompiledMatcher::AllOf(matchers) => matchers.iter().all(|m| m.matches_str(s)),
+            CompiledMatcher::CaseInsensitiveGroup { children, mode } => {
+                let lowered = ascii_lowercase_cow(s);
+                match mode {
+                    GroupMode::Any => children
+                        .iter()
+                        .any(|c| c.matches_pre_lowered(lowered.as_ref())),
+                    GroupMode::All => children
+                        .iter()
+                        .all(|c| c.matches_pre_lowered(lowered.as_ref())),
+                }
+            }
             _ => false,
         }
     }

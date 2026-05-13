@@ -118,6 +118,41 @@ pub enum CompiledMatcher {
     AnyOf(Vec<CompiledMatcher>),
     /// Match if ALL children match (AND).
     AllOf(Vec<CompiledMatcher>),
+
+    /// A composite of case-insensitive string matchers that lowers the haystack
+    /// once before dispatching to children.
+    ///
+    /// Built by the optimizer when an `AnyOf` or `AllOf` group is composed
+    /// entirely of case-insensitive string matchers (`Contains`, `StartsWith`,
+    /// `EndsWith`, `Exact`, `AhoCorasickSet`, plus regexes that carry the
+    /// `(?i)` flag, plus `Not` / nested `AnyOf` / `AllOf` whose every leaf
+    /// satisfies these rules).
+    ///
+    /// **Invariant**: every child must be pre-lowerable. The optimizer's
+    /// `is_pre_lowerable` validator enforces this; `matches_pre_lowered`
+    /// `debug_assert!`s on violation.
+    ///
+    /// **Why this exists**: a mixed `AnyOf([Contains, StartsWith, EndsWith])`
+    /// previously called `s.to_lowercase()` once per child. Pre-lowering the
+    /// haystack a single time and dispatching to a CI-aware match path
+    /// eliminates the redundant allocations.
+    CaseInsensitiveGroup {
+        children: Vec<CompiledMatcher>,
+        mode: GroupMode,
+    },
+}
+
+/// Reduction mode for composite matchers.
+///
+/// `Any` corresponds to OR semantics; `All` to AND. Used by
+/// `CaseInsensitiveGroup` to encode whether a single match suffices or every
+/// child must match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupMode {
+    /// At least one child must match (`AnyOf` semantics).
+    Any,
+    /// Every child must match (`AllOf` semantics).
+    All,
 }
 
 /// A part of an expand template.

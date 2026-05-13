@@ -176,12 +176,12 @@ fn extract_from_matcher(matcher: &CompiledMatcher, field: &str, out: &mut Vec<(S
         CompiledMatcher::Exact { value, .. } => {
             out.push((field.to_string(), value.to_lowercase()));
         }
-        CompiledMatcher::AnyOf(children) => {
+        CompiledMatcher::AnyOf(children) | CompiledMatcher::AllOf(children) => {
             for child in children {
                 extract_from_matcher(child, field, out);
             }
         }
-        CompiledMatcher::AllOf(children) => {
+        CompiledMatcher::CaseInsensitiveGroup { children, .. } => {
             for child in children {
                 extract_from_matcher(child, field, out);
             }
