@@ -17,6 +17,8 @@ use rsigma_runtime::{
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tower_http::trace::TraceLayer;
+#[cfg(feature = "daemon-otlp")]
+use tracing::Instrument;
 
 /// A dead-letter queue entry for events that fail processing.
 #[derive(Serialize)]
@@ -618,79 +620,84 @@ pub async fn run_daemon(config: DaemonConfig) {
                 batch_size = initial_batch_size,
                 input_format = ?input_format,
             );
-            let _batch_guard = batch_span.enter();
 
-            // Pre-parse: route parse failures to DLQ before processing.
-            let mut valid_payloads = Vec::with_capacity(batch.len());
-            let mut valid_tokens = Vec::with_capacity(batch.len());
+            // Use Instrument rather than .enter() because the batch processing
+            // awaits on multiple channels; .enter() across .await produces
+            // confused span nesting on the multi-threaded runtime.
+            let shutdown = tracing::Instrument::instrument(
+                async {
+                    let mut valid_payloads = Vec::with_capacity(batch.len());
+                    let mut valid_tokens = Vec::with_capacity(batch.len());
 
-            for raw_event in batch {
-                if dlq_enabled
-                    && !raw_event.payload.trim().is_empty()
-                    && rsigma_runtime::parse_line(&raw_event.payload, &input_format).is_none()
-                {
-                    tracing::debug!("Event routed to DLQ: parse error");
-                    if engine_dlq_tx
-                        .send(DlqEntry {
-                            original_event: raw_event.payload,
-                            error: "parse error".to_string(),
-                            timestamp: chrono::Utc::now().to_rfc3339(),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        tracing::warn!("DLQ channel closed, parse-error event dropped");
+                    for raw_event in batch {
+                        if dlq_enabled
+                            && !raw_event.payload.trim().is_empty()
+                            && rsigma_runtime::parse_line(&raw_event.payload, &input_format)
+                                .is_none()
+                        {
+                            tracing::debug!("Event routed to DLQ: parse error");
+                            if engine_dlq_tx
+                                .send(DlqEntry {
+                                    original_event: raw_event.payload,
+                                    error: "parse error".to_string(),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                })
+                                .await
+                                .is_err()
+                            {
+                                tracing::warn!("DLQ channel closed, parse-error event dropped");
+                            }
+                            if engine_ack_tx.send(raw_event.ack_token).await.is_err() {
+                                return true;
+                            }
+                            continue;
+                        }
+                        valid_payloads.push(raw_event.payload);
+                        valid_tokens.push(raw_event.ack_token);
                     }
-                    if engine_ack_tx.send(raw_event.ack_token).await.is_err() {
-                        break;
+
+                    if valid_payloads.is_empty() {
+                        return false;
                     }
-                    continue;
-                }
-                valid_payloads.push(raw_event.payload);
-                valid_tokens.push(raw_event.ack_token);
-            }
 
-            if valid_payloads.is_empty() {
-                engine_metrics.observe_pipeline_latency(pipeline_start.elapsed().as_secs_f64());
-                continue;
-            }
+                    let process_start = std::time::Instant::now();
+                    let results: Vec<ProcessResult> = engine_processor.process_batch_with_format(
+                        &valid_payloads,
+                        &input_format,
+                        Some(&filter_fn),
+                    );
+                    let process_elapsed_ms = process_start.elapsed().as_millis() as u64;
+                    let match_count = results
+                        .iter()
+                        .filter(|r| !r.detections.is_empty() || !r.correlations.is_empty())
+                        .count();
+                    tracing::debug!(
+                        batch_size = valid_payloads.len(),
+                        matches = match_count,
+                        elapsed_ms = process_elapsed_ms,
+                        "Batch processed",
+                    );
 
-            let process_start = std::time::Instant::now();
-            let results: Vec<ProcessResult> = engine_processor.process_batch_with_format(
-                &valid_payloads,
-                &input_format,
-                Some(&filter_fn),
-            );
-            let process_elapsed_ms = process_start.elapsed().as_millis() as u64;
-            let match_count = results
-                .iter()
-                .filter(|r| !r.detections.is_empty() || !r.correlations.is_empty())
-                .count();
-            tracing::debug!(
-                batch_size = valid_payloads.len(),
-                matches = match_count,
-                elapsed_ms = process_elapsed_ms,
-                "Batch processed",
-            );
-
-            let mut shutdown = false;
-
-            for (result, ack_token) in results.into_iter().zip(valid_tokens) {
-                if result.detections.is_empty() && result.correlations.is_empty() {
-                    if engine_ack_tx.send(ack_token).await.is_err() {
-                        tracing::debug!("Ack channel closed, engine shutting down");
-                        shutdown = true;
-                        break;
+                    for (result, ack_token) in results.into_iter().zip(valid_tokens) {
+                        if result.detections.is_empty() && result.correlations.is_empty() {
+                            if engine_ack_tx.send(ack_token).await.is_err() {
+                                tracing::debug!("Ack channel closed, engine shutting down");
+                                return true;
+                            }
+                            continue;
+                        }
+                        engine_metrics.on_output_queue_depth_change(1);
+                        if sink_tx.send((result, vec![ack_token])).await.is_err() {
+                            tracing::debug!("Sink channel closed, engine shutting down");
+                            return true;
+                        }
                     }
-                    continue;
-                }
-                engine_metrics.on_output_queue_depth_change(1);
-                if sink_tx.send((result, vec![ack_token])).await.is_err() {
-                    tracing::debug!("Sink channel closed, engine shutting down");
-                    shutdown = true;
-                    break;
-                }
-            }
+
+                    false
+                },
+                batch_span,
+            )
+            .await;
 
             engine_metrics.observe_pipeline_latency(pipeline_start.elapsed().as_secs_f64());
 
@@ -1370,7 +1377,8 @@ async fn otlp_http_logs(
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/x-protobuf");
+        .unwrap_or("application/x-protobuf")
+        .to_string();
 
     let is_proto = content_type.starts_with("application/x-protobuf")
         || content_type.starts_with("application/protobuf");
@@ -1378,121 +1386,123 @@ async fn otlp_http_logs(
     let encoding = if is_proto { "protobuf" } else { "json" };
 
     let span = tracing::debug_span!("otlp_ingest", transport = "http", encoding);
-    let _enter = span.enter();
+    async move {
+        if !is_proto && !is_json {
+            state
+                .metrics
+                .otlp_errors
+                .with_label_values(&["http", "unsupported_content_type"])
+                .inc();
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "unsupported content-type: {content_type} \
+                         (expected application/x-protobuf or application/json)"
+                    )
+                })),
+            )
+                .into_response();
+        }
 
-    if !is_proto && !is_json {
+        let body = match otlp_maybe_decompress(&headers, body) {
+            Ok(b) => b,
+            Err(e) => {
+                state
+                    .metrics
+                    .otlp_errors
+                    .with_label_values(&["http", "decompression"])
+                    .inc();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("decompression error: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+        let request = if is_proto {
+            use prost::Message;
+            match rsigma_runtime::ExportLogsServiceRequest::decode(body) {
+                Ok(req) => req,
+                Err(e) => {
+                    state
+                        .metrics
+                        .otlp_errors
+                        .with_label_values(&["http", "decode"])
+                        .inc();
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("protobuf decode error: {e}")
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            match serde_json::from_slice::<rsigma_runtime::ExportLogsServiceRequest>(&body) {
+                Ok(req) => req,
+                Err(e) => {
+                    state
+                        .metrics
+                        .otlp_errors
+                        .with_label_values(&["http", "decode"])
+                        .inc();
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("JSON decode error: {e}")
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        };
+
         state
             .metrics
-            .otlp_errors
-            .with_label_values(&["http", "unsupported_content_type"])
+            .otlp_requests
+            .with_label_values(&["http", encoding])
             .inc();
-        return (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            Json(serde_json::json!({
-                "error": format!(
-                    "unsupported content-type: {content_type} \
-                     (expected application/x-protobuf or application/json)"
+
+        let raw_events = rsigma_runtime::logs_request_to_raw_events(&request);
+        let record_count = raw_events.len();
+        state.metrics.otlp_log_records.inc_by(record_count as u64);
+        tracing::debug!(record_count, "OTLP logs ingested");
+
+        for event in raw_events {
+            if state.otlp_event_tx.send(event).await.is_err() {
+                state
+                    .metrics
+                    .otlp_errors
+                    .with_label_values(&["http", "channel_closed"])
+                    .inc();
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": "event channel closed"
+                    })),
                 )
+                    .into_response();
+            }
+        }
+
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "partialSuccess": {
+                    "rejectedLogRecords": 0,
+                    "errorMessage": ""
+                }
             })),
         )
-            .into_response();
+            .into_response()
     }
-
-    let body = match otlp_maybe_decompress(&headers, body) {
-        Ok(b) => b,
-        Err(e) => {
-            state
-                .metrics
-                .otlp_errors
-                .with_label_values(&["http", "decompression"])
-                .inc();
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("decompression error: {e}")
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    let request = if is_proto {
-        use prost::Message;
-        match rsigma_runtime::ExportLogsServiceRequest::decode(body) {
-            Ok(req) => req,
-            Err(e) => {
-                state
-                    .metrics
-                    .otlp_errors
-                    .with_label_values(&["http", "decode"])
-                    .inc();
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("protobuf decode error: {e}")
-                    })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        match serde_json::from_slice::<rsigma_runtime::ExportLogsServiceRequest>(&body) {
-            Ok(req) => req,
-            Err(e) => {
-                state
-                    .metrics
-                    .otlp_errors
-                    .with_label_values(&["http", "decode"])
-                    .inc();
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("JSON decode error: {e}")
-                    })),
-                )
-                    .into_response();
-            }
-        }
-    };
-
-    state
-        .metrics
-        .otlp_requests
-        .with_label_values(&["http", encoding])
-        .inc();
-
-    let raw_events = rsigma_runtime::logs_request_to_raw_events(&request);
-    let record_count = raw_events.len();
-    state.metrics.otlp_log_records.inc_by(record_count as u64);
-    tracing::debug!(record_count, "OTLP logs ingested");
-
-    for event in raw_events {
-        if state.otlp_event_tx.send(event).await.is_err() {
-            state
-                .metrics
-                .otlp_errors
-                .with_label_values(&["http", "channel_closed"])
-                .inc();
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": "event channel closed"
-                })),
-            )
-                .into_response();
-        }
-    }
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "partialSuccess": {
-                "rejectedLogRecords": 0,
-                "errorMessage": ""
-            }
-        })),
-    )
-        .into_response()
+    .instrument(span)
+    .await
 }
 
 #[cfg(feature = "daemon-otlp")]
@@ -1530,31 +1540,33 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
         request: tonic::Request<rsigma_runtime::ExportLogsServiceRequest>,
     ) -> Result<tonic::Response<rsigma_runtime::ExportLogsServiceResponse>, tonic::Status> {
         let span = tracing::debug_span!("otlp_ingest", transport = "grpc", encoding = "protobuf");
-        let _enter = span.enter();
+        async move {
+            self.metrics
+                .otlp_requests
+                .with_label_values(&["grpc", "protobuf"])
+                .inc();
 
-        self.metrics
-            .otlp_requests
-            .with_label_values(&["grpc", "protobuf"])
-            .inc();
+            let raw_events = rsigma_runtime::logs_request_to_raw_events(&request.into_inner());
+            let record_count = raw_events.len();
+            self.metrics.otlp_log_records.inc_by(record_count as u64);
+            tracing::debug!(record_count, "OTLP logs ingested");
 
-        let raw_events = rsigma_runtime::logs_request_to_raw_events(&request.into_inner());
-        let record_count = raw_events.len();
-        self.metrics.otlp_log_records.inc_by(record_count as u64);
-        tracing::debug!(record_count, "OTLP logs ingested");
+            for event in raw_events {
+                self.event_tx.send(event).await.map_err(|_| {
+                    self.metrics
+                        .otlp_errors
+                        .with_label_values(&["grpc", "channel_closed"])
+                        .inc();
+                    tonic::Status::unavailable("event channel closed")
+                })?;
+            }
 
-        for event in raw_events {
-            self.event_tx.send(event).await.map_err(|_| {
-                self.metrics
-                    .otlp_errors
-                    .with_label_values(&["grpc", "channel_closed"])
-                    .inc();
-                tonic::Status::unavailable("event channel closed")
-            })?;
+            Ok(tonic::Response::new(
+                rsigma_runtime::ExportLogsServiceResponse::default(),
+            ))
         }
-
-        Ok(tonic::Response::new(
-            rsigma_runtime::ExportLogsServiceResponse::default(),
-        ))
+        .instrument(span)
+        .await
     }
 }
 

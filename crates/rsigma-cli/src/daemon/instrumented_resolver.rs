@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use rsigma_eval::pipeline::sources::{DynamicSource, SourceType};
 use rsigma_runtime::sources::{ResolvedValue, SourceError, SourceResolver};
+use tracing::Instrument;
 
 use super::metrics::Metrics;
 
@@ -43,57 +44,64 @@ impl SourceResolver for InstrumentedResolver {
             source_id = %source.id,
             source_type = source_type_label,
         );
-        let _enter = span.enter();
 
-        let start = Instant::now();
-        let result = self.inner.resolve(source).await;
-        let elapsed = start.elapsed();
-        let elapsed_secs = elapsed.as_secs_f64();
+        // Use Instrument rather than .enter() because the inner resolve can do
+        // long-running async work (HTTP, command, file IO); .enter() across
+        // .await produces confused span nesting on the multi-threaded runtime.
+        async move {
+            let start = Instant::now();
+            let result = self.inner.resolve(source).await;
+            let elapsed = start.elapsed();
 
-        self.metrics.source_resolve_latency.observe(elapsed_secs);
+            self.metrics
+                .source_resolve_latency
+                .observe(elapsed.as_secs_f64());
 
-        match &result {
-            Ok(value) => {
-                if value.from_cache {
-                    self.metrics.source_cache_hits.inc();
-                }
-                self.metrics
-                    .source_last_resolved
-                    .with_label_values(&[source.id.as_str()])
-                    .set(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs_f64(),
+            match &result {
+                Ok(value) => {
+                    if value.from_cache {
+                        self.metrics.source_cache_hits.inc();
+                    }
+                    self.metrics
+                        .source_last_resolved
+                        .with_label_values(&[source.id.as_str()])
+                        .set(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs_f64(),
+                        );
+                    tracing::debug!(
+                        cache_hit = value.from_cache,
+                        duration_ms = elapsed.as_millis() as u64,
+                        "Source resolved",
                     );
-                tracing::debug!(
-                    cache_hit = value.from_cache,
-                    duration_ms = elapsed.as_millis() as u64,
-                    "Source resolved",
-                );
+                }
+                Err(e) => {
+                    let error_kind = match &e.kind {
+                        rsigma_runtime::SourceErrorKind::Fetch(_) => "Fetch",
+                        rsigma_runtime::SourceErrorKind::Parse(_) => "Parse",
+                        rsigma_runtime::SourceErrorKind::Extract(_) => "Extract",
+                        rsigma_runtime::SourceErrorKind::Timeout => "Timeout",
+                        rsigma_runtime::SourceErrorKind::ResourceLimit(_) => "ResourceLimit",
+                    };
+                    self.metrics
+                        .source_resolve_errors
+                        .with_label_values(&[source.id.as_str(), error_kind])
+                        .inc();
+                    tracing::warn!(
+                        error_kind,
+                        error = %e,
+                        duration_ms = elapsed.as_millis() as u64,
+                        "Source resolution failed",
+                    );
+                }
             }
-            Err(e) => {
-                let error_kind = match &e.kind {
-                    rsigma_runtime::SourceErrorKind::Fetch(_) => "Fetch",
-                    rsigma_runtime::SourceErrorKind::Parse(_) => "Parse",
-                    rsigma_runtime::SourceErrorKind::Extract(_) => "Extract",
-                    rsigma_runtime::SourceErrorKind::Timeout => "Timeout",
-                    rsigma_runtime::SourceErrorKind::ResourceLimit(_) => "ResourceLimit",
-                };
-                self.metrics
-                    .source_resolve_errors
-                    .with_label_values(&[source.id.as_str(), error_kind])
-                    .inc();
-                tracing::warn!(
-                    error_kind,
-                    error = %e,
-                    duration_ms = elapsed.as_millis() as u64,
-                    "Source resolution failed",
-                );
-            }
-        }
 
-        result
+            result
+        }
+        .instrument(span)
+        .await
     }
 }
 
