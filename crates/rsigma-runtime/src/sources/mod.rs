@@ -172,6 +172,7 @@ impl SourceResolver for DefaultSourceResolver {
 
         match result {
             Ok(value) => {
+                tracing::debug!(source_id = %source.id, "Source fetched successfully");
                 self.cache.store(&source.id, &value.data);
                 Ok(value)
             }

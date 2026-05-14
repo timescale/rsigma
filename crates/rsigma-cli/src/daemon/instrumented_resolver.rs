@@ -38,11 +38,19 @@ impl SourceResolver for InstrumentedResolver {
             .with_label_values(&[source.id.as_str(), source_type_label])
             .inc();
 
+        let span = tracing::debug_span!(
+            "resolve_source",
+            source_id = %source.id,
+            source_type = source_type_label,
+        );
+        let _enter = span.enter();
+
         let start = Instant::now();
         let result = self.inner.resolve(source).await;
-        let elapsed = start.elapsed().as_secs_f64();
+        let elapsed = start.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
 
-        self.metrics.source_resolve_latency.observe(elapsed);
+        self.metrics.source_resolve_latency.observe(elapsed_secs);
 
         match &result {
             Ok(value) => {
@@ -58,6 +66,11 @@ impl SourceResolver for InstrumentedResolver {
                             .unwrap_or_default()
                             .as_secs_f64(),
                     );
+                tracing::debug!(
+                    cache_hit = value.from_cache,
+                    duration_ms = elapsed.as_millis() as u64,
+                    "Source resolved",
+                );
             }
             Err(e) => {
                 let error_kind = match &e.kind {
@@ -71,6 +84,12 @@ impl SourceResolver for InstrumentedResolver {
                     .source_resolve_errors
                     .with_label_values(&[source.id.as_str(), error_kind])
                     .inc();
+                tracing::warn!(
+                    error_kind,
+                    error = %e,
+                    duration_ms = elapsed.as_millis() as u64,
+                    "Source resolution failed",
+                );
             }
         }
 

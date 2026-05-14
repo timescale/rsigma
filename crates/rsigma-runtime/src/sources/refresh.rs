@@ -207,6 +207,8 @@ impl RefreshScheduler {
                 continue;
             }
 
+            let refresh_count = to_resolve.len();
+            let refresh_start = std::time::Instant::now();
             match resolve_all(
                 resolver.as_ref(),
                 &to_resolve.iter().map(|s| (*s).clone()).collect::<Vec<_>>(),
@@ -214,10 +216,20 @@ impl RefreshScheduler {
             .await
             {
                 Ok(resolved) => {
+                    tracing::debug!(
+                        sources = refresh_count,
+                        duration_ms = refresh_start.elapsed().as_millis() as u64,
+                        "Scheduled refresh completed",
+                    );
                     let _ = result_tx.send(Some(RefreshResult { resolved }));
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "Background source refresh failed");
+                    tracing::warn!(
+                        error = %e,
+                        sources = refresh_count,
+                        duration_ms = refresh_start.elapsed().as_millis() as u64,
+                        "Background source refresh failed",
+                    );
                 }
             }
         }
