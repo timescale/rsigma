@@ -344,6 +344,19 @@ Input formats are selected via `--input-format` on the CLI or `InputFormat` in t
 
 See [`examples/jsonl_stdin.rs`](crates/rsigma-runtime/examples/jsonl_stdin.rs) and [`examples/tail_syslog.rs`](crates/rsigma-runtime/examples/tail_syslog.rs) for complete working examples.
 
+## Observability
+
+The daemon emits Prometheus metrics on `/metrics` and structured JSON logs to stderr via [`tracing`](https://docs.rs/tracing). Verbosity is controlled with `RUST_LOG` (default `info`). Useful filter targets:
+
+| Filter | Surfaces |
+|--------|----------|
+| `RUST_LOG=info,tower_http=debug` | HTTP API access logs (method, URI, status, latency) for every REST request |
+| `RUST_LOG=info,rsigma=debug` | batch processing spans, DLQ routing, OTLP per-request fields, snapshot save duration |
+| `RUST_LOG=info,rsigma_runtime::sources=debug` | dynamic source resolution and refresh scheduler |
+| `RUST_LOG=info,rsigma_eval=debug` | correlation engine internals (chain depth, hard-cap eviction at `warn`) |
+
+`tracing` spans installed on hot paths (batch processing, source resolution, OTLP ingest, rule loading) double as profiling hooks consumable by `tokio-console` or `tracing-timing` without code changes. Non-daemon subcommands default to human-readable output; pass `--log-format json` (or `text`) to additionally install a stderr subscriber for CI/log aggregation use cases.
+
 ## Architecture
 
 Everything starts with a Sigma rule in YAML format:

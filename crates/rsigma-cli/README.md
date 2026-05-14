@@ -334,7 +334,16 @@ curl -X POST http://localhost:9090/v1/logs \
 
 The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Grafana or other Prometheus-based tools. A single PromQL query like `increase(rsigma_detection_matches_by_rule_total[5m]) > 0` produces separate alert instances for each `{rule_title, level}` combination. The aggregate counters (`_total`) remain for lightweight total-throughput monitoring.
 
-**Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`).
+**Logging:** structured JSON to stderr, configurable via `RUST_LOG` environment variable (default: `info`). Useful filter targets:
+
+- `RUST_LOG=info,tower_http=debug` — HTTP API access logs (method, URI, status, latency) for every request to `/api/v1/*`, `/healthz`, `/metrics`.
+- `RUST_LOG=info,rsigma=debug` — verbose batch processing (`Batch processed` events with `batch_size`, `matches`, `elapsed_ms`), DLQ routing, source resolution timing, state snapshot duration, and OTLP per-request fields.
+- `RUST_LOG=info,rsigma_runtime::sources=debug` — dynamic source resolution and refresh scheduler details.
+- `RUST_LOG=info,rsigma_eval=debug` — correlation engine internals (chain depth limits, hard-cap eviction warnings already emit at `warn`).
+
+The `tracing` spans installed on hot paths (batch processing, source resolution, OTLP ingest, rule loading) double as profiling hooks consumable by `tokio-console` or `tracing-timing` without code changes—just swap in the corresponding subscriber layer.
+
+**CLI subcommand logging:** non-daemon subcommands (`eval`, `lint`, `validate`, `convert`, `fields`, `parse`, `resolve`) default to human-readable stdout/stderr output only. Pass the global `--log-format json` (or `--log-format text`) to additionally install a tracing subscriber on stderr for CI/log aggregation use cases. Verbosity follows `RUST_LOG` (default `info`). Human-readable output is unchanged when the flag is set.
 
 **State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts. For example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
 
