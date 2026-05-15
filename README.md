@@ -68,13 +68,13 @@ For rule quality and editor integration, a built-in linter validates rules again
 
 ```bash
 # Build all crates
-cargo build --release
+cargo build --release --all-features --workspace
 
 # Install the CLI
-cargo install rsigma
+cargo install --locked rsigma
 
 # Install the LSP server
-cargo install --path crates/rsigma-lsp
+cargo install --locked --path crates/rsigma-lsp
 ```
 
 ### Docker
