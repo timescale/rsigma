@@ -68,6 +68,25 @@ Wildcard/regex rule parsing is O(1) due to pattern caching (only the first parse
 | 1,000 | 961.9 us |
 | 5,000 | 4.90 ms |
 
+### Rule Load Paths (0.11.x)
+
+Apple M4 Pro, macOS, release build, 2026-05-16. Compares the three engine entry points for loading rules at large N. `add_collection` and `add_rules` rebuild the inverted and bloom indexes once at the end of the batch; `add_rule` in a loop folds each rule incrementally with an amortized-doubling bloom rebuild (64-rule floor, 2x ratchet).
+
+| Rules   | `add_collection`           | `add_rules`               | `add_rule` loop           |
+|--------:|----------------------------|----------------------------|----------------------------|
+| 1,000   | 1.15 ms (1.15 us/rule)     | 1.17 ms (1.17 us/rule)     | 1.64 ms (1.64 us/rule)     |
+| 10,000  | 11.82 ms (1.18 us/rule)    | 11.85 ms (1.18 us/rule)    | 17.23 ms (1.72 us/rule)    |
+| 100,000 | 121.65 ms (1.22 us/rule)   | 122.13 ms (1.22 us/rule)   | 166.07 ms (1.66 us/rule)   |
+
+All three paths scale linearly in the rule count. Per-rule cost is essentially constant from 1K to 100K, confirming the O(N) total complexity:
+
+- `add_collection` and `add_rules` cost roughly 1.2 us/rule. The fixed per-batch cost is dominated by the final inverted index + bloom build over the aggregate.
+- `add_rule` in a loop costs roughly 1.65 us/rule, about 40% more than the batched paths. The overhead is the per-rule incremental insert plus the ~11 doubling-watermark rebuilds the bloom triggers between 1 and 100K rules. There is no quadratic blowup; the constant factor pays for the incremental contract.
+
+The takeaway is that `add_rule` is no longer a foot-gun for bulk loads. Batched APIs are still slightly faster and remain the recommended path for cold-load scenarios; the single-rule path exists for cases where the caller wants per-rule error reporting (`rsigma validate`) or per-rule mutation semantics.
+
+Run with `cargo bench -p rsigma-eval --bench eval -- rule_load`.
+
 ### Single Event Evaluation
 
 Time to evaluate one event against N compiled rules.

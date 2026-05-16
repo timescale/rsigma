@@ -38,6 +38,70 @@ fn bench_compile_rules(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: rule load paths at large N
+//
+// Compares the three engine entry points used by validate / daemon /
+// library callers. All three should scale linearly in the rule count;
+// `add_collection` and `add_rules` rebuild the inverted and bloom
+// indexes once at the end of the batch, while `add_rule` in a loop
+// folds each rule incrementally with an amortized-doubling bloom
+// rebuild.
+// ---------------------------------------------------------------------------
+
+fn bench_rule_load(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rule_load");
+    // Each iteration builds an engine from scratch, so keep the sample
+    // count modest to bound wall-clock time at 100K rules.
+    group.sample_size(10);
+
+    for n in [1_000, 10_000, 100_000] {
+        let yaml = datagen::gen_n_rules(n);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+
+        group.bench_with_input(
+            BenchmarkId::new("add_collection", n),
+            &collection,
+            |b, collection| {
+                b.iter(|| {
+                    let mut engine = Engine::new();
+                    engine.add_collection(black_box(collection)).unwrap();
+                    black_box(&engine);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("add_rules", n),
+            &collection,
+            |b, collection| {
+                b.iter(|| {
+                    let mut engine = Engine::new();
+                    let errs = engine.add_rules(black_box(&collection.rules));
+                    debug_assert!(errs.is_empty());
+                    black_box(&engine);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("add_rule_loop", n),
+            &collection,
+            |b, collection| {
+                b.iter(|| {
+                    let mut engine = Engine::new();
+                    for rule in black_box(&collection.rules) {
+                        engine.add_rule(rule).unwrap();
+                    }
+                    black_box(&engine);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: evaluate 1 event against N rules
 // ---------------------------------------------------------------------------
 
@@ -476,6 +540,7 @@ fn bench_eval_regex_heavy(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_compile_rules,
+    bench_rule_load,
     bench_eval_single_event,
     bench_eval_throughput,
     bench_eval_batch,
@@ -492,6 +557,7 @@ criterion_group!(
 criterion_group!(
     benches,
     bench_compile_rules,
+    bench_rule_load,
     bench_eval_single_event,
     bench_eval_throughput,
     bench_eval_batch,
