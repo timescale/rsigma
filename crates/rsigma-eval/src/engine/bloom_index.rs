@@ -877,7 +877,10 @@ detection:
             // is safe; we only assert correctness, not optimality.
             let v = incremental.probe("CommandLine", haystack);
             assert!(
-                matches!(v, BloomVerdict::MaybeMatch | BloomVerdict::DefinitelyNoMatch),
+                matches!(
+                    v,
+                    BloomVerdict::MaybeMatch | BloomVerdict::DefinitelyNoMatch
+                ),
                 "incremental probe must return a defined verdict for {haystack}, got {v:?}"
             );
         }
