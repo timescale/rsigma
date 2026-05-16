@@ -11,6 +11,17 @@ updates:
     cooldown:
       default-days: 7
 
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: weekly
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
