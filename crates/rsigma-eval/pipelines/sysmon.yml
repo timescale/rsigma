@@ -12,8 +12,8 @@
 # Derived from pySigma-pipeline-sysmon.
 #
 # Usage:
-#   rsigma eval -r rules/ -p sysmon -e '{"EventID": 1, "Image": "cmd.exe", ...}'
-#   rsigma daemon -r rules/ -p sysmon
+#   rsigma engine eval -r rules/ -p sysmon -e '{"EventID": 1, "Image": "cmd.exe", ...}'
+#   rsigma engine daemon -r rules/ -p sysmon
 
 name: sysmon
 priority: 10

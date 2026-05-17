@@ -43,5 +43,5 @@ When running the daemon in production, we recommend the following Docker flags:
 
 ```bash
 docker run --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  ghcr.io/timescale/rsigma:latest daemon ...
+  ghcr.io/timescale/rsigma:latest engine daemon ...
 ```

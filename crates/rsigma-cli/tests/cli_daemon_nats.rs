@@ -1,4 +1,4 @@
-//! E2E tests for the `rsigma daemon` binary with NATS source/sink.
+//! E2E tests for the `rsigma engine daemon` binary with NATS source/sink.
 //!
 //! Each test starts a NATS JetStream container via testcontainers, spawns
 //! the daemon binary with `--input nats://... --output nats://...`, publishes
@@ -75,7 +75,7 @@ impl DaemonProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn rsigma daemon");
+            .expect("failed to spawn rsigma engine daemon");
         Self { child }
     }
 

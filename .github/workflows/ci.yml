@@ -152,17 +152,17 @@ jobs:
       - name: Clone SigmaHQ rules
         run: git clone --depth 1 https://github.com/SigmaHQ/sigma.git /tmp/sigma
       - name: Validate and compile all Sigma rules
-        run: ./target/release/rsigma validate /tmp/sigma/rules/ --verbose
+        run: ./target/release/rsigma rule validate /tmp/sigma/rules/ --verbose
       - name: Validate SigmaHQ corpus with dynamic pipelines
         run: |
-          ./target/release/rsigma validate /tmp/sigma/rules/ \
+          ./target/release/rsigma rule validate /tmp/sigma/rules/ \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/field_mapping.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/allowlist.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/multi_format.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/extract_languages.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/include_expansion.yml \
             --resolve-sources --verbose
-      - name: Golden file comparison for rsigma resolve
+      - name: Golden file comparison for rsigma pipeline resolve
         run: |
           failed=0
           for pipeline in tests/fixtures/dynamic-pipelines/pipelines/*.yml; do
@@ -172,7 +172,7 @@ jobs:
               echo "SKIP: no golden file for ${name}"
               continue
             fi
-            actual=$(./target/release/rsigma resolve --pipeline "$pipeline" --pretty)
+            actual=$(./target/release/rsigma pipeline resolve --pipeline "$pipeline" --pretty)
             if ! diff -u "$golden" <(echo "$actual") > /tmp/diff_${name}.txt 2>&1; then
               echo "FAIL: ${name} resolve output differs from golden file"
               cat /tmp/diff_${name}.txt
@@ -182,6 +182,6 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            echo "::error::Golden file comparison failed. Run 'rsigma resolve' locally and update golden files."
+            echo "::error::Golden file comparison failed. Run 'rsigma pipeline resolve' locally and update golden files."
             exit 1
           fi

@@ -6,7 +6,7 @@
 # event type for better partition pruning and compression ratios.
 #
 # Usage:
-#   rsigma convert -t postgres -p pipelines/ocsf_postgres_multi_table.yml rules/
+#   rsigma backend convert -t postgres -p pipelines/ocsf_postgres_multi_table.yml rules/
 #
 # When used with temporal correlation rules that reference detection rules from
 # different categories, the PostgreSQL backend automatically generates UNION ALL

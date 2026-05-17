@@ -5,7 +5,7 @@
 # in the reference TimescaleDB `security_events` schema.
 #
 # Usage:
-#   rsigma convert -t postgres -p pipelines/ocsf_postgres.yml rules/
+#   rsigma backend convert -t postgres -p pipelines/ocsf_postgres.yml rules/
 
 name: ocsf_postgres
 priority: 10

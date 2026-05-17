@@ -1,4 +1,4 @@
-//! E2E tests for the `rsigma daemon` HTTP input mode and REST API.
+//! E2E tests for the `rsigma engine daemon` HTTP input mode and REST API.
 //!
 //! Each test spawns the daemon with `--input http`, discovers the actual
 //! API port from the structured log output, and exercises the endpoints.

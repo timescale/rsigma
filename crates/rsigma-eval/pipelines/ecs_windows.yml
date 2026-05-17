@@ -7,8 +7,8 @@
 # Derived from pySigma-backend-elasticsearch ecs_windows pipeline.
 #
 # Usage:
-#   rsigma eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
-#   rsigma daemon -r rules/ -p ecs_windows
+#   rsigma engine eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
+#   rsigma engine daemon -r rules/ -p ecs_windows
 
 name: ecs_windows
 priority: 20

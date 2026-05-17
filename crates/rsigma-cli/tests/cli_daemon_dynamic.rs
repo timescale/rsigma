@@ -1,4 +1,4 @@
-//! E2E tests for the `rsigma daemon` with dynamic pipelines.
+//! E2E tests for the `rsigma engine daemon` with dynamic pipelines.
 //!
 //! Tests exercise the full lifecycle: source resolution at startup,
 //! detection with dynamically-resolved pipelines, source refresh on
@@ -41,7 +41,7 @@ impl DaemonProcess {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn rsigma daemon");
+            .expect("failed to spawn rsigma engine daemon");
 
         let stderr = child.stderr.take().unwrap();
         let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -100,7 +100,7 @@ impl DaemonProcess {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("failed to spawn rsigma daemon");
+            .expect("failed to spawn rsigma engine daemon");
 
         let timeout = Duration::from_secs(10);
         let start = std::time::Instant::now();
@@ -776,7 +776,7 @@ fn daemon_sources_list_endpoint() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: rsigma resolve command (CLI) works with dynamic pipeline
+// Test: rsigma pipeline resolve command (CLI) works with dynamic pipeline
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -797,7 +797,7 @@ fn cli_resolve_command_resolves_sources() {
             "--pretty",
         ])
         .output()
-        .expect("failed to run rsigma resolve");
+        .expect("failed to run rsigma pipeline resolve");
 
     assert!(
         output.status.success(),
@@ -818,7 +818,7 @@ fn cli_resolve_command_resolves_sources() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: rsigma resolve --dry-run shows metadata without resolving
+// Test: rsigma pipeline resolve --dry-run shows metadata without resolving
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -840,7 +840,7 @@ fn cli_resolve_dry_run_shows_metadata() {
             "--pretty",
         ])
         .output()
-        .expect("failed to run rsigma resolve --dry-run");
+        .expect("failed to run rsigma pipeline resolve --dry-run");
 
     assert!(
         output.status.success(),
@@ -856,7 +856,7 @@ fn cli_resolve_dry_run_shows_metadata() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: rsigma validate --resolve-sources checks source reachability
+// Test: rsigma rule validate --resolve-sources checks source reachability
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -882,7 +882,7 @@ fn cli_validate_resolve_sources_passes() {
             "--resolve-sources",
         ])
         .output()
-        .expect("failed to run rsigma validate");
+        .expect("failed to run rsigma rule validate");
 
     assert!(
         output.status.success(),
@@ -892,7 +892,7 @@ fn cli_validate_resolve_sources_passes() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: rsigma validate --resolve-sources fails for unreachable source
+// Test: rsigma rule validate --resolve-sources fails for unreachable source
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -915,7 +915,7 @@ fn cli_validate_resolve_sources_fails_unreachable() {
             "--resolve-sources",
         ])
         .output()
-        .expect("failed to run rsigma validate");
+        .expect("failed to run rsigma rule validate");
 
     assert!(
         !output.status.success(),

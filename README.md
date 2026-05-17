@@ -94,7 +94,7 @@ docker run --rm \
   --cap-drop=ALL \
   --security-opt=no-new-privileges:true \
   -v /path/to/rules:/rules:ro \
-  ghcr.io/timescale/rsigma:latest validate /rules/
+  ghcr.io/timescale/rsigma:latest rule validate /rules/
 ```
 
 Verify the image signature:
