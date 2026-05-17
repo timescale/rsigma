@@ -5,9 +5,70 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
-### CLI
+**TL;DR**
+The next RSigma release is the "operations and load performance" release:
+* Comprehensive daemon and CLI observability: tower-http API access logs, per-request OTLP tracing, batch processing spans, source resolution spans, DLQ visibility, NATS and sink lifecycle events, correlation state eviction warnings, rule load diagnostics, daemon lifecycle logs, and a global `--log-format` flag for non-daemon subcommands.
+* Eval rule loading is no longer O(N²): `Engine::add_rule` is amortized O(1), and bulk loaders (`Engine::add_rules`, `extend_compiled_rules`, `add_collection`) rebuild indexes exactly once per batch. The full 3,120-rule SigmaHQ corpus that previously appeared to hang now loads in ~120 ms.
+* CLI subcommands reorganized into five noun-led groups (`engine`, `rule`, `backend`, `pipeline`). Flat aliases continue to work as deprecated forwarders for one release.
+* Test reliability: `cli_daemon_http` and `cli_daemon_otlp` E2E suites are now flake-free on macOS under load.
+* Dependency bumps: opentelemetry-proto 0.31.0 to 0.32.0, async-nats 0.47 to 0.48, yamlpath/yamlpatch 1.25.2 (with the `serde_yaml` cargo rename replaced by `yaml_serde` directly), tokio 1.52.3, jsonschema 0.46.4, tower-http 0.6.10, tonic 0.14.6.
 
-The 12 flat top-level subcommands are reorganized into five noun-led command groups so the CLI scales as more subcommands arrive (most immediately, `attack coverage` and `attack update` from the upcoming MITRE ATT&CK contributor PR). The flat aliases continue to work for one release as visible-deprecated forwarders, are hidden in the next release, and are removed in v1.0. Every existing invocation keeps working, so there is no breaking change in this release.
+### Daemon and CLI observability (PR #107)
+
+The daemon and CLI ship with structured logs, distributed tracing spans, and profiling hooks across the three observability pillars. All new instrumentation flows through the existing `tracing-subscriber` (JSON, env-filter) and is controlled via `RUST_LOG`. Spans are designed to be consumable by future `tokio-console` or `tracing-opentelemetry` exporters without code changes.
+
+**Phases.** One commit per phase, in landing order:
+
+| Phase | Scope |
+|-------|-------|
+| HTTP API access logs | `tower-http::TraceLayer::new_for_http()` on the Axum router; each request produces a span with method, URI, status, and latency |
+| Event pipeline | Per-batch debug span (`batch_size`, `input_format`, `match` count, `elapsed_ms`); DLQ parse-failure debug events; checked DLQ channel send with warn-on-closed; DLQ task lifecycle logging |
+| Source resolution | `InstrumentedResolver` debug span (`source_id`, `source_type`); cache hit / fetch boundary events; refresh scheduler cycle completion logs (`sources`, `duration_ms`) |
+| Correlation memory pressure | Warn on hard-cap eviction (current count, max, evicted, target capacity) so high-cardinality traffic causing data loss is no longer silent |
+| NATS, sinks, backpressure | NATS source/sink publish and ack events; `spawn_source` backpressure warn alongside the existing metric; `Sink::FanOut` per-sink labels (`sink_index`, `sink_type`, error) |
+| Rule load diagnostics | `load_rules` info span (`rules_path`, `duration_ms`); first three parse error details when bad rules fail to compile |
+| OTLP per-request tracing | `otlp_ingest` debug span on both HTTP and gRPC handlers; `record_count` event after decoding `ExportLogsServiceRequest` |
+| Daemon lifecycle | Health state transitions; file watcher errors; reload-channel coalesce vs closed events; periodic state snapshot duration and serialized size; SQLite migration column events; per-task shutdown-join logs |
+| `--log-format` for CLI | Global `--log-format <json\|text>` initializes a stderr subscriber on non-daemon subcommands. `engine eval`, `rule validate`, and `rule lint` emit info events on completion (rules loaded, validation totals, lint summary) when a subscriber is installed. The daemon always logs JSON, so the flag is a no-op there. |
+
+**Verbosity targets.**
+
+| `RUST_LOG` filter | Surfaces |
+|-------------------|----------|
+| `info,tower_http=debug` | HTTP API access logs |
+| `info,rsigma=debug` | Batch processing spans, DLQ routing, OTLP per-request fields, snapshot save duration |
+| `info,rsigma_runtime::sources=debug` | Dynamic source resolution and refresh scheduler |
+| `info,rsigma_eval=debug` | Correlation engine internals |
+
+**Span correctness fix.** Holding an `EnteredSpan` guard from `Span::enter()` across `.await` is an anti-pattern on the multi-threaded tokio runtime: when the task is suspended, the thread-local span context can leak into other tasks scheduled on the same thread, producing incorrect span nesting. `InstrumentedResolver::resolve`, the OTLP HTTP and gRPC handlers, and the engine batch loop now use `.instrument()` on async blocks instead. Span fields, event payloads, and runtime behavior are unchanged.
+
+**Documentation.** A new Observability section in the root README and an updated Logging paragraph in the CLI README list the supported `RUST_LOG` filter targets and document the new `--log-format` flag.
+
+### Eval rule loading performance (PRs #119, #121, #122, #123)
+
+Loading rules into an engine is no longer O(N²) in the rule count.
+
+**Batched loaders rebuild indexes exactly once.** New `Engine::add_rules` (compiles each rule with the configured pipelines and collects per-rule compile errors without aborting the batch) and `Engine::extend_compiled_rules` (pre-compiled equivalent) rebuild the inverted index and per-field bloom exactly once at the end of the batch. `Engine::add_collection`, the `rsigma rule validate` path, and the `rsigma engine eval` rule load path now route through these APIs so the daemon and every `RuntimeEngine` caller share the one-rebuild fast path. Loading the SigmaHQ corpus (~3,120 rules) used to pay around 3K full index rebuilds and appeared to hang; it now completes in roughly 120 ms.
+
+**Single-rule add path is amortized O(1).** `Engine::add_rule` and `Engine::add_compiled_rule` no longer rebuild the indexes from scratch on every push. They fold the new rule into the inverted index incrementally via the new `RuleIndex::append_rule(rule_idx, rule)` primitive, and into the per-field bloom via `FieldBloomIndex::append_rule(rule)`. The bloom uses a doubling watermark with a 64-rule floor to schedule full rebuilds when the rule count has at least doubled past the last rebuild, capping false-positive-rate drift while keeping the amortized per-rule cost O(1). Rules that introduce a brand-new indexed field get a fresh bloom on the fly.
+
+| Rules   | `add_collection` | `add_rules` | `add_rule` loop |
+|--------:|-----------------:|------------:|----------------:|
+| 1,000   |          1.15 ms |     1.17 ms |         1.64 ms |
+| 10,000  |         11.82 ms |    11.85 ms |        17.23 ms |
+| 100,000 |        121.65 ms |   122.13 ms |       166.07 ms |
+
+(M4 Pro, release build. Run via `cargo bench -p rsigma-eval --bench eval -- rule_load`.)
+
+When `cross_rule_ac_enabled` is on, the daachorse cross-rule index has no incremental update story, so the single-rule add path falls back to a full `Engine::rebuild_index`. Bulk loaders are unaffected.
+
+**Correctness.** Between bloom rebuilds, probes may answer `MaybeMatch` where the batched-rebuild path would answer `DefinitelyNoMatch`. Both verdicts are correct (`MaybeMatch` is always safe); the engine just evaluates the rule directly instead of short-circuiting. The new differential test `append_rule_matches_build_verdicts` pins this property by checking that positive verdicts match exactly and that disjoint haystacks are still rejected at >= 90% under incremental builds.
+
+**Benchmarks.** A new `rule_load` Criterion group compares the three load entry points at 1K / 10K / 100K rules. Numbers recorded in `BENCHMARKS.md` under the Rule Load Paths (0.11.x) subsection.
+
+### CLI command groups (PR #124)
+
+The 12 flat top-level subcommands are reorganized into five noun-led command groups so the CLI scales as more subcommands arrive. The flat aliases continue to work for one release as visible-deprecated forwarders, are hidden in the next release, and are removed in v1.0. Every existing invocation keeps working, so there is no breaking change in this release.
 
 **Migration:**
 
@@ -34,19 +95,37 @@ warning: `rsigma <old>` is deprecated; use `rsigma <new>` instead. This alias wi
 
 stdout is unchanged. Exit codes are unchanged. Every flag accepted by the old form is accepted by the new form, with identical defaults and semantics.
 
-**Why noun-led groups.** Every group is a noun (`engine`, `rule`, `backend`, `pipeline`, `attack`), so command paths read as "rsigma's X tooling: do Y" rather than the awkward verb-on-verb chains a `run` or `convert` group would produce (`rsigma convert run RULES` vs the chosen `rsigma backend convert RULES`). The five groups are deliberately stable and small so future commands have an obvious home rather than landing as more top-level sprawl.
-
-**`attack` group reserved.** `rsigma attack --help` lists no subcommands in this release. The `AttackCommands` enum is intentionally empty and is populated by the separate MITRE ATT&CK contributor PR (see `idea-proposals/MITRE ATT&CK/`) with `attack coverage` and `attack update`. No new top-level `attack-coverage` or `attack-update` commands will ever ship; both land as `attack` subcommands.
+**Why noun-led groups.** Every group is a noun (`engine`, `rule`, `backend`, `pipeline`), so command paths read as "rsigma's X tooling: do Y" rather than the awkward verb-on-verb chains a `run` or `convert` group would produce (`rsigma convert run RULES` vs the chosen `rsigma backend convert RULES`). The five groups are deliberately stable and small so future commands have an obvious home rather than landing as more top-level sprawl.
 
 **Deprecation timeline.**
 
 - **This release**: flat aliases visible in `rsigma --help` with a `[deprecated]` tag, stderr warning on invocation. Every test, script, and pipeline keeps working.
-- **Next release**: `#[command(hide = true)]` removes the aliases from `--help` but the invocations still work.
-- **v1.0**: flat aliases removed.
+- **Next release** ([issue #125](https://github.com/timescale/rsigma/issues/125)): `#[command(hide = true)]` removes the aliases from `--help` but the invocations still work.
+- **v1.0** ([issue #126](https://github.com/timescale/rsigma/issues/126)): flat aliases removed.
 
-### Internal
+**Internal refactor.** The CLI dispatch layer is collapsed: each subcommand's clap arguments now live in `crates/rsigma-cli/src/commands/<name>.rs` as a `pub struct <Name>Args` deriving `clap::Args`, and the daemon's 35-field arg set + `cmd_daemon` body moved out of `main.rs` into a new `crates/rsigma-cli/src/commands/daemon.rs`. `main.rs` dropped from ~1360 lines to ~520 with no behavior change; the dispatch becomes a thin two-layer match (group -> leaf).
 
-- The CLI dispatch layer is collapsed: each subcommand's clap arguments now live in `crates/rsigma-cli/src/commands/<name>.rs` as a `pub struct <Name>Args` deriving `clap::Args`, and the daemon's 35-field arg set + `cmd_daemon` body moved out of `main.rs` into a new `crates/rsigma-cli/src/commands/daemon.rs`. `main.rs` dropped from ~1360 lines to ~600 with no behavior change.
+### Test reliability (PRs #115, #123)
+
+The `cli_daemon_http` and `cli_daemon_otlp` E2E suites are no longer flaky on macOS under load. Three real issues caused intermittent `ConnectionRefused`:
+
+1. The daemon's stdout was piped but never drained, so a chatty detection-match sink could fill the ~64 KiB pipe buffer and stall the daemon mid-write.
+2. The spawn handshake stopped reading stderr after seeing "Sink started", so any subsequent log line could fill the stderr buffer too.
+3. "Sink started" is emitted before `axum::serve` enters its accept loop; tests that fired requests immediately after the handshake sometimes hit the kernel before the listener was wired up.
+
+The shared `DaemonProcess` helper (now in `tests/common/mod.rs`) drains stdout in a background thread, forwards interesting stderr lines to the main thread via `mpsc`, probes the actual TCP socket with `TcpStream::connect_timeout` before returning, and wraps the `Child` in a `ChildGuard` RAII type. Fixed `std::thread::sleep` waits in three OTLP tests and two HTTP tests are replaced with a `poll_until` helper that retries every 50 ms up to a 5 s deadline against the specific observable condition (metric labels present, status counters incremented). Each test now finishes in around 1.0 s, with the suite passing consistently across many consecutive macOS runs.
+
+PR #123 also de-flaked an eval bloom test (`append_rule_matches_build_verdicts`) by replacing brittle three-needle assertions with a 1000-trigram aggregate sweep, since `BuildHasherDefault<ahash::AHasher>` uses a runtime-randomized seed by default and bit positions shift between process invocations.
+
+### Other changes
+
+* **Dependencies (PRs #111, #113, #114, #120):** opentelemetry-proto 0.31.0 -> 0.32.0 with handling for the new `StringValueStrindex` and `key_strindex` schema fields; async-nats 0.47 -> 0.48 (JetStream 2.14 features, panic fix); jsonschema 0.46.3 -> 0.46.4 (regex panic fix); tower-http 0.6.9 -> 0.6.10; tonic 0.14.5 -> 0.14.6; tokio 1.52.2 -> 1.52.3. yamlpath and yamlpatch bumped to 1.25.2, and the `serde_yaml` cargo rename was replaced with the real `yaml_serde` crate name across all six member manifests (~199 source references), so the manifest, source code, and compiler errors agree about which crate is in use.
+* **GitHub Actions (PRs #111, #120):** taiki-e/install-action 2.75.28 -> 2.77.3, github/codeql-action 4.35.2 -> 4.35.4, sigstore/cosign-installer 4.1.1 -> 4.1.2.
+* **Dependabot config (PR #114):** added a second cargo ecosystem entry pointed at `/fuzz` with the same weekly schedule and patch group as the root entry, so the fuzz workspace's lockfile no longer drifts and bleeds into unrelated PRs.
+* **Architecture diagrams:** the ASCII diagram in `README.md` and the Mermaid diagram in `assets/architecture.mmd` were refreshed to reflect Dynamic Sigma Pipelines (v0.10.0), the matcher optimizer and prefilters (v0.11.0), DLQ as a sink target, broadened hot-reload over rules + pipelines, builtin pipelines (`ecs_windows`, `sysmon`), and the directory-style modules from the v0.9.0 modularization. A legend now explains feature-gated components (`*` for feature-gated and `**` for `daachorse-index`).
+* **README:** install and build instructions corrected; eval prefilters mentioned in the prose; fifth blog article and BlackNoise newsletter mention added.
+
+[v0.11.0...HEAD](https://github.com/timescale/rsigma/compare/v0.11.0...HEAD)
 
 ## [0.11.0] - 2026-05-14
 
