@@ -264,6 +264,7 @@ fn daemon_with_dynamic_pipeline_detects_via_var_expansion() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -310,6 +311,7 @@ fn daemon_dynamic_pipeline_no_false_positive() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -353,6 +355,7 @@ fn daemon_reload_preserves_dynamic_detection() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -414,6 +417,7 @@ fn daemon_source_refresh_on_file_change() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -477,6 +481,7 @@ fn daemon_error_policy_use_cached() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -537,6 +542,7 @@ fn daemon_required_source_fail_exits() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let status = DaemonProcess::spawn_expect_exit(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -571,6 +577,7 @@ fn daemon_api_sources_resolve_triggers_re_resolution() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -632,6 +639,7 @@ fn daemon_status_includes_dynamic_sources() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -671,6 +679,7 @@ fn daemon_metrics_include_source_resolution() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -713,6 +722,7 @@ fn daemon_cache_invalidation_endpoint() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -743,6 +753,7 @@ fn daemon_sources_list_endpoint() {
     let pipeline_file = temp_file(".yml", &pipeline_yaml);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),
@@ -779,6 +790,7 @@ fn cli_resolve_command_resolves_sources() {
 
     let output = Command::new(rsigma_bin())
         .args([
+            "pipeline",
             "resolve",
             "-p",
             pipeline_file.path().to_str().unwrap(),
@@ -820,6 +832,7 @@ fn cli_resolve_dry_run_shows_metadata() {
 
     let output = Command::new(rsigma_bin())
         .args([
+            "pipeline",
             "resolve",
             "-p",
             pipeline_file.path().to_str().unwrap(),
@@ -861,6 +874,7 @@ fn cli_validate_resolve_sources_passes() {
 
     let output = Command::new(rsigma_bin())
         .args([
+            "rule",
             "validate",
             rule_dir.path().to_str().unwrap(),
             "-p",
@@ -893,6 +907,7 @@ fn cli_validate_resolve_sources_fails_unreachable() {
 
     let output = Command::new(rsigma_bin())
         .args([
+            "rule",
             "validate",
             rule_dir.path().to_str().unwrap(),
             "-p",
@@ -962,6 +977,7 @@ level: high
     let rule_file = temp_file(".yml", rule);
 
     let daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule_file.path().to_str().unwrap(),

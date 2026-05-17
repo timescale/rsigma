@@ -26,7 +26,7 @@ fn validate_directory_with_valid_rules() {
     std::fs::write(dir.path().join("rule2.yml"), SIMPLE_RULE_WINDASH).unwrap();
 
     rsigma()
-        .args(["validate", dir.path().to_str().unwrap()])
+        .args(["rule", "validate", dir.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("Detection rules:"))
@@ -39,7 +39,12 @@ fn validate_directory_with_errors() {
     std::fs::write(dir.path().join("bad.yml"), "42").unwrap();
 
     rsigma()
-        .args(["validate", dir.path().to_str().unwrap(), "--verbose"])
+        .args([
+            "rule",
+            "validate",
+            dir.path().to_str().unwrap(),
+            "--verbose",
+        ])
         .assert()
         .stdout(predicate::str::contains("Parsed"));
 }
@@ -47,7 +52,7 @@ fn validate_directory_with_errors() {
 #[test]
 fn validate_nonexistent_directory() {
     rsigma()
-        .args(["validate", "/tmp/nonexistent_rsigma_dir"])
+        .args(["rule", "validate", "/tmp/nonexistent_rsigma_dir"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Error"));
@@ -61,6 +66,7 @@ fn validate_with_pipeline() {
 
     rsigma()
         .args([
+            "rule",
             "validate",
             dir.path().to_str().unwrap(),
             "-p",

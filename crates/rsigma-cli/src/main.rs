@@ -8,6 +8,12 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::{Parser, Subcommand};
+use commands::{
+    ConditionArgs, ConvertArgs, EvalArgs, FieldsArgs, LintArgs, LintCounts, ListFormatsArgs,
+    ParseArgs, ResolveArgs, StdinArgs, ValidateArgs,
+};
+#[cfg(feature = "daemon")]
+use commands::{DaemonArgs, cmd_daemon};
 use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
 use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEventMode, Pipeline, parse_pipeline_file,
@@ -28,7 +34,7 @@ struct Cli {
     /// (default: info). Human-readable stdout/stderr output is unchanged;
     /// this flag only adds machine-readable diagnostic logs alongside it.
     ///
-    /// Has no effect on the `daemon` subcommand, which always logs JSON.
+    /// Has no effect on the `engine daemon` subcommand, which always logs JSON.
     #[arg(long = "log-format", value_enum, global = true)]
     log_format: Option<LogFormat>,
 
@@ -44,546 +50,147 @@ enum LogFormat {
     Text,
 }
 
+// The new noun-led command groups (`engine`, `rule`, `backend`, `pipeline`,
+// `attack`) are the source of truth. The flat top-level variants that follow
+// are deprecated aliases kept for one release; each carries `[deprecated]` in
+// its `about` text and prints a stderr warning before forwarding to the same
+// `cmd_*` helper.
+//
+// We deliberately use a `//` comment (not `///`) so clap does not promote it
+// to the top-level `--help` `about` text and override the explicit
+// `#[command(about = ...)]` on `Cli`.
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Parse a single Sigma YAML file and print the AST as JSON
-    Parse {
-        /// Path to a Sigma YAML file
-        path: PathBuf,
-
-        /// Pretty-print JSON output
-        #[arg(short, long, default_value_t = true)]
-        pretty: bool,
+    /// Run rules against events (eval / daemon)
+    Engine {
+        #[command(subcommand)]
+        cmd: EngineCommands,
     },
 
-    /// Parse all Sigma rules in a directory (recursive) and report results
-    Validate {
-        /// Path to a directory containing Sigma YAML files
-        path: PathBuf,
-
-        /// Show details for each file (not just summary)
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
-        #[arg(short = 'p', long = "pipeline")]
-        pipelines: Vec<PathBuf>,
-
-        /// Also resolve dynamic pipeline sources during validation.
-        /// Sources must be reachable (file/command/HTTP) for validation to pass.
-        #[arg(long = "resolve-sources")]
-        resolve_sources: bool,
-    },
-
-    /// Parse a condition expression and print the AST
-    Condition {
-        /// The condition expression to parse
-        expr: String,
-    },
-
-    /// Read Sigma YAML from stdin and print parsed AST as JSON
-    Stdin {
-        /// Pretty-print JSON output
-        #[arg(short, long, default_value_t = true)]
-        pretty: bool,
-    },
-
-    /// Lint Sigma rules against the specification
-    ///
-    /// Runs built-in lint checks derived from the Sigma v2.1.0 specification.
-    /// Optionally also validates against a JSON schema (use --schema default
-    /// to download the official schema, or --schema <path> for a local file).
-    Lint {
-        /// Path to a Sigma rule file or directory of rules
-        path: PathBuf,
-
-        /// JSON schema for additional validation.
-        /// Use "default" to download the official Sigma schema (cached for 7 days),
-        /// or provide a path to a local schema file.
-        #[arg(short, long)]
-        schema: Option<String>,
-
-        /// Show details for all files, including those that pass
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Color output: auto (default), always, never
-        #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
-        color: String,
-
-        /// Disable specific lint rules (comma-separated).
-        /// Example: --disable missing_description,missing_author
-        #[arg(long, value_delimiter = ',')]
-        disable: Vec<String>,
-
-        /// Path to a .rsigma-lint.yml config file.
-        /// If omitted, searches for .rsigma-lint.yml in ancestor directories.
-        #[arg(long = "config")]
-        lint_config: Option<PathBuf>,
-
-        /// Exclude paths matching glob patterns (can be repeated).
-        /// Patterns are matched against paths relative to the lint root.
-        /// Example: --exclude "config/**" --exclude "**/unsupported/**"
-        #[arg(long)]
-        exclude: Vec<String>,
-
-        /// Auto-fix safe lint issues in-place.
-        /// Applies format-preserving fixes to files on disk.
-        #[arg(long)]
-        fix: bool,
-
-        /// Minimum severity that causes a non-zero exit code.
-        /// 'error' (default): exit 1 only when errors are found.
-        /// 'warning': exit 1 when warnings or errors are found.
-        /// 'info': exit 1 when any findings (info, warning, error) are found.
-        #[arg(long = "fail-level", default_value = "error",
-               value_parser = ["error", "warning", "info"])]
-        fail_level: String,
-    },
-
-    /// Run as a long-running daemon with hot-reload, health checks, and metrics
-    ///
-    /// Reads NDJSON events from stdin, evaluates against rules, and writes
-    /// matches to stdout. Exposes health endpoints, Prometheus metrics,
-    /// and a management API on the configured address.
-    #[cfg(feature = "daemon")]
-    Daemon {
-        /// Path to a Sigma rule file or directory of rules
-        #[arg(short, long)]
-        rules: PathBuf,
-
-        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
-        #[arg(short = 'p', long = "pipeline")]
-        pipelines: Vec<PathBuf>,
-
-        /// jq filter to extract the event payload from each JSON object
-        #[arg(long = "jq", conflicts_with = "jsonpath")]
-        jq: Option<String>,
-
-        /// JSONPath (RFC 9535) query to extract the event payload
-        #[arg(long = "jsonpath", conflicts_with = "jq")]
-        jsonpath: Option<String>,
-
-        /// Include the full event JSON in each detection match output
-        #[arg(long = "include-event")]
-        include_event: bool,
-
-        /// Pretty-print JSON output
-        #[arg(long)]
-        pretty: bool,
-
-        /// Address for health, metrics, and API server (default: 0.0.0.0:9090)
-        #[arg(long = "api-addr", default_value = "0.0.0.0:9090")]
-        api_addr: String,
-
-        /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
-        #[arg(long = "suppress")]
-        suppress: Option<String>,
-
-        /// Action after correlation fires: 'alert' (default) or 'reset'
-        #[arg(long = "action", value_parser = ["alert", "reset"])]
-        action: Option<String>,
-
-        /// Suppress detection output for correlation-only rules
-        #[arg(long = "no-detections")]
-        no_detections: bool,
-
-        /// Correlation event mode: none, full, or refs
-        #[arg(long = "correlation-event-mode", default_value = "none")]
-        correlation_event_mode: String,
-
-        /// Max events per correlation window group
-        #[arg(long = "max-correlation-events", default_value = "10")]
-        max_correlation_events: usize,
-
-        /// Event field name(s) for timestamp extraction in correlations
-        #[arg(long = "timestamp-field")]
-        timestamp_fields: Vec<String>,
-
-        /// Path to SQLite database for persisting correlation state across restarts.
-        /// When set, state is loaded on startup and saved periodically + on shutdown.
-        #[arg(long = "state-db")]
-        state_db: Option<PathBuf>,
-
-        /// Interval in seconds between periodic state snapshots (default: 30).
-        /// Only meaningful when --state-db is set.
-        #[arg(long = "state-save-interval", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
-        state_save_interval: u64,
-
-        /// Event input source. Supported schemes: stdin, http, nats://<host>:<port>/<subject>
-        #[arg(long = "input", default_value = "stdin")]
-        input: String,
-
-        /// Detection output sink (can be repeated for fan-out).
-        /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
-        #[arg(long = "output", default_value = "stdout")]
-        output: Vec<String>,
-
-        /// Bounded channel capacity for source→engine and engine→sink queues.
-        /// Higher values absorb bursts; lower values apply back-pressure sooner.
-        #[arg(long = "buffer-size", default_value = "10000")]
-        buffer_size: usize,
-
-        /// Maximum events to process per engine lock acquisition.
-        /// Reduces mutex overhead under load. 1 = process one at a time (default).
-        #[arg(long = "batch-size", default_value = "1")]
-        batch_size: usize,
-
-        /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
-        #[arg(long = "drain-timeout", default_value = "5")]
-        drain_timeout: u64,
-
-        /// Dead-letter queue target for events that fail processing.
-        /// Accepts same schemes as --output: stdout, file://<path>, nats://<host>:<port>/<subject>.
-        /// When not set, failed events are logged and discarded.
-        #[arg(long = "dlq")]
-        dlq: Option<String>,
-
-        /// Input log format for event parsing.
-        /// auto: try JSON → syslog → plain (default).
-        /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
-        /// cef (requires cef feature).
-        #[arg(long = "input-format", default_value = "auto")]
-        input_format: String,
-
-        /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
-        /// Only used when --input-format is syslog or auto. Defaults to UTC.
-        #[arg(long = "syslog-tz", default_value = "+00:00")]
-        syslog_tz: String,
-
-        /// NATS credentials file (.creds) for JWT + NKey authentication.
-        /// Also reads from NATS_CREDS environment variable.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-creds", env = "NATS_CREDS")]
-        nats_creds: Option<PathBuf>,
-
-        /// NATS authentication token. Also reads from NATS_TOKEN.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-token", env = "NATS_TOKEN", conflicts_with = "nats_creds")]
-        nats_token: Option<String>,
-
-        /// NATS username (requires --nats-password). Also reads from NATS_USER.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-user", env = "NATS_USER", requires = "nats_password", conflicts_with_all = ["nats_creds", "nats_token"])]
-        nats_user: Option<String>,
-
-        /// NATS password (requires --nats-user). Also reads from NATS_PASSWORD.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-password", env = "NATS_PASSWORD", requires = "nats_user")]
-        nats_password: Option<String>,
-
-        /// NATS NKey seed for authentication. Also reads from NATS_NKEY.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-nkey", env = "NATS_NKEY", conflicts_with_all = ["nats_creds", "nats_token", "nats_user"])]
-        nats_nkey: Option<String>,
-
-        /// TLS client certificate for mutual TLS with NATS.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-tls-cert", requires = "nats_tls_key")]
-        nats_tls_cert: Option<PathBuf>,
-
-        /// TLS client private key for mutual TLS with NATS.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-tls-key", requires = "nats_tls_cert")]
-        nats_tls_key: Option<PathBuf>,
-
-        /// Require TLS for NATS connections.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "nats-require-tls")]
-        nats_require_tls: bool,
-
-        /// Replay from a specific JetStream sequence number.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "replay-from-sequence", conflicts_with_all = ["replay_from_time", "replay_from_latest"])]
-        replay_from_sequence: Option<u64>,
-
-        /// Replay from a specific timestamp (ISO 8601, e.g. 2024-01-15T10:00:00Z).
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "replay-from-time", conflicts_with_all = ["replay_from_sequence", "replay_from_latest"])]
-        replay_from_time: Option<String>,
-
-        /// Start from the latest message, skipping stream history.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "replay-from-latest", conflicts_with_all = ["replay_from_sequence", "replay_from_time"])]
-        replay_from_latest: bool,
-
-        /// Clear correlation state on startup. When used with --replay-from-*,
-        /// forces a clean slate even if the replay starts after the stored position.
-        #[arg(long = "clear-state", conflicts_with = "keep_state")]
-        clear_state: bool,
-
-        /// Force restore correlation state even during replay. Use when you know
-        /// the replay starts after the last processed position (forward catch-up)
-        /// and want to preserve cross-boundary correlation windows.
-        #[arg(long = "keep-state", conflicts_with = "clear_state")]
-        keep_state: bool,
-
-        /// Behavior when no timestamp field is found in an event.
-        /// 'wallclock' (default): use wall-clock time for correlation windows.
-        /// 'skip': run detections but skip correlation state updates for that
-        /// event. Recommended for forensic replay of logs without timestamps.
-        #[arg(long = "timestamp-fallback", default_value = "wallclock",
-               value_parser = ["wallclock", "skip"])]
-        timestamp_fallback: String,
-
-        /// Consumer group name for NATS JetStream load balancing.
-        /// Multiple daemon instances using the same group name share the
-        /// workload via a single durable pull consumer.
-        #[cfg(feature = "daemon-nats")]
-        #[arg(long = "consumer-group", env = "RSIGMA_CONSUMER_GROUP")]
-        consumer_group: Option<String>,
-
-        /// Allow include directives to reference remote (HTTP/NATS) sources.
-        /// By default, includes are restricted to local sources (file/command)
-        /// for security. Use this flag to opt in to remote include resolution.
-        #[arg(long = "allow-remote-include")]
-        allow_remote_include: bool,
-
-        /// Enable bloom-filter pre-filtering of positive substring matchers.
-        ///
-        /// Off by default. When enabled, the engine builds a per-field bloom
-        /// over every rule's `|contains` / `|startswith` / `|endswith`
-        /// needles and short-circuits items whose field value cannot
-        /// possibly contain a needle trigram. The probe costs ~1 µs per
-        /// event, so this only pays off on rule sets where most events do
-        /// NOT match any pattern (e.g. high-volume telemetry against
-        /// substring-heavy threat-intel rules). Run the
-        /// `eval_bloom_rejection` benchmark on representative data before
-        /// flipping this on in production.
-        #[arg(long = "bloom-prefilter")]
-        bloom_prefilter: bool,
-
-        /// Memory budget (in bytes) for the bloom index. Defaults to 1 MB
-        /// (1048576). Lower the cap on memory-constrained deployments;
-        /// raise it for very large rule sets where the default starts
-        /// evicting useful filters. Has no effect unless
-        /// `--bloom-prefilter` is set.
-        #[arg(long = "bloom-max-bytes")]
-        bloom_max_bytes: Option<usize>,
-
-        /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
-        ///
-        /// Off by default. When enabled, the engine builds a single
-        /// per-field `DoubleArrayAhoCorasick` over every rule's positive
-        /// substring needles and drops AC-prunable rules (pure positive
-        /// substring detections, no negation) from the candidate set when
-        /// none of their patterns match the event. Pays off only on rule
-        /// sets > ~5K rules with many shared substring patterns
-        /// (threat-intel feeds, IOC packs). For smaller rule sets the
-        /// per-rule Aho-Corasick matcher is already optimal. Build time
-        /// scales linearly with total pattern count; pattern count per
-        /// field is capped at 100K. Available when compiled with the
-        /// `daachorse-index` Cargo feature.
-        #[cfg(feature = "daachorse-index")]
-        #[arg(long = "cross-rule-ac")]
-        cross_rule_ac: bool,
-    },
-
-    /// Evaluate events against Sigma rules
-    ///
-    /// Load rules from a file or directory, then evaluate JSON events.
-    /// Events can be provided as a single JSON string (--event) or as
-    /// NDJSON (newline-delimited JSON) from stdin. Files with a .evtx
-    /// extension are parsed as Windows Event Log files (requires the
-    /// evtx feature).
-    Eval {
-        /// Path to a Sigma rule file or directory of rules
-        #[arg(short, long)]
-        rules: PathBuf,
-
-        /// A single event as a JSON string, or @path to read from a file.
-        /// Supports NDJSON files and .evtx (Windows Event Log) files.
-        /// If omitted, reads NDJSON from stdin.
-        #[arg(short, long)]
-        event: Option<String>,
-
-        /// Pretty-print JSON output
-        #[arg(long)]
-        pretty: bool,
-
-        /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
-        #[arg(short = 'p', long = "pipeline")]
-        pipelines: Vec<PathBuf>,
-
-        /// jq filter to extract the event payload from each JSON object.
-        /// Example: --jq '.event' or --jq '.records[]'
-        #[arg(long = "jq", conflicts_with = "jsonpath")]
-        jq: Option<String>,
-
-        /// JSONPath (RFC 9535) query to extract the event payload.
-        /// Example: --jsonpath '$.event' or --jsonpath '$.records[*]'
-        #[arg(long = "jsonpath", conflicts_with = "jq")]
-        jsonpath: Option<String>,
-
-        /// Suppression window for correlation alerts.
-        /// After a correlation fires for a group key, suppress re-alerts
-        /// for this duration. Examples: 5m, 1h, 30s.
-        #[arg(long = "suppress")]
-        suppress: Option<String>,
-
-        /// Action to take after a correlation fires.
-        /// 'alert' (default): keep state, re-alert on next match.
-        /// 'reset': clear window state, require threshold from scratch.
-        #[arg(long = "action", value_parser = ["alert", "reset"])]
-        action: Option<String>,
-
-        /// Suppress detection-level output for rules that are only
-        /// referenced by correlations (where generate=false).
-        #[arg(long = "no-detections")]
-        no_detections: bool,
-
-        /// Include the full event JSON in each detection match output.
-        /// Equivalent to the `rsigma.include_event` custom attribute.
-        #[arg(long = "include-event")]
-        include_event: bool,
-
-        /// Correlation event inclusion mode:
-        ///   none  — don't include events (default, zero overhead)
-        ///   full  — include full event bodies (deflate compressed in memory)
-        ///   refs  — include lightweight references (timestamp + event ID)
-        /// Use --max-correlation-events to cap storage per window.
-        #[arg(long = "correlation-event-mode", default_value = "none")]
-        correlation_event_mode: String,
-
-        /// Maximum events to store per correlation window group when
-        /// --correlation-event-mode is not 'none'. Oldest events are
-        /// evicted when the cap is reached.
-        #[arg(long = "max-correlation-events", default_value = "10")]
-        max_correlation_events: usize,
-
-        /// Event field name(s) to use for timestamp extraction in correlations.
-        /// Can be specified multiple times; tried in order before built-in
-        /// defaults (@timestamp, timestamp, EventTime, …).
-        /// Equivalent to the `rsigma.timestamp_field` custom attribute.
-        #[arg(long = "timestamp-field")]
-        timestamp_fields: Vec<String>,
-
-        /// Input log format for event parsing.
-        /// auto: try JSON → syslog → plain (default).
-        /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
-        /// cef (requires cef feature).
-        #[arg(long = "input-format", default_value = "auto")]
-        input_format: String,
-
-        /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
-        /// Only used when --input-format is syslog or auto. Defaults to UTC.
-        #[arg(long = "syslog-tz", default_value = "+00:00")]
-        syslog_tz: String,
-
-        /// Exit with code 1 when any detection or correlation fires.
-        /// Useful in CI/CD pipelines to fail a build on detection.
-        #[arg(long = "fail-on-detection")]
-        fail_on_detection: bool,
-
-        /// Enable bloom-filter pre-filtering of positive substring matchers.
-        /// See `rsigma daemon --help` for the trade-off.
-        #[arg(long = "bloom-prefilter")]
-        bloom_prefilter: bool,
-
-        /// Memory budget (in bytes) for the bloom index. Defaults to 1 MB.
-        /// No effect unless `--bloom-prefilter` is set.
-        #[arg(long = "bloom-max-bytes")]
-        bloom_max_bytes: Option<usize>,
-
-        /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
-        /// See `rsigma daemon --help` for the trade-off. Available when
-        /// compiled with the `daachorse-index` Cargo feature.
-        #[cfg(feature = "daachorse-index")]
-        #[arg(long = "cross-rule-ac")]
-        cross_rule_ac: bool,
+    /// Inspect and operate on Sigma rule files
+    Rule {
+        #[command(subcommand)]
+        cmd: RuleCommands,
     },
 
     /// Convert Sigma rules to backend-native queries
-    Convert {
-        /// Path(s) to Sigma rule file(s) or directory
-        rules: Vec<PathBuf>,
-
-        /// Target backend (e.g. test)
-        #[arg(short, long)]
-        target: String,
-
-        /// Output format (backend-specific, default: "default")
-        #[arg(short, long, default_value = "default")]
-        format: String,
-
-        /// Processing pipeline(s) (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths
-        #[arg(short = 'p', long = "pipeline")]
-        pipeline: Vec<PathBuf>,
-
-        /// Skip pipeline requirement check
-        #[arg(long)]
-        without_pipeline: bool,
-
-        /// Skip unsupported rules instead of failing
-        #[arg(short, long)]
-        skip_unsupported: bool,
-
-        /// Output file (default: stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Backend options as key=value pairs (repeatable)
-        #[arg(short = 'O', long = "option")]
-        backend_options: Vec<String>,
+    Backend {
+        #[command(subcommand)]
+        cmd: BackendCommands,
     },
 
-    /// List available conversion targets (backends)
+    /// Pipeline tooling (resolve dynamic sources, …)
+    Pipeline {
+        #[command(subcommand)]
+        cmd: PipelineCommands,
+    },
+
+    /// MITRE ATT&CK tooling (reserved; populated by the ATT&CK contributor PR)
+    Attack {
+        #[command(subcommand)]
+        cmd: AttackCommands,
+    },
+
+    // ---- Deprecated flat aliases (visible this release, hidden next) ----
+    /// [deprecated] Use `rsigma engine eval` instead
+    Eval(EvalArgs),
+
+    /// [deprecated] Use `rsigma engine daemon` instead
+    #[cfg(feature = "daemon")]
+    Daemon(DaemonArgs),
+
+    /// [deprecated] Use `rsigma rule parse` instead
+    Parse(ParseArgs),
+
+    /// [deprecated] Use `rsigma rule validate` instead
+    Validate(ValidateArgs),
+
+    /// [deprecated] Use `rsigma rule lint` instead
+    Lint(LintArgs),
+
+    /// [deprecated] Use `rsigma rule fields` instead
+    Fields(FieldsArgs),
+
+    /// [deprecated] Use `rsigma rule condition` instead
+    Condition(ConditionArgs),
+
+    /// [deprecated] Use `rsigma rule stdin` instead
+    Stdin(StdinArgs),
+
+    /// [deprecated] Use `rsigma backend convert` instead
+    Convert(ConvertArgs),
+
+    /// [deprecated] Use `rsigma backend targets` instead
+    #[command(name = "list-targets")]
     ListTargets,
 
-    /// List available output formats for a target
-    ListFormats {
-        /// Target backend name
-        target: String,
-    },
+    /// [deprecated] Use `rsigma backend formats` instead
+    #[command(name = "list-formats")]
+    ListFormats(ListFormatsArgs),
 
-    /// Resolve dynamic pipeline sources and display their data
-    ///
-    /// Test source resolution without running the daemon. Resolves all
-    /// dynamic sources declared in the given pipeline(s) and prints
-    /// the resulting data as JSON.
-    Resolve {
-        /// Processing pipeline(s) containing dynamic sources
-        #[arg(short = 'p', long = "pipeline", required = true)]
-        pipelines: Vec<PathBuf>,
+    /// [deprecated] Use `rsigma pipeline resolve` instead
+    Resolve(ResolveArgs),
+}
 
-        /// Resolve only a specific source by ID
-        #[arg(short, long)]
-        source: Option<String>,
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+enum EngineCommands {
+    /// Evaluate events against Sigma rules
+    Eval(EvalArgs),
 
-        /// Pretty-print JSON output
-        #[arg(long)]
-        pretty: bool,
+    /// Run as a long-running daemon with hot-reload, health checks, and metrics
+    #[cfg(feature = "daemon")]
+    Daemon(DaemonArgs),
+}
 
-        /// Show what would be resolved without performing resolution
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-    },
+#[derive(Subcommand)]
+enum RuleCommands {
+    /// Parse a single Sigma YAML file and print the AST as JSON
+    Parse(ParseArgs),
+
+    /// Parse all Sigma rules in a directory (recursive) and report results
+    Validate(ValidateArgs),
+
+    /// Lint Sigma rules against the specification
+    Lint(LintArgs),
 
     /// List all fields referenced by Sigma rules
-    ///
-    /// Extracts field names from detection blocks, correlation group-by/condition
-    /// fields, filter detections, and rule metadata. Optionally applies pipelines
-    /// to show post-mapping field names.
-    Fields {
-        /// Path to a Sigma rule file or directory of rules
-        #[arg(short, long)]
-        rules: PathBuf,
+    Fields(FieldsArgs),
 
-        /// Processing pipeline(s) to apply (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths.
-        /// When provided, fields are shown after pipeline transformations.
-        #[arg(short = 'p', long = "pipeline")]
-        pipelines: Vec<PathBuf>,
+    /// Parse a condition expression and print the AST
+    Condition(ConditionArgs),
 
-        /// Exclude fields from filter rules
-        #[arg(long)]
-        no_filters: bool,
-
-        /// Output as JSON instead of a table
-        #[arg(long)]
-        json: bool,
-    },
+    /// Read Sigma YAML from stdin and print parsed AST as JSON
+    Stdin(StdinArgs),
 }
+
+#[derive(Subcommand)]
+enum BackendCommands {
+    /// Convert Sigma rules to backend-native queries
+    Convert(ConvertArgs),
+
+    /// List available conversion targets (backends)
+    Targets,
+
+    /// List available output formats for a target
+    Formats(ListFormatsArgs),
+}
+
+#[derive(Subcommand)]
+enum PipelineCommands {
+    /// Resolve dynamic pipeline sources and display their data
+    Resolve(ResolveArgs),
+}
+
+/// Reserved for the MITRE ATT&CK contributor work in
+/// [post-evaluation_enrichment_f3efb7b4.plan.md].
+///
+/// Concrete variants (`Coverage`, `Update`) land in that PR behind
+/// `#[cfg(feature = "attack-mapping")]`. Until then this enum is empty and
+/// `rsigma attack` reports "no available subcommands" via clap.
+#[derive(Subcommand)]
+enum AttackCommands {}
 
 fn main() {
     let cli = Cli::parse();
@@ -591,266 +198,161 @@ fn main() {
     // Daemon installs its own JSON subscriber unconditionally; only init for
     // other subcommands when the user opts in via --log-format.
     #[cfg(feature = "daemon")]
-    let is_daemon = matches!(cli.command, Commands::Daemon { .. });
+    let is_daemon = matches!(
+        cli.command,
+        Commands::Engine {
+            cmd: EngineCommands::Daemon(_),
+            ..
+        } | Commands::Daemon(_)
+    );
     #[cfg(not(feature = "daemon"))]
     let is_daemon = false;
     if !is_daemon && let Some(format) = cli.log_format {
         init_cli_log_subscriber(format);
     }
 
-    match cli.command {
+    dispatch(cli.command);
+}
+
+/// Forward a deprecated flat invocation to its new home and print a stderr
+/// migration hint. The warning text follows a single template so operators
+/// see a consistent message regardless of which alias they hit.
+fn deprecation_warn(old: &str, new: &str) {
+    eprintln!(
+        "warning: `rsigma {old}` is deprecated; use `rsigma {new}` instead. \
+         This alias will be hidden in the next release and removed in v1.0."
+    );
+}
+
+fn dispatch(command: Commands) {
+    match command {
+        // -- Grouped commands ------------------------------------------------
+        Commands::Engine { cmd } => dispatch_engine(cmd),
+        Commands::Rule { cmd } => dispatch_rule(cmd),
+        Commands::Backend { cmd } => dispatch_backend(cmd),
+        Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
+        Commands::Attack { cmd } => dispatch_attack(cmd),
+
+        // -- Deprecated flat aliases ----------------------------------------
+        Commands::Eval(args) => {
+            deprecation_warn("eval", "engine eval");
+            run_eval(args);
+        }
         #[cfg(feature = "daemon")]
-        Commands::Daemon {
-            rules,
-            pipelines,
-            jq,
-            jsonpath,
-            include_event,
-            pretty,
-            api_addr,
-            suppress,
-            action,
-            no_detections,
-            correlation_event_mode,
-            max_correlation_events,
-            timestamp_fields,
-            state_db,
-            state_save_interval,
-            input,
-            output,
-            buffer_size,
-            batch_size,
-            drain_timeout,
-            dlq,
-            input_format,
-            syslog_tz,
-            #[cfg(feature = "daemon-nats")]
-            nats_creds,
-            #[cfg(feature = "daemon-nats")]
-            nats_token,
-            #[cfg(feature = "daemon-nats")]
-            nats_user,
-            #[cfg(feature = "daemon-nats")]
-            nats_password,
-            #[cfg(feature = "daemon-nats")]
-            nats_nkey,
-            #[cfg(feature = "daemon-nats")]
-            nats_tls_cert,
-            #[cfg(feature = "daemon-nats")]
-            nats_tls_key,
-            #[cfg(feature = "daemon-nats")]
-            nats_require_tls,
-            #[cfg(feature = "daemon-nats")]
-            replay_from_sequence,
-            #[cfg(feature = "daemon-nats")]
-            replay_from_time,
-            #[cfg(feature = "daemon-nats")]
-            replay_from_latest,
-            clear_state,
-            keep_state,
-            timestamp_fallback,
-            #[cfg(feature = "daemon-nats")]
-            consumer_group,
-            allow_remote_include,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-        } => {
-            #[cfg(feature = "daemon-nats")]
-            let nats_auth = NatsAuthArgs {
-                nats_creds,
-                nats_token,
-                nats_user,
-                nats_password,
-                nats_nkey,
-                nats_tls_cert,
-                nats_tls_key,
-                nats_require_tls,
-            };
-            #[cfg(feature = "daemon-nats")]
-            let replay_policy = if let Some(seq) = replay_from_sequence {
-                rsigma_runtime::ReplayPolicy::FromSequence(seq)
-            } else if let Some(ref ts) = replay_from_time {
-                let t =
-                    time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
-                        .unwrap_or_else(|e| {
-                            eprintln!("Invalid --replay-from-time '{ts}': {e}");
-                            process::exit(exit_code::CONFIG_ERROR);
-                        });
-                rsigma_runtime::ReplayPolicy::FromTime(t)
-            } else if replay_from_latest {
-                rsigma_runtime::ReplayPolicy::Latest
-            } else {
-                rsigma_runtime::ReplayPolicy::Resume
-            };
+        Commands::Daemon(args) => {
+            deprecation_warn("daemon", "engine daemon");
+            cmd_daemon(args);
+        }
+        Commands::Parse(args) => {
+            deprecation_warn("parse", "rule parse");
+            commands::cmd_parse(args);
+        }
+        Commands::Validate(args) => {
+            deprecation_warn("validate", "rule validate");
+            commands::cmd_validate(args);
+        }
+        Commands::Lint(args) => {
+            deprecation_warn("lint", "rule lint");
+            run_lint(args);
+        }
+        Commands::Fields(args) => {
+            deprecation_warn("fields", "rule fields");
+            commands::cmd_fields(args);
+        }
+        Commands::Condition(args) => {
+            deprecation_warn("condition", "rule condition");
+            commands::cmd_condition(args);
+        }
+        Commands::Stdin(args) => {
+            deprecation_warn("stdin", "rule stdin");
+            commands::cmd_stdin(args);
+        }
+        Commands::Convert(args) => {
+            deprecation_warn("convert", "backend convert");
+            commands::cmd_convert(args);
+        }
+        Commands::ListTargets => {
+            deprecation_warn("list-targets", "backend targets");
+            commands::cmd_list_targets();
+        }
+        Commands::ListFormats(ListFormatsArgs { target }) => {
+            deprecation_warn("list-formats", "backend formats");
+            commands::cmd_list_formats(target);
+        }
+        Commands::Resolve(args) => {
+            deprecation_warn("resolve", "pipeline resolve");
+            commands::cmd_resolve(args);
+        }
+    }
+}
 
-            let state_restore_mode = if clear_state {
-                daemon::server::StateRestoreMode::ForceClear
-            } else if keep_state {
-                daemon::server::StateRestoreMode::ForceKeep
-            } else {
-                daemon::server::StateRestoreMode::Auto
-            };
+fn dispatch_engine(cmd: EngineCommands) {
+    match cmd {
+        EngineCommands::Eval(args) => run_eval(args),
+        #[cfg(feature = "daemon")]
+        EngineCommands::Daemon(args) => cmd_daemon(args),
+    }
+}
 
-            cmd_daemon(
-                rules,
-                pipelines,
-                jq,
-                jsonpath,
-                include_event,
-                pretty,
-                api_addr,
-                suppress,
-                action,
-                no_detections,
-                correlation_event_mode,
-                max_correlation_events,
-                timestamp_fields,
-                timestamp_fallback,
-                state_db,
-                state_save_interval,
-                input,
-                output,
-                buffer_size,
-                batch_size,
-                drain_timeout,
-                dlq,
-                input_format,
-                syslog_tz,
-                state_restore_mode,
-                #[cfg(feature = "daemon-nats")]
-                nats_auth,
-                #[cfg(feature = "daemon-nats")]
-                replay_policy,
-                #[cfg(feature = "daemon-nats")]
-                consumer_group,
-                allow_remote_include,
-                bloom_prefilter,
-                bloom_max_bytes,
-                #[cfg(feature = "daachorse-index")]
-                cross_rule_ac,
-            )
-        }
-        Commands::Parse { path, pretty } => commands::cmd_parse(path, pretty),
-        Commands::Validate {
-            path,
-            verbose,
-            pipelines,
-            resolve_sources,
-        } => commands::cmd_validate(path, verbose, pipelines, resolve_sources),
-        Commands::Lint {
-            path,
-            schema,
-            verbose,
-            color,
-            disable,
-            lint_config,
-            exclude,
-            fix: apply_fix,
-            fail_level,
-        } => {
-            let counts = commands::cmd_lint(
-                path,
-                schema,
-                verbose,
-                &color,
-                disable,
-                lint_config,
-                exclude,
-                apply_fix,
-            );
-            let should_fail = match fail_level.as_str() {
-                "info" => counts.errors > 0 || counts.warnings > 0 || counts.infos > 0,
-                "warning" => counts.errors > 0 || counts.warnings > 0,
-                _ => counts.errors > 0,
-            };
-            if should_fail {
-                process::exit(exit_code::FINDINGS);
-            }
-        }
-        Commands::Condition { expr } => commands::cmd_condition(expr),
-        Commands::Stdin { pretty } => commands::cmd_stdin(pretty),
-        Commands::Eval {
-            rules,
-            event,
-            pretty,
-            pipelines,
-            jq,
-            jsonpath,
-            suppress,
-            action,
-            no_detections,
-            include_event,
-            correlation_event_mode,
-            max_correlation_events,
-            timestamp_fields,
-            input_format,
-            syslog_tz,
-            fail_on_detection,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-        } => {
-            let had_matches = commands::cmd_eval(
-                rules,
-                event,
-                pretty,
-                pipelines,
-                jq,
-                jsonpath,
-                suppress,
-                action,
-                no_detections,
-                include_event,
-                correlation_event_mode,
-                max_correlation_events,
-                timestamp_fields,
-                input_format,
-                syslog_tz,
-                bloom_prefilter,
-                bloom_max_bytes,
-                #[cfg(feature = "daachorse-index")]
-                cross_rule_ac,
-            );
-            if fail_on_detection && had_matches {
-                process::exit(exit_code::FINDINGS);
-            }
-        }
-        Commands::Convert {
-            rules,
-            target,
-            format,
-            pipeline,
-            without_pipeline,
-            skip_unsupported,
-            output,
-            backend_options,
-        } => commands::cmd_convert(
-            rules,
-            target,
-            format,
-            pipeline,
-            without_pipeline,
-            skip_unsupported,
-            output,
-            backend_options,
-        ),
-        Commands::ListTargets => commands::cmd_list_targets(),
-        Commands::ListFormats { target } => commands::cmd_list_formats(target),
-        Commands::Fields {
-            rules,
-            pipelines,
-            no_filters,
-            json,
-        } => commands::cmd_fields(rules, pipelines, no_filters, json),
-        Commands::Resolve {
-            pipelines,
-            source,
-            pretty,
-            dry_run,
-        } => commands::cmd_resolve(pipelines, source, pretty, dry_run),
+fn dispatch_rule(cmd: RuleCommands) {
+    match cmd {
+        RuleCommands::Parse(args) => commands::cmd_parse(args),
+        RuleCommands::Validate(args) => commands::cmd_validate(args),
+        RuleCommands::Lint(args) => run_lint(args),
+        RuleCommands::Fields(args) => commands::cmd_fields(args),
+        RuleCommands::Condition(args) => commands::cmd_condition(args),
+        RuleCommands::Stdin(args) => commands::cmd_stdin(args),
+    }
+}
+
+fn dispatch_backend(cmd: BackendCommands) {
+    match cmd {
+        BackendCommands::Convert(args) => commands::cmd_convert(args),
+        BackendCommands::Targets => commands::cmd_list_targets(),
+        BackendCommands::Formats(ListFormatsArgs { target }) => commands::cmd_list_formats(target),
+    }
+}
+
+fn dispatch_pipeline(cmd: PipelineCommands) {
+    match cmd {
+        PipelineCommands::Resolve(args) => commands::cmd_resolve(args),
+    }
+}
+
+fn dispatch_attack(cmd: AttackCommands) {
+    // `AttackCommands` is intentionally empty until the ATT&CK contributor PR
+    // populates it. The exhaustive `match` keeps it impossible to add a
+    // variant without wiring a handler. Once `Coverage` and `Update` land,
+    // they slot in here.
+    match cmd {}
+}
+
+/// Shared eval entry point used by both `engine eval` and the deprecated
+/// `eval` alias. Centralizes the `--fail-on-detection` exit-code handling.
+fn run_eval(args: EvalArgs) {
+    let fail_on_detection = args.fail_on_detection;
+    let had_matches = commands::cmd_eval(args);
+    if fail_on_detection && had_matches {
+        process::exit(exit_code::FINDINGS);
+    }
+}
+
+/// Shared lint entry point used by both `rule lint` and the deprecated `lint`
+/// alias. Centralizes the `--fail-level` exit-code handling.
+fn run_lint(args: LintArgs) {
+    let fail_level = args.fail_level.clone();
+    let LintCounts {
+        errors,
+        warnings,
+        infos,
+    } = commands::cmd_lint(args);
+    let should_fail = match fail_level.as_str() {
+        "info" => errors > 0 || warnings > 0 || infos > 0,
+        "warning" => errors > 0 || warnings > 0,
+        _ => errors > 0,
+    };
+    if should_fail {
+        process::exit(exit_code::FINDINGS);
     }
 }
 
@@ -877,149 +379,7 @@ fn init_cli_log_subscriber(format: LogFormat) {
 }
 
 // ---------------------------------------------------------------------------
-// Daemon subcommand
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "daemon-nats")]
-struct NatsAuthArgs {
-    nats_creds: Option<PathBuf>,
-    nats_token: Option<String>,
-    nats_user: Option<String>,
-    nats_password: Option<String>,
-    nats_nkey: Option<String>,
-    nats_tls_cert: Option<PathBuf>,
-    nats_tls_key: Option<PathBuf>,
-    nats_require_tls: bool,
-}
-
-#[cfg(feature = "daemon")]
-#[allow(clippy::too_many_arguments)]
-fn cmd_daemon(
-    rules_path: PathBuf,
-    pipeline_paths: Vec<PathBuf>,
-    jq: Option<String>,
-    jsonpath: Option<String>,
-    include_event: bool,
-    pretty: bool,
-    api_addr: String,
-    suppress: Option<String>,
-    action: Option<String>,
-    no_detections: bool,
-    correlation_event_mode: String,
-    max_correlation_events: usize,
-    timestamp_fields: Vec<String>,
-    timestamp_fallback: String,
-    state_db: Option<PathBuf>,
-    state_save_interval: u64,
-    input: String,
-    output: Vec<String>,
-    buffer_size: usize,
-    batch_size: usize,
-    drain_timeout: u64,
-    dlq: Option<String>,
-    input_format: String,
-    syslog_tz: String,
-    state_restore_mode: daemon::server::StateRestoreMode,
-    #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
-    #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
-    #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
-    allow_remote_include: bool,
-    bloom_prefilter: bool,
-    bloom_max_bytes: Option<usize>,
-    #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
-) {
-    // Set up structured logging
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
-    let pipelines = load_pipelines(&pipeline_paths);
-    let event_filter = std::sync::Arc::new(build_event_filter(jq, jsonpath));
-    let parsed_input_format = parse_input_format(&input_format, &syslog_tz);
-
-    let corr_config = build_correlation_config(
-        suppress,
-        action,
-        no_detections,
-        correlation_event_mode,
-        max_correlation_events,
-        timestamp_fields,
-        &timestamp_fallback,
-    );
-
-    let addr: std::net::SocketAddr = api_addr.parse().unwrap_or_else(|e| {
-        eprintln!("Invalid API address '{api_addr}': {e}");
-        process::exit(exit_code::CONFIG_ERROR);
-    });
-
-    #[cfg(feature = "daemon-nats")]
-    let nats_config = rsigma_runtime::NatsConnectConfig {
-        credentials_file: nats_auth.nats_creds,
-        token: nats_auth.nats_token,
-        username: nats_auth.nats_user,
-        password: nats_auth.nats_password,
-        nkey: nats_auth.nats_nkey,
-        tls_client_cert: nats_auth.nats_tls_cert,
-        tls_client_key: nats_auth.nats_tls_key,
-        require_tls: nats_auth.nats_require_tls,
-        ..Default::default()
-    };
-
-    let file_pipeline_paths: Vec<PathBuf> = pipeline_paths
-        .into_iter()
-        .filter(|p| resolve_builtin_pipeline(p.to_str().unwrap_or("")).is_none())
-        .collect();
-
-    let config = daemon::server::DaemonConfig {
-        rules_path,
-        pipelines,
-        pipeline_paths: file_pipeline_paths,
-        corr_config,
-        include_event,
-        pretty,
-        api_addr: addr,
-        event_filter,
-        state_db,
-        state_save_interval,
-        input,
-        output,
-        buffer_size,
-        batch_size,
-        drain_timeout,
-        dlq,
-        input_format: parsed_input_format,
-        #[cfg(feature = "daemon-nats")]
-        nats_config,
-        #[cfg(feature = "daemon-nats")]
-        replay_policy,
-        #[cfg(feature = "daemon-nats")]
-        consumer_group,
-        state_restore_mode,
-        allow_remote_include,
-        bloom_prefilter,
-        bloom_max_bytes,
-        #[cfg(feature = "daachorse-index")]
-        cross_rule_ac,
-    };
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to create Tokio runtime: {e}");
-            process::exit(exit_code::CONFIG_ERROR);
-        });
-
-    rt.block_on(daemon::run_daemon(config));
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
+// Shared helpers (used across commands)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
@@ -1113,77 +473,6 @@ pub(crate) fn print_json(value: &impl serde::Serialize, pretty: bool) {
             process::exit(exit_code::CONFIG_ERROR);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Input format parsing
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "daemon")]
-pub(crate) fn parse_input_format(format_str: &str, syslog_tz: &str) -> rsigma_runtime::InputFormat {
-    use rsigma_runtime::InputFormat;
-    use rsigma_runtime::input::SyslogConfig;
-
-    let tz_secs = parse_tz_offset(syslog_tz);
-
-    match format_str {
-        "auto" => InputFormat::Auto(SyslogConfig {
-            default_tz_offset_secs: tz_secs,
-        }),
-        "json" => InputFormat::Json,
-        "syslog" => InputFormat::Syslog(SyslogConfig {
-            default_tz_offset_secs: tz_secs,
-        }),
-        "plain" => InputFormat::Plain,
-        #[cfg(feature = "logfmt")]
-        "logfmt" => InputFormat::Logfmt,
-        #[cfg(feature = "cef")]
-        "cef" => InputFormat::Cef,
-        other => {
-            eprintln!("Unknown input format: '{other}'");
-            eprintln!("Supported formats: auto, json, syslog, plain");
-            #[cfg(feature = "logfmt")]
-            eprintln!("  (with logfmt feature): logfmt");
-            #[cfg(feature = "cef")]
-            eprintln!("  (with cef feature): cef");
-            process::exit(exit_code::CONFIG_ERROR);
-        }
-    }
-}
-
-/// Parse a timezone offset string like "+05:00" or "-08:00" into seconds east of UTC.
-#[cfg(feature = "daemon")]
-fn parse_tz_offset(s: &str) -> i32 {
-    let s = s.trim();
-    if s == "UTC" || s == "utc" || s == "Z" || s == "+00:00" {
-        return 0;
-    }
-
-    let (sign, rest) = if let Some(rest) = s.strip_prefix('+') {
-        (1i32, rest)
-    } else if let Some(rest) = s.strip_prefix('-') {
-        (-1i32, rest)
-    } else {
-        eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
-        process::exit(exit_code::CONFIG_ERROR);
-    };
-
-    let parts: Vec<&str> = rest.split(':').collect();
-    if parts.len() != 2 {
-        eprintln!("Invalid timezone offset: '{s}' (expected +HH:MM or -HH:MM)");
-        process::exit(exit_code::CONFIG_ERROR);
-    }
-
-    let hours: i32 = parts[0].parse().unwrap_or_else(|_| {
-        eprintln!("Invalid timezone offset hours: '{}'", parts[0]);
-        process::exit(exit_code::CONFIG_ERROR);
-    });
-    let minutes: i32 = parts[1].parse().unwrap_or_else(|_| {
-        eprintln!("Invalid timezone offset minutes: '{}'", parts[1]);
-        process::exit(exit_code::CONFIG_ERROR);
-    });
-
-    sign * (hours * 3600 + minutes * 60)
 }
 
 // ---------------------------------------------------------------------------

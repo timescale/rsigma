@@ -1,15 +1,37 @@
 use std::path::PathBuf;
 use std::process;
 
+use clap::Args;
 use rsigma_eval::Engine;
 use rsigma_parser::parse_sigma_directory;
 
-pub(crate) fn cmd_validate(
-    path: PathBuf,
-    verbose: bool,
-    pipeline_paths: Vec<PathBuf>,
-    resolve_sources: bool,
-) {
+/// Arguments for `rsigma rule validate` (and the deprecated `rsigma validate`).
+#[derive(Args, Debug)]
+pub(crate) struct ValidateArgs {
+    /// Path to a directory containing Sigma YAML files
+    pub path: PathBuf,
+
+    /// Show details for each file (not just summary)
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
+    #[arg(short = 'p', long = "pipeline")]
+    pub pipelines: Vec<PathBuf>,
+
+    /// Also resolve dynamic pipeline sources during validation.
+    /// Sources must be reachable (file/command/HTTP) for validation to pass.
+    #[arg(long = "resolve-sources")]
+    pub resolve_sources: bool,
+}
+
+pub(crate) fn cmd_validate(args: ValidateArgs) {
+    let ValidateArgs {
+        path,
+        verbose,
+        pipelines: pipeline_paths,
+        resolve_sources,
+    } = args;
     let mut pipelines = crate::load_pipelines(&pipeline_paths);
 
     if resolve_sources {

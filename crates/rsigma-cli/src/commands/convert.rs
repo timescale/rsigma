@@ -1,7 +1,43 @@
 use std::path::PathBuf;
 use std::process;
 
+use clap::Args;
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file};
+
+/// Arguments for `rsigma backend convert` (and the deprecated `rsigma convert`).
+#[derive(Args, Debug)]
+pub(crate) struct ConvertArgs {
+    /// Path(s) to Sigma rule file(s) or directory
+    pub rules: Vec<PathBuf>,
+
+    /// Target backend (e.g. test)
+    #[arg(short, long)]
+    pub target: String,
+
+    /// Output format (backend-specific, default: "default")
+    #[arg(short, long, default_value = "default")]
+    pub format: String,
+
+    /// Processing pipeline(s) (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths
+    #[arg(short = 'p', long = "pipeline")]
+    pub pipeline: Vec<PathBuf>,
+
+    /// Skip pipeline requirement check
+    #[arg(long)]
+    pub without_pipeline: bool,
+
+    /// Skip unsupported rules instead of failing
+    #[arg(short, long)]
+    pub skip_unsupported: bool,
+
+    /// Output file (default: stdout)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Backend options as key=value pairs (repeatable)
+    #[arg(short = 'O', long = "option")]
+    pub backend_options: Vec<String>,
+}
 
 fn get_backend(
     target: &str,
@@ -24,24 +60,25 @@ fn get_backend(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn cmd_convert(
-    rules: Vec<PathBuf>,
-    target: String,
-    format: String,
-    pipeline_paths: Vec<PathBuf>,
-    without_pipeline: bool,
-    skip_unsupported: bool,
-    output: Option<PathBuf>,
-    backend_options: Vec<String>,
-) {
+pub(crate) fn cmd_convert(args: ConvertArgs) {
+    let ConvertArgs {
+        rules,
+        target,
+        format,
+        pipeline: pipeline_paths,
+        without_pipeline,
+        skip_unsupported,
+        output,
+        backend_options,
+    } = args;
+
     let collection = load_collection_multi(&rules);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) {
         eprintln!(
-            "  note: dynamic sources are not resolved by `rsigma convert`. \
-             Use `rsigma resolve` to inspect sources or `rsigma daemon` to evaluate \
+            "  note: dynamic sources are not resolved by `rsigma backend convert`. \
+             Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
              events with dynamic pipelines."
         );
     }
@@ -119,6 +156,14 @@ pub(crate) fn cmd_list_formats(target: String) {
     for (name, desc) in backend.formats() {
         println!("  {name}  - {desc}");
     }
+}
+
+/// Wrapper for the deprecated flat `rsigma list-formats TARGET` form so the
+/// outer dispatch can pull the positional argument off a clap variant uniformly.
+#[derive(Args, Debug)]
+pub(crate) struct ListFormatsArgs {
+    /// Target backend name
+    pub target: String,
 }
 
 fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {

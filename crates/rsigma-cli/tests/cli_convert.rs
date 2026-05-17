@@ -58,6 +58,7 @@ fn convert_simple_rule_to_postgres() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -74,6 +75,7 @@ fn convert_with_format_view() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -92,6 +94,7 @@ fn convert_with_format_timescaledb() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -127,6 +130,7 @@ level: low
 
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             dir.path().to_str().unwrap(),
             "--target",
@@ -157,6 +161,7 @@ transformations:
 
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -175,6 +180,7 @@ fn convert_skip_unsupported() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -192,6 +198,7 @@ fn convert_requires_pipeline_error() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -207,6 +214,7 @@ fn convert_invalid_target() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -226,6 +234,7 @@ fn convert_invalid_format() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -247,6 +256,7 @@ fn convert_correlation_rule() {
     let rule = temp_file(".yml", CORRELATION_RULES);
     let output = rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -269,6 +279,7 @@ fn convert_to_file_output() {
 
     rsigma()
         .args([
+            "backend",
             "convert",
             rule.path().to_str().unwrap(),
             "--target",
@@ -289,7 +300,7 @@ fn convert_to_file_output() {
 
 #[test]
 fn list_targets() {
-    let output = rsigma().args(["list-targets"]).output().unwrap();
+    let output = rsigma().args(["backend", "targets"]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
     Available conversion targets:
@@ -302,7 +313,7 @@ fn list_targets() {
 #[test]
 fn list_formats_postgres() {
     let output = rsigma()
-        .args(["list-formats", "postgres"])
+        .args(["backend", "formats", "postgres"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -319,7 +330,7 @@ fn list_formats_postgres() {
 #[test]
 fn list_formats_invalid_target() {
     let output = rsigma()
-        .args(["list-formats", "nonexistent"])
+        .args(["backend", "formats", "nonexistent"])
         .output()
         .unwrap();
     assert!(!output.status.success());

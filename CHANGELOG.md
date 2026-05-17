@@ -3,6 +3,51 @@
 All notable changes to RSigma are documented in this file.
 Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
+## [Unreleased]
+
+### CLI
+
+The 12 flat top-level subcommands are reorganized into five noun-led command groups so the CLI scales as more subcommands arrive (most immediately, `attack coverage` and `attack update` from the upcoming MITRE ATT&CK contributor PR). The flat aliases continue to work for one release as visible-deprecated forwarders, are hidden in the next release, and are removed in v1.0. Every existing invocation keeps working, so there is no breaking change in this release.
+
+**Migration:**
+
+| Old (flat) | New (grouped) |
+|------------|---------------|
+| `rsigma eval ...` | `rsigma engine eval ...` |
+| `rsigma daemon ...` | `rsigma engine daemon ...` |
+| `rsigma parse ...` | `rsigma rule parse ...` |
+| `rsigma validate ...` | `rsigma rule validate ...` |
+| `rsigma lint ...` | `rsigma rule lint ...` |
+| `rsigma fields ...` | `rsigma rule fields ...` |
+| `rsigma condition ...` | `rsigma rule condition ...` |
+| `rsigma stdin ...` | `rsigma rule stdin ...` |
+| `rsigma convert RULES ...` | `rsigma backend convert RULES ...` |
+| `rsigma list-targets` | `rsigma backend targets` |
+| `rsigma list-formats TARGET` | `rsigma backend formats TARGET` |
+| `rsigma resolve ...` | `rsigma pipeline resolve ...` |
+
+**What you'll see.** Invoking any flat alias prints one stderr line:
+
+```
+warning: `rsigma <old>` is deprecated; use `rsigma <new>` instead. This alias will be hidden in the next release and removed in v1.0.
+```
+
+stdout is unchanged. Exit codes are unchanged. Every flag accepted by the old form is accepted by the new form, with identical defaults and semantics.
+
+**Why noun-led groups.** Every group is a noun (`engine`, `rule`, `backend`, `pipeline`, `attack`), so command paths read as "rsigma's X tooling: do Y" rather than the awkward verb-on-verb chains a `run` or `convert` group would produce (`rsigma convert run RULES` vs the chosen `rsigma backend convert RULES`). The five groups are deliberately stable and small so future commands have an obvious home rather than landing as more top-level sprawl.
+
+**`attack` group reserved.** `rsigma attack --help` lists no subcommands in this release. The `AttackCommands` enum is intentionally empty and is populated by the separate MITRE ATT&CK contributor PR (see `idea-proposals/MITRE ATT&CK/`) with `attack coverage` and `attack update`. No new top-level `attack-coverage` or `attack-update` commands will ever ship; both land as `attack` subcommands.
+
+**Deprecation timeline.**
+
+- **This release**: flat aliases visible in `rsigma --help` with a `[deprecated]` tag, stderr warning on invocation. Every test, script, and pipeline keeps working.
+- **Next release**: `#[command(hide = true)]` removes the aliases from `--help` but the invocations still work.
+- **v1.0**: flat aliases removed.
+
+### Internal
+
+- The CLI dispatch layer is collapsed: each subcommand's clap arguments now live in `crates/rsigma-cli/src/commands/<name>.rs` as a `pub struct <Name>Args` deriving `clap::Args`, and the daemon's 35-field arg set + `cmd_daemon` body moved out of `main.rs` into a new `crates/rsigma-cli/src/commands/daemon.rs`. `main.rs` dropped from ~1360 lines to ~600 with no behavior change.
+
 ## [0.11.0] - 2026-05-14
 
 **TL;DR**

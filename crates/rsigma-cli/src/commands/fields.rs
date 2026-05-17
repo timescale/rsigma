@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use clap::Args;
 use rsigma_eval::{Pipeline, apply_pipelines};
 use rsigma_parser::{
     CorrelationCondition, CorrelationRule, Detection, DetectionItem, Detections, FilterRule,
@@ -12,19 +13,41 @@ use serde::Serialize;
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub(crate) fn cmd_fields(
-    path: PathBuf,
-    pipeline_paths: Vec<PathBuf>,
-    no_filters: bool,
-    json: bool,
-) {
+/// Arguments for `rsigma rule fields` (and the deprecated `rsigma fields`).
+#[derive(Args, Debug)]
+pub(crate) struct FieldsArgs {
+    /// Path to a Sigma rule file or directory of rules
+    #[arg(short, long)]
+    pub rules: PathBuf,
+
+    /// Processing pipeline(s) to apply (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths.
+    /// When provided, fields are shown after pipeline transformations.
+    #[arg(short = 'p', long = "pipeline")]
+    pub pipelines: Vec<PathBuf>,
+
+    /// Exclude fields from filter rules
+    #[arg(long)]
+    pub no_filters: bool,
+
+    /// Output as JSON instead of a table
+    #[arg(long)]
+    pub json: bool,
+}
+
+pub(crate) fn cmd_fields(args: FieldsArgs) {
+    let FieldsArgs {
+        rules: path,
+        pipelines: pipeline_paths,
+        no_filters,
+        json,
+    } = args;
     let collection = crate::load_collection(&path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) {
         eprintln!(
-            "  note: dynamic sources are not resolved by `rsigma fields`. \
-             Use `rsigma resolve` to inspect sources or `rsigma daemon` to evaluate \
+            "  note: dynamic sources are not resolved by `rsigma rule fields`. \
+             Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
              events with dynamic pipelines."
         );
     }

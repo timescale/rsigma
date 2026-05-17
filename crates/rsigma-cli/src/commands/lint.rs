@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
 
+use clap::Args;
 use rsigma_parser::lint::{self, FileLintResult, LintConfig};
 use serde::Deserialize;
 
@@ -13,18 +14,69 @@ pub(crate) struct LintCounts {
     pub infos: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn cmd_lint(
-    path: PathBuf,
-    schema: Option<String>,
-    verbose: bool,
-    color: &str,
-    disable: Vec<String>,
-    lint_config_path: Option<PathBuf>,
-    exclude: Vec<String>,
-    apply_fix: bool,
-) -> LintCounts {
-    let p = Painter::new(color);
+/// Arguments for `rsigma rule lint` (and the deprecated `rsigma lint`).
+#[derive(Args, Debug)]
+pub(crate) struct LintArgs {
+    /// Path to a Sigma rule file or directory of rules
+    pub path: PathBuf,
+
+    /// JSON schema for additional validation.
+    /// Use "default" to download the official Sigma schema (cached for 7 days),
+    /// or provide a path to a local schema file.
+    #[arg(short, long)]
+    pub schema: Option<String>,
+
+    /// Show details for all files, including those that pass
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// Color output: auto (default), always, never
+    #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
+    pub color: String,
+
+    /// Disable specific lint rules (comma-separated).
+    /// Example: --disable missing_description,missing_author
+    #[arg(long, value_delimiter = ',')]
+    pub disable: Vec<String>,
+
+    /// Path to a .rsigma-lint.yml config file.
+    /// If omitted, searches for .rsigma-lint.yml in ancestor directories.
+    #[arg(long = "config")]
+    pub lint_config: Option<PathBuf>,
+
+    /// Exclude paths matching glob patterns (can be repeated).
+    /// Patterns are matched against paths relative to the lint root.
+    /// Example: --exclude "config/**" --exclude "**/unsupported/**"
+    #[arg(long)]
+    pub exclude: Vec<String>,
+
+    /// Auto-fix safe lint issues in-place.
+    /// Applies format-preserving fixes to files on disk.
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Minimum severity that causes a non-zero exit code.
+    /// 'error' (default): exit 1 only when errors are found.
+    /// 'warning': exit 1 when warnings or errors are found.
+    /// 'info': exit 1 when any findings (info, warning, error) are found.
+    #[arg(long = "fail-level", default_value = "error",
+           value_parser = ["error", "warning", "info"])]
+    pub fail_level: String,
+}
+
+pub(crate) fn cmd_lint(args: LintArgs) -> LintCounts {
+    let LintArgs {
+        path,
+        schema,
+        verbose,
+        color,
+        disable,
+        lint_config: lint_config_path,
+        exclude,
+        fix: apply_fix,
+        fail_level: _,
+    } = args;
+    let p = Painter::new(&color);
 
     // 0. Build lint config from file + CLI flags
     let config = build_lint_config(&path, disable, lint_config_path, exclude);

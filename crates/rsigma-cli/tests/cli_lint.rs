@@ -167,7 +167,7 @@ level: invalid_level
 fn lint_valid_rule_passes() {
     let rule = temp_file(".yml", LINT_VALID_RULE);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("0 failed"));
@@ -177,7 +177,7 @@ fn lint_valid_rule_passes() {
 fn lint_valid_rule_verbose() {
     let rule = temp_file(".yml", LINT_VALID_RULE);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap(), "--verbose"])
+        .args(["rule", "lint", rule.path().to_str().unwrap(), "--verbose"])
         .assert()
         .success()
         .stdout(predicate::str::contains("OK"));
@@ -187,7 +187,7 @@ fn lint_valid_rule_verbose() {
 fn lint_invalid_level() {
     let rule = temp_file(".yml", LINT_INVALID_LEVEL);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("invalid_level"))
@@ -198,7 +198,7 @@ fn lint_invalid_level() {
 fn lint_invalid_status() {
     let rule = temp_file(".yml", LINT_INVALID_STATUS);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("invalid_status"));
@@ -208,7 +208,7 @@ fn lint_invalid_status() {
 fn lint_invalid_date() {
     let rule = temp_file(".yml", LINT_INVALID_DATE);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("invalid_date"));
@@ -218,7 +218,7 @@ fn lint_invalid_date() {
 fn lint_invalid_tags() {
     let rule = temp_file(".yml", LINT_INVALID_TAGS);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .stdout(predicate::str::contains("invalid_tag"))
         .stdout(predicate::str::contains("duplicate_tags"));
@@ -228,7 +228,7 @@ fn lint_invalid_tags() {
 fn lint_missing_detection() {
     let rule = temp_file(".yml", LINT_MISSING_DETECTION);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("missing_detection"));
@@ -238,7 +238,7 @@ fn lint_missing_detection() {
 fn lint_deprecated_without_related() {
     let rule = temp_file(".yml", LINT_DEPRECATED_NO_RELATED);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .stdout(predicate::str::contains("deprecated_without_related"));
 }
@@ -247,7 +247,7 @@ fn lint_deprecated_without_related() {
 fn lint_valid_correlation() {
     let rule = temp_file(".yml", LINT_VALID_CORRELATION);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("0 failed"));
@@ -257,7 +257,7 @@ fn lint_valid_correlation() {
 fn lint_invalid_correlation() {
     let rule = temp_file(".yml", LINT_INVALID_CORRELATION);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("invalid_correlation_type"))
@@ -268,7 +268,7 @@ fn lint_invalid_correlation() {
 fn lint_valid_filter() {
     let rule = temp_file(".yml", LINT_VALID_FILTER);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("0 failed"));
@@ -278,7 +278,7 @@ fn lint_valid_filter() {
 fn lint_filter_has_level() {
     let rule = temp_file(".yml", LINT_FILTER_WITH_LEVEL);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .stdout(predicate::str::contains("filter_has_level"));
 }
@@ -287,7 +287,7 @@ fn lint_filter_has_level() {
 fn lint_multi_doc_yaml() {
     let rule = temp_file(".yml", LINT_MULTI_DOC);
     rsigma()
-        .args(["lint", rule.path().to_str().unwrap()])
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("invalid_level"))
@@ -301,7 +301,7 @@ fn lint_directory() {
     std::fs::write(dir.path().join("bad.yml"), LINT_INVALID_LEVEL).unwrap();
 
     rsigma()
-        .args(["lint", dir.path().to_str().unwrap()])
+        .args(["rule", "lint", dir.path().to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicate::str::contains("1 failed"))
@@ -311,7 +311,7 @@ fn lint_directory() {
 #[test]
 fn lint_nonexistent_path() {
     rsigma()
-        .args(["lint", "/tmp/nonexistent_rsigma_lint_path.yml"])
+        .args(["rule", "lint", "/tmp/nonexistent_rsigma_lint_path.yml"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Error"));
@@ -342,6 +342,7 @@ detection:
 
     rsigma()
         .args([
+            "rule",
             "lint",
             rule.path().to_str().unwrap(),
             "--schema",
@@ -375,7 +376,7 @@ detection:
     .unwrap();
 
     rsigma()
-        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .args(["rule", "lint", path.to_str().unwrap(), "--fix"])
         .assert()
         .stdout(predicate::str::contains("Applied"));
 
@@ -406,7 +407,7 @@ detection:
     .unwrap();
 
     rsigma()
-        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .args(["rule", "lint", path.to_str().unwrap(), "--fix"])
         .assert()
         .stdout(predicate::str::contains("Applied"));
 
@@ -439,7 +440,7 @@ detection:
     .unwrap();
 
     rsigma()
-        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .args(["rule", "lint", path.to_str().unwrap(), "--fix"])
         .assert()
         .stdout(predicate::str::contains("Applied"));
 
@@ -464,7 +465,7 @@ detection:
     std::fs::write(&path, original).unwrap();
 
     rsigma()
-        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .args(["rule", "lint", path.to_str().unwrap(), "--fix"])
         .assert()
         .success();
 
@@ -494,7 +495,7 @@ detection:
     .unwrap();
 
     rsigma()
-        .args(["lint", path.to_str().unwrap(), "--fix"])
+        .args(["rule", "lint", path.to_str().unwrap(), "--fix"])
         .assert()
         .stdout(predicate::str::contains("Applied"));
 

@@ -83,7 +83,7 @@ All three paths scale linearly in the rule count. Per-rule cost is essentially c
 - `add_collection` and `add_rules` cost roughly 1.2 us/rule. The fixed per-batch cost is dominated by the final inverted index + bloom build over the aggregate.
 - `add_rule` in a loop costs roughly 1.65 us/rule, about 40% more than the batched paths. The overhead is the per-rule incremental insert plus the ~11 doubling-watermark rebuilds the bloom triggers between 1 and 100K rules. There is no quadratic blowup; the constant factor pays for the incremental contract.
 
-The takeaway is that `add_rule` is no longer a foot-gun for bulk loads. Batched APIs are still slightly faster and remain the recommended path for cold-load scenarios; the single-rule path exists for cases where the caller wants per-rule error reporting (`rsigma validate`) or per-rule mutation semantics.
+The takeaway is that `add_rule` is no longer a foot-gun for bulk loads. Batched APIs are still slightly faster and remain the recommended path for cold-load scenarios; the single-rule path exists for cases where the caller wants per-rule error reporting (`rsigma rule validate`) or per-rule mutation semantics.
 
 Run with `cargo bench -p rsigma-eval --bench eval -- rule_load`.
 
@@ -159,7 +159,7 @@ Run with `cargo bench -p rsigma-eval --bench eval -- eval_ac_threshold_sweep`.
 
 The cross-rule index turns O(rules × patterns) per event into O(haystack_length) for the AC scan, so throughput is essentially constant in rule count once the index is enabled.
 
-For typical mixed workloads (substring + exact + regex rules, events that hit multiple fields, smaller rule sets) the index adds build-time and lookup overhead with smaller wins or none, and can even cause a slowdown. **Off by default.** Enable via `Engine::set_cross_rule_ac(true)` programmatically, or `--cross-rule-ac` on `rsigma daemon` / `rsigma eval` (requires the `daachorse-index` Cargo feature). Always benchmark against representative data before flipping it on.
+For typical mixed workloads (substring + exact + regex rules, events that hit multiple fields, smaller rule sets) the index adds build-time and lookup overhead with smaller wins or none, and can even cause a slowdown. **Off by default.** Enable via `Engine::set_cross_rule_ac(true)` programmatically, or `--cross-rule-ac` on `rsigma engine daemon` / `rsigma engine eval` (requires the `daachorse-index` Cargo feature). Always benchmark against representative data before flipping it on.
 
 Run with `cargo bench -p rsigma-eval --features daachorse-index --bench eval -- eval_cross_rule_ac`.
 

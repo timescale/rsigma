@@ -67,6 +67,7 @@ fn eval_single_event_match() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -86,6 +87,7 @@ fn eval_bloom_prefilter_flag_is_accepted() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -104,6 +106,7 @@ fn eval_bloom_prefilter_with_max_bytes() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -126,6 +129,7 @@ fn eval_bloom_prefilter_rejects_non_matching_event() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -143,6 +147,7 @@ fn eval_single_event_no_match() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -160,6 +165,7 @@ fn eval_invalid_json_event() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -179,7 +185,7 @@ fn eval_ndjson_stdin() {
 {"CommandLine": "inject malware payload"}
 "#;
     rsigma()
-        .args(["eval", "--rules", rule.path().to_str().unwrap()])
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
         .write_stdin(events)
         .assert()
         .success()
@@ -195,7 +201,7 @@ fn eval_ndjson_skips_blank_lines() {
 
 "#;
     rsigma()
-        .args(["eval", "--rules", rule.path().to_str().unwrap()])
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
         .write_stdin(events)
         .assert()
         .success()
@@ -209,6 +215,7 @@ fn eval_at_file_single_event() {
     let at_path = format!("@{}", events.path().to_str().unwrap());
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -234,6 +241,7 @@ fn eval_at_file_ndjson() {
     let at_path = format!("@{}", events.path().to_str().unwrap());
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -250,6 +258,7 @@ fn eval_at_file_not_found() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -266,6 +275,7 @@ fn eval_pretty_output() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -283,6 +293,7 @@ fn eval_include_event() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -306,6 +317,7 @@ fn eval_with_pipeline() {
 
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -329,6 +341,7 @@ fn eval_jq_filter() {
     let event = r#"{"wrapper": {"CommandLine": "malware"}}"#;
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -348,6 +361,7 @@ fn eval_jsonpath_filter() {
     let event = r#"{"data": {"CommandLine": "malware"}}"#;
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -366,6 +380,7 @@ fn eval_jq_and_jsonpath_conflict() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -393,7 +408,7 @@ fn eval_correlation_fires() {
 {"EventType": "login_failure", "User": "admin", "@timestamp": "2025-01-01T00:00:03Z"}
 "#;
     rsigma()
-        .args(["eval", "--rules", rule.path().to_str().unwrap()])
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
         .write_stdin(events)
         .assert()
         .success()
@@ -408,7 +423,7 @@ fn eval_correlation_below_threshold() {
 {"EventType": "login_failure", "User": "admin", "@timestamp": "2025-01-01T00:00:02Z"}
 "#;
     rsigma()
-        .args(["eval", "--rules", rule.path().to_str().unwrap()])
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
         .write_stdin(events)
         .assert()
         .success()
@@ -427,6 +442,7 @@ fn eval_correlation_with_suppress() {
 "#;
     let output = rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -460,6 +476,7 @@ fn eval_correlation_action_reset() {
 "#;
     let output = rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -490,6 +507,7 @@ fn eval_no_detections_flag() {
 "#;
     let output = rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -522,6 +540,7 @@ fn eval_filter_excludes_match() {
     let rule = temp_file(".yml", FILTER_RULES);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -539,6 +558,7 @@ fn eval_filter_allows_match() {
     let rule = temp_file(".yml", FILTER_RULES);
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -563,6 +583,7 @@ fn eval_custom_timestamp_field() {
 "#;
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             rule.path().to_str().unwrap(),
@@ -600,6 +621,7 @@ level: low
     let events = "<38>Apr 25 14:30:00 web01 sudo: admin : TTY=pts/0 ; COMMAND=/bin/bash\n";
     let output = rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             syslog_rule.path().to_str().unwrap(),
@@ -632,6 +654,7 @@ level: high
     );
     let output = rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             plain_rule.path().to_str().unwrap(),
@@ -660,7 +683,7 @@ fn no_subcommand_shows_help() {
 #[test]
 fn eval_missing_rules_arg() {
     rsigma()
-        .args(["eval", "--event", "{}"])
+        .args(["engine", "eval", "--event", "{}"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("--rules"));
@@ -670,6 +693,7 @@ fn eval_missing_rules_arg() {
 fn eval_nonexistent_rules_path() {
     rsigma()
         .args([
+            "engine",
             "eval",
             "--rules",
             "/tmp/nonexistent_rsigma_rules.yml",

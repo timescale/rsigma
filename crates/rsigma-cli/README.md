@@ -16,36 +16,59 @@ cargo install rsigma
 
 ```bash
 # Single event (inline JSON)
-rsigma eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
+rsigma engine eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
 # Stream NDJSON from stdin
-cat events.ndjson | rsigma eval -r path/to/rules/
+cat events.ndjson | rsigma engine eval -r path/to/rules/
 
 # Long-running daemon with hot-reload, health checks, and Prometheus metrics
-hel run | rsigma daemon -r rules/ -p ecs_windows --api-addr 0.0.0.0:9090
+hel run | rsigma engine daemon -r rules/ -p ecs_windows --api-addr 0.0.0.0:9090
 
 # With a builtin pipeline (no external file needed)
-rsigma eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
+rsigma engine eval -r rules/ -p ecs_windows -e '{"process.command_line": "whoami"}'
 
 # Or use a custom pipeline YAML file
-rsigma eval -r rules/ -p pipelines/custom.yml -e '{"src_ip": "10.0.0.1"}'
+rsigma engine eval -r rules/ -p pipelines/custom.yml -e '{"src_ip": "10.0.0.1"}'
 
 # Convert rules to backend-native queries
-rsigma convert -r rules/ -t test
+rsigma backend convert -r rules/ -t test
 
 # Convert to PostgreSQL SQL
-rsigma convert -r rules/ -t postgres
+rsigma backend convert -r rules/ -t postgres
 
 # List all fields referenced by rules (with optional pipeline mapping)
-rsigma fields -r rules/ -p ecs_windows
+rsigma rule fields -r rules/ -p ecs_windows
 
 # List available conversion backends
-rsigma list-targets
+rsigma backend targets
 ```
 
 ## Subcommands
 
-### `parse`: Parse a single rule
+Commands are grouped into five noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / condition / stdin), `backend` (convert / targets / formats), `pipeline` (resolve), and `attack` (reserved; populated by the upcoming MITRE ATT&CK contributor PR).
+
+### Migrating from the old flat commands
+
+Every flat top-level command still works for one release as a visible-deprecated alias. Invoking the old form prints a stderr warning and forwards to the same implementation; stdout, exit codes, and every flag are unchanged.
+
+| Old (flat, deprecated) | New (grouped) |
+|------------------------|---------------|
+| `rsigma eval ...` | `rsigma engine eval ...` |
+| `rsigma daemon ...` | `rsigma engine daemon ...` |
+| `rsigma parse ...` | `rsigma rule parse ...` |
+| `rsigma validate ...` | `rsigma rule validate ...` |
+| `rsigma lint ...` | `rsigma rule lint ...` |
+| `rsigma fields ...` | `rsigma rule fields ...` |
+| `rsigma condition ...` | `rsigma rule condition ...` |
+| `rsigma stdin ...` | `rsigma rule stdin ...` |
+| `rsigma convert RULES ...` | `rsigma backend convert RULES ...` |
+| `rsigma list-targets` | `rsigma backend targets` |
+| `rsigma list-formats TARGET` | `rsigma backend formats TARGET` |
+| `rsigma resolve ...` | `rsigma pipeline resolve ...` |
+
+Deprecation timeline: flat aliases are **visible** in `rsigma --help` this release (with `[deprecated]` in the about text), **hidden** from `--help` in the next release, and **removed** in v1.0. Migrate at your convenience within that window.
+
+### `rule parse`: Parse a single rule
 
 Parse a Sigma YAML file and output the AST as JSON.
 
@@ -55,13 +78,13 @@ Parse a Sigma YAML file and output the AST as JSON.
 | `--pretty` / `-p` | flag | **true** | Pretty-print JSON output |
 
 ```bash
-rsigma parse rule.yml            # print AST as pretty-printed JSON
-rsigma parse rule.yml --pretty   # same (default)
+rsigma rule parse rule.yml            # print AST as pretty-printed JSON
+rsigma rule parse rule.yml --pretty   # same (default)
 ```
 
 Note: pretty-print is on by default and cannot be disabled.
 
-### `validate`: Validate rules in a directory
+### `rule validate`: Validate rules in a directory
 
 Parse and compile all rules in a directory, reporting errors.
 
@@ -73,12 +96,12 @@ Parse and compile all rules in a directory, reporting errors.
 | `--resolve-sources` | flag | `false` | Also resolve dynamic pipeline sources during validation. Sources must be reachable (file/command/HTTP) for validation to pass |
 
 ```bash
-rsigma validate path/to/rules/ -v              # verbose output
-rsigma validate rules/ -p pipelines/ecs.yml    # validate with pipeline
-rsigma validate rules/ -p dynamic.yml --resolve-sources  # validate + test source resolution
+rsigma rule validate path/to/rules/ -v              # verbose output
+rsigma rule validate rules/ -p pipelines/ecs.yml    # validate with pipeline
+rsigma rule validate rules/ -p dynamic.yml --resolve-sources  # validate + test source resolution
 ```
 
-### `lint`: Lint rules against the Sigma specification
+### `rule lint`: Lint rules against the Sigma specification
 
 Run 66 built-in lint rules with optional JSON schema validation.
 
@@ -95,18 +118,18 @@ Run 66 built-in lint rules with optional JSON schema validation.
 | `--fail-level` | string | `"error"` | Minimum severity for non-zero exit: `error` (default), `warning`, or `info` |
 
 ```bash
-rsigma lint path/to/rules/                     # lint all rules
-rsigma lint path/to/rules/ -v                  # verbose (show passing files + info-only)
-rsigma lint path/to/rules/ --schema default    # + JSON schema validation (downloads + caches)
-rsigma lint rule.yml --schema my-schema.json   # local JSON schema
-rsigma lint path/to/rules/ --color always      # force color
-rsigma lint rules/ --disable missing_description,missing_author  # suppress specific rules
-rsigma lint rules/ --config my-lint.yml        # explicit config file
-rsigma lint rules/ --exclude "config/**"       # skip non-rule files
-rsigma lint rules/ --exclude "config/**" --exclude "**/unsupported/**"  # multiple patterns
-rsigma lint rules/ --fix                       # auto-fix safe issues
-rsigma lint rules/ --fail-level warning        # CI: fail on warnings too
-rsigma lint rules/ --fail-level info           # CI: fail on any finding
+rsigma rule lint path/to/rules/                     # lint all rules
+rsigma rule lint path/to/rules/ -v                  # verbose (show passing files + info-only)
+rsigma rule lint path/to/rules/ --schema default    # + JSON schema validation (downloads + caches)
+rsigma rule lint rule.yml --schema my-schema.json   # local JSON schema
+rsigma rule lint path/to/rules/ --color always      # force color
+rsigma rule lint rules/ --disable missing_description,missing_author  # suppress specific rules
+rsigma rule lint rules/ --config my-lint.yml        # explicit config file
+rsigma rule lint rules/ --exclude "config/**"       # skip non-rule files
+rsigma rule lint rules/ --exclude "config/**" --exclude "**/unsupported/**"  # multiple patterns
+rsigma rule lint rules/ --fix                       # auto-fix safe issues
+rsigma rule lint rules/ --fail-level warning        # CI: fail on warnings too
+rsigma rule lint rules/ --fail-level info           # CI: fail on any finding
 ```
 
 **Lint output summary format:**
@@ -117,14 +140,14 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 
 **Schema validation skips** documents with `action: global`, `action: reset`, or `action: repeat` (action fragments).
 
-### `daemon`: Run as a long-running detection service
+### `engine daemon`: Run as a long-running detection service
 
 Run rsigma as a long-running daemon that continuously reads NDJSON from stdin, evaluates against rules, writes matches to stdout, and exposes health/metrics/management APIs over HTTP.
 
-Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-reload: adding, modifying, or removing `.yml`/`.yaml` files in the rules directory or any pipeline file passed via `-p` triggers an automatic reload (rules and pipelines are re-read together). SIGHUP and the `/api/v1/reload` endpoint also trigger reloads. The daemon is designed for production deployment behind a log collector (e.g. `hel run | rsigma daemon ...`) or an event bus.
+Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and supports hot-reload: adding, modifying, or removing `.yml`/`.yaml` files in the rules directory or any pipeline file passed via `-p` triggers an automatic reload (rules and pipelines are re-read together). SIGHUP and the `/api/v1/reload` endpoint also trigger reloads. The daemon is designed for production deployment behind a log collector (e.g. `hel run | rsigma engine daemon ...`) or an event bus.
 
 > [!TIP]
-> Correlation rules also work in `eval` mode within a single run (via stdin or `@file`), but daemon mode is recommended for continuous stateful tracking with hot-reload and state persistence.
+> Correlation rules also work in `engine eval` mode within a single run (via stdin or `@file`), but `engine daemon` mode is recommended for continuous stateful tracking with hot-reload and state persistence.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -182,62 +205,62 @@ Unlike `eval`, the daemon stays alive after stdin reaches EOF and supports hot-r
 
 ```bash
 # Basic daemon: stream events, detect, output matches
-hel run | rsigma daemon -r rules/ -p ecs.yml
+hel run | rsigma engine daemon -r rules/ -p ecs.yml
 
 # Accept events via HTTP POST instead of stdin
-rsigma daemon -r rules/ --input http
+rsigma engine daemon -r rules/ --input http
 # Then: curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
 
 # NATS JetStream source and sink
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
 
 # Fan-out: write detections to both stdout and a file
-hel run | rsigma daemon -r rules/ --output stdout --output file:///tmp/detections.ndjson
+hel run | rsigma engine daemon -r rules/ --output stdout --output file:///tmp/detections.ndjson
 
 # NATS with authentication (credentials file)
-rsigma daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
+rsigma engine daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
 
 # NATS with token auth (via environment variable)
-NATS_TOKEN=secret rsigma daemon -r rules/ --input nats://localhost:4222/events.>
+NATS_TOKEN=secret rsigma engine daemon -r rules/ --input nats://localhost:4222/events.>
 
 # NATS with mutual TLS
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
   --nats-tls-cert /etc/rsigma/client.pem --nats-tls-key /etc/rsigma/client-key.pem --nats-require-tls
 
 # Dead-letter queue for failed events
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
   --dlq file:///var/log/rsigma-dlq.ndjson
 
 # Replay from a specific stream sequence
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 42
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 42
 
 # Replay from a point in time
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
 
 # Start from the latest message, ignoring history
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-latest
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-latest
 
 # Consumer groups for horizontal scaling
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
 
 # With SQLite state persistence (correlation state survives restarts)
-hel run | rsigma daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db
+hel run | rsigma engine daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db
 
 # Force clear state on startup (ignore any saved state)
-rsigma daemon -r rules/ --state-db ./state.db --clear-state
+rsigma engine daemon -r rules/ --state-db ./state.db --clear-state
 
 # Force restore state during replay (forward catch-up scenario)
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
   --state-db ./state.db --replay-from-sequence 1001 --keep-state
 
 # Skip events without timestamps for correlation (forensic replay)
-rsigma daemon -r rules/ --timestamp-fallback skip
+rsigma engine daemon -r rules/ --timestamp-fallback skip
 
 # Tune pipeline: micro-batch 64 events per lock, 50K buffer, 10s drain on shutdown
-rsigma daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
+rsigma engine daemon -r rules/ --batch-size 64 --buffer-size 50000 --drain-timeout 10
 
 # With all options
-rsigma daemon \
+rsigma engine daemon \
   -r rules/ \
   -p ecs.yml \
   --jq '.event' \
@@ -343,7 +366,7 @@ The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Gra
 
 The `tracing` spans installed on hot paths (batch processing, source resolution, OTLP ingest, rule loading) double as profiling hooks consumable by `tokio-console` or `tracing-timing` without code changes—just swap in the corresponding subscriber layer.
 
-**CLI subcommand logging:** non-daemon subcommands (`eval`, `lint`, `validate`, `convert`, `fields`, `parse`, `resolve`) default to human-readable stdout/stderr output only. Pass the global `--log-format json` (or `--log-format text`) to additionally install a tracing subscriber on stderr for CI/log aggregation use cases. Verbosity follows `RUST_LOG` (default `info`). Human-readable output is unchanged when the flag is set.
+**CLI subcommand logging:** non-daemon subcommands (everything outside `rsigma engine daemon` — that is, `rsigma engine eval`, the `rsigma rule *` group, `rsigma backend *`, `rsigma pipeline resolve`) default to human-readable stdout/stderr output only. Pass the global `--log-format json` (or `--log-format text`) to additionally install a tracing subscriber on stderr for CI/log aggregation use cases. Verbosity follows `RUST_LOG` (default `info`). Human-readable output is unchanged when the flag is set.
 
 **State persistence:** when `--state-db` is set, correlation state (window entries, suppression timestamps, event buffers) is persisted to a SQLite database. State is loaded on startup, saved periodically (default every 30s, configurable via `--state-save-interval`), and saved on graceful shutdown. This allows correlation windows to survive daemon restarts. For example, an `event_count` correlation that saw 2 of 3 required events before a restart will resume from 2 after restarting. The database uses WAL journal mode and stores a single JSON snapshot row. Correlation entries are keyed by stable rule identifiers (id/name), so state survives rule reloads even if internal ordering changes.
 
@@ -359,7 +382,7 @@ The `tracing` spans installed on hot paths (batch processing, source resolution,
 
 **Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. To build without daemon dependencies: `cargo build --no-default-features`.
 
-### `eval`: Evaluate events against rules
+### `engine eval`: Evaluate events against rules
 
 Evaluate JSON events against Sigma detection and correlation rules.
 
@@ -394,24 +417,24 @@ Evaluate JSON events against Sigma detection and correlation rules.
 
 ```bash
 # Single event (inline JSON)
-rsigma eval -r path/to/rules/ -e '{"CommandLine": "whoami"}'
+rsigma engine eval -r path/to/rules/ -e '{"CommandLine": "whoami"}'
 
 # Read events from a file (@file syntax, streams as NDJSON, one event per line)
-rsigma eval -r path/to/rules/ -e @events.ndjson
+rsigma engine eval -r path/to/rules/ -e @events.ndjson
 
 # Stream NDJSON from stdin
-cat events.ndjson | rsigma eval -r path/to/rules/
+cat events.ndjson | rsigma engine eval -r path/to/rules/
 
 # With processing pipeline(s), applied in priority order
-rsigma eval -r rules/ -p sysmon.yml -p custom.yml -e '...'
+rsigma engine eval -r rules/ -p sysmon.yml -p custom.yml -e '...'
 ```
 
 The `@file` syntax is equivalent to piping the file via stdin but avoids the pipe:
 
 ```bash
 # These are equivalent:
-rsigma eval -r rules/ -e @events.ndjson
-cat events.ndjson | rsigma eval -r rules/
+rsigma engine eval -r rules/ -e @events.ndjson
+cat events.ndjson | rsigma engine eval -r rules/
 ```
 
 **EVTX (Windows Event Log) files** (requires `evtx` feature):
@@ -420,10 +443,10 @@ Files with a `.evtx` extension are automatically detected and parsed as binary W
 
 ```bash
 # Evaluate Sigma rules against a Windows Event Log file
-rsigma eval -r rules/ -e @security.evtx
+rsigma engine eval -r rules/ -e @security.evtx
 
 # With a pipeline and pretty output
-rsigma eval -r rules/ -p sysmon.yml -e @Microsoft-Windows-Sysmon.evtx --pretty
+rsigma engine eval -r rules/ -p sysmon.yml -e @Microsoft-Windows-Sysmon.evtx --pretty
 ```
 
 **Event extraction (jq / JSONPath):**
@@ -432,48 +455,48 @@ rsigma eval -r rules/ -p sysmon.yml -e @Microsoft-Windows-Sysmon.evtx --pretty
 
 ```bash
 # Unwrap nested payloads with jq syntax
-rsigma eval -r rules/ --jq '.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
+rsigma engine eval -r rules/ --jq '.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
 
 # JSONPath (RFC 9535)
-rsigma eval -r rules/ --jsonpath '$.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
+rsigma engine eval -r rules/ --jsonpath '$.event' -e '{"ts":"...","event":{"CommandLine":"whoami"}}'
 
 # Array unwrapping: yields one event per element
-rsigma eval -r rules/ --jq '.records[]' -e '{"records":[{"CommandLine":"whoami"},{"CommandLine":"id"}]}'
+rsigma engine eval -r rules/ --jq '.records[]' -e '{"records":[{"CommandLine":"whoami"},{"CommandLine":"id"}]}'
 
 # Stream with extraction
-hel run | rsigma eval -r rules/ -p ecs.yml --jq '.event'
+hel run | rsigma engine eval -r rules/ -p ecs.yml --jq '.event'
 ```
 
 **Detection output:**
 
 ```bash
 # Include the full matched event JSON in detection output
-rsigma eval -r rules/ --include-event -e '{"CommandLine": "whoami"}'
+rsigma engine eval -r rules/ --include-event -e '{"CommandLine": "whoami"}'
 ```
 
 **Correlation options:**
 
 ```bash
 # Suppress duplicate correlation alerts within a time window
-rsigma eval -r rules/ --suppress 5m < events.ndjson
+rsigma engine eval -r rules/ --suppress 5m < events.ndjson
 
 # Reset state after alert fires (default: alert)
-rsigma eval -r rules/ --suppress 5m --action reset < events.ndjson
+rsigma engine eval -r rules/ --suppress 5m --action reset < events.ndjson
 
 # Include full contributing events in correlation output (compressed in memory)
-rsigma eval -r rules/ --correlation-event-mode full < events.ndjson
+rsigma engine eval -r rules/ --correlation-event-mode full < events.ndjson
 
 # Include lightweight event references (timestamp + ID) instead
-rsigma eval -r rules/ --correlation-event-mode refs < events.ndjson
+rsigma engine eval -r rules/ --correlation-event-mode refs < events.ndjson
 
 # Cap stored events per correlation window (default: 10)
-rsigma eval -r rules/ --correlation-event-mode full --max-correlation-events 20 < events.ndjson
+rsigma engine eval -r rules/ --correlation-event-mode full --max-correlation-events 20 < events.ndjson
 
 # Suppress detection output (only show correlation alerts)
-rsigma eval -r rules/ --no-detections < events.ndjson
+rsigma engine eval -r rules/ --no-detections < events.ndjson
 
 # Custom timestamp field for correlation windowing
-rsigma eval -r rules/ --timestamp-field time < events.ndjson
+rsigma engine eval -r rules/ --timestamp-field time < events.ndjson
 ```
 
 ### Custom rule attributes
@@ -510,16 +533,16 @@ custom_attributes:
 level: high
 ```
 
-### `convert`: Convert rules to backend-native queries
+### `backend convert`: Convert rules to backend-native queries
 
 Convert Sigma rules into query strings for a specific backend (SQL, SPL, KQL, Lucene, etc.).
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `<rules>` | positional, repeatable | required | Path(s) to Sigma rule file(s) or directory |
-| `--target` / `-t` | string | required | Backend target name (see `list-targets`) |
+| `--target` / `-t` | string | required | Backend target name (see `backend targets`) |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s) |
-| `--format` / `-f` | string | `"default"` | Output format (see `list-formats`) |
+| `--format` / `-f` | string | `"default"` | Output format (see `backend formats`) |
 | `-O` / `--option` | repeatable | `[]` | Backend options as `key=value` pairs (e.g. `-O table=logs -O schema=public`) |
 | `--output` / `-o` | path | stdout | Write output to a file instead of stdout |
 | `--skip-unsupported` / `-s` | flag | `false` | Skip unsupported rules instead of failing |
@@ -529,54 +552,54 @@ Available backends: `test`, `postgres` (aliases: `postgresql`, `pg`).
 
 ```bash
 # Convert rules using the test backend
-rsigma convert rules/ -t test
+rsigma backend convert rules/ -t test
 
 # Convert with a pipeline and specific output format
-rsigma convert rules/ -t test -p pipelines/ecs.yml -f state
+rsigma backend convert rules/ -t test -p pipelines/ecs.yml -f state
 
 # Convert a single rule
-rsigma convert rule.yml -t test
+rsigma backend convert rule.yml -t test
 
 # Convert to PostgreSQL SQL
-rsigma convert rules/ -t postgres
+rsigma backend convert rules/ -t postgres
 
 # Convert to PostgreSQL with OCSF field mapping (single table)
-rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
+rsigma backend convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
 
 # Convert with per-logsource table routing (multi-table)
-rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
+rsigma backend convert rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
 
 # Generate PostgreSQL views
-rsigma convert rules/ -t postgres -f view
+rsigma backend convert rules/ -t postgres -f view
 
 # Generate TimescaleDB continuous aggregates
-rsigma convert rules/ -t postgres -f continuous_aggregate
+rsigma backend convert rules/ -t postgres -f continuous_aggregate
 
 # Custom backend options (table, schema, timestamp field, etc.)
-rsigma convert rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+rsigma backend convert rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
 
 # JSONB mode: access fields inside a JSONB column
-rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+rsigma backend convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
 
 # Skip rules that the backend does not support
-rsigma convert rules/ -t postgres --skip-unsupported
+rsigma backend convert rules/ -t postgres --skip-unsupported
 
 # Write output to a file
-rsigma convert rules/ -t postgres -o queries.sql
+rsigma backend convert rules/ -t postgres -o queries.sql
 ```
 
-### `list-targets`: List available conversion backends
+### `backend targets`: List available conversion backends
 
 List all registered conversion backend targets.
 
 ```bash
-rsigma list-targets
+rsigma backend targets
 # Output:
 #   test      Backend-neutral text queries for testing
 #   postgres  PostgreSQL/TimescaleDB SQL
 ```
 
-### `list-formats`: List output formats for a backend
+### `backend formats`: List output formats for a backend
 
 List the output formats supported by a specific backend.
 
@@ -585,7 +608,7 @@ List the output formats supported by a specific backend.
 | `<target>` | positional | required | Backend target name |
 
 ```bash
-rsigma list-formats postgres
+rsigma backend formats postgres
 # Output:
 #   default              Plain PostgreSQL SQL
 #   view                 CREATE OR REPLACE VIEW for each rule
@@ -594,7 +617,7 @@ rsigma list-formats postgres
 #   sliding_window       Correlation queries using window functions for per-row sliding detection
 ```
 
-### `fields`: List all fields referenced by Sigma rules
+### `rule fields`: List all fields referenced by Sigma rules
 
 Extract and display every field name referenced across detection rules, correlation rules, filter rules, and rule metadata. Useful for building a field catalog, auditing pipeline coverage, or understanding which fields a ruleset depends on.
 
@@ -618,26 +641,26 @@ When pipelines are provided, fields are shown after pipeline transformations (fi
 
 ```bash
 # List all fields in a ruleset
-rsigma fields -r rules/
+rsigma rule fields -r rules/
 
 # Show fields after ECS pipeline mapping
-rsigma fields -r rules/ -p pipelines/ecs.yml
+rsigma rule fields -r rules/ -p pipelines/ecs.yml
 
 # Exclude filter-contributed fields
-rsigma fields -r rules/ --no-filters
+rsigma rule fields -r rules/ --no-filters
 
 # JSON output for scripting
-rsigma fields -r rules/ --json
+rsigma rule fields -r rules/ --json
 
 # Pipe JSON to jq for further analysis
-rsigma fields -r rules/ --json | jq '.fields[] | select(.sources[] == "detection") | .field'
+rsigma rule fields -r rules/ --json | jq '.fields[] | select(.sources[] == "detection") | .field'
 ```
 
 **Table output** writes field data to stdout and a summary line to stderr, so you can pipe the table or redirect it without mixing in summary text.
 
 **JSON output** includes a `summary` object (rule/correlation/filter counts, unique fields, pipelines applied), a `fields` array, and when pipelines are applied, a `pipeline_mappings` array showing each field name transformation.
 
-### `resolve`: Test dynamic source resolution
+### `pipeline resolve`: Test dynamic source resolution
 
 Resolve all dynamic sources declared in the given pipeline(s) and print the resulting data as JSON. Useful for testing pipeline source configuration without running the daemon.
 
@@ -650,16 +673,16 @@ Resolve all dynamic sources declared in the given pipeline(s) and print the resu
 
 ```bash
 # Resolve all sources in a dynamic pipeline
-rsigma resolve -p pipelines/dynamic.yml --pretty
+rsigma pipeline resolve -p pipelines/dynamic.yml --pretty
 
 # Resolve a specific source by ID
-rsigma resolve -p pipelines/dynamic.yml --source threat_intel
+rsigma pipeline resolve -p pipelines/dynamic.yml --source threat_intel
 
 # Dry-run: list sources and metadata without fetching
-rsigma resolve -p pipelines/dynamic.yml --dry-run
+rsigma pipeline resolve -p pipelines/dynamic.yml --dry-run
 
 # Test multiple pipelines at once
-rsigma resolve -p pipeline1.yml -p pipeline2.yml
+rsigma pipeline resolve -p pipeline1.yml -p pipeline2.yml
 ```
 
 **Output format (normal mode):**
@@ -685,7 +708,7 @@ rsigma resolve -p pipeline1.yml -p pipeline2.yml
 }
 ```
 
-### `condition`: Parse a condition expression
+### `rule condition`: Parse a condition expression
 
 Parse a Sigma condition expression and output the AST as pretty-printed JSON. Output is always pretty-printed.
 
@@ -694,10 +717,10 @@ Parse a Sigma condition expression and output the AST as pretty-printed JSON. Ou
 | `expr` | positional | required | The condition expression to parse |
 
 ```bash
-rsigma condition 'selection and not filter'
+rsigma rule condition 'selection and not filter'
 ```
 
-### `stdin`: Parse YAML from stdin
+### `rule stdin`: Parse YAML from stdin
 
 Read a single Sigma YAML document from stdin and output the AST as JSON.
 
@@ -706,7 +729,7 @@ Read a single Sigma YAML document from stdin and output the AST as JSON.
 | `--pretty` / `-p` | flag | **true** | Pretty-print JSON output |
 
 ```bash
-cat rule.yml | rsigma stdin
+cat rule.yml | rsigma rule stdin
 ```
 
 ## File Discovery
@@ -720,15 +743,15 @@ All subcommands that accept a directory path scan recursively for `.yml` and `.y
 
 | Mode | Input format | Behavior |
 |------|-------------|----------|
-| `rsigma eval -e '...'` | Inline JSON string | Parses the string as a single JSON object and evaluates it |
-| `rsigma eval -e @path` | NDJSON file | Reads the file line-by-line as NDJSON (same behavior as stdin) |
-| `rsigma eval -e @path.evtx` | EVTX binary file | Parses the binary Windows Event Log file and evaluates each record (requires `evtx` feature) |
-| `rsigma eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped. Exits after EOF |
-| `rsigma daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
-| `rsigma daemon --input http` | NDJSON via HTTP POST | Events sent to `POST /api/v1/events`. Stays alive, exposes all APIs |
-| `rsigma daemon --input nats://...` | NATS JetStream | Subscribes to a JetStream subject. At-least-once delivery with deferred ack |
+| `rsigma engine eval -e '...'` | Inline JSON string | Parses the string as a single JSON object and evaluates it |
+| `rsigma engine eval -e @path` | NDJSON file | Reads the file line-by-line as NDJSON (same behavior as stdin) |
+| `rsigma engine eval -e @path.evtx` | EVTX binary file | Parses the binary Windows Event Log file and evaluates each record (requires `evtx` feature) |
+| `rsigma engine eval` (no `--event`) | NDJSON from stdin | Each non-blank line is parsed as JSON. Blank lines are skipped. Exits after EOF |
+| `rsigma engine daemon` | NDJSON from stdin | Continuous stdin reader; stays alive after EOF. Exposes HTTP APIs for management |
+| `rsigma engine daemon --input http` | NDJSON via HTTP POST | Events sent to `POST /api/v1/events`. Stays alive, exposes all APIs |
+| `rsigma engine daemon --input nats://...` | NATS JetStream | Subscribes to a JetStream subject. At-least-once delivery with deferred ack |
 | OTLP (any `--input` mode) | OTLP protobuf/JSON via HTTP POST or gRPC | Agents send `ExportLogsServiceRequest` to `/v1/logs` (HTTP) or the gRPC `LogsService/Export` endpoint. Requires `daemon-otlp` feature |
-| `rsigma stdin` | Single YAML document | Parses as Sigma YAML → outputs AST as JSON |
+| `rsigma rule stdin` | Single YAML document | Parses as Sigma YAML → outputs AST as JSON |
 
 Event filters (`--jq`/`--jsonpath`) are applied to every event regardless of input mode.
 
@@ -937,7 +960,7 @@ Resolved values are cached in memory (and optionally SQLite). The cache supports
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `daemon` | **on** | Enables the `daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) |
+| `daemon` | **on** | Enables the `engine daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) |
 | `daemon-nats` | off | Enables NATS JetStream input/output, authentication, replay, and consumer groups (implies `daemon`) |
 | `daemon-otlp` | off | Enables OTLP log ingestion via HTTP (protobuf/JSON) and gRPC on `/v1/logs` (implies `daemon`) |
 | `logfmt` | off | Enables `logfmt` input format in `daemon` and `eval` |
@@ -967,16 +990,16 @@ cargo build --release --no-default-features
 Use `--fail-on-detection` with `eval` to fail a CI pipeline when a detection rule matches:
 
 ```bash
-rsigma eval -r rules/ --fail-on-detection -e @test-events.ndjson
+rsigma engine eval -r rules/ --fail-on-detection -e @test-events.ndjson
 echo $?  # 0 = no detections, 1 = detections fired, 2 = rule error, 3 = config error
 ```
 
 Use `--fail-level` with `lint` to control the minimum severity that triggers a non-zero exit:
 
 ```bash
-rsigma lint rules/ --fail-level warning   # exit 1 on warnings or errors
-rsigma lint rules/ --fail-level info      # exit 1 on any finding
-rsigma lint rules/                        # default: exit 1 only on errors
+rsigma rule lint rules/ --fail-level warning   # exit 1 on warnings or errors
+rsigma rule lint rules/ --fail-level info      # exit 1 on any finding
+rsigma rule lint rules/                        # default: exit 1 only on errors
 ```
 
 ## License

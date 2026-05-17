@@ -156,9 +156,10 @@ impl DaemonProcess {
         }
     }
 
-    /// Spawn `rsigma daemon -r RULE --input http --api-addr 127.0.0.1:0`.
+    /// Spawn `rsigma engine daemon -r RULE --input http --api-addr 127.0.0.1:0`.
     pub fn spawn_http(rule_path: &str) -> Self {
         Self::spawn(&[
+            "engine",
             "daemon",
             "-r",
             rule_path,

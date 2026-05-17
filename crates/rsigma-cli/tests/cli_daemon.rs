@@ -41,6 +41,7 @@ fn daemon_state_db_created_on_first_run() {
 
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -69,6 +70,7 @@ fn daemon_state_persists_across_restarts() {
                         {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     let output1 = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -93,6 +95,7 @@ fn daemon_state_persists_across_restarts() {
     let events_run2 = "{\"EventType\":\"login\",\"User\":\"admin\"}\n";
     let output2 = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -131,6 +134,7 @@ fn daemon_state_db_multiple_groups() {
                         {\"EventType\":\"login\",\"User\":\"bob\"}\n";
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -149,6 +153,7 @@ fn daemon_state_db_multiple_groups() {
                         {\"EventType\":\"login\",\"User\":\"bob\"}\n";
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -182,6 +187,7 @@ fn daemon_without_state_db_works() {
                    {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -220,6 +226,7 @@ level: medium
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -252,6 +259,7 @@ fn daemon_streaming_stdin_stdout() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -284,6 +292,7 @@ fn daemon_streaming_file_output() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -320,6 +329,7 @@ fn daemon_streaming_fanout_stdout_and_file() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -356,6 +366,7 @@ fn daemon_streaming_no_match_produces_no_output() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -386,6 +397,7 @@ fn daemon_streaming_batch_size() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -417,6 +429,7 @@ fn daemon_streaming_custom_buffer_size() {
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -462,6 +475,7 @@ level: low
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -499,6 +513,7 @@ level: low
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -534,6 +549,7 @@ level: high
 
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rule.path().to_str().unwrap(),
@@ -566,6 +582,7 @@ fn daemon_clear_state_prevents_restore() {
                         {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -582,6 +599,7 @@ fn daemon_clear_state_prevents_restore() {
     // Run 2: send 1 event with --clear-state. State is wiped, so total is 1, not 3.
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -616,6 +634,7 @@ fn daemon_keep_state_forces_restore() {
                         {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -632,6 +651,7 @@ fn daemon_keep_state_forces_restore() {
     // Run 2: send 1 event with --keep-state. Restored 2 + 1 = 3, should fire.
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -661,6 +681,7 @@ fn daemon_clear_state_and_keep_state_conflict() {
 
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -690,6 +711,7 @@ fn daemon_timestamp_fallback_skip() {
                    {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -727,6 +749,7 @@ fn daemon_timestamp_fallback_wallclock_default() {
                    {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -765,6 +788,7 @@ fn daemon_state_db_migration_from_old_schema() {
                    {\"EventType\":\"login\",\"User\":\"admin\"}\n";
     rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),
@@ -830,6 +854,7 @@ fn daemon_state_db_migration_from_old_schema() {
     // It should auto-migrate and restore the snapshot.
     let output = rsigma()
         .args([
+            "engine",
             "daemon",
             "-r",
             rules.path().to_str().unwrap(),

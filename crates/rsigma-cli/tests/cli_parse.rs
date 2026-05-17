@@ -13,7 +13,7 @@ use predicates::prelude::*;
 fn parse_valid_rule() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     rsigma()
-        .args(["parse", rule.path().to_str().unwrap()])
+        .args(["rule", "parse", rule.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("Test Rule"))
@@ -23,7 +23,7 @@ fn parse_valid_rule() {
 #[test]
 fn parse_nonexistent_file() {
     rsigma()
-        .args(["parse", "/tmp/nonexistent_rsigma_test.yml"])
+        .args(["rule", "parse", "/tmp/nonexistent_rsigma_test.yml"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Error"));
@@ -33,7 +33,7 @@ fn parse_nonexistent_file() {
 fn parse_invalid_yaml() {
     let bad = temp_file(".yml", "42");
     rsigma()
-        .args(["parse", bad.path().to_str().unwrap()])
+        .args(["rule", "parse", bad.path().to_str().unwrap()])
         .assert()
         .success()
         .stderr(predicate::str::contains("Warning"));
@@ -46,7 +46,7 @@ fn parse_invalid_yaml() {
 #[test]
 fn condition_valid() {
     rsigma()
-        .args(["condition", "selection1 and not filter"])
+        .args(["rule", "condition", "selection1 and not filter"])
         .assert()
         .success()
         .stdout(predicate::str::contains("And"))
@@ -57,7 +57,11 @@ fn condition_valid() {
 #[test]
 fn condition_complex() {
     rsigma()
-        .args(["condition", "1 of selection* or (filter1 and filter2)"])
+        .args([
+            "rule",
+            "condition",
+            "1 of selection* or (filter1 and filter2)",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("selection*"));
@@ -66,7 +70,7 @@ fn condition_complex() {
 #[test]
 fn condition_invalid() {
     rsigma()
-        .args(["condition", "invalid !!! syntax"])
+        .args(["rule", "condition", "invalid !!! syntax"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("error"));
@@ -79,7 +83,7 @@ fn condition_invalid() {
 #[test]
 fn stdin_valid_rule() {
     rsigma()
-        .args(["stdin"])
+        .args(["rule", "stdin"])
         .write_stdin(SIMPLE_RULE)
         .assert()
         .success()
@@ -89,7 +93,7 @@ fn stdin_valid_rule() {
 #[test]
 fn stdin_invalid_yaml() {
     rsigma()
-        .args(["stdin"])
+        .args(["rule", "stdin"])
         .write_stdin("12345")
         .assert()
         .success()

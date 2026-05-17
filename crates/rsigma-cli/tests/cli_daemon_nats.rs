@@ -174,6 +174,7 @@ async fn daemon_nats_single_detection() {
         .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -221,6 +222,7 @@ async fn daemon_nats_no_match_no_output() {
         .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -269,6 +271,7 @@ async fn daemon_nats_correlation() {
         .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -318,6 +321,7 @@ async fn daemon_nats_fanout() {
         .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -401,6 +405,7 @@ async fn daemon_nats_state_persists_source_position() {
         .unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -474,6 +479,7 @@ async fn daemon_nats_forward_replay_restores_state() {
     let mut output_sub = client.subscribe("e2e.fwd.out".to_string()).await.unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -513,6 +519,7 @@ async fn daemon_nats_forward_replay_restores_state() {
     let mut output_sub2 = client.subscribe("e2e.fwd.out".to_string()).await.unwrap();
 
     let mut daemon2 = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -579,6 +586,7 @@ async fn daemon_nats_backward_replay_clears_state() {
     let mut output_sub = client.subscribe("e2e.bwd.out".to_string()).await.unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -617,6 +625,7 @@ async fn daemon_nats_backward_replay_clears_state() {
     let mut output_sub2 = client.subscribe("e2e.bwd.out".to_string()).await.unwrap();
 
     let mut daemon2 = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),
@@ -712,6 +721,7 @@ async fn daemon_nats_state_db_migration_stores_position() {
     let mut output_sub = client.subscribe("e2e.mig.out".to_string()).await.unwrap();
 
     let mut daemon = DaemonProcess::spawn(&[
+        "engine",
         "daemon",
         "-r",
         rule.path().to_str().unwrap(),

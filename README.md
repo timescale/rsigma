@@ -110,19 +110,19 @@ cosign verify \
 
 ```bash
 # Evaluate a single event against Sigma rules
-rsigma eval -r rules/ -e '{"CommandLine": "cmd /c whoami"}'
+rsigma engine eval -r rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
 # Stream NDJSON from stdin
-cat events.ndjson | rsigma eval -r rules/
+cat events.ndjson | rsigma engine eval -r rules/
 
 # Run as a daemon with hot-reload and Prometheus metrics
-rsigma daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
+rsigma engine daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 
 # Accept events via HTTP POST
-rsigma daemon -r rules/ --input http
+rsigma engine daemon -r rules/ --input http
 
 # Convert rules to PostgreSQL SQL
-rsigma convert rules/ -t postgres
+rsigma backend convert rules/ -t postgres
 ```
 
 See the [CLI README](crates/rsigma-cli/) for complete documentation of all subcommands and flags.
@@ -133,18 +133,18 @@ The daemon accepts events from multiple sources. The `--input` flag selects the 
 
 ```bash
 # stdin (default): pipe events from any source
-hel run | rsigma daemon -r rules/ -p ecs.yml
+hel run | rsigma engine daemon -r rules/ -p ecs.yml
 
 # HTTP: POST NDJSON events to /api/v1/events
-rsigma daemon -r rules/ --input http
+rsigma engine daemon -r rules/ --input http
 curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
 
 # NATS JetStream (requires daemon-nats feature)
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
 
 # OTLP (requires daemon-otlp feature): always active alongside any --input mode
 # Agents (Grafana Alloy, Vector, Fluent Bit, OTel Collector) send logs to /v1/logs (HTTP) or gRPC
-rsigma daemon -r rules/ --input http
+rsigma engine daemon -r rules/ --input http
 curl -X POST http://localhost:9090/v1/logs -H 'Content-Type: application/json' -d '{"resourceLogs":[...]}'
 ```
 
@@ -154,23 +154,23 @@ Production-grade NATS JetStream support with authentication, at-least-once deliv
 
 ```bash
 # Credentials file authentication
-rsigma daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
+rsigma engine daemon -r rules/ --input nats://nats.example.com:4222/events.> --nats-creds /etc/rsigma/nats.creds
 
 # Mutual TLS
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> \
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
   --nats-tls-cert client.pem --nats-tls-key client-key.pem --nats-require-tls
 
 # Replay from a point in time
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-time 2026-04-30T00:00:00Z
 
 # Replay with automatic state restore (forward catch-up)
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 1001 --state-db state.db
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-from-sequence 1001 --state-db state.db
 
 # Consumer groups for horizontal scaling
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
 
 # Dead-letter queue for events that fail processing
-rsigma daemon -r rules/ --input nats://localhost:4222/events.> --dlq file:///var/log/rsigma-dlq.ndjson
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --dlq file:///var/log/rsigma-dlq.ndjson
 ```
 
 ### Input Formats and Pipelines
@@ -179,19 +179,19 @@ Events are parsed with auto-detection by default (JSON, syslog, plain text). Fea
 
 ```bash
 # With a processing pipeline for field mapping
-rsigma eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
+rsigma engine eval -r rules/ -p pipelines/ecs.yml -e '{"process.command_line": "whoami"}'
 
 # Explicit syslog with timezone offset
-tail -f /var/log/syslog | rsigma eval -r rules/ --input-format syslog --syslog-tz +0530
+tail -f /var/log/syslog | rsigma engine eval -r rules/ --input-format syslog --syslog-tz +0530
 
 # logfmt (requires logfmt feature)
-rsigma eval -r rules/ --input-format logfmt < app.log
+rsigma engine eval -r rules/ --input-format logfmt < app.log
 
 # CEF / ArcSight (requires cef feature)
-rsigma eval -r rules/ --input-format cef < arcsight.log
+rsigma engine eval -r rules/ --input-format cef < arcsight.log
 
 # EVTX / Windows Event Log (requires evtx feature)
-rsigma eval -r rules/ -e @security.evtx
+rsigma engine eval -r rules/ -e @security.evtx
 ```
 
 ### Dynamic Pipelines
@@ -231,10 +231,10 @@ transformations:
 
 ```bash
 # Test source resolution offline
-rsigma resolve -p pipeline.yml --pretty
+rsigma pipeline resolve -p pipeline.yml --pretty
 
 # Run the daemon with a dynamic pipeline
-rsigma daemon -r rules/ -p pipeline.yml
+rsigma engine daemon -r rules/ -p pipeline.yml
 ```
 
 Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
@@ -245,31 +245,31 @@ Convert Sigma rules into backend-native queries for historical threat hunting.
 
 ```bash
 # PostgreSQL SQL
-rsigma convert rules/ -t postgres
+rsigma backend convert rules/ -t postgres
 
 # PostgreSQL with OCSF field mapping
-rsigma convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
+rsigma backend convert rules/ -t postgres -p pipelines/ocsf_postgres.yml
 
 # PostgreSQL views, TimescaleDB continuous aggregates, or sliding window correlation
-rsigma convert rules/ -t postgres -f view
-rsigma convert rules/ -t postgres -f continuous_aggregate
-rsigma convert rules/ -t postgres -f sliding_window
+rsigma backend convert rules/ -t postgres -f view
+rsigma backend convert rules/ -t postgres -f continuous_aggregate
+rsigma backend convert rules/ -t postgres -f sliding_window
 
 # JSONB mode: access fields inside a JSONB column
-rsigma convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+rsigma backend convert rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
 
 # LynxDB search queries
-rsigma convert rules/ -t lynxdb
+rsigma backend convert rules/ -t lynxdb
 
 # List all fields referenced by a ruleset
-rsigma fields -r rules/
+rsigma rule fields -r rules/
 
 # Show fields after pipeline mapping
-rsigma fields -r rules/ -p ecs.yml --json
+rsigma rule fields -r rules/ -p ecs.yml --json
 
 # List available backends and formats
-rsigma list-targets
-rsigma list-formats postgres
+rsigma backend targets
+rsigma backend formats postgres
 ```
 
 ### Library Usage

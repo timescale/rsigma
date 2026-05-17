@@ -3,16 +3,39 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use clap::Args;
 use rsigma_eval::parse_pipeline_file;
 use rsigma_runtime::DefaultSourceResolver;
 use rsigma_runtime::sources::SourceResolver;
 
-pub fn cmd_resolve(
-    pipeline_paths: Vec<PathBuf>,
-    source_filter: Option<String>,
-    pretty: bool,
-    dry_run: bool,
-) {
+/// Arguments for `rsigma pipeline resolve` (and the deprecated `rsigma resolve`).
+#[derive(Args, Debug)]
+pub struct ResolveArgs {
+    /// Processing pipeline(s) containing dynamic sources
+    #[arg(short = 'p', long = "pipeline", required = true)]
+    pub pipelines: Vec<PathBuf>,
+
+    /// Resolve only a specific source by ID
+    #[arg(short, long)]
+    pub source: Option<String>,
+
+    /// Pretty-print JSON output
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Show what would be resolved without performing resolution
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+pub fn cmd_resolve(args: ResolveArgs) {
+    let ResolveArgs {
+        pipelines: pipeline_paths,
+        source: source_filter,
+        pretty,
+        dry_run,
+    } = args;
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

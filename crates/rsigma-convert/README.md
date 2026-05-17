@@ -142,7 +142,7 @@ transformations:
 ```
 
 ```bash
-rsigma convert -r rules/ -t lynxdb -p pipeline.yml
+rsigma backend convert -r rules/ -t lynxdb -p pipeline.yml
 # Output: FROM security_logs | search ...
 ```
 
@@ -165,7 +165,7 @@ When a Sigma rule specifies `fields:`, the backend emits `SELECT field1, field2,
 Backend configuration can be set via `-O key=value` flags on the CLI, which are wired through to `PostgresBackend::from_options`. Recognized keys: `table`, `schema`, `database`, `timestamp_field`, `json_field`, `case_sensitive_re`.
 
 ```bash
-rsigma convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
+rsigma backend convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
 ```
 
 ### Custom table, schema, and database
@@ -203,14 +203,14 @@ Two OCSF processing pipelines are included:
 
 ```bash
 # Single-table pipeline
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml
+rsigma backend convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml
 
 # Multi-table pipeline (per-logsource routing)
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
+rsigma backend convert -r rules/ -t postgres -p pipelines/ocsf_postgres_multi_table.yml
 
 # With output format
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f view
-rsigma convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f continuous_aggregate
+rsigma backend convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f view
+rsigma backend convert -r rules/ -t postgres -p pipelines/ocsf_postgres.yml -f continuous_aggregate
 ```
 
 ### Multi-table temporal correlations
@@ -362,7 +362,7 @@ This matches the nested traversal behavior of the evaluation engine (`rsigma-eva
 
 ```bash
 # Convert rules with JSONB field access against a "data" column
-rsigma convert -r rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
+rsigma backend convert -r rules/ -t postgres -O table=okta_events -O json_field=data -O timestamp_field=time
 ```
 
 ## LynxDB Backend Details

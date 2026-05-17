@@ -390,7 +390,7 @@ engine.set_bloom_max_bytes(2 * 1024 * 1024);
 engine.add_collection(&collection)?;
 ```
 
-CLI equivalents on `rsigma eval` and `rsigma daemon`:
+CLI equivalents on `rsigma engine eval` and `rsigma engine daemon`:
 
 ```
 --bloom-prefilter              # enable
@@ -425,7 +425,7 @@ engine.set_cross_rule_ac(true);
 engine.add_collection(&collection)?;
 ```
 
-CLI equivalents on `rsigma eval` and `rsigma daemon` (when the CLI is compiled with the feature):
+CLI equivalents on `rsigma engine eval` and `rsigma engine daemon` (when the CLI is compiled with the feature):
 
 ```
 --cross-rule-ac

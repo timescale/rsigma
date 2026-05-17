@@ -205,7 +205,7 @@ level: high
 fn fields_simple_detection() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -225,7 +225,7 @@ fn fields_simple_detection() {
 fn fields_with_metadata_fields() {
     let rule = temp_file(".yml", RULE_WITH_FIELDS_METADATA);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -243,7 +243,7 @@ fn fields_with_metadata_fields() {
 fn fields_correlation_adds_group_by() {
     let rule = temp_file(".yml", CORRELATION_RULES);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -265,7 +265,7 @@ fn fields_correlation_adds_group_by() {
 fn fields_value_count_condition_field() {
     let rule = temp_file(".yml", VALUE_COUNT_CORRELATION);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -282,7 +282,7 @@ fn fields_value_count_condition_field() {
 fn fields_alias_mapping_values() {
     let rule = temp_file(".yml", FIELD_ALIAS_CORRELATION);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -301,7 +301,7 @@ fn fields_alias_mapping_values() {
 fn fields_keywords_only_rule_has_no_fields() {
     let rule = temp_file(".yml", KEYWORDS_ONLY);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -318,7 +318,7 @@ fn fields_keywords_only_rule_has_no_fields() {
 fn fields_includes_filters_by_default() {
     let rule = temp_file(".yml", WITH_FILTER);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", rule.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -341,6 +341,7 @@ fn fields_no_filters_excludes_filter_fields() {
     let rule = temp_file(".yml", WITH_FILTER);
     let output = rsigma()
         .args([
+            "rule",
             "fields",
             "-r",
             rule.path().to_str().unwrap(),
@@ -369,6 +370,7 @@ fn fields_with_pipeline_transforms_names() {
     let pipeline = temp_file(".yml", PIPELINE_YAML);
     let output = rsigma()
         .args([
+            "rule",
             "fields",
             "-r",
             rule.path().to_str().unwrap(),
@@ -399,7 +401,13 @@ fn fields_with_pipeline_transforms_names() {
 fn fields_json_output() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap(), "--json"])
+        .args([
+            "rule",
+            "fields",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -420,6 +428,7 @@ fn fields_json_with_pipeline_includes_mappings() {
     let pipeline = temp_file(".yml", PIPELINE_YAML);
     let output = rsigma()
         .args([
+            "rule",
             "fields",
             "-r",
             rule.path().to_str().unwrap(),
@@ -447,7 +456,13 @@ fn fields_json_with_pipeline_includes_mappings() {
 fn fields_json_with_filter() {
     let rule = temp_file(".yml", WITH_FILTER);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap(), "--json"])
+        .args([
+            "rule",
+            "fields",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -469,7 +484,13 @@ fn fields_json_with_filter() {
 fn fields_json_snapshot() {
     let rule = temp_file(".yml", CORRELATION_RULES);
     let output = rsigma()
-        .args(["fields", "-r", rule.path().to_str().unwrap(), "--json"])
+        .args([
+            "rule",
+            "fields",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -529,7 +550,7 @@ fn fields_directory_of_rules() {
     std::fs::write(dir.path().join("rule_b.yml"), RULE_WITH_FIELDS_METADATA).unwrap();
 
     let output = rsigma()
-        .args(["fields", "-r", dir.path().to_str().unwrap()])
+        .args(["rule", "fields", "-r", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -554,7 +575,7 @@ fn fields_directory_of_rules() {
 #[test]
 fn fields_nonexistent_path() {
     rsigma()
-        .args(["fields", "-r", "/nonexistent/path"])
+        .args(["rule", "fields", "-r", "/nonexistent/path"])
         .assert()
         .failure();
 }
@@ -562,7 +583,7 @@ fn fields_nonexistent_path() {
 #[test]
 fn fields_missing_rules_arg() {
     rsigma()
-        .args(["fields"])
+        .args(["rule", "fields"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("--rules"));
