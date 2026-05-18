@@ -154,6 +154,192 @@ A subset of the detection rules above, grouped here because they all flag modifi
 | `related_missing_required` | `error` | — | `related[]` entry is missing the required `id:` or `type:` field. |
 | `deprecated_without_related` | `warning` | — | A rule with `status: deprecated` should declare `related:` pointing at the replacement. |
 
+## Selected findings, with worked examples
+
+Most lint rules are self-evident from their description. The ones below tend to surprise rule authors when they hit them for the first time. Each section shows the Sigma fragment that triggers the rule and the cleanup the linter (or you with `--fix`) would apply.
+
+### `wildcard_only_value`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        Image: '*'
+    condition: selection
+```
+
+A lone `*` value matches **any** value of `Image`, including null. That's almost never what the author meant; what they actually wanted is "the field is present" or "match any non-null value", which Sigma expresses as `|exists: true`.
+
+Fixed by `--fix`:
+
+```yaml
+detection:
+    selection:
+        Image|exists: true
+    condition: selection
+```
+
+### `single_value_all_modifier`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        CommandLine|contains|all: 'whoami'
+    condition: selection
+```
+
+The `|all` modifier is meaningful only with multiple values (it ANDs the per-value matches). On a single-value item it is a no-op and confuses readers. The fix removes `|all`.
+
+```yaml
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+```
+
+### `all_with_re`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        CommandLine|re|all:
+            - '^cmd'
+            - 'whoami'
+    condition: selection
+```
+
+`|all` says every value in the list must match the field. `|re` says match a single regex. Combining the two on a single field can't be both at once: a regex is by definition the only matcher, so `|all` adds nothing. The fix removes `|all` and the rule keeps its OR semantics across the patterns; if you actually needed AND, use two separate selections joined with `and` in `condition:`.
+
+### `non_lowercase_key`
+
+Trigger:
+
+```yaml
+Title: Suspicious whoami invocation
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+```
+
+Sigma's top-level keys (`title:`, `id:`, `logsource:`, `detection:`, `level:` …) are case-sensitive. `Title:` is **not** recognised by the parser; the rule silently has no title. The fix lowercases the offending key.
+
+### `condition_references_unknown`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection_keywords
+```
+
+The `condition:` expression references `selection_keywords`, but the only selection defined in the `detection:` block is `selection`. The rule will fail to compile; this lint catches it before runtime. No auto-fix because the linter cannot tell which selection name was intended.
+
+### `deprecated_aggregation_syntax`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        EventID: 4625
+    condition: selection | count() by User > 5
+```
+
+The pipe-aggregation form in `condition:` is the pre-v2 way to express a correlation. Sigma v2.1.0 makes correlations first-class via a dedicated `correlation:` block, which rsigma evaluates and converts more accurately:
+
+```yaml
+title: Failed logon (base)
+id: 9d2e7c48-4a3b-4f99-93c9-1c5f7c8b1a2b
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4625
+    condition: selection
+---
+title: Brute force logon
+id: aaaa1111-2222-3333-4444-555555555555
+correlation:
+    type: event_count
+    rules: [9d2e7c48-4a3b-4f99-93c9-1c5f7c8b1a2b]
+    group-by: [User]
+    timespan: 5m
+    condition:
+        gte: 5
+```
+
+No auto-fix because the migration is structural (split into a base detection plus a correlation document).
+
+### `duplicate_fields`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        CommandLine|contains: whoami
+        CommandLine|contains: net.exe
+    condition: selection
+```
+
+YAML preserves duplicate keys silently; the parser keeps only the last one, so the `whoami` match is dropped. The fix removes the earlier duplicate. If you wanted both, use a single key with a list of values, or split the selections.
+
+```yaml
+detection:
+    selection:
+        CommandLine|contains:
+            - whoami
+            - net.exe
+    condition: selection
+```
+
+### `unknown_tag_namespace`
+
+Trigger:
+
+```yaml
+tags:
+    - attack.t1059
+    - mittre.t1059       # typo: should be attack.t1059
+```
+
+The recognised tag namespaces are `attack.*`, `cve.*`, `detection.*`, `tlp.*`, `stp.*`, and `informational.*`. The fix is to manually replace the unknown namespace with the closest valid one (the linter doesn't auto-correct; tag namespaces are ambiguous enough that silent rewrites would be unsafe).
+
+### `null_in_value_list`
+
+Trigger:
+
+```yaml
+detection:
+    selection:
+        ParentImage:
+            - C:\Windows\System32\cmd.exe
+            - null
+    condition: selection
+```
+
+A `null` literal inside a values list is spec-ambiguous. Does it mean "the field is null" or "an absent value" or "the literal string `null`"? The lint flags it so the author can be explicit. To express "field is null", use `|exists: false`. To match the literal string, quote it (`'null'`).
+
+### `invalid_status` and `invalid_level`
+
+Trigger:
+
+```yaml
+status: experimnetal      # typo
+level: criticla           # typo
+```
+
+The valid `status:` values are `stable`, `test`, `experimental`, `deprecated`, `unsupported`. The valid `level:` values are `informational`, `low`, `medium`, `high`, `critical`. The fix replaces the bad value with the closest valid one (edit-distance ≤ 3).
+
 ## How to read the source for any rule
 
 Every lint rule's emission lives in a single file under [`crates/rsigma-parser/src/lint/rules/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-parser/src/lint/rules):
