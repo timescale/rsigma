@@ -86,4 +86,4 @@ rsigma is a Cargo workspace with the following crates:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [MIT License](https://github.com/timescale/rsigma/blob/main/LICENSE).

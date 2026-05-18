@@ -189,4 +189,4 @@ Both types are stable JSON suitable for downstream consumers (Loki, Slack webhoo
 
 - **Tutorial path:** [quick start](quick-start.md) -> [evaluating rules](../guide/evaluating-rules.md) -> [streaming detection](../guide/streaming-detection.md).
 - **Reference path:** [CLI](../cli/index.md), [linting rules](../reference/lint-rules.md), [Prometheus metrics](../reference/metrics.md), [feature flags](../reference/feature-flags.md).
-- **Architecture path:** [crate map and data flow](../reference/architecture.md), [library API](../library/index.md), [contributing](../developers/contributing.md).
+- **Architecture path:** [crate map and data flow](../reference/architecture.md), [library API](../library/index.md), [contributing](../contributing.md).

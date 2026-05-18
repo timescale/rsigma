@@ -115,7 +115,7 @@ cargo build --release --all-features --workspace
 ./target/release/rsigma --help
 ```
 
-A workspace build produces every binary: the CLI (`target/release/rsigma`) and the LSP server (`target/release/rsigma-lsp`). See the [contributing guide](../developers/contributing.md) for the full developer workflow.
+A workspace build produces every binary: the CLI (`target/release/rsigma`) and the LSP server (`target/release/rsigma-lsp`). See the [contributing guide](../contributing.md) for the full developer workflow.
 
 ## Verify the install
 
