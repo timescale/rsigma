@@ -182,7 +182,7 @@ The `rsigma_dlq_events_total` Prometheus counter tracks DLQ volume. Alert on rat
 
 ## Connection lifecycle and reconnects
 
-`async-nats` handles reconnection automatically with exponential backoff. The daemon logs each connect / disconnect / reconnect at `info` level via the `tracing` subscriber. While disconnected:
+`async-nats` handles reconnection automatically with exponential backoff. The daemon logs each connect/disconnect/reconnect at `info` level via the `tracing` subscriber. While disconnected:
 
 - Incoming messages buffer briefly in NATS's local buffer, then back-pressure propagates to the publisher.
 - Outgoing sink writes block until reconnect.
@@ -195,7 +195,7 @@ The `rsigma_dlq_events_total` Prometheus counter tracks DLQ volume. Alert on rat
 
 | Setting | Tune to |
 |---------|---------|
-| Stream `max_age` / `max_msgs` | Long enough to outlast any restart you care to replay across. |
+| Stream `max_age`/`max_msgs` | Long enough to outlast any restart you care to replay across. |
 | Consumer `ack_wait` | Short enough to redeliver quickly on a panic, long enough that legitimate slow processing does not trigger redelivery. 30 to 60 s is a good starting point. |
 | Consumer `max_deliver` | Cap at 5 to 10. Beyond that, DLQ is more honest than infinite redelivery. |
 | `--buffer-size` | Bounded mpsc capacity. Default 10000. Increase to 50000+ for bursty 50k/s ingest. |

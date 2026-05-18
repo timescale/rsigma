@@ -8,8 +8,8 @@ The same set of formats works in both `engine eval` and `engine daemon`. The `--
 
 | Format | Flag value | Feature flag | Typical source |
 |--------|-----------|--------------|----------------|
-| JSON / NDJSON | `json` | default | Application logs, Sysmon-as-JSON, OTLP stripped of envelope, anything via Helr |
-| Syslog (RFC 3164 / 5424) | `syslog` | default | Network appliances, traditional Unix logs |
+| JSON/NDJSON | `json` | default | Application logs, Sysmon-as-JSON, OTLP stripped of envelope, anything via Helr |
+| Syslog (RFC 3164/5424) | `syslog` | default | Network appliances, traditional Unix logs |
 | logfmt | `logfmt` | `logfmt` | Go services (HashiCorp, Grafana, kubelet logs) |
 | CEF | `cef` | `cef` | ArcSight, McAfee, vendor SIEM-friendly format |
 | EVTX | (auto-detected by `.evtx` extension) | `evtx` | Windows Event Log binary files |
@@ -19,7 +19,7 @@ The same set of formats works in both `engine eval` and `engine daemon`. The `--
 
 Default features include JSON, syslog, EVTX, and plain text. logfmt, CEF, and OTLP are feature-gated to keep the dependency surface small.
 
-## JSON / NDJSON
+## JSON/NDJSON
 
 JSON is the universal default. Each line is parsed as a single JSON object and evaluated as one event.
 
@@ -77,7 +77,7 @@ cargo install --locked rsigma --features logfmt
 
 Auto-detect does not consider logfmt because the format is ambiguous against plain text. Pass `--input-format logfmt` explicitly.
 
-## CEF / ArcSight (feature-gated)
+## CEF/ArcSight (feature-gated)
 
 [Common Event Format](https://en.wikipedia.org/wiki/Common_Event_Format) is the ArcSight-style pipe-delimited header plus key/value extensions. Hand-rolled parser handles the full spec including `\=`, `\n`, `\\` escapes, and CEF wrapped in syslog (the parser locates the `CEF:0|` start automatically).
 
@@ -267,7 +267,7 @@ When an event has no parseable timestamp, the correlation engine falls back to t
 
 ## See also
 
-- [Evaluating Rules](evaluating-rules.md) for event extraction with `--jq` / `--jsonpath`.
+- [Evaluating Rules](evaluating-rules.md) for event extraction with `--jq`/`--jsonpath`.
 - [Streaming Detection](streaming-detection.md) for daemon input modes and back-pressure tuning.
 - [OTLP Integration](otlp-integration.md) for the agent configurations on the producer side.
 - [Feature Flags reference](../reference/feature-flags.md) for the `logfmt`, `cef`, `evtx`, `daemon-otlp` feature gates.

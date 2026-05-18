@@ -84,7 +84,7 @@ Pipelines compose 26 transformation types. The most common ones in practice are:
 |----------------|--------------|
 | `field_name_mapping` | Rename fields one-to-one or one-to-many (`CommandLine: [process.command_line, process.args]`). |
 | `field_name_prefix_mapping` | Rename fields by prefix. |
-| `field_name_prefix` / `field_name_suffix` | Add a static prefix or suffix to every field name. |
+| `field_name_prefix`/`field_name_suffix` | Add a static prefix or suffix to every field name. |
 | `field_name_transform` | Case conversion (`lower`, `upper`, `snake_case`, `title`). |
 | `add_condition` | Inject extra detection conditions (e.g. add `EventID: 1`). |
 | `drop_detection_item` | Remove matching detection items. |
@@ -113,7 +113,7 @@ Apply at the rule level. Common types:
 | `contains_detection_item` | `field`, optional `value` |
 | `processing_item_applied` | `processing_item_id` (chain to prior steps) |
 | `processing_state` | `key`, `val` |
-| `is_sigma_rule` / `is_sigma_correlation_rule` | (no args) |
+| `is_sigma_rule`/`is_sigma_correlation_rule` | (no args) |
 | `rule_attribute` | `attribute`, `value` |
 | `tag` | `tag` |
 

@@ -142,7 +142,7 @@ CREATE MATERIALIZED VIEW sigma_9d2e7c48_4a3b_4f99_93c9_1c5f7c8b1a2b
     WITH NO DATA
 ```
 
-TimescaleDB then refreshes the aggregate in the background and your dashboards query the materialised result instead of the raw hypertable. Convert the base detection rules separately (or pass `--skip-unsupported`) and skip the `event_count` / `value_count` correlation rules; the materialised view above is the queryable surface you want.
+TimescaleDB then refreshes the aggregate in the background and your dashboards query the materialised result instead of the raw hypertable. Convert the base detection rules separately (or pass `--skip-unsupported`) and skip the `event_count`/`value_count` correlation rules; the materialised view above is the queryable surface you want.
 
 #### `sliding_window`
 

@@ -3,7 +3,7 @@ site_name: RSigma
 site_description: A complete Rust toolkit for the Sigma detection standard. Parser, evaluator, rule conversion, streaming daemon, linter, and LSP.
 site_url: https://timescale.github.io/rsigma/
 site_author: Mostafa Moradian
-copyright: Copyright &copy; 2026 Mostafa Moradian. Licensed under MIT.
+copyright: Copyright &copy; 2026 Tiger Data. Licensed under MIT.
 
 repo_name: timescale/rsigma
 repo_url: https://github.com/timescale/rsigma

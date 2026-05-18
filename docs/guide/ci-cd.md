@@ -85,7 +85,7 @@ Add `-p <pipeline.yml>` to validate that your processing pipelines apply cleanly
 rsigma rule validate rules/ -p pipelines/ecs.yml
 ```
 
-For dynamic pipelines, add `--resolve-sources` so CI also exercises the HTTP / file / command sources at validation time. The job fails with exit `3` if any source is unreachable:
+For dynamic pipelines, add `--resolve-sources` so CI also exercises the HTTP/file/command sources at validation time. The job fails with exit `3` if any source is unreachable:
 
 ```bash
 rsigma rule validate rules/ -p pipelines/dynamic.yml --resolve-sources
@@ -308,7 +308,7 @@ done
 - **Pin the rsigma version** in CI. Detection-as-code repos test specific behaviour; a silent rsigma upgrade can flip a previously-fixed bug. Use `cargo install --locked rsigma --version 0.11.0` or pin the precompiled archive URL.
 - **Separate lint and validate jobs**. They fail for different reasons. A combined job hides which check broke.
 - **Avoid `set +e` around rsigma**. Structured exit codes are the API. Wrapping commands in `|| true` or `set +e` defeats the whole model.
-- **JSON output for diagnostic logs**. Pass `--log-format json` so CI log aggregators (Datadog CI Visibility, Buildkite test analytics) can parse run metadata without regex. Stdout / stderr are unchanged; only structured diagnostic logs flip to JSON. See [Observability](observability.md).
+- **JSON output for diagnostic logs**. Pass `--log-format json` so CI log aggregators (Datadog CI Visibility, Buildkite test analytics) can parse run metadata without regex. Stdout/stderr are unchanged; only structured diagnostic logs flip to JSON. See [Observability](observability.md).
 
 ## See also
 

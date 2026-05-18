@@ -132,7 +132,7 @@ Use `--include-event` to embed the full event JSON in every match (useful for fo
 rsigma engine eval -r rules/ --include-event -e @events.ndjson
 ```
 
-For per-rule control, set the `rsigma.include_event` custom attribute on the rule (`"true"` / `"false"`). See [Custom Attributes](../reference/custom-attributes.md).
+For per-rule control, set the `rsigma.include_event` custom attribute on the rule (`"true"`/`"false"`). See [Custom Attributes](../reference/custom-attributes.md).
 
 ## Input formats other than JSON
 

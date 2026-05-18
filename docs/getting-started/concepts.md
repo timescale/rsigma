@@ -136,7 +136,7 @@ RSigma reads events in seven formats with auto-detection by default:
 
 | Format | Example use case |
 |--------|------------------|
-| JSON / NDJSON | API logs, Sysmon-as-JSON, the universal default |
+| JSON/NDJSON | API logs, Sysmon-as-JSON, the universal default |
 | Syslog (RFC 3164/5424) | Network appliances, traditional Unix logs |
 | logfmt (feature-gated) | Application logs from Go services |
 | CEF (feature-gated) | ArcSight, McAfee, vendor SIEM-friendly format |

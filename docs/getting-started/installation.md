@@ -137,4 +137,4 @@ You should see `rsigma {{ rsigma.version }}` and a list of the top-level command
 - **Linux**: archives are glibc-linked and target Ubuntu 22.04's glibc baseline. They run on any distribution with a comparable or newer glibc. For Alpine or other musl-only environments, prefer the GHCR Docker image, build from source with `cargo build --target x86_64-unknown-linux-musl`, or open an issue if you need official musl binaries.
 - **macOS**: the `aarch64-apple-darwin` archive targets Apple Silicon (M1+). On older Intel Macs use the `x86_64` archive.
 - **Windows**: the daemon's NATS and OTLP features rely on `tokio` and `tonic` and are fully supported on Windows. File watching for hot-reload uses the native ReadDirectoryChangesW API.
-- **Alpine / scratch containers**: prefer the GHCR image, which is built on a minimal glibc base and is fully self-contained.
+- **Alpine/scratch containers**: prefer the GHCR image, which is built on a minimal glibc base and is fully self-contained.

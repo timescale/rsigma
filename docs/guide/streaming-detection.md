@@ -9,8 +9,8 @@ This page covers the daemon's life cycle, input and output options, hot-reload, 
 ```text
                 ┌───────────────┐    ┌──────────────────┐    ┌───────────────┐
 events ───────► │ Event source  ├───►│  LogProcessor    ├───►│  Sinks        ├───► detections
-                │ stdin / HTTP  │    │  + RuntimeEngine │    │ stdout / file │
-                │ NATS / OTLP   │    │  (Engine + Corr) │    │ NATS / DLQ    │
+                │ stdin/HTTP    │    │  + RuntimeEngine │    │ stdout/file   │
+                │ NATS/OTLP     │    │  (Engine + Corr) │    │ NATS/DLQ      │
                 └───────────────┘    └──────────────────┘    └───────────────┘
                                             ▲
                                             │
