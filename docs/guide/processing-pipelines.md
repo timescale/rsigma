@@ -214,7 +214,7 @@ The use cases are concrete:
 
 ### Source declaration
 
-Add a `sources` section to your pipeline YAML. Each source has a type, a configuration, an extraction expression, and a refresh policy:
+Add a `sources` section to your pipeline YAML. Each source has a type, a configuration, an extraction expression, and a refresh policy. Substitution into the pipeline is wired through `vars:`, which the runtime expands with the resolved data; rules then reference the resulting values via standard `%placeholder%` syntax handled by the `value_placeholders` transformation:
 
 ```yaml
 name: dynamic_threat_intel
@@ -230,33 +230,36 @@ sources:
     on_error: use_cached
     required: true
 
-  - id: field_config
-    type: file
-    path: /etc/rsigma/fields.json
-    format: json
-    refresh: watch
-
   - id: enrichment_rules
     type: command
     command: ["generate-transformations", "--format", "json"]
     format: json
     refresh: once
 
-transformations:
-  - id: map_fields
-    type: field_name_mapping
-    mapping: ${source.field_config}
+vars:
+  blocklist: "${source.ip_blocklist}"
 
-  - id: block_known_bad
-    type: add_condition
-    conditions:
-      - field: DestinationIp
-        value: ${source.ip_blocklist}
+transformations:
+  - id: expand_placeholders
+    type: value_placeholders
 
   - include: ${source.enrichment_rules}
 ```
 
-Anywhere a pipeline YAML accepts a string, list, or mapping, you can substitute `${source.<id>}` and the resolved value gets plugged in at load time. The pipeline ends up looking like a normal static pipeline by the time it reaches the engine.
+In rules, reference the var with the standard Sigma `%name%` placeholder:
+
+```yaml
+title: Connection to known-bad IP
+logsource:
+    category: network_connection
+detection:
+    selection:
+        Action: 'allow'
+        DestinationIp: '%blocklist%'
+    condition: selection
+```
+
+`${source.<id>}` substitution applies to `vars:` entries and to `include:` directives. Transformation field values such as `add_condition.conditions.<field>` are parsed as typed structures and do **not** substitute dynamic sources directly; route lists of values through `vars` plus `value_placeholders` as shown above. Single scalar substitutions inside transformation fields (such as `set_state.value`) follow the same pattern through `vars`.
 
 ### Source types
 
