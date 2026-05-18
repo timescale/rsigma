@@ -6,6 +6,7 @@ nav:
   - Library: library
   - Developers: developers
   - Reference: reference
+  - Benchmarks: benchmarks.md
   - Deployment: deployment
   - Editors: editors
   - Ecosystem: ecosystem

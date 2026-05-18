@@ -208,7 +208,7 @@ Refresh policies and on-error behaviour are documented in [Dynamic Pipeline Sour
 
 Three transparent passes (matcher optimizer) always run. Three opt-in passes (`--bloom-prefilter`, `--cross-rule-ac`, and the `parallel` rayon path enabled by default in the CLI) require explicit knobs. The streaming daemon's `--buffer-size` (default 10000) and `--batch-size` (default 1) tune throughput vs tail latency.
 
-Verified Criterion numbers ship in the [Benchmarks reference](../developers/benchmarks.md). Headline figures: 2 µs per event for 100 rules, 30 µs per event for 1k rules, 162 µs per event for 5k rules. Cross-rule AC delivers up to ~100× speed-up on pure-substring rule sets dominated by non-matching events.
+Verified Criterion numbers ship in the [Benchmarks](../benchmarks.md) page. Headline figures: 2 µs per event for 100 rules, 30 µs per event for 1k rules, 162 µs per event for 5k rules. Cross-rule AC delivers up to ~100× speed-up on pure-substring rule sets dominated by non-matching events.
 
 ## Threat model
 
@@ -219,5 +219,5 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 - [Source diagram](https://github.com/timescale/rsigma/blob/main/assets/architecture.mmd) — the Mermaid file this page renders from.
 - [Per-crate READMEs](https://github.com/timescale/rsigma/tree/main/crates) for the implementation-side documentation.
 - [docs.rs/rsigma](https://docs.rs/rsigma) for the library API.
-- [Benchmarks](../developers/benchmarks.md) for the Criterion results across parser, evaluator, correlation engine, runtime, and dynamic pipelines.
+- [Benchmarks](../benchmarks.md) for the Criterion results across parser, evaluator, correlation engine, runtime, and dynamic pipelines.
 - [Performance Tuning](../guide/performance-tuning.md), [Observability](../guide/observability.md), [Security Hardening](security.md) for the operator-facing concerns.

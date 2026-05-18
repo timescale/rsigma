@@ -121,4 +121,4 @@ A five-part article series on building RSigma and using it in production:
 - **MSRV:** Rust `{{ rsigma.msrv }}`, edition `{{ rsigma.edition }}`.
 - **Cross-platform binaries:** Linux, macOS, Windows on amd64 and arm64.
 - **Container image:** `{{ rsigma.docker_image }}:latest` (multi-arch, cosign-signed, SBOM, SLSA Build L3 provenance).
-- **Throughput:** ~1.06M events/sec detection, ~569K events/sec correlation on an Apple M4 Pro. See [benchmarks](developers/benchmarks.md).
+- **Throughput:** ~1.06M events/sec detection, ~569K events/sec correlation on an Apple M4 Pro. See [benchmarks](benchmarks.md).

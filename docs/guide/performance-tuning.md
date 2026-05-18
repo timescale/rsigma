@@ -14,7 +14,7 @@ Three rewrites run at rule-compile time, transparently. There is no flag to disa
 | `RegexSet` collapse | Any `AnyOf` group of 3+ `re` matchers collapses into a single `regex::RegexSet`. | same |
 | `CaseInsensitiveGroup` wrapper | A group whose children are all case-insensitive lowers the haystack once via `ascii_lowercase_cow` and dispatches to the children via `matches_pre_lowered`. Removes the per-child `to_lowercase()` allocation. | same |
 
-Threshold choices come from a Criterion sweep documented in the [Benchmarks reference](../developers/benchmarks.md) (8 patterns is where the sequential `str::contains` path with `memchr`/Two-Way SIMD acceleration loses to Aho-Corasick on typical haystacks). The compiler invariant is that these are pure rewrites: the optimized tree returns the same `bool` for the same event as the unoptimized tree.
+Threshold choices come from a Criterion sweep documented in the [Benchmarks](../benchmarks.md) page (8 patterns is where the sequential `str::contains` path with `memchr`/Two-Way SIMD acceleration loses to Aho-Corasick on typical haystacks). The compiler invariant is that these are pure rewrites: the optimized tree returns the same `bool` for the same event as the unoptimized tree.
 
 Because the optimizer is part of compilation, a rule reload picks up any new pattern groupings automatically.
 
@@ -123,7 +123,7 @@ See [Evaluating Rules](evaluating-rules.md#correlation-in-eval-mode) for the mat
 
 ## Benchmarking your own corpus
 
-Criterion benchmarks live in [`crates/rsigma-eval/benches/eval.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/benches/eval.rs) and [`crates/rsigma-runtime/benches/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/benches). The full numbers ship in the [Benchmarks reference](../developers/benchmarks.md).
+Criterion benchmarks live in [`crates/rsigma-eval/benches/eval.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/benches/eval.rs) and [`crates/rsigma-runtime/benches/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/benches). The full numbers ship in the [Benchmarks](../benchmarks.md) page.
 
 Quick runs on a checkout:
 
@@ -163,5 +163,5 @@ Replace the synthetic Criterion inputs with rules and events that mirror your ow
 - [Streaming Detection](streaming-detection.md) for daemon-level configuration around hot-reload, state, and back-pressure.
 - [Evaluating Rules](evaluating-rules.md) for the corresponding `engine eval` flags.
 - [Feature Flags reference](../reference/feature-flags.md) for `daachorse-index`, `evtx`, `logfmt`, `cef`, and `daemon-*` features.
-- [Benchmarks reference](../developers/benchmarks.md) for the full Criterion results across parser, evaluator, correlation engine, runtime, and dynamic pipelines.
+- [Benchmarks](../benchmarks.md) for the full Criterion results across parser, evaluator, correlation engine, runtime, and dynamic pipelines.
 - [`rsigma-eval/README.md`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md) for the matcher optimizer, bloom, and cross-rule AC implementation notes.
