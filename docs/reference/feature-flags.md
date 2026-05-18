@@ -1,0 +1,105 @@
+# Feature Flags
+
+`rsigma` is a workspace of seven crates, several of which expose Cargo features that gate optional dependencies and code paths. This page documents every feature, its default state, what it pulls in, and how to enable it when building from source.
+
+The CLI ships with sensible defaults; the precompiled release archives and the GHCR Docker image are built with `--all-features`, so every feature documented here is available out of the box.
+
+## `rsigma-cli`
+
+The crate that produces the `rsigma` binary.
+
+| Feature | Default | Pulls in | What it enables |
+|---------|---------|----------|-----------------|
+| `daemon` | yes | `rsigma-runtime`, `tokio`, `axum`, `prometheus`, `notify`, `rusqlite`, `tower-http` | `engine daemon`, the HTTP API server, `/metrics`, hot-reload, SQLite state persistence. The default; disable only for a minimal `engine eval` / `rule *` build. |
+| `daemon-nats` | no | `daemon` + `async-nats`, `tokio-stream`, `time`, `rsigma-runtime/nats` | NATS JetStream as `--input` and `--output` (and DLQ). All `--nats-*` flags. `RSIGMA_CONSUMER_GROUP`. See [NATS Streaming](../guide/nats-streaming.md). |
+| `daemon-otlp` | no | `daemon` + `prost`, `tonic`, `flate2`, `rsigma-runtime/otlp` | OTLP/HTTP and OTLP/gRPC receivers on `/v1/logs`. See [OTLP Integration](../guide/otlp-integration.md). |
+| `logfmt` | no | `rsigma-runtime/logfmt` | `--input-format logfmt` for the daemon and `engine eval`. |
+| `cef` | no | `rsigma-runtime/cef` | `--input-format cef` for ArcSight-style logs. |
+| `evtx` | no | `rsigma-runtime/evtx` (dep on the `evtx` crate) | Native `.evtx` file input via `engine eval -e @file.evtx`. See [Input Formats](../guide/input-formats.md#evtx-windows-event-log-feature-gated). |
+| `daachorse-index` | no | `rsigma-eval/daachorse-index`, optionally `rsigma-runtime/daachorse-index` | The `--cross-rule-ac` flag for very large rule sets dominated by shared positive substrings. See [Performance Tuning](../guide/performance-tuning.md#cross-rule-aho-corasick-pre-filter). |
+
+## `rsigma-eval`
+
+The detection and correlation engine. Used as a library and re-exported by `rsigma-cli`.
+
+| Feature | Default | Pulls in | What it enables |
+|---------|---------|----------|-----------------|
+| `parallel` | no | `rayon` | Parallel batch evaluation via `Engine::evaluate_batch_parallel`. The CLI enables this by default through its dependency declaration. |
+| `daachorse-index` | no | `daachorse` | Cross-rule Aho-Corasick pre-filter. See above. |
+
+## `rsigma-runtime`
+
+The streaming runtime (event sources, sinks, daemon plumbing, dynamic pipelines).
+
+| Feature | Default | Pulls in | What it enables |
+|---------|---------|----------|-----------------|
+| `nats` | no | `async-nats`, `tokio-stream`, `time`, `futures` | NATS source, sink, and dynamic-pipeline source type. |
+| `otlp` | no | `opentelemetry-proto`, `prost` | OTLP log decoding. |
+| `logfmt` | no | (none beyond the parser) | `logfmt` input parser. |
+| `cef` | no | (none beyond the parser) | `cef` input parser. |
+| `evtx` | no | `evtx` | `.evtx` file reader. |
+| `daachorse-index` | no | `rsigma-eval/daachorse-index` | Cross-rule AC support when used from `rsigma-runtime` consumers. |
+
+## `rsigma-parser`
+
+No features. The parser is unconditional.
+
+## Building with features
+
+### Cargo install
+
+```bash
+# Default: daemon + everything that ships with it, no extras.
+cargo install --locked rsigma
+
+# Recommended for production: daemon + NATS + OTLP + EVTX + cross-rule AC.
+cargo install --locked rsigma --features daemon-nats,daemon-otlp,evtx,daachorse-index
+
+# Match the prebuilt release archives and Docker image exactly.
+cargo install --locked rsigma --all-features
+```
+
+### Local development
+
+```bash
+# Workspace build with every feature on.
+cargo build --release --all-features --workspace
+
+# Run just the `engine daemon` tests with the NATS feature.
+cargo test -p rsigma-cli --features daemon-nats
+```
+
+### Per-feature CI matrix
+
+The repo's `ci.yml` matrix tests these combinations on every push:
+
+- `--no-default-features` (`engine eval` + `rule *` + `backend *` only)
+- default (`daemon` on, no extras)
+- `daemon-nats`
+- `daemon-otlp`
+- `logfmt`, `cef`, `evtx`, `daachorse-index` individually
+- `--all-features` (the release shape)
+
+If you depend on a feature combination not covered in CI, file an issue so it can be added to the matrix.
+
+## Detecting features at runtime
+
+The binary's `--help` enumerates only the flags compiled in. If a NATS flag is missing from `rsigma engine daemon --help`, the binary was built without `daemon-nats`. Equivalent shells for the other gated surfaces:
+
+```bash
+# daachorse-index?
+rsigma engine daemon --help | grep -q cross-rule-ac && echo on || echo off
+
+# evtx?
+echo "" | rsigma engine eval -r /dev/null -e @/dev/null --input-format json 2>&1 | grep -q "evtx" || echo "evtx feature not required for JSON inputs"
+
+# Inspect feature flags via the binary's version output (planned: not yet implemented).
+```
+
+A `rsigma --features` introspection flag is on the [roadmap](https://github.com/timescale/rsigma/issues) but not yet shipped.
+
+## See also
+
+- [Installation](../getting-started/installation.md) for prebuilt binaries (which use `--all-features`) and source builds.
+- [Performance Tuning](../guide/performance-tuning.md) for when `daachorse-index` actually pays off.
+- [NATS Streaming](../guide/nats-streaming.md), [OTLP Integration](../guide/otlp-integration.md), [Input Formats](../guide/input-formats.md) for what each feature gates in practice.
