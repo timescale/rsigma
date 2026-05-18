@@ -28,38 +28,40 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_batch_size` | histogram | — | Number of events processed per batch. |
 | `rsigma_dlq_events_total` | counter | — | Events routed to the dead-letter queue. |
 
-## Per-rule labels (2 metrics, label `rule_id`)
+## Per-rule labels (2 metrics)
 
-Exposed once at least one detection or correlation has fired. The labels let you alert on a specific rule firing too frequently or going silent.
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `rsigma_detection_matches_by_rule_total` | counter | `rule_id` | Detection matches per rule. |
-| `rsigma_correlation_matches_by_rule_total` | counter | `rule_id` | Correlation matches per rule. |
-
-Rules with very high cardinality should not be label-counted; consider pruning rules that fire on every event before they swamp the metrics endpoint.
-
-## Dynamic pipeline sources (5 metrics, label `source_id`)
-
-Exposed when one or more pipelines declare dynamic sources. Counters lazily register on first resolve; gauges register as soon as a source is configured.
+These counters carry labels that identify which rule fired. They surface on `/metrics` only after the first match for that kind.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_source_resolves_total` | counter | `source_id`, `result` (`ok`/`error`) | Total source resolutions, partitioned by outcome. |
-| `rsigma_source_resolve_errors_total` | counter | `source_id`, `kind` (`http_status`, `timeout`, `parse`, `extract`, `resource_limit`, `auth`, `other`) | Categorised resolution failures. |
-| `rsigma_source_resolve_seconds` | histogram | `source_id` | Resolution latency per source. |
-| `rsigma_source_cache_hits_total` | counter | `source_id` | Times cached source data was served on resolution failure. |
-| `rsigma_source_last_resolved_timestamp` | gauge | `source_id` | Unix timestamp of the last successful resolve. Alert on staleness. |
+| `rsigma_detection_matches_by_rule_total` | counter | `rule_title`, `level` | Detection matches per rule. |
+| `rsigma_correlation_matches_by_rule_total` | counter | `rule_title`, `level`, `correlation_type` | Correlation matches per rule (`correlation_type` is `event_count`, `value_count`, `temporal`, `temporal_ordered`, `value_sum`, `value_avg`, `value_percentile`, or `value_median`). |
+
+`rule_title` is not guaranteed to be unique in a rule set. If two rules share a title, their counters add together. For collision-free per-rule analytics, scrape `rsigma_detection_matches_total` and join against your detection NDJSON stream by `rule_id` outside Prometheus.
+
+## Dynamic pipeline sources (5 metrics)
+
+Exposed when one or more pipelines declare dynamic sources. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
+| `rsigma_source_resolve_errors_total` | counter | `source_id`, `error_kind` (`Fetch`, `Parse`, `Extract`, `Timeout`, `ResourceLimit`) | Failed dynamic source resolutions. |
+| `rsigma_source_resolve_seconds` | histogram | — | Dynamic source resolution latency. Aggregated across all sources. |
+| `rsigma_source_cache_hits_total` | counter | — | Times cached source data was served on resolution failure. Aggregated across all sources. |
+| `rsigma_source_last_resolved_timestamp` | gauge | `source_id` | Unix timestamp of the last successful resolution per source. Alert on staleness. |
+
+The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP / file / command / NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 
 ## OTLP (3 metrics)
 
-Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is active. The lazy ones (`requests_total`, `errors_total`) register on the first request.
+Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is active. The labelled counters surface after the first request of that kind.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_otlp_requests_total` | counter | `transport` (`http`/`grpc`), `result` (`ok`/`error`) | OTLP `/v1/logs` request count. |
+| `rsigma_otlp_requests_total` | counter | `transport` (`http`, `grpc`), `encoding` (e.g. `json`, `protobuf`, `protobuf+gzip`) | OTLP export requests received. |
 | `rsigma_otlp_log_records_total` | counter | — | Log records ingested via OTLP. |
-| `rsigma_otlp_errors_total` | counter | `transport`, `kind` | Categorised OTLP errors. |
+| `rsigma_otlp_errors_total` | counter | `transport`, `reason` (`unsupported_content_type`, `decompression`, `decode`, `channel_closed`) | OTLP request errors. |
 
 ## Scrape configuration
 

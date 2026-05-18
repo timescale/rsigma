@@ -68,9 +68,11 @@ diff <(sort rule-fields.txt) <(sort schema-fields.txt)
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success. |
-| `2` | Rules path could not be read or a rule failed to parse. |
+| `0` | Success. Per-rule parse errors are reported as a stderr warning but do not change the exit code. |
+| `2` | Rules path could not be read. |
 | `3` | Pipeline file could not be loaded. |
+
+For a strict gate that fails on per-rule parse or compile errors, use [`rule validate`](validate.md).
 
 ## See also
 

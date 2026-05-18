@@ -207,8 +207,10 @@ curl -sS -X DELETE http://127.0.0.1:9090/api/v1/sources/cache/ip_blocklist
 ```
 
 ```json
-{"status":"cache_invalidated","source_id":"ip_blocklist"}
+{"status":"invalidated","source_id":"ip_blocklist"}
 ```
+
+The endpoint returns `200 OK` for any source ID regardless of whether that ID is currently configured; nonexistent IDs are a no-op. If you need a strict check, list `/api/v1/sources` first and confirm the source is registered before invalidating.
 
 ## OTLP ingest
 

@@ -47,8 +47,10 @@ rsigma rule parse rules/whoami.yml | jq '.detection.selection'
 
 | Code | Meaning |
 |------|---------|
-| `0` | The file parsed cleanly. |
-| `2` | Parse error. The error message lands on stderr. |
+| `0` | The file was readable. A YAML syntax error or missing-required-field is reported as a warning to stderr and the partial AST still prints to stdout. |
+| `2` | The file could not be opened (IO error, permission denied, path not found). |
+
+For a strict per-rule gate that fails on parse errors, use [`rule validate`](validate.md).
 
 ## See also
 

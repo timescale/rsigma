@@ -7,8 +7,8 @@
 | Code | Constant | Meaning |
 |------|----------|---------|
 | `0` | `SUCCESS` | Operation completed cleanly. For `engine eval`, events were processed (detections may have fired). For `rule lint`, no findings at or above `--fail-level`. For `rule validate`, every rule parsed and compiled. |
-| `1` | `FINDINGS` | The tool ran but produced findings. For `engine eval --fail-on-detection`, at least one detection or correlation fired. For `rule lint --fail-level <X>`, at least one finding at or above `X`. For `pipeline resolve`, at least one source returned an error. |
-| `2` | `RULE_ERROR` | The input rules could not be loaded or compiled. For `rule validate`, parse or compile errors. For `backend convert`, conversion failed or every rule failed. For `engine eval` and `rule lint`, the rules path could not be read. |
+| `1` | `FINDINGS` | The tool ran but produced findings. For `engine eval --fail-on-detection`, at least one detection or correlation fired. For `rule lint --fail-level <X>`, at least one finding at or above `X`. |
+| `2` | `RULE_ERROR` | The input rules could not be loaded or compiled. For `rule validate`, parse or compile errors. For `backend convert`, conversion failed or every rule failed. For `engine eval`, `rule lint`, `rule fields`, and `rule parse`, the rules path or file could not be read. For `rule condition`, the expression has bad syntax. |
 | `3` | `CONFIG_ERROR` | Configuration or argument error: bad pipeline file, unknown backend target, malformed `--suppress` duration, invalid `--jq` filter, unreadable schema file. |
 
 ## Per-command behaviour
@@ -17,23 +17,25 @@
 |---------|-----|-----|-----|-----|
 | `engine eval` | Default; or no match with `--fail-on-detection`. | Detection/correlation fired (with `--fail-on-detection`). | Rules path unreadable. | Bad `-p`, `--jq`, `--jsonpath`, `--suppress`, etc. |
 | `engine daemon` | Normal shutdown. | (not used) | Rules path unreadable at startup. | Bad `--input`, `--output`, pipeline file, etc. |
-| `rule parse` | Parsed cleanly. | (not used) | Parse error. | (not used) |
+| `rule parse` | File readable; YAML errors and missing-field issues are warnings on stderr and the partial AST still prints. | (not used) | File could not be opened (IO error). | (not used) |
 | `rule validate` | Every rule parsed and compiled. | (not used) | At least one parse or compile error. | Pipeline load failure, `--resolve-sources` failure. |
 | `rule lint` | No findings at or above `--fail-level`. | Findings at or above `--fail-level`. | Rules path or schema file unreadable. | Bad `--schema` argument. |
-| `rule fields` | Listed cleanly. | (not used) | Rules path unreadable or rule parse error. | Pipeline file unreadable. |
-| `rule condition` | Expression parsed. | (not used) | Parse error. | (not used) |
-| `rule stdin` | Parsed cleanly. | (not used) | Parse error. | (not used) |
+| `rule fields` | Listed cleanly. Per-rule parse errors are warnings only. | (not used) | Rules path unreadable. | Pipeline file unreadable. |
+| `rule condition` | Expression parsed. | (not used) | Bad expression syntax. | (not used) |
+| `rule stdin` | Always; YAML errors are warnings and the partial AST still prints. | (not used) | (not used) | (not used) |
 | `backend convert` | Conversion succeeded. | (not used) | Conversion failed, rules path empty (without `--skip-unsupported`). | Unknown `--target`, unknown `--format`, unwritable `--output`. |
 | `backend targets` | Always. | — | — | — |
-| `backend formats` | Backend listed. | — | — | Unknown backend name. |
-| `pipeline resolve` | All sources resolved. | At least one source errored. | Pipeline file unreadable. | Bad `--source` ID. |
+| `backend formats` | Always. Unknown backend names print an error and the available-targets list, but still exit `0`. | — | — | — |
+| `pipeline resolve` | Always (the command logs per-source `status: "error"` in its JSON output but does not propagate a failure exit). For a strict CI gate, use [`rule validate --resolve-sources`](../cli/rule/validate.md), which exits `3` if any source fails to resolve. | — | Pipeline file unreadable. | Bad `--source` ID. |
 
 ## Non-obvious behaviours
 
-- `engine eval` logs per-rule parse errors as warnings on stderr and exits `0`. Use `rule validate` for a strict per-rule gate.
+- `engine eval`, `rule parse`, `rule fields`, and `rule stdin` log per-rule parse errors as warnings on stderr and still exit `0`. Use `rule validate` for a strict per-rule gate that fails on parse or compile errors.
 - `engine eval` exits `0` by default even when matches fire. Pass `--fail-on-detection` to make matches fail the build.
 - `rule lint` exits `0` for findings below `--fail-level`. The default threshold is `error`, so a clean lint with only info or warning findings still returns `0`.
 - The `hint` lint severity never triggers exit `1`, even with `--fail-level info`.
+- `backend formats` returns `0` even for unknown backend names (it just prints the error and the available list).
+- `pipeline resolve` returns `0` even when sources fail to resolve; per-source `status: "error"` is in the JSON output. For a strict CI gate, use `rule validate --resolve-sources`.
 
 ## CI patterns
 

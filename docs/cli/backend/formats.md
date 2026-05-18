@@ -51,8 +51,9 @@ Available formats for 'lynxdb':
 
 | Code | Meaning |
 |------|---------|
-| `0` | Backend listed. |
-| `3` | Unknown backend name. |
+| `0` | Always (the command is informational and does not propagate an unknown-target argument to a non-zero exit). |
+
+Unknown backend names print `Unknown target: <name>` followed by the list of available targets, but the process still exits `0`. To validate a target in CI before passing it to `backend convert`, parse this output or, better, hard-code the supported target list since the set is small and changes rarely.
 
 ## See also
 

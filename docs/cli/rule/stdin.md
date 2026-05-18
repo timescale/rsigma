@@ -55,8 +55,9 @@ generate-sigma --product windows --action whoami | rsigma rule stdin
 
 | Code | Meaning |
 |------|---------|
-| `0` | Parsed cleanly. |
-| `2` | Parse error. |
+| `0` | Always. YAML syntax errors and missing-required-field issues are reported as warnings on stderr; the partial AST still prints to stdout. |
+
+`rule stdin` is intentionally lenient because it is meant for editor integrations and shell pipelines where you want the partial parse even when the input is incomplete. For a strict gate, use [`rule validate`](validate.md) (which exits `2` on parse or compile errors).
 
 ## See also
 

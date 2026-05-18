@@ -75,8 +75,7 @@ Good for catching typos and refresh-policy mistakes before they hit production.
 
 | Code | Meaning |
 |------|---------|
-| `0` | All requested sources resolved cleanly. |
-| `1` | At least one source returned an error. |
+| `0` | The command ran. Per-source results are in the JSON output; each one carries `"status": "ok"` or `"status": "error"`. **`pipeline resolve` does NOT propagate per-source errors to its exit code.** For a strict CI gate, pair with [`rule validate --resolve-sources`](../rule/validate.md), which exits `3` if any source fails. |
 | `2` | Pipeline file could not be read or parsed. |
 | `3` | Bad CLI argument (e.g. unknown `--source` ID). |
 
