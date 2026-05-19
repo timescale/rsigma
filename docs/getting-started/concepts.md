@@ -183,7 +183,7 @@ A correlation that fires produces a `CorrelationResult`:
 }
 ```
 
-Both types are stable JSON suitable for downstream consumers (Loki, Slack webhooks, SOAR playbooks, Fenrir response engines, custom alerting). The [output formats reference](../reference/http-api.md#output-payloads) defines every field.
+Both types are stable JSON suitable for downstream consumers (Loki, Slack webhooks, SOAR playbooks, Fenrir response engines, custom alerting). The [HTTP API reference](../reference/http-api.md) shows the response shape for every endpoint that emits these payloads.
 
 ## Where to go next
 

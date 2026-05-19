@@ -238,7 +238,7 @@ From here, pick the path that matches your work:
 
 - **Detection engineers**: [linting rules](../guide/linting-rules.md), [CI/CD](../guide/ci-cd.md), [processing pipelines](../guide/processing-pipelines.md).
 - **Platform engineers**: [streaming detection](../guide/streaming-detection.md), [NATS](../guide/nats-streaming.md), [OTLP integration](../guide/otlp-integration.md).
-- **Threat hunters**: [evaluating rules](../guide/evaluating-rules.md), [input formats](../guide/input-formats.md), [EVTX files](../guide/input-formats.md#evtx-windows-event-log).
+- **Threat hunters**: [evaluating rules](../guide/evaluating-rules.md), [input formats](../guide/input-formats.md), [EVTX files](../guide/input-formats.md#evtx-windows-event-log-feature-gated).
 - **Library users**: [embedding the crates](../library/index.md).
 
-If anything in this quick start did not work, check the [troubleshooting tips](../guide/observability.md#troubleshooting) or [open an issue](https://{{ rsigma.repo_url | replace("https://", "") }}/issues).
+If anything in this quick start did not work, run the [quick-verification checklist](../guide/observability.md#quick-verification) (log filter targets, `/healthz` / `/readyz`, `/metrics` smoke check) or [open an issue](https://{{ rsigma.repo_url | replace("https://", "") }}/issues).

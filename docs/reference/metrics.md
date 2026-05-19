@@ -128,5 +128,5 @@ groups:
 
 - [Observability](../guide/observability.md) for the broader observability story, including the `tracing` event targets that complement these metrics.
 - [Performance Tuning](../guide/performance-tuning.md) for which metric to watch when sizing `--buffer-size`, `--batch-size`, or correlation `max_state_entries`.
-- [Streaming Detection](../guide/streaming-detection.md#prometheus-and-the-http-api) for how the `/metrics` endpoint fits into the broader daemon API.
+- [Streaming Detection](../guide/streaming-detection.md#http-api) for how the `/metrics` endpoint fits into the broader daemon API.
 - [`daemon/metrics` source](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) for the registry implementation.

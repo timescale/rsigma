@@ -14,7 +14,7 @@ parallel = ["rayon"]
 daachorse-index = ["dep:daachorse"]
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.11.0" }
+rsigma-parser = { path = "../rsigma-parser", version = "0.12.0" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 yaml_serde = "0.10"

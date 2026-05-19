@@ -3,13 +3,14 @@
 All notable changes to RSigma are documented in this file.
 Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
-## [Unreleased]
+## [0.12.0] - 2026-05-20
 
 **TL;DR**
-The next RSigma release is the "operations and load performance" release:
+RSigma v0.12.0 is the "operability, performance, and documentation" release:
 * Comprehensive daemon and CLI observability: tower-http API access logs, per-request OTLP tracing, batch processing spans, source resolution spans, DLQ visibility, NATS and sink lifecycle events, correlation state eviction warnings, rule load diagnostics, daemon lifecycle logs, and a global `--log-format` flag for non-daemon subcommands.
 * Eval rule loading is no longer O(N²): `Engine::add_rule` is amortized O(1), and bulk loaders (`Engine::add_rules`, `extend_compiled_rules`, `add_collection`) rebuild indexes exactly once per batch. The full 3,120-rule SigmaHQ corpus that previously appeared to hang now loads in ~120 ms.
 * CLI subcommands reorganized into five noun-led groups (`engine`, `rule`, `backend`, `pipeline`). Flat aliases continue to work as deprecated forwarders for one release.
+* Full documentation site live at <https://timescale.github.io/rsigma/>: 47 pages spanning Getting Started, User Guide, CLI Reference, Library API, Developers, Reference (including a 66-rule lint catalogue and a 27-metric Prometheus catalogue), Deployment, Editors, and Ecosystem. Built from `docs/` on every merge to `main` via the new `.github/workflows/docs.yml`.
 * Test reliability: `cli_daemon_http` and `cli_daemon_otlp` E2E suites are now flake-free on macOS under load.
 * Dependency bumps: opentelemetry-proto 0.31.0 to 0.32.0, async-nats 0.47 to 0.48, yamlpath/yamlpatch 1.25.2 (with the `serde_yaml` cargo rename replaced by `yaml_serde` directly), tokio 1.52.3, jsonschema 0.46.4, tower-http 0.6.10, tonic 0.14.6.
 
@@ -137,6 +138,33 @@ stdout is unchanged. Exit codes are unchanged. Every flag accepted by the old fo
 
 **Internal refactor.** The CLI dispatch layer is collapsed: each subcommand's clap arguments now live in `crates/rsigma-cli/src/commands/<name>.rs` as a `pub struct <Name>Args` deriving `clap::Args`, and the daemon's 35-field arg set + `cmd_daemon` body moved out of `main.rs` into a new `crates/rsigma-cli/src/commands/daemon.rs`. `main.rs` dropped from ~1360 lines to ~520 with no behavior change; the dispatch becomes a thin two-layer match (group -> leaf).
 
+### Documentation site (PR #129)
+
+A full documentation site now lives at <https://timescale.github.io/rsigma/>, built from `docs/` with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) and deployed by `.github/workflows/docs.yml`. 47 pages were written from scratch or migrated out of the README sprawl, structured so a detection engineer can get from "what is rsigma" to a running daemon in five minutes and to backend conversion or correlation in fifteen.
+
+**Sections.**
+
+| Section | Pages | What it covers |
+|---------|-------|----------------|
+| Getting Started | 3 | Installation (cargo, Docker, signed binary archives), quick-start (first eval, first daemon, first convert in five minutes), core concepts (Sigma primer, rule kinds, eval-vs-daemon, noun-led CLI). |
+| User Guide | 11 | Evaluating rules, streaming detection, rule conversion, linting, processing pipelines (static + dynamic), input formats (incl EVTX), NATS streaming, OTLP integration with copy-paste recipes for Grafana Alloy / Vector / Fluent Bit / OTel Collector, CI/CD, performance tuning (matcher optimizer, bloom, cross-rule AC), observability (`--log-format`, `RUST_LOG` filter targets). |
+| CLI Reference | 13 | One page per grouped subcommand (`engine eval`, `engine daemon`, `rule parse/validate/lint/fields/condition/stdin`, `backend convert/targets/formats`, `pipeline resolve`) plus an overview with the migration table from the deprecated flat aliases. |
+| Library | 5 | Per-crate overviews of `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime`, each with a verified minimum working example and the public API surface that matters for embedders. |
+| Developers | 6 | Orientation, testing (the five-tier CI shape), fuzzing (all 15 cargo-fuzz harnesses), walkthroughs for adding a new backend, adding a new input format, and adding a new lint rule (the linter and LSP). |
+| Reference | 13 | 66-rule lint catalogue with worked examples for the trickier rules; PostgreSQL and LynxDB backend references; 27-metric Prometheus catalogue with verified labels; HTTP API; exit codes; environment variables; feature flags; custom attributes; builtin pipelines (`ecs_windows`, `sysmon`); dynamic-pipeline source spec; security hardening (input caps, resource limits, parser robustness, SQL injection prevention, network exposure, filesystem footprint, dependency policy); architecture diagram with the full crate map. |
+| Deployment | 1 | Docker deployment with all hardening flags verified end-to-end against a `rsigma:local` build, including cosign signature verification and SLSA Build L3 attestation lookup via `gh attestation`. |
+| Editors | 2 | VS Code / Cursor extension (wrapping `rsigma-lsp`); Neovim, Helix, Zed, Emacs `eglot`, and Sublime LSP wiring for the same server. |
+| Ecosystem | 1 | Helr companion page with a full docker-compose stack pairing Helr's HTTP-API log collection with the rsigma daemon over NATS. |
+| Top-level | 5 | Home (with a `Built with RSigma` section featuring [detection.studio](https://detection.studio/), a browser-based Sigma rule playground compiled from rsigma to WASM), Release Notes (mirrors this CHANGELOG), Contributing, Security Policy, Benchmarks (mirror of the root-level `BENCHMARKS.md`). |
+
+**Verification.** Every documented CLI flag, exit code, metric label, HTTP endpoint, environment variable, feature flag, and Docker hardening flag was checked against the live binary or the workspace source rather than transcribed from memory. The Docker page was tested end-to-end against a local `rsigma:local` build from `main` (compose stacks, bind-mount permissions, `--state-db` persistence, signature verification with cosign, SLSA attestation lookup via `gh attestation`).
+
+**CI.** `.github/workflows/docs.yml` has a `build` job that runs `mkdocs build --strict` on every PR touching `docs/`, `mkdocs.yml`, or `docs/requirements.txt`, and a `deploy` job that runs only on `main` and publishes via `actions/deploy-pages`. Every action is SHA-pinned with a version comment; top-level `permissions: {}` with least-privilege per-job overrides (`contents: read` for build, `pages: write` + `id-token: write` for deploy); `persist-credentials: false` on checkout; `concurrency` group with cancel-in-progress; `workflow_dispatch` for manual dry-runs. `zizmor --pedantic` reports zero findings.
+
+**One-time setup.** GitHub Pages source must be set to "GitHub Actions" under `Settings -> Pages`. The first push to `main` after the v0.12.0 release does the first deploy; subsequent docs-only changes redeploy automatically.
+
+**Deferred.** The Kubernetes deployment page is staged under `docs-drafts/` until the Helm Chart (#1a roadmap item) lands. The `attack` CLI subcommand group has a reserved enum but no docs yet; documentation will arrive with the MITRE ATT&CK contributor PR.
+
 ### Test reliability (PRs #115, #123)
 
 The `cli_daemon_http` and `cli_daemon_otlp` E2E suites are no longer flaky on macOS under load. Three real issues caused intermittent `ConnectionRefused`:
@@ -157,7 +185,7 @@ PR #123 also de-flaked an eval bloom test (`append_rule_matches_build_verdicts`)
 * **Architecture diagrams:** the ASCII diagram in `README.md` and the Mermaid diagram in `assets/architecture.mmd` were refreshed to reflect Dynamic Sigma Pipelines (v0.10.0), the matcher optimizer and prefilters (v0.11.0), DLQ as a sink target, broadened hot-reload over rules + pipelines, builtin pipelines (`ecs_windows`, `sysmon`), and the directory-style modules from the v0.9.0 modularization. A legend now explains feature-gated components (`*` for feature-gated and `**` for `daachorse-index`).
 * **README:** install and build instructions corrected; eval prefilters mentioned in the prose; fifth blog article and BlackNoise newsletter mention added.
 
-[v0.11.0...HEAD](https://github.com/timescale/rsigma/compare/v0.11.0...HEAD)
+[v0.11.0...v0.12.0](https://github.com/timescale/rsigma/compare/v0.11.0...v0.12.0)
 
 ## [0.11.0] - 2026-05-14
 
@@ -1194,6 +1222,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.12.0]: https://github.com/timescale/rsigma/releases/tag/v0.12.0
 [0.11.0]: https://github.com/timescale/rsigma/releases/tag/v0.11.0
 [0.10.0]: https://github.com/timescale/rsigma/releases/tag/v0.10.0
 [0.9.0]: https://github.com/timescale/rsigma/releases/tag/v0.9.0
