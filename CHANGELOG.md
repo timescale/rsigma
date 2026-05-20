@@ -5,7 +5,7 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
-### Unified evaluation result type (#43)
+### Unified evaluation result type (#132)
 
 `MatchResult` and `CorrelationResult` are collapsed into a single `EvaluationResult` via composition. The five fields shared between detection and correlation today (`rule_title`, `rule_id`, `level`, `tags`, `custom_attributes`) move into a new `RuleHeader` struct along with a new optional `enrichments` map. Kind-specific fields live in `DetectionBody` and `CorrelationBody`, behind a `#[serde(untagged)]` `ResultBody` enum.
 
