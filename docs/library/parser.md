@@ -19,7 +19,7 @@ For full rule loading, compilation, and event evaluation, layer [`rsigma-eval`](
 
 ```toml
 [dependencies]
-rsigma-parser = "0.11"
+rsigma-parser = "{{ rsigma.version }}"
 ```
 
 The crate has no rsigma dependencies and pulls in `yaml_serde` 0.10 (the maintained `serde_yaml` fork), `regex`, `pest`, and `thiserror`. No features.

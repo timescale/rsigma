@@ -18,9 +18,9 @@ For a one-shot evaluation against in-memory events, you do not need this crate; 
 
 ```toml
 [dependencies]
-rsigma-parser = "0.11"
-rsigma-eval = "0.11"
-rsigma-runtime = "0.11"
+rsigma-parser = "{{ rsigma.version }}"
+rsigma-eval = "{{ rsigma.version }}"
+rsigma-runtime = "{{ rsigma.version }}"
 tokio = { version = "1", features = ["full"] }
 ```
 

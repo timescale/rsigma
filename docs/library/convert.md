@@ -18,8 +18,8 @@ For event evaluation (running rules against in-memory events), use [`rsigma-eval
 
 ```toml
 [dependencies]
-rsigma-parser = "0.11"
-rsigma-convert = "0.11"
+rsigma-parser = "{{ rsigma.version }}"
+rsigma-convert = "{{ rsigma.version }}"
 ```
 
 No features. The crate is pure Rust + `regex`.

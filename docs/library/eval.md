@@ -18,8 +18,8 @@ For streaming I/O (stdin / HTTP / NATS / OTLP), source resolution, and hot-reloa
 
 ```toml
 [dependencies]
-rsigma-parser = "0.11"
-rsigma-eval = "0.11"
+rsigma-parser = "{{ rsigma.version }}"
+rsigma-eval = "{{ rsigma.version }}"
 serde_json = "1"   # only if you use the JsonEvent shim
 ```
 

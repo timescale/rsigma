@@ -133,6 +133,7 @@ plugins:
       trailing_newlines: true
       comments: false
   - macros:
+      module_name: docs/macros
       include_yaml:
         - docs/_data/vars.yml
   - minify:

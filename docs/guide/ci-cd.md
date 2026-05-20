@@ -109,7 +109,7 @@ on:
 permissions: {}
 
 env:
-  RSIGMA_VERSION: "0.12.0"
+  RSIGMA_VERSION: "{{ rsigma.version }}"
 
 jobs:
   lint:
@@ -194,7 +194,7 @@ For a faster CI loop, install from the precompiled archives instead of `cargo in
 stages: [check, eval, build]
 
 variables:
-  RSIGMA_VERSION: "0.12.0"
+  RSIGMA_VERSION: "{{ rsigma.version }}"
 
 default:
   image: debian:bookworm-slim
@@ -305,7 +305,7 @@ done
 ## Tips and gotchas
 
 - **Cache the rsigma binary** between CI runs. The `cargo install` form compiles rsigma from source and typically takes several minutes on a GitHub-hosted runner; the precompiled archive download completes in under 5 seconds. The release page ships archives for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, and `aarch64-pc-windows-msvc`.
-- **Pin the rsigma version** in CI. Detection-as-code repos test specific behaviour; a silent rsigma upgrade can flip a previously-fixed bug. Use `cargo install --locked rsigma --version 0.12.0` or pin the precompiled archive URL.
+- **Pin the rsigma version** in CI. Detection-as-code repos test specific behaviour; a silent rsigma upgrade can flip a previously-fixed bug. Use `cargo install --locked rsigma --version {{ rsigma.version }}` or pin the precompiled archive URL.
 - **Separate lint and validate jobs**. They fail for different reasons. A combined job hides which check broke.
 - **Avoid `set +e` around rsigma**. Structured exit codes are the API. Wrapping commands in `|| true` or `set +e` defeats the whole model.
 - **JSON output for diagnostic logs**. Pass `--log-format json` so CI log aggregators (Datadog CI Visibility, Buildkite test analytics) can parse run metadata without regex. Stdout/stderr are unchanged; only structured diagnostic logs flip to JSON. See [Observability](observability.md).

@@ -33,8 +33,8 @@ The smallest "match one event" program needs three crates:
 ```toml
 # Cargo.toml
 [dependencies]
-rsigma-parser = "0.11"
-rsigma-eval = "0.11"
+rsigma-parser = "{{ rsigma.version }}"
+rsigma-eval = "{{ rsigma.version }}"
 serde_json = "1"
 ```
 

@@ -7,7 +7,7 @@
 | Property | Value |
 |----------|-------|
 | Registry | `ghcr.io/timescale/rsigma` |
-| Tags | `latest`, `v0.12.0`, `v0.11.0`, ... (every release) |
+| Tags | `latest`, `v{{ rsigma.version }}`, ... (every release) |
 | Architectures | `linux/amd64`, `linux/arm64` |
 | Base image | `FROM scratch` (no shell, no package manager) |
 | User | `65534:65534` (`nobody:nogroup`) |
@@ -34,13 +34,13 @@ docker run --rm -v "$PWD/rules:/rules:ro" \
 Production deployments should pin to a specific version, not `latest`:
 
 ```bash
-docker run --rm ghcr.io/timescale/rsigma:0.12.0 --version
+docker run --rm ghcr.io/timescale/rsigma:{{ rsigma.version }} --version
 ```
 
 For full immutability, pin by image digest. Pull `inspect` to find the digest, then reference it directly:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/timescale/rsigma:0.12.0
+docker buildx imagetools inspect ghcr.io/timescale/rsigma:{{ rsigma.version }}
 # Note the Digest line, then:
 docker run --rm ghcr.io/timescale/rsigma@sha256:<digest> --version
 ```
@@ -117,7 +117,7 @@ A self-contained compose file for the streaming daemon with file-based persisten
 ```yaml
 services:
   rsigma:
-    image: ghcr.io/timescale/rsigma:0.12.0
+    image: ghcr.io/timescale/rsigma:{{ rsigma.version }}
     read_only: true
     cap_drop:
       - ALL
@@ -167,7 +167,7 @@ docker run --rm \
     -e NATS_CREDS_FILE=/etc/rsigma/nats.creds \
     -v "$PWD/rules:/rules:ro" \
     -v "$PWD/nats.creds:/etc/rsigma/nats.creds:ro" \
-    ghcr.io/timescale/rsigma:0.12.0 \
+    ghcr.io/timescale/rsigma:{{ rsigma.version }} \
     engine daemon -r /rules/ \
     --input "nats://nats.internal:4222/events.>" \
     --nats-creds /etc/rsigma/nats.creds
