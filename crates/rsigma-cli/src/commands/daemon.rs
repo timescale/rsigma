@@ -499,19 +499,6 @@ fn run_daemon(
         .filter(|p| resolve_builtin_pipeline(p.to_str().unwrap_or("")).is_none())
         .collect();
 
-    // Parse the enrichers config now so a malformed YAML or
-    // cross-namespace template reference fails at startup rather than
-    // when the first event arrives. The actual `EnrichmentPipeline`
-    // construction happens inside `run_daemon` once the `Metrics`
-    // struct (which owns the Prometheus registry) exists, so
-    // `rsigma_enrichment_*` counters can be wired into Prometheus.
-    let enrichers_file = enrichers_path.as_ref().map(|path| {
-        daemon::enrichment::load_enrichers_file(path).unwrap_or_else(|e| {
-            eprintln!("Failed to load enrichers config: {e}");
-            process::exit(exit_code::CONFIG_ERROR);
-        })
-    });
-
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
@@ -542,7 +529,7 @@ fn run_daemon(
         bloom_max_bytes,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
-        enrichers_file,
+        enrichers_path,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

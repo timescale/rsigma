@@ -40,6 +40,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
 humantime = "2"
+arc-swap = "1"
 
 # daemon mode dependencies
 tokio = { version = "1", features = ["full"], optional = true }

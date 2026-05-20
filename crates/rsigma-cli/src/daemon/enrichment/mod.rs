@@ -13,4 +13,4 @@
 
 pub mod config;
 
-pub use config::{EnrichersFile, build_enrichers_full, load_enrichers_file};
+pub use config::{build_enrichers_full, load_enrichers_file};
