@@ -71,6 +71,22 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) style:
 - **Fuzz targets** live in `fuzz/fuzz_targets/`. Add a fuzz target for any new untrusted input surface.
 - **Benchmarks** use Criterion and live in `benches/`.
 
+## Documentation
+
+Two surfaces must stay in sync with what each release ships:
+
+1. **Crate READMEs** (`README.md` at the workspace root, plus `crates/<crate>/README.md`) — for any public API or behavior change. The root README documents runtime/security features (Docker hardening, signature verification, supported features).
+2. **The mkdocs site under `docs/`** — the primary user-facing documentation surface, published at `https://timescale.github.io/rsigma/`. A PR that adds or changes:
+   - A user-facing capability → add or update the relevant `docs/guide/<topic>.md` page and the section's `.pages` nav file (the `awesome-pages` plugin reads `.pages` to control nav order)
+   - A CLI subcommand or flag → update the matching `docs/cli/<group>/<command>.md` page (e.g. `docs/cli/engine/daemon.md`)
+   - A daemon config key → update `docs/cli/engine/daemon.md` and any cross-referenced guide page
+   - A public library API surface → update the matching `docs/library/<crate>.md` page
+   - A Prometheus metric, HTTP endpoint, environment variable, lint rule, feature flag, or backend → update the corresponding `docs/reference/<topic>.md` page
+
+Run `mkdocs build --strict` locally before pushing docs changes; `.github/workflows/docs.yml` enforces it on every PR.
+
+A `CHANGELOG.md` entry under `## [X.Y.Z] - YYYY-MM-DD` is part of the release commit (the same content gets copied to the GitHub Release body). For features with public-API impact, the release notes mention the affected README and `docs/` pages so reviewers can sanity-check the doc sync.
+
 ## Architecture
 
 rsigma is a Cargo workspace with the following crates:
