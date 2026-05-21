@@ -5,6 +5,18 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Detached dynamic sources (#135)
+
+Dynamic source declarations are decoupled from pipeline YAML files. Sources are now a first-class daemon-level concept declared in standalone YAML files and loaded via the new `--source <file_or_dir>` flag (repeatable). Both pipelines and enrichers reference sources by `source_id` as before; the daemon resolves them through a unified `DaemonSourceRegistry` that enforces collision-error semantics (same ID in two sites is a startup error with both paths in the message).
+
+**Pipeline-embedded `sources:` is deprecated.** Existing pipeline files that declare `sources:` continue to work but emit a `tracing::warn!` at parse time recommending `--source` and `rsigma rule migrate-sources`. The deprecation follows the same three-release cycle as the CLI command groups (#125, #126): visible-deprecated this release, hidden from docs next release (#136), removed at v1.0 (#137).
+
+**New subcommand.** `rsigma rule migrate-sources -p <pipeline-dir> -o <out>` extracts every pipeline-embedded `sources:` block into a standalone file, deduplicating by source ID with collision detection, and rewrites the pipeline files with the `sources:` block removed. Supports `--strategy single` (default, one consolidated file) and `--strategy per-pipeline`.
+
+**CLI flag additions.** `--source-file` on `rsigma pipeline resolve` and `--source` on `rsigma rule validate --resolve-sources` so offline tooling can validate pipelines that reference external sources.
+
+**API change.** `GET /api/v1/sources` now returns an `origin` field on each entry (`external:<path>` or `pipeline:<name>`) instead of the previous `pipeline` field.
+
 ### Post-evaluation enrichment (#134)
 
 The daemon now runs a configurable enrichment pipeline between `engine.evaluate()` and the sinks. Each detection or correlation gets context (asset owner, IP reputation, identity, GeoIP, KEV flag, runbook URL, ...) injected into its `RuleHeader::enrichments` map before serialization, so every downstream consumer sees the same structured data without re-fetching it.
