@@ -882,39 +882,10 @@ Dynamic pipelines extend static Sigma pipelines with external data sources. Any 
 
 ### Source declaration
 
-#### External source files (recommended)
-
-Declare sources in standalone YAML files with a top-level `sources:` list and load them with `--source`:
+Declare sources in a standalone YAML file with a top-level `sources:` list and load them with the repeatable `--source` flag. The pipeline file references each source by `id`:
 
 ```yaml
 # sources.yml
-sources:
-  - id: ip_blocklist
-    type: http
-    url: https://feeds.example.com/blocklist.json
-    format: json
-    extract: ".ips"
-    refresh: 300s
-    timeout: 10s
-    on_error: use_cached
-    required: true
-```
-
-```bash
-rsigma engine daemon -r rules/ -p pipelines/ --source sources.yml
-rsigma engine daemon -r rules/ -p pipelines/ --source sources.d/   # loads all *.yml/*.yaml in directory
-```
-
-External source files decouple source configuration from pipeline logic, making pipelines reusable across environments. Source IDs must be unique across all `--source` files and pipeline-embedded declarations. Use `rsigma rule migrate-sources` to automate migration from pipeline-embedded sources.
-
-#### Pipeline-embedded sources (deprecated)
-
-> **Deprecated.** Pipeline-embedded `sources:` blocks still work but will be removed in a future release. Use external source files with `--source` instead. See `rsigma rule migrate-sources` for automated migration.
-
-Add a `sources` section to your pipeline YAML:
-
-```yaml
-name: dynamic_threat_intel
 sources:
   - id: ip_blocklist
     type: http
@@ -937,7 +908,11 @@ sources:
     command: ["generate-transformations", "--format", "json"]
     format: json
     refresh: once
+```
 
+```yaml
+# pipelines/dynamic_threat_intel.yml
+name: dynamic_threat_intel
 transformations:
   - id: map_fields
     type: field_name_mapping
@@ -951,6 +926,15 @@ transformations:
 
   - include: ${source.enrichment_rules}
 ```
+
+```bash
+rsigma engine daemon -r rules/ -p pipelines/ --source sources.yml
+rsigma engine daemon -r rules/ -p pipelines/ --source sources.d/   # loads all *.yml/*.yaml in directory
+```
+
+External source files decouple source configuration from pipeline logic, so pipelines stay reusable across environments. Source IDs must be unique across every `--source` file. The flag is repeatable, so multiple files can be combined (each with its own per-team or per-data-source ownership).
+
+> **Deprecated.** Declaring `sources:` inline in a pipeline file is deprecated and will be removed in v1.0 (tracked in [#137](https://github.com/timescale/rsigma/issues/137)). The parser still accepts it but prints a `warning:` line on stderr at every load. Migrate with `rsigma rule migrate-sources -p <dir-or-file> -o sources.yml` and load the result via `--source sources.yml`.
 
 ### Source types
 
@@ -1142,7 +1126,7 @@ The decision matrix:
 - **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
 
-`lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>` or pipeline-embedded `sources:`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
+`lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache. (Pipeline-embedded `sources:` blocks also populate the cache but are deprecated; see [Source declaration](#source-declaration).)
 
 ### `http`: per-result HTTP fetch with optional response cache
 
@@ -1220,15 +1204,19 @@ Operators rarely need new Rust code. Every recipe below composes one of the four
 #### `enrich_ip_employee`: identity lookup by source IP
 
 ```yaml
+# sources.yml -- loaded via `rsigma engine daemon --source sources.yml`
 sources:
-  employee_directory:
+  - id: employee_directory
     type: file
     path: /etc/rsigma/employees.json
     format: json
     extract:
       expr: 'with_entries(.value |= {user: .user, team: .team})'
       type: jq
+```
 
+```yaml
+# enrichers.yml -- loaded via `--enrichers enrichers.yml`
 enrichers:
   - id: enrich_ip_employee
     kind: detection
@@ -1264,13 +1252,17 @@ Same source as above, key by username instead:
 Prefer `lookup` if a GeoIP dump fits in memory; fall back to `http` for vendor APIs:
 
 ```yaml
+# sources.yml
 sources:
-  geoip_db:
+  - id: geoip_db
     type: file
     path: /var/lib/geoip/cidr-to-country.json
     format: json
-    refresh: { interval: 86400s }
+    refresh: 24h
+```
 
+```yaml
+# enrichers.yml
 enrichers:
   - id: enrich_ip_geoip
     kind: detection
@@ -1307,13 +1299,17 @@ enrichers:
 Pulls the CISA KEV catalog as a dynamic-pipelines source, then flags CVEs that appear in it:
 
 ```yaml
+# sources.yml
 sources:
-  kev_catalog:
+  - id: kev_catalog
     type: http
     url: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
     format: json
-    refresh: { interval: 3600s }
+    refresh: 1h
+```
 
+```yaml
+# enrichers.yml
 enrichers:
   - id: enrich_cve_kev
     kind: detection

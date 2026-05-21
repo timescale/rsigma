@@ -223,9 +223,10 @@ rsigma engine eval -r rules/ -e @security.evtx
 
 Standard Sigma pipelines are static: every value is hardcoded in YAML. RSigma extends this with dynamic pipelines where external data sources feed into any part of a pipeline via `${source.*}` template references. This means field mappings, condition values, and even entire transformation blocks can be populated from live APIs, configuration files, commands, or NATS subjects.
 
+Dynamic sources are declared in a standalone YAML file and loaded into the daemon with the repeatable `--source` flag. The pipeline file references them by `id`:
+
 ```yaml
-# pipeline.yml with dynamic sources
-name: dynamic_example
+# sources.yml -- loaded with `--source sources.yml`
 sources:
   - id: threat_intel
     type: http
@@ -241,7 +242,11 @@ sources:
     path: /etc/rsigma/fields.json
     format: json
     refresh: watch
+```
 
+```yaml
+# pipeline.yml -- loaded with `-p pipeline.yml`
+name: dynamic_example
 transformations:
   - id: map_fields
     type: field_name_mapping
@@ -256,16 +261,13 @@ transformations:
 
 ```bash
 # Test source resolution offline
-rsigma pipeline resolve -p pipeline.yml --pretty
+rsigma pipeline resolve -p pipeline.yml --source-file sources.yml --pretty
 
-# Run the daemon with a dynamic pipeline (pipeline-embedded sources, deprecated)
-rsigma engine daemon -r rules/ -p pipeline.yml
-
-# Recommended: declare sources in a standalone file and load with --source
+# Run the daemon with the external source file
 rsigma engine daemon -r rules/ -p pipeline.yml --source sources.yml
 ```
 
-Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. The recommended approach is to declare sources in standalone files loaded with `--source`, decoupling them from pipeline YAML. Pipeline-embedded `sources:` blocks are deprecated; use `rsigma rule migrate-sources` to migrate. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
+Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. Pipeline-embedded `sources:` blocks are deprecated and will be removed in v1.0 (tracked in [#137](https://github.com/timescale/rsigma/issues/137)); use `rsigma rule migrate-sources -p <dir-or-file> -o sources.yml` to migrate existing pipelines. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
 
 ### Rule Conversion
 

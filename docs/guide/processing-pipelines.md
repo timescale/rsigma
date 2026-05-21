@@ -214,18 +214,10 @@ The use cases are concrete:
 
 ### Source declaration
 
-!!! warning "Deprecated location"
-    Declaring sources inline in a pipeline file is deprecated. The recommended
-    approach is to declare sources in a standalone YAML file loaded via
-    `--source` on the daemon. See [External source files](../reference/dynamic-sources.md#external-source-files-recommended)
-    for the recommended approach, and run `rsigma rule migrate-sources` to
-    extract existing inline sources.
-
-Add a `sources` section to your pipeline YAML (or, preferably, a standalone source file loaded via `--source`). Each source has a type, a configuration, an extraction expression, and a refresh policy. Substitution into the pipeline is wired through `vars:`, which the runtime expands with the resolved data; rules then reference the resulting values via standard `%placeholder%` syntax handled by the `value_placeholders` transformation:
+Declare sources in a standalone YAML file with a top-level `sources:` block and load it into the daemon with the repeatable `--source` flag. The pipeline file then references each source by its `id` through `${source.<id>}` expansion inside `vars:` (or inline `include:` directives); rules pick up the resolved values via the standard Sigma `%placeholder%` syntax handled by the `value_placeholders` transformation.
 
 ```yaml
-name: dynamic_threat_intel
-priority: 50
+# sources.yml -- loaded via `--source sources.yml`
 sources:
   - id: ip_blocklist
     type: http
@@ -242,7 +234,12 @@ sources:
     command: ["generate-transformations", "--format", "json"]
     format: json
     refresh: once
+```
 
+```yaml
+# pipeline.yml -- loaded via `-p pipeline.yml`
+name: dynamic_threat_intel
+priority: 50
 vars:
   blocklist: "${source.ip_blocklist}"
 
@@ -252,6 +249,19 @@ transformations:
 
   - include: ${source.enrichment_rules}
 ```
+
+```bash
+rsigma engine daemon -r rules/ -p pipeline.yml --source sources.yml
+```
+
+!!! warning "Pipeline-embedded `sources:` is deprecated"
+    Declaring `sources:` inside the pipeline YAML (as opposed to a standalone
+    file loaded with `--source`) is deprecated and will be removed in v1.0
+    (tracked in [#137](https://github.com/timescale/rsigma/issues/137)). The
+    parser accepts it today but prints a `warning:` line on stderr and a
+    matching `tracing::warn!` event. Migrate existing pipelines with
+    `rsigma rule migrate-sources -p <dir-or-file> -o sources.yml` and load
+    the resulting file with `--source sources.yml`.
 
 In rules, reference the var with the standard Sigma `%name%` placeholder:
 

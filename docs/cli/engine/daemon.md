@@ -48,7 +48,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 | Flag | Description |
 |------|-------------|
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `sysmon`) or YAML file paths. Repeatable. |
-| `--source <FILE_OR_DIR>` | External source file(s) or directory of source files. Repeatable. Loads dynamic source declarations independently of any pipeline file. A file path loads one YAML file with a top-level `sources:` block; a directory path loads all `*.yml`/`*.yaml` files in it, alphabetically. Source IDs must be unique across all `--source` files and all pipeline-embedded `sources:` blocks. See [Dynamic Pipeline Sources](../../reference/dynamic-sources.md). |
+| `--source <FILE_OR_DIR>` | External source file(s) or directory of source files. Repeatable. Loads dynamic source declarations independently of any pipeline file. A file path loads one YAML file with a top-level `sources:` block; a directory path loads all `*.yml`/`*.yaml` files in it, alphabetically. Source IDs must be unique across every `--source` file (pipeline-embedded `sources:` blocks are deprecated and counted in the same uniqueness check; see [Dynamic Pipeline Sources](../../reference/dynamic-sources.md)). |
 | `--allow-remote-include` | Allow `include:` directives in pipelines to reference remote (HTTP/NATS) sources. Off by default for security. |
 
 ### Post-evaluation enrichment
