@@ -125,7 +125,7 @@ pub struct EnricherConfig {
     /// `command`: how to interpret stdout. `json` (default) or `raw`.
     #[serde(default)]
     pub output: OutputFormatLabel,
-    /// `lookup`: source ID from the dynamic-pipelines `sources:` block.
+    /// `lookup`: source ID of a dynamic source configured on the daemon.
     #[serde(default)]
     pub source: Option<String>,
     /// `lookup`: default value injected on cache miss / no extract match.
@@ -452,9 +452,13 @@ fn build_one(
             let cache = source_cache.ok_or(EnrichersConfigError::MissingField {
                 enricher_id: cfg.id.clone(),
                 type_name: cfg.type_name.clone(),
-                // Surfaced when the daemon has no dynamic-sources block
-                // but an operator declared a lookup enricher anyway.
-                field: "<source_cache: declare a `sources:` block in your pipeline>",
+                // Surfaced when the daemon has no dynamic sources
+                // configured but an operator declared a lookup enricher
+                // anyway. Intentionally declaration-site-neutral so the
+                // error reads correctly regardless of whether the
+                // operator declares sources inline in a pipeline file or
+                // via the daemon-level source registry.
+                field: "<source_cache: no dynamic sources configured>",
             })?;
             let extract = build_extract_expr(&cfg)?;
             Ok(Box::new(LookupEnricher::new(

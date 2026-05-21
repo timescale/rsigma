@@ -1031,14 +1031,14 @@ Cheapest primitive. No I/O. Cannot fail past config-load-time template parse err
 
 ### `lookup`: read from the dynamic-pipelines source cache
 
-Reads a value from the dynamic-pipelines `SourceCache` by `source_id` and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. Zero-network-cost for anything already loaded as a pipeline source.
+Reads a value from the dynamic-pipelines `SourceCache` by `source_id` and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. Zero-network-cost for anything already loaded as a dynamic source.
 
 ```yaml
 - id: asset_context_corr
   kind: correlation
   type: lookup
   inject_field: asset_context
-  source: asset_inventory          # source_id from the pipeline `sources:` block
+  source: asset_inventory          # id of a dynamic source configured on the daemon
   extract: '.assets[] | select(.hostname == "${correlation.group_key.HostName}")'
   extract_type: jq                 # jq | jsonpath | cel; defaults to jq
   default: "unknown"               # injected on cache miss / no extract match
@@ -1052,7 +1052,7 @@ The decision matrix:
 - **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
 
-`lookup` requires the daemon's pipelines to declare at least one dynamic source. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
+`lookup` requires at least one dynamic source to be configured on the daemon. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
 
 ### `http`: per-result HTTP fetch with optional response cache
 

@@ -2,7 +2,7 @@
 //! [`SourceCache`](crate::sources::SourceCache) and inject it (optionally
 //! after applying an [`ExtractExpr`] for slicing).
 //!
-//! Zero-network-cost path for anything already loaded as a pipeline
+//! Zero-network-cost path for anything already loaded as a dynamic
 //! source. The enricher takes a `source_id`, an optional extract
 //! expression, and an optional `default` value. The flow is:
 //!
