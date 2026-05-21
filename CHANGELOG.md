@@ -5,6 +5,22 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Pipeline-embedded `sources:` deprecation gets louder (#140, closes #136)
+
+Phase 3 of the [detached-dynamic-sources](https://github.com/timescale/rsigma/issues/135) cycle. Pipeline files that declare an inline `sources:` block now print a `warning:` line on stderr in addition to the existing `tracing::warn!` event:
+
+```
+warning: pipeline '<name>' (<path>) declares an inline 'sources:' block, which is deprecated and will be removed in v1.0. Migrate with `rsigma rule migrate-sources -p <path> -o sources.yml` and load via `--source sources.yml` on `rsigma engine daemon`.
+```
+
+The structured warning is unchanged, so log aggregators that already parse it keep working. The emission moves out of `commands/daemon.rs` into a shared `warn_pipeline_inline_sources` helper that `load_pipelines` calls for every pipeline file, so the warning now surfaces from every CLI entry point that loads a pipeline (`engine eval`, `engine daemon`, `rule validate`, `rule fields`, `backend convert`, `pipeline resolve`). Canonical-path deduplication via a process-wide `OnceLock<Mutex<HashSet<PathBuf>>>` keeps daemon hot-reloads (SIGHUP, file-watcher event, `POST /api/v1/reload`) from re-spamming the message on every reload.
+
+**Doc and README sweep.** Every example for dynamic sources now declares them in a standalone YAML file loaded via `--source`. The pipeline-embedded form is documented only as a short "Deprecated" callout that points operators at `rsigma rule migrate-sources` and the v1.0 removal issue (#137). The reference page (`docs/reference/dynamic-sources.md`), the user guide (`docs/guide/processing-pipelines.md` and `docs/guide/enrichers.md`), the daemon CLI page (`docs/cli/engine/daemon.md`), the top-level README, the CLI README, and the runtime README all switch to the external-file form. The CLI README's recipe-catalog refresh values also switch from the unsupported `{ interval: ... }` mapping form to the literal-duration syntax (`1h`, `24h`) that the parser actually accepts.
+
+**Deprecation timeline.** v0.13.0 (#135) introduced the `tracing::warn!`. This release adds the louder stderr warning and hides the deprecated form from docs. v1.0 (#137) turns it into a hard parse error and removes the `Pipeline.sources` field.
+
+A new `cli_sources_deprecation.rs` integration suite pins the stderr emission, the dedup invariant, the negative case (pipelines without inline sources do not warn), and the migration-command suggestion (the warning embeds the actual pipeline path so the suggested `rsigma rule migrate-sources` invocation is copy-pasteable).
+
 ## [0.13.0] - 2026-05-26
 
 **TL;DR**
