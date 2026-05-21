@@ -1221,7 +1221,7 @@ fn source_ref_regex() -> &'static Regex {
 
 /// Scan the entire pipeline YAML for `${source.*}` template references and
 /// `include` directives, returning all found references.
-fn scan_source_refs(obj: &yaml_serde::Mapping) -> Vec<SourceRef> {
+pub(crate) fn scan_source_refs(obj: &yaml_serde::Mapping) -> Vec<SourceRef> {
     let mut refs = Vec::new();
 
     // Scan vars

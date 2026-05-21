@@ -1732,3 +1732,124 @@ transformations:
     assert_eq!(src.on_error, sources::ErrorPolicy::UseDefault);
     assert!(src.default.is_some());
 }
+
+// =============================================================================
+// External source file parsing
+// =============================================================================
+
+#[test]
+fn test_parse_sources_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let sources_path = dir.path().join("sources.yml");
+    std::fs::write(
+        &sources_path,
+        r#"
+sources:
+  - id: test_source
+    type: file
+    path: /tmp/test.json
+    format: json
+  - id: another_source
+    type: http
+    url: https://example.com/data
+    format: json
+    refresh: 1h
+"#,
+    )
+    .unwrap();
+
+    let sources = parsing::parse_sources_file(&sources_path).unwrap();
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[0].id, "test_source");
+    assert_eq!(sources[1].id, "another_source");
+}
+
+#[test]
+fn test_parse_sources_file_missing_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.yml");
+    std::fs::write(&path, "name: not_sources\n").unwrap();
+
+    let err = parsing::parse_sources_file(&path).unwrap_err();
+    assert!(err.to_string().contains("sources:"));
+}
+
+#[test]
+fn test_parse_sources_dir() {
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("01-infra.yml"),
+        r#"
+sources:
+  - id: infra_src
+    type: file
+    path: /tmp/infra.json
+    format: json
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("02-threat.yaml"),
+        r#"
+sources:
+  - id: threat_src
+    type: http
+    url: https://example.com/iocs
+    format: json
+"#,
+    )
+    .unwrap();
+
+    // Non-YAML files should be ignored
+    std::fs::write(dir.path().join("readme.txt"), "not yaml").unwrap();
+
+    let sources = parsing::parse_sources_dir(dir.path()).unwrap();
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[0].id, "infra_src");
+    assert_eq!(sources[1].id, "threat_src");
+}
+
+// =============================================================================
+// validate_source_refs with external IDs
+// =============================================================================
+
+#[test]
+fn test_validate_source_refs_with_external_ids() {
+    let yaml = r#"
+name: test
+transformations:
+  - type: value_placeholders
+    include: "${source.ext_lookup}"
+"#;
+    let pipeline = parse_pipeline(yaml);
+    assert!(pipeline.is_err(), "should fail without external IDs");
+
+    let value: yaml_serde::Value = yaml_serde::from_str(yaml).unwrap();
+    let obj = value.as_mapping().unwrap();
+    let source_refs = super::parsing::scan_source_refs(obj);
+
+    let mut external = std::collections::HashSet::new();
+    external.insert("ext_lookup".to_string());
+
+    assert!(parsing::validate_source_refs(&[], &source_refs, Some(&external)).is_ok());
+}
+
+#[test]
+fn test_validate_source_refs_undeclared_even_with_externals() {
+    let refs = vec![sources::SourceRef {
+        source_id: "missing".to_string(),
+        sub_path: None,
+        location: sources::RefLocation::Var {
+            var_name: "x".to_string(),
+        },
+        raw_template: "${source.missing}".to_string(),
+    }];
+    let mut external = std::collections::HashSet::new();
+    external.insert("other_id".to_string());
+
+    let result = parsing::validate_source_refs(&[], &refs, Some(&external));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("missing"));
+}

@@ -34,6 +34,7 @@ daachorse = { version = "3", optional = true }
 criterion = "0.8"
 proptest = "1.10.0"
 rand = "0.10"
+tempfile = "3.27.0"
 
 [[bench]]
 name = "eval"
