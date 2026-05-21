@@ -72,6 +72,9 @@ This library is part of [rsigma].
 |----------|-------------|
 | `parse_pipeline(yaml: &str)` | Parse a pipeline from a YAML string |
 | `parse_pipeline_file(path: &Path)` | Parse a pipeline from a YAML file |
+| `parse_sources_file(path: &Path)` | Parse a standalone source YAML file (top-level `sources:` list) |
+| `parse_sources_dir(dir: &Path)` | Parse all `*.yml`/`*.yaml` source files in a directory |
+| `validate_source_refs(pipeline, external_ids)` | Validate that `${source.*}` references resolve against declared and/or external source IDs |
 | `apply_pipelines(pipelines, rule)` | Apply all pipelines to a rule in priority order |
 | `apply_pipelines_with_state(pipelines, rule)` | Apply pipelines and return the merged `PipelineState` (for backends) |
 | `merge_pipelines(pipelines)` | Merge multiple pipelines into one (sorted by priority) |

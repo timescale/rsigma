@@ -236,11 +236,14 @@ transformations:
 # Test source resolution offline
 rsigma pipeline resolve -p pipeline.yml --pretty
 
-# Run the daemon with a dynamic pipeline
+# Run the daemon with a dynamic pipeline (pipeline-embedded sources, deprecated)
 rsigma engine daemon -r rules/ -p pipeline.yml
+
+# Recommended: declare sources in a standalone file and load with --source
+rsigma engine daemon -r rules/ -p pipeline.yml --source sources.yml
 ```
 
-Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
+Sources support four types (file, HTTP, command, NATS), multiple data formats (JSON, YAML, lines, CSV), three extraction languages (jq, JSONPath, CEL), configurable refresh policies, error handling with caching, and include directives for injecting entire transformation blocks. The recommended approach is to declare sources in standalone files loaded with `--source`, decoupling them from pipeline YAML. Pipeline-embedded `sources:` blocks are deprecated; use `rsigma rule migrate-sources` to migrate. See the [CLI README](crates/rsigma-cli/README.md#dynamic-pipelines) for the full reference and the [runtime README](crates/rsigma-runtime/README.md) for the library API.
 
 ### Rule Conversion
 
@@ -377,7 +380,7 @@ From there, the AST can go in three directions depending on what you need:
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
 - **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. EVTX\* files are parsed directly from binary via `EvtxFileReader`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
-- **Dynamic sources:** `SourceResolver` fetches data from files, commands, HTTP APIs, and NATS subjects. Resolved values are injected into pipelines via `TemplateExpander`. A `SourceCache` (in-memory + optional SQLite) provides fallback data. `RefreshScheduler` manages auto-refresh (interval, file watch, NATS push, on-demand). Extraction supports jq, JSONPath, and CEL.
+- **Dynamic sources:** `SourceResolver` fetches data from files, commands, HTTP APIs, and NATS subjects. Resolved values are injected into pipelines via `TemplateExpander`. A `SourceCache` (in-memory + optional SQLite) provides fallback data. `RefreshScheduler` manages auto-refresh (interval, file watch, NATS push, on-demand). Extraction supports jq, JSONPath, and CEL. `DaemonSourceRegistry` unifies sources from external files (`--source`) and pipeline-embedded declarations with collision-error semantics.
 - **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
 - **Output:** Sinks write evaluation results to stdout, files, or NATS as one flat JSON object per result. Multiple sinks can run in fan-out. The output type is `EvaluationResult` (a composition of `RuleHeader` + `ResultBody::Detection|Correlation`), carrying rule title, id, level, tags, matched selections, field matches, aggregated values, and optionally the triggering events.
 

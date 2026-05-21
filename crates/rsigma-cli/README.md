@@ -94,11 +94,13 @@ Parse and compile all rules in a directory, reporting errors.
 | `--verbose` / `-v` | flag | `false` | Show details for each file (parse errors, compile errors) |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s) to apply before compilation |
 | `--resolve-sources` | flag | `false` | Also resolve dynamic pipeline sources during validation. Sources must be reachable (file/command/HTTP) for validation to pass |
+| `--source` | repeatable | `[]` | External source file(s) or directory to load alongside pipeline-declared sources (for validating pipelines that reference external sources) |
 
 ```bash
 rsigma rule validate path/to/rules/ -v              # verbose output
 rsigma rule validate rules/ -p pipelines/ecs.yml    # validate with pipeline
 rsigma rule validate rules/ -p dynamic.yml --resolve-sources  # validate + test source resolution
+rsigma rule validate rules/ -p pipe.yml --source sources.yml --resolve-sources  # validate with external sources
 ```
 
 ### `rule lint`: Lint rules against the Sigma specification
@@ -180,6 +182,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--clear-state` | flag | `false` | Clear correlation state on startup (conflicts with `--keep-state`) |
 | `--keep-state` | flag | `false` | Force restore correlation state on startup, even during replay (conflicts with `--clear-state`) |
 | `--timestamp-fallback` | string | `"wallclock"` | `wallclock` (substitute current time) or `skip` (omit from correlation) when events lack parseable timestamps |
+| `--source` | repeatable | `[]` | External source file(s) or directory of source files. Loads dynamic source declarations independently of pipeline files. See [External source files](#external-source-files) |
 | `--allow-remote-include` | flag | `false` | Allow `include` directives in dynamic pipelines to reference remote (HTTP/NATS) sources. Local sources (file/command) are always permitted |
 
 **NATS flags** (require `daemon-nats` feature):
@@ -662,12 +665,13 @@ rsigma rule fields -r rules/ --json | jq '.fields[] | select(.sources[] == "dete
 
 ### `pipeline resolve`: Test dynamic source resolution
 
-Resolve all dynamic sources declared in the given pipeline(s) and print the resulting data as JSON. Useful for testing pipeline source configuration without running the daemon.
+Resolve all dynamic sources declared in the given pipeline(s) and/or external source files and print the resulting data as JSON. Useful for testing source configuration without running the daemon.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--pipeline` / `-p` | repeatable | required | Processing pipeline(s) containing dynamic sources |
 | `--source` / `-s` | string | none | Resolve only a specific source by ID |
+| `--source-file` | repeatable | `[]` | External source file(s) or directory of source files (same as daemon `--source`) |
 | `--pretty` | flag | `false` | Pretty-print JSON output |
 | `--dry-run` | flag | `false` | Show what would be resolved (source metadata) without performing resolution |
 
@@ -677,6 +681,9 @@ rsigma pipeline resolve -p pipelines/dynamic.yml --pretty
 
 # Resolve a specific source by ID
 rsigma pipeline resolve -p pipelines/dynamic.yml --source threat_intel
+
+# Resolve external source files alongside pipeline sources
+rsigma pipeline resolve -p pipelines/dynamic.yml --source-file sources.yml --pretty
 
 # Dry-run: list sources and metadata without fetching
 rsigma pipeline resolve -p pipelines/dynamic.yml --dry-run
@@ -730,6 +737,23 @@ Read a single Sigma YAML document from stdin and output the AST as JSON.
 
 ```bash
 cat rule.yml | rsigma rule stdin
+```
+
+### `rule migrate-sources`: Extract pipeline sources into standalone files
+
+Extract pipeline-embedded `sources:` blocks into standalone source files. Pipeline-embedded sources are deprecated; this tool automates the migration to the `--source` flag.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--pipeline` / `-p` | repeatable | required | Pipeline file or directory to migrate |
+| `--output` / `-o` | path | required | Output file (single strategy) or directory (per-pipeline strategy) |
+| `--strategy` | string | `"single"` | `single` consolidates all sources into one file; `per-pipeline` writes one file per pipeline |
+| `--dry-run` | flag | `false` | Preview extracted sources on stdout without writing |
+
+```bash
+rsigma rule migrate-sources -p pipelines/ -o sources.yml                     # consolidate
+rsigma rule migrate-sources -p pipelines/ -o sources.d/ --strategy per-pipeline  # one file per pipeline
+rsigma rule migrate-sources -p pipeline.yml -o sources.yml --dry-run         # preview
 ```
 
 ## File Discovery
@@ -820,6 +844,35 @@ The `event` field is present only when `--include-event` is set.
 Dynamic pipelines extend static Sigma pipelines with external data sources. Any string, list, or mapping value in the pipeline YAML can contain `${source.<id>}` template references that are resolved at runtime.
 
 ### Source declaration
+
+#### External source files (recommended)
+
+Declare sources in standalone YAML files with a top-level `sources:` list and load them with `--source`:
+
+```yaml
+# sources.yml
+sources:
+  - id: ip_blocklist
+    type: http
+    url: https://feeds.example.com/blocklist.json
+    format: json
+    extract: ".ips"
+    refresh: 300s
+    timeout: 10s
+    on_error: use_cached
+    required: true
+```
+
+```bash
+rsigma engine daemon -r rules/ -p pipelines/ --source sources.yml
+rsigma engine daemon -r rules/ -p pipelines/ --source sources.d/   # loads all *.yml/*.yaml in directory
+```
+
+External source files decouple source configuration from pipeline logic, making pipelines reusable across environments. Source IDs must be unique across all `--source` files and pipeline-embedded declarations. Use `rsigma rule migrate-sources` to automate migration from pipeline-embedded sources.
+
+#### Pipeline-embedded sources (deprecated)
+
+> **Deprecated.** Pipeline-embedded `sources:` blocks still work but will be removed in a future release. Use external source files with `--source` instead. See `rsigma rule migrate-sources` for automated migration.
 
 Add a `sources` section to your pipeline YAML:
 
@@ -1052,7 +1105,7 @@ The decision matrix:
 - **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
 
-`lookup` requires at least one dynamic source to be configured on the daemon. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
+`lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>` or pipeline-embedded `sources:`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
 
 ### `http`: per-result HTTP fetch with optional response cache
 
