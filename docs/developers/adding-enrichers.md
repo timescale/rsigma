@@ -223,7 +223,9 @@ For the YAML-loader path, exercise `register_builtin` + an `EnrichersFile` with 
 
 ## Observability
 
-Per-call metrics are emitted automatically; no extra hook is required. The pipeline records `rsigma_enrichment_total{enricher_id, kind, status}` and `rsigma_enrichment_duration_seconds{enricher_id, kind}` for every non-filtered call; `enricher_id` is the value you set in `Enricher::id()`. Bespoke types using a private cache or rate-limiter should emit their own counters under a `rsigma_enrichment_<name>_*` prefix to keep the namespace stable for downstream dashboards.
+Per-call metrics are emitted automatically; no extra hook is required. The pipeline records `rsigma_enrichment_total{enricher_id, kind, status}` and `rsigma_enrichment_duration_seconds{enricher_id, kind}` for every non-filtered call; `enricher_id` is the value you set in `Enricher::id()`. The pipeline also pre-registers your label triple at construction (via `MetricsHook::register_enricher`), so your enricher's metrics appear with zero values on `/metrics` from the first scrape, before any event has fired. You don't need to call this hook yourself.
+
+Bespoke types using a private cache or rate-limiter should emit their own counters under a `rsigma_enrichment_<name>_*` prefix to keep the namespace stable for downstream dashboards. If those counters use `IntCounterVec` with per-enricher labels, mirror the built-in pattern: pre-register the label sets at construction (the daemon's `Metrics` impl does this for the HTTP cache via `register_http_enricher_cache`) so operators see all your families on the first scrape.
 
 ## Document it
 

@@ -55,7 +55,7 @@ The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `F
 
 ## Enrichment (6 metrics)
 
-Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
+Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` row is pre-registered at startup, so all six families render with their `# HELP` / `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|

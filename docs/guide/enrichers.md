@@ -286,7 +286,7 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
 
-Filtered (kind- or scope-mismatched) calls do not increment any counters.
+Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` row is pre-registered at startup, so all six families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## See also
 

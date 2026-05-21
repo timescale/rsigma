@@ -1296,7 +1296,7 @@ The enrichment pipeline reports six Prometheus metrics:
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
 
-The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination is pre-registered at startup, so all six families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## Environment Variables
 
