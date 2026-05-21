@@ -171,8 +171,14 @@ impl Enricher for CommandEnricher {
                     kind: EnrichErrorKind::Parse(format!("JSON: {e}")),
                 })?,
             OutputFormat::Raw => {
+                // Strip trailing CR and LF in any combination so that the
+                // Windows CRLF line ending from `cmd /C echo ...` produces
+                // the same captured value as the Unix LF from `sh -c
+                // echo ...`. We do not call `.trim_end()` because that
+                // would also strip trailing spaces, which a `Raw` capture
+                // is otherwise expected to preserve verbatim.
                 let s = String::from_utf8_lossy(&output.stdout);
-                serde_json::Value::String(s.trim_end_matches('\n').to_string())
+                serde_json::Value::String(s.trim_end_matches(['\r', '\n']).to_string())
             }
         };
         inject_enrichment(result, &self.inject_field, value);
