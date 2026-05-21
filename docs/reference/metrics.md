@@ -53,6 +53,21 @@ Exposed when one or more pipelines declare dynamic sources. The labelled counter
 
 The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP / file / command / NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 
+## Enrichment (6 metrics)
+
+Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` row is pre-registered at startup, so all six families render with their `# HELP` / `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_enrichment_total` | counter | `enricher_id`, `kind` (`detection`, `correlation`), `status` (`success`, `skip`, `error`, `timeout`, `drop`) | Per-call outcome counter. `kind` is the enricher's declared kind (the YAML `kind:` field), not a per-result discriminator. |
+| `rsigma_enrichment_duration_seconds` | histogram | `enricher_id`, `kind` | Per-enricher latency. Buckets target both fast `template` calls and slower `http`/`command` invocations. |
+| `rsigma_enrichment_queue_depth` | gauge | — | Pending enrichment calls (sum across both kinds). Watch this versus `max_concurrent_enrichments`. |
+| `rsigma_enrichment_http_cache_hits_total` | counter | `enricher_id` | HTTP enricher response-cache hits. Mandatory signal for any rate-limited API recipe. |
+| `rsigma_enrichment_http_cache_misses_total` | counter | `enricher_id` | HTTP enricher response-cache misses. |
+| `rsigma_enrichment_http_cache_expirations_total` | counter | `enricher_id` | HTTP enricher response-cache entries evicted on expiry. |
+
+The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
+
 ## OTLP (3 metrics)
 
 Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is active. The labelled counters surface after the first request of that kind.
@@ -111,6 +126,15 @@ groups:
       - alert: RsigmaSourceStale
         expr: time() - rsigma_source_last_resolved_timestamp > 600
         for: 5m
+        labels: {severity: warning}
+
+      # Enricher consistently failing (timeouts or fetch errors).
+      - alert: RsigmaEnrichmentFailing
+        expr: |
+          sum by (enricher_id) (
+            rate(rsigma_enrichment_total{status=~"error|timeout"}[5m])
+          ) > 1
+        for: 10m
         labels: {severity: warning}
 ```
 

@@ -39,6 +39,8 @@ yamlpatch = "1.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
+humantime = "2"
+arc-swap = "1"
 
 # daemon mode dependencies
 tokio = { version = "1", features = ["full"], optional = true }
@@ -70,4 +72,5 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 serde_json = "1"
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "logs", "with-serde"] }
 prost = "0.14"
+wiremock = "0.6"
 flate2 = "1"

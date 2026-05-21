@@ -50,6 +50,14 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `sysmon`) or YAML file paths. Repeatable. |
 | `--allow-remote-include` | Allow `include:` directives in pipelines to reference remote (HTTP/NATS) sources. Off by default for security. |
 
+### Post-evaluation enrichment
+
+| Flag | Description |
+|------|-------------|
+| `--enrichers <PATH>` | YAML file declaring post-evaluation enrichers. Hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; failed reloads keep the previous pipeline active. See [Enrichers](../../guide/enrichers.md) for the schema, the four primitives, and the recipes catalog. |
+
+The enrichers file accepts `max_concurrent_enrichments: <N>` at the top level (default `16`) plus a list of enricher entries, each declaring `kind: detection | correlation`, a primitive `type:` (`template` / `lookup` / `http` / `command`), an `inject_field`, and primitive-specific keys (`template`, `url` / `headers` / `cache_ttl`, `command`, `source` / `extract` / `default`, ...). Cross-namespace template references are rejected at startup with a clear error pointing at the offending field.
+
 ### API server
 
 | Flag | Default | Description |

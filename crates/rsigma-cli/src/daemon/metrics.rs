@@ -31,6 +31,12 @@ pub struct Metrics {
     pub source_resolve_latency: Histogram,
     pub source_cache_hits: IntCounter,
     pub source_last_resolved: GaugeVec,
+    pub enrichment_total: IntCounterVec,
+    pub enrichment_duration_seconds: prometheus::HistogramVec,
+    pub enrichment_queue_depth: IntGauge,
+    pub enrichment_http_cache_hits_total: IntCounterVec,
+    pub enrichment_http_cache_misses_total: IntCounterVec,
+    pub enrichment_http_cache_expirations_total: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_requests: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
@@ -261,6 +267,71 @@ impl Metrics {
             .register(Box::new(source_last_resolved.clone()))
             .unwrap();
 
+        let enrichment_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_total",
+                "Total per-result enrichment calls, labeled by enricher and outcome",
+            ),
+            &["enricher_id", "kind", "status"],
+        )
+        .unwrap();
+        let enrichment_duration_seconds = prometheus::HistogramVec::new(
+            HistogramOpts::new("rsigma_enrichment_duration_seconds", "Per-enricher latency")
+                .buckets(vec![
+                    0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+                ]),
+            &["enricher_id", "kind"],
+        )
+        .unwrap();
+        let enrichment_queue_depth = IntGauge::with_opts(Opts::new(
+            "rsigma_enrichment_queue_depth",
+            "Pending enrichment calls (sum across both kinds)",
+        ))
+        .unwrap();
+        let enrichment_http_cache_hits_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_http_cache_hits_total",
+                "HTTP enricher response-cache hits",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_http_cache_misses_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_http_cache_misses_total",
+                "HTTP enricher response-cache misses",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_http_cache_expirations_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_http_cache_expirations_total",
+                "HTTP enricher response-cache entries evicted on expiry",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+
+        registry
+            .register(Box::new(enrichment_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_queue_depth.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_http_cache_hits_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_http_cache_misses_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_http_cache_expirations_total.clone()))
+            .unwrap();
+
         #[cfg(feature = "daemon-otlp")]
         let otlp_requests = IntCounterVec::new(
             Opts::new(
@@ -318,6 +389,12 @@ impl Metrics {
             source_resolve_latency,
             source_cache_hits,
             source_last_resolved,
+            enrichment_total,
+            enrichment_duration_seconds,
+            enrichment_queue_depth,
+            enrichment_http_cache_hits_total,
+            enrichment_http_cache_misses_total,
+            enrichment_http_cache_expirations_total,
             #[cfg(feature = "daemon-otlp")]
             otlp_requests,
             #[cfg(feature = "daemon-otlp")]
@@ -400,6 +477,79 @@ impl MetricsHook for Metrics {
         self.correlation_matches_by_rule
             .with_label_values(&[rule_title, level, correlation_type])
             .inc();
+    }
+
+    fn on_enrichment_completed(
+        &self,
+        enricher_id: &str,
+        kind: &str,
+        status: &str,
+        duration_seconds: f64,
+    ) {
+        self.enrichment_total
+            .with_label_values(&[enricher_id, kind, status])
+            .inc();
+        self.enrichment_duration_seconds
+            .with_label_values(&[enricher_id, kind])
+            .observe(duration_seconds);
+    }
+
+    fn on_enrichment_queue_depth_change(&self, delta: i64) {
+        if delta > 0 {
+            self.enrichment_queue_depth.add(delta);
+        } else {
+            self.enrichment_queue_depth.sub(-delta);
+        }
+    }
+
+    fn on_enrichment_http_cache_hit(&self, enricher_id: &str) {
+        self.enrichment_http_cache_hits_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_http_cache_miss(&self, enricher_id: &str) {
+        self.enrichment_http_cache_misses_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_http_cache_expiration(&self, enricher_id: &str) {
+        self.enrichment_http_cache_expirations_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn register_enricher(&self, enricher_id: &str, kind: &str) {
+        // Pre-create label sets so `# HELP` / `# TYPE` lines for the
+        // per-enricher metrics show up on the first /metrics scrape,
+        // even before the enricher has fired. `inc_by(0)` and a
+        // bare `with_label_values` both materialise the entry; the
+        // former is more explicit about the intent.
+        for status in ["success", "skip", "error", "timeout", "drop"] {
+            self.enrichment_total
+                .with_label_values(&[enricher_id, kind, status])
+                .inc_by(0);
+        }
+        // HistogramVec materialises its buckets in `with_label_values`
+        // without observing, so this is side-effect-free: the metric
+        // appears with all-zero buckets and `_count == 0` until the
+        // first `observe(...)` call.
+        let _ = self
+            .enrichment_duration_seconds
+            .with_label_values(&[enricher_id, kind]);
+    }
+
+    fn register_http_enricher_cache(&self, enricher_id: &str) {
+        self.enrichment_http_cache_hits_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+        self.enrichment_http_cache_misses_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+        self.enrichment_http_cache_expirations_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
     }
 }
 

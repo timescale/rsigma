@@ -43,6 +43,7 @@
 //! ```
 
 pub mod engine;
+pub mod enrichment;
 pub mod error;
 pub mod input;
 pub mod io;
@@ -52,6 +53,13 @@ pub mod processor;
 pub mod sources;
 
 pub use engine::{EngineStats, RuntimeEngine};
+pub use enrichment::{
+    CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,
+    EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
+    HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
+    TemplateError, build_default_http_client, lookup_builtin, register_builtin,
+    validate_template_namespace,
+};
 pub use error::RuntimeError;
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::{

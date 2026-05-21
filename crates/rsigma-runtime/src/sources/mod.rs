@@ -95,25 +95,40 @@ pub trait SourceResolver: Send + Sync {
 
 /// Default source resolver that dispatches to file, command, and HTTP resolvers.
 pub struct DefaultSourceResolver {
-    cache: SourceCache,
+    cache: std::sync::Arc<SourceCache>,
 }
 
 impl DefaultSourceResolver {
     /// Create a new resolver with an in-memory cache.
     pub fn new() -> Self {
         Self {
-            cache: SourceCache::new(),
+            cache: std::sync::Arc::new(SourceCache::new()),
         }
     }
 
     /// Create a new resolver with the given cache.
     pub fn with_cache(cache: SourceCache) -> Self {
+        Self {
+            cache: std::sync::Arc::new(cache),
+        }
+    }
+
+    /// Create a new resolver that shares an existing `Arc<SourceCache>`
+    /// with another consumer (e.g. the daemon's enrichment pipeline,
+    /// which reads from the same cache for `lookup` enrichers).
+    pub fn with_arc_cache(cache: std::sync::Arc<SourceCache>) -> Self {
         Self { cache }
     }
 
     /// Get a reference to the cache (for inspection/testing).
     pub fn cache(&self) -> &SourceCache {
         &self.cache
+    }
+
+    /// Borrow the shared `Arc<SourceCache>` so other components (e.g.
+    /// the daemon's enrichment pipeline) can read from the same cache.
+    pub fn arc_cache(&self) -> std::sync::Arc<SourceCache> {
+        self.cache.clone()
     }
 }
 

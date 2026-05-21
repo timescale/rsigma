@@ -48,6 +48,11 @@ tokio = { version = "1", features = ["full"] }
 | `SourceResolver` trait + `DefaultSourceResolver` | Dynamic-pipeline source resolution: HTTP, command, file, NATS. |
 | `SourceCache` | TTL-aware cache for resolved source values. Optional SQLite backing for cross-restart persistence. |
 | `TemplateExpander`, `RefreshScheduler`, `RefreshTrigger` | Substitutes `${source.X}` references in pipeline `vars:` and runs the refresh policies. |
+| `Enricher` trait + `EnrichmentPipeline` | Post-evaluation enrichment surface. Drives the four primitives (`TemplateEnricher`, `LookupEnricher`, `HttpEnricher`, `CommandEnricher`) and any bespoke types registered via `register_builtin`. |
+| `EnricherKind`, `OnError`, `Scope`, `EnrichError`, `EnrichErrorKind` | Configuration types: declared kind, error policy, scope filter, and the typed error returned by `Enricher::enrich`. |
+| `HttpResponseCache` (re-exported from `enrichment::http_cache`) | `(method, url, body_hash)`-keyed in-memory response cache with TTL and lazy eviction. Each `HttpEnricher` instance owns its own. |
+| `register_builtin(name, factory) -> Result<(), String>` | Process-global, append-only registry hook. External crates use it to ship a bespoke Rust-coded enricher type addressable via `type: <name>` in the daemon's enrichers config. Reserved names (`template` / `lookup` / `http` / `command`) and duplicate registrations are rejected. |
+| `lookup_builtin(name)` | Read-only registry probe used by the daemon config loader. |
 
 The full pipeline architecture, source resolution flow, and dynamic-pipeline contract are in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-runtime/README.md) and the [Architecture reference](../reference/architecture.md).
 
@@ -106,6 +111,41 @@ tokio::spawn(async move {
 ```
 
 The daemon's `notify` + SIGHUP + `POST /api/v1/reload` wiring lives in `rsigma-cli`; `LogProcessor` just exposes the primitive.
+
+## Post-evaluation enrichment
+
+`EnrichmentPipeline` runs after the engine has produced a `ProcessResult` and before the sink serializes it. Each enricher implements the `Enricher` trait, declares a `kind: detection | correlation` at construction, and writes into `RuleHeader::enrichments` under a configured `inject_field`. The pipeline filters per-result by declared kind against the body variant, applies the optional `Scope` filter, wraps the call in a per-enricher timeout, and applies the configured `OnError` policy on failure.
+
+```rust
+use rsigma_runtime::{
+    EnricherKind, EnrichmentPipeline, OnError, Scope, TemplateEnricher,
+};
+use std::time::Duration;
+
+let runbook = TemplateEnricher::new(
+    "runbook_det".to_string(),
+    EnricherKind::Detection,
+    "runbook_url".to_string(),
+    "https://wiki.internal/runbooks/${detection.rule.id}".to_string(),
+    Duration::from_secs(5),
+    OnError::Skip,
+    Scope::default(),
+);
+
+let pipeline = EnrichmentPipeline::new(
+    vec![Box::new(runbook)],
+    16, // max_concurrent_enrichments
+);
+
+// `results` is the engine's `Vec<EvaluationResult>`.
+// pipeline.run(&mut results).await;
+```
+
+Wire a `MetricsHook` via `EnrichmentPipeline::with_metrics` to surface `rsigma_enrichment_total` / `rsigma_enrichment_duration_seconds` / `rsigma_enrichment_queue_depth` (and the HTTP cache counters) into your own metrics backend. The daemon's Prometheus-backed `Metrics` struct implements the hook.
+
+For YAML-driven configuration, use the `rsigma-cli` `daemon::enrichment::build_enrichers_full` entry point in your own daemon, or copy the loader pattern from `rsigma-cli/src/daemon/enrichment/config.rs`.
+
+For the operator-facing schema, the four primitives, and the recipe catalog, see [Enrichers](../guide/enrichers.md).
 
 ## Custom metrics
 

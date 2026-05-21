@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -11,8 +12,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use rsigma_runtime::{
-    AckToken, FileSink, InputFormat, LogProcessor, MetricsHook, RawEvent, RuntimeEngine, Sink,
-    StdinSource, StdoutSink, spawn_source,
+    AckToken, EnrichmentPipeline, FileSink, InputFormat, LogProcessor, MetricsHook, RawEvent,
+    RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -104,11 +105,24 @@ pub struct DaemonConfig {
     /// Cargo feature.
     #[cfg(feature = "daachorse-index")]
     pub cross_rule_ac: bool,
+    /// Optional path to the enrichers config (from `--enrichers`). Read
+    /// at daemon startup and again on hot-reload (SIGHUP / file watcher
+    /// / `POST /api/v1/reload`); failures during reload are logged and
+    /// the previous pipeline stays active.
+    pub enrichers_path: Option<PathBuf>,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
+
+    // The enrichment pipeline is constructed below, after the dynamic
+    // source resolver exists, so `lookup` enrichers can share the
+    // resolver's `Arc<SourceCache>`. We hoist the `ArcSwap` here so
+    // the sink task closure can capture it directly.
+    let enrichment_metrics = metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>;
+    let enrichment_swap: Arc<ArcSwap<Option<Arc<EnrichmentPipeline>>>> =
+        Arc::new(ArcSwap::new(Arc::new(None)));
 
     // Open SQLite state store if configured
     let state_store = config.state_db.as_ref().map(|path| {
@@ -283,6 +297,35 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     }
 
+    // Build the post-evaluation enrichment pipeline now that the
+    // dynamic source resolver (if any) has been constructed; `lookup`
+    // enrichers share the resolver's `Arc<SourceCache>` so they read
+    // from the same cache the resolver writes into. Failures here exit
+    // cleanly because no I/O has started yet.
+    let initial_source_cache = source_resolver_val.as_ref().map(|r| r.arc_cache());
+    if let Some(path) = config.enrichers_path.as_ref() {
+        match super::enrichment::load_enrichers_file(path).and_then(|file| {
+            super::enrichment::build_enrichers_full(
+                file,
+                initial_source_cache.clone(),
+                enrichment_metrics.clone(),
+            )
+        }) {
+            Ok(p) => {
+                tracing::info!(
+                    enrichers = p.len(),
+                    path = %path.display(),
+                    "Enrichment pipeline loaded"
+                );
+                enrichment_swap.store(Arc::new(Some(Arc::new(p))));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build enrichment pipeline");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+    }
+
     // Bounded channel acts as backpressure for reload requests. Capacity 4
     // allows the file watcher, SIGHUP handler, and HTTP endpoint to queue
     // reloads without blocking, while the consumer debounces with a 500ms
@@ -389,6 +432,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_processor = processor.clone();
     let reload_metrics = metrics.clone();
     let reload_health = health.clone();
+    let reload_enrichment_swap = enrichment_swap.clone();
+    let reload_enrichers_path = config.enrichers_path.clone();
+    let reload_enrichment_metrics = enrichment_metrics.clone();
+    let reload_source_cache = initial_source_cache.clone();
     tokio::spawn(async move {
         while reload_rx.recv().await.is_some() {
             // Debounce: batch rapid file changes
@@ -417,6 +464,45 @@ pub async fn run_daemon(config: DaemonConfig) {
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to reload rules");
                     reload_metrics.reloads_failed.inc();
+                }
+            }
+
+            // Reload enrichers. Failures here log + bump
+            // `reloads_failed` and leave the previous pipeline in place
+            // so a typo in the enrichers config doesn't take down
+            // detection enrichment in production.
+            if let Some(path) = reload_enrichers_path.as_deref() {
+                match super::enrichment::load_enrichers_file(path).and_then(|file| {
+                    super::enrichment::build_enrichers_full(
+                        file,
+                        reload_source_cache.clone(),
+                        reload_enrichment_metrics.clone(),
+                    )
+                }) {
+                    Ok(new_pipeline) => {
+                        let prev_count = reload_enrichment_swap
+                            .load()
+                            .as_ref()
+                            .as_ref()
+                            .map(|p| p.len())
+                            .unwrap_or(0);
+                        let new_count = new_pipeline.len();
+                        reload_enrichment_swap.store(Arc::new(Some(Arc::new(new_pipeline))));
+                        tracing::info!(
+                            previous = prev_count,
+                            current = new_count,
+                            path = %path.display(),
+                            "Enrichment pipeline reloaded"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            path = %path.display(),
+                            "Failed to reload enrichers config; keeping previous pipeline"
+                        );
+                        reload_metrics.reloads_failed.inc();
+                    }
                 }
             }
         }
@@ -723,15 +809,43 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
     tracing::info!(output = ?output_specs, "Sink started");
 
-    // Sink task: reads (ProcessResult, Vec<AckToken>) from channel, writes via
-    // Sink dispatch, then forwards ack tokens to the ack task.
-    // On sink failure with DLQ enabled, routes the failed result to the DLQ.
+    // Sink task: reads (ProcessResult, Vec<AckToken>) from channel, runs
+    // any configured post-evaluation enrichment, writes via Sink dispatch,
+    // then forwards ack tokens to the ack task. On sink failure with DLQ
+    // enabled, routes the failed result to the DLQ.
     let sink_metrics = metrics.clone();
     let sink_dlq_tx = dlq_tx;
+    let enrichment_swap_for_sink = enrichment_swap.clone();
     let sink_handle = tokio::spawn(async move {
         let mut sink = sink;
-        while let Some((result, ack_tokens)) = sink_rx.recv().await {
+        while let Some((mut result, ack_tokens)) = sink_rx.recv().await {
             sink_metrics.on_output_queue_depth_change(-1);
+
+            // Post-evaluation enrichment: one loop over the flat
+            // `Vec<EvaluationResult>`. The pipeline filters per-result by
+            // declared `kind` against the `body` variant and may
+            // suppress entries via `on_error: drop`. If every entry is
+            // dropped, skip sink delivery but still ack the events.
+            //
+            // We `load_full` so the pipeline's lifetime extends across
+            // the await without holding an `ArcSwap` guard; the
+            // reload path swaps in a new value without blocking.
+            let pipeline_snapshot = enrichment_swap_for_sink.load_full();
+            if let Some(pipeline) = pipeline_snapshot.as_ref()
+                && !pipeline.is_empty()
+            {
+                pipeline.run(&mut result).await;
+                if result.is_empty() {
+                    for token in ack_tokens {
+                        if ack_tx.send(token).await.is_err() {
+                            tracing::debug!("Ack channel closed");
+                            return;
+                        }
+                    }
+                    continue;
+                }
+            }
+
             if let Err(e) = sink.send(&result).await {
                 tracing::warn!(error = %e, "Error writing to sink");
                 let serialized = serde_json::to_string(&result).unwrap_or_default();

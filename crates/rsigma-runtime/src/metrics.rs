@@ -35,6 +35,39 @@ pub trait MetricsHook: Send + Sync {
         _correlation_type: &str,
     ) {
     }
+
+    /// One enrichment call completed (success, skip, error, timeout, drop).
+    /// `kind` is the enricher's declared kind (`detection` / `correlation`).
+    /// `status` is one of `success` / `skip` / `error` / `timeout` / `drop`.
+    fn on_enrichment_completed(
+        &self,
+        _enricher_id: &str,
+        _kind: &str,
+        _status: &str,
+        _duration_seconds: f64,
+    ) {
+    }
+    /// The enrichment queue depth changed (positive = a result entered the
+    /// pipeline, negative = a result completed). Sum across both kinds.
+    fn on_enrichment_queue_depth_change(&self, _delta: i64) {}
+    /// HTTP enrichment cache lookup hit a live entry.
+    fn on_enrichment_http_cache_hit(&self, _enricher_id: &str) {}
+    /// HTTP enrichment cache lookup missed (no entry).
+    fn on_enrichment_http_cache_miss(&self, _enricher_id: &str) {}
+    /// HTTP enrichment cache lookup found an expired entry and evicted it.
+    fn on_enrichment_http_cache_expiration(&self, _enricher_id: &str) {}
+
+    /// Pre-register an enricher's `enricher_id` + `kind` label set so
+    /// `rsigma_enrichment_total{...}` and
+    /// `rsigma_enrichment_duration_seconds{...}` are emitted with their
+    /// `# HELP` and `# TYPE` lines from the very first `/metrics`
+    /// scrape, even before the enricher has run. Called once per
+    /// configured enricher at pipeline construction.
+    fn register_enricher(&self, _enricher_id: &str, _kind: &str) {}
+    /// Pre-register the three HTTP-cache counter label sets for an
+    /// `HttpEnricher` instance so the cache counters are visible on
+    /// `/metrics` from startup, even before any cache event fires.
+    fn register_http_enricher_cache(&self, _enricher_id: &str) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

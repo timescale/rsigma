@@ -243,6 +243,22 @@ pub(crate) struct DaemonArgs {
     #[cfg(feature = "daachorse-index")]
     #[arg(long = "cross-rule-ac")]
     pub cross_rule_ac: bool,
+
+    /// Path to a YAML file declaring post-evaluation enrichers.
+    ///
+    /// When set, every `EvaluationResult` produced by the engine flows
+    /// through the configured enrichment pipeline (one or more of
+    /// `template` / `lookup` / `http` / `command` primitives, plus any
+    /// bespoke types registered via `register_builtin`) before being
+    /// written to the sink. See the `Enrichers` section in the
+    /// `rsigma-cli` README for the YAML schema and recipes.
+    ///
+    /// The validator runs at startup: a config that references the
+    /// wrong template namespace (e.g. `${correlation.*}` inside a
+    /// `kind: detection` enricher), declares an unknown `type:`, or
+    /// has a malformed `scope:` rejects the daemon with a clear error.
+    #[arg(long = "enrichers", value_name = "PATH")]
+    pub enrichers: Option<PathBuf>,
 }
 
 /// Helper struct grouping NATS connection / auth flags so `cmd_daemon` does
@@ -317,6 +333,7 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         bloom_max_bytes,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
+        enrichers,
     } = args;
 
     #[cfg(feature = "daemon-nats")]
@@ -392,6 +409,7 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         bloom_max_bytes,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
+        enrichers,
     );
 }
 
@@ -429,6 +447,7 @@ fn run_daemon(
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
+    enrichers_path: Option<PathBuf>,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
 
@@ -510,6 +529,7 @@ fn run_daemon(
         bloom_max_bytes,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
+        enrichers_path,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

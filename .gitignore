@@ -7,6 +7,8 @@ editors/vscode/*.vsix
 
 # MkDocs build output
 /site/
+/docs/.venv/
+/docs/__pycache__/
 
 # Secrets and credentials
 .env

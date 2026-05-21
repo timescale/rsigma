@@ -31,10 +31,13 @@ parking_lot = "0.12"
 syslog_loose = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 async-trait = "0.1"
+globset = "0.4"
 regex = "1"
 csv = "1"
+jaq-core = "1.5.0"
 jaq-interpret = "1.5.0"
 jaq-parse = "1.0.3"
+jaq-std = "1.5.0"
 jsonpath-rust = "1"
 cel = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -57,6 +60,7 @@ criterion = "0.8"
 rand = "0.10"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["nats"] }
+wiremock = "0.6"
 
 [[bench]]
 name = "runtime_throughput"

@@ -23,10 +23,19 @@ pub fn apply_extract(
 }
 
 /// Apply a jq expression using jaq.
+///
+/// Loads the jaq core natives (`+`, `length`, `keys`, …) and the
+/// `jaq-std` library (`select`, `map`, `first`, `with_entries`, …) so
+/// the supported filter surface matches real jq for the operator-facing
+/// expressions documented in the dynamic-pipelines and enrichment
+/// references.
 fn apply_jq(data: &serde_json::Value, expr: &str) -> Result<serde_json::Value, SourceError> {
     use jaq_interpret::{Ctx, FilterT, RcIter, Val};
 
-    let mut defs = jaq_interpret::ParseCtx::new(vec![]);
+    let mut defs = jaq_interpret::ParseCtx::new(Vec::new());
+    defs.insert_natives(jaq_core::core());
+    defs.insert_defs(jaq_std::std());
+
     let (filter, errs) = jaq_parse::parse(expr, jaq_parse::main());
 
     if !errs.is_empty() || filter.is_none() {
@@ -37,6 +46,15 @@ fn apply_jq(data: &serde_json::Value, expr: &str) -> Result<serde_json::Value, S
     }
 
     let filter = defs.compile(filter.unwrap());
+    if !defs.errs.is_empty() {
+        return Err(SourceError {
+            source_id: String::new(),
+            kind: SourceErrorKind::Extract(format!(
+                "jq compile errors ({} in: {expr})",
+                defs.errs.len(),
+            )),
+        });
+    }
     let inputs = RcIter::new(std::iter::empty());
     let val = Val::from(data.clone());
 

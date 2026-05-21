@@ -4,6 +4,7 @@ nav:
   - Rule Conversion: rule-conversion.md
   - Linting Rules: linting-rules.md
   - Processing Pipelines: processing-pipelines.md
+  - Enrichers: enrichers.md
   - Input Formats: input-formats.md
   - NATS Streaming: nats-streaming.md
   - OTLP Integration: otlp-integration.md

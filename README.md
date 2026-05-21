@@ -22,6 +22,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
 * Dynamic pipelines: populate any pipeline value from external sources (HTTP, files, commands, NATS) with template expansion, auto-refresh, and data extraction via jq, JSONPath, or CEL
+* Post-evaluation enrichment: inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via four primitives (`template`, `lookup`, `http`, `command`) with kind-aware template namespaces, response cache, scope filtering, and hot-reload
 * Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
 * Optional eval prefilters for large rule sets: bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
 * Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input

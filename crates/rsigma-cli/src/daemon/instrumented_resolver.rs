@@ -28,6 +28,13 @@ impl InstrumentedResolver {
     pub fn cache(&self) -> &rsigma_runtime::sources::cache::SourceCache {
         self.inner.cache()
     }
+
+    /// Borrow the shared `Arc<SourceCache>` so other consumers (the
+    /// enrichment pipeline's `lookup` enrichers) can read from the
+    /// same cache the resolver writes into.
+    pub fn arc_cache(&self) -> std::sync::Arc<rsigma_runtime::sources::cache::SourceCache> {
+        self.inner.arc_cache()
+    }
 }
 
 #[async_trait::async_trait]

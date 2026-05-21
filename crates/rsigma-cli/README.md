@@ -943,6 +943,361 @@ The source must resolve to a JSON array of transformation objects. Nested includ
 
 Resolved values are cached in memory (and optionally SQLite). The cache supports TTL-based expiration. The `use_cached` error policy serves stale data from the cache when a fresh fetch fails. Cache entries can be invalidated per-source via `DELETE /api/v1/sources/cache/{source_id}`.
 
+## Enrichers
+
+Post-evaluation enrichers run after `engine.evaluate()` produces a `ProcessResult` and before each result is serialized to a sink. They inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into `enrichments.<field>` on each detection or correlation.
+
+Enrichers are configured in a YAML file passed via `--enrichers <path>` to `engine daemon`:
+
+```bash
+rsigma engine daemon -r rules/ --enrichers /etc/rsigma/enrichers.yml
+```
+
+The config is hot-reloaded on `SIGHUP`, on file-watcher changes, and on `POST /api/v1/reload`. A reload that fails validation logs the error and keeps the previous pipeline active; the daemon never silently degrades to "no enrichment" because of a typo.
+
+### Config schema
+
+```yaml
+# Bound on concurrent enrichment chains across all results in a batch.
+# Defaults to 16 if omitted.
+max_concurrent_enrichments: 16
+
+enrichers:
+  - id: <unique-string>            # required, used as a Prometheus label
+    kind: detection | correlation  # required, see "Kind and template namespaces"
+    type: template | lookup | http | command  # required, the primitive
+    inject_field: <field-name>     # required, key under enrichments.<...>
+    timeout: 5s                    # optional, humantime; default 5s
+    on_error: skip | null | drop   # optional; default skip
+    scope:                         # optional; see "Scope filtering"
+      rules: [<rule-id-or-glob>, ...]
+      tags:  [<tag-or-prefix.*>, ...]
+      levels: [low, medium, high, critical, informational]
+    # ... primitive-specific fields below ...
+```
+
+### Kind and template namespaces
+
+Every enricher declares a `kind: detection | correlation`. The kind drives two checks:
+
+1. **Config-load-time template validation.** A `kind: detection` enricher may only reference `${detection.*}` variables in its templated fields (`url`, `template`, `headers`, `body`, `command`, `env`, `extract`); a `kind: correlation` enricher may only reference `${correlation.*}`. Cross-namespace references are rejected at startup with a clear error pointing at the offending field. `${ENV_VAR}` is allowed in both namespaces.
+2. **Runtime body matching.** The pipeline skips enrichers whose declared kind does not match the current `EvaluationResult` body variant before invoking `enrich()`, so a detection-kind enricher pays no cost on correlation results and vice versa.
+
+Detection variables (`${detection.*}`):
+
+| Variable | Resolves to |
+|---|---|
+| `${detection.rule.title}` / `.id` / `.level` | Rule metadata from `RuleHeader` |
+| `${detection.tags}` | Comma-joined `tags` |
+| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields` |
+| `${detection.event.<dotted.path>}` | JSON path into the original event (when `rsigma.include_event: "true"` on the rule) |
+
+Correlation variables (`${correlation.*}`):
+
+| Variable | Resolves to |
+|---|---|
+| `${correlation.rule.title}` / `.id` / `.level` | Rule metadata from `RuleHeader` |
+| `${correlation.tags}` | Comma-joined `tags` |
+| `${correlation.type}` | `event_count`, `temporal`, `value_sum`, ... |
+| `${correlation.aggregated_value}` | The value that crossed the condition threshold |
+| `${correlation.timespan_secs}` | Window size in seconds |
+| `${correlation.group_key.<field>}` | Look up a group-by field by name |
+| `${correlation.group_key}` | Joined `field=value,field=value` string |
+
+For enrichers that conceptually apply to both kinds (identity lookups, runbook URLs, any tag-based enricher), declare two YAML entries. The plan below shows the YAML-anchor pattern for cutting duplication.
+
+### Scope filtering
+
+`scope` limits when an enricher fires within its declared `kind`:
+
+- `scope.rules`: list of rule IDs (exact match) or rule-title globs (`Suspicious *`)
+- `scope.tags`: tag-set intersection with prefix wildcards (`attack.*` matches `attack.t1059.001`)
+- `scope.levels`: severity membership against `RuleHeader::level`
+- No scope = fires for every result of the enricher's declared kind (use for cheap enrichers like `template`)
+
+There is no `scope.kinds` axis: the top-level `kind` already gates which result variant the enricher sees. Axes are AND-ed; an empty axis is not a filter.
+
+### `template`: pure string interpolation
+
+Cheapest primitive. No I/O. Cannot fail past config-load-time template parse errors.
+
+```yaml
+- id: runbook_det
+  kind: detection
+  type: template
+  inject_field: runbook_url
+  template: "https://wiki.internal/runbooks/${detection.rule.id}"
+```
+
+### `lookup`: read from the dynamic-pipelines source cache
+
+Reads a value from the dynamic-pipelines `SourceCache` by `source_id` and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. Zero-network-cost for anything already loaded as a dynamic source.
+
+```yaml
+- id: asset_context_corr
+  kind: correlation
+  type: lookup
+  inject_field: asset_context
+  source: asset_inventory          # id of a dynamic source configured on the daemon
+  extract: '.assets[] | select(.hostname == "${correlation.group_key.HostName}")'
+  extract_type: jq                 # jq | jsonpath | cel; defaults to jq
+  default: "unknown"               # injected on cache miss / no extract match
+  on_error: skip                   # applied only when default is not configured
+```
+
+The decision matrix:
+
+- **Cache hit + extract matches** → inject the extracted value
+- **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_error`
+- **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
+- **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
+
+`lookup` requires at least one dynamic source to be configured on the daemon. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache.
+
+### `http`: per-result HTTP fetch with optional response cache
+
+Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on `(method, url, body_hash)` with a configurable TTL; mandatory in practice for any rate-limited API.
+
+```yaml
+- id: hash_virustotal
+  kind: detection
+  type: http
+  inject_field: file_reputation
+  url: "https://www.virustotal.com/api/v3/files/${detection.fields.SHA256}"
+  method: GET                      # default GET
+  headers:
+    x-apikey: "${VIRUSTOTAL_API_KEY}"
+  cache_ttl: 1h                    # mandatory for the 4 req/min free tier
+  extract: ".data.attributes.last_analysis_stats"
+  extract_type: jq
+  on_error: skip
+  scope:
+    tags: ["attack.execution", "attack.defense_evasion"]
+```
+
+Each enricher instance owns its own response cache: two enrichers hitting the same URL with different `Authorization` headers do not share entries.
+
+### `command`: per-result local-process execution
+
+Per-result `tokio::process::Command` invocation with template-expanded argv and environment. Stdout is captured (capped at 10 MB) and parsed as JSON or as a raw string. Non-zero exit codes map to `EnrichErrorKind::Fetch` with a snippet of stderr attached to the error message.
+
+```yaml
+- id: ip_reputation
+  kind: detection
+  type: command
+  inject_field: ip_reputation
+  command:
+    - "/usr/local/bin/check-ip-rep"
+    - "${detection.fields.SourceIp}"
+  env:
+    REP_LOCAL_DB: "/var/lib/iprep.db"
+  output: json                     # json (default) | raw
+  timeout: 3s
+  on_error: skip
+```
+
+### YAML-anchor pattern for kind-agnostic enrichers
+
+Some enrichers conceptually apply to both kinds (identity lookups, runbook URLs, any tag-based enricher). Declare two entries with the same `type` and `inject_field` but different `kind` and template namespaces; YAML anchors cut the duplication where the loader allows them, but the safest portable form is two explicit entries:
+
+```yaml
+enrichers:
+  - id: runbook_det
+    kind: detection
+    type: template
+    inject_field: runbook_url
+    template: "https://wiki.internal/runbooks/${detection.rule.id}"
+
+  - id: runbook_corr
+    kind: correlation
+    type: template
+    inject_field: runbook_url
+    template: "https://wiki.internal/runbooks/${correlation.rule.id}"
+```
+
+### Output shape
+
+The pipeline writes into `RuleHeader::enrichments` lazily, so detections and correlations that no enricher touched still serialize without an empty `enrichments` object. A typical NDJSON line looks like:
+
+```json
+{"rule_title":"Suspicious PowerShell encoded command","rule_id":"rule-pwsh-enc","level":"high","tags":["attack.t1059.001"],"matched_selections":["selection"],"matched_fields":[{"field":"CommandLine","value":"powershell -enc ..."}],"enrichments":{"asset_info":{"hostname":"dc01","owner":"IT-Ops"},"runbook_url":"https://wiki.internal/runbooks/rule-pwsh-enc"}}
+```
+
+### Composing enrichers (recipe catalog)
+
+Operators rarely need new Rust code. Every recipe below composes one of the four primitives against a dynamic-pipelines source or a remote API. Field names like `${detection.fields.SourceIp}` are illustrative; substitute the names your pipeline actually produces.
+
+#### `enrich_ip_employee`: identity lookup by source IP
+
+```yaml
+sources:
+  employee_directory:
+    type: file
+    path: /etc/rsigma/employees.json
+    format: json
+    extract:
+      expr: 'with_entries(.value |= {user: .user, team: .team})'
+      type: jq
+
+enrichers:
+  - id: enrich_ip_employee
+    kind: detection
+    type: lookup
+    inject_field: employee
+    source: employee_directory
+    extract: '."${detection.fields.SourceIp}"'
+    extract_type: jq
+    default: "unknown"
+    scope:
+      levels: [high, critical]
+```
+
+Expected `enrichments.employee` shape: `{"user": "alice", "team": "Platform"}` or `"unknown"` on miss.
+
+#### `enrich_username_employee`: identity lookup by username
+
+Same source as above, key by username instead:
+
+```yaml
+- id: enrich_username_employee
+  kind: detection
+  type: lookup
+  inject_field: employee
+  source: employee_directory_by_user
+  extract: '."${detection.fields.User}"'
+  extract_type: jq
+  default: null
+```
+
+#### `enrich_ip_geoip`: country/city/ASN by IP
+
+Prefer `lookup` if a GeoIP dump fits in memory; fall back to `http` for vendor APIs:
+
+```yaml
+sources:
+  geoip_db:
+    type: file
+    path: /var/lib/geoip/cidr-to-country.json
+    format: json
+    refresh: { interval: 86400s }
+
+enrichers:
+  - id: enrich_ip_geoip
+    kind: detection
+    type: lookup
+    inject_field: geoip
+    source: geoip_db
+    extract: '.[] | select(.cidr | test("${detection.fields.SourceIp}"))'
+    extract_type: jq
+    default: { country: "unknown" }
+```
+
+#### `enrich_hash_virustotal`: hash reputation with cache
+
+`cache_ttl` is mandatory for the 4 req/min free tier and a major win for duplicate-detection bursts on any tier:
+
+```yaml
+- id: enrich_hash_virustotal
+  kind: detection
+  type: http
+  inject_field: file_reputation
+  url: "https://www.virustotal.com/api/v3/files/${detection.fields.SHA256}"
+  headers:
+    x-apikey: "${VIRUSTOTAL_API_KEY}"
+  cache_ttl: 1h
+  extract: ".data.attributes.last_analysis_stats"
+  extract_type: jq
+  on_error: skip
+  scope:
+    tags: ["attack.execution"]
+```
+
+#### `enrich_cve_kev`: known-exploited-vulnerability flag
+
+Pulls the CISA KEV catalog as a dynamic-pipelines source, then flags CVEs that appear in it:
+
+```yaml
+sources:
+  kev_catalog:
+    type: http
+    url: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+    format: json
+    refresh: { interval: 3600s }
+
+enrichers:
+  - id: enrich_cve_kev
+    kind: detection
+    type: lookup
+    inject_field: kev
+    source: kev_catalog
+    extract: '.vulnerabilities[] | select(.cveID == "${detection.fields.CveId}")'
+    extract_type: jq
+    default: null
+```
+
+#### `enrich_url_runbook`: synthesized runbook URL
+
+Pure string interpolation, no I/O. Use this any time a downstream consumer (Slack, PagerDuty, RSoar) needs a per-detection link:
+
+```yaml
+- id: enrich_url_runbook
+  kind: detection
+  type: template
+  inject_field: runbook_url
+  template: "https://wiki.internal/runbooks/${detection.rule.id}"
+```
+
+#### When to pick which primitive
+
+- Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, GeoIP dump).
+- Prefer `http` only when the data is genuinely per-result or too large to cache. Always set `cache_ttl` for rate-limited APIs.
+- Prefer `command` only when no other primitive will do (a binary parser, a vendored CLI tool, anything that already exists as a script).
+- Never use `template` for anything that could be a YAML literal.
+
+### Bespoke (Rust-coded) enrichers
+
+The four primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
+
+1. **It bundles non-trivial data** (e.g. a dataset committed to the repo and `include_bytes!`-ed at compile time). Recipes can't express vendored data.
+2. **It needs a parser the YAML primitives don't expose** (e.g. MaxMind's binary GeoLite2 format, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
+3. **It provides a stable named contract**: downstream consumers reference a specific `enrichments.<field>` shape directly. A recipe-driven approach lets every operator choose their own `inject_field`, which is fine for ad-hoc enrichment but bad for a contract that crosses team or organisational boundaries.
+4. **It implements a non-obvious algorithm** (e.g. coalescing per-result hash lookups into one batched-GET request). This is implementable as a recipe but the implementation is fragile.
+
+Otherwise, ship a recipe and only promote when one of the criteria above bites.
+
+#### `register_builtin(name, factory)`
+
+External crates register a bespoke enricher type via:
+
+```rust
+use rsigma_runtime::{Enricher, register_builtin};
+
+register_builtin(
+    "enrich_my_thing",
+    std::sync::Arc::new(|raw_config: &serde_json::Value| -> Result<Box<dyn Enricher>, String> {
+        let cfg: MyConfig = serde_json::from_value(raw_config.clone()).map_err(|e| e.to_string())?;
+        Ok(Box::new(MyEnricher::new(cfg)))
+    }),
+).unwrap();
+```
+
+Reserved names (`template`, `lookup`, `http`, `command`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind` / `scope` / template rules as the four primitives; promotion does not change the YAML shape, only the `type:` value.
+
+### Metrics
+
+The enrichment pipeline reports six Prometheus metrics:
+
+| Metric | Labels | Description |
+|---|---|---|
+| `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success` / `skip` / `error` / `timeout` / `drop` |
+| `rsigma_enrichment_duration_seconds` | `enricher_id`, `kind` | Per-enricher latency histogram |
+| `rsigma_enrichment_queue_depth` | – | Pending enrichment calls (sum across both kinds) |
+| `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |
+| `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
+| `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
+
+The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination is pre-registered at startup, so all six families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+
 ## Environment Variables
 
 | Variable | Scope | Behavior |
