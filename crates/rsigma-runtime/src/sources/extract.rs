@@ -24,48 +24,56 @@ pub fn apply_extract(
 
 /// Apply a jq expression using jaq.
 ///
-/// Loads the jaq core natives (`+`, `length`, `keys`, …) and the
-/// `jaq-std` library (`select`, `map`, `first`, `with_entries`, …) so
-/// the supported filter surface matches real jq for the operator-facing
-/// expressions documented in the dynamic-pipelines and enrichment
-/// references.
+/// Loads the jaq core natives (`+`, `length`, `keys`, …), the
+/// `jaq-std` library (`select`, `map`, `first`, `with_entries`, …),
+/// and the `jaq-json` JSON-specific filters (`tojson`, `fromjson`,
+/// `length`, …) so the supported filter surface matches real jq for
+/// the operator-facing expressions documented in the dynamic-pipelines
+/// and enrichment references.
 fn apply_jq(data: &serde_json::Value, expr: &str) -> Result<serde_json::Value, SourceError> {
-    use jaq_interpret::{Ctx, FilterT, RcIter, Val};
+    use jaq_core::load::{Arena, File, Loader};
+    use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
+    use jaq_json::Val;
 
-    let mut defs = jaq_interpret::ParseCtx::new(Vec::new());
-    defs.insert_natives(jaq_core::core());
-    defs.insert_defs(jaq_std::std());
+    let program = File {
+        code: expr,
+        path: (),
+    };
 
-    let (filter, errs) = jaq_parse::parse(expr, jaq_parse::main());
+    let defs = jaq_core::defs()
+        .chain(jaq_std::defs())
+        .chain(jaq_json::defs());
+    let funs = jaq_core::funs()
+        .chain(jaq_std::funs())
+        .chain(jaq_json::funs());
 
-    if !errs.is_empty() || filter.is_none() {
-        return Err(SourceError {
+    let arena = Arena::default();
+    let modules = Loader::new(defs)
+        .load(&arena, program)
+        .map_err(|_| SourceError {
             source_id: String::new(),
             kind: SourceErrorKind::Extract(format!("invalid jq expression: {expr}")),
-        });
-    }
+        })?;
 
-    let filter = defs.compile(filter.unwrap());
-    if !defs.errs.is_empty() {
-        return Err(SourceError {
+    let filter = Compiler::default()
+        .with_funs(funs)
+        .compile(modules)
+        .map_err(|_| SourceError {
             source_id: String::new(),
-            kind: SourceErrorKind::Extract(format!(
-                "jq compile errors ({} in: {expr})",
-                defs.errs.len(),
-            )),
-        });
-    }
-    let inputs = RcIter::new(std::iter::empty());
-    let val = Val::from(data.clone());
+            kind: SourceErrorKind::Extract(format!("jq compile error in: {expr}")),
+        })?;
 
-    let ctx = Ctx::new([], &inputs);
-    let results: Vec<Val> = filter
-        .run((ctx, val))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| SourceError {
+    let input = json_to_val(data.clone());
+    let ctx = Ctx::<data::JustLut<Val>>::new(&filter.lut, Vars::new([]));
+
+    let mut results: Vec<Val> = Vec::new();
+    for r in filter.id.run((ctx, input)).map(unwrap_valr) {
+        let v = r.map_err(|e| SourceError {
             source_id: String::new(),
             kind: SourceErrorKind::Extract(format!("jq execution error: {e}")),
         })?;
+        results.push(v);
+    }
 
     match results.len() {
         0 => Ok(serde_json::Value::Null),
@@ -180,31 +188,61 @@ fn cel_to_json(val: &cel::Value) -> serde_json::Value {
     }
 }
 
+/// Convert a `serde_json::Value` to a jaq `Val`.
+fn json_to_val(v: serde_json::Value) -> jaq_json::Val {
+    use jaq_core::ValT;
+    use jaq_json::Val;
+
+    match v {
+        serde_json::Value::Null => Val::Null,
+        serde_json::Value::Bool(b) => Val::Bool(b),
+        serde_json::Value::Number(n) => Val::from_num(&n.to_string()).unwrap_or(Val::Null),
+        serde_json::Value::String(s) => Val::from(s),
+        serde_json::Value::Array(arr) => arr.into_iter().map(json_to_val).collect(),
+        serde_json::Value::Object(obj) => Val::obj(
+            obj.into_iter()
+                .map(|(k, v)| (Val::from(k), json_to_val(v)))
+                .collect(),
+        ),
+    }
+}
+
 /// Convert a jaq `Val` to a `serde_json::Value`.
-fn val_to_json(val: &jaq_interpret::Val) -> serde_json::Value {
+///
+/// Byte and text strings are decoded with lossy UTF-8 conversion. Non-string
+/// object keys are stringified via their Display impl so they round-trip into
+/// JSON keys.
+fn val_to_json(val: &jaq_json::Val) -> serde_json::Value {
+    use jaq_json::Val;
+    use jaq_std::ValT;
+
     match val {
-        jaq_interpret::Val::Null => serde_json::Value::Null,
-        jaq_interpret::Val::Bool(b) => serde_json::Value::Bool(*b),
-        jaq_interpret::Val::Int(i) => serde_json::json!(i),
-        jaq_interpret::Val::Float(f) => serde_json::json!(f),
-        jaq_interpret::Val::Num(n) => {
-            if let Ok(i) = n.parse::<i64>() {
+        Val::Null => serde_json::Value::Null,
+        Val::Bool(b) => serde_json::Value::Bool(*b),
+        Val::Num(_) => {
+            if let Some(i) = val.as_isize() {
                 serde_json::json!(i)
-            } else if let Ok(f) = n.parse::<f64>() {
-                serde_json::json!(f)
+            } else if let Some(f) = val.as_f64() {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|| serde_json::Value::String(val.to_string()))
             } else {
-                serde_json::Value::String(n.to_string())
+                serde_json::Value::String(val.to_string())
             }
         }
-        jaq_interpret::Val::Str(s) => serde_json::Value::String(s.to_string()),
-        jaq_interpret::Val::Arr(arr) => {
-            serde_json::Value::Array(arr.iter().map(val_to_json).collect())
+        Val::BStr(b) | Val::TStr(b) => {
+            serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
         }
-        jaq_interpret::Val::Obj(obj) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .iter()
-                .map(|(k, v)| (k.to_string(), val_to_json(v)))
-                .collect();
+        Val::Arr(arr) => serde_json::Value::Array(arr.iter().map(val_to_json).collect()),
+        Val::Obj(obj) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in obj.iter() {
+                let key = match k {
+                    Val::BStr(b) | Val::TStr(b) => String::from_utf8_lossy(b).into_owned(),
+                    _ => k.to_string(),
+                };
+                map.insert(key, val_to_json(v));
+            }
             serde_json::Value::Object(map)
         }
     }

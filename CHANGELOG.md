@@ -65,7 +65,7 @@ Filtered (kind- or scope-mismatched) enricher calls do not increment any counter
 
 **Documentation.** New `docs/guide/enrichers.md` (config schema, the four primitives, recipes catalog, promotion criteria, output shape, metrics) and `docs/developers/adding-enrichers.md` (testing pattern, metrics wiring, naming conventions). `docs/cli/engine/daemon.md`, `docs/library/runtime.md`, and `docs/reference/metrics.md` updated. The `crates/rsigma-cli/README.md` gains a full enrichment surface section that mirrors the docs-site guide.
 
-**New dependencies.** `humantime` and `arc-swap` in `rsigma-cli` (humantime for `5s` / `1h` duration parsing in the YAML; arc-swap for the hot-reload swap), `globset` and `jaq-core` / `jaq-std` in `rsigma-runtime` (globset for `scope.rules` / `scope.tags` patterns; the jaq additions wire the existing `jaq-interpret` / `jaq-parse` into the enrichment `extract` flow). `wiremock` added as a dev-dependency in both crates for HTTP enricher integration tests.
+**New dependencies.** `humantime` and `arc-swap` in `rsigma-cli` (humantime for `5s` / `1h` duration parsing in the YAML; arc-swap for the hot-reload swap), `globset` and `jaq-core` / `jaq-std` / `jaq-json` in `rsigma-runtime` (globset for `scope.rules` / `scope.tags` patterns; the jaq additions wire the enrichment `extract` flow through jaq 3.0). `wiremock` added as a dev-dependency in both crates for HTTP enricher integration tests.
 
 ### Unified evaluation result type (#132)
 
@@ -98,6 +98,10 @@ A new Criterion bench (`crates/rsigma-eval/benches/result_serialize.rs`) pins se
 ### Drop reserved `attack` subcommand
 
 The empty `attack` command group that v0.12.0 reserved as a forward declaration for MITRE ATT&CK tooling is removed. The corresponding `Commands::Attack` clap variant, the `AttackCommands` enum, the dispatcher branch, the help-text test assertion, and the "reserved; populated by the upcoming MITRE ATT&CK contributor PR" README line are gone. The CLI now exposes four groups instead of five (`engine`, `rule`, `backend`, `pipeline`); the `attack` namespace remains available for a future contributor PR to populate but is no longer reserved ahead of time.
+
+### Dependency and security bumps (#145)
+
+Rolls up five open Dependabot PRs and closes two Dependabot security alerts. Rust: `jsonschema` 0.46.5, `assert_cmd` 2.2.2 (#141), and `jaq-core` / `jaq-std` 1.x to 3.0 with the new `jaq-json` 2.0 (#142, #143) -- the jaq 3.0 release ships the Radically Open Security audit fixes and a new `Loader` + `Compiler` + `Ctx` API that both `apply_jq` sites in `rsigma-runtime` and `rsigma-cli` are ported to; valid jq expressions in `extract:` and `--jq` are unaffected. CI: `cargo-deny-action` 2.0.18, `taiki-e/install-action` 2.78.0, `zizmor-action` 0.5.5 (#144). VS Code extension: top-level npm overrides bump `@azure/msal-node` to ^5.2.2 (drops the vulnerable `uuid` 8.x, closes [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq), #138) and `brace-expansion` to ^5.0.6 (closes [CVE-2026-45149](https://nvd.nist.gov/vuln/detail/CVE-2026-45149)).
 
 ### Other changes
 

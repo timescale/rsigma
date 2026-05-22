@@ -14,7 +14,9 @@ use commands::{
 };
 #[cfg(feature = "daemon")]
 use commands::{DaemonArgs, cmd_daemon};
-use jaq_interpret::{Ctx, FilterT, ParseCtx, RcIter, Val};
+use jaq_core::load::{Arena, File, Loader};
+use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
+use jaq_json::Val;
 use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEventMode, Pipeline, parse_pipeline_file,
     resolve_builtin_pipeline,
@@ -471,12 +473,15 @@ pub(crate) fn print_json(value: &impl serde::Serialize, pretty: bool) {
 // Event filtering (jq / JSONPath)
 // ---------------------------------------------------------------------------
 
+/// Compiled jq filter parameterised over the JSON value type used by jaq.
+type CompiledJqFilter = jaq_core::Filter<data::JustLut<Val>>;
+
 /// Pre-compiled event filter -- either a jq filter or a JSONPath query.
 pub(crate) enum EventFilter {
     /// No filter -- pass through the entire event.
     None,
     /// A compiled jq filter.
-    Jq(jaq_interpret::Filter),
+    Jq(CompiledJqFilter),
     /// A compiled JSONPath query.
     JsonPath(JsonPath),
 }
@@ -485,21 +490,28 @@ pub(crate) enum EventFilter {
 pub(crate) fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -> EventFilter {
     if let Some(jq_expr) = jq {
         eprintln!("Event filter: jq '{jq_expr}'");
-        let mut defs = ParseCtx::new(Vec::new());
-        let (parsed, errs) = jaq_parse::parse(&jq_expr, jaq_parse::main());
-        if !errs.is_empty() {
-            eprintln!("Invalid jq filter: {:?}", errs);
-            process::exit(exit_code::CONFIG_ERROR);
-        }
-        let Some(parsed) = parsed else {
-            eprintln!("Invalid jq filter: failed to parse '{jq_expr}'");
-            process::exit(exit_code::CONFIG_ERROR);
+        let program = File {
+            code: jq_expr.as_str(),
+            path: (),
         };
-        let filter = defs.compile(parsed);
-        if !defs.errs.is_empty() {
-            eprintln!("jq compilation errors ({} error(s))", defs.errs.len());
+        let defs = jaq_core::defs()
+            .chain(jaq_std::defs())
+            .chain(jaq_json::defs());
+        let funs = jaq_core::funs()
+            .chain(jaq_std::funs())
+            .chain(jaq_json::funs());
+        let arena = Arena::default();
+        let modules = Loader::new(defs).load(&arena, program).unwrap_or_else(|e| {
+            eprintln!("Invalid jq filter '{jq_expr}': {} module error(s)", e.len());
             process::exit(exit_code::CONFIG_ERROR);
-        }
+        });
+        let filter = Compiler::default()
+            .with_funs(funs)
+            .compile(modules)
+            .unwrap_or_else(|e| {
+                eprintln!("jq compilation errors ({} error(s))", e.len());
+                process::exit(exit_code::CONFIG_ERROR);
+            });
         EventFilter::Jq(filter)
     } else if let Some(jp_expr) = jsonpath {
         eprintln!("Event filter: jsonpath '{jp_expr}'");
@@ -587,16 +599,18 @@ pub(crate) fn apply_event_filter(
         EventFilter::None => vec![value.clone()],
 
         EventFilter::Jq(f) => {
-            let inputs = RcIter::new(core::iter::empty());
-            let out = f.run((Ctx::new([], &inputs), Val::from(value.clone())));
-            out.filter_map(|r| match r {
-                Ok(val) => val_to_json(val),
-                Err(e) => {
-                    eprintln!("jq runtime error: {e}");
-                    None
-                }
-            })
-            .collect()
+            let input = json_to_val(value.clone());
+            let ctx = Ctx::<data::JustLut<Val>>::new(&f.lut, Vars::new([]));
+            f.id.run((ctx, input))
+                .map(unwrap_valr)
+                .filter_map(|r| match r {
+                    Ok(val) => val_to_json(&val),
+                    Err(e) => {
+                        eprintln!("jq runtime error: {e}");
+                        None
+                    }
+                })
+                .collect()
         }
 
         EventFilter::JsonPath(path) => {
@@ -606,34 +620,65 @@ pub(crate) fn apply_event_filter(
     }
 }
 
+/// Convert a `serde_json::Value` to a jaq `Val`.
+fn json_to_val(v: serde_json::Value) -> Val {
+    use jaq_core::ValT;
+
+    match v {
+        serde_json::Value::Null => Val::Null,
+        serde_json::Value::Bool(b) => Val::Bool(b),
+        serde_json::Value::Number(n) => Val::from_num(&n.to_string()).unwrap_or(Val::Null),
+        serde_json::Value::String(s) => Val::from(s),
+        serde_json::Value::Array(arr) => arr.into_iter().map(json_to_val).collect(),
+        serde_json::Value::Object(obj) => Val::obj(
+            obj.into_iter()
+                .map(|(k, v)| (Val::from(k), json_to_val(v)))
+                .collect(),
+        ),
+    }
+}
+
 /// Convert a jaq `Val` to a `serde_json::Value`.
-fn val_to_json(val: Val) -> Option<serde_json::Value> {
-    match val {
-        Val::Null => Some(serde_json::Value::Null),
-        Val::Bool(b) => Some(serde_json::Value::Bool(b)),
-        Val::Int(n) => Some(serde_json::Value::Number(n.into())),
-        Val::Float(f) => serde_json::Number::from_f64(f).map(serde_json::Value::Number),
-        Val::Num(n) => {
-            if let Ok(i) = n.parse::<i64>() {
-                Some(serde_json::Value::Number(i.into()))
-            } else if let Ok(f) = n.parse::<f64>() {
-                serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+///
+/// Returns `None` only if the value cannot be represented as JSON at all
+/// (currently never; non-finite floats and non-string object keys fall back
+/// to their string representation).
+fn val_to_json(val: &Val) -> Option<serde_json::Value> {
+    use jaq_std::ValT;
+
+    Some(match val {
+        Val::Null => serde_json::Value::Null,
+        Val::Bool(b) => serde_json::Value::Bool(*b),
+        Val::Num(_) => {
+            if let Some(i) = val.as_isize() {
+                serde_json::Value::Number((i as i64).into())
+            } else if let Some(f) = val.as_f64() {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|| serde_json::Value::String(val.to_string()))
             } else {
-                Some(serde_json::Value::String(n.to_string()))
+                serde_json::Value::String(val.to_string())
             }
         }
-        Val::Str(s) => Some(serde_json::Value::String(s.to_string())),
+        Val::BStr(b) | Val::TStr(b) => {
+            serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
+        }
         Val::Arr(arr) => {
-            let items: Vec<serde_json::Value> =
-                arr.iter().filter_map(|v| val_to_json(v.clone())).collect();
-            Some(serde_json::Value::Array(items))
+            let items: Vec<serde_json::Value> = arr.iter().filter_map(val_to_json).collect();
+            serde_json::Value::Array(items)
         }
         Val::Obj(obj) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .iter()
-                .filter_map(|(k, v)| val_to_json(v.clone()).map(|jv| (k.to_string(), jv)))
-                .collect();
-            Some(serde_json::Value::Object(map))
+            let mut map = serde_json::Map::new();
+            for (k, v) in obj.iter() {
+                let key = match k {
+                    Val::BStr(b) | Val::TStr(b) => String::from_utf8_lossy(b).into_owned(),
+                    _ => k.to_string(),
+                };
+                if let Some(jv) = val_to_json(v) {
+                    map.insert(key, jv);
+                }
+            }
+            serde_json::Value::Object(map)
         }
-    }
+    })
 }
