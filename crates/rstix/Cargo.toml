@@ -1,0 +1,50 @@
+[package]
+name = "rstix"
+description = "STIX 2.1 + TAXII 2.1 library crate"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["serde"]
+
+serde = ["dep:serde", "dep:serde_json"]
+pattern = ["serde"]
+validate = ["serde", "pattern"]
+graph = ["serde"]
+marking = ["serde"]
+store = ["serde"]
+store-fs = ["store"]
+enrichment = ["store", "graph"]
+taxii = ["serde", "dep:reqwest", "dep:tokio", "dep:secrecy"]
+auth-certificate = ["taxii"]
+testing = ["validate", "taxii", "dep:wiremock"]
+full = [
+    "pattern",
+    "validate",
+    "graph",
+    "marking",
+    "store-fs",
+    "enrichment",
+    "taxii",
+    "auth-certificate",
+    "testing",
+]
+
+[dependencies]
+uuid = { version = "1", features = ["v4", "v5"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+phf = { version = "0.11", features = ["macros"] }
+thiserror = "2"
+
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+secrecy = { version = "0.10", optional = true }
+wiremock = { version = "0.6", optional = true }

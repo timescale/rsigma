@@ -19,3 +19,6 @@ editors/vscode/*.vsix
 .cursor/
 
 /docs-drafts/
+.DS_Store
+/plan/*
+/Sidenote/*
