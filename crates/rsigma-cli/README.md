@@ -202,6 +202,17 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--nats-tls-key` | path | none | Client private key for mutual TLS (requires `--nats-tls-cert`) |
 | `--nats-require-tls` | flag | `false` | Require TLS on NATS connections |
 
+**TLS flags** (require `daemon-tls` feature):
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--tls-cert` | path | none | PEM-encoded leaf certificate (chain) for the API listener. Requires `--tls-key`. |
+| `--tls-key` | path | none | PEM-encoded private key (PKCS#8, PKCS#1, or SEC1). Requires `--tls-cert`. |
+| `--tls-key-password` | string | none | Password for an encrypted `--tls-key` (env: `RSIGMA_TLS_KEY_PASSWORD`). Currently rejected with a clear hint pointing at `openssl rsa` for offline decryption. |
+| `--tls-client-ca` | path | none | PEM bundle of trusted CAs for inbound client certificate verification (mTLS). |
+| `--tls-min-version` | string | `"1.3"` | Minimum TLS protocol version: `1.2` or `1.3`. |
+| `--allow-plaintext` | flag | `false` | Permit plaintext on a non-loopback `--api-addr`. Loopback always allows plaintext. |
+
 \* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
 
 **Usage:**
@@ -245,6 +256,17 @@ rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-f
 
 # Consumer groups for horizontal scaling
 rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
+
+# Terminate TLS in-process (requires the daemon-tls feature)
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key
+
+# Mutual TLS: every agent must present a CA-signed client cert
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key \
+  --tls-client-ca /etc/rsigma/tls/clients-ca.crt
 
 # With SQLite state persistence (correlation state survives restarts)
 hel run | rsigma engine daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db

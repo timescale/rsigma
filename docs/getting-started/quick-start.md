@@ -158,6 +158,8 @@ For continuous detection with hot-reload, metrics, and a management API, run RSi
 rsigma engine daemon -r rules/ --input http --api-addr 127.0.0.1:9090 &
 ```
 
+Loopback (`127.0.0.0/8`, `::1`) keeps plaintext for local development. When you move to a production bind such as `--api-addr 0.0.0.0:9090`, the daemon (built with the `daemon-tls` feature) refuses to start without either `--tls-cert`/`--tls-key` or an explicit `--allow-plaintext`. See [TLS termination](../reference/security.md#tls-termination-for-the-api-listener) for the full story.
+
 The daemon logs structured JSON to stderr while it starts. Detections are written to stdout as they fire. In another terminal (or after `&` returns control), send an event:
 
 ```bash

@@ -155,7 +155,7 @@ See [NATS Streaming](nats-streaming.md) for the full replay matrix.
 
 ## HTTP API
 
-The daemon binds an Axum HTTP server on `--api-addr` (default `0.0.0.0:9090`). It serves both REST and Prometheus endpoints, plus OTLP/gRPC and OTLP/HTTP when the feature is enabled. The full reference is in [HTTP API](../reference/http-api.md). Key endpoints:
+The daemon binds an Axum HTTP server on `--api-addr` (default `0.0.0.0:9090`). It serves both REST and Prometheus endpoints, plus OTLP/gRPC and OTLP/HTTP when the feature is enabled. With the optional `daemon-tls` build feature and `--tls-cert`/`--tls-key`, the same listener terminates HTTPS for every protocol on one socket (ALPN negotiates `h2` and `http/1.1`). When `daemon-tls` is built in, the daemon refuses to start on a non-loopback `--api-addr` without TLS or `--allow-plaintext`; loopback always allows plaintext for local development. See the [TLS reference](../reference/security.md#tls-termination-for-the-api-listener) for the flag table and hot-reload semantics. The full HTTP reference is in [HTTP API](../reference/http-api.md). Key endpoints:
 
 | Path | Method | Purpose |
 |------|--------|---------|
@@ -206,7 +206,7 @@ If the drain timeout expires before the queue empties, the daemon force-exits wi
 | `--pipeline` references either a builtin (`ecs_windows`, `sysmon`) or a versioned file in the same directory. | Same. |
 | `--state-db` is set and points to durable storage. | Correlation state survives restarts. |
 | `--dlq` is configured. | Parse errors and sink failures land somewhere you can audit. |
-| `--api-addr` is bound to an internal interface (or behind a proxy). | The management API has no auth. Never expose it on the public internet. |
+| `--api-addr` is bound to an internal interface, behind a TLS-terminating proxy, or paired with `--tls-cert`/`--tls-key` (and `--tls-client-ca` for agent pinning). | The management API has no bearer-token auth; rely on mTLS or network isolation, never expose plaintext to the public internet. |
 | The container runs read-only with capabilities dropped. | See the [Docker guide](../deployment/docker.md). |
 | Prometheus scrapes `/metrics`. | Detect back-pressure, parse errors, DLQ events. |
 | `/readyz` is wired to the orchestrator's startup probe. | Avoid sending traffic to a daemon that has not loaded rules yet. |

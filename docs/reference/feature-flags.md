@@ -13,6 +13,7 @@ The crate that produces the `rsigma` binary.
 | `daemon` | yes | `rsigma-runtime`, `tokio`, `axum`, `prometheus`, `notify`, `rusqlite`, `tower-http` | `engine daemon`, the HTTP API server, `/metrics`, hot-reload, SQLite state persistence. The default; disable only for a minimal `engine eval` / `rule *` build. |
 | `daemon-nats` | no | `daemon` + `async-nats`, `tokio-stream`, `time`, `rsigma-runtime/nats` | NATS JetStream as `--input` and `--output` (and DLQ). All `--nats-*` flags. `RSIGMA_CONSUMER_GROUP`. See [NATS Streaming](../guide/nats-streaming.md). |
 | `daemon-otlp` | no | `daemon` + `prost`, `tonic`, `flate2`, `rsigma-runtime/otlp` | OTLP/HTTP and OTLP/gRPC receivers on `/v1/logs`. See [OTLP Integration](../guide/otlp-integration.md). |
+| `daemon-tls` | no | `daemon` + `rustls` (aws-lc-rs), `tokio-rustls`, `rustls-pemfile`, `rustls-pki-types`, `x509-parser`, `hyper`/`hyper-util` | Server-side TLS termination for the API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mTLS client verification, SIGHUP-triggered cert hot-reload, and two extra Prometheus metrics. See [TLS termination](security.md#tls-termination-for-the-api-listener). |
 | `logfmt` | no | `rsigma-runtime/logfmt` | `--input-format logfmt` for the daemon and `engine eval`. |
 | `cef` | no | `rsigma-runtime/cef` | `--input-format cef` for ArcSight-style logs. |
 | `evtx` | no | `rsigma-runtime/evtx` (dep on the `evtx` crate) | Native `.evtx` file input via `engine eval -e @file.evtx`. See [Input Formats](../guide/input-formats.md#evtx-windows-event-log-feature-gated). |
@@ -77,6 +78,7 @@ The repo's `ci.yml` matrix tests these combinations on every push:
 - default (`daemon` on, no extras)
 - `daemon-nats`
 - `daemon-otlp`
+- `daemon-tls`
 - `logfmt`, `cef`, `evtx`, `daachorse-index` individually
 - `--all-features` (the release shape)
 

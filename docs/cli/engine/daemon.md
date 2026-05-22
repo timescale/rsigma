@@ -65,6 +65,25 @@ The enrichers file accepts `max_concurrent_enrichments: <N>` at the top level (d
 |------|---------|-------------|
 | `--api-addr <ADDR>` | `0.0.0.0:9090` | Bind address for `/healthz`, `/readyz`, `/metrics`, `/api/v1/*`, and (with the `daemon-otlp` feature) `/v1/logs`. |
 
+### TLS (requires the `daemon-tls` build feature)
+
+When TLS is configured, the daemon terminates TLS in-process for every protocol on `--api-addr` (HTTP REST API, `/metrics`, OTLP/HTTP, OTLP/gRPC). The negotiation advertises both `h2` and `http/1.1` via ALPN so legacy REST clients and modern gRPC clients share one socket.
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--tls-cert <PATH>` | unset | unset | PEM-encoded leaf certificate (with any intermediates) for the API listener. Requires `--tls-key`. |
+| `--tls-key <PATH>` | unset | unset | PEM-encoded private key. PKCS#8, PKCS#1 (RSA), and SEC1 (EC) formats are accepted. Requires `--tls-cert`. |
+| `--tls-key-password <PASS>` | `RSIGMA_TLS_KEY_PASSWORD` | unset | Password for an encrypted `--tls-key`. Currently rejected at startup with a clear error; decrypt with `openssl rsa -in key.pem -out key-decrypted.pem` first. |
+| `--tls-client-ca <PATH>` | unset | unset | PEM bundle of trusted CA certificates used to verify inbound client certificates. Enables mutual TLS: clients without a cert signed by one of the listed CAs are rejected during the handshake. |
+| `--tls-min-version <1.2\|1.3>` | unset | `1.3` | Minimum TLS protocol version. Drop to `1.2` only for legacy agents that cannot negotiate TLS 1.3. |
+| `--allow-plaintext` | unset | off | Permit plaintext on a non-loopback `--api-addr`. Without this flag (and without `--tls-cert`/`--tls-key`) the daemon refuses to start on any public address. Loopback (`127.0.0.0/8`, `::1`) always allows plaintext for local development. |
+
+Hot-reload: `SIGHUP` re-reads the certificate and key from disk and atomically swaps the active `rustls::ServerConfig` for new handshakes; inflight TLS connections are unaffected. Failed reloads keep the previous certificate active and log an error. The hot-reload path piggy-backs on the existing rules-reload signal, so a single `kill -HUP <pid>` rotates rules, pipelines, and TLS material together.
+
+Observability: the `/metrics` endpoint exposes `rsigma_tls_certificate_expiry_seconds` (signed; negative once the cert has expired) and `rsigma_tls_active_connections`. A single WARN is logged at startup (and after every reload) if the active certificate expires within 30 days.
+
+See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-listener) for a deeper dive, including ACME / sidecar reverse proxy alternatives that this feature replaces.
+
 ### Correlation behavior
 
 | Flag | Default | Description |
@@ -166,6 +185,19 @@ rsigma engine daemon -r rules/ \
     --output "file:///var/log/rsigma/detections.ndjson" \
     --output "nats://nats.internal:4222/detections.urgent"
 ```
+
+### HTTPS with mutual TLS
+
+```bash
+rsigma engine daemon -r rules/ \
+    --input http \
+    --api-addr 0.0.0.0:9090 \
+    --tls-cert /etc/rsigma/tls/server.crt \
+    --tls-key  /etc/rsigma/tls/server.key \
+    --tls-client-ca /etc/rsigma/tls/clients-ca.crt
+```
+
+Clients connecting to `https://daemon:9090/v1/logs` (OTLP/HTTP) or `https://daemon:9090/api/v1/events` (REST) must present a certificate signed by `clients-ca.crt` or the handshake is rejected. Rotate the server cert with `cp new.crt /etc/rsigma/tls/server.crt && kill -HUP $(pidof rsigma)`.
 
 ### Forensic replay from a NATS sequence
 
