@@ -43,6 +43,10 @@ pub struct Metrics {
     pub otlp_log_records: IntCounter,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_errors: IntCounterVec,
+    #[cfg(feature = "daemon-tls")]
+    pub tls_certificate_expiry_seconds: Gauge,
+    #[cfg(feature = "daemon-tls")]
+    pub tls_active_connections: std::sync::Arc<IntGauge>,
 }
 
 impl Metrics {
@@ -363,6 +367,30 @@ impl Metrics {
             registry.register(Box::new(otlp_errors.clone())).unwrap();
         }
 
+        #[cfg(feature = "daemon-tls")]
+        let tls_certificate_expiry_seconds = Gauge::with_opts(Opts::new(
+            "rsigma_tls_certificate_expiry_seconds",
+            "Seconds until the active TLS server certificate's not_after",
+        ))
+        .unwrap();
+        #[cfg(feature = "daemon-tls")]
+        let tls_active_connections = std::sync::Arc::new(
+            IntGauge::with_opts(Opts::new(
+                "rsigma_tls_active_connections",
+                "Currently active TLS-terminated connections on the API listener",
+            ))
+            .unwrap(),
+        );
+        #[cfg(feature = "daemon-tls")]
+        {
+            registry
+                .register(Box::new(tls_certificate_expiry_seconds.clone()))
+                .unwrap();
+            registry
+                .register(Box::new(tls_active_connections.as_ref().clone()))
+                .unwrap();
+        }
+
         Metrics {
             registry,
             events_processed,
@@ -401,6 +429,10 @@ impl Metrics {
             otlp_log_records,
             #[cfg(feature = "daemon-otlp")]
             otlp_errors,
+            #[cfg(feature = "daemon-tls")]
+            tls_certificate_expiry_seconds,
+            #[cfg(feature = "daemon-tls")]
+            tls_active_connections,
         }
     }
 

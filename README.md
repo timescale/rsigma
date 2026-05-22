@@ -26,6 +26,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
 * Optional eval prefilters for large rule sets: bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
 * Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
+* In-process TLS termination for the daemon API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mutual TLS, `aws-lc-rs` crypto, and cross-platform certificate hot-reload
 * NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
 * OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
 * Built-in linter with 66 checks, four severity levels, a full suppression system, and auto-fix (`--fix`) for 13 safe rules
@@ -175,6 +176,25 @@ rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer
 # Dead-letter queue for events that fail processing
 rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --dlq file:///var/log/rsigma-dlq.ndjson
 ```
+
+### TLS Termination
+
+Optional in-process TLS termination for the daemon's API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC), all on one socket. Requires the `daemon-tls` build feature. ALPN advertises both `h2` and `http/1.1` so legacy REST clients and modern gRPC clients share the listener. The daemon refuses to start on a non-loopback `--api-addr` without TLS or `--allow-plaintext`; loopback always allows plaintext for local development.
+
+```bash
+# HTTPS for every protocol on --api-addr
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key
+
+# Mutual TLS: every agent must present a CA-signed client cert
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key \
+  --tls-client-ca /etc/rsigma/tls/clients-ca.crt
+```
+
+Certificate hot-reload is cross-platform: `POST /api/v1/reload`, `SIGHUP` (Unix), or a YAML file change picked up by the file watcher all trigger the central reload task, which re-reads the cert/key from disk and atomically swaps the active `rustls::ServerConfig` via `Arc<ArcSwap<…>>` without dropping inflight connections. Two extra Prometheus gauges (`rsigma_tls_certificate_expiry_seconds` and `rsigma_tls_active_connections`) make the rotation observable.
 
 ### Input Formats and Pipelines
 

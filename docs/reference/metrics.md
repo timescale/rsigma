@@ -78,6 +78,15 @@ Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is acti
 | `rsigma_otlp_log_records_total` | counter | — | Log records ingested via OTLP. |
 | `rsigma_otlp_errors_total` | counter | `transport`, `reason` (`unsupported_content_type`, `decompression`, `decode`, `channel_closed`) | OTLP request errors. |
 
+## TLS (2 metrics)
+
+Exposed when the daemon is built with `daemon-tls`. Both metrics render with their `# HELP` and `# TYPE` lines as soon as TLS is configured, even before the first handshake.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_tls_certificate_expiry_seconds` | gauge | — | Seconds until the active TLS server certificate's `not_after`. Signed: negative once expired. Updated at startup and after every successful SIGHUP-triggered reload. |
+| `rsigma_tls_active_connections` | gauge | — | Currently active TLS-terminated connections on the API listener. Decrements on connection close (including handshake failure). |
+
 ## Scrape configuration
 
 Minimum Prometheus scrape config:
@@ -136,6 +145,18 @@ groups:
           ) > 1
         for: 10m
         labels: {severity: warning}
+
+      # TLS certificate expires within 14 days.
+      - alert: RsigmaTlsCertExpiring
+        expr: rsigma_tls_certificate_expiry_seconds < 14 * 86400
+        for: 5m
+        labels: {severity: warning}
+
+      # TLS certificate has already expired.
+      - alert: RsigmaTlsCertExpired
+        expr: rsigma_tls_certificate_expiry_seconds < 0
+        for: 1m
+        labels: {severity: critical}
 ```
 
 ## Histograms: bucket guidance

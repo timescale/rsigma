@@ -80,15 +80,48 @@ Custom identifiers passed through `-O table=...` or pipeline `set_state` are val
 
 ## Daemon network exposure
 
-The `engine daemon` HTTP and gRPC listeners are unauthenticated today. The recommended deployment shape is one of:
+The `engine daemon` HTTP and gRPC listeners share one socket. With the optional `daemon-tls` build feature the daemon terminates TLS in-process; without it a sidecar reverse proxy is the recommended path. The recommended deployment shape is one of:
 
+- Build with `daemon-tls` and pass `--tls-cert`/`--tls-key` to terminate TLS in-process for HTTP REST, OTLP/HTTP, and OTLP/gRPC on the same `--api-addr`. Add `--tls-client-ca` to require mTLS for agent-to-daemon pinning. See [TLS termination](#tls-termination-for-the-api-listener).
 - Bind to loopback (`--api-addr 127.0.0.1:9090`) and access via a reverse proxy that adds TLS and authentication. Nginx, Caddy, and Traefik all work; an example is documented in [Docker deployment](../deployment/docker.md).
 - Bind to a private network segment that the SOC controls.
-- Future: in-process TLS termination including mTLS for OTLP agents. Tracked at [issue #128](https://github.com/timescale/rsigma/issues/128).
+
+To prevent accidental cleartext exposure when `daemon-tls` is built in, the daemon refuses to start on a non-loopback `--api-addr` unless either `--tls-cert`/`--tls-key` or `--allow-plaintext` is supplied. Loopback (`127.0.0.0/8`, `::1`) always allows plaintext.
 
 NATS connections from the daemon (source, sink, DLQ) support five auth methods (creds file, token, user+password, NKey, mTLS) and TLS-required mode. See [NATS Streaming: authentication](../guide/nats-streaming.md#authentication).
 
-OTLP receiver authentication is the upstream agent's responsibility today (TLS terminates upstream of rsigma in any deployment that needs it).
+### TLS termination for the API listener
+
+Pass any two of the four `--tls-*` flags to enable in-process TLS:
+
+```bash
+rsigma engine daemon -r rules/ \
+    --api-addr 0.0.0.0:9090 \
+    --tls-cert /etc/rsigma/tls/server.crt \
+    --tls-key  /etc/rsigma/tls/server.key
+```
+
+ALPN advertises both `h2` and `http/1.1` so the same listener serves OTLP/gRPC (HTTP/2 framing) and the REST API (HTTP/1.1) without splitting ports.
+
+For mutual TLS (every agent must present a CA-signed client cert):
+
+```bash
+rsigma engine daemon -r rules/ \
+    --api-addr 0.0.0.0:9090 \
+    --tls-cert /etc/rsigma/tls/server.crt \
+    --tls-key  /etc/rsigma/tls/server.key \
+    --tls-client-ca /etc/rsigma/tls/clients-ca.crt
+```
+
+Use `--tls-min-version 1.2` only when a legacy agent cannot negotiate TLS 1.3. The provider is `aws-lc-rs`, matching the NATS client TLS path and inheriting upstream FIPS-mode work.
+
+Hot-reload: cert rotation funnels through the daemon's central debounced reload task, which is triggered by `POST /api/v1/reload` (works on every platform, including Windows), `SIGHUP` (Unix), or a YAML change picked up by the file watcher. All three paths re-read the certificate and key from disk and atomically swap the rustls `ServerConfig` via `Arc<ArcSwap<…>>`. Inflight TLS connections are not dropped. Failed reloads keep the previous certificate active, bump `rsigma_reloads_failed_total`, and log an error so a typo in the cert path cannot black-hole the listener. The same trigger also reloads rules, pipelines, and enrichers, so cert rotation typically piggy-backs on a routine reload.
+
+Observability: `/metrics` exposes `rsigma_tls_certificate_expiry_seconds` (signed; negative once expired) and `rsigma_tls_active_connections`. A single WARN is logged at startup (and on every successful reload) when the active cert expires within 30 days; wire that line into the existing log-based alerting.
+
+Out of scope for this feature today: ACME / Let's Encrypt automation. Operators point `--tls-cert` and `--tls-key` at renewed files (cert-manager, certbot, Vault PKI, ...) and send SIGHUP. Encrypted private keys are also out of scope; the flag (`--tls-key-password` / `RSIGMA_TLS_KEY_PASSWORD`) is reserved for a future release and currently rejects with a clear `openssl rsa` hint.
+
+OTLP receiver authentication is the upstream agent's responsibility. The recommended pattern is mTLS (`--tls-client-ca`) so every OpenTelemetry agent pins to a known CA without rsigma needing a bearer-token authn layer.
 
 ## Filesystem footprint
 
@@ -118,14 +151,14 @@ See [`.github/workflows/docker.yml`](https://github.com/timescale/rsigma/blob/ma
 
 ## Threat model summary
 
-In one paragraph: rsigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. The daemon HTTP listeners are NOT a hardened public surface; deploy them behind a reverse proxy. The NATS and OTLP entry points support authentication, but mTLS termination for the rsigma HTTP API itself is on the roadmap (issue #128).
+In one paragraph: rsigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. Daemon HTTP and OTLP listeners can be hardened in-process by building with the `daemon-tls` feature and pairing `--tls-cert`/`--tls-key` with `--tls-client-ca` for mTLS; without that, deploy behind a reverse proxy. NATS connections (source, sink, DLQ) support five auth methods plus TLS-required mode.
 
 ## See also
 
 - [`SECURITY.md`](../security-policy.md) for the disclosure policy.
 - [Dynamic Pipeline Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
-- [Issue #128](https://github.com/timescale/rsigma/issues/128) for the planned in-process TLS for the daemon API and OTLP endpoints.
+- [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
 - [Prometheus metrics: dynamic pipeline sources](metrics.md#dynamic-pipeline-sources-5-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

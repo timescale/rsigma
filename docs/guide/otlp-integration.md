@@ -208,13 +208,31 @@ Verified with `otelcol-contrib` v0.152. The previous aliases (`filelog`, `otlpht
 
 ## TLS
 
-The daemon's `--api-addr` listener does not terminate TLS by itself. For production, put a reverse proxy in front (Caddy, nginx, Envoy) and configure the agents to point at the proxy. The proxy speaks TLS outbound and forwards HTTP/2 + HTTP/1.1 to the daemon's plain socket on a private network.
+Build the daemon with the `daemon-tls` feature and pass `--tls-cert`/`--tls-key` to have it terminate TLS in-process for OTLP/HTTP, OTLP/gRPC, and the rest of the API on the same socket. ALPN advertises `h2` and `http/1.1`, so the same listener handles legacy REST clients and modern HTTP/2 gRPC clients.
 
-A future feature could add direct TLS at the daemon, but the reverse-proxy approach lets you reuse your existing TLS automation and cert management.
+```bash
+rsigma engine daemon -r rules/ \
+    --api-addr 0.0.0.0:9090 \
+    --tls-cert /etc/rsigma/tls/server.crt \
+    --tls-key  /etc/rsigma/tls/server.key
+```
+
+For agent-to-daemon pinning, add `--tls-client-ca` and require every agent to present a CA-signed client cert. See [TLS termination](../reference/security.md#tls-termination-for-the-api-listener) for the full reference, including SIGHUP-triggered hot-reload of the certificate.
+
+When `daemon-tls` is not compiled in (or the operator prefers an external TLS terminator), put a reverse proxy in front of the daemon: Caddy, nginx, Envoy, and Traefik all work. The proxy speaks TLS outbound and forwards HTTP/2 + HTTP/1.1 to the daemon's plain socket on a private network.
+
+### Agent recipes with TLS
+
+Each of the four agents documented above can be pointed at an `https://` endpoint:
+
+- **Grafana Alloy**: add a `tls { ca_pem = file("/etc/alloy/rsigma-ca.pem") }` block to the `otelcol.exporter.otlphttp` `client` argument. For mTLS, set `cert_pem` and `key_pem` to the agent's client cert.
+- **Vector**: under the `opentelemetry` sink, add `tls { ca_file = "/etc/vector/rsigma-ca.pem", verify_certificate = true }`. For mTLS, also set `crt_file` and `key_file`.
+- **Fluent Bit**: set `tls On`, `tls.ca_file /etc/fluent-bit/rsigma-ca.pem`. For mTLS, add `tls.crt_file` and `tls.key_file`.
+- **OpenTelemetry Collector**: under the `otlphttp/rsigma` exporter, add `tls: { ca_file: /etc/otelcol/rsigma-ca.pem }`. For mTLS, add `cert_file` and `key_file`.
 
 ## Authentication
 
-OTLP/HTTP supports standard `Authorization` headers, and the agents above can all set custom headers. The daemon does not validate them currently. If you need authentication, again terminate at a reverse proxy that enforces the header check before forwarding.
+OTLP/HTTP supports standard `Authorization` headers, and the agents above can all set custom headers. The daemon does not currently validate bearer or basic auth headers; the recommended authentication path is mutual TLS via `--tls-client-ca`, which pins every agent to a CA-signed identity at the handshake before any HTTP request body is parsed.
 
 ## Observability
 

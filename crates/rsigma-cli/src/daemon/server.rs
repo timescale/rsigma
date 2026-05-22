@@ -116,6 +116,11 @@ pub struct DaemonConfig {
     /// pipeline-embedded `sources:` blocks. Collision-checked at
     /// construction time.
     pub source_registry: rsigma_runtime::sources::registry::DaemonSourceRegistry,
+    /// Optional server-side TLS state. `Some` when the operator passed
+    /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
+    /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
+    #[cfg(feature = "daemon-tls")]
+    pub tls_state: Option<super::tls::TlsState>,
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
@@ -454,19 +459,48 @@ pub async fn run_daemon(config: DaemonConfig) {
         tonic::service::Routes::from(app).add_service(grpc_service)
     };
 
-    #[cfg(feature = "daemon-otlp")]
-    tracing::info!(addr = %actual_addr, "API server listening (HTTP/2 + gRPC)");
-    #[cfg(not(feature = "daemon-otlp"))]
-    tracing::info!(addr = %actual_addr, "API server listening");
+    // TLS state is consumed below to build either a plaintext or TLS-wrapped
+    // listener; pull it out of `config` here so the borrow ends before the
+    // serve task captures the rest of the config by move.
+    #[cfg(feature = "daemon-tls")]
+    let tls_state = config.tls_state.clone();
+    #[cfg(feature = "daemon-tls")]
+    let tls_enabled = tls_state.is_some();
+    #[cfg(not(feature = "daemon-tls"))]
+    let tls_enabled = false;
 
-    // Spawn SIGHUP listener (triggers both rule reload and source re-resolution)
+    #[cfg(feature = "daemon-tls")]
+    if let Some(ref state) = tls_state {
+        update_tls_metrics(&metrics, state.expiry_unix.load(Ordering::Relaxed));
+        warn_if_cert_expiring_soon(state.expiry_unix.load(Ordering::Relaxed));
+    }
+
+    #[cfg(feature = "daemon-otlp")]
+    if tls_enabled {
+        tracing::info!(addr = %actual_addr, "API server listening (HTTPS, HTTP/2 + gRPC)");
+    } else {
+        tracing::info!(addr = %actual_addr, "API server listening (HTTP/2 + gRPC)");
+    }
+    #[cfg(not(feature = "daemon-otlp"))]
+    if tls_enabled {
+        tracing::info!(addr = %actual_addr, "API server listening (HTTPS)");
+    } else {
+        tracing::info!(addr = %actual_addr, "API server listening");
+    }
+
+    // Spawn SIGHUP listener (Unix-only; routes the signal into the
+    // same `reload_tx` channel the file watcher and HTTP endpoint
+    // use, so every reload trigger funnels through one task).
     let sighup_reload_tx = reload_tx.clone();
     let sighup_sources_tx = sources_trigger_tx_val.clone();
     tokio::spawn(async move {
         reload::sighup_listener(sighup_reload_tx, sighup_sources_tx).await;
     });
 
-    // Spawn reload handler — uses LogProcessor::reload_rules for atomic hot-reload
+    // Spawn reload handler — uses LogProcessor::reload_rules for atomic hot-reload.
+    // Also re-reads enricher config and (when `daemon-tls` is built in) the TLS
+    // certificate / key so a single `POST /api/v1/reload`, SIGHUP, or file-watcher
+    // event rotates every hot-reloadable component in one debounced pass.
     let reload_processor = processor.clone();
     let reload_metrics = metrics.clone();
     let reload_health = health.clone();
@@ -474,6 +508,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_enrichers_path = config.enrichers_path.clone();
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
+    #[cfg(feature = "daemon-tls")]
+    let reload_tls_state = tls_state.clone();
+    #[cfg(feature = "daemon-tls")]
+    let reload_tls_metrics = metrics.clone();
     tokio::spawn(async move {
         while reload_rx.recv().await.is_some() {
             // Debounce: batch rapid file changes
@@ -538,6 +576,29 @@ pub async fn run_daemon(config: DaemonConfig) {
                             error = %e,
                             path = %path.display(),
                             "Failed to reload enrichers config; keeping previous pipeline"
+                        );
+                        reload_metrics.reloads_failed.inc();
+                    }
+                }
+            }
+
+            // Reload TLS certificate / key from disk when daemon-tls is
+            // built in and configured. Failures keep the previous
+            // certificate active so a typo in the cert path cannot
+            // black-hole the listener; the operator sees the error in
+            // the daemon log and via `rsigma_reloads_failed_total`.
+            #[cfg(feature = "daemon-tls")]
+            if let Some(ref state) = reload_tls_state {
+                match state.reload() {
+                    Ok(new_expiry) => {
+                        update_tls_metrics(&reload_tls_metrics, new_expiry);
+                        warn_if_cert_expiring_soon(new_expiry);
+                        tracing::info!(not_after = new_expiry, "TLS certificate hot-reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            "Failed to reload TLS certificate; keeping previous one active"
                         );
                         reload_metrics.reloads_failed.inc();
                     }
@@ -943,28 +1004,55 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let drain_duration = std::time::Duration::from_secs(config.drain_timeout);
 
+    // Build the unified axum router: with `daemon-otlp`, the OTLP/gRPC
+    // service is folded into the same axum::Router via Tonic's
+    // `Routes::into_axum_router`. axum::serve handles HTTP/1 and HTTP/2
+    // (including h2c for plaintext gRPC) via hyper-util's auto::Builder.
     #[cfg(feature = "daemon-otlp")]
-    let mut serve_handle = {
-        let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-        tokio::spawn(async move {
-            if let Err(e) = tonic::transport::Server::builder()
-                .accept_http1(true)
-                .serve_with_incoming_shutdown(otlp_routes, incoming, shutdown_signal())
-                .await
-            {
-                tracing::error!(error = %e, "server error");
-            }
-        })
-    };
+    let unified_app: axum::Router = otlp_routes.into_axum_router();
     #[cfg(not(feature = "daemon-otlp"))]
-    let mut serve_handle = tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
+    let unified_app: axum::Router = app;
+
+    let mut serve_handle = {
+        #[cfg(feature = "daemon-tls")]
         {
-            tracing::error!(error = %e, "server error");
+            if let Some(state) = tls_state {
+                let tls_listener = super::tls::RustlsListener::new(
+                    listener,
+                    state.config.clone(),
+                    metrics.tls_active_connections.clone(),
+                );
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(tls_listener, unified_app)
+                        .with_graceful_shutdown(shutdown_signal())
+                        .await
+                    {
+                        tracing::error!(error = %e, "server error");
+                    }
+                })
+            } else {
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(listener, unified_app)
+                        .with_graceful_shutdown(shutdown_signal())
+                        .await
+                    {
+                        tracing::error!(error = %e, "server error");
+                    }
+                })
+            }
         }
-    });
+        #[cfg(not(feature = "daemon-tls"))]
+        {
+            tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, unified_app)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await
+                {
+                    tracing::error!(error = %e, "server error");
+                }
+            })
+        }
+    };
 
     let shutdown_triggered = tokio::select! {
         _ = &mut serve_handle => true,
@@ -1200,6 +1288,39 @@ fn decide_state_restore(
                 true
             }
         }
+    }
+}
+
+/// Refresh the `rsigma_tls_certificate_expiry_seconds` gauge to the
+/// number of seconds between now and `expiry_unix`. Called at startup
+/// and after every SIGHUP-triggered cert reload.
+#[cfg(feature = "daemon-tls")]
+pub(crate) fn update_tls_metrics(metrics: &Metrics, expiry_unix: i64) {
+    let now = chrono::Utc::now().timestamp();
+    let delta = (expiry_unix - now) as f64;
+    metrics.tls_certificate_expiry_seconds.set(delta);
+}
+
+/// Emit a single WARN if the active certificate expires within 30 days.
+/// Operators wire this into existing log-based alerting; the Prometheus
+/// gauge handles the longer-horizon dashboards.
+#[cfg(feature = "daemon-tls")]
+pub(crate) fn warn_if_cert_expiring_soon(expiry_unix: i64) {
+    const WARN_WINDOW_SECS: i64 = 30 * 24 * 3600;
+    let now = chrono::Utc::now().timestamp();
+    let remaining = expiry_unix - now;
+    if remaining < 0 {
+        tracing::warn!(
+            expiry_unix,
+            "TLS server certificate has already expired; clients will reject the handshake"
+        );
+    } else if remaining < WARN_WINDOW_SECS {
+        let days = remaining / 86400;
+        tracing::warn!(
+            expiry_unix,
+            days_remaining = days,
+            "TLS server certificate expires in less than 30 days; rotate it soon"
+        );
     }
 }
 

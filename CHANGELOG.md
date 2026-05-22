@@ -5,6 +5,40 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Server-side TLS for the daemon API listener (#128)
+
+The `engine daemon` API listener now terminates TLS in-process for every protocol that already shares `--api-addr`: the Axum HTTP REST API (`/healthz`, `/readyz`, `/metrics`, `/api/v1/*`), OTLP/HTTP on `POST /v1/logs`, and OTLP/gRPC via `LogsService/Export`. Operators can drop the sidecar reverse proxy they previously needed for confidentiality, integrity, and agent-to-daemon pinning.
+
+**New Cargo feature.** `daemon-tls` on `rsigma-cli` gates the TLS surface and pulls in `rustls` (with the `aws-lc-rs` provider, matching the NATS client TLS path and inheriting upstream FIPS-mode work), `tokio-rustls`, `rustls-pemfile`, `rustls-pki-types`, `x509-parser`, and `hyper`/`hyper-util`. The default build is unchanged.
+
+**Six new flags on `rsigma engine daemon`.**
+
+| Flag | Env | Default | Purpose |
+|------|-----|---------|---------|
+| `--tls-cert <PATH>` | -- | -- | PEM-encoded leaf certificate (chain). Requires `--tls-key`. |
+| `--tls-key <PATH>` | -- | -- | PEM-encoded private key (PKCS#8, PKCS#1, or SEC1). Requires `--tls-cert`. |
+| `--tls-key-password <PASS>` | `RSIGMA_TLS_KEY_PASSWORD` | -- | Password for an encrypted `--tls-key`. Currently rejected with a clear hint pointing at `openssl rsa` for offline decryption; reserved for a future release. |
+| `--tls-client-ca <PATH>` | -- | -- | PEM bundle of trusted CAs. Enables mutual TLS: clients without a CA-signed cert are rejected during the handshake. |
+| `--tls-min-version <1.2\|1.3>` | -- | `1.3` | Minimum negotiated TLS protocol version. |
+| `--allow-plaintext` | -- | off | Opt-in for plaintext on a non-loopback `--api-addr`. |
+
+**Plaintext refusal policy.** When `daemon-tls` is built in, the daemon refuses to start on any non-loopback address unless either `--tls-cert`/`--tls-key` or `--allow-plaintext` is supplied. Loopback (`127.0.0.0/8`, `::1`) always allows plaintext to keep local development friction-free.
+
+**Unified serving path.** The implementation collapses the previous split between `axum::serve` (for plaintext non-OTLP) and `tonic::transport::Server::serve_with_incoming_shutdown` (for OTLP) into a single `axum::Router` built via `tonic::service::Routes::into_axum_router`. For TLS, a small custom `axum::serve::Listener` wraps the `TcpListener` and performs the `tokio-rustls` handshake on every accepted connection. ALPN advertises both `h2` and `http/1.1`, so the same socket continues to serve REST + Prometheus + OTLP/HTTP + gRPC after TLS termination.
+
+**Cross-platform cert hot-reload.** Cert rotation funnels through the daemon's central debounced reload task, which is triggered by `POST /api/v1/reload` (works on every platform, including Windows), `SIGHUP` (Unix), or a YAML change picked up by the file watcher. All three paths re-read the certificate and key from disk and atomically swap the active `rustls::ServerConfig` via `Arc<ArcSwap<…>>`. Inflight TLS connections are not dropped; failed reloads keep the previous certificate active, bump `rsigma_reloads_failed_total`, and log an error so a typo in the cert path cannot black-hole the listener. Encrypted-key support and ACME/Let's Encrypt automation are intentionally out of scope; operators rotate cert files (cert-manager, certbot, Vault PKI, ...) and trigger a reload.
+
+**Two new Prometheus metrics.**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `rsigma_tls_certificate_expiry_seconds` | gauge | Seconds until the active TLS server certificate's `not_after`. Signed: negative once expired. Updated at startup and after every successful reload. |
+| `rsigma_tls_active_connections` | gauge | Currently active TLS-terminated connections on the API listener. Decrements on connection close (including handshake failure). |
+
+A single WARN is logged at startup (and after every successful reload) when the active cert expires within 30 days, so operators can plug the line into existing log-based alerting alongside the longer-horizon Prometheus alert on `rsigma_tls_certificate_expiry_seconds`.
+
+**Docs.** Full reference under "TLS termination for the API listener" in `docs/reference/security.md`; flag table in `docs/cli/engine/daemon.md`; agent recipes (Grafana Alloy, Vector, Fluent Bit, OpenTelemetry Collector) with `tls`/mTLS blocks in `docs/guide/otlp-integration.md`; quick-start note in `docs/getting-started/quick-start.md`; new row in `docs/reference/feature-flags.md`; two new alerts in `docs/reference/metrics.md`.
+
 ### Deprecated CLI aliases hidden from `--help` (#125)
 
 The 12 flat top-level CLI aliases (`eval`, `daemon`, `parse`, `validate`, `lint`, `fields`, `condition`, `stdin`, `convert`, `list-targets`, `list-formats`, `resolve`) introduced as visible-deprecated forwarders in v0.12.0 (PR #124) are now hidden from `rsigma --help` via `#[command(hide = true)]`. The dispatch arms and the `deprecation_warn` helper are otherwise unchanged, so:

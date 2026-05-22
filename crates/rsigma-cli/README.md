@@ -202,6 +202,19 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--nats-tls-key` | path | none | Client private key for mutual TLS (requires `--nats-tls-cert`) |
 | `--nats-require-tls` | flag | `false` | Require TLS on NATS connections |
 
+**TLS flags** (require `daemon-tls` feature):
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--tls-cert` | path | none | PEM-encoded leaf certificate (chain) for the API listener. Requires `--tls-key`. |
+| `--tls-key` | path | none | PEM-encoded private key (PKCS#8, PKCS#1, or SEC1). Requires `--tls-cert`. |
+| `--tls-key-password` | string | none | Password for an encrypted `--tls-key` (env: `RSIGMA_TLS_KEY_PASSWORD`). Currently rejected with a clear hint pointing at `openssl rsa` for offline decryption. |
+| `--tls-client-ca` | path | none | PEM bundle of trusted CAs for inbound client certificate verification (mTLS). |
+| `--tls-min-version` | string | `"1.3"` | Minimum TLS protocol version: `1.2` or `1.3`. |
+| `--allow-plaintext` | flag | `false` | Permit plaintext on a non-loopback `--api-addr`. Loopback always allows plaintext. |
+
+When the `daemon-tls` feature is built in, the daemon refuses to start on a non-loopback `--api-addr` without `--tls-cert`/`--tls-key` or an explicit `--allow-plaintext` opt-in. With TLS configured, the same socket serves HTTP REST, `/metrics`, OTLP/HTTP, and OTLP/gRPC over a single TLS connection via ALPN (advertises both `h2` and `http/1.1`). Crypto provider is `aws-lc-rs`, matching the NATS client TLS path. Certificate hot-reload is cross-platform: any of the hot-reload triggers below re-reads the cert/key from disk and atomically swaps the active `rustls::ServerConfig` via `Arc<ArcSwap<…>>` without dropping inflight TLS connections.
+
 \* Feature-gated: `logfmt` requires the `logfmt` feature, `cef` requires the `cef` feature.
 
 **Usage:**
@@ -246,6 +259,17 @@ rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --replay-f
 # Consumer groups for horizontal scaling
 rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer-group detection-workers
 
+# Terminate TLS in-process (requires the daemon-tls feature)
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key
+
+# Mutual TLS: every agent must present a CA-signed client cert
+rsigma engine daemon -r rules/ --input http --api-addr 0.0.0.0:9090 \
+  --tls-cert /etc/rsigma/tls/server.crt \
+  --tls-key  /etc/rsigma/tls/server.key \
+  --tls-client-ca /etc/rsigma/tls/clients-ca.crt
+
 # With SQLite state persistence (correlation state survives restarts)
 hel run | rsigma engine daemon -r rules/ -p ecs.yml --state-db ./rsigma-state.db
 
@@ -282,7 +306,7 @@ rsigma engine daemon \
 | `/metrics` | GET | Prometheus metrics (events processed, matches, latency, rules loaded, etc.) |
 | `/api/v1/status` | GET | Full daemon status (rules, state entries, counters, uptime) |
 | `/api/v1/rules` | GET | Rule counts and rules path |
-| `/api/v1/reload` | POST | Trigger a manual rule reload |
+| `/api/v1/reload` | POST | Trigger a manual reload of rules, pipelines, enrichers, and (with `daemon-tls`) the TLS certificate. Cross-platform alternative to `SIGHUP`. |
 | `/api/v1/events` | POST | Ingest events (NDJSON body, one event per line). Only available with `--input http` |
 | `/api/v1/sources` | GET | List dynamic sources and their resolution status |
 | `/api/v1/sources/resolve` | POST | Trigger re-resolution of all dynamic sources (or specific ones via request body) |
@@ -322,9 +346,11 @@ curl -X POST http://localhost:9090/v1/logs \
 
 - File system changes to `.yml`/`.yaml` files in the rules directory (debounced 500ms)
 - `SIGHUP` signal (Unix only) -- triggers both rule reload and dynamic source re-resolution
-- `POST /api/v1/reload`
+- `POST /api/v1/reload` -- cross-platform; the recommended cert-rotation path on Windows
 - `POST /api/v1/sources/resolve` -- re-resolves dynamic sources without reloading rules
 - NATS control subject `rsigma.control.resolve` (when using NATS sources) -- payload can be empty (resolve all) or `{"source_id": "..."}` (resolve one)
+
+The first three triggers all funnel through one debounced reload task that re-reads rules, pipelines, enrichers, and (when `daemon-tls` is built in) the TLS certificate and key. A failed reload of any component bumps `rsigma_reloads_failed_total`, logs an error, and leaves the previous in-memory state active so a typo on disk cannot black-hole the daemon.
 
 **Prometheus metrics:**
 
@@ -357,6 +383,8 @@ curl -X POST http://localhost:9090/v1/logs \
 | `rsigma_otlp_requests_total` | counter | `transport`, `encoding` | OTLP export requests received (requires `daemon-otlp`) |
 | `rsigma_otlp_log_records_total` | counter | | Log records ingested via OTLP (requires `daemon-otlp`) |
 | `rsigma_otlp_errors_total` | counter | `transport`, `reason` | OTLP request errors (requires `daemon-otlp`) |
+| `rsigma_tls_certificate_expiry_seconds` | gauge | | Seconds until the active TLS server certificate's `not_after` (signed; negative once expired). Requires `daemon-tls` |
+| `rsigma_tls_active_connections` | gauge | | Currently active TLS-terminated connections on the API listener (requires `daemon-tls`) |
 
 The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Grafana or other Prometheus-based tools. A single PromQL query like `increase(rsigma_detection_matches_by_rule_total[5m]) > 0` produces separate alert instances for each `{rule_title, level}` combination. The aggregate counters (`_total`) remain for lightweight total-throughput monitoring.
 

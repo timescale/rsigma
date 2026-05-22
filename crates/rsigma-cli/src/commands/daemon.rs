@@ -272,6 +272,70 @@ pub(crate) struct DaemonArgs {
     /// error.
     #[arg(long = "source", value_name = "FILE_OR_DIR")]
     pub sources: Vec<PathBuf>,
+
+    // ---------------------------------------------------------------
+    // TLS (requires the `daemon-tls` build feature)
+    // ---------------------------------------------------------------
+    /// PEM-encoded TLS certificate (chain) for the API listener.
+    ///
+    /// When set together with `--tls-key`, the daemon terminates TLS
+    /// for the HTTP REST API, the Prometheus `/metrics` endpoint, and
+    /// (with `daemon-otlp`) both OTLP/HTTP and OTLP/gRPC on the same
+    /// `--api-addr`. The leaf certificate and any intermediates may be
+    /// concatenated in a single PEM file.
+    ///
+    /// Hot-reloaded on SIGHUP without dropping inflight connections.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(long = "tls-cert", value_name = "PATH", requires = "tls_key")]
+    pub tls_cert: Option<PathBuf>,
+
+    /// PEM-encoded TLS private key for the API listener.
+    ///
+    /// PKCS#8, PKCS#1 (RSA), and SEC1 (EC) formats are accepted.
+    /// Encrypted keys are not supported yet; decrypt with
+    /// `openssl rsa -in key.pem -out key-decrypted.pem` first.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(long = "tls-key", value_name = "PATH", requires = "tls_cert")]
+    pub tls_key: Option<PathBuf>,
+
+    /// Password for an encrypted `--tls-key`. Currently rejected at
+    /// startup; reserved for a future release to keep the flag stable.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(long = "tls-key-password", env = "RSIGMA_TLS_KEY_PASSWORD")]
+    pub tls_key_password: Option<String>,
+
+    /// PEM bundle of trusted CA certificates used to verify inbound
+    /// client certificates (mutual TLS).
+    ///
+    /// When set, clients must present a certificate signed by one of
+    /// the listed CAs or the TLS handshake is rejected with
+    /// `bad certificate`. Useful for agent-to-daemon pinning.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(long = "tls-client-ca", value_name = "PATH", requires = "tls_cert")]
+    pub tls_client_ca: Option<PathBuf>,
+
+    /// Minimum TLS protocol version accepted by the server.
+    ///
+    /// Default is `1.3`. Use `1.2` only for compatibility with legacy
+    /// agents that cannot negotiate TLS 1.3.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(
+        long = "tls-min-version",
+        value_name = "VERSION",
+        default_value = "1.3"
+    )]
+    pub tls_min_version: String,
+
+    /// Allow the daemon to bind a non-loopback `--api-addr` without TLS.
+    ///
+    /// By default the daemon refuses to start on a public address
+    /// (`0.0.0.0`, `::`, or any non-loopback IP) unless either
+    /// `--tls-cert`/`--tls-key` is supplied or this flag is set.
+    /// Loopback (`127.0.0.0/8`, `::1`) is always allowed in plaintext
+    /// to keep local development friction-free.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(long = "allow-plaintext")]
+    pub allow_plaintext: bool,
 }
 
 /// Helper struct grouping NATS connection / auth flags so `cmd_daemon` does
@@ -348,6 +412,18 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         cross_rule_ac,
         enrichers,
         sources: source_paths,
+        #[cfg(feature = "daemon-tls")]
+        tls_cert,
+        #[cfg(feature = "daemon-tls")]
+        tls_key,
+        #[cfg(feature = "daemon-tls")]
+        tls_key_password,
+        #[cfg(feature = "daemon-tls")]
+        tls_client_ca,
+        #[cfg(feature = "daemon-tls")]
+        tls_min_version,
+        #[cfg(feature = "daemon-tls")]
+        allow_plaintext,
     } = args;
 
     #[cfg(feature = "daemon-nats")]
@@ -384,6 +460,16 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         daemon::server::StateRestoreMode::ForceKeep
     } else {
         daemon::server::StateRestoreMode::Auto
+    };
+
+    #[cfg(feature = "daemon-tls")]
+    let tls_args = TlsCliArgs {
+        cert: tls_cert,
+        key: tls_key,
+        key_password: tls_key_password,
+        client_ca: tls_client_ca,
+        min_version: tls_min_version,
+        allow_plaintext,
     };
 
     run_daemon(
@@ -425,7 +511,20 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         cross_rule_ac,
         enrichers,
         source_paths,
+        #[cfg(feature = "daemon-tls")]
+        tls_args,
     );
+}
+
+/// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
+#[cfg(feature = "daemon-tls")]
+pub(crate) struct TlsCliArgs {
+    pub cert: Option<PathBuf>,
+    pub key: Option<PathBuf>,
+    pub key_password: Option<String>,
+    pub client_ca: Option<PathBuf>,
+    pub min_version: String,
+    pub allow_plaintext: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -464,6 +563,7 @@ fn run_daemon(
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     source_paths: Vec<PathBuf>,
+    #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
 
@@ -496,6 +596,9 @@ fn run_daemon(
         eprintln!("Invalid API address '{api_addr}': {e}");
         process::exit(exit_code::CONFIG_ERROR);
     });
+
+    #[cfg(feature = "daemon-tls")]
+    let tls_state = build_tls_state(&tls_args, addr);
 
     #[cfg(feature = "daemon-nats")]
     let nats_config = rsigma_runtime::NatsConnectConfig {
@@ -586,6 +689,8 @@ fn run_daemon(
         cross_rule_ac,
         enrichers_path,
         source_registry,
+        #[cfg(feature = "daemon-tls")]
+        tls_state,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -629,6 +734,51 @@ pub(crate) fn parse_input_format(format_str: &str, syslog_tz: &str) -> rsigma_ru
             eprintln!("  (with logfmt feature): logfmt");
             #[cfg(feature = "cef")]
             eprintln!("  (with cef feature): cef");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Build the TLS state from CLI flags and enforce the
+/// "no plaintext on non-loopback" policy. Returns `None` when TLS is not
+/// requested. Exits with `CONFIG_ERROR` on validation failure so the
+/// operator sees the problem before the daemon spins up.
+#[cfg(feature = "daemon-tls")]
+fn build_tls_state(args: &TlsCliArgs, addr: std::net::SocketAddr) -> Option<daemon::tls::TlsState> {
+    use daemon::tls::{TlsCliConfig, TlsMinVersion, TlsState, enforce_plaintext_policy};
+
+    match (args.cert.as_ref(), args.key.as_ref()) {
+        (Some(cert), Some(key)) => {
+            let min_version: TlsMinVersion = args.min_version.parse().unwrap_or_else(|e| {
+                eprintln!("{e}");
+                process::exit(exit_code::CONFIG_ERROR);
+            });
+            let cli_cfg = TlsCliConfig {
+                cert_path: cert.clone(),
+                key_path: key.clone(),
+                key_password: args.key_password.clone(),
+                client_ca_path: args.client_ca.clone(),
+                min_version,
+            };
+            match TlsState::from_paths(cli_cfg) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    eprintln!("Failed to initialize TLS: {e}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        (None, None) => {
+            if let Err(msg) = enforce_plaintext_policy(addr, args.allow_plaintext) {
+                eprintln!("{msg}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+            None
+        }
+        _ => {
+            // clap's `requires` should make this unreachable, but guard
+            // anyway in case the validator is bypassed (e.g. tests).
+            eprintln!("--tls-cert and --tls-key must be supplied together");
             process::exit(exit_code::CONFIG_ERROR);
         }
     }

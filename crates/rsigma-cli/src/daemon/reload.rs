@@ -73,7 +73,16 @@ pub fn spawn_file_watcher(
     Some(watcher)
 }
 
-/// Set up a SIGHUP handler that sends reload signals and source re-resolution triggers.
+/// Set up a SIGHUP handler that signals the central reload task and
+/// kicks off source re-resolution.
+///
+/// SIGHUP just routes the signal into the same `reload_tx` channel the
+/// file watcher and `POST /api/v1/reload` use, so every reload trigger
+/// funnels through the one debounced reload task in `server::run_daemon`.
+/// That task is what actually re-reads rules, enrichers, and (when
+/// `daemon-tls` is built in) the TLS certificate and key. The Windows
+/// build has no SIGHUP equivalent; operators rotate certs via
+/// `POST /api/v1/reload` instead.
 #[cfg(unix)]
 pub async fn sighup_listener(
     reload_tx: mpsc::Sender<()>,

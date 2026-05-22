@@ -138,6 +138,15 @@ impl DaemonProcess {
             }
         }
 
+        // The daemon may log a wildcard bind address like `0.0.0.0:PORT`
+        // (or `[::]:PORT`). Connecting to a wildcard address returns
+        // `WSAEADDRNOTAVAIL` on Windows. Linux and macOS silently treat
+        // it as loopback, so the same test was green there. Rewrite the
+        // recorded address to the loopback equivalent before probing
+        // and before exposing it via `url()`; the daemon listens on
+        // every interface so loopback is always reachable.
+        let api_addr = rewrite_wildcard_to_loopback(api_addr);
+
         let socket: std::net::SocketAddr = api_addr
             .parse()
             .unwrap_or_else(|e| panic!("invalid api_addr {api_addr:?}: {e}"));
@@ -174,6 +183,11 @@ impl DaemonProcess {
         format!("http://{}{path}", self.api_addr)
     }
 
+    /// Convenience constructor that returns an `https://...` URL.
+    pub fn https_url(&self, path: &str) -> String {
+        format!("https://{}{path}", self.api_addr)
+    }
+
     pub fn api_addr(&self) -> &str {
         &self.api_addr
     }
@@ -182,6 +196,51 @@ impl DaemonProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Spawn the daemon and return either a `DaemonProcess` on success or the
+/// stderr line that caused the failure on a hard startup error.
+///
+/// Use this when a test wants to assert that a misconfigured invocation
+/// (e.g. plaintext bind on `0.0.0.0` without `--allow-plaintext`) refuses
+/// to start with a specific error message.
+pub fn spawn_expect_failure(args: &[&str], deadline: Duration) -> String {
+    let mut child = StdCommand::new(rsigma_bin())
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn rsigma engine daemon");
+
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { return };
+            let _ = tx.send(line);
+        }
+    });
+
+    let end = Instant::now() + deadline;
+    let mut collected = Vec::new();
+    while Instant::now() < end {
+        let remaining = end
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::ZERO);
+        if let Ok(Some(_)) = child.try_wait() {
+            break;
+        }
+        match rx.recv_timeout(remaining.min(Duration::from_millis(200))) {
+            Ok(line) => {
+                collected.push(line);
+            }
+            Err(_) => continue,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    collected.join("\n")
 }
 
 impl Drop for DaemonProcess {
@@ -196,6 +255,24 @@ fn extract_addr(line: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(line)
         .ok()
         .and_then(|v| v["fields"]["addr"].as_str().map(|s| s.to_string()))
+}
+
+/// Rewrite a wildcard bind address (`0.0.0.0:PORT` or `[::]:PORT`) to the
+/// loopback equivalent. Connecting to a wildcard works on Linux/macOS
+/// (silently routed to loopback) but fails with `WSAEADDRNOTAVAIL` on
+/// Windows, which made `public_bind_with_allow_plaintext_starts` flake
+/// only on Windows CI before this rewrite.
+fn rewrite_wildcard_to_loopback(addr: String) -> String {
+    match addr.parse::<std::net::SocketAddr>() {
+        Ok(parsed) if parsed.ip().is_unspecified() => {
+            let port = parsed.port();
+            match parsed {
+                std::net::SocketAddr::V4(_) => format!("127.0.0.1:{port}"),
+                std::net::SocketAddr::V6(_) => format!("[::1]:{port}"),
+            }
+        }
+        _ => addr,
+    }
 }
 
 // ---------------------------------------------------------------------------

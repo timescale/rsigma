@@ -14,6 +14,16 @@ default = ["daemon"]
 daemon = ["rsigma-runtime", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http"]
 daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time"]
 daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2", "tokio-stream"]
+daemon-tls = [
+    "daemon",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rustls-pki-types",
+    "dep:x509-parser",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tower-service",
+]
 logfmt = ["rsigma-runtime/logfmt"]
 cef = ["rsigma-runtime/cef"]
 evtx = ["rsigma-runtime/evtx"]
@@ -58,6 +68,15 @@ prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip"], optional = true }
 flate2 = { version = "1", optional = true }
 
+# daemon-tls dependencies
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12", "logging"], optional = true }
+rustls-pki-types = { version = "1.9", features = ["std"], optional = true }
+x509-parser = { version = "0.18", optional = true }
+hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"], optional = true }
+tower-service = { version = "0.3", optional = true }
+
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
@@ -75,3 +94,8 @@ opentelemetry-proto = { version = "0.32", default-features = false, features = [
 prost = "0.14"
 wiremock = "0.6"
 flate2 = "1"
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-pki-types = { version = "1.9", features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+time = "0.3"
