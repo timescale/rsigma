@@ -319,7 +319,11 @@ pub(crate) struct DaemonArgs {
     /// Default is `1.3`. Use `1.2` only for compatibility with legacy
     /// agents that cannot negotiate TLS 1.3.
     #[cfg(feature = "daemon-tls")]
-    #[arg(long = "tls-min-version", value_name = "VERSION", default_value = "1.3")]
+    #[arg(
+        long = "tls-min-version",
+        value_name = "VERSION",
+        default_value = "1.3"
+    )]
     pub tls_min_version: String,
 
     /// Allow the daemon to bind a non-loopback `--api-addr` without TLS.
@@ -740,10 +744,7 @@ pub(crate) fn parse_input_format(format_str: &str, syslog_tz: &str) -> rsigma_ru
 /// requested. Exits with `CONFIG_ERROR` on validation failure so the
 /// operator sees the problem before the daemon spins up.
 #[cfg(feature = "daemon-tls")]
-fn build_tls_state(
-    args: &TlsCliArgs,
-    addr: std::net::SocketAddr,
-) -> Option<daemon::tls::TlsState> {
+fn build_tls_state(args: &TlsCliArgs, addr: std::net::SocketAddr) -> Option<daemon::tls::TlsState> {
     use daemon::tls::{TlsCliConfig, TlsMinVersion, TlsState, enforce_plaintext_policy};
 
     match (args.cert.as_ref(), args.key.as_ref()) {

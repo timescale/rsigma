@@ -109,10 +109,7 @@ pub async fn sighup_listener(
                 Ok(new_expiry) => {
                     super::server::update_tls_metrics(&tls_metrics, new_expiry);
                     super::server::warn_if_cert_expiring_soon(new_expiry);
-                    tracing::info!(
-                        not_after = new_expiry,
-                        "TLS certificate hot-reloaded"
-                    );
+                    tracing::info!(not_after = new_expiry, "TLS certificate hot-reloaded");
                 }
                 Err(e) => {
                     tracing::error!(

@@ -174,9 +174,16 @@ fn build_server_config(cli: &TlsCliConfig) -> Result<ServerConfig, TlsError> {
 
     let builder = if let Some(ca_path) = cli.client_ca_path.as_ref() {
         let roots = load_client_ca_roots(ca_path)?;
-        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
-            .build()
-            .map_err(|e| TlsError::InvalidClientCa(ca_path.clone(), e.to_string()))?;
+        // Pass the aws-lc-rs provider explicitly so the builder does not
+        // try (and fail, when both `ring` and `aws-lc-rs` are in the
+        // dependency tree) to discover the process-level
+        // `CryptoProvider`.
+        let verifier = WebPkiClientVerifier::builder_with_provider(
+            Arc::new(roots),
+            Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        )
+        .build()
+        .map_err(|e| TlsError::InvalidClientCa(ca_path.clone(), e.to_string()))?;
         builder.with_client_cert_verifier(verifier)
     } else {
         builder.with_no_client_auth()
