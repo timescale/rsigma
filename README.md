@@ -17,22 +17,22 @@ For rule quality and editor integration, a built-in linter validates rules again
 
 ## Supported Features
 
-* Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
-* Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
-* Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
-* pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
-* Dynamic pipelines: populate any pipeline value from external sources (HTTP, files, commands, NATS) with template expansion, auto-refresh, and data extraction via jq, JSONPath, or CEL
-* Post-evaluation enrichment: inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via four primitives (`template`, `lookup`, `http`, `command`) with kind-aware template namespaces, response cache, scope filtering, and hot-reload
-* Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
-* Optional eval prefilters for large rule sets: bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
-* Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
-* In-process TLS termination for the daemon API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mutual TLS, `aws-lc-rs` crypto, and cross-platform certificate hot-reload
-* NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
-* OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
-* Built-in linter with 66 checks, four severity levels, a full suppression system, and auto-fix (`--fix`) for 13 safe rules
-* LSP server with real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
-* Multi-arch Docker images (linux/amd64, linux/arm64) with cosign signatures, SBOM, and SLSA Build L3 provenance
-* Cross-platform binaries for Linux, macOS, and Windows on amd64 and arm64
+* **Sigma parsing:** Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
+* **Rule evaluation:** Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
+* **Streaming daemon:** Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
+* **Input formats:** Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
+* **Processing pipelines:** Use pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
+* **Dynamic pipelines:** Populate any pipeline value from external sources (HTTP, files, commands, NATS) with template expansion, auto-refresh, and data extraction via jq, JSONPath, or CEL
+* **Post-evaluation enrichment:** Inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via four primitives (`template`, `lookup`, `http`, `command`) with kind-aware template namespaces, response cache, scope filtering, and hot-reload
+* **Rule conversion:** Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB)
+* **Eval prefilters:** Use optional prefilters for large rule sets, including a bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
+* **TLS termination:** Use in-process TLS termination for the daemon API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mutual TLS, `aws-lc-rs` crypto, and cross-platform certificate hot-reload
+* **NATS JetStream:** Use NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
+* **OTLP ingestion:** Use OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
+* **Built-in linter:** Validate rules with 66 checks, four severity levels, a full suppression system, and auto-fix (`--fix`) for 13 safe rules
+* **LSP server:** Use real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
+* **Docker images:** Use multi-arch Docker images (linux/amd64, linux/arm64) with cosign signatures, SBOM, and SLSA Build L3 provenance
+* **Release binaries:** Use cross-platform binaries for Linux, macOS, and Windows on amd64 and arm64
 
 ## Crates
 
