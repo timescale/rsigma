@@ -1668,14 +1668,24 @@ fn missing_fields(
         .collect()
 }
 
-fn paginate<T: Clone>(items: &[T], offset: usize, limit: usize) -> (Vec<T>, Option<usize>) {
-    if offset >= items.len() {
-        return (Vec::new(), None);
+/// Slice a window out of `items` by moving the page elements out of the
+/// source `Vec` rather than cloning. Returns the page, the original
+/// total (preserved before the move), and the next offset (if any).
+///
+/// Consumes `items` because all four field endpoints construct the
+/// list fresh from a snapshot and then discard the rest; cloning each
+/// `serde_json::Value` just to throw the leftovers away wastes work
+/// proportional to `total - limit`.
+fn paginate<T>(mut items: Vec<T>, offset: usize, limit: usize) -> (Vec<T>, usize, Option<usize>) {
+    let total = items.len();
+    if offset >= total {
+        return (Vec::new(), total, None);
     }
-    let end = offset.saturating_add(limit).min(items.len());
-    let page = items[offset..end].to_vec();
-    let next_offset = if end < items.len() { Some(end) } else { None };
-    (page, next_offset)
+    let end = offset.saturating_add(limit).min(total);
+    items.truncate(end);
+    let page: Vec<T> = items.drain(offset..).collect();
+    let next_offset = if end < total { Some(end) } else { None };
+    (page, total, next_offset)
 }
 
 async fn fields_full(
@@ -1698,17 +1708,20 @@ async fn fields_full(
     let mut intersection_count: usize = 0;
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for e in &snapshot.entries {
-        seen.insert(e.field.as_str());
-        if rule_field_set.contains(&e.field) {
+        let field: &str = &e.field;
+        seen.insert(field);
+        if rule_field_set.contains(field) {
             intersection_count += 1;
         } else {
-            unknown_entries.push(serde_json::json!({ "field": e.field, "count": e.count }));
+            unknown_entries.push(serde_json::json!({ "field": field, "count": e.count }));
         }
     }
     let missing_entries = missing_fields(&rule_field_set, &seen);
 
-    let (unknown_page, unknown_next) = paginate(&unknown_entries, query.offset(), query.limit());
-    let (missing_page, missing_next) = paginate(&missing_entries, query.offset(), query.limit());
+    let (unknown_page, unknown_total, unknown_next) =
+        paginate(unknown_entries, query.offset(), query.limit());
+    let (missing_page, missing_total, missing_next) =
+        paginate(missing_entries, query.offset(), query.limit());
 
     let body = serde_json::json!({
         "summary": {
@@ -1719,19 +1732,19 @@ async fn fields_full(
             "max_keys": snapshot.max_keys,
             "uptime_seconds": snapshot.uptime_seconds,
             "intersection_count": intersection_count,
-            "unknown_count": unknown_entries.len(),
-            "missing_count": missing_entries.len(),
+            "unknown_count": unknown_total,
+            "missing_count": missing_total,
         },
         "unknown": {
             "items": unknown_page,
-            "total": unknown_entries.len(),
+            "total": unknown_total,
             "offset": query.offset(),
             "limit": query.limit(),
             "next_offset": unknown_next,
         },
         "missing": {
             "items": missing_page,
-            "total": missing_entries.len(),
+            "total": missing_total,
             "offset": query.offset(),
             "limit": query.limit(),
             "next_offset": missing_next,
@@ -1756,11 +1769,16 @@ async fn fields_unknown(
     let entries: Vec<serde_json::Value> = snapshot
         .entries
         .iter()
-        .filter(|e| !rule_field_set.contains(&e.field))
-        .map(|e| serde_json::json!({ "field": e.field, "count": e.count }))
+        .filter(|e| {
+            let field: &str = &e.field;
+            !rule_field_set.contains(field)
+        })
+        .map(|e| {
+            let field: &str = &e.field;
+            serde_json::json!({ "field": field, "count": e.count })
+        })
         .collect();
-    let total = entries.len();
-    let (page, next_offset) = paginate(&entries, query.offset(), query.limit());
+    let (page, total, next_offset) = paginate(entries, query.offset(), query.limit());
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -1786,11 +1804,13 @@ async fn fields_missing(
 
     let rule_field_set = state.processor.rule_field_set();
 
-    let seen: std::collections::HashSet<&str> =
-        snapshot.entries.iter().map(|e| e.field.as_str()).collect();
+    let seen: std::collections::HashSet<&str> = snapshot
+        .entries
+        .iter()
+        .map(|e| -> &str { &e.field })
+        .collect();
     let entries = missing_fields(&rule_field_set, &seen);
-    let total = entries.len();
-    let (page, next_offset) = paginate(&entries, query.offset(), query.limit());
+    let (page, total, next_offset) = paginate(entries, query.offset(), query.limit());
     (
         StatusCode::OK,
         Json(serde_json::json!({

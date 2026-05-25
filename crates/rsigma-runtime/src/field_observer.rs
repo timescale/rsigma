@@ -35,6 +35,7 @@
 //!   does not desync the monotonic counters.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -42,10 +43,15 @@ use parking_lot::Mutex;
 use rsigma_eval::event::Event;
 
 /// Single field-name counter as exposed via the snapshot API.
+///
+/// The field name is held as `Arc<str>` so snapshotting only bumps a
+/// refcount rather than copying every key out of the observer's
+/// internal map. Treat as a string slice for read access:
+/// `entry.field.as_ref()` or `&*entry.field`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldObservationEntry {
     /// Dot-joined field path (matches what `Event::field_keys` returns).
-    pub field: String,
+    pub field: Arc<str>,
     /// Number of events that contained this field since the last reset.
     pub count: u64,
 }
@@ -81,8 +87,16 @@ pub struct FieldObservation {
 
 /// Capped, opt-in field-name counter shared across the daemon's event task
 /// and the HTTP API handlers.
+///
+/// Keys are stored as `Arc<str>` rather than `String` so a snapshot
+/// only refcount-bumps each key instead of allocating a fresh
+/// `String` per entry. The trade is one extra allocation per
+/// first-time-insert (Arc header) in exchange for cheap snapshots,
+/// which is the right side of the trade because the metrics handler
+/// scrapes every 15-30 s while new-key insertions happen at most once
+/// per unique field across the whole observation window.
 pub struct FieldObserver {
-    inner: Mutex<HashMap<String, u64>>,
+    inner: Mutex<HashMap<Arc<str>, u64>>,
     max_keys: usize,
     /// Resets to 0 on [`reset`](Self::reset). Drives the "since-last-reset"
     /// view exposed in [`FieldObservation::overflow_dropped`].
@@ -136,7 +150,7 @@ impl FieldObserver {
             if let Some(slot) = counts.get_mut(key.as_ref()) {
                 *slot = slot.saturating_add(1);
             } else if counts.len() < self.max_keys {
-                counts.insert(key.into_owned(), 1);
+                counts.insert(Arc::<str>::from(key.as_ref()), 1);
             } else {
                 overflow_local = overflow_local.saturating_add(1);
             }
@@ -152,12 +166,18 @@ impl FieldObserver {
 
     /// Snapshot the current counts. Entries are sorted by descending
     /// count, then by ascending name for deterministic output.
+    ///
+    /// Cheap relative to the cardinality of the observer: each entry
+    /// only refcount-clones the `Arc<str>` key rather than copying the
+    /// key bytes, so a 10 000-key snapshot costs ~10 000 atomic
+    /// increments plus one `Vec` allocation, not 10 000 `String`
+    /// allocations.
     pub fn snapshot(&self) -> FieldObservation {
         let counts = self.inner.lock();
         let mut entries: Vec<FieldObservationEntry> = counts
             .iter()
             .map(|(k, v)| FieldObservationEntry {
-                field: k.clone(),
+                field: Arc::clone(k),
                 count: *v,
             })
             .collect();
@@ -240,20 +260,23 @@ mod tests {
         assert_eq!(snap.events_observed, 1);
         assert_eq!(snap.unique_keys, 2);
         assert_eq!(snap.overflow_dropped, 0);
-        let names: Vec<&str> = snap.entries.iter().map(|e| e.field.as_str()).collect();
+        let names: Vec<&str> = snap.entries.iter().map(|e| -> &str { &e.field }).collect();
         assert!(names.contains(&"CommandLine"));
         assert!(names.contains(&"User"));
     }
 
     #[test]
-    fn observes_nested_json_with_dotted_paths() {
+    fn observes_nested_json_with_dotted_leaves() {
         let observer = FieldObserver::new(100);
         let v = json!({"actor": {"id": "u1"}});
         observer.observe(&JsonEvent::borrow(&v));
         let snap = observer.snapshot();
-        let names: Vec<&str> = snap.entries.iter().map(|e| e.field.as_str()).collect();
-        assert!(names.contains(&"actor"));
+        let names: Vec<&str> = snap.entries.iter().map(|e| -> &str { &e.field }).collect();
+        // Only the leaf is observed; the intermediate `actor` is not.
+        // This keeps the gap signal free of false positives on objects
+        // whose children are rule-referenced.
         assert!(names.contains(&"actor.id"));
+        assert!(!names.contains(&"actor"));
     }
 
     #[test]
@@ -268,7 +291,7 @@ mod tests {
         let entry = snap
             .entries
             .iter()
-            .find(|e| e.field == "CommandLine")
+            .find(|e| &*e.field == "CommandLine")
             .expect("CommandLine tracked");
         assert_eq!(entry.count, 5);
     }
@@ -300,7 +323,7 @@ mod tests {
         observer.observe(&JsonEvent::borrow(&json!({"warm": 1})));
         observer.observe(&JsonEvent::borrow(&json!({"chill": 1})));
         let snap = observer.snapshot();
-        let order: Vec<&str> = snap.entries.iter().map(|e| e.field.as_str()).collect();
+        let order: Vec<&str> = snap.entries.iter().map(|e| -> &str { &e.field }).collect();
         assert_eq!(order, vec!["hot", "chill", "warm"]);
     }
 

@@ -173,9 +173,10 @@ pub trait Event {
     fn to_json(&self) -> Value;
 
     /// Collect the names of every leaf field in the event, with nested
-    /// objects flattened to dot-separated paths (e.g. `actor.id`). Arrays
-    /// contribute their parent path only; per-index suffixes are not
-    /// emitted.
+    /// objects flattened to dot-separated paths (e.g. `actor.id`).
+    /// Intermediate object names are not emitted; only leaves count.
+    /// Arrays contribute their parent path once; per-index suffixes are
+    /// not emitted.
     ///
     /// Used by the daemon's opt-in field-observability surface; not on the
     /// detection hot path. The default implementation walks `to_json()`,
@@ -185,11 +186,9 @@ pub trait Event {
     /// (the dot-joined path doesn't exist anywhere in the source) but
     /// flat formats like `KvEvent` can return `Cow::Borrowed`.
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
-        let mut out: Vec<Cow<'static, str>> = Vec::new();
-        collect_field_keys_json(&self.to_json(), "", &mut out);
-        out.into_iter()
-            .map(|c| Cow::Owned(c.into_owned()))
-            .collect()
+        let mut paths: Vec<String> = Vec::new();
+        collect_field_keys_json(&self.to_json(), "", &mut paths);
+        paths.into_iter().map(Cow::Owned).collect()
     }
 }
 
@@ -198,42 +197,31 @@ pub trait Event {
 /// crate for recursive JSON traversal.
 pub(crate) const FIELD_KEYS_MAX_DEPTH: usize = 64;
 
-pub(crate) fn collect_field_keys_json(
-    value: &Value,
-    prefix: &str,
-    out: &mut Vec<Cow<'static, str>>,
-) {
+/// Walk a JSON value and push every leaf field path into `out`. The
+/// helper threads owned `String`s rather than `Cow` because every path
+/// is constructed by `format!`-joining (or copying the top-level key),
+/// so there are no borrowed shortcuts to capture.
+pub(crate) fn collect_field_keys_json(value: &Value, prefix: &str, out: &mut Vec<String>) {
     collect_field_keys_json_depth(value, prefix, out, FIELD_KEYS_MAX_DEPTH);
 }
 
-fn collect_field_keys_json_depth(
-    value: &Value,
-    prefix: &str,
-    out: &mut Vec<Cow<'static, str>>,
-    depth: usize,
-) {
+fn collect_field_keys_json_depth(value: &Value, prefix: &str, out: &mut Vec<String>, depth: usize) {
     if depth == 0 {
         return;
     }
-    match value {
-        Value::Object(map) => {
-            for (k, v) in map {
-                let path = if prefix.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{prefix}.{k}")
-                };
-                let is_leaf = !matches!(v, Value::Object(_));
-                if is_leaf {
-                    out.push(Cow::Owned(path));
-                } else {
-                    out.push(Cow::Owned(path.clone()));
-                    collect_field_keys_json_depth(v, &path, out, depth - 1);
-                }
+    if let Value::Object(map) = value {
+        for (k, v) in map {
+            let path = if prefix.is_empty() {
+                k.clone()
+            } else {
+                format!("{prefix}.{k}")
+            };
+            match v {
+                // Recurse into nested objects without emitting the
+                // intermediate path; only leaf descendants count.
+                Value::Object(_) => collect_field_keys_json_depth(v, &path, out, depth - 1),
+                _ => out.push(path),
             }
-        }
-        _ => {
-            // Non-object top-level value contributes no field names.
         }
     }
 }

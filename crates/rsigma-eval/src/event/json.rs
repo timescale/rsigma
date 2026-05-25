@@ -93,10 +93,16 @@ impl<'a> Event for JsonEvent<'a> {
         self.inner.as_ref().clone()
     }
 
-    /// Walk every object key in the event and yield dot-joined paths.
-    /// Each intermediate object also emits its own path so callers see
-    /// `actor` alongside `actor.id` for top-level coverage analysis.
-    /// Array siblings are not indexed; the parent path appears once.
+    /// Walk every leaf field in the event and yield dot-joined paths.
+    /// Intermediate object names (`actor` for `{"actor":{"id":"x"}}`)
+    /// are NOT emitted; only the leaves (`actor.id`) appear. This
+    /// matches typical Sigma rules, which reference nested values via
+    /// dot-notation; emitting the intermediate name would falsely flag
+    /// every parent object as "unknown" in the gap signal even when
+    /// the rule references a child path. Top-level scalar fields
+    /// (`{"actor":"alice"}`) emit `actor` because they ARE leaves.
+    /// Arrays contribute their parent path once; per-index suffixes
+    /// are not emitted.
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
         let mut out = Vec::new();
         collect_field_keys(&self.inner, "", &mut out, MAX_NESTING_DEPTH);
@@ -160,10 +166,13 @@ fn collect_field_keys<'a>(v: &'a Value, prefix: &str, out: &mut Vec<Cow<'a, str>
                 format!("{prefix}.{k}")
             };
             match child {
-                Value::Object(_) => {
-                    out.push(Cow::Owned(path.clone()));
-                    collect_field_keys(child, &path, out, depth - 1);
-                }
+                // Recurse into nested objects but do NOT emit the
+                // intermediate path; only the leaf descendants count.
+                // Sigma rules normally reference leaves via
+                // dot-notation, so emitting `actor` alongside
+                // `actor.id` would falsely flag the parent as
+                // "unknown" in the gap signal.
+                Value::Object(_) => collect_field_keys(child, &path, out, depth - 1),
                 _ => out.push(Cow::Owned(path)),
             }
         }
@@ -345,12 +354,24 @@ mod tests {
     }
 
     #[test]
-    fn json_field_keys_nested() {
+    fn json_field_keys_nested_leaves_only() {
+        // Intermediate object names like `actor` are NOT emitted; only
+        // leaves (`actor.id`, `actor.type`) and top-level scalars
+        // (`verb`) appear.
         let v = json!({"actor": {"id": "u1", "type": "User"}, "verb": "login"});
         let event = JsonEvent::borrow(&v);
         let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
         keys.sort();
-        assert_eq!(keys, vec!["actor", "actor.id", "actor.type", "verb"]);
+        assert_eq!(keys, vec!["actor.id", "actor.type", "verb"]);
+    }
+
+    #[test]
+    fn json_field_keys_deeply_nested_leaves_only() {
+        let v = json!({"a": {"b": {"c": 1}}, "flat": "x"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["a.b.c", "flat"]);
     }
 
     #[test]
