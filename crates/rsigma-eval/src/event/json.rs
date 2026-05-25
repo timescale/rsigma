@@ -92,6 +92,16 @@ impl<'a> Event for JsonEvent<'a> {
     fn to_json(&self) -> Value {
         self.inner.as_ref().clone()
     }
+
+    /// Walk every object key in the event and yield dot-joined paths.
+    /// Each intermediate object also emits its own path so callers see
+    /// `actor` alongside `actor.id` for top-level coverage analysis.
+    /// Array siblings are not indexed; the parent path appears once.
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        let mut out = Vec::new();
+        collect_field_keys(&self.inner, "", &mut out, MAX_NESTING_DEPTH);
+        out
+    }
 }
 
 /// Recursively traverse a JSON value following dot-notation path segments.
@@ -135,6 +145,28 @@ fn any_string_value_json(v: &Value, pred: &dyn Fn(&str) -> bool, depth: usize) -
             .iter()
             .any(|val| any_string_value_json(val, pred, depth - 1)),
         _ => false,
+    }
+}
+
+fn collect_field_keys<'a>(v: &'a Value, prefix: &str, out: &mut Vec<Cow<'a, str>>, depth: usize) {
+    if depth == 0 {
+        return;
+    }
+    if let Value::Object(map) = v {
+        for (k, child) in map {
+            let path = if prefix.is_empty() {
+                k.clone()
+            } else {
+                format!("{prefix}.{k}")
+            };
+            match child {
+                Value::Object(_) => {
+                    out.push(Cow::Owned(path.clone()));
+                    collect_field_keys(child, &path, out, depth - 1);
+                }
+                _ => out.push(Cow::Owned(path)),
+            }
+        }
     }
 }
 
@@ -301,5 +333,39 @@ mod tests {
             Some(EventValue::Str(Cow::Borrowed("value")))
         );
         assert_eq!(event.to_json(), v);
+    }
+
+    #[test]
+    fn json_field_keys_flat() {
+        let v = json!({"CommandLine": "x", "User": "y"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["CommandLine", "User"]);
+    }
+
+    #[test]
+    fn json_field_keys_nested() {
+        let v = json!({"actor": {"id": "u1", "type": "User"}, "verb": "login"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["actor", "actor.id", "actor.type", "verb"]);
+    }
+
+    #[test]
+    fn json_field_keys_array_parent_only() {
+        let v = json!({"events": [{"id": 1}, {"id": 2}]});
+        let event = JsonEvent::borrow(&v);
+        let keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        // Arrays contribute their parent key only; array indices are not enumerated.
+        assert_eq!(keys, vec!["events"]);
+    }
+
+    #[test]
+    fn json_field_keys_top_level_non_object_empty() {
+        let v = json!("just a string");
+        let event = JsonEvent::owned(v);
+        assert!(event.field_keys().is_empty());
     }
 }

@@ -50,6 +50,13 @@ impl Event for KvEvent {
             .collect();
         Value::Object(map)
     }
+
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        self.fields
+            .iter()
+            .map(|(k, _)| Cow::Borrowed(k.as_str()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +89,15 @@ mod tests {
         let event = KvEvent::new(vec![("key".into(), "val".into())]);
         let j = event.to_json();
         assert_eq!(j, json!({"key": "val"}));
+    }
+
+    #[test]
+    fn kv_field_keys() {
+        let event = KvEvent::new(vec![
+            ("host".into(), "web01".into()),
+            ("status".into(), "200".into()),
+        ]);
+        let keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        assert_eq!(keys, vec!["host", "status"]);
     }
 }
