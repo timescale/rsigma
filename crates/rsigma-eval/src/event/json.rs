@@ -92,6 +92,22 @@ impl<'a> Event for JsonEvent<'a> {
     fn to_json(&self) -> Value {
         self.inner.as_ref().clone()
     }
+
+    /// Walk every leaf field in the event and yield dot-joined paths.
+    /// Intermediate object names (`actor` for `{"actor":{"id":"x"}}`)
+    /// are NOT emitted; only the leaves (`actor.id`) appear. This
+    /// matches typical Sigma rules, which reference nested values via
+    /// dot-notation; emitting the intermediate name would falsely flag
+    /// every parent object as "unknown" in the gap signal even when
+    /// the rule references a child path. Top-level scalar fields
+    /// (`{"actor":"alice"}`) emit `actor` because they ARE leaves.
+    /// Arrays contribute their parent path once; per-index suffixes
+    /// are not emitted.
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        let mut out = Vec::new();
+        collect_field_keys(&self.inner, "", &mut out, MAX_NESTING_DEPTH);
+        out
+    }
 }
 
 /// Recursively traverse a JSON value following dot-notation path segments.
@@ -135,6 +151,31 @@ fn any_string_value_json(v: &Value, pred: &dyn Fn(&str) -> bool, depth: usize) -
             .iter()
             .any(|val| any_string_value_json(val, pred, depth - 1)),
         _ => false,
+    }
+}
+
+fn collect_field_keys<'a>(v: &'a Value, prefix: &str, out: &mut Vec<Cow<'a, str>>, depth: usize) {
+    if depth == 0 {
+        return;
+    }
+    if let Value::Object(map) = v {
+        for (k, child) in map {
+            let path = if prefix.is_empty() {
+                k.clone()
+            } else {
+                format!("{prefix}.{k}")
+            };
+            match child {
+                // Recurse into nested objects but do NOT emit the
+                // intermediate path; only the leaf descendants count.
+                // Sigma rules normally reference leaves via
+                // dot-notation, so emitting `actor` alongside
+                // `actor.id` would falsely flag the parent as
+                // "unknown" in the gap signal.
+                Value::Object(_) => collect_field_keys(child, &path, out, depth - 1),
+                _ => out.push(Cow::Owned(path)),
+            }
+        }
     }
 }
 
@@ -301,5 +342,51 @@ mod tests {
             Some(EventValue::Str(Cow::Borrowed("value")))
         );
         assert_eq!(event.to_json(), v);
+    }
+
+    #[test]
+    fn json_field_keys_flat() {
+        let v = json!({"CommandLine": "x", "User": "y"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["CommandLine", "User"]);
+    }
+
+    #[test]
+    fn json_field_keys_nested_leaves_only() {
+        // Intermediate object names like `actor` are NOT emitted; only
+        // leaves (`actor.id`, `actor.type`) and top-level scalars
+        // (`verb`) appear.
+        let v = json!({"actor": {"id": "u1", "type": "User"}, "verb": "login"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["actor.id", "actor.type", "verb"]);
+    }
+
+    #[test]
+    fn json_field_keys_deeply_nested_leaves_only() {
+        let v = json!({"a": {"b": {"c": 1}}, "flat": "x"});
+        let event = JsonEvent::borrow(&v);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["a.b.c", "flat"]);
+    }
+
+    #[test]
+    fn json_field_keys_array_parent_only() {
+        let v = json!({"events": [{"id": 1}, {"id": 2}]});
+        let event = JsonEvent::borrow(&v);
+        let keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        // Arrays contribute their parent key only; array indices are not enumerated.
+        assert_eq!(keys, vec!["events"]);
+    }
+
+    #[test]
+    fn json_field_keys_top_level_non_object_empty() {
+        let v = json!("just a string");
+        let event = JsonEvent::owned(v);
+        assert!(event.field_keys().is_empty());
     }
 }

@@ -63,6 +63,13 @@ where
             .collect();
         Value::Object(map)
     }
+
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        self.inner
+            .keys()
+            .map(|k| Cow::Borrowed(k.as_ref()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -88,5 +95,16 @@ mod tests {
         m.insert("k".to_string(), "v".to_string());
         let event = MapEvent::new(m);
         assert_eq!(event.to_json(), json!({"k": "v"}));
+    }
+
+    #[test]
+    fn map_event_field_keys() {
+        let mut m = HashMap::new();
+        m.insert("user".to_string(), "admin".to_string());
+        m.insert("host".to_string(), "web01".to_string());
+        let event = MapEvent::new(m);
+        let mut keys: Vec<String> = event.field_keys().iter().map(|c| c.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["host", "user"]);
     }
 }

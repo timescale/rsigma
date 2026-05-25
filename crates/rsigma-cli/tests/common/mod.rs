@@ -179,6 +179,25 @@ impl DaemonProcess {
         ])
     }
 
+    /// Spawn the daemon in HTTP-input mode with extra CLI flags appended
+    /// after the standard scaffolding (`-r`, `--input http`,
+    /// `--api-addr 127.0.0.1:0`). Useful for opt-in flags like
+    /// `--observe-fields` that integration tests need to exercise.
+    pub fn spawn_http_with_args(rule_path: &str, extra_args: &[&str]) -> Self {
+        let mut args = vec![
+            "engine",
+            "daemon",
+            "-r",
+            rule_path,
+            "--input",
+            "http",
+            "--api-addr",
+            "127.0.0.1:0",
+        ];
+        args.extend_from_slice(extra_args);
+        Self::spawn(&args)
+    }
+
     pub fn url(&self, path: &str) -> String {
         format!("http://{}{path}", self.api_addr)
     }
@@ -279,10 +298,15 @@ fn rewrite_wildcard_to_loopback(addr: String) -> String {
 // HTTP and polling helpers
 // ---------------------------------------------------------------------------
 
-/// GET `url`, panicking on transport errors. Returns the status code and
-/// body. Status codes other than 2xx are returned, not panicked.
+/// GET `url`. Returns (status, body) for any HTTP response code
+/// (including 4xx/5xx with their JSON error bodies). Panics on transport
+/// errors only.
 pub fn http_get(url: &str) -> (u16, String) {
-    let resp = ureq::get(url).call().expect("HTTP GET failed");
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent.get(url).call().expect("HTTP GET failed");
     let status = resp.status().as_u16();
     let body = resp.into_body().read_to_string().unwrap();
     (status, body)
@@ -300,6 +324,20 @@ pub fn http_post(url: &str, body: &str) -> (u16, String) {
         Err(ureq::Error::StatusCode(code)) => (code, String::new()),
         Err(e) => panic!("HTTP POST failed: {e}"),
     }
+}
+
+/// DELETE `url`. Returns (status, body) for any HTTP response code
+/// (including 4xx/5xx with their JSON error bodies). Panics on transport
+/// errors only.
+pub fn http_delete(url: &str) -> (u16, String) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent.delete(url).call().expect("HTTP DELETE failed");
+    let status = resp.status().as_u16();
+    let body = resp.into_body().read_to_string().unwrap();
+    (status, body)
 }
 
 /// Poll `check` every 50ms until it returns `Some(value)` or `deadline`

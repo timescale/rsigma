@@ -227,6 +227,30 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "bloom-max-bytes")]
     pub bloom_max_bytes: Option<usize>,
 
+    /// Enable opt-in observation of every event's field keys so the
+    /// daemon can answer two coverage questions over its admin API:
+    /// which fields appear in events but are never referenced by any
+    /// loaded rule (gap signal), and which fields are referenced by
+    /// rules but have never appeared in an event (broken coverage).
+    ///
+    /// Off by default. When set, an in-memory counter records the field
+    /// keys of every event evaluated by the engine task; the counter is
+    /// hard-capped by `--observe-fields-max-keys` and surfaced via the
+    /// `/api/v1/fields`, `/api/v1/fields/unknown`, and
+    /// `/api/v1/fields/missing` endpoints (plus
+    /// `DELETE /api/v1/fields/observer` to reset).
+    #[arg(long = "observe-fields")]
+    pub observe_fields: bool,
+
+    /// Hard ceiling on the number of distinct field names tracked by
+    /// the field observer. Once the ceiling is reached, new keys are
+    /// dropped (and counted via
+    /// `rsigma_fields_observer_overflow_dropped_total`); existing keys
+    /// keep incrementing. Default: 10000. Has no effect unless
+    /// `--observe-fields` is set.
+    #[arg(long = "observe-fields-max-keys", default_value_t = 10_000)]
+    pub observe_fields_max_keys: usize,
+
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
     ///
     /// Off by default. When enabled, the engine builds a single
@@ -408,6 +432,8 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         allow_remote_include,
         bloom_prefilter,
         bloom_max_bytes,
+        observe_fields,
+        observe_fields_max_keys,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -507,6 +533,8 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         allow_remote_include,
         bloom_prefilter,
         bloom_max_bytes,
+        observe_fields,
+        observe_fields_max_keys,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -560,6 +588,8 @@ fn run_daemon(
     allow_remote_include: bool,
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
+    observe_fields: bool,
+    observe_fields_max_keys: usize,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     source_paths: Vec<PathBuf>,
@@ -685,6 +715,8 @@ fn run_daemon(
         allow_remote_include,
         bloom_prefilter,
         bloom_max_bytes,
+        observe_fields,
+        observe_fields_max_keys,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,

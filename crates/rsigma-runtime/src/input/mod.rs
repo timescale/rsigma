@@ -101,6 +101,14 @@ impl Event for EventInputDecoded {
             EventInputDecoded::Plain(e) => e.to_json(),
         }
     }
+
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        match self {
+            EventInputDecoded::Json(e) => e.field_keys(),
+            EventInputDecoded::Kv(e) => e.field_keys(),
+            EventInputDecoded::Plain(e) => e.field_keys(),
+        }
+    }
 }
 
 /// Parse a raw log line using the specified format.

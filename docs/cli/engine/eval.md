@@ -66,6 +66,29 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 | `--bloom-max-bytes <BYTES>` | `1048576` | Memory budget for the bloom index (1 MiB default). No effect without `--bloom-prefilter`. |
 | `--cross-rule-ac` | off | Enable the cross-rule Aho-Corasick pre-filter. Available when compiled with the `daachorse-index` Cargo feature. See [Performance Tuning](../../guide/performance-tuning.md#cross-rule-aho-corasick-pre-filter). |
 
+### Field observability (offline coverage report)
+
+The same gap / broken-coverage signals exposed by the daemon's `/api/v1/fields*` endpoints are available offline as a one-shot report:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--observe-fields` | off | Record the field keys of every evaluated event and emit a coverage report at end-of-run. The report has the same JSON shape as `GET /api/v1/fields`, so the same `jq` queries work against either runtime (suited for CI gap analysis). |
+| `--observe-fields-max-keys <N>` | `10000` | Hard ceiling on distinct field names tracked. New keys are dropped after the cap (and counted via `overflow_dropped` in the report). |
+| `--observe-fields-report <PATH>` | unset | Write the report to a file. When omitted (and `--observe-fields` is set), the report goes to stderr so detections on stdout stay machine-consumable. |
+
+```bash
+# CI: keep stdout for detection NDJSON, stderr for logs, report in its own file
+rsigma engine eval -r rules/ -e @events.ndjson \
+    --observe-fields \
+    --observe-fields-report coverage.json
+
+# Quick interactive run: the report shows up on stderr alongside the
+# "Processed N events, M matches." line
+rsigma engine eval -r rules/ -e @events.ndjson --observe-fields
+```
+
+See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow shared with the daemon path.
+
 ### CI gating
 
 | Flag | Description |

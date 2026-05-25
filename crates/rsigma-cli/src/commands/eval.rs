@@ -1,10 +1,13 @@
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 
 use clap::Args;
-use rsigma_eval::{CorrelationEngine, Engine, JsonEvent, Pipeline};
+use rsigma_eval::{
+    CorrelationEngine, Engine, Event, FieldObserver, JsonEvent, Pipeline, RuleFieldSet,
+};
 use rsigma_parser::SigmaCollection;
 
 use crate::EventFilter;
@@ -116,6 +119,44 @@ pub(crate) struct EvalArgs {
     #[cfg(feature = "daachorse-index")]
     #[arg(long = "cross-rule-ac")]
     pub cross_rule_ac: bool,
+
+    /// Record the field keys of every evaluated event and emit a
+    /// coverage report at the end of the run.
+    ///
+    /// The report joins observed event fields against the field names
+    /// referenced by the loaded rules and surfaces two halves of
+    /// detection coverage:
+    ///
+    /// - **gap signal:** event fields no rule references.
+    /// - **broken-coverage signal:** rule fields that never appeared
+    ///   in an event during the run.
+    ///
+    /// Off by default. Same JSON shape as the daemon's
+    /// `GET /api/v1/fields` endpoint so the same `jq` query works
+    /// against either runtime (e.g. for a CI gate).
+    #[arg(long = "observe-fields")]
+    pub observe_fields: bool,
+
+    /// Hard ceiling on the number of distinct field names tracked.
+    /// Once the ceiling is reached, new keys are dropped (and counted
+    /// via `overflow_dropped` in the report); existing keys keep
+    /// incrementing. Default: 10000. Has no effect unless
+    /// `--observe-fields` is set.
+    #[arg(
+        long = "observe-fields-max-keys",
+        default_value_t = std::num::NonZeroUsize::new(10_000).unwrap(),
+    )]
+    pub observe_fields_max_keys: std::num::NonZeroUsize,
+
+    /// Path to write the field-observation JSON report to. When
+    /// omitted (and `--observe-fields` is set) the report is written
+    /// to stderr so detections on stdout stay machine-consumable.
+    #[arg(
+        long = "observe-fields-report",
+        value_name = "PATH",
+        requires = "observe_fields"
+    )]
+    pub observe_fields_report: Option<PathBuf>,
 }
 
 /// Resolved event source from the `--event` flag.
@@ -179,6 +220,9 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
         bloom_max_bytes,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
+        observe_fields,
+        observe_fields_max_keys,
+        observe_fields_report,
     } = args;
 
     let collection = crate::load_collection(&rules_path);
@@ -208,7 +252,24 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
         "wallclock",
     );
 
-    if has_correlations {
+    // Field observability context, built once before evaluation and
+    // shared across the eval helpers. None unless `--observe-fields`
+    // is set. The rule field set is computed from the collection +
+    // pipelines so the report matches what the engine evaluates
+    // against; ownership of the collection is preserved because
+    // `add_collection` borrows it.
+    let observe_ctx: Option<ObserveContext> = if observe_fields {
+        Some(ObserveContext {
+            observer: Arc::new(FieldObserver::new(observe_fields_max_keys.get())),
+            rule_field_set: RuleFieldSet::collect(&collection, &pipelines, true),
+            report_path: observe_fields_report,
+        })
+    } else {
+        None
+    };
+    let observe_ref = observe_ctx.as_ref();
+
+    let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
             &rules_path,
@@ -224,6 +285,7 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
             bloom_max_bytes,
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac,
+            observe_ref,
         )
     } else {
         cmd_eval_detection_only(
@@ -240,8 +302,15 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
             bloom_max_bytes,
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac,
+            observe_ref,
         )
+    };
+
+    if let Some(ctx) = observe_ref {
+        render_field_report(ctx);
     }
+
+    had_matches
 }
 
 /// Evaluation with correlations (stateful). Returns `true` if any match fired.
@@ -260,6 +329,7 @@ fn cmd_eval_with_correlations(
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
+    observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
@@ -303,6 +373,7 @@ fn cmd_eval_with_correlations(
             let mut had_matches = false;
             for payload in crate::apply_event_filter(&value, event_filter) {
                 let event = JsonEvent::borrow(&payload);
+                observe_event(observe, &event);
                 let result = engine.process_event(&event);
 
                 if result.is_empty() {
@@ -329,6 +400,7 @@ fn cmd_eval_with_correlations(
                 pretty,
                 input_format_str,
                 syslog_tz_str,
+                observe,
             );
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
@@ -338,7 +410,7 @@ fn cmd_eval_with_correlations(
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
             let (det_count, corr_count, rec_count) =
-                eval_evtx_corr(&mut engine, &path, event_filter, pretty);
+                eval_evtx_corr(&mut engine, &path, event_filter, pretty, observe);
             eprintln!(
                 "Processed {rec_count} EVTX records, {det_count} detection matches, {corr_count} correlation matches."
             );
@@ -353,6 +425,7 @@ fn cmd_eval_with_correlations(
                 pretty,
                 input_format_str,
                 syslog_tz_str,
+                observe,
             );
             eprintln!(
                 "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
@@ -372,6 +445,7 @@ fn eval_stream_corr(
     pretty: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
+    observe: Option<&ObserveContext>,
 ) -> (u64, u64, u64) {
     let mut line_num = 0u64;
     let mut det_count = 0u64;
@@ -407,6 +481,7 @@ fn eval_stream_corr(
                 pretty,
                 &mut det_count,
                 &mut corr_count,
+                observe,
             );
         }
         #[cfg(not(feature = "daemon"))]
@@ -418,6 +493,7 @@ fn eval_stream_corr(
                 pretty,
                 &mut det_count,
                 &mut corr_count,
+                observe,
             );
         }
     }
@@ -427,6 +503,7 @@ fn eval_stream_corr(
 
 /// Evaluate a single line through the correlation engine using format-aware parsing.
 #[cfg(feature = "daemon")]
+#[allow(clippy::too_many_arguments)]
 fn eval_line_corr(
     engine: &mut CorrelationEngine,
     line: &str,
@@ -435,15 +512,15 @@ fn eval_line_corr(
     pretty: bool,
     det_count: &mut u64,
     corr_count: &mut u64,
+    observe: Option<&ObserveContext>,
 ) {
-    use rsigma_eval::Event;
-
     if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
         // For JSON events, apply the event filter (which may produce multiple payloads).
         if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
             let json_value = decoded.to_json();
             for payload in crate::apply_event_filter(&json_value, event_filter) {
                 let event = JsonEvent::borrow(&payload);
+                observe_event(observe, &event);
                 let result = engine.process_event(&event);
                 for m in &result {
                     if m.is_detection() {
@@ -456,6 +533,7 @@ fn eval_line_corr(
             }
         } else {
             // Non-JSON events: evaluate directly (no event filter).
+            observe_event(observe, &decoded);
             let result = engine.process_event(&decoded);
             for m in &result {
                 if m.is_detection() {
@@ -471,6 +549,7 @@ fn eval_line_corr(
 
 /// Evaluate a single line through the correlation engine (JSON-only fallback).
 #[cfg(not(feature = "daemon"))]
+#[allow(clippy::too_many_arguments)]
 fn eval_line_corr_json(
     engine: &mut CorrelationEngine,
     line: &str,
@@ -478,6 +557,7 @@ fn eval_line_corr_json(
     pretty: bool,
     det_count: &mut u64,
     corr_count: &mut u64,
+    observe: Option<&ObserveContext>,
 ) {
     let value: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -489,6 +569,7 @@ fn eval_line_corr_json(
 
     for payload in crate::apply_event_filter(&value, event_filter) {
         let event = JsonEvent::borrow(&payload);
+        observe_event(observe, &event);
         let result = engine.process_event(&event);
         for m in &result {
             if m.is_detection() {
@@ -516,6 +597,7 @@ fn cmd_eval_detection_only(
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
+    observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = Engine::new();
     engine.set_include_event(include_event);
@@ -562,6 +644,7 @@ fn cmd_eval_detection_only(
             } else {
                 for payload in &payloads {
                     let event = JsonEvent::borrow(payload);
+                    observe_event(observe, &event);
                     let matches = engine.evaluate(&event);
 
                     if matches.is_empty() {
@@ -589,13 +672,15 @@ fn cmd_eval_detection_only(
                 pretty,
                 input_format_str,
                 syslog_tz_str,
+                observe,
             );
             eprintln!("Processed {line_num} events, {match_count} matches.");
             match_count > 0
         }
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
-            let (match_count, rec_count) = eval_evtx_detect(&engine, &path, event_filter, pretty);
+            let (match_count, rec_count) =
+                eval_evtx_detect(&engine, &path, event_filter, pretty, observe);
             eprintln!("Processed {rec_count} EVTX records, {match_count} matches.");
             match_count > 0
         }
@@ -608,6 +693,7 @@ fn cmd_eval_detection_only(
                 pretty,
                 input_format_str,
                 syslog_tz_str,
+                observe,
             );
             eprintln!("Processed {line_num} events, {match_count} matches.");
             match_count > 0
@@ -625,6 +711,7 @@ fn eval_stream_detect(
     pretty: bool,
     input_format_str: &str,
     syslog_tz_str: &str,
+    observe: Option<&ObserveContext>,
 ) -> (u64, u64) {
     let mut line_num = 0u64;
     let mut match_count = 0u64;
@@ -657,11 +744,19 @@ fn eval_stream_detect(
                 event_filter,
                 pretty,
                 &mut match_count,
+                observe,
             );
         }
         #[cfg(not(feature = "daemon"))]
         {
-            eval_line_detect_json(engine, &line, event_filter, pretty, &mut match_count);
+            eval_line_detect_json(
+                engine,
+                &line,
+                event_filter,
+                pretty,
+                &mut match_count,
+                observe,
+            );
         }
     }
 
@@ -670,6 +765,7 @@ fn eval_stream_detect(
 
 /// Evaluate a single line through the detection engine using format-aware parsing.
 #[cfg(feature = "daemon")]
+#[allow(clippy::too_many_arguments)]
 fn eval_line_detect(
     engine: &Engine,
     line: &str,
@@ -677,20 +773,21 @@ fn eval_line_detect(
     event_filter: &EventFilter,
     pretty: bool,
     match_count: &mut u64,
+    observe: Option<&ObserveContext>,
 ) {
-    use rsigma_eval::Event;
-
     if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
         if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
             let json_value = decoded.to_json();
             for payload in crate::apply_event_filter(&json_value, event_filter) {
                 let event = JsonEvent::borrow(&payload);
+                observe_event(observe, &event);
                 for m in &engine.evaluate(&event) {
                     *match_count += 1;
                     crate::print_json(m, pretty);
                 }
             }
         } else {
+            observe_event(observe, &decoded);
             for m in &engine.evaluate(&decoded) {
                 *match_count += 1;
                 crate::print_json(m, pretty);
@@ -707,6 +804,7 @@ fn eval_line_detect_json(
     event_filter: &EventFilter,
     pretty: bool,
     match_count: &mut u64,
+    observe: Option<&ObserveContext>,
 ) {
     let value: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -718,6 +816,7 @@ fn eval_line_detect_json(
 
     for payload in crate::apply_event_filter(&value, event_filter) {
         let event = JsonEvent::borrow(&payload);
+        observe_event(observe, &event);
         for m in &engine.evaluate(&event) {
             *match_count += 1;
             crate::print_json(m, pretty);
@@ -737,6 +836,7 @@ fn eval_evtx_corr(
     path: &std::path::Path,
     event_filter: &EventFilter,
     pretty: bool,
+    observe: Option<&ObserveContext>,
 ) -> (u64, u64, u64) {
     let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
         eprintln!("Error opening EVTX file '{}': {e}", path.display());
@@ -759,6 +859,7 @@ fn eval_evtx_corr(
 
         for payload in crate::apply_event_filter(&value, event_filter) {
             let event = JsonEvent::borrow(&payload);
+            observe_event(observe, &event);
             let result = engine.process_event(&event);
             for m in &result {
                 if m.is_detection() {
@@ -782,6 +883,7 @@ fn eval_evtx_detect(
     path: &std::path::Path,
     event_filter: &EventFilter,
     pretty: bool,
+    observe: Option<&ObserveContext>,
 ) -> (u64, u64) {
     let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
         eprintln!("Error opening EVTX file '{}': {e}", path.display());
@@ -803,6 +905,7 @@ fn eval_evtx_detect(
 
         for payload in crate::apply_event_filter(&value, event_filter) {
             let event = JsonEvent::borrow(&payload);
+            observe_event(observe, &event);
             for m in &engine.evaluate(&event) {
                 match_count += 1;
                 crate::print_json(m, pretty);
@@ -811,4 +914,120 @@ fn eval_evtx_detect(
     }
 
     (match_count, rec_count)
+}
+
+// ---------------------------------------------------------------------------
+// Field observability for `engine eval`
+// ---------------------------------------------------------------------------
+
+/// Shared context for the eval-time field observer. Built once before
+/// the event loop and threaded through the helpers via
+/// `Option<&ObserveContext>` so the no-op (`None`) case stays a single
+/// pointer-comparison branch.
+struct ObserveContext {
+    observer: Arc<FieldObserver>,
+    rule_field_set: RuleFieldSet,
+    /// When `None`, the report is written to stderr at end-of-run.
+    /// When `Some(path)`, it is written to that file (created or
+    /// truncated). Stdout is intentionally not a destination: the
+    /// detection NDJSON stream lives there.
+    report_path: Option<PathBuf>,
+}
+
+/// Observe one event if the context is set; no-op otherwise. Inlined
+/// to keep the disabled path a single null pointer check.
+#[inline]
+fn observe_event<E: Event + ?Sized>(ctx: Option<&ObserveContext>, event: &E) {
+    if let Some(ctx) = ctx {
+        ctx.observer.observe(event);
+    }
+}
+
+/// Maximum number of rule titles surfaced per missing-field entry in
+/// the eval report (matches the daemon's `/api/v1/fields/missing`
+/// behaviour). A `truncated: true` flag accompanies any field that
+/// touches more rules than this cap.
+const EVAL_MISSING_RULE_TITLES_CAP: usize = 10;
+
+/// Render the end-of-run field coverage report and write it to the
+/// configured destination (file or stderr). The JSON shape matches
+/// the daemon's `GET /api/v1/fields` payload so CI pipelines can
+/// share a single `jq` query across runtimes.
+fn render_field_report(ctx: &ObserveContext) {
+    let snapshot = ctx.observer.snapshot();
+    let coverage = snapshot.coverage(&ctx.rule_field_set);
+
+    let unknown_entries: Vec<serde_json::Value> = coverage
+        .unknown
+        .iter()
+        .map(|e| {
+            let field: &str = &e.field;
+            serde_json::json!({ "field": field, "count": e.count })
+        })
+        .collect();
+    let missing_entries: Vec<serde_json::Value> = coverage
+        .missing
+        .iter()
+        .map(|(name, origin)| {
+            let total = origin.rule_titles.len();
+            let truncated = total > EVAL_MISSING_RULE_TITLES_CAP;
+            let rule_titles: Vec<&str> = origin
+                .rule_titles
+                .iter()
+                .map(String::as_str)
+                .take(EVAL_MISSING_RULE_TITLES_CAP)
+                .collect();
+            let sources: Vec<&str> = origin.sources.iter().map(|s| s.as_str()).collect();
+            serde_json::json!({
+                "field": name,
+                "rule_count": total,
+                "sources": sources,
+                "rule_titles": rule_titles,
+                "truncated": truncated,
+            })
+        })
+        .collect();
+
+    let report = serde_json::json!({
+        "summary": {
+            "events_observed": snapshot.events_observed,
+            "unique_keys_observed": snapshot.unique_keys,
+            "rule_fields_loaded": ctx.rule_field_set.len(),
+            "overflow_dropped": snapshot.overflow_dropped,
+            "max_keys": snapshot.max_keys,
+            "uptime_seconds": snapshot.uptime_seconds,
+            "intersection_count": coverage.intersection_count,
+            "unknown_count": unknown_entries.len(),
+            "missing_count": missing_entries.len(),
+        },
+        "unknown": unknown_entries,
+        "missing": missing_entries,
+    });
+
+    let serialized = serde_json::to_string_pretty(&report).unwrap_or_else(|_| report.to_string());
+
+    match ctx.report_path.as_deref() {
+        Some(path) => {
+            if let Err(e) = write_report_to_file(path, &serialized) {
+                eprintln!(
+                    "Failed to write field observation report to {}: {e}",
+                    path.display()
+                );
+            }
+        }
+        None => {
+            // Write to stderr so detections on stdout stay
+            // machine-consumable. A best-effort write: failures here
+            // do not change the exit code because the run already
+            // produced the NDJSON results the operator cares about.
+            let _ = writeln!(io::stderr(), "{serialized}");
+        }
+    }
+}
+
+fn write_report_to_file(path: &Path, serialized: &str) -> std::io::Result<()> {
+    let mut file = File::create(path)?;
+    file.write_all(serialized.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.flush()
 }

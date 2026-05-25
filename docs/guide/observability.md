@@ -159,6 +159,52 @@ groups:
           summary: rsigma rule reload is failing
 ```
 
+## Detection coverage with `--observe-fields`
+
+The daemon can answer two coverage questions live from inside the process:
+
+- **Gap signal:** "which event fields am I receiving that no loaded rule references?" An answer of "src_ip is the most-frequent unknown field" is a strong hint that an enricher should drop the field before ingestion, or that a new rule should consume it.
+- **Broken-coverage signal:** "which rule fields have never appeared in an event since the daemon started?" An answer of "ProcessGuid is referenced by 3 rules and was never seen" usually means a pipeline mapping is wrong or the upstream agent dropped the field.
+
+Field observation is **off by default** because it adds a per-event field iteration that operators should opt into. Enable it with `--observe-fields` and (optionally) cap memory with `--observe-fields-max-keys <N>` (default `10000`).
+
+```bash
+rsigma engine daemon -r /etc/rsigma/rules/ \
+  --pipeline ecs_windows \
+  --observe-fields \
+  --observe-fields-max-keys 10000
+```
+
+Once enabled, four endpoints are live on `--api-addr`:
+
+```bash
+# Compact one-shot view bundled with summary, unknown, missing.
+curl -sS http://127.0.0.1:9090/api/v1/fields | jq
+
+# Just the gap signal, sorted by hottest unknown first.
+curl -sS http://127.0.0.1:9090/api/v1/fields/unknown | jq '.items[:5]'
+
+# Just the broken-coverage signal, with sample rule titles.
+curl -sS http://127.0.0.1:9090/api/v1/fields/missing | jq '.items[:5]'
+
+# Start a fresh observation window after rolling out a new rule pack.
+curl -sS -X DELETE http://127.0.0.1:9090/api/v1/fields/observer
+```
+
+Three Prometheus surfaces refresh on every `/metrics` scrape (`rsigma_fields_observed_total`, `rsigma_fields_observer_unique_keys`, `rsigma_fields_observer_overflow_dropped_total`). A persistent positive rate on `rsigma_fields_observer_overflow_dropped_total` means `--observe-fields-max-keys` is too low for the deployment; bump it or accept that long-tail keys will be invisible.
+
+The same surface works offline via `rsigma engine eval --observe-fields` for CI gap analysis. The end-of-run report has the same JSON shape as `GET /api/v1/fields`, so a single `jq` query works against either runtime:
+
+```bash
+rsigma engine eval -r rules/ -e @events.ndjson \
+    --observe-fields \
+    --observe-fields-report coverage.json
+
+jq '.summary | {events_observed, unknown_count, missing_count}' coverage.json
+```
+
+See [HTTP API: Field observability](../reference/http-api.md#field-observability) for the daemon endpoint payloads and pagination, [`engine daemon`](../cli/engine/daemon.md#field-observability-advanced) for the daemon flags, and [`engine eval`](../cli/engine/eval.md#field-observability-offline-coverage-report) for the offline equivalent.
+
 ## Health probes
 
 For Kubernetes-style orchestrators:
@@ -193,6 +239,6 @@ The first line of `/metrics` should be a `# HELP rsigma_back_pressure_events_tot
 - [Streaming Detection](streaming-detection.md) for the daemon's HTTP API surface that complements the metrics endpoint.
 - [Performance Tuning](performance-tuning.md) for which metric to watch when sizing `--buffer-size`, `--batch-size`, or correlation `max_state_entries`.
 - [NATS Streaming](nats-streaming.md) for the NATS-specific log targets (`async_nats::connector`).
-- [Prometheus metrics reference](../reference/metrics.md) for the full 27-metric catalog.
+- [Prometheus metrics reference](../reference/metrics.md) for the full 30-metric catalog.
 - [HTTP API reference](../reference/http-api.md) for every endpoint exposed alongside `/metrics`.
 - [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives) for the exact `RUST_LOG` directive grammar.

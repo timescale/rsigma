@@ -18,6 +18,10 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/sources` | GET | none | Dynamic pipeline sources currently registered. |
 | `/api/v1/sources/resolve` | POST | none | Force re-resolution of all dynamic sources (with no body) or one specific source (with `{"source_id":"..."}`). |
 | `/api/v1/sources/cache/{source_id}` | DELETE | none | Invalidate one source's cache so the next read fetches fresh. |
+| `/api/v1/fields` | GET | none | Combined gap + broken-coverage report. Requires `--observe-fields`. |
+| `/api/v1/fields/unknown` | GET | none | Fields seen in events that no rule references. Requires `--observe-fields`. |
+| `/api/v1/fields/missing` | GET | none | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
+| `/api/v1/fields/observer` | DELETE | none | Reset the field observer's counters. Requires `--observe-fields`. |
 | `/v1/logs` | POST | none | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
 | OTLP/gRPC `LogsService/Export` | gRPC | none | OTLP over gRPC on the same `--api-addr`. Requires `daemon-otlp`. |
 
@@ -211,6 +215,122 @@ curl -sS -X DELETE http://127.0.0.1:9090/api/v1/sources/cache/ip_blocklist
 ```
 
 The endpoint returns `200 OK` for any source ID regardless of whether that ID is currently configured; nonexistent IDs are a no-op. If you need a strict check, list `/api/v1/sources` first and confirm the source is registered before invalidating.
+
+## Field observability
+
+The daemon can record the field keys of every event it evaluates and join that against the field names referenced by loaded rules. This surfaces two halves of detection coverage from inside the process:
+
+- **Gap signal:** fields in events that no rule references. Likely candidates for new detections, or a sign that an enricher should drop the field before ingestion.
+- **Broken-coverage signal:** fields referenced by rules that have never appeared in an event. Either the rule is dead-lettered (wrong pipeline mapping, wrong logsource) or the event source has stopped emitting that field.
+
+Field observation is **off by default**. Start the daemon with `--observe-fields` (and optionally `--observe-fields-max-keys <N>`, default `10000`) to enable the surface. When disabled, all four endpoints below return `503 Service Unavailable` with `{"error":"field observation disabled","hint":"..."}`.
+
+Three Prometheus surfaces refresh on every `/metrics` scrape (and after every successful `/api/v1/fields/*` call): `rsigma_fields_observed_total`, `rsigma_fields_observer_unique_keys`, and `rsigma_fields_observer_overflow_dropped_total`. See [Prometheus metrics](metrics.md) for the catalog entries.
+
+### `GET /api/v1/fields`
+
+One-shot snapshot bundling `summary`, `unknown`, and `missing` sections. Useful for dashboards that want all three views in a single round-trip. Each list section is paginated via `?limit=N&offset=M`.
+
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/fields?limit=10'
+```
+
+```json
+{
+  "summary": {
+    "events_observed": 1248,
+    "unique_keys_observed": 18,
+    "rule_fields_loaded": 22,
+    "overflow_dropped": 0,
+    "max_keys": 10000,
+    "uptime_seconds": 312.4,
+    "intersection_count": 12,
+    "unknown_count": 6,
+    "missing_count": 10
+  },
+  "unknown": {
+    "items": [{"field": "src_ip", "count": 1187}],
+    "total": 6,
+    "offset": 0,
+    "limit": 10,
+    "next_offset": null
+  },
+  "missing": {
+    "items": [{
+      "field": "ProcessGuid",
+      "rule_count": 3,
+      "sources": ["detection"],
+      "rule_titles": ["Sysmon Process Tampering", "..."],
+      "truncated": false
+    }],
+    "total": 10,
+    "offset": 0,
+    "limit": 10,
+    "next_offset": null
+  }
+}
+```
+
+### `GET /api/v1/fields/unknown`
+
+Event field paths that the observer has seen but no loaded rule references. Sorted by descending count, then ascending name. Paginated with `?limit=N&offset=M`.
+
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/fields/unknown?limit=5'
+```
+
+```json
+{
+  "items": [
+    {"field": "src_ip", "count": 1187},
+    {"field": "User", "count": 1183}
+  ],
+  "total": 6,
+  "offset": 0,
+  "limit": 5,
+  "next_offset": null
+}
+```
+
+### `GET /api/v1/fields/missing`
+
+Field names referenced by loaded rules that have never appeared in an event since the observer was started (or last reset). Each entry includes `rule_count` (total rules touching the field), `sources` (the kinds the field originated in: `detection`, `correlation`, `filter`, `metadata`), and `rule_titles` (up to 10 sample titles, with `truncated: true` when more exist).
+
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/fields/missing?limit=5'
+```
+
+```json
+{
+  "items": [
+    {
+      "field": "ProcessGuid",
+      "rule_count": 3,
+      "sources": ["detection"],
+      "rule_titles": ["Sysmon Process Tampering"],
+      "truncated": false
+    }
+  ],
+  "total": 10,
+  "offset": 0,
+  "limit": 5,
+  "next_offset": null
+}
+```
+
+### `DELETE /api/v1/fields/observer`
+
+Clear the observer's counters and overflow tally, and reset the per-observer uptime clock. Returns what was cleared so dashboards can subtract baselines.
+
+```bash
+curl -sS -X DELETE http://127.0.0.1:9090/api/v1/fields/observer
+```
+
+```json
+{"status":"reset","previous_keys":18,"previous_events":1248}
+```
+
+A `DELETE` does not affect rule loading or any other daemon state. Use it after a rule reload to start a clean coverage window against the updated rule set.
 
 ## OTLP ingest
 

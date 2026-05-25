@@ -68,7 +68,10 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use processor::{EventFilter, LogProcessor};
 
-pub use rsigma_eval::{ProcessResult, ProcessResultExt};
+pub use rsigma_eval::{
+    FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult,
+    ProcessResultExt,
+};
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger};
 pub use sources::{
     DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,

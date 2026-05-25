@@ -5,6 +5,48 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Unknown-field discovery API (#149)
+
+The `engine daemon` learns to surface two halves of detection coverage live from inside the process: which event fields are not referenced by any loaded rule (gap signal) and which rule fields have never appeared in an event (broken-coverage signal). RSigma owns both rule parsing and event ingestion end-to-end, so this view does not need an external pipeline.
+
+**Two new flags on `rsigma engine daemon`** (off by default; zero overhead when not set):
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--observe-fields` | off | Enable the field observer. When enabled, every event evaluated by the engine task has its dotted field paths recorded. |
+| `--observe-fields-max-keys <N>` | `10000` | Hard ceiling on distinct field names. Existing keys keep counting once the cap is hit; new keys are dropped and counted as overflow. |
+
+**Four new HTTP endpoints.**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/fields` | Snapshot bundling `summary` + `unknown` + `missing` for a one-shot dashboard read. |
+| `GET` | `/api/v1/fields/unknown` | Event fields not referenced by any rule. Sorted by descending count. |
+| `GET` | `/api/v1/fields/missing` | Rule fields never seen in events. Each entry includes up to 10 rule titles with a `truncated` flag for fields that span more rules. |
+| `DELETE` | `/api/v1/fields/observer` | Clear the observer's counters and return `{previous_keys, previous_events}`. |
+
+Each list endpoint accepts `?limit=N&offset=M` (default `limit=100`, cap `1000`) and returns `total` + `next_offset` for deterministic pagination. All four return `503 Service Unavailable` with `{"error":"field observation disabled","hint":"..."}` when `--observe-fields` is not set.
+
+**Three new Prometheus surfaces.**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `rsigma_fields_observed_total` | counter | Total events scanned by the opt-in field observer. |
+| `rsigma_fields_observer_unique_keys` | gauge | Distinct field names currently tracked. |
+| `rsigma_fields_observer_overflow_dropped_total` | counter | New-key insert attempts dropped because the observer was at capacity. |
+
+The gauges refresh on every `/metrics` scrape and after every successful `/api/v1/fields/*` call, so a Prometheus alert on `rsigma_fields_observer_overflow_dropped_total` fires the moment an operator's `--observe-fields-max-keys` choice is too low for the deployment.
+
+**Shared extraction with `rsigma rule fields`.** The rule-field side of the join lives in a new `rsigma_eval::fields` module (`RuleFieldSet`) that both the CLI subcommand and the daemon import. The daemon caches the post-pipeline set on `RuntimeEngine` via `ArcSwap` and refreshes it on every successful `load_rules()`, so the HTTP handlers run lock-free against a stable view even during hot reloads.
+
+**Shared join primitive.** `FieldObservation::coverage(&RuleFieldSet) -> FieldCoverage` lives in `rsigma-eval` and partitions an observation snapshot into the unknown / intersection / missing buckets in one pass. Both the daemon's HTTP handlers and the eval report consume this, so the partition semantics cannot drift across runtimes.
+
+**Implementation cost.** Default-off; the engine task takes a single `ArcSwap` load per batch when no observer is attached and skips field iteration entirely. With `--observe-fields` set, the only added work is one `Event::field_keys()` walk per parsed event (one `String` allocation per leaf path, depth-capped at 64; flat formats like `KvEvent` return `Cow::Borrowed`) plus a short `std::sync::Mutex` lock to update counters. Memory is bounded by `--observe-fields-max-keys` (10k default ≈ a few hundred KB; keys stored as `Arc<str>` so snapshots refcount-bump rather than copy).
+
+**Offline coverage report.** `rsigma engine eval` mirrors the daemon's field-observability surface with three new flags: `--observe-fields` enables observation; `--observe-fields-max-keys <N>` (default 10000, validated as `NonZeroUsize` so 0 is rejected at parse time); `--observe-fields-report <PATH>` writes the JSON report to a file (defaults to stderr if omitted so detections on stdout stay machine-consumable; clap-`requires` `--observe-fields` so the typo case fails fast). The report has the same shape as `GET /api/v1/fields`, so the same `jq` queries work against either runtime. To make this possible without coupling `engine eval` to the `daemon` Cargo feature, `FieldObserver` lives in `rsigma-eval` (which every consumer already links) and uses `std::sync::Mutex` to keep `rsigma-eval` dependency-light. `rsigma-runtime` keeps a `pub use rsigma_eval::{FieldObserver, FieldObservation, FieldObservationEntry, FieldCoverage}` re-export so existing imports continue to compile unchanged.
+
+**Docs.** Endpoint reference under "Field observability" in `docs/reference/http-api.md`; flag rows in `docs/cli/engine/daemon.md` and `docs/cli/engine/eval.md`; metric rows in `docs/reference/metrics.md`; combined daemon/eval workflow in `docs/guide/observability.md`.
+
 ### Server-side TLS for the daemon API listener (#128)
 
 The `engine daemon` API listener now terminates TLS in-process for every protocol that already shares `--api-addr`: the Axum HTTP REST API (`/healthz`, `/readyz`, `/metrics`, `/api/v1/*`), OTLP/HTTP on `POST /v1/logs`, and OTLP/gRPC via `LogsService/Export`. Operators can drop the sidecar reverse proxy they previously needed for confidentiality, integrity, and agent-to-daemon pinning.

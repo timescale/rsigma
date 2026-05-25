@@ -38,6 +38,13 @@ impl Event for PlainEvent {
     fn to_json(&self) -> Value {
         serde_json::json!({ "_raw": self.raw })
     }
+
+    /// Plain log lines have no structured field surface; the synthetic
+    /// `_raw` envelope from `to_json` is not a field operators care about
+    /// for coverage analysis.
+    fn field_keys(&self) -> Vec<Cow<'_, str>> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -56,6 +63,12 @@ mod tests {
         let event = PlainEvent::new("error: disk full".into());
         assert!(event.any_string_value(&|s| s.contains("disk")));
         assert!(!event.any_string_value(&|s| s.contains("memory")));
+    }
+
+    #[test]
+    fn plain_field_keys_is_empty() {
+        let event = PlainEvent::new("error: disk full".into());
+        assert!(event.field_keys().is_empty());
     }
 
     #[test]

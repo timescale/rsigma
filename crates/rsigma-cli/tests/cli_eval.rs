@@ -722,3 +722,189 @@ fn help_flag() {
         .success()
         .stdout(predicate::str::contains("Parse, validate, and evaluate"));
 }
+
+// ---------------------------------------------------------------------------
+// eval subcommand — field observability (--observe-fields)
+// ---------------------------------------------------------------------------
+
+/// Helper: run `engine eval` with `--observe-fields --observe-fields-report
+/// <path>` against an inline event, and return the parsed report JSON.
+fn run_eval_with_observation(
+    rule_yaml: &str,
+    event_json: &str,
+    extra_flags: &[&str],
+) -> serde_json::Value {
+    let rule = temp_file(".yml", rule_yaml);
+    let report_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let mut args: Vec<&str> = vec![
+        "engine",
+        "eval",
+        "--rules",
+        rule.path().to_str().unwrap(),
+        "--event",
+        event_json,
+        "--observe-fields",
+        "--observe-fields-report",
+        report_file.path().to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra_flags);
+    rsigma().args(&args).assert().success();
+    let body = std::fs::read_to_string(report_file.path()).unwrap();
+    serde_json::from_str(&body).expect("report file should be valid JSON")
+}
+
+#[test]
+fn observe_fields_emits_full_report_to_file() {
+    let report = run_eval_with_observation(
+        SIMPLE_RULE,
+        r#"{"CommandLine":"malware","User":"alice","src_ip":"10.0.0.1"}"#,
+        &[],
+    );
+    let summary = &report["summary"];
+    assert_eq!(summary["events_observed"].as_u64().unwrap(), 1);
+    assert_eq!(summary["unique_keys_observed"].as_u64().unwrap(), 3);
+    assert_eq!(summary["overflow_dropped"].as_u64().unwrap(), 0);
+    assert!(summary["rule_fields_loaded"].as_u64().unwrap() >= 1);
+    assert_eq!(summary["intersection_count"].as_u64().unwrap(), 1); // CommandLine
+    assert_eq!(summary["unknown_count"].as_u64().unwrap(), 2); // User + src_ip
+}
+
+#[test]
+fn observe_fields_unknown_lists_event_fields_no_rule_references() {
+    let report = run_eval_with_observation(
+        SIMPLE_RULE,
+        r#"{"CommandLine":"malware","User":"alice","src_ip":"10.0.0.1"}"#,
+        &[],
+    );
+    let names: Vec<&str> = report["unknown"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["field"].as_str())
+        .collect();
+    assert!(names.contains(&"User"));
+    assert!(names.contains(&"src_ip"));
+    assert!(!names.contains(&"CommandLine"));
+}
+
+#[test]
+fn observe_fields_missing_lists_rule_fields_never_observed() {
+    // No CommandLine in the event => rule's CommandLine field is "missing".
+    let report = run_eval_with_observation(SIMPLE_RULE, r#"{"User":"alice"}"#, &[]);
+    let items = report["missing"].as_array().unwrap();
+    let cmd_entry = items
+        .iter()
+        .find(|e| e["field"] == "CommandLine")
+        .expect("CommandLine should be flagged missing");
+    assert!(cmd_entry["rule_count"].as_u64().unwrap() >= 1);
+    let sources: Vec<&str> = cmd_entry["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.as_str())
+        .collect();
+    assert!(sources.contains(&"detection"));
+}
+
+#[test]
+fn observe_fields_max_keys_caps_distinct_fields() {
+    let report = run_eval_with_observation(
+        SIMPLE_RULE,
+        r#"{"a":1,"b":2,"c":3,"d":4,"e":5}"#,
+        &["--observe-fields-max-keys", "2"],
+    );
+    let summary = &report["summary"];
+    assert_eq!(summary["unique_keys_observed"].as_u64().unwrap(), 2);
+    assert_eq!(summary["overflow_dropped"].as_u64().unwrap(), 3);
+    assert_eq!(summary["max_keys"].as_u64().unwrap(), 2);
+}
+
+#[test]
+fn observe_fields_writes_to_stderr_when_no_report_path() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let output = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine":"malware","extra":"hello"}"#,
+            "--observe-fields",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The report is JSON on stderr; check for stable summary fields.
+    assert!(stderr.contains("\"events_observed\""));
+    assert!(stderr.contains("\"unknown\""));
+    assert!(stderr.contains("\"missing\""));
+    // And detections stay on stdout (rule fires on the matching event).
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Test Rule"));
+}
+
+#[test]
+fn observe_fields_report_without_observe_flag_is_rejected() {
+    // clap `requires` should refuse `--observe-fields-report` when
+    // `--observe-fields` is not also supplied, so a typo at the CLI
+    // surface fails fast instead of silently producing no report.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let report_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine":"malware"}"#,
+            "--observe-fields-report",
+            report_file.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--observe-fields"));
+}
+
+#[test]
+fn observe_fields_max_keys_zero_is_rejected() {
+    // NonZeroUsize value parser refuses 0; otherwise every observation
+    // would count as overflow with no useful tracking.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine":"malware"}"#,
+            "--observe-fields",
+            "--observe-fields-max-keys",
+            "0",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn observe_fields_off_by_default_emits_no_report() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let output = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine":"malware","extra":"hello"}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("\"events_observed\""));
+    assert!(!stderr.contains("\"unknown\""));
+}

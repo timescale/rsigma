@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
-use rsigma_eval::{Event, JsonEvent, ProcessResult, ProcessResultExt};
+use rsigma_eval::{Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet};
 
 use crate::engine::RuntimeEngine;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
@@ -26,6 +26,11 @@ pub type EventFilter = dyn Fn(&serde_json::Value) -> Vec<serde_json::Value>;
 pub struct LogProcessor {
     engine: Arc<ArcSwap<Mutex<RuntimeEngine>>>,
     metrics: Arc<dyn MetricsHook>,
+    /// Optional opt-in field observer. When `Some`, every parsed event
+    /// flowing through `process_batch_with_format` has its field keys
+    /// recorded. When `None`, the batch path skips iteration entirely
+    /// so the hot path stays untouched.
+    field_observer: ArcSwap<Option<Arc<FieldObserver>>>,
 }
 
 impl LogProcessor {
@@ -34,7 +39,24 @@ impl LogProcessor {
         LogProcessor {
             engine: Arc::new(ArcSwap::from_pointee(Mutex::new(engine))),
             metrics,
+            field_observer: ArcSwap::new(Arc::new(None)),
         }
+    }
+
+    /// Attach (or detach) the opt-in field observer.
+    ///
+    /// When set, [`process_batch_with_format`](Self::process_batch_with_format)
+    /// records each parsed event's field keys before evaluation. Pass
+    /// `None` to disable observation; the hot path then performs zero
+    /// extra work. Safe to call at runtime: the swap is wait-free, and
+    /// in-flight batches finish against whichever observer they read.
+    pub fn set_field_observer(&self, observer: Option<Arc<FieldObserver>>) {
+        self.field_observer.store(Arc::new(observer));
+    }
+
+    /// Return the currently-attached field observer, if any.
+    pub fn field_observer(&self) -> Option<Arc<FieldObserver>> {
+        self.field_observer.load_full().as_ref().clone()
     }
 
     /// Atomically replace the engine with a new one.
@@ -200,6 +222,20 @@ impl LogProcessor {
             return empty_results(batch.len());
         }
 
+        // Optional opt-in field observation. Cheap when disabled: one
+        // hazard-pointer `Guard` (no Arc clone) plus an `Option` check.
+        // When enabled, walks each decoded event's field keys before
+        // evaluation. The Guard's lifetime extends through the loop so
+        // the observer cannot be dropped mid-batch even if the daemon
+        // detaches it concurrently.
+        let observer_guard = self.field_observer.load();
+        if let Some(observer) = observer_guard.as_ref() {
+            for (_, decoded) in &decoded_events {
+                observer.observe(decoded);
+            }
+        }
+        drop(observer_guard);
+
         // Phase 2: Batch evaluation — parallel detection + sequential correlation
         let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();
 
@@ -331,6 +367,15 @@ impl LogProcessor {
         let snapshot = self.engine.load();
         let engine = snapshot.lock();
         engine.stats()
+    }
+
+    /// Return an immutable snapshot of the current rule field set
+    /// (post-pipeline). The lock is held only long enough to clone the
+    /// `Arc`; the returned value remains valid across reloads.
+    pub fn rule_field_set(&self) -> Arc<RuleFieldSet> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        engine.rule_field_set()
     }
 }
 

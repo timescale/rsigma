@@ -79,6 +79,29 @@ This library is part of [rsigma].
 | `apply_pipelines_with_state(pipelines, rule)` | Apply pipelines and return the merged `PipelineState` (for backends) |
 | `merge_pipelines(pipelines)` | Merge multiple pipelines into one (sorted by priority) |
 
+### Rule field extraction (`fields` module)
+
+Shared between `rsigma rule fields` and the field-observability surfaces in both `engine eval` and `engine daemon`, so the offline view matches what the engine references at runtime.
+
+| Type / function | Description |
+|-----------------|-------------|
+| `RuleFieldSet::collect(collection, pipelines, include_filters)` | Walk a `SigmaCollection` (after optional pipeline transformations) and return every field name referenced by detection items, correlation `group-by`/threshold/alias fields, filter detections, and rule-level `fields:` metadata |
+| `RuleFieldSet::contains(name)` / `origin(name)` / `iter()` / `names()` / `len()` | Query the resulting set; entries are sorted lexicographically |
+| `FieldOrigin { rule_titles, sources }` | Per-field provenance: which rules touched it and from which kind |
+| `FieldSource::{Detection, Correlation, Filter, Metadata}` | Tagged source kind, with `as_str()` for stable JSON serialization |
+
+### Field observability (`field_observer` module)
+
+Opt-in counter that records every observed field name and surfaces gap and broken-coverage signals. Consumed by both `engine eval` (one-shot report at end-of-run) and `engine daemon` (live `/api/v1/fields*` endpoints).
+
+| Type / function | Description |
+|-----------------|-------------|
+| `FieldObserver::new(max_keys)` | Construct an observer with a hard cap on distinct keys (overflow drops are counted, existing keys keep updating) |
+| `FieldObserver::observe(event: &impl Event)` | Walk `event.field_keys()` and bump per-field counters; `&self` so callers can share an `Arc` |
+| `FieldObserver::snapshot()` | `FieldObservation { entries, events_observed, unique_keys, overflow_dropped, lifetime_events_observed, lifetime_overflow_dropped, max_keys, uptime_seconds }`. Entries sorted by descending count then name. Keys held as `Arc<str>` so the snapshot is refcount-cheap |
+| `FieldObservation::coverage(&RuleFieldSet)` | Partition a snapshot into `FieldCoverage { unknown, intersection_count, missing }` against a rule field set in one pass. Both the daemon HTTP handlers and the eval report consume this, so the partition semantics cannot drift |
+| `FieldObserver::reset()` | Clear counters; lifetime totals survive so Prometheus counter bridges stay monotonic |
+
 ## Detection Engine
 
 - **Compiled matchers**: optimized matching for all 30 modifier combinations — exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash expansion (5 replacement characters), field references, placeholder expansion, timestamp part extraction
@@ -144,6 +167,7 @@ The `Event` wrapper provides flexible field access over `serde_json::Value`:
 - **Dot-notation**: if no flat key matches and the path contains `.`, split and traverse nested objects.
 - **Array traversal**: arrays are searched with OR semantics (first matching element wins).
 - **Keyword detection**: `matches_keyword` searches all string values across all fields recursively.
+- **Field enumeration**: `field_keys()` returns the leaf field paths in dot-notation (e.g. `actor.id`), with intermediate object names included so callers can inspect coverage at any nesting level. Used by the daemon's opt-in field observer; not on the detection hot path. Ships with a default impl that walks `to_json()`; `JsonEvent` overrides with a zero-copy recursive walk.
 - **Max nesting depth**: recursive traversal stops at depth **64** (`MAX_NESTING_DEPTH`).
 
 ## Correlation Engine

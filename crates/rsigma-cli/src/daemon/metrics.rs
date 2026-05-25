@@ -47,6 +47,9 @@ pub struct Metrics {
     pub tls_certificate_expiry_seconds: Gauge,
     #[cfg(feature = "daemon-tls")]
     pub tls_active_connections: std::sync::Arc<IntGauge>,
+    pub fields_observed_total: IntCounter,
+    pub fields_observer_unique_keys: IntGauge,
+    pub fields_observer_overflow_dropped_total: IntCounter,
 }
 
 impl Metrics {
@@ -391,6 +394,31 @@ impl Metrics {
                 .unwrap();
         }
 
+        let fields_observed_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observed_total",
+            "Total events scanned by the opt-in field observer (--observe-fields)",
+        ))
+        .unwrap();
+        let fields_observer_unique_keys = IntGauge::with_opts(Opts::new(
+            "rsigma_fields_observer_unique_keys",
+            "Distinct field names currently tracked by the field observer",
+        ))
+        .unwrap();
+        let fields_observer_overflow_dropped_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observer_overflow_dropped_total",
+            "New-key insert attempts dropped because the field observer was at capacity",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(fields_observed_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_unique_keys.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_overflow_dropped_total.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -433,6 +461,39 @@ impl Metrics {
             tls_certificate_expiry_seconds,
             #[cfg(feature = "daemon-tls")]
             tls_active_connections,
+            fields_observed_total,
+            fields_observer_unique_keys,
+            fields_observer_overflow_dropped_total,
+        }
+    }
+
+    /// Refresh the field-observer Prometheus gauges from a snapshot.
+    /// Called both by the periodic uptime tick path inside the
+    /// `/metrics` handler and by the dedicated `/api/v1/fields*`
+    /// endpoints so a scrape immediately after a reset reflects the
+    /// new state.
+    ///
+    /// Prometheus counters must be monotonic, so this bridges from the
+    /// observer's *lifetime* totals (which never reset) rather than from
+    /// `events_observed` / `overflow_dropped` (which reset on
+    /// `DELETE /api/v1/fields/observer`). Without that, a reset between
+    /// scrapes silently drops every event observed before the
+    /// lifetime-total bridge re-overtook the Prometheus counter's
+    /// last-known value.
+    pub fn update_field_observer_metrics(&self, snapshot: &rsigma_runtime::FieldObservation) {
+        self.fields_observer_unique_keys
+            .set(snapshot.unique_keys as i64);
+        let observed_now = snapshot.lifetime_events_observed;
+        let observed_prev = self.fields_observed_total.get();
+        if observed_now > observed_prev {
+            self.fields_observed_total
+                .inc_by(observed_now - observed_prev);
+        }
+        let overflow_now = snapshot.lifetime_overflow_dropped;
+        let overflow_prev = self.fields_observer_overflow_dropped_total.get();
+        if overflow_now > overflow_prev {
+            self.fields_observer_overflow_dropped_total
+                .inc_by(overflow_now - overflow_prev);
         }
     }
 

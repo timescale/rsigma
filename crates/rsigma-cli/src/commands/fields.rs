@@ -1,17 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use clap::Args;
-use rsigma_eval::{Pipeline, apply_pipelines};
-use rsigma_parser::{
-    CorrelationCondition, CorrelationRule, Detection, DetectionItem, Detections, FilterRule,
-    SigmaCollection, SigmaRule,
-};
+use rsigma_eval::{FieldOrigin, FieldSource, Pipeline, RuleFieldSet};
+use rsigma_parser::SigmaCollection;
 use serde::Serialize;
-
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
 
 /// Arguments for `rsigma rule fields` (and the deprecated `rsigma fields`).
 #[derive(Args, Debug)]
@@ -97,127 +89,6 @@ struct PipelineMapping {
 }
 
 // ---------------------------------------------------------------------------
-// Field collection
-// ---------------------------------------------------------------------------
-
-/// Tracks where a field was seen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum FieldSource {
-    Detection,
-    Correlation,
-    Filter,
-    Metadata,
-}
-
-impl FieldSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            FieldSource::Detection => "detection",
-            FieldSource::Correlation => "correlation",
-            FieldSource::Filter => "filter",
-            FieldSource::Metadata => "metadata",
-        }
-    }
-}
-
-struct FieldCollector {
-    /// field_name -> (set of rule titles that reference it, set of source types)
-    fields: BTreeMap<String, (BTreeSet<String>, BTreeSet<FieldSource>)>,
-}
-
-impl FieldCollector {
-    fn new() -> Self {
-        Self {
-            fields: BTreeMap::new(),
-        }
-    }
-
-    fn add(&mut self, field: &str, rule_title: &str, source: FieldSource) {
-        let entry = self
-            .fields
-            .entry(field.to_string())
-            .or_insert_with(|| (BTreeSet::new(), BTreeSet::new()));
-        entry.0.insert(rule_title.to_string());
-        entry.1.insert(source);
-    }
-
-    fn collect_detection_items(
-        &mut self,
-        detection: &Detection,
-        rule_title: &str,
-        source: FieldSource,
-    ) {
-        match detection {
-            Detection::AllOf(items) => {
-                for item in items {
-                    self.collect_item(item, rule_title, source);
-                }
-            }
-            Detection::AnyOf(subs) => {
-                for sub in subs {
-                    self.collect_detection_items(sub, rule_title, source);
-                }
-            }
-            Detection::Keywords(_) => {}
-        }
-    }
-
-    fn collect_item(&mut self, item: &DetectionItem, rule_title: &str, source: FieldSource) {
-        if let Some(ref name) = item.field.name {
-            self.add(name, rule_title, source);
-        }
-    }
-
-    fn collect_detections(
-        &mut self,
-        detections: &Detections,
-        rule_title: &str,
-        source: FieldSource,
-    ) {
-        for det in detections.named.values() {
-            self.collect_detection_items(det, rule_title, source);
-        }
-    }
-
-    fn collect_rule(&mut self, rule: &SigmaRule) {
-        self.collect_detections(&rule.detection, &rule.title, FieldSource::Detection);
-        for f in &rule.fields {
-            self.add(f, &rule.title, FieldSource::Metadata);
-        }
-    }
-
-    fn collect_correlation(&mut self, corr: &CorrelationRule) {
-        for f in &corr.group_by {
-            self.add(f, &corr.title, FieldSource::Correlation);
-        }
-        if let CorrelationCondition::Threshold {
-            field: Some(ref fields),
-            ..
-        } = corr.condition
-        {
-            for f in fields {
-                self.add(f, &corr.title, FieldSource::Correlation);
-            }
-        }
-        for alias in &corr.aliases {
-            for mapped_field in alias.mapping.values() {
-                self.add(mapped_field, &corr.title, FieldSource::Correlation);
-            }
-        }
-        for f in &corr.fields {
-            self.add(f, &corr.title, FieldSource::Metadata);
-        }
-    }
-
-    fn collect_filter(&mut self, filter: &FilterRule) {
-        self.collect_detections(&filter.detection, &filter.title, FieldSource::Filter);
-        for f in &filter.fields {
-            self.add(f, &filter.title, FieldSource::Metadata);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Pipeline mapping extraction
 // ---------------------------------------------------------------------------
 
@@ -280,53 +151,32 @@ fn extract_pipeline_mappings(pipelines: &[Pipeline]) -> Vec<PipelineMapping> {
 // Report building
 // ---------------------------------------------------------------------------
 
+fn entry_from_origin(name: &str, origin: &FieldOrigin) -> FieldEntry {
+    let mut sources: Vec<&FieldSource> = origin.sources.iter().collect();
+    sources.sort();
+    FieldEntry {
+        field: name.to_string(),
+        rule_count: origin.rule_titles.len(),
+        sources: sources
+            .into_iter()
+            .map(|s| s.as_str().to_string())
+            .collect(),
+    }
+}
+
 fn build_report(
     collection: &SigmaCollection,
     pipelines: &[Pipeline],
     no_filters: bool,
 ) -> FieldsReport {
-    let mut collector = FieldCollector::new();
+    let set = RuleFieldSet::collect(collection, pipelines, !no_filters);
 
-    if pipelines.is_empty() {
-        for rule in &collection.rules {
-            collector.collect_rule(rule);
-        }
-        for corr in &collection.correlations {
-            collector.collect_correlation(corr);
-        }
-    } else {
-        for rule in &collection.rules {
-            let mut transformed = rule.clone();
-            if let Err(e) = apply_pipelines(pipelines, &mut transformed) {
-                eprintln!("Warning: pipeline error for '{}': {e}", rule.title);
-                collector.collect_rule(rule);
-                continue;
-            }
-            collector.collect_rule(&transformed);
-        }
-        for corr in &collection.correlations {
-            collector.collect_correlation(corr);
-        }
-    }
-
-    if !no_filters {
-        for filter in &collection.filters {
-            collector.collect_filter(filter);
-        }
-    }
-
-    let pipeline_mappings = extract_pipeline_mappings(pipelines);
-
-    let fields: Vec<FieldEntry> = collector
-        .fields
-        .into_iter()
-        .map(|(name, (rules, sources))| FieldEntry {
-            field: name,
-            rule_count: rules.len(),
-            sources: sources.iter().map(|s| s.as_str().to_string()).collect(),
-        })
+    let fields: Vec<FieldEntry> = set
+        .iter()
+        .map(|(name, origin)| entry_from_origin(name, origin))
         .collect();
 
+    let pipeline_mappings = extract_pipeline_mappings(pipelines);
     let unique_fields = fields.len();
 
     FieldsReport {

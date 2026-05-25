@@ -140,6 +140,15 @@ The auth methods are mutually exclusive. See [NATS Streaming](../../guide/nats-s
 | `--bloom-max-bytes <BYTES>` | `1048576` | Memory budget for the bloom index (1 MiB default). No effect without `--bloom-prefilter`. |
 | `--cross-rule-ac` | off | Enable cross-rule Aho-Corasick. Available with the `daachorse-index` build feature. See [Performance Tuning](../../guide/performance-tuning.md#cross-rule-aho-corasick-pre-filter). |
 
+### Field observability (advanced)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--observe-fields` | off | Record the field keys of every event evaluated by the engine task so the `/api/v1/fields/*` endpoints can report which event fields no rule references (gap signal) and which rule fields have never appeared in an event (broken-coverage signal). Off by default; when off the engine task does not iterate event fields at all. |
+| `--observe-fields-max-keys <N>` | `10000` | Hard ceiling on distinct field names tracked. Existing keys keep counting after the cap is hit; new keys are dropped and surfaced via `rsigma_fields_observer_overflow_dropped_total`. No effect without `--observe-fields`. |
+
+See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow, and [HTTP API](../../reference/http-api.md#field-observability) for the endpoint payloads.
+
 ## Examples
 
 ### Minimal daemon: stdin → stdout

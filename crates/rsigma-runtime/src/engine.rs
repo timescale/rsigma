@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, Pipeline, ProcessResult,
-    parse_pipeline_file,
+    RuleFieldSet, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -32,6 +33,11 @@ pub struct RuntimeEngine {
     /// `daachorse-index` Cargo feature.
     #[cfg(feature = "daachorse-index")]
     cross_rule_ac: bool,
+    /// Post-pipeline rule field set, refreshed at the end of every
+    /// `load_rules()`. Wrapped in `ArcSwap` so readers (e.g. the daemon's
+    /// `/api/v1/fields/*` endpoints) can snapshot a stable view without
+    /// blocking the hot path during a reload.
+    rule_field_set: Arc<ArcSwap<RuleFieldSet>>,
 }
 
 enum EngineVariant {
@@ -66,7 +72,19 @@ impl RuntimeEngine {
             bloom_max_bytes: None,
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac: false,
+            rule_field_set: Arc::new(ArcSwap::from_pointee(RuleFieldSet::default())),
         }
+    }
+
+    /// Return an immutable snapshot of the post-pipeline rule field set.
+    ///
+    /// Cheap to call: returns a refcounted handle that stays valid even if
+    /// `load_rules()` runs concurrently. The daemon's field-observability
+    /// endpoints use this to compute the intersection between observed
+    /// event keys and rule-referenced fields without coordinating with the
+    /// engine lock.
+    pub fn rule_field_set(&self) -> Arc<RuleFieldSet> {
+        self.rule_field_set.load_full()
     }
 
     /// Enable or disable bloom-filter pre-filtering on the inner detection
@@ -243,6 +261,7 @@ impl RuntimeEngine {
                 state_entries: engine.state_count(),
             };
             self.engine = EngineVariant::WithCorrelations(Box::new(engine));
+            self.refresh_rule_field_set(&collection);
             tracing::debug!(
                 detection_rules = stats.detection_rules,
                 correlation_rules = stats.correlation_rules,
@@ -272,6 +291,7 @@ impl RuntimeEngine {
                 state_entries: 0,
             };
             self.engine = EngineVariant::DetectionOnly(Box::new(engine));
+            self.refresh_rule_field_set(&collection);
             tracing::debug!(
                 detection_rules = stats.detection_rules,
                 correlation_rules = stats.correlation_rules,
@@ -280,6 +300,13 @@ impl RuntimeEngine {
             );
             Ok(stats)
         }
+    }
+
+    /// Recompute the post-pipeline rule field set and publish it. Called at
+    /// the end of every successful `load_rules()` branch.
+    fn refresh_rule_field_set(&self, collection: &SigmaCollection) {
+        let field_set = RuleFieldSet::collect(collection, &self.pipelines, true);
+        self.rule_field_set.store(Arc::new(field_set));
     }
 
     /// Process a batch of events using parallel detection + sequential correlation.

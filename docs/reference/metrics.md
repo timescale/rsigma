@@ -1,6 +1,6 @@
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue is 27 metric names across three concerns; the runtime exposes the ones that have ever fired in a given process. A startup scrape shows 21 names by default (one of the per-rule counters surfaces immediately because the registry pre-creates it for documentation); the remaining six lazy metrics register on first use of dynamic pipelines or OTLP.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue is 30 metric names across four concerns; the runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
@@ -86,6 +86,16 @@ Exposed when the daemon is built with `daemon-tls`. Both metrics render with the
 |--------|------|--------|-------------|
 | `rsigma_tls_certificate_expiry_seconds` | gauge | — | Seconds until the active TLS server certificate's `not_after`. Signed: negative once expired. Updated at startup and after every successful SIGHUP-triggered reload. |
 | `rsigma_tls_active_connections` | gauge | — | Currently active TLS-terminated connections on the API listener. Decrements on connection close (including handshake failure). |
+
+## Field observability (3 metrics)
+
+Exposed unconditionally; values stay at zero unless the daemon was started with `--observe-fields`. All three refresh on every `/metrics` scrape and after every successful `/api/v1/fields/*` call. See [HTTP API: Field observability](http-api.md#field-observability) for the matching endpoints.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_fields_observed_total` | counter | — | Total events scanned by the opt-in field observer. Advances regardless of whether the event had structured fields. |
+| `rsigma_fields_observer_unique_keys` | gauge | — | Distinct field names currently tracked. Saturates at `--observe-fields-max-keys` (default `10000`). |
+| `rsigma_fields_observer_overflow_dropped_total` | counter | — | New-key insert attempts dropped because the observer was at capacity. A persistent positive rate signals that `--observe-fields-max-keys` is too low for the deployment. |
 
 ## Scrape configuration
 

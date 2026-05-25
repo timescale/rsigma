@@ -12,8 +12,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
 use rsigma_runtime::{
-    AckToken, EnrichmentPipeline, FileSink, InputFormat, LogProcessor, MetricsHook, RawEvent,
-    RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
+    AckToken, EnrichmentPipeline, FieldObserver, FileSink, InputFormat, LogProcessor, MetricsHook,
+    RawEvent, RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -66,6 +66,10 @@ struct AppState {
     otlp_event_tx: mpsc::Sender<RawEvent>,
     /// The daemon-wide source registry for API endpoints.
     source_registry: Arc<rsigma_runtime::sources::registry::DaemonSourceRegistry>,
+    /// Opt-in field observer. `Some` when the daemon was started with
+    /// `--observe-fields`; the engine task records observed field keys
+    /// and the `/api/v1/fields/*` handlers (Phase 4) consume snapshots.
+    field_observer: Option<Arc<FieldObserver>>,
 }
 
 #[derive(Clone)]
@@ -101,6 +105,17 @@ pub struct DaemonConfig {
     /// Optional override for the bloom memory budget (bytes). `None` means
     /// the crate default (1 MB).
     pub bloom_max_bytes: Option<usize>,
+    /// Enable the opt-in field observer that counts every event's field
+    /// keys so the `/api/v1/fields/*` endpoints can surface gap and
+    /// broken-coverage signals. Off by default; when off the engine
+    /// task does not iterate `Event::field_keys` at all.
+    pub observe_fields: bool,
+    /// Hard ceiling on the number of distinct field names tracked by
+    /// the field observer. Once the ceiling is reached, new keys are
+    /// dropped (and counted via
+    /// `rsigma_fields_observer_overflow_dropped_total`); existing keys
+    /// keep incrementing.
+    pub observe_fields_max_keys: usize,
     /// Enable the cross-rule Aho-Corasick pre-filter. Off by default;
     /// benefit is workload-dependent (large rule sets with shared
     /// substring patterns). Available behind the `daachorse-index`
@@ -402,6 +417,18 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(feature = "daemon-otlp")]
     let otlp_event_tx = event_tx.clone();
 
+    let field_observer = if config.observe_fields {
+        let observer = Arc::new(FieldObserver::new(config.observe_fields_max_keys));
+        processor.set_field_observer(Some(observer.clone()));
+        tracing::info!(
+            max_keys = config.observe_fields_max_keys,
+            "Field observer enabled"
+        );
+        Some(observer)
+    } else {
+        None
+    };
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -414,6 +441,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
         source_registry: Arc::new(config.source_registry.clone()),
+        field_observer: field_observer.clone(),
     };
 
     let app = Router::new()
@@ -433,7 +461,11 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route(
             "/api/v1/sources/cache/{source_id}",
             delete(invalidate_source_cache),
-        );
+        )
+        .route("/api/v1/fields", get(fields_full))
+        .route("/api/v1/fields/unknown", get(fields_unknown))
+        .route("/api/v1/fields/missing", get(fields_missing))
+        .route("/api/v1/fields/observer", delete(fields_observer_reset));
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
@@ -1367,6 +1399,11 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
         .uptime_seconds
         .set(state.start_time.elapsed().as_secs_f64());
 
+    if let Some(observer) = state.field_observer.as_ref() {
+        let snapshot = observer.snapshot();
+        state.metrics.update_field_observer_metrics(&snapshot);
+    }
+
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -1562,6 +1599,231 @@ async fn invalidate_source_cache(
         StatusCode::OK,
         Json(serde_json::json!({ "status": "invalidated", "source_id": source_id })),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Field observability handlers
+// ---------------------------------------------------------------------------
+
+/// Default `?limit=` value for the paginated `/api/v1/fields/*` endpoints.
+const FIELDS_DEFAULT_LIMIT: usize = 100;
+/// Hard upper bound on `?limit=` to keep response payloads bounded even
+/// when an operator asks for everything.
+const FIELDS_MAX_LIMIT: usize = 1000;
+/// Maximum number of rule titles surfaced per missing-field entry. The
+/// API also reports `truncated: true` when a field carries more.
+const MISSING_RULE_TITLES_CAP: usize = 10;
+
+#[derive(serde::Deserialize, Default)]
+struct FieldsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+impl FieldsQuery {
+    fn limit(&self) -> usize {
+        self.limit
+            .unwrap_or(FIELDS_DEFAULT_LIMIT)
+            .min(FIELDS_MAX_LIMIT)
+    }
+    fn offset(&self) -> usize {
+        self.offset.unwrap_or(0)
+    }
+}
+
+fn observation_disabled_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "field observation disabled",
+            "hint": "restart the daemon with --observe-fields to enable /api/v1/fields/*",
+        })),
+    )
+        .into_response()
+}
+
+fn missing_field_payload(field: &str, origin: &rsigma_eval::FieldOrigin) -> serde_json::Value {
+    let mut rule_titles: Vec<&str> = origin.rule_titles.iter().map(String::as_str).collect();
+    let total = rule_titles.len();
+    let truncated = total > MISSING_RULE_TITLES_CAP;
+    rule_titles.truncate(MISSING_RULE_TITLES_CAP);
+    let sources: Vec<&str> = origin.sources.iter().map(|s| s.as_str()).collect();
+    serde_json::json!({
+        "field": field,
+        "rule_count": total,
+        "sources": sources,
+        "rule_titles": rule_titles,
+        "truncated": truncated,
+    })
+}
+
+/// Slice a window out of `items` by moving the page elements out of the
+/// source `Vec` rather than cloning. Returns the page, the original
+/// total (preserved before the move), and the next offset (if any).
+///
+/// Consumes `items` because all four field endpoints construct the
+/// list fresh from a snapshot and then discard the rest; cloning each
+/// `serde_json::Value` just to throw the leftovers away wastes work
+/// proportional to `total - limit`.
+fn paginate<T>(mut items: Vec<T>, offset: usize, limit: usize) -> (Vec<T>, usize, Option<usize>) {
+    let total = items.len();
+    if offset >= total {
+        return (Vec::new(), total, None);
+    }
+    let end = offset.saturating_add(limit).min(total);
+    items.truncate(end);
+    let page: Vec<T> = items.drain(offset..).collect();
+    let next_offset = if end < total { Some(end) } else { None };
+    (page, total, next_offset)
+}
+
+async fn fields_full(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<FieldsQuery>,
+) -> Response {
+    let Some(observer) = state.field_observer.as_ref() else {
+        return observation_disabled_response();
+    };
+    let snapshot = observer.snapshot();
+    state.metrics.update_field_observer_metrics(&snapshot);
+
+    let rule_field_set = state.processor.rule_field_set();
+    let coverage = snapshot.coverage(&rule_field_set);
+
+    let unknown_entries: Vec<serde_json::Value> = coverage
+        .unknown
+        .iter()
+        .map(|e| {
+            let field: &str = &e.field;
+            serde_json::json!({ "field": field, "count": e.count })
+        })
+        .collect();
+    let missing_entries: Vec<serde_json::Value> = coverage
+        .missing
+        .iter()
+        .map(|(name, origin)| missing_field_payload(name, origin))
+        .collect();
+    let intersection_count = coverage.intersection_count;
+
+    let (unknown_page, unknown_total, unknown_next) =
+        paginate(unknown_entries, query.offset(), query.limit());
+    let (missing_page, missing_total, missing_next) =
+        paginate(missing_entries, query.offset(), query.limit());
+
+    let body = serde_json::json!({
+        "summary": {
+            "events_observed": snapshot.events_observed,
+            "unique_keys_observed": snapshot.unique_keys,
+            "rule_fields_loaded": rule_field_set.len(),
+            "overflow_dropped": snapshot.overflow_dropped,
+            "max_keys": snapshot.max_keys,
+            "uptime_seconds": snapshot.uptime_seconds,
+            "intersection_count": intersection_count,
+            "unknown_count": unknown_total,
+            "missing_count": missing_total,
+        },
+        "unknown": {
+            "items": unknown_page,
+            "total": unknown_total,
+            "offset": query.offset(),
+            "limit": query.limit(),
+            "next_offset": unknown_next,
+        },
+        "missing": {
+            "items": missing_page,
+            "total": missing_total,
+            "offset": query.offset(),
+            "limit": query.limit(),
+            "next_offset": missing_next,
+        },
+    });
+
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+async fn fields_unknown(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<FieldsQuery>,
+) -> Response {
+    let Some(observer) = state.field_observer.as_ref() else {
+        return observation_disabled_response();
+    };
+    let snapshot = observer.snapshot();
+    state.metrics.update_field_observer_metrics(&snapshot);
+
+    let rule_field_set = state.processor.rule_field_set();
+
+    let coverage = snapshot.coverage(&rule_field_set);
+    let entries: Vec<serde_json::Value> = coverage
+        .unknown
+        .iter()
+        .map(|e| {
+            let field: &str = &e.field;
+            serde_json::json!({ "field": field, "count": e.count })
+        })
+        .collect();
+    let (page, total, next_offset) = paginate(entries, query.offset(), query.limit());
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "items": page,
+            "total": total,
+            "offset": query.offset(),
+            "limit": query.limit(),
+            "next_offset": next_offset,
+        })),
+    )
+        .into_response()
+}
+
+async fn fields_missing(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<FieldsQuery>,
+) -> Response {
+    let Some(observer) = state.field_observer.as_ref() else {
+        return observation_disabled_response();
+    };
+    let snapshot = observer.snapshot();
+    state.metrics.update_field_observer_metrics(&snapshot);
+
+    let rule_field_set = state.processor.rule_field_set();
+
+    let coverage = snapshot.coverage(&rule_field_set);
+    let entries: Vec<serde_json::Value> = coverage
+        .missing
+        .iter()
+        .map(|(name, origin)| missing_field_payload(name, origin))
+        .collect();
+    let (page, total, next_offset) = paginate(entries, query.offset(), query.limit());
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "items": page,
+            "total": total,
+            "offset": query.offset(),
+            "limit": query.limit(),
+            "next_offset": next_offset,
+        })),
+    )
+        .into_response()
+}
+
+async fn fields_observer_reset(State(state): State<AppState>) -> Response {
+    let Some(observer) = state.field_observer.as_ref() else {
+        return observation_disabled_response();
+    };
+    let (previous_keys, previous_events) = observer.reset();
+    let snapshot = observer.snapshot();
+    state.metrics.update_field_observer_metrics(&snapshot);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "reset",
+            "previous_keys": previous_keys,
+            "previous_events": previous_events,
+        })),
+    )
+        .into_response()
 }
 
 /// Accept events via HTTP POST for processing.
