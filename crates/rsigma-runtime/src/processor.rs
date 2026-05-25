@@ -4,10 +4,9 @@ use parking_lot::Mutex;
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
-use rsigma_eval::{Event, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet};
+use rsigma_eval::{Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet};
 
 use crate::engine::RuntimeEngine;
-use crate::field_observer::FieldObserver;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
 use crate::metrics::MetricsHook;
 

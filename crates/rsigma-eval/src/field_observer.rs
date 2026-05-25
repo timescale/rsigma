@@ -1,46 +1,57 @@
-//! Opt-in observer that records every field name seen on the daemon's hot
-//! path so the field-observability endpoints can report which event fields
-//! are not referenced by any loaded rule (gap signal) and which rule
-//! fields have never been seen in events (broken-coverage signal).
+//! Opt-in observer that records every field name seen at evaluation
+//! time so consumers can report which event fields are not referenced
+//! by any loaded rule (gap signal) and which rule fields have never
+//! been seen in events (broken-coverage signal).
+//!
+//! Lives in `rsigma-eval` because the observer only depends on the
+//! [`Event`] trait. The daemon (`rsigma-runtime` + `rsigma-cli`'s
+//! `engine daemon`) and the one-shot evaluator (`rsigma-cli`'s
+//! `engine eval`) both consume the same type so the report shape is
+//! consistent across runtimes.
 //!
 //! # Design
 //!
-//! - Backed by a `parking_lot::Mutex<HashMap<String, u64>>`. The mutex is
-//!   only held long enough to bump or insert a counter; the daemon's
-//!   engine task is the sole writer in the current architecture, so
-//!   contention is bounded by event throughput rather than worker count.
-//! - A hard cap (`max_keys`) bounds memory. Once the cap is reached new
-//!   keys are dropped and the `overflow_dropped` counter is incremented;
-//!   existing counters keep updating so the observer keeps surfacing
-//!   high-frequency keys even on a saturated set.
-//! - The observer is opt-in: the daemon constructs an `Arc<FieldObserver>`
-//!   only when `--observe-fields` is set. When the feature is off the
-//!   engine task never calls `observe`, so the hot path stays untouched.
+//! - Backed by a `std::sync::Mutex<HashMap<Arc<str>, u64>>`. The mutex
+//!   is only held long enough to bump or insert a counter; the lock
+//!   never wraps user code that could panic, so poisoning is
+//!   effectively impossible in practice and the `lock().unwrap()`
+//!   calls below treat poisoning as a programmer bug.
+//! - A hard cap (`max_keys`) bounds memory. Once the cap is reached
+//!   new keys are dropped and the `overflow_dropped` counter is
+//!   incremented; existing counters keep updating so the observer
+//!   keeps surfacing high-frequency keys even on a saturated set.
+//! - The observer is opt-in: callers construct an `Arc<FieldObserver>`
+//!   only when their `--observe-fields` flag is set. When unset the
+//!   observation call sites stay unwired and the hot path is
+//!   untouched.
+//! - Keys are stored as `Arc<str>` so a snapshot only refcount-bumps
+//!   each key rather than copying the string. Trade: one extra
+//!   allocation per first-time-insert (Arc header) in exchange for
+//!   near-free repeated snapshots.
+//! - Lifetime counters (`lifetime_events_observed`,
+//!   `lifetime_overflow_dropped`) are monotonic across resets so
+//!   Prometheus counter bridges don't desync when the daemon resets
+//!   the observer via `DELETE /api/v1/fields/observer`.
 //!
 //! # Coordinates
 //!
-//! - The daemon iterates [`Event::field_keys`](rsigma_eval::Event::field_keys)
-//!   once per event before evaluation. For JSON events this is a
-//!   recursive walk that allocates one `String` per leaf path
-//!   (dot-joined paths do not exist as substrings of the source value);
-//!   for flat formats like `KvEvent` the override returns
-//!   `Cow::Borrowed`. The cost is acceptable in the opt-in diagnostic
-//!   mode but is not free.
-//! - The HTTP API takes [`snapshot`](FieldObserver::snapshot) and joins it
-//!   against `RuntimeEngine::rule_field_set` to compute the
-//!   unknown / missing / intersection sets per request.
-//! - The Prometheus counter bridge in the CLI metrics module reads
-//!   `lifetime_events_observed` / `lifetime_overflow_dropped` rather
-//!   than the resettable views, so `DELETE /api/v1/fields/observer`
-//!   does not desync the monotonic counters.
+//! - Iterate [`Event::field_keys`](crate::Event::field_keys) once per
+//!   event before evaluation. For JSON events this is a recursive
+//!   walk that allocates one `String` per leaf path (dot-joined paths
+//!   are not substrings of the source value); for flat formats like
+//!   `KvEvent` the override returns `Cow::Borrowed`. The cost is
+//!   acceptable in the opt-in diagnostic mode but is not free.
+//! - Render the gap and broken-coverage signals by joining a
+//!   [`snapshot`](FieldObserver::snapshot) against a
+//!   [`RuleFieldSet`](crate::RuleFieldSet).
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use parking_lot::Mutex;
-use rsigma_eval::event::Event;
+use crate::event::Event;
 
 /// Single field-name counter as exposed via the snapshot API.
 ///
@@ -58,8 +69,9 @@ pub struct FieldObservationEntry {
 
 /// Immutable snapshot of an observer's state at one moment in time.
 ///
-/// Returned by [`FieldObserver::snapshot`]; the daemon's HTTP handlers
-/// consume this to render the `/api/v1/fields/*` endpoints.
+/// Returned by [`FieldObserver::snapshot`]; consumers (the daemon's
+/// HTTP handlers, the `engine eval` report writer) render coverage
+/// reports from this against a [`RuleFieldSet`](crate::RuleFieldSet).
 #[derive(Debug, Clone, Default)]
 pub struct FieldObservation {
     /// Per-field counters, sorted by descending count then ascending name.
@@ -85,16 +97,9 @@ pub struct FieldObservation {
     pub uptime_seconds: f64,
 }
 
-/// Capped, opt-in field-name counter shared across the daemon's event task
-/// and the HTTP API handlers.
-///
-/// Keys are stored as `Arc<str>` rather than `String` so a snapshot
-/// only refcount-bumps each key instead of allocating a fresh
-/// `String` per entry. The trade is one extra allocation per
-/// first-time-insert (Arc header) in exchange for cheap snapshots,
-/// which is the right side of the trade because the metrics handler
-/// scrapes every 15-30 s while new-key insertions happen at most once
-/// per unique field across the whole observation window.
+/// Capped, opt-in field-name counter shared across producers (the
+/// daemon's event task, the eval streaming loop) and consumers (the
+/// daemon's HTTP handlers, the eval report writer).
 pub struct FieldObserver {
     inner: Mutex<HashMap<Arc<str>, u64>>,
     max_keys: usize,
@@ -145,7 +150,7 @@ impl FieldObserver {
             return;
         }
         let mut overflow_local = 0u64;
-        let mut counts = self.inner.lock();
+        let mut counts = self.inner.lock().expect("field observer mutex poisoned");
         for key in keys {
             if let Some(slot) = counts.get_mut(key.as_ref()) {
                 *slot = slot.saturating_add(1);
@@ -173,7 +178,7 @@ impl FieldObserver {
     /// increments plus one `Vec` allocation, not 10 000 `String`
     /// allocations.
     pub fn snapshot(&self) -> FieldObservation {
-        let counts = self.inner.lock();
+        let counts = self.inner.lock().expect("field observer mutex poisoned");
         let mut entries: Vec<FieldObservationEntry> = counts
             .iter()
             .map(|(k, v)| FieldObservationEntry {
@@ -192,7 +197,12 @@ impl FieldObserver {
             lifetime_events_observed: self.lifetime_events_observed.load(Ordering::Relaxed),
             lifetime_overflow_dropped: self.lifetime_overflow_dropped.load(Ordering::Relaxed),
             max_keys: self.max_keys,
-            uptime_seconds: self.start.lock().elapsed().as_secs_f64(),
+            uptime_seconds: self
+                .start
+                .lock()
+                .expect("field observer start mutex poisoned")
+                .elapsed()
+                .as_secs_f64(),
         }
     }
 
@@ -200,13 +210,16 @@ impl FieldObserver {
     /// `(unique_keys, events_observed)` pair so the API endpoint can
     /// report what was cleared.
     pub fn reset(&self) -> (usize, u64) {
-        let mut counts = self.inner.lock();
+        let mut counts = self.inner.lock().expect("field observer mutex poisoned");
         let previous_keys = counts.len();
         counts.clear();
         drop(counts);
         let previous_events = self.events_observed.swap(0, Ordering::Relaxed);
         self.overflow_dropped.store(0, Ordering::Relaxed);
-        *self.start.lock() = Instant::now();
+        *self
+            .start
+            .lock()
+            .expect("field observer start mutex poisoned") = Instant::now();
         (previous_keys, previous_events)
     }
 
@@ -224,7 +237,10 @@ impl FieldObserver {
 
     /// Distinct keys currently tracked (does not include overflow drops).
     pub fn unique_keys(&self) -> usize {
-        self.inner.lock().len()
+        self.inner
+            .lock()
+            .expect("field observer mutex poisoned")
+            .len()
     }
 
     /// Insert attempts dropped because the observer was at capacity
@@ -248,7 +264,7 @@ impl FieldObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsigma_eval::event::JsonEvent;
+    use crate::event::JsonEvent;
     use serde_json::json;
 
     #[test]
@@ -378,7 +394,7 @@ mod tests {
     #[test]
     fn plain_event_observation_is_a_noop_for_counters() {
         let observer = FieldObserver::new(100);
-        let plain = rsigma_eval::event::PlainEvent::new("disk full".into());
+        let plain = crate::event::PlainEvent::new("disk full".into());
         observer.observe(&plain);
         let snap = observer.snapshot();
         // events_observed still ticks: the observer saw the event but it had

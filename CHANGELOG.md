@@ -41,7 +41,9 @@ The gauges refresh on every `/metrics` scrape and after every successful `/api/v
 
 **Implementation cost.** Default-off; the engine task takes a single `ArcSwap::load_full` per batch when no observer is attached and skips field iteration entirely. With `--observe-fields` set, the only added work is one `Event::field_keys()` walk per parsed event (zero-allocation for JSON via depth-capped recursion) plus a short `parking_lot::Mutex` to update counters. Memory is bounded by `--observe-fields-max-keys` (10k default ≈ a few hundred KB of `String` keys).
 
-**Docs.** Endpoint reference under "Field observability" in `docs/reference/http-api.md`; flag rows in `docs/cli/engine/daemon.md`; metric rows in `docs/reference/metrics.md`; gap/broken-coverage workflow in `docs/guide/observability.md`.
+**Offline coverage report.** `rsigma engine eval` mirrors the daemon's field-observability surface with three new flags: `--observe-fields` enables observation; `--observe-fields-max-keys <N>` (default 10000) caps the in-memory observer; `--observe-fields-report <PATH>` writes the JSON report to a file (defaults to stderr if omitted so detections on stdout stay machine-consumable). The report has the same shape as `GET /api/v1/fields`, so the same `jq` queries work against either runtime. To make this possible without coupling `engine eval` to the `daemon` Cargo feature, `FieldObserver` moved from `rsigma-runtime` to `rsigma-eval` (which is always available) and switched its mutex backing from `parking_lot::Mutex` to `std::sync::Mutex` to keep `rsigma-eval` dependency-light. `rsigma-runtime` keeps a `pub use` re-export so existing consumers of `rsigma_runtime::FieldObserver` continue to compile unchanged.
+
+**Docs.** Endpoint reference under "Field observability" in `docs/reference/http-api.md`; flag rows in `docs/cli/engine/daemon.md` and `docs/cli/engine/eval.md`; metric rows in `docs/reference/metrics.md`; combined daemon/eval workflow in `docs/guide/observability.md`.
 
 ### Server-side TLS for the daemon API listener (#128)
 

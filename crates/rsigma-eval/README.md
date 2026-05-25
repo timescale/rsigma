@@ -81,7 +81,7 @@ This library is part of [rsigma].
 
 ### Rule field extraction (`fields` module)
 
-Shared between `rsigma rule fields` and the daemon's field-observability endpoints, so the offline view matches what the engine references at runtime.
+Shared between `rsigma rule fields` and the field-observability surfaces in both `engine eval` and `engine daemon`, so the offline view matches what the engine references at runtime.
 
 | Type / function | Description |
 |-----------------|-------------|
@@ -89,6 +89,17 @@ Shared between `rsigma rule fields` and the daemon's field-observability endpoin
 | `RuleFieldSet::contains(name)` / `origin(name)` / `iter()` / `names()` / `len()` | Query the resulting set; entries are sorted lexicographically |
 | `FieldOrigin { rule_titles, sources }` | Per-field provenance: which rules touched it and from which kind |
 | `FieldSource::{Detection, Correlation, Filter, Metadata}` | Tagged source kind, with `as_str()` for stable JSON serialization |
+
+### Field observability (`field_observer` module)
+
+Opt-in counter that records every observed field name and surfaces gap and broken-coverage signals. Consumed by both `engine eval` (one-shot report at end-of-run) and `engine daemon` (live `/api/v1/fields*` endpoints).
+
+| Type / function | Description |
+|-----------------|-------------|
+| `FieldObserver::new(max_keys)` | Construct an observer with a hard cap on distinct keys (overflow drops are counted, existing keys keep updating) |
+| `FieldObserver::observe(event: &impl Event)` | Walk `event.field_keys()` and bump per-field counters; `&self` so callers can share an `Arc` |
+| `FieldObserver::snapshot()` | `FieldObservation { entries, events_observed, unique_keys, overflow_dropped, lifetime_events_observed, lifetime_overflow_dropped, max_keys, uptime_seconds }`. Entries sorted by descending count then name. Keys held as `Arc<str>` so the snapshot is refcount-cheap |
+| `FieldObserver::reset()` | Clear counters; lifetime totals survive so Prometheus counter bridges stay monotonic |
 
 ## Detection Engine
 

@@ -45,7 +45,6 @@
 pub mod engine;
 pub mod enrichment;
 pub mod error;
-pub mod field_observer;
 pub mod input;
 pub mod io;
 pub mod metrics;
@@ -62,7 +61,6 @@ pub use enrichment::{
     validate_template_namespace,
 };
 pub use error::RuntimeError;
-pub use field_observer::{FieldObservation, FieldObservationEntry, FieldObserver};
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::{
     AckToken, EventSource, FileSink, RawEvent, Sink, StdinSource, StdoutSink, spawn_source,
@@ -70,7 +68,9 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use processor::{EventFilter, LogProcessor};
 
-pub use rsigma_eval::{ProcessResult, ProcessResultExt};
+pub use rsigma_eval::{
+    FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult, ProcessResultExt,
+};
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger};
 pub use sources::{
     DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,

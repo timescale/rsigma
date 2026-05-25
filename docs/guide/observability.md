@@ -193,7 +193,17 @@ curl -sS -X DELETE http://127.0.0.1:9090/api/v1/fields/observer
 
 Three Prometheus surfaces refresh on every `/metrics` scrape (`rsigma_fields_observed_total`, `rsigma_fields_observer_unique_keys`, `rsigma_fields_observer_overflow_dropped_total`). A persistent positive rate on `rsigma_fields_observer_overflow_dropped_total` means `--observe-fields-max-keys` is too low for the deployment; bump it or accept that long-tail keys will be invisible.
 
-See [HTTP API: Field observability](../reference/http-api.md#field-observability) for the full endpoint payloads and pagination, and [`engine daemon`](../cli/engine/daemon.md#field-observability-advanced) for the flag reference.
+The same surface works offline via `rsigma engine eval --observe-fields` for CI gap analysis. The end-of-run report has the same JSON shape as `GET /api/v1/fields`, so a single `jq` query works against either runtime:
+
+```bash
+rsigma engine eval -r rules/ -e @events.ndjson \
+    --observe-fields \
+    --observe-fields-report coverage.json
+
+jq '.summary | {events_observed, unknown_count, missing_count}' coverage.json
+```
+
+See [HTTP API: Field observability](../reference/http-api.md#field-observability) for the daemon endpoint payloads and pagination, [`engine daemon`](../cli/engine/daemon.md#field-observability-advanced) for the daemon flags, and [`engine eval`](../cli/engine/eval.md#field-observability-offline-coverage-report) for the offline equivalent.
 
 ## Health probes
 
