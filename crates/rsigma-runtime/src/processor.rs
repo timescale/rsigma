@@ -223,14 +223,19 @@ impl LogProcessor {
             return empty_results(batch.len());
         }
 
-        // Optional opt-in field observation. Cheap when disabled (one
-        // ArcSwap load + Option check); when enabled, walks each decoded
-        // event's field keys before evaluation.
-        if let Some(observer) = self.field_observer.load_full().as_ref().as_ref() {
+        // Optional opt-in field observation. Cheap when disabled: one
+        // hazard-pointer `Guard` (no Arc clone) plus an `Option` check.
+        // When enabled, walks each decoded event's field keys before
+        // evaluation. The Guard's lifetime extends through the loop so
+        // the observer cannot be dropped mid-batch even if the daemon
+        // detaches it concurrently.
+        let observer_guard = self.field_observer.load();
+        if let Some(observer) = observer_guard.as_ref() {
             for (_, decoded) in &decoded_events {
                 observer.observe(decoded);
             }
         }
+        drop(observer_guard);
 
         // Phase 2: Batch evaluation — parallel detection + sequential correlation
         let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();

@@ -178,9 +178,12 @@ pub trait Event {
     /// emitted.
     ///
     /// Used by the daemon's opt-in field-observability surface; not on the
-    /// detection hot path. The default implementation walks `to_json()`
-    /// which is correct but allocates; concrete event types override for
-    /// zero-copy traversal where possible.
+    /// detection hot path. The default implementation walks `to_json()`,
+    /// which clones the event and allocates one `String` per leaf path;
+    /// concrete event types override to skip the `to_json()` clone. The
+    /// per-leaf `String` allocation is unavoidable for nested objects
+    /// (the dot-joined path doesn't exist anywhere in the source) but
+    /// flat formats like `KvEvent` can return `Cow::Borrowed`.
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
         let mut out: Vec<Cow<'static, str>> = Vec::new();
         collect_field_keys_json(&self.to_json(), "", &mut out);

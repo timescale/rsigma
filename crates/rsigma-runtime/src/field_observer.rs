@@ -21,12 +21,18 @@
 //!
 //! - The daemon iterates [`Event::field_keys`](rsigma_eval::Event::field_keys)
 //!   once per event before evaluation. For JSON events this is a
-//!   zero-allocation recursive walk; for non-JSON formats the default
-//!   trait impl runs over `to_json()` (still acceptable for the opt-in
-//!   diagnostic mode).
+//!   recursive walk that allocates one `String` per leaf path
+//!   (dot-joined paths do not exist as substrings of the source value);
+//!   for flat formats like `KvEvent` the override returns
+//!   `Cow::Borrowed`. The cost is acceptable in the opt-in diagnostic
+//!   mode but is not free.
 //! - The HTTP API takes [`snapshot`](FieldObserver::snapshot) and joins it
 //!   against `RuntimeEngine::rule_field_set` to compute the
 //!   unknown / missing / intersection sets per request.
+//! - The Prometheus counter bridge in the CLI metrics module reads
+//!   `lifetime_events_observed` / `lifetime_overflow_dropped` rather
+//!   than the resettable views, so `DELETE /api/v1/fields/observer`
+//!   does not desync the monotonic counters.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,8 +64,15 @@ pub struct FieldObservation {
     /// Distinct field names tracked (saturates at `max_keys`).
     pub unique_keys: usize,
     /// Number of insert attempts dropped because the observer was at
-    /// capacity.
+    /// capacity since the last reset.
     pub overflow_dropped: u64,
+    /// Lifetime total of events evaluated since the observer was
+    /// constructed, ignoring resets. Drives Prometheus counters, which
+    /// must be monotonic.
+    pub lifetime_events_observed: u64,
+    /// Lifetime total of insert attempts dropped because the observer
+    /// was at capacity, ignoring resets. Drives Prometheus counters.
+    pub lifetime_overflow_dropped: u64,
     /// Configured ceiling for distinct keys.
     pub max_keys: usize,
     /// Seconds since the observer was created (or last reset).
@@ -71,8 +84,17 @@ pub struct FieldObservation {
 pub struct FieldObserver {
     inner: Mutex<HashMap<String, u64>>,
     max_keys: usize,
+    /// Resets to 0 on [`reset`](Self::reset). Drives the "since-last-reset"
+    /// view exposed in [`FieldObservation::overflow_dropped`].
     overflow_dropped: AtomicU64,
+    /// Resets to 0 on [`reset`](Self::reset). Drives the "since-last-reset"
+    /// view exposed in [`FieldObservation::events_observed`].
     events_observed: AtomicU64,
+    /// Monotonic. Never reset. Drives the Prometheus counter bridge so
+    /// the lifetime metric stays consistent across observer resets.
+    lifetime_events_observed: AtomicU64,
+    /// Monotonic. Never reset. Drives the Prometheus counter bridge.
+    lifetime_overflow_dropped: AtomicU64,
     start: Mutex<Instant>,
 }
 
@@ -88,6 +110,8 @@ impl FieldObserver {
             max_keys,
             overflow_dropped: AtomicU64::new(0),
             events_observed: AtomicU64::new(0),
+            lifetime_events_observed: AtomicU64::new(0),
+            lifetime_overflow_dropped: AtomicU64::new(0),
             start: Mutex::new(Instant::now()),
         }
     }
@@ -100,6 +124,8 @@ impl FieldObserver {
     /// the caller's side.
     pub fn observe<E: Event + ?Sized>(&self, event: &E) {
         self.events_observed.fetch_add(1, Ordering::Relaxed);
+        self.lifetime_events_observed
+            .fetch_add(1, Ordering::Relaxed);
         let keys = event.field_keys();
         if keys.is_empty() {
             return;
@@ -118,6 +144,8 @@ impl FieldObserver {
         drop(counts);
         if overflow_local > 0 {
             self.overflow_dropped
+                .fetch_add(overflow_local, Ordering::Relaxed);
+            self.lifetime_overflow_dropped
                 .fetch_add(overflow_local, Ordering::Relaxed);
         }
     }
@@ -141,6 +169,8 @@ impl FieldObserver {
             events_observed: self.events_observed.load(Ordering::Relaxed),
             unique_keys,
             overflow_dropped: self.overflow_dropped.load(Ordering::Relaxed),
+            lifetime_events_observed: self.lifetime_events_observed.load(Ordering::Relaxed),
+            lifetime_overflow_dropped: self.lifetime_overflow_dropped.load(Ordering::Relaxed),
             max_keys: self.max_keys,
             uptime_seconds: self.start.lock().elapsed().as_secs_f64(),
         }
@@ -165,14 +195,28 @@ impl FieldObserver {
         self.events_observed.load(Ordering::Relaxed)
     }
 
+    /// Lifetime total of events observed since the observer was
+    /// constructed, ignoring resets. Monotonic; suitable for driving
+    /// Prometheus counters.
+    pub fn lifetime_events_observed(&self) -> u64 {
+        self.lifetime_events_observed.load(Ordering::Relaxed)
+    }
+
     /// Distinct keys currently tracked (does not include overflow drops).
     pub fn unique_keys(&self) -> usize {
         self.inner.lock().len()
     }
 
-    /// Insert attempts dropped because the observer was at capacity.
+    /// Insert attempts dropped because the observer was at capacity
+    /// since the last reset.
     pub fn overflow_dropped(&self) -> u64 {
         self.overflow_dropped.load(Ordering::Relaxed)
+    }
+
+    /// Lifetime total of insert attempts dropped because the observer
+    /// was at capacity, ignoring resets. Monotonic.
+    pub fn lifetime_overflow_dropped(&self) -> u64 {
+        self.lifetime_overflow_dropped.load(Ordering::Relaxed)
     }
 
     /// Configured per-observer ceiling for distinct keys.
@@ -273,6 +317,39 @@ mod tests {
         assert_eq!(snap.unique_keys, 0);
         assert_eq!(snap.overflow_dropped, 0);
         assert!(snap.entries.is_empty());
+    }
+
+    #[test]
+    fn lifetime_counters_survive_reset() {
+        // Regression: the Prometheus counter bridge relies on monotonic
+        // lifetime totals. Resetting the observer must not lose data
+        // points that the next /metrics scrape needs to see.
+        let observer = FieldObserver::new(2);
+        // 3 events, 4 unique fields => 2 fit, 2 overflow per event.
+        for _ in 0..3 {
+            observer.observe(&JsonEvent::borrow(&json!({"a": 1, "b": 2, "c": 3, "d": 4})));
+        }
+        let before = observer.snapshot();
+        assert_eq!(before.events_observed, 3);
+        assert_eq!(before.lifetime_events_observed, 3);
+        assert_eq!(before.overflow_dropped, 6);
+        assert_eq!(before.lifetime_overflow_dropped, 6);
+
+        observer.reset();
+        let after_reset = observer.snapshot();
+        assert_eq!(after_reset.events_observed, 0);
+        assert_eq!(after_reset.overflow_dropped, 0);
+        // Lifetime totals MUST NOT reset:
+        assert_eq!(after_reset.lifetime_events_observed, 3);
+        assert_eq!(after_reset.lifetime_overflow_dropped, 6);
+
+        // Continue observing; lifetime keeps climbing from where it was.
+        observer.observe(&JsonEvent::borrow(&json!({"a": 1, "b": 2, "c": 3, "d": 4})));
+        let after = observer.snapshot();
+        assert_eq!(after.events_observed, 1);
+        assert_eq!(after.lifetime_events_observed, 4);
+        assert_eq!(after.overflow_dropped, 2);
+        assert_eq!(after.lifetime_overflow_dropped, 8);
     }
 
     #[test]

@@ -1690,22 +1690,22 @@ async fn fields_full(
 
     let rule_field_set = state.processor.rule_field_set();
 
-    let seen: std::collections::HashSet<&str> =
-        snapshot.entries.iter().map(|e| e.field.as_str()).collect();
-
-    let unknown_entries: Vec<serde_json::Value> = snapshot
-        .entries
-        .iter()
-        .filter(|e| !rule_field_set.contains(&e.field))
-        .map(|e| serde_json::json!({ "field": e.field, "count": e.count }))
-        .collect();
+    // Single pass over the snapshot: partition observed fields into
+    // unknown (not referenced by any rule) and intersection
+    // (referenced by at least one rule), and record which keys we saw
+    // so the missing-set computation can skip them.
+    let mut unknown_entries: Vec<serde_json::Value> = Vec::new();
+    let mut intersection_count: usize = 0;
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for e in &snapshot.entries {
+        seen.insert(e.field.as_str());
+        if rule_field_set.contains(&e.field) {
+            intersection_count += 1;
+        } else {
+            unknown_entries.push(serde_json::json!({ "field": e.field, "count": e.count }));
+        }
+    }
     let missing_entries = missing_fields(&rule_field_set, &seen);
-
-    let intersection_count = snapshot
-        .entries
-        .iter()
-        .filter(|e| rule_field_set.contains(&e.field))
-        .count();
 
     let (unknown_page, unknown_next) = paginate(&unknown_entries, query.offset(), query.limit());
     let (missing_page, missing_next) = paginate(&missing_entries, query.offset(), query.limit());

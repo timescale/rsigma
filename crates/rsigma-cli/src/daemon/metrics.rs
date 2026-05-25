@@ -472,19 +472,24 @@ impl Metrics {
     /// `/metrics` handler and by the dedicated `/api/v1/fields*`
     /// endpoints so a scrape immediately after a reset reflects the
     /// new state.
+    ///
+    /// Prometheus counters must be monotonic, so this bridges from the
+    /// observer's *lifetime* totals (which never reset) rather than from
+    /// `events_observed` / `overflow_dropped` (which reset on
+    /// `DELETE /api/v1/fields/observer`). Without that, a reset between
+    /// scrapes silently drops every event observed before the
+    /// lifetime-total bridge re-overtook the Prometheus counter's
+    /// last-known value.
     pub fn update_field_observer_metrics(&self, snapshot: &rsigma_runtime::FieldObservation) {
         self.fields_observer_unique_keys
             .set(snapshot.unique_keys as i64);
-        // The counters are monotonic, so set via reset+inc would be
-        // wrong on subsequent calls. Compute the delta against the
-        // last-seen value and only `inc_by` the positive difference.
-        let observed_now = snapshot.events_observed;
+        let observed_now = snapshot.lifetime_events_observed;
         let observed_prev = self.fields_observed_total.get();
         if observed_now > observed_prev {
             self.fields_observed_total
                 .inc_by(observed_now - observed_prev);
         }
-        let overflow_now = snapshot.overflow_dropped;
+        let overflow_now = snapshot.lifetime_overflow_dropped;
         let overflow_prev = self.fields_observer_overflow_dropped_total.get();
         if overflow_now > overflow_prev {
             self.fields_observer_overflow_dropped_total
