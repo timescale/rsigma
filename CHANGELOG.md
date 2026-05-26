@@ -5,6 +5,17 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-26
+
+**TL;DR**
+RSigma v0.13.0 is the "post-evaluation enrichment, server-side TLS, and field observability" release:
+* Post-evaluation enrichment between `engine.evaluate()` and the sinks: four primitives (`template`, `lookup`, `http`, `command`), strict detection-vs-correlation kind separation, scope filters, `on_error` policies, six new Prometheus metrics, and a public `register_builtin(name, factory)` registry.
+* Server-side TLS on the daemon API listener (Axum REST + Prometheus + OTLP/HTTP + OTLP/gRPC sharing one socket via ALPN), gated by the new `daemon-tls` Cargo feature, with optional mutual TLS and cross-platform cert hot-reload via `POST /api/v1/reload`.
+* Field observability: opt-in `--observe-fields` on `engine daemon` and `engine eval` exposes the gap and broken-coverage signals via four `/api/v1/fields/*` endpoints and three Prometheus surfaces, sharing a `RuleFieldSet` + `FieldCoverage` join primitive across CLI and daemon.
+* Detached dynamic sources: declare sources in standalone YAML loaded via `--source <file_or_dir>`, with a unified `DaemonSourceRegistry` and a new `rsigma rule migrate-sources` helper. Pipeline-embedded `sources:` is visible-deprecated this release.
+* Library API: `MatchResult` and `CorrelationResult` collapse into a single `EvaluationResult` (`RuleHeader` + `ResultBody`), wire shape preserved. Deprecated CLI aliases are now hidden from `rsigma --help`. The reserved-but-empty `attack` subcommand group is removed.
+* Dependency bumps: jsonschema 0.46.5, jaq-core / jaq-std 1.x to 3.0 with jaq-json 2.0 (Radically Open Security audit fixes), assert_cmd 2.2.2, plus CI action bumps and two VS Code Dependabot security fixes (`@azure/msal-node` ^5.2.2, `brace-expansion` ^5.0.6).
+
 ### Unknown-field discovery API (#149)
 
 The `engine daemon` learns to surface two halves of detection coverage live from inside the process: which event fields are not referenced by any loaded rule (gap signal) and which rule fields have never appeared in an event (broken-coverage signal). RSigma owns both rule parsing and event ingestion end-to-end, so this view does not need an external pipeline.
@@ -185,6 +196,8 @@ Rolls up five open Dependabot PRs and closes two Dependabot security alerts. Rus
 * **Enrichment wording:** the `lookup` enricher's startup error message and `docs/guide/enrichers.md` describe sources as "configured on the daemon" rather than "declared in your pipeline `sources:` block" so the copy stays accurate after a forthcoming release lets sources be declared independently of pipelines.
 * **README and home page:** [Detection Engineering Weekly #157](https://www.detectionengineering.net/p/dew-157-shai-hulud-goes-open-source) added to the "featured in" list (`README.md` and `docs/index.md`) with a quote calling out RSigma's dynamic-pipelines model.
 * **Contributing guidelines:** the `docs/` MkDocs site is now listed as a release deliverable in `CONTRIBUTING.md` alongside the crate READMEs, with a page-to-change matrix that maps each kind of change (new CLI flag, new daemon config key, new library API, new metric, new feature flag) to the page that must stay in sync.
+
+[v0.12.0...v0.13.0](https://github.com/timescale/rsigma/compare/v0.12.0...v0.13.0)
 
 ## [0.12.0] - 2026-05-20
 
@@ -1405,6 +1418,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.13.0]: https://github.com/timescale/rsigma/releases/tag/v0.13.0
 [0.12.0]: https://github.com/timescale/rsigma/releases/tag/v0.12.0
 [0.11.0]: https://github.com/timescale/rsigma/releases/tag/v0.11.0
 [0.10.0]: https://github.com/timescale/rsigma/releases/tag/v0.10.0
