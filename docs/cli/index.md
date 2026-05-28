@@ -1,6 +1,6 @@
 # CLI Reference
 
-`rsigma` is a single binary that exposes every operation through four noun-led command groups: `engine`, `rule`, `backend`, and `pipeline`. Each subcommand is independent and self-contained; there is no global state, no daemon required for the one-shot commands, and no implicit configuration file.
+`rsigma` is a single binary that exposes every operation through five noun-led command groups: `engine`, `rule`, `backend`, `pipeline`, and `config`. Each subcommand is independent and self-contained; there is no global state. A YAML config file is optional but supported, with strict CLI > env > file > default precedence — see the [Configuration Reference](../reference/configuration.md).
 
 This reference documents every subcommand with its flag table, verified examples, and exit-code semantics. For narrative walkthroughs see the [User Guide](../guide/evaluating-rules.md).
 
@@ -12,6 +12,7 @@ This reference documents every subcommand with its flag table, verified examples
 | [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `condition`, `stdin` | Inspect, validate, and lint Sigma rule files. |
 | [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, …). |
 | [`pipeline`](pipeline/resolve.md) | `resolve` | Inspect and test processing pipelines, including dynamic sources. |
+| [`config`](config/init.md) | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the YAML config file. |
 
 ## Global flags
 
@@ -41,8 +42,15 @@ rsigma
 │   ├── convert                emit backend-native queries from rules
 │   ├── targets                list compiled-in backends
 │   └── formats                list output formats for one backend
-└── pipeline
-    └── resolve                offline source resolution + dry-run for dynamic pipelines
+├── pipeline
+│   └── resolve                offline source resolution + dry-run for dynamic pipelines
+└── config
+    ├── init                   scaffold a commented rsigma.yaml
+    ├── validate               check files for unknown keys and inactive sections
+    ├── show                   print the effective config with per-leaf sources
+    ├── schema                 emit the JSON Schema
+    ├── path                   list the config files that would be loaded
+    └── reload                 hot-reload a running daemon (POST /api/v1/reload)
 ```
 
 ## Migration from flat subcommands

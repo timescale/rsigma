@@ -14,7 +14,7 @@ pub(crate) use convert::{
 };
 #[cfg(feature = "daemon")]
 pub(crate) use daemon::{DaemonArgs, cmd_daemon, parse_input_format};
-pub(crate) use eval::{EvalArgs, cmd_eval};
+pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};
 pub(crate) use fields::{FieldsArgs, cmd_fields};
 pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
 pub(crate) use migrate_sources::{MigrateSourcesArgs, cmd_migrate_sources};

@@ -22,7 +22,14 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). |
+| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. |
+
+### Configuration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config <PATH>` | unset | Load a specific YAML config file instead of running the [discovery chain](../../reference/configuration.md#discovery). CLI flags still take precedence over file values. |
+| `--dry-run` | off | Print the effective `daemon` section (defaults < file < env) and exit `0` without binding any port. |
 
 ### Event input
 

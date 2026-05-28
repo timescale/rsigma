@@ -4,20 +4,33 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
-use clap::Args;
+use clap::parser::ValueSource;
+use clap::{ArgMatches, Args};
 use rsigma_eval::{
     CorrelationEngine, Engine, Event, FieldObserver, JsonEvent, Pipeline, RuleFieldSet,
 };
 use rsigma_parser::SigmaCollection;
 
 use crate::EventFilter;
+use crate::config;
+use crate::exit_code;
 
 /// Arguments for `rsigma engine eval` (and the deprecated `rsigma eval`).
 #[derive(Args, Debug)]
 pub(crate) struct EvalArgs {
-    /// Path to a Sigma rule file or directory of rules
+    /// Path to a YAML config file. Overrides config-file discovery.
+    /// CLI flags still take precedence over config-file values.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Print the effective config (defaults < file < env) and exit.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Path to a Sigma rule file or directory of rules.
+    /// Required unless supplied via `eval.rules` in the config file.
     #[arg(short, long)]
-    pub rules: PathBuf,
+    pub rules: Option<PathBuf>,
 
     /// A single event as a JSON string, or @path to read from a file.
     /// Supports NDJSON files and .evtx (Windows Event Log) files.
@@ -197,10 +210,68 @@ fn resolve_event_source(event_json: Option<String>) -> EventSource {
     }
 }
 
+/// Overlay the `eval` config section (defaults < file < env) onto `args` for
+/// any flag the operator did not set explicitly. Handles `--dry-run` by
+/// printing the effective config and exiting. Called before `cmd_eval` so the
+/// resolved `fail_on_detection` drives the exit code.
+pub(crate) fn apply_eval_config(args: &mut EvalArgs, matches: &ArgMatches) {
+    let base = config::load_and_merge(args.config.as_deref());
+    if args.dry_run {
+        config::print_dry_run("eval", &base);
+        process::exit(exit_code::SUCCESS);
+    }
+    overlay_eval_config(args, matches, base);
+}
+
+/// Pure overlay of the resolved `eval` section onto `args` (no disk access),
+/// split out from [`apply_eval_config`] so it can be unit-tested.
+fn overlay_eval_config(
+    args: &mut EvalArgs,
+    matches: &ArgMatches,
+    base: config::RsigmaConfigPartial,
+) {
+    let explicit = |id: &str| {
+        matches!(
+            matches.value_source(id),
+            Some(ValueSource::CommandLine | ValueSource::EnvVariable)
+        )
+    };
+
+    if let Some(eval) = base.eval {
+        if !explicit("rules")
+            && let Some(v) = eval.rules
+        {
+            args.rules = Some(v);
+        }
+        if !explicit("pipelines")
+            && let Some(v) = eval.pipelines
+        {
+            args.pipelines = v;
+        }
+        if !explicit("input_format")
+            && let Some(v) = eval.input_format
+        {
+            args.input_format = v;
+        }
+        if !explicit("syslog_tz")
+            && let Some(v) = eval.syslog_tz
+        {
+            args.syslog_tz = v;
+        }
+        if !explicit("fail_on_detection")
+            && let Some(v) = eval.fail_on_detection
+        {
+            args.fail_on_detection = v;
+        }
+    }
+}
+
 /// Returns `true` if any detection or correlation matched.
 pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
     let EvalArgs {
-        rules: rules_path,
+        config: _,
+        dry_run: _,
+        rules: rules_opt,
         event: event_json,
         pretty,
         pipelines: pipeline_paths,
@@ -224,6 +295,11 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
         observe_fields_max_keys,
         observe_fields_report,
     } = args;
+
+    let rules_path = rules_opt.unwrap_or_else(|| {
+        eprintln!("error: no rules path; set --rules or eval.rules in the config file");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
 
     let collection = crate::load_collection(&rules_path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
@@ -1030,4 +1106,39 @@ fn write_report_to_file(path: &Path, serialized: &str) -> std::io::Result<()> {
     file.write_all(serialized.as_bytes())?;
     file.write_all(b"\n")?;
     file.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{Command, FromArgMatches};
+
+    fn parse(argv: &[&str]) -> (EvalArgs, ArgMatches) {
+        let cmd = EvalArgs::augment_args(Command::new("eval"));
+        let matches = cmd.get_matches_from(argv);
+        let args = EvalArgs::from_arg_matches(&matches).expect("valid args");
+        (args, matches)
+    }
+
+    fn partial(yaml: &str) -> config::RsigmaConfigPartial {
+        yaml_serde::from_str(yaml).expect("valid partial")
+    }
+
+    #[test]
+    fn cli_flag_beats_config_file() {
+        let (mut args, matches) = parse(&["eval", "--rules", "/cli/rules"]);
+        let base = partial("eval:\n  rules: /file/rules\n  fail_on_detection: true\n");
+        overlay_eval_config(&mut args, &matches, base);
+        // CLI flag wins for rules; the file fills fail_on_detection.
+        assert_eq!(args.rules.as_deref(), Some(Path::new("/cli/rules")));
+        assert!(args.fail_on_detection);
+    }
+
+    #[test]
+    fn config_fills_unset_rules() {
+        let (mut args, matches) = parse(&["eval"]);
+        let base = partial("eval:\n  rules: /file/rules\n");
+        overlay_eval_config(&mut args, &matches, base);
+        assert_eq!(args.rules.as_deref(), Some(Path::new("/file/rules")));
+    }
 }

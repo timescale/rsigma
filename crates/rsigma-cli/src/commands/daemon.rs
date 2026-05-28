@@ -6,17 +6,31 @@
 use std::path::PathBuf;
 use std::process;
 
-use clap::Args;
+use clap::parser::ValueSource;
+use clap::{ArgMatches, Args};
 
+use crate::config;
 use crate::daemon;
 use crate::exit_code;
 
 /// Arguments for `rsigma engine daemon` (and the deprecated `rsigma daemon`).
 #[derive(Args, Debug)]
 pub(crate) struct DaemonArgs {
-    /// Path to a Sigma rule file or directory of rules
+    /// Path to a YAML config file. Overrides config-file discovery
+    /// (./rsigma.yaml, ~/.config/rsigma/config.yaml, /etc/rsigma/config.yaml).
+    /// CLI flags still take precedence over config-file values.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Print the effective config (defaults < file < env) and exit without
+    /// starting the daemon. CLI flags override these values at runtime.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Path to a Sigma rule file or directory of rules.
+    /// Required unless supplied via `daemon.rules` in the config file.
     #[arg(short, long)]
-    pub rules: PathBuf,
+    pub rules: Option<PathBuf>,
 
     /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
     #[arg(short = 'p', long = "pipeline")]
@@ -39,7 +53,7 @@ pub(crate) struct DaemonArgs {
     pub pretty: bool,
 
     /// Address for health, metrics, and API server (default: 0.0.0.0:9090)
-    #[arg(long = "api-addr", default_value = "0.0.0.0:9090")]
+    #[arg(long = "api-addr", default_value = config::defaults::API_ADDR)]
     pub api_addr: String,
 
     /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
@@ -55,11 +69,11 @@ pub(crate) struct DaemonArgs {
     pub no_detections: bool,
 
     /// Correlation event mode: none, full, or refs
-    #[arg(long = "correlation-event-mode", default_value = "none")]
+    #[arg(long = "correlation-event-mode", default_value = config::defaults::CORRELATION_EVENT_MODE)]
     pub correlation_event_mode: String,
 
     /// Max events per correlation window group
-    #[arg(long = "max-correlation-events", default_value = "10")]
+    #[arg(long = "max-correlation-events", default_value_t = config::defaults::MAX_CORRELATION_EVENTS)]
     pub max_correlation_events: usize,
 
     /// Event field name(s) for timestamp extraction in correlations
@@ -73,30 +87,30 @@ pub(crate) struct DaemonArgs {
 
     /// Interval in seconds between periodic state snapshots (default: 30).
     /// Only meaningful when --state-db is set.
-    #[arg(long = "state-save-interval", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long = "state-save-interval", default_value_t = config::defaults::STATE_SAVE_INTERVAL, value_parser = clap::value_parser!(u64).range(1..))]
     pub state_save_interval: u64,
 
     /// Event input source. Supported schemes: stdin, http, nats://<host>:<port>/<subject>
-    #[arg(long = "input", default_value = "stdin")]
+    #[arg(long = "input", default_value = config::defaults::INPUT_SOURCE)]
     pub input: String,
 
     /// Detection output sink (can be repeated for fan-out).
     /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
-    #[arg(long = "output", default_value = "stdout")]
+    #[arg(long = "output", default_value = config::defaults::STDOUT_SINK)]
     pub output: Vec<String>,
 
     /// Bounded channel capacity for source→engine and engine→sink queues.
     /// Higher values absorb bursts; lower values apply back-pressure sooner.
-    #[arg(long = "buffer-size", default_value = "10000")]
+    #[arg(long = "buffer-size", default_value_t = config::defaults::BUFFER_SIZE)]
     pub buffer_size: usize,
 
     /// Maximum events to process per engine lock acquisition.
     /// Reduces mutex overhead under load. 1 = process one at a time (default).
-    #[arg(long = "batch-size", default_value = "1")]
+    #[arg(long = "batch-size", default_value_t = config::defaults::BATCH_SIZE)]
     pub batch_size: usize,
 
     /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
-    #[arg(long = "drain-timeout", default_value = "5")]
+    #[arg(long = "drain-timeout", default_value_t = config::defaults::DRAIN_TIMEOUT)]
     pub drain_timeout: u64,
 
     /// Dead-letter queue target for events that fail processing.
@@ -109,12 +123,12 @@ pub(crate) struct DaemonArgs {
     /// auto: try JSON → syslog → plain (default).
     /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
     /// cef (requires cef feature).
-    #[arg(long = "input-format", default_value = "auto")]
+    #[arg(long = "input-format", default_value = config::defaults::INPUT_FORMAT)]
     pub input_format: String,
 
     /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
     /// Only used when --input-format is syslog or auto. Defaults to UTC.
-    #[arg(long = "syslog-tz", default_value = "+00:00")]
+    #[arg(long = "syslog-tz", default_value = config::defaults::SYSLOG_TZ)]
     pub syslog_tz: String,
 
     /// NATS credentials file (.creds) for JWT + NKey authentication.
@@ -188,7 +202,7 @@ pub(crate) struct DaemonArgs {
     /// 'wallclock' (default): use wall-clock time for correlation windows.
     /// 'skip': run detections but skip correlation state updates for that
     /// event. Recommended for forensic replay of logs without timestamps.
-    #[arg(long = "timestamp-fallback", default_value = "wallclock",
+    #[arg(long = "timestamp-fallback", default_value = config::defaults::TIMESTAMP_FALLBACK,
            value_parser = ["wallclock", "skip"])]
     pub timestamp_fallback: String,
 
@@ -248,7 +262,7 @@ pub(crate) struct DaemonArgs {
     /// `rsigma_fields_observer_overflow_dropped_total`); existing keys
     /// keep incrementing. Default: 10000. Has no effect unless
     /// `--observe-fields` is set.
-    #[arg(long = "observe-fields-max-keys", default_value_t = 10_000)]
+    #[arg(long = "observe-fields-max-keys", default_value_t = config::defaults::OBSERVE_FIELDS_MAX_KEYS)]
     pub observe_fields_max_keys: usize,
 
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
@@ -346,7 +360,7 @@ pub(crate) struct DaemonArgs {
     #[arg(
         long = "tls-min-version",
         value_name = "VERSION",
-        default_value = "1.3"
+        default_value = config::defaults::TLS_MIN_VERSION
     )]
     pub tls_min_version: String,
 
@@ -377,9 +391,18 @@ pub(crate) struct NatsAuthArgs {
 }
 
 /// Entry point for `rsigma engine daemon` (and the deprecated `rsigma daemon`).
-pub(crate) fn cmd_daemon(args: DaemonArgs) {
+pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
+    let base = config::load_and_merge(args.config.as_deref());
+    if args.dry_run {
+        config::print_dry_run("daemon", &base);
+        return;
+    }
+    apply_daemon_config(&mut args, matches, base);
+
     let DaemonArgs {
-        rules: rules_path,
+        config: _,
+        dry_run: _,
+        rules: rules_opt,
         pipelines: pipeline_paths,
         jq,
         jsonpath,
@@ -451,6 +474,11 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         #[cfg(feature = "daemon-tls")]
         allow_plaintext,
     } = args;
+
+    let rules_path = rules_opt.unwrap_or_else(|| {
+        eprintln!("error: no rules path; set --rules or daemon.rules in the config file");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
 
     #[cfg(feature = "daemon-nats")]
     let nats_auth = NatsAuthArgs {
@@ -542,6 +570,245 @@ pub(crate) fn cmd_daemon(args: DaemonArgs) {
         #[cfg(feature = "daemon-tls")]
         tls_args,
     );
+}
+
+/// Overlay the resolved config (`base` = defaults < file < env) onto `args`,
+/// but only for fields the operator did NOT set explicitly on the command
+/// line. This makes the effective precedence CLI flag > env > file > default
+/// without disturbing the rest of the daemon plumbing.
+fn apply_daemon_config(
+    args: &mut DaemonArgs,
+    matches: &ArgMatches,
+    base: config::RsigmaConfigPartial,
+) {
+    // A flag counts as explicitly set if it came from the command line or from
+    // one of clap's own `env=` bindings (e.g. RSIGMA_CONSUMER_GROUP); in both
+    // cases it must win over the config file.
+    let explicit = |id: &str| {
+        matches!(
+            matches.value_source(id),
+            Some(ValueSource::CommandLine | ValueSource::EnvVariable)
+        )
+    };
+    let Some(daemon) = base.daemon else {
+        return;
+    };
+
+    if !explicit("rules")
+        && let Some(v) = daemon.rules
+    {
+        args.rules = Some(v);
+    }
+    if !explicit("pipelines")
+        && let Some(v) = daemon.pipelines
+    {
+        args.pipelines = v;
+    }
+    if !explicit("sources")
+        && let Some(v) = daemon.sources
+    {
+        args.sources = v;
+    }
+    if !explicit("enrichers")
+        && let Some(v) = daemon.enrichers
+    {
+        args.enrichers = Some(v);
+    }
+
+    if let Some(api) = daemon.api {
+        if !explicit("api_addr")
+            && let Some(v) = api.addr
+        {
+            args.api_addr = v;
+        }
+        #[cfg(feature = "daemon-tls")]
+        if let Some(tls) = api.tls {
+            if !explicit("tls_cert")
+                && let Some(v) = tls.cert
+            {
+                args.tls_cert = Some(v);
+            }
+            if !explicit("tls_key")
+                && let Some(v) = tls.key
+            {
+                args.tls_key = Some(v);
+            }
+            if !explicit("tls_client_ca")
+                && let Some(v) = tls.client_ca
+            {
+                args.tls_client_ca = Some(v);
+            }
+            if !explicit("tls_min_version")
+                && let Some(v) = tls.min_version
+            {
+                args.tls_min_version = v;
+            }
+            if !explicit("allow_plaintext")
+                && let Some(v) = tls.allow_plaintext
+            {
+                args.allow_plaintext = v;
+            }
+        }
+    }
+
+    if let Some(input) = daemon.input {
+        if !explicit("input")
+            && let Some(v) = input.source
+        {
+            args.input = v;
+        }
+        if !explicit("input_format")
+            && let Some(v) = input.format
+        {
+            args.input_format = v;
+        }
+        if !explicit("syslog_tz")
+            && let Some(v) = input.syslog_tz
+        {
+            args.syslog_tz = v;
+        }
+        if !explicit("buffer_size")
+            && let Some(v) = input.buffer_size
+        {
+            args.buffer_size = v;
+        }
+        if !explicit("batch_size")
+            && let Some(v) = input.batch_size
+        {
+            args.batch_size = v;
+        }
+        if !explicit("jq")
+            && let Some(v) = input.jq
+        {
+            args.jq = Some(v);
+        }
+        if !explicit("jsonpath")
+            && let Some(v) = input.jsonpath
+        {
+            args.jsonpath = Some(v);
+        }
+    }
+
+    if let Some(output) = daemon.output {
+        if !explicit("output")
+            && let Some(v) = output.sinks
+        {
+            args.output = v;
+        }
+        if !explicit("dlq")
+            && let Some(v) = output.dlq
+        {
+            args.dlq = Some(v);
+        }
+        if !explicit("drain_timeout")
+            && let Some(v) = output.drain_timeout
+        {
+            args.drain_timeout = v;
+        }
+        if !explicit("include_event")
+            && let Some(v) = output.include_event
+        {
+            args.include_event = v;
+        }
+        if !explicit("pretty")
+            && let Some(v) = output.pretty
+        {
+            args.pretty = v;
+        }
+    }
+
+    if let Some(correlation) = daemon.correlation {
+        if !explicit("suppress")
+            && let Some(v) = correlation.suppress
+        {
+            args.suppress = Some(v);
+        }
+        if !explicit("action")
+            && let Some(v) = correlation.action
+        {
+            args.action = Some(v);
+        }
+        if !explicit("correlation_event_mode")
+            && let Some(v) = correlation.event_mode
+        {
+            args.correlation_event_mode = v;
+        }
+        if !explicit("max_correlation_events")
+            && let Some(v) = correlation.max_events
+        {
+            args.max_correlation_events = v;
+        }
+        if !explicit("timestamp_fields")
+            && let Some(v) = correlation.timestamp_fields
+        {
+            args.timestamp_fields = v;
+        }
+        if !explicit("timestamp_fallback")
+            && let Some(v) = correlation.timestamp_fallback
+        {
+            args.timestamp_fallback = v;
+        }
+        if !explicit("no_detections")
+            && let Some(v) = correlation.no_detections
+        {
+            args.no_detections = v;
+        }
+    }
+
+    if let Some(state) = daemon.state {
+        if !explicit("state_db")
+            && let Some(v) = state.db
+        {
+            args.state_db = Some(v);
+        }
+        if !explicit("state_save_interval")
+            && let Some(v) = state.save_interval
+        {
+            args.state_save_interval = v;
+        }
+    }
+
+    if let Some(engine) = daemon.engine {
+        if !explicit("bloom_prefilter")
+            && let Some(v) = engine.bloom_prefilter
+        {
+            args.bloom_prefilter = v;
+        }
+        if !explicit("bloom_max_bytes")
+            && let Some(v) = engine.bloom_max_bytes
+        {
+            args.bloom_max_bytes = Some(v);
+        }
+        if !explicit("observe_fields")
+            && let Some(v) = engine.observe_fields
+        {
+            args.observe_fields = v;
+        }
+        if !explicit("observe_fields_max_keys")
+            && let Some(v) = engine.observe_fields_max_keys
+        {
+            args.observe_fields_max_keys = v;
+        }
+        if !explicit("allow_remote_include")
+            && let Some(v) = engine.allow_remote_include
+        {
+            args.allow_remote_include = v;
+        }
+        #[cfg(feature = "daachorse-index")]
+        if !explicit("cross_rule_ac")
+            && let Some(v) = engine.cross_rule_ac
+        {
+            args.cross_rule_ac = v;
+        }
+    }
+
+    #[cfg(feature = "daemon-nats")]
+    if let Some(nats) = daemon.nats
+        && !explicit("consumer_group")
+        && let Some(v) = nats.consumer_group
+    {
+        args.consumer_group = Some(v);
+    }
 }
 
 /// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
@@ -839,4 +1106,45 @@ fn parse_tz_offset(s: &str) -> i32 {
     });
 
     sign * (hours * 3600 + minutes * 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{Command, FromArgMatches};
+    use std::path::Path;
+
+    fn parse(argv: &[&str]) -> (DaemonArgs, ArgMatches) {
+        let cmd = DaemonArgs::augment_args(Command::new("daemon"));
+        let matches = cmd.get_matches_from(argv);
+        let args = DaemonArgs::from_arg_matches(&matches).expect("valid args");
+        (args, matches)
+    }
+
+    fn partial(yaml: &str) -> config::RsigmaConfigPartial {
+        yaml_serde::from_str(yaml).expect("valid partial")
+    }
+
+    #[test]
+    fn cli_flag_beats_config_file() {
+        let (mut args, matches) =
+            parse(&["daemon", "--rules", "/cli/rules", "--buffer-size", "999"]);
+        let base = partial(
+            "daemon:\n  rules: /file/rules\n  api:\n    addr: \"1.2.3.4:5\"\n  input:\n    buffer_size: 111\n",
+        );
+        apply_daemon_config(&mut args, &matches, base);
+        // CLI flags win over the file:
+        assert_eq!(args.rules.as_deref(), Some(Path::new("/cli/rules")));
+        assert_eq!(args.buffer_size, 999);
+        // The file fills a flag the user did not set:
+        assert_eq!(args.api_addr, "1.2.3.4:5");
+    }
+
+    #[test]
+    fn config_fills_unset_rules() {
+        let (mut args, matches) = parse(&["daemon"]);
+        let base = partial("daemon:\n  rules: /file/rules\n");
+        apply_daemon_config(&mut args, &matches, base);
+        assert_eq!(args.rules.as_deref(), Some(Path::new("/file/rules")));
+    }
 }

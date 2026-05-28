@@ -4,3 +4,4 @@ nav:
   - rule
   - backend
   - pipeline
+  - config

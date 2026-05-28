@@ -68,6 +68,34 @@ Every flat top-level command still works as a hidden, undocumented forwarder. In
 
 Deprecation timeline: flat aliases are **hidden** from `rsigma --help` but stay functional with a stderr migration warning, and will be **removed** in v1.0. Migrate at your convenience within that window.
 
+### `config`: YAML configuration
+
+Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config).
+
+```bash
+# Scaffold a commented template at ./rsigma.yaml.
+rsigma config init
+
+# Discover files, deserialize, warn on unknown keys and inert sections.
+rsigma config validate
+
+# Print the effective config with the source of each leaf.
+rsigma config show --for daemon
+
+# Emit the JSON Schema (paired with a $schema header in the template).
+rsigma config schema > rsigma.schema.json
+
+# List the config files that would load.
+rsigma config path
+
+# Hot-reload a running daemon (POST /api/v1/reload, cross-platform).
+rsigma config reload
+```
+
+`engine daemon` and `engine eval` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+
+Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
+
 ### `rule parse`: Parse a single rule
 
 Parse a Sigma YAML file and output the AST as JSON.

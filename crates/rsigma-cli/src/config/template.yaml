@@ -1,0 +1,118 @@
+# yaml-language-server: $schema=https://timescale.github.io/rsigma/rsigma.schema.json
+#
+# rsigma configuration file.
+#
+# Precedence (low to high):
+#   compiled defaults < /etc/rsigma < ~/.config/rsigma < .rsigmarc < ./rsigma.yaml < env < CLI flags
+#
+# Discovery: place this at ./rsigma.yaml, ~/.config/rsigma/config.yaml, or
+# /etc/rsigma/config.yaml, or point at it with `--config <path>`.
+# Regenerate the JSON Schema with: rsigma config schema
+version: 1
+
+global:
+  # Diagnostic log format on stderr: text | json (maps to --log-format).
+  log_format: text
+  # color and format are reserved for the upcoming output-format work and are
+  # inert today.
+  # color: auto
+  # format: json
+
+daemon:
+  # Path to a Sigma rule file or directory.
+  rules: /etc/rsigma/rules
+  # Builtin pipeline names (ecs_windows, sysmon) or YAML file paths.
+  pipelines: []
+  # External dynamic-source files or directories (repeatable).
+  sources: []
+  # Post-evaluation enricher config file.
+  # enrichers: /etc/rsigma/enrichers.yml
+
+  api:
+    # Bind address for health, metrics, and the HTTP/OTLP API.
+    addr: "0.0.0.0:9090"
+    # TLS settings (ignored unless built with the daemon-tls feature).
+    # tls:
+    #   cert: /etc/rsigma/tls/cert.pem
+    #   key: /etc/rsigma/tls/key.pem
+    #   client_ca: /etc/rsigma/tls/ca.pem
+    #   min_version: "1.3"
+    #   allow_plaintext: false
+
+  input:
+    # Event source: stdin | http | nats://host:port/subject
+    source: stdin
+    # Log format: auto | json | syslog | plain | logfmt | cef
+    format: auto
+    # Default timezone offset for RFC 3164 syslog.
+    syslog_tz: "+00:00"
+    # Channel capacity for source->engine and engine->sink queues.
+    buffer_size: 10000
+    # Max events processed per engine lock acquisition.
+    batch_size: 1
+    # jq filter / JSONPath query to extract the event payload (mutually exclusive).
+    # jq: ".event"
+    # jsonpath: "$.event"
+
+  output:
+    # Detection sinks (repeatable): stdout | file://path | nats://host:port/subject
+    sinks: [stdout]
+    # Dead-letter queue for events that fail processing.
+    # dlq: "file:///var/lib/rsigma/dlq.ndjson"
+    # Seconds to wait for in-flight events to drain on shutdown.
+    drain_timeout: 5
+    # Include the full event JSON in each detection.
+    include_event: false
+    # Pretty-print JSON output.
+    pretty: false
+
+  correlation:
+    # Suppression window for correlation alerts (e.g. 5m, 1h, 30s).
+    # suppress: 5m
+    # Action after a correlation fires: alert | reset
+    action: alert
+    # Correlation event inclusion: none | full | refs
+    event_mode: none
+    # Max events stored per correlation window group.
+    max_events: 10
+    # Extra event field names for timestamp extraction.
+    # timestamp_fields: ["@timestamp"]
+    # Behavior when no timestamp field is found: wallclock | skip
+    timestamp_fallback: wallclock
+    # Suppress detection output for correlation-only rules.
+    no_detections: false
+
+  state:
+    # SQLite database for persisting correlation state across restarts.
+    # db: /var/lib/rsigma/state.db
+    # Seconds between periodic state snapshots.
+    save_interval: 30
+
+  engine:
+    # Enable bloom-filter pre-filtering of positive substring matchers.
+    bloom_prefilter: false
+    # Memory budget (bytes) for the bloom index. No effect unless bloom_prefilter.
+    # bloom_max_bytes: 1048576
+    # Observe event field keys for coverage reporting.
+    observe_fields: false
+    # Hard ceiling on distinct field names tracked by the observer.
+    observe_fields_max_keys: 10000
+    # Allow include directives to reference remote (HTTP/NATS) sources.
+    allow_remote_include: false
+    # Enable the cross-rule Aho-Corasick pre-filter (daachorse-index feature).
+    # cross_rule_ac: false
+
+  # NATS secrets (creds/token/password/nkey) are NOT configurable here by
+  # design; supply them via environment variables. Ignored unless daemon-nats.
+  # nats:
+  #   consumer_group: rsigma
+
+eval:
+  # Default rules path for `rsigma engine eval`.
+  # rules: ./rules
+  # pipelines: [sysmon]
+  input_format: auto
+  syslog_tz: "+00:00"
+  fail_on_detection: false
+  # format is reserved for the upcoming output-format work.
+  # format: table

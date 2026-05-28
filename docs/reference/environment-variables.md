@@ -1,6 +1,11 @@
 # Environment Variables
 
-`rsigma` reads a small set of environment variables in addition to its CLI flags. Every variable here has a corresponding `--flag` that takes precedence; the env vars exist so secrets and per-host configuration can stay out of process tables and shell history.
+`rsigma` reads two parallel families of environment variables in addition to its CLI flags:
+
+1. **Legacy single-underscore names** bound to specific clap flags (`NATS_CREDS`, `RSIGMA_CONSUMER_GROUP`, `RSIGMA_TLS_KEY_PASSWORD`, …). These are how secrets stay out of process tables and shell history.
+2. **Uniform `RSIGMA_<SECTION>__<KEY>`** names that mirror every non-secret config-file key, using `__` as the nesting separator. See [Configuration](configuration.md#environment-layer) for the full scheme and examples.
+
+Every variable here has a corresponding `--flag` that takes precedence.
 
 ## Variables
 
@@ -8,7 +13,10 @@
 |----------|------|---------|---------------|--------|
 | `RUST_LOG` | `tracing-subscriber` filter directive | `info` | All (always for `engine daemon`; otherwise only when `--log-format` is set) | Controls verbosity of structured diagnostic logs on stderr. See [Observability](../guide/observability.md#rust_log-filter-targets) for the target catalog. |
 | `NO_COLOR` | `0`/`1` (presence-only) | unset | `rule lint` and any subcommand that emits colored stderr | Disables ANSI colors. Follows the [NO_COLOR convention](https://no-color.org/). |
+| `XDG_CONFIG_HOME` | path | `~/.config` | All | Honoured when locating the user config (`$XDG_CONFIG_HOME/rsigma/config.yaml`). See [Configuration discovery](configuration.md#discovery). |
+| `RSIGMA_<SECTION>__<KEY>` | YAML scalar | unset | `engine daemon`, `engine eval` | Uniform env layer for non-secret config keys (e.g. `RSIGMA_DAEMON__API__ADDR`, `RSIGMA_GLOBAL__LOG_FORMAT`). See [Configuration: environment layer](configuration.md#environment-layer). |
 | `RSIGMA_CONSUMER_GROUP` | string | unset | `engine daemon` with `--input nats://` | NATS JetStream consumer group name. Equivalent to `--consumer-group`. Multiple daemons sharing the same group name load-balance across a single durable pull consumer. |
+| `RSIGMA_TLS_KEY_PASSWORD` | string | unset | `engine daemon` with `--tls-key` | Password for an encrypted TLS key. Currently rejected at startup; reserved for a future release. |
 | `NATS_CREDS` | path to `.creds` file | unset | `engine daemon` with NATS source or sink | NATS credentials file (JWT + NKey). Equivalent to `--nats-creds`. |
 | `NATS_TOKEN` | string | unset | same | NATS authentication token. Equivalent to `--nats-token`. |
 | `NATS_USER` | string | unset | same | NATS username (requires `NATS_PASSWORD`). Equivalent to `--nats-user`. |
@@ -33,7 +41,7 @@ uses `bar`, not `foo`. The env var is convenient for not putting the token in `p
 
 Common variables that `rsigma` does NOT consume, in case operators are wondering why setting them has no effect:
 
-- `SIGMA_RULES_DIR`, `RSIGMA_RULES`, `RSIGMA_CONFIG`: not implemented. Rules and pipelines are always passed via `--rules` and `--pipeline`.
+- `SIGMA_RULES_DIR`, `RSIGMA_RULES`: not implemented. Use `--rules` on the command line or `daemon.rules`/`eval.rules` in a config file (or set the corresponding `RSIGMA_DAEMON__RULES` / `RSIGMA_EVAL__RULES`).
 - `OTEL_EXPORTER_OTLP_*`: rsigma is an OTLP *receiver*, not an exporter. These env vars apply to the agent publishing logs into rsigma (see [OTLP Integration](../guide/otlp-integration.md)), not to rsigma itself.
 - `PROMETHEUS_*`: the daemon exposes `/metrics` on `--api-addr`; no client-side env vars are involved.
 

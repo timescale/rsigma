@@ -559,6 +559,20 @@ RSigma is designed for high-throughput detection. On an Apple M4 Pro:
 
 See [BENCHMARKS.md](BENCHMARKS.md) for full Criterion results across all subsystems.
 
+## Configuration
+
+`engine daemon` and `engine eval` accept their settings via a layered YAML config in addition to CLI flags. Precedence is **CLI flag > env > project file > user file > system file > default**, with the project layer being either `./rsigma.yaml` or the nearest `.rsigmarc`. Manage it with the `rsigma config` group:
+
+```bash
+rsigma config init                  # scaffold ./rsigma.yaml with comments
+rsigma config validate              # discover files, warn on unknown keys
+rsigma config show --for daemon     # show the effective config per-leaf
+rsigma config schema                # emit the JSON Schema for editors/CI
+rsigma config reload                # POST /api/v1/reload (cross-platform)
+```
+
+Both commands also accept `--config <PATH>` (load only that file) and `--dry-run` (print the effective section, exit `0`). Secrets (NATS creds, TLS key password) deliberately stay env/flag-only and never appear in the schema. Full details in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
+
 ## Reference
 
 - [pySigma](https://github.com/SigmaHQ/pySigma): reference Python implementation
