@@ -122,7 +122,7 @@ jobs:
         with:
           toolchain: stable
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@e1c4cd42111751368541a7cb5db3522bd1f846a4 # v2.78.0
+      - uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
