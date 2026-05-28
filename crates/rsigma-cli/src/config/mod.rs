@@ -50,12 +50,13 @@ pub(crate) fn load_and_merge(explicit: Option<&Path>) -> RsigmaConfigPartial {
     }
 }
 
-/// Best-effort lookup of `global.log_format` from the discovered config files
-/// and `RSIGMA_*` env (no compiled default, so this is `None` unless an
-/// operator set it). Used by `main` to pick the CLI log format before any
-/// command runs. Quiet: unlike `load_and_merge`, it never warns or exits.
-pub(crate) fn discovered_log_format() -> Option<String> {
-    let loaded = load_layered(None).ok()?;
+/// Best-effort lookup of `global.log_format` from the config files (honoring an
+/// explicit `--config` path when present) and the `RSIGMA_*` env (no compiled
+/// default, so this is `None` unless an operator set it). Used by `main` to
+/// pick the CLI log format before any command runs. Quiet: unlike
+/// `load_and_merge`, it never warns or exits.
+pub(crate) fn discovered_log_format(explicit: Option<&Path>) -> Option<String> {
+    let loaded = load_layered(explicit).ok()?;
     let merged = loaded.config.merge(resolve::env_partial());
     merged.global.and_then(|g| g.log_format)
 }
@@ -188,17 +189,29 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
     let mut unknown = Vec::new();
     let mut docs = yaml_serde::Deserializer::from_str(&content);
     let Some(doc) = docs.next() else {
-        // Empty file: nothing to merge.
+        // Empty file (or comments only): nothing to merge.
         return Ok((RsigmaConfigPartial::default(), unknown));
     };
 
-    let partial: RsigmaConfigPartial = serde_ignored::deserialize(doc, |path| {
-        unknown.push(path.to_string())
-    })
-    .map_err(|e| ConfigError::Parse {
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })?;
+    let partial: RsigmaConfigPartial =
+        serde_ignored::deserialize(doc, |path| unknown.push(path.to_string())).map_err(|e| {
+            let raw = e.to_string();
+            // A top-level scalar/sequence/null produces serde's terse
+            // "invalid type: …, expected struct RsigmaConfigPartial". Rewrite it
+            // into something an operator can act on.
+            let message = if raw.contains("expected struct RsigmaConfigPartial") {
+                format!(
+                    "top-level config must be a YAML mapping of sections \
+                 (global, daemon, eval); got {raw}"
+                )
+            } else {
+                raw
+            };
+            ConfigError::Parse {
+                path: path.to_path_buf(),
+                message,
+            }
+        })?;
 
     Ok((partial, unknown))
 }

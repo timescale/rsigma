@@ -23,7 +23,7 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
-use super::schema::RsigmaConfigPartial;
+use super::schema::{Merge, RsigmaConfigPartial};
 
 /// Which layer supplied a resolved value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -32,6 +32,8 @@ pub(crate) enum Source {
     Default,
     File,
     Env,
+    /// A CLI flag. Serialized and displayed as `flag` so JSON and text agree.
+    #[serde(rename = "flag")]
     Cli,
 }
 
@@ -56,7 +58,10 @@ fn env_partial_from<I>(vars: I) -> RsigmaConfigPartial
 where
     I: IntoIterator<Item = (String, String)>,
 {
-    let mut root = Map::new();
+    // Deserialize each variable into its own single-key partial and fold them
+    // together, so one malformed variable is skipped with a warning rather
+    // than dropping the whole environment layer.
+    let mut acc = RsigmaConfigPartial::default();
     for (key, raw) in vars {
         let Some(rest) = key.strip_prefix("RSIGMA_") else {
             continue;
@@ -69,16 +74,14 @@ where
         let path: Vec<String> = rest.split("__").map(|s| s.to_ascii_lowercase()).collect();
         // Parse the value as a YAML scalar so ints/bools/lists coerce.
         let scalar: Value = yaml_serde::from_str(&raw).unwrap_or(Value::String(raw));
-        insert_nested(&mut root, &path, scalar);
-    }
-
-    match serde_json::from_value(Value::Object(root)) {
-        Ok(partial) => partial,
-        Err(e) => {
-            eprintln!("warning: ignoring RSIGMA_* environment config: {e}");
-            RsigmaConfigPartial::default()
+        let mut obj = Map::new();
+        insert_nested(&mut obj, &path, scalar);
+        match serde_json::from_value::<RsigmaConfigPartial>(Value::Object(obj)) {
+            Ok(partial) => acc = acc.merge(partial),
+            Err(e) => eprintln!("warning: ignoring environment variable {key}: {e}"),
         }
     }
+    acc
 }
 
 fn insert_nested(obj: &mut Map<String, Value>, path: &[String], value: Value) {
@@ -238,6 +241,27 @@ mod tests {
         assert_eq!(daemon.api.expect("api").addr, Some("127.0.0.1:7000".into()));
         assert_eq!(daemon.input.expect("input").buffer_size, Some(42));
         assert_eq!(p.global.expect("global").log_format, Some("json".into()));
+    }
+
+    #[test]
+    fn env_skips_only_the_malformed_var() {
+        let vars = vec![
+            (
+                "RSIGMA_DAEMON__API__ADDR".to_string(),
+                "127.0.0.1:7000".to_string(),
+            ),
+            // Bad: a scalar where the schema wants a list. Must not drop the
+            // sibling api.addr value.
+            (
+                "RSIGMA_DAEMON__OUTPUT__SINKS".to_string(),
+                "not-a-list".to_string(),
+            ),
+        ];
+        let p = env_partial_from(vars);
+        assert_eq!(
+            p.daemon.expect("daemon").api.expect("api").addr,
+            Some("127.0.0.1:7000".into())
+        );
     }
 
     #[test]

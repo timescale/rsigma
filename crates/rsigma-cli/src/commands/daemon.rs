@@ -53,7 +53,7 @@ pub(crate) struct DaemonArgs {
     pub pretty: bool,
 
     /// Address for health, metrics, and API server (default: 0.0.0.0:9090)
-    #[arg(long = "api-addr", default_value = "0.0.0.0:9090")]
+    #[arg(long = "api-addr", default_value = config::defaults::API_ADDR)]
     pub api_addr: String,
 
     /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
@@ -69,11 +69,11 @@ pub(crate) struct DaemonArgs {
     pub no_detections: bool,
 
     /// Correlation event mode: none, full, or refs
-    #[arg(long = "correlation-event-mode", default_value = "none")]
+    #[arg(long = "correlation-event-mode", default_value = config::defaults::CORRELATION_EVENT_MODE)]
     pub correlation_event_mode: String,
 
     /// Max events per correlation window group
-    #[arg(long = "max-correlation-events", default_value = "10")]
+    #[arg(long = "max-correlation-events", default_value_t = config::defaults::MAX_CORRELATION_EVENTS)]
     pub max_correlation_events: usize,
 
     /// Event field name(s) for timestamp extraction in correlations
@@ -87,30 +87,30 @@ pub(crate) struct DaemonArgs {
 
     /// Interval in seconds between periodic state snapshots (default: 30).
     /// Only meaningful when --state-db is set.
-    #[arg(long = "state-save-interval", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long = "state-save-interval", default_value_t = config::defaults::STATE_SAVE_INTERVAL, value_parser = clap::value_parser!(u64).range(1..))]
     pub state_save_interval: u64,
 
     /// Event input source. Supported schemes: stdin, http, nats://<host>:<port>/<subject>
-    #[arg(long = "input", default_value = "stdin")]
+    #[arg(long = "input", default_value = config::defaults::INPUT_SOURCE)]
     pub input: String,
 
     /// Detection output sink (can be repeated for fan-out).
     /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
-    #[arg(long = "output", default_value = "stdout")]
+    #[arg(long = "output", default_value = config::defaults::STDOUT_SINK)]
     pub output: Vec<String>,
 
     /// Bounded channel capacity for source→engine and engine→sink queues.
     /// Higher values absorb bursts; lower values apply back-pressure sooner.
-    #[arg(long = "buffer-size", default_value = "10000")]
+    #[arg(long = "buffer-size", default_value_t = config::defaults::BUFFER_SIZE)]
     pub buffer_size: usize,
 
     /// Maximum events to process per engine lock acquisition.
     /// Reduces mutex overhead under load. 1 = process one at a time (default).
-    #[arg(long = "batch-size", default_value = "1")]
+    #[arg(long = "batch-size", default_value_t = config::defaults::BATCH_SIZE)]
     pub batch_size: usize,
 
     /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
-    #[arg(long = "drain-timeout", default_value = "5")]
+    #[arg(long = "drain-timeout", default_value_t = config::defaults::DRAIN_TIMEOUT)]
     pub drain_timeout: u64,
 
     /// Dead-letter queue target for events that fail processing.
@@ -123,12 +123,12 @@ pub(crate) struct DaemonArgs {
     /// auto: try JSON → syslog → plain (default).
     /// Explicit: json, syslog, plain, logfmt (requires logfmt feature),
     /// cef (requires cef feature).
-    #[arg(long = "input-format", default_value = "auto")]
+    #[arg(long = "input-format", default_value = config::defaults::INPUT_FORMAT)]
     pub input_format: String,
 
     /// Default timezone offset for RFC 3164 syslog (e.g. +05:00, -08:00).
     /// Only used when --input-format is syslog or auto. Defaults to UTC.
-    #[arg(long = "syslog-tz", default_value = "+00:00")]
+    #[arg(long = "syslog-tz", default_value = config::defaults::SYSLOG_TZ)]
     pub syslog_tz: String,
 
     /// NATS credentials file (.creds) for JWT + NKey authentication.
@@ -202,7 +202,7 @@ pub(crate) struct DaemonArgs {
     /// 'wallclock' (default): use wall-clock time for correlation windows.
     /// 'skip': run detections but skip correlation state updates for that
     /// event. Recommended for forensic replay of logs without timestamps.
-    #[arg(long = "timestamp-fallback", default_value = "wallclock",
+    #[arg(long = "timestamp-fallback", default_value = config::defaults::TIMESTAMP_FALLBACK,
            value_parser = ["wallclock", "skip"])]
     pub timestamp_fallback: String,
 
@@ -262,7 +262,7 @@ pub(crate) struct DaemonArgs {
     /// `rsigma_fields_observer_overflow_dropped_total`); existing keys
     /// keep incrementing. Default: 10000. Has no effect unless
     /// `--observe-fields` is set.
-    #[arg(long = "observe-fields-max-keys", default_value_t = 10_000)]
+    #[arg(long = "observe-fields-max-keys", default_value_t = config::defaults::OBSERVE_FIELDS_MAX_KEYS)]
     pub observe_fields_max_keys: usize,
 
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
@@ -360,7 +360,7 @@ pub(crate) struct DaemonArgs {
     #[arg(
         long = "tls-min-version",
         value_name = "VERSION",
-        default_value = "1.3"
+        default_value = config::defaults::TLS_MIN_VERSION
     )]
     pub tls_min_version: String,
 

@@ -224,15 +224,34 @@ fn main() {
     #[cfg(not(feature = "daemon"))]
     let is_daemon = false;
     // The --log-format flag wins; otherwise honor global.log_format from a
-    // discovered config file or RSIGMA_GLOBAL__LOG_FORMAT.
-    let log_format = cli
-        .log_format
-        .or_else(|| config::discovered_log_format().and_then(|s| parse_log_format(&s)));
+    // discovered config file (or an explicit --config path) or
+    // RSIGMA_GLOBAL__LOG_FORMAT.
+    let log_format = cli.log_format.or_else(|| {
+        let cfg_override = scan_config_flag();
+        config::discovered_log_format(cfg_override.as_deref()).and_then(|s| parse_log_format(&s))
+    });
     if !is_daemon && let Some(format) = log_format {
         init_cli_log_subscriber(format);
     }
 
     dispatch(cli.command, &matches);
+}
+
+/// Pre-scan argv for an explicit `--config <PATH>` / `--config=<PATH>` so the
+/// early log-format resolution honors the same file the subcommand will load.
+/// Only the long form is scanned; the short `-c` belongs to the `config`
+/// subcommands, where `global.log_format` is irrelevant.
+fn scan_config_flag() -> Option<PathBuf> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--config" {
+            return args.next().map(PathBuf::from);
+        }
+        if let Some(value) = arg.strip_prefix("--config=") {
+            return Some(PathBuf::from(value));
+        }
+    }
+    None
 }
 
 /// Parse a `global.log_format` config string into a `LogFormat`.

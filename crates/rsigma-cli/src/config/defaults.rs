@@ -26,6 +26,8 @@ pub(crate) const TIMESTAMP_FALLBACK: &str = "wallclock";
 pub(crate) const STATE_SAVE_INTERVAL: u64 = 30;
 pub(crate) const OBSERVE_FIELDS_MAX_KEYS: usize = 10_000;
 pub(crate) const STDOUT_SINK: &str = "stdout";
+/// Default minimum TLS version for the daemon API listener (feature-gated).
+pub(crate) const TLS_MIN_VERSION: &str = "1.3";
 
 /// A fully-populated partial holding every compiled default.
 ///
