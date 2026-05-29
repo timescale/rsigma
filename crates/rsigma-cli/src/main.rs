@@ -4,6 +4,7 @@ mod config;
 mod daemon;
 pub(crate) mod exit_code;
 mod fix;
+pub(crate) mod output;
 
 use std::path::PathBuf;
 use std::process;
