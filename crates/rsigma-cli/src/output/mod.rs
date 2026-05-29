@@ -48,8 +48,6 @@ impl OutputFormat {
     }
 
     /// Lowercase wire name, used for diagnostics and `config show`.
-    // Used by the backend `convert` command, which lands in a follow-up commit.
-    #[allow(dead_code)]
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Json => "json",

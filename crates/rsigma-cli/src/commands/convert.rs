@@ -4,7 +4,7 @@ use std::process;
 use clap::Args;
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file};
 
-use crate::output::OutputCtx;
+use crate::output::{OutputCtx, OutputFormat, render_json};
 
 /// Arguments for `rsigma backend convert` (and the deprecated `rsigma convert`).
 #[derive(Args, Debug)]
@@ -62,7 +62,7 @@ fn get_backend(
     }
 }
 
-pub(crate) fn cmd_convert(args: ConvertArgs, _ctx: OutputCtx) {
+pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
     let ConvertArgs {
         rules,
         target,
@@ -129,6 +129,43 @@ pub(crate) fn cmd_convert(args: ConvertArgs, _ctx: OutputCtx) {
             }
             if !skip_unsupported && !output_data.errors.is_empty() {
                 process::exit(crate::exit_code::RULE_ERROR);
+            }
+            // `--output-format json` wraps the queries in a JSON envelope.
+            // The other structured formats (`ndjson`/`csv`/`tsv`/`table`)
+            // make no sense for free-form query text -- warn once on stderr
+            // and fall back to the raw text path.
+            if ctx.format == OutputFormat::Json && output.is_none() {
+                let queries: Vec<serde_json::Value> = output_data
+                    .queries
+                    .iter()
+                    .flat_map(|r| {
+                        r.queries.iter().map(move |q| {
+                            serde_json::json!({
+                                "rule_title": r.rule_title,
+                                "rule_id": r.rule_id,
+                                "query": q,
+                            })
+                        })
+                    })
+                    .collect();
+                render_json(
+                    &serde_json::json!({
+                        "target": target,
+                        "format": format,
+                        "queries": queries,
+                    }),
+                    ctx.pretty_json(),
+                );
+                return;
+            }
+            if ctx.explicit_format
+                && !matches!(ctx.format, OutputFormat::Json | OutputFormat::Ndjson)
+                && ctx.show_progress()
+            {
+                eprintln!(
+                    "warning: `--output-format {}` is not supported by `backend convert`; falling back to raw query text.",
+                    ctx.format.as_str(),
+                );
             }
             let all_queries: Vec<&str> = output_data
                 .queries
