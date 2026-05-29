@@ -36,7 +36,9 @@ A minimal example, with every supported top-level section:
 version: 1
 
 global:
-  log_format: text     # text | json (maps to --log-format)
+  log_format: text         # text | json (maps to --log-format)
+  output_format: json      # json | ndjson | table | csv | tsv (maps to --output-format)
+  color: auto              # auto | always | never (maps to --color)
 
 daemon:
   rules: /etc/rsigma/rules
@@ -74,7 +76,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 
 | Section | Used by | Notes |
 |---------|---------|-------|
-| `global` | every subcommand | Only `global.log_format` is wired today. `global.color` and `global.format` are reserved for the upcoming output-format work. |
+| `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.nats` | `engine daemon` | Non-secret NATS knobs (e.g. `consumer_group`). Secrets stay env-only. Inert unless built with `daemon-nats`. |

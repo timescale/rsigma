@@ -5,6 +5,34 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### TTY-aware output + structured output formats (#157)
+
+Every rsigma subcommand can now emit its structured output in one of five formats, selected by a new **global** `--output-format <json|ndjson|table|csv|tsv>` flag. The default is TTY-aware: pretty JSON when stdout is a terminal, plain NDJSON when piped or redirected, so `rsigma engine eval … | jq` does the right thing without any extra flag and `rsigma engine eval` in a terminal is finally readable.
+
+**New global flags.** Three more global knobs ride alongside `--output-format` and the existing `--log-format`:
+
+- `--color <auto|always|never>` honours [`NO_COLOR`](https://no-color.org/) under `auto` (the default).
+- `--quiet` / `-q` suppresses every non-data line (progress, summary, fallback warnings); errors still go to stderr.
+- `--no-stats` suppresses only the trailing summary line; progress messages still appear.
+
+All four resolve through the same layered precedence as the rest of the config: **flag > `RSIGMA_GLOBAL__*` env > `global.*` in the YAML config > TTY-aware default**.
+
+**Per-command rendering.**
+
+- **`engine eval`** is the showcase. `table` renders a `LEVEL | RULE | TYPE | DETAIL` summary (numeric columns right-aligned). `csv` and `tsv` stream a header line plus one row per match. `--pretty` is preserved as a backwards-compatibility alias for "pretty JSON" and wins over the TTY default.
+- **`rule fields`** folds its `--json` flag into the new selector; `--json` is kept as a hidden deprecated alias for `--output-format json`. The legacy table view stays the default even when piped, so existing pipelines are unchanged. `--output-format ndjson` streams one field record per line.
+- **`rule lint`** keeps the coloured human view as the default. `--output-format json` emits a `{summary, findings}` envelope; `ndjson` streams one `Finding` per line; `csv` / `tsv` write a `PATH,SEVERITY,RULE,LINE,MESSAGE` table. The per-command `--color` flag is gone in favour of the global one; behaviour is identical.
+- **`rule parse`**, **`rule condition`**, **`rule stdin`**: routed through the shared JSON renderer; `--pretty` still defaults to on (the AST is small and human-friendly is the default).
+- **`backend convert`**: keeps its existing `-f, --format` for the backend query format and `-o, --output` for the output file unchanged. `--output-format json` wraps the queries in a `{target, format, queries: [{rule_title, rule_id, query}, …]}` envelope. The non-JSON tabular formats are not meaningful for free-form query text, so the command prints a stderr warning and falls back to raw text (the warning is itself suppressible with `--quiet`).
+
+**Output module.** A new `crates/rsigma-cli/src/output/` module owns the `OutputFormat` and `ColorChoice` enums, the `OutputCtx` resolver, the `Tabular` trait + width-aligning `render_table` (with auto-right-align for numeric columns), the streaming `DelimitedWriter` for CSV/TSV (hand-rolled RFC 4180-style escaping, no new dependency), and the `Painter` previously in `commands/lint.rs` (now reused by every command). The lint Painter is gone; the shared one resolves color from `--color` plus `NO_COLOR` plus TTY detection just like before.
+
+**Config schema.** `global.format` is renamed to `global.output_format` (the old key was reserved for this work and was inert), and `eval.format` is dropped (it was inert too). The committed template, the JSON Schema emitted by `rsigma config schema`, and the schema drift-guard test all reflect the rename.
+
+**Tests.** New unit tests in `crates/rsigma-cli/src/output/mod.rs` cover format / color parsing, TTY default resolution, `--quiet` / `--no-stats` semantics, CSV/TSV escaping edge cases, and the `Tabular` row shape. A new `crates/rsigma-cli/tests/cli_output_format.rs` integration suite (19 tests) exercises every format end to end on `engine eval`, `rule lint`, `rule fields`, and `backend convert`, plus the env-layer and config-file resolution and the flag-beats-env precedence.
+
+**Docs.** New canonical `docs/reference/output.md` page (registered in `docs/reference/.pages`) covering formats, TTY behaviour, color, quiet/no-stats, precedence, and per-command behaviour. The eval CLI doc gains an output-format section and a table-view example; the env-vars doc lists the two new variables; root README and CLI README gain a Global flags section. The configuration reference example shows the new `global.output_format` / `global.color` keys.
+
 ### Layered YAML configuration + `rsigma config` group (#152)
 
 `engine daemon` and `engine eval` are now driven by an optional layered YAML config file with explicit precedence **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf. The same machinery is exposed through a new `rsigma config` command group for scaffolding, validation, introspection, and reload.

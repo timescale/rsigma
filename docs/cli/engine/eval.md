@@ -49,9 +49,11 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 
 ### Output
 
+The global `--output-format` / `--color` / `--quiet` / `--no-stats` flags apply here too; see [Output Formats](../../reference/output.md). The flags below are eval-specific.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--pretty` | off | Pretty-print JSON output. |
+| `--pretty` | off | Pretty-print JSON output. Kept for backwards compatibility; equivalent to `--output-format json` with pretty-printing on. |
 | `--no-detections` | off | Suppress detection output for rules that exist only to feed correlations (`generate: false`). |
 | `--include-event` | off | Embed the full event JSON in every `MatchResult`. Equivalent to setting `rsigma.include_event: "true"` per-rule. |
 
@@ -115,6 +117,14 @@ rsigma engine eval -r rules/ -e '{"CommandLine":"cmd /c whoami"}'
 ```bash
 rsigma engine eval -r rules/ --pretty -e @events.ndjson
 ```
+
+### Table view for interactive triage
+
+```bash
+rsigma engine eval -r rules/ -e @events.ndjson --output-format table
+```
+
+A width-aligned `LEVEL | RULE | TYPE | DETAIL` table appears on stdout. Use `--output-format csv` or `--output-format tsv` to pipe into a spreadsheet instead. See [Output Formats](../../reference/output.md).
 
 ### EVTX file with the bundled Windows-mapping pipeline
 

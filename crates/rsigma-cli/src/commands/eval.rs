@@ -7,13 +7,15 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
-    CorrelationEngine, Engine, Event, FieldObserver, JsonEvent, Pipeline, RuleFieldSet,
+    CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, Pipeline,
+    ResultBody, RuleFieldSet,
 };
 use rsigma_parser::SigmaCollection;
 
 use crate::EventFilter;
 use crate::config;
 use crate::exit_code;
+use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular};
 
 /// Arguments for `rsigma engine eval` (and the deprecated `rsigma eval`).
 #[derive(Args, Debug)]
@@ -267,7 +269,7 @@ fn overlay_eval_config(
 }
 
 /// Returns `true` if any detection or correlation matched.
-pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
+pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let EvalArgs {
         config: _,
         dry_run: _,
@@ -304,7 +306,7 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
     let collection = crate::load_collection(&rules_path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
-    if pipelines.iter().any(|p| p.is_dynamic()) {
+    if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
         eprintln!(
             "  note: dynamic sources are not resolved by `rsigma engine eval`. \
              Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
@@ -345,12 +347,17 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
     };
     let observe_ref = observe_ctx.as_ref();
 
+    // The match renderer encapsulates the selected output format. `--pretty`
+    // is honoured for backwards compatibility: it implies the JSON branch and
+    // turns pretty-printing on even when stdout is not a TTY.
+    let mut renderer = MatchRenderer::new(ctx, pretty);
+
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
             &rules_path,
             event_source,
-            pretty,
+            &mut renderer,
             &pipelines,
             &event_filter,
             corr_config,
@@ -368,7 +375,7 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
             collection,
             &rules_path,
             event_source,
-            pretty,
+            &mut renderer,
             &pipelines,
             &event_filter,
             include_event,
@@ -382,8 +389,10 @@ pub(crate) fn cmd_eval(args: EvalArgs) -> bool {
         )
     };
 
-    if let Some(ctx) = observe_ref {
-        render_field_report(ctx);
+    renderer.flush();
+
+    if let Some(octx) = observe_ref {
+        render_field_report(octx);
     }
 
     had_matches
@@ -395,7 +404,7 @@ fn cmd_eval_with_correlations(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
     event_source: EventSource,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     config: rsigma_eval::CorrelationConfig,
@@ -423,12 +432,14 @@ fn cmd_eval_with_correlations(
         process::exit(crate::exit_code::RULE_ERROR);
     }
 
-    eprintln!(
-        "Loaded {} detection rules + {} correlation rules from {}",
-        engine.detection_rule_count(),
-        engine.correlation_rule_count(),
-        rules_path.display(),
-    );
+    if renderer.ctx().show_progress() {
+        eprintln!(
+            "Loaded {} detection rules + {} correlation rules from {}",
+            engine.detection_rule_count(),
+            engine.correlation_rule_count(),
+            rules_path.display(),
+        );
+    }
     tracing::info!(
         detection_rules = engine.detection_rule_count(),
         correlation_rules = engine.correlation_rule_count(),
@@ -453,11 +464,13 @@ fn cmd_eval_with_correlations(
                 let result = engine.process_event(&event);
 
                 if result.is_empty() {
-                    eprintln!("No matches.");
+                    if renderer.ctx().show_progress() {
+                        eprintln!("No matches.");
+                    }
                 } else {
                     had_matches = true;
                     for m in &result {
-                        crate::print_json(m, pretty);
+                        renderer.emit(m);
                     }
                 }
             }
@@ -473,23 +486,27 @@ fn cmd_eval_with_correlations(
                 &mut engine,
                 reader,
                 event_filter,
-                pretty,
+                renderer,
                 input_format_str,
                 syslog_tz_str,
                 observe,
             );
-            eprintln!(
-                "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
-            );
+            if renderer.ctx().show_stats() {
+                eprintln!(
+                    "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+                );
+            }
             det_count > 0 || corr_count > 0
         }
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
             let (det_count, corr_count, rec_count) =
-                eval_evtx_corr(&mut engine, &path, event_filter, pretty, observe);
-            eprintln!(
-                "Processed {rec_count} EVTX records, {det_count} detection matches, {corr_count} correlation matches."
-            );
+                eval_evtx_corr(&mut engine, &path, event_filter, renderer, observe);
+            if renderer.ctx().show_stats() {
+                eprintln!(
+                    "Processed {rec_count} EVTX records, {det_count} detection matches, {corr_count} correlation matches."
+                );
+            }
             det_count > 0 || corr_count > 0
         }
         EventSource::Stdin => {
@@ -498,14 +515,16 @@ fn cmd_eval_with_correlations(
                 &mut engine,
                 stdin.lock(),
                 event_filter,
-                pretty,
+                renderer,
                 input_format_str,
                 syslog_tz_str,
                 observe,
             );
-            eprintln!(
-                "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
-            );
+            if renderer.ctx().show_stats() {
+                eprintln!(
+                    "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
+                );
+            }
             det_count > 0 || corr_count > 0
         }
     }
@@ -518,7 +537,7 @@ fn eval_stream_corr(
     engine: &mut CorrelationEngine,
     reader: impl BufRead,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     input_format_str: &str,
     syslog_tz_str: &str,
     observe: Option<&ObserveContext>,
@@ -554,7 +573,7 @@ fn eval_stream_corr(
                 &line,
                 &format,
                 event_filter,
-                pretty,
+                renderer,
                 &mut det_count,
                 &mut corr_count,
                 observe,
@@ -566,7 +585,7 @@ fn eval_stream_corr(
                 engine,
                 &line,
                 event_filter,
-                pretty,
+                renderer,
                 &mut det_count,
                 &mut corr_count,
                 observe,
@@ -585,7 +604,7 @@ fn eval_line_corr(
     line: &str,
     format: &rsigma_runtime::InputFormat,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     det_count: &mut u64,
     corr_count: &mut u64,
     observe: Option<&ObserveContext>,
@@ -604,7 +623,7 @@ fn eval_line_corr(
                     } else {
                         *corr_count += 1;
                     }
-                    crate::print_json(m, pretty);
+                    renderer.emit(m);
                 }
             }
         } else {
@@ -617,7 +636,7 @@ fn eval_line_corr(
                 } else {
                     *corr_count += 1;
                 }
-                crate::print_json(m, pretty);
+                renderer.emit(m);
             }
         }
     }
@@ -630,7 +649,7 @@ fn eval_line_corr_json(
     engine: &mut CorrelationEngine,
     line: &str,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     det_count: &mut u64,
     corr_count: &mut u64,
     observe: Option<&ObserveContext>,
@@ -653,7 +672,7 @@ fn eval_line_corr_json(
             } else {
                 *corr_count += 1;
             }
-            crate::print_json(m, pretty);
+            renderer.emit(m);
         }
     }
 }
@@ -664,7 +683,7 @@ fn cmd_eval_detection_only(
     collection: SigmaCollection,
     rules_path: &std::path::Path,
     event_source: EventSource,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     include_event: bool,
@@ -691,11 +710,13 @@ fn cmd_eval_detection_only(
         process::exit(crate::exit_code::RULE_ERROR);
     }
 
-    eprintln!(
-        "Loaded {} rules from {}",
-        engine.rule_count(),
-        rules_path.display()
-    );
+    if renderer.ctx().show_progress() {
+        eprintln!(
+            "Loaded {} rules from {}",
+            engine.rule_count(),
+            rules_path.display()
+        );
+    }
     tracing::info!(
         detection_rules = engine.rule_count(),
         correlation_rules = 0,
@@ -716,7 +737,9 @@ fn cmd_eval_detection_only(
             let mut had_matches = false;
             let payloads = crate::apply_event_filter(&value, event_filter);
             if payloads.is_empty() {
-                eprintln!("No matches.");
+                if renderer.ctx().show_progress() {
+                    eprintln!("No matches.");
+                }
             } else {
                 for payload in &payloads {
                     let event = JsonEvent::borrow(payload);
@@ -724,11 +747,13 @@ fn cmd_eval_detection_only(
                     let matches = engine.evaluate(&event);
 
                     if matches.is_empty() {
-                        eprintln!("No matches.");
+                        if renderer.ctx().show_progress() {
+                            eprintln!("No matches.");
+                        }
                     } else {
                         had_matches = true;
                         for m in &matches {
-                            crate::print_json(m, pretty);
+                            renderer.emit(m);
                         }
                     }
                 }
@@ -745,19 +770,23 @@ fn cmd_eval_detection_only(
                 &engine,
                 reader,
                 event_filter,
-                pretty,
+                renderer,
                 input_format_str,
                 syslog_tz_str,
                 observe,
             );
-            eprintln!("Processed {line_num} events, {match_count} matches.");
+            if renderer.ctx().show_stats() {
+                eprintln!("Processed {line_num} events, {match_count} matches.");
+            }
             match_count > 0
         }
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
             let (match_count, rec_count) =
-                eval_evtx_detect(&engine, &path, event_filter, pretty, observe);
-            eprintln!("Processed {rec_count} EVTX records, {match_count} matches.");
+                eval_evtx_detect(&engine, &path, event_filter, renderer, observe);
+            if renderer.ctx().show_stats() {
+                eprintln!("Processed {rec_count} EVTX records, {match_count} matches.");
+            }
             match_count > 0
         }
         EventSource::Stdin => {
@@ -766,12 +795,14 @@ fn cmd_eval_detection_only(
                 &engine,
                 stdin.lock(),
                 event_filter,
-                pretty,
+                renderer,
                 input_format_str,
                 syslog_tz_str,
                 observe,
             );
-            eprintln!("Processed {line_num} events, {match_count} matches.");
+            if renderer.ctx().show_stats() {
+                eprintln!("Processed {line_num} events, {match_count} matches.");
+            }
             match_count > 0
         }
     }
@@ -784,7 +815,7 @@ fn eval_stream_detect(
     engine: &Engine,
     reader: impl BufRead,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     input_format_str: &str,
     syslog_tz_str: &str,
     observe: Option<&ObserveContext>,
@@ -818,7 +849,7 @@ fn eval_stream_detect(
                 &line,
                 &format,
                 event_filter,
-                pretty,
+                renderer,
                 &mut match_count,
                 observe,
             );
@@ -829,7 +860,7 @@ fn eval_stream_detect(
                 engine,
                 &line,
                 event_filter,
-                pretty,
+                renderer,
                 &mut match_count,
                 observe,
             );
@@ -847,7 +878,7 @@ fn eval_line_detect(
     line: &str,
     format: &rsigma_runtime::InputFormat,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     match_count: &mut u64,
     observe: Option<&ObserveContext>,
 ) {
@@ -859,14 +890,14 @@ fn eval_line_detect(
                 observe_event(observe, &event);
                 for m in &engine.evaluate(&event) {
                     *match_count += 1;
-                    crate::print_json(m, pretty);
+                    renderer.emit(m);
                 }
             }
         } else {
             observe_event(observe, &decoded);
             for m in &engine.evaluate(&decoded) {
                 *match_count += 1;
-                crate::print_json(m, pretty);
+                renderer.emit(m);
             }
         }
     }
@@ -878,7 +909,7 @@ fn eval_line_detect_json(
     engine: &Engine,
     line: &str,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     match_count: &mut u64,
     observe: Option<&ObserveContext>,
 ) {
@@ -895,7 +926,7 @@ fn eval_line_detect_json(
         observe_event(observe, &event);
         for m in &engine.evaluate(&event) {
             *match_count += 1;
-            crate::print_json(m, pretty);
+            renderer.emit(m);
         }
     }
 }
@@ -911,7 +942,7 @@ fn eval_evtx_corr(
     engine: &mut CorrelationEngine,
     path: &std::path::Path,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     observe: Option<&ObserveContext>,
 ) -> (u64, u64, u64) {
     let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
@@ -943,7 +974,7 @@ fn eval_evtx_corr(
                 } else {
                     corr_count += 1;
                 }
-                crate::print_json(m, pretty);
+                renderer.emit(m);
             }
         }
     }
@@ -958,7 +989,7 @@ fn eval_evtx_detect(
     engine: &Engine,
     path: &std::path::Path,
     event_filter: &EventFilter,
-    pretty: bool,
+    renderer: &mut MatchRenderer,
     observe: Option<&ObserveContext>,
 ) -> (u64, u64) {
     let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
@@ -984,7 +1015,7 @@ fn eval_evtx_detect(
             observe_event(observe, &event);
             for m in &engine.evaluate(&event) {
                 match_count += 1;
-                crate::print_json(m, pretty);
+                renderer.emit(m);
             }
         }
     }
@@ -1106,6 +1137,190 @@ fn write_report_to_file(path: &Path, serialized: &str) -> std::io::Result<()> {
     file.write_all(serialized.as_bytes())?;
     file.write_all(b"\n")?;
     file.flush()
+}
+
+// ---------------------------------------------------------------------------
+// MatchRenderer: format-aware streaming output for evaluation results
+// ---------------------------------------------------------------------------
+
+/// Format-aware streaming sink for [`EvaluationResult`] records.
+///
+/// Built once per `cmd_eval` call from the resolved [`OutputCtx`]. JSON and
+/// the delimited formats stream per match; `table` buffers and renders in
+/// [`MatchRenderer::flush`].
+///
+/// The legacy `--pretty` flag flips the JSON branch to pretty-print even
+/// when stdout is piped, so callers can still get pretty JSON in CI logs.
+struct MatchRenderer {
+    ctx: OutputCtx,
+    state: RenderState,
+}
+
+enum RenderState {
+    /// Plain JSON (one object per line, pretty if requested).
+    Json { pretty: bool },
+    /// Streaming delimited writer (`csv` or `tsv`).
+    Delimited(DelimitedWriter),
+    /// Buffer of rows for the width-aligning table renderer.
+    Table(Vec<EvalRow>),
+}
+
+impl MatchRenderer {
+    fn new(ctx: OutputCtx, pretty_flag: bool) -> Self {
+        // `--pretty` was the historical way to opt into pretty-printed JSON.
+        // The operator explicitly asked for that, so honour it regardless of
+        // the resolved format (it would be confusing if `--pretty` silently
+        // turned into compact NDJSON when piped).
+        let state = if pretty_flag && !ctx.explicit_format {
+            RenderState::Json { pretty: true }
+        } else {
+            match ctx.format {
+                OutputFormat::Json => RenderState::Json {
+                    pretty: pretty_flag || ctx.pretty_json(),
+                },
+                OutputFormat::Ndjson => RenderState::Json { pretty: false },
+                OutputFormat::Csv => {
+                    RenderState::Delimited(DelimitedWriter::new(',', EvalRow::headers()))
+                }
+                OutputFormat::Tsv => {
+                    RenderState::Delimited(DelimitedWriter::new('\t', EvalRow::headers()))
+                }
+                OutputFormat::Table => RenderState::Table(Vec::new()),
+            }
+        };
+        Self { ctx, state }
+    }
+
+    fn ctx(&self) -> &OutputCtx {
+        &self.ctx
+    }
+
+    /// Emit one match in the configured format.
+    fn emit(&mut self, m: &EvaluationResult) {
+        match &mut self.state {
+            RenderState::Json { pretty } => crate::output::render_json(m, *pretty),
+            RenderState::Delimited(writer) => {
+                let row = EvalRow::from_result(m).row();
+                writer.push(&row);
+            }
+            RenderState::Table(rows) => rows.push(EvalRow::from_result(m)),
+        }
+    }
+
+    /// Render any buffered output. No-op for the streaming formats.
+    fn flush(&mut self) {
+        if let RenderState::Table(rows) = &self.state {
+            crate::output::render_table(rows);
+        }
+    }
+}
+
+/// Tabular row projection of an [`EvaluationResult`] for `--output-format
+/// table|csv|tsv`. Four columns by design:
+///
+/// * `LEVEL`: rule level (`info`, `low`, `medium`, `high`, `critical`) or
+///   `-` when the rule did not set one.
+/// * `RULE`: rule title.
+/// * `TYPE`: `detection` for plain matches, the correlation type name
+///   (`event_count`, `temporal`, …) for correlation firings.
+/// * `DETAIL`: a one-line summary -- matched fields for detections,
+///   `group_key` plus the aggregated value for correlations.
+///
+/// JSON / NDJSON output preserves the full record; the projection here is
+/// for the human / spreadsheet views.
+#[derive(Clone)]
+struct EvalRow {
+    level: String,
+    rule: String,
+    kind: String,
+    detail: String,
+}
+
+const ROW_HEADERS: &[&str] = &["LEVEL", "RULE", "TYPE", "DETAIL"];
+
+const DETAIL_MAX: usize = 200;
+
+impl EvalRow {
+    fn from_result(m: &EvaluationResult) -> Self {
+        let level = m
+            .header
+            .level
+            .as_ref()
+            .map(|l| l.as_str().to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let rule = m.header.rule_title.clone();
+        let (kind, detail) = match &m.body {
+            ResultBody::Detection(d) => {
+                let detail = d
+                    .matched_fields
+                    .iter()
+                    .map(|fm| format!("{}={}", fm.field, summarize_value(&fm.value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ("detection".to_string(), truncate(detail))
+            }
+            ResultBody::Correlation(c) => {
+                let group = c
+                    .group_key
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let detail = if group.is_empty() {
+                    format!("agg={}", c.aggregated_value)
+                } else {
+                    format!("{group} | agg={}", c.aggregated_value)
+                };
+                (c.correlation_type.as_str().to_string(), truncate(detail))
+            }
+        };
+        Self {
+            level,
+            rule,
+            kind,
+            detail,
+        }
+    }
+}
+
+impl Tabular for EvalRow {
+    fn headers() -> &'static [&'static str] {
+        ROW_HEADERS
+    }
+    fn row(&self) -> Vec<String> {
+        vec![
+            self.level.clone(),
+            self.rule.clone(),
+            self.kind.clone(),
+            self.detail.clone(),
+        ]
+    }
+}
+
+/// Render a matched-field value as a compact one-line string. The full
+/// payload is always available via `--output-format ndjson` if needed.
+fn summarize_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        // Compact JSON for arrays/objects keeps the table on one line.
+        other => other.to_string(),
+    }
+}
+
+/// Cap a detail cell at [`DETAIL_MAX`] characters. Long values get a `…`
+/// suffix so a single wide field cannot derail the table layout.
+fn truncate(mut s: String) -> String {
+    if s.chars().count() <= DETAIL_MAX {
+        return s;
+    }
+    let truncated: String = s.chars().take(DETAIL_MAX - 1).collect();
+    s.clear();
+    s.push_str(&truncated);
+    s.push('…');
+    s
 }
 
 #[cfg(test)]

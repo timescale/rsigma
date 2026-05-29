@@ -61,6 +61,23 @@ pub(crate) fn discovered_log_format(explicit: Option<&Path>) -> Option<String> {
     merged.global.and_then(|g| g.log_format)
 }
 
+/// Best-effort lookup of `global.output_format` and `global.color` from the
+/// config files plus the `RSIGMA_*` env. Returns the two values as raw
+/// strings (the [`crate::output`] module parses them). Quiet: like
+/// [`discovered_log_format`], it never warns or exits.
+pub(crate) fn discovered_global_output(
+    explicit: Option<&Path>,
+) -> (Option<String>, Option<String>) {
+    let Some(loaded) = load_layered(explicit).ok() else {
+        return (None, None);
+    };
+    let merged = loaded.config.merge(resolve::env_partial());
+    let Some(global) = merged.global else {
+        return (None, None);
+    };
+    (global.output_format, global.color)
+}
+
 /// Print the effective `section` config (defaults < file < env) as YAML to
 /// stdout, used by `--dry-run`. CLI flags override these at runtime; that note
 /// goes to stderr so the YAML on stdout stays clean.

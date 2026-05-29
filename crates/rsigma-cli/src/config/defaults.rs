@@ -39,7 +39,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         global: Some(GlobalPartial {
             log_format: Some(LOG_FORMAT.to_string()),
             color: None,
-            format: None,
+            output_format: None,
         }),
         daemon: Some(DaemonPartial {
             rules: None,
@@ -95,7 +95,6 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             input_format: Some(INPUT_FORMAT.to_string()),
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             fail_on_detection: Some(false),
-            format: None,
         }),
     }
 }

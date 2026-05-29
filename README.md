@@ -118,8 +118,14 @@ cosign verify \
 # Evaluate a single event against Sigma rules
 rsigma engine eval -r rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
-# Stream NDJSON from stdin
+# Stream NDJSON from stdin (auto-selected when stdout is piped)
 cat events.ndjson | rsigma engine eval -r rules/
+
+# Interactive triage in a terminal: width-aligned table view
+rsigma engine eval -r rules/ -e @events.ndjson --output-format table
+
+# Pipe a CSV view into a spreadsheet or data tool
+rsigma engine eval -r rules/ -e @events.ndjson --output-format csv > matches.csv
 
 # Run as a daemon with hot-reload and Prometheus metrics
 rsigma engine daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090

@@ -1,6 +1,7 @@
 nav:
   - Lint Rules: lint-rules.md
   - Configuration: configuration.md
+  - Output Formats: output.md
   - Backends: backends
   - Prometheus Metrics: metrics.md
   - HTTP API: http-api.md

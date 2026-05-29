@@ -5,6 +5,8 @@ use rsigma_eval::{FieldOrigin, FieldSource, Pipeline, RuleFieldSet};
 use rsigma_parser::SigmaCollection;
 use serde::Serialize;
 
+use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular, render_json};
+
 /// Arguments for `rsigma rule fields` (and the deprecated `rsigma fields`).
 #[derive(Args, Debug)]
 pub(crate) struct FieldsArgs {
@@ -21,12 +23,12 @@ pub(crate) struct FieldsArgs {
     #[arg(long)]
     pub no_filters: bool,
 
-    /// Output as JSON instead of a table
-    #[arg(long)]
+    /// Deprecated alias for `--output-format json`. Hidden from `--help`.
+    #[arg(long, hide = true)]
     pub json: bool,
 }
 
-pub(crate) fn cmd_fields(args: FieldsArgs) {
+pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
     let FieldsArgs {
         rules: path,
         pipelines: pipeline_paths,
@@ -36,7 +38,7 @@ pub(crate) fn cmd_fields(args: FieldsArgs) {
     let collection = crate::load_collection(&path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
-    if pipelines.iter().any(|p| p.is_dynamic()) {
+    if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
         eprintln!(
             "  note: dynamic sources are not resolved by `rsigma rule fields`. \
              Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
@@ -46,10 +48,51 @@ pub(crate) fn cmd_fields(args: FieldsArgs) {
 
     let report = build_report(&collection, &pipelines, no_filters);
 
-    if json {
-        crate::print_json(&report, true);
+    // Resolve the effective format. `--json` is a deprecated alias for
+    // `--output-format json` and always wins when set. Otherwise we honour
+    // an *explicit* `--output-format` flag; without one, the legacy table
+    // view stays the default (the TTY-aware NDJSON fallback would regress
+    // the existing `rule fields` UX).
+    let format = if json {
+        OutputFormat::Json
+    } else if ctx.explicit_format {
+        ctx.format
     } else {
-        print_table(&report);
+        OutputFormat::Table
+    };
+
+    match format {
+        OutputFormat::Json => render_json(&report, true),
+        OutputFormat::Ndjson => {
+            // Emit one row per field plus a summary record so the stream is
+            // line-oriented end to end.
+            for entry in &report.fields {
+                render_json(entry, false);
+            }
+        }
+        OutputFormat::Csv => render_fields_delimited(&report, ',', &ctx),
+        OutputFormat::Tsv => render_fields_delimited(&report, '\t', &ctx),
+        OutputFormat::Table => print_table(&report, &ctx),
+    }
+}
+
+/// Render the field catalog as CSV/TSV. Summary goes to stderr (gated on
+/// `show_stats`); the data rows go to stdout.
+fn render_fields_delimited(report: &FieldsReport, sep: char, ctx: &OutputCtx) {
+    if ctx.show_stats() {
+        let s = &report.summary;
+        eprintln!(
+            "Rules: {} detection, {} correlation, {} filter | Pipelines: {} | Unique fields: {}",
+            s.total_rules,
+            s.total_correlations,
+            s.total_filters,
+            s.pipelines_applied,
+            s.unique_fields,
+        );
+    }
+    let mut writer = DelimitedWriter::new(sep, FieldEntry::headers());
+    for entry in &report.fields {
+        writer.push(&entry.row());
     }
 }
 
@@ -196,63 +239,45 @@ fn build_report(
 // Table output
 // ---------------------------------------------------------------------------
 
-fn print_table(report: &FieldsReport) {
-    let s = &report.summary;
-    eprintln!(
-        "Rules: {} detection, {} correlation, {} filter | Pipelines: {} | Unique fields: {}",
-        s.total_rules, s.total_correlations, s.total_filters, s.pipelines_applied, s.unique_fields
-    );
-
-    if report.fields.is_empty() {
-        eprintln!("No fields found.");
-        return;
+impl Tabular for FieldEntry {
+    fn headers() -> &'static [&'static str] {
+        &["FIELD", "RULES", "SOURCES"]
     }
+    fn row(&self) -> Vec<String> {
+        vec![
+            self.field.clone(),
+            self.rule_count.to_string(),
+            self.sources.join(", "),
+        ]
+    }
+}
 
-    let max_field = report
-        .fields
-        .iter()
-        .map(|f| f.field.len())
-        .max()
-        .unwrap_or(5)
-        .max(5);
-    let max_sources = report
-        .fields
-        .iter()
-        .map(|f| f.sources.join(", ").len())
-        .max()
-        .unwrap_or(7)
-        .max(7);
-
-    eprintln!();
-    println!(
-        "{:<width_f$}  {:>5}  {:<width_s$}",
-        "FIELD",
-        "RULES",
-        "SOURCES",
-        width_f = max_field,
-        width_s = max_sources,
-    );
-    println!(
-        "{:<width_f$}  {:>5}  {:<width_s$}",
-        "-".repeat(max_field),
-        "-----",
-        "-".repeat(max_sources),
-        width_f = max_field,
-        width_s = max_sources,
-    );
-
-    for entry in &report.fields {
-        println!(
-            "{:<width_f$}  {:>5}  {:<width_s$}",
-            entry.field,
-            entry.rule_count,
-            entry.sources.join(", "),
-            width_f = max_field,
-            width_s = max_sources,
+fn print_table(report: &FieldsReport, ctx: &OutputCtx) {
+    let s = &report.summary;
+    if ctx.show_stats() {
+        eprintln!(
+            "Rules: {} detection, {} correlation, {} filter | Pipelines: {} | Unique fields: {}",
+            s.total_rules,
+            s.total_correlations,
+            s.total_filters,
+            s.pipelines_applied,
+            s.unique_fields,
         );
     }
 
-    if !report.pipeline_mappings.is_empty() {
+    if report.fields.is_empty() {
+        if ctx.show_progress() {
+            eprintln!("No fields found.");
+        }
+        return;
+    }
+
+    if ctx.show_stats() {
+        eprintln!();
+    }
+    crate::output::render_table(&report.fields);
+
+    if !report.pipeline_mappings.is_empty() && ctx.show_stats() {
         eprintln!();
         eprintln!("Pipeline field mappings:");
         for m in &report.pipeline_mappings {

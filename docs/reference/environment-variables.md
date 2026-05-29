@@ -12,7 +12,9 @@ Every variable here has a corresponding `--flag` that takes precedence.
 | Variable | Type | Default | Subcommand(s) | Effect |
 |----------|------|---------|---------------|--------|
 | `RUST_LOG` | `tracing-subscriber` filter directive | `info` | All (always for `engine daemon`; otherwise only when `--log-format` is set) | Controls verbosity of structured diagnostic logs on stderr. See [Observability](../guide/observability.md#rust_log-filter-targets) for the target catalog. |
-| `NO_COLOR` | `0`/`1` (presence-only) | unset | `rule lint` and any subcommand that emits colored stderr | Disables ANSI colors. Follows the [NO_COLOR convention](https://no-color.org/). |
+| `NO_COLOR` | `0`/`1` (presence-only) | unset | All subcommands that emit colored stdout/stderr | Disables ANSI colors when `--color auto`. Follows the [NO_COLOR convention](https://no-color.org/). |
+| `RSIGMA_GLOBAL__OUTPUT_FORMAT` | `json`/`ndjson`/`table`/`csv`/`tsv` | unset | All | Default value for `--output-format`. See [Output Formats](output.md). |
+| `RSIGMA_GLOBAL__COLOR` | `auto`/`always`/`never` | unset | All | Default value for `--color`. |
 | `XDG_CONFIG_HOME` | path | `~/.config` | All | Honoured when locating the user config (`$XDG_CONFIG_HOME/rsigma/config.yaml`). See [Configuration discovery](configuration.md#discovery). |
 | `RSIGMA_<SECTION>__<KEY>` | YAML scalar | unset | `engine daemon`, `engine eval` | Uniform env layer for non-secret config keys (e.g. `RSIGMA_DAEMON__API__ADDR`, `RSIGMA_GLOBAL__LOG_FORMAT`). See [Configuration: environment layer](configuration.md#environment-layer). |
 | `RSIGMA_CONSUMER_GROUP` | string | unset | `engine daemon` with `--input nats://` | NATS JetStream consumer group name. Equivalent to `--consumer-group`. Multiple daemons sharing the same group name load-balance across a single durable pull consumer. |

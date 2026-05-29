@@ -18,8 +18,14 @@ cargo install rsigma
 # Single event (inline JSON)
 rsigma engine eval -r path/to/rules/ -e '{"CommandLine": "cmd /c whoami"}'
 
-# Stream NDJSON from stdin
+# Stream NDJSON from stdin (auto-selected when piped)
 cat events.ndjson | rsigma engine eval -r path/to/rules/
+
+# Table view for interactive triage
+rsigma engine eval -r path/to/rules/ -e @events.ndjson --output-format table
+
+# CSV for spreadsheets / data tools
+rsigma engine eval -r path/to/rules/ -e @events.ndjson --output-format csv
 
 # Long-running daemon with hot-reload, health checks, and Prometheus metrics
 hel run | rsigma engine daemon -r rules/ -p ecs_windows --api-addr 0.0.0.0:9090
@@ -42,6 +48,18 @@ rsigma rule fields -r rules/ -p ecs_windows
 # List available conversion backends
 rsigma backend targets
 ```
+
+## Global flags
+
+These flags work with every subcommand, mirroring how `--log-format` does, and they also resolve from the YAML config and the `RSIGMA_*` env layer (see [Output Formats](https://timescale.github.io/rsigma/reference/output/)).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output-format <FORMAT>` | TTY-aware (pretty `json` on a terminal, `ndjson` when piped) | One of `json`, `ndjson`, `table`, `csv`, `tsv`. `engine eval`, `rule fields`, and `rule lint` honour every value; `backend convert` honours `json` (wraps queries) and warns + falls back to raw text for `table`/`csv`/`tsv`. |
+| `--color <CHOICE>` | `auto` | One of `auto`, `always`, `never`. `auto` honours `NO_COLOR` and disables colour when stdout is not a TTY. |
+| `--quiet`, `-q` | off | Suppress every non-data line (progress, stats, fallback warnings). Errors still go to stderr. |
+| `--no-stats` | off | Suppress only the trailing summary; progress messages still appear. |
+| `--log-format <FORMAT>` | unset | When set, initialises a stderr `tracing` subscriber in `text` or `json`. Diagnostic logs only; does not affect stdout. |
 
 ## Subcommands
 
@@ -140,7 +158,6 @@ Run 66 built-in lint rules with optional JSON schema validation.
 | `path` | positional | required | Path to a Sigma rule file or directory |
 | `--schema` / `-s` | string | none | `"default"` to download the official schema (cached 7 days), or a path to a local JSON schema file |
 | `--verbose` / `-v` | flag | `false` | Show details for all files, including those that pass |
-| `--color` | string | `"auto"` | `auto`, `always`, or `never` |
 | `--disable` | string | `""` | Comma-separated lint rule IDs to suppress |
 | `--config` | path | none | Explicit path to `.rsigma-lint.yml` (otherwise auto-discovered by walking ancestor directories) |
 | `--exclude` | string | none | Glob pattern for paths to skip (repeatable, relative to lint root) |
@@ -152,7 +169,8 @@ rsigma rule lint path/to/rules/                     # lint all rules
 rsigma rule lint path/to/rules/ -v                  # verbose (show passing files + info-only)
 rsigma rule lint path/to/rules/ --schema default    # + JSON schema validation (downloads + caches)
 rsigma rule lint rule.yml --schema my-schema.json   # local JSON schema
-rsigma rule lint path/to/rules/ --color always      # force color
+rsigma rule lint path/to/rules/ --color always      # force color (global flag)
+rsigma rule lint path/to/rules/ --output-format json # machine-readable {summary,findings}
 rsigma rule lint rules/ --disable missing_description,missing_author  # suppress specific rules
 rsigma rule lint rules/ --config my-lint.yml        # explicit config file
 rsigma rule lint rules/ --exclude "config/**"       # skip non-rule files
