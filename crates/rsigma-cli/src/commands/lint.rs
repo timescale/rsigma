@@ -1,4 +1,3 @@
-use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
@@ -6,6 +5,8 @@ use std::time::SystemTime;
 use clap::Args;
 use rsigma_parser::lint::{self, FileLintResult, LintConfig};
 use serde::Deserialize;
+
+use crate::output::{OutputCtx, Painter};
 
 /// Counts returned by `cmd_lint` so the caller can decide the exit code.
 pub(crate) struct LintCounts {
@@ -29,10 +30,6 @@ pub(crate) struct LintArgs {
     /// Show details for all files, including those that pass
     #[arg(short, long)]
     pub verbose: bool,
-
-    /// Color output: auto (default), always, never
-    #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
-    pub color: String,
 
     /// Disable specific lint rules (comma-separated).
     /// Example: --disable missing_description,missing_author
@@ -64,19 +61,18 @@ pub(crate) struct LintArgs {
     pub fail_level: String,
 }
 
-pub(crate) fn cmd_lint(args: LintArgs) -> LintCounts {
+pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
     let LintArgs {
         path,
         schema,
         verbose,
-        color,
         disable,
         lint_config: lint_config_path,
         exclude,
         fix: apply_fix,
         fail_level: _,
     } = args;
-    let p = Painter::new(&color);
+    let p = Painter::new(ctx.color);
 
     // 0. Build lint config from file + CLI flags
     let config = build_lint_config(&path, disable, lint_config_path, exclude);
@@ -551,67 +547,8 @@ fn build_lint_config(
 // ---------------------------------------------------------------------------
 // Terminal color support
 // ---------------------------------------------------------------------------
-
-/// ANSI color painter that respects `--color`, `NO_COLOR`, and tty detection.
-struct Painter {
-    enabled: bool,
-}
-
-impl Painter {
-    fn new(color_arg: &str) -> Self {
-        let enabled = match color_arg {
-            "always" => true,
-            "never" => false,
-            _ => io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
-        };
-        Painter { enabled }
-    }
-
-    fn paint(&self, code: &str, text: &str) -> String {
-        if self.enabled {
-            format!("\x1b[{code}m{text}\x1b[0m")
-        } else {
-            text.to_string()
-        }
-    }
-
-    fn bold(&self, s: &str) -> String {
-        self.paint("1", s)
-    }
-
-    fn dim(&self, s: &str) -> String {
-        self.paint("2", s)
-    }
-
-    fn red(&self, s: &str) -> String {
-        self.paint("31", s)
-    }
-
-    fn red_bold(&self, s: &str) -> String {
-        self.paint("1;31", s)
-    }
-
-    fn green(&self, s: &str) -> String {
-        self.paint("32", s)
-    }
-
-    fn green_bold(&self, s: &str) -> String {
-        self.paint("1;32", s)
-    }
-
-    fn yellow(&self, s: &str) -> String {
-        self.paint("33", s)
-    }
-
-    fn yellow_bold(&self, s: &str) -> String {
-        self.paint("1;33", s)
-    }
-
-    fn blue(&self, s: &str) -> String {
-        self.paint("34", s)
-    }
-
-    fn cyan(&self, s: &str) -> String {
-        self.paint("36", s)
-    }
-}
+//
+// The `Painter` previously defined here moved to `crate::output` so other
+// commands (`engine eval`, `rule fields`, …) can share its
+// `--color`/`NO_COLOR`/TTY resolution. The local definition is gone; the
+// import at the top of this module brings the shared one in.

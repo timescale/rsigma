@@ -5,6 +5,8 @@ use std::process;
 use clap::Args;
 use rsigma_parser::{parse_sigma_file, parse_sigma_yaml};
 
+use crate::output::OutputCtx;
+
 /// Arguments for `rsigma rule parse` (and the deprecated `rsigma parse`).
 #[derive(Args, Debug)]
 pub(crate) struct ParseArgs {
@@ -31,7 +33,7 @@ pub(crate) struct StdinArgs {
     pub pretty: bool,
 }
 
-pub(crate) fn cmd_parse(args: ParseArgs) {
+pub(crate) fn cmd_parse(args: ParseArgs, _ctx: OutputCtx) {
     let ParseArgs { path, pretty } = args;
     match parse_sigma_file(&path) {
         Ok(collection) => {
@@ -45,7 +47,7 @@ pub(crate) fn cmd_parse(args: ParseArgs) {
     }
 }
 
-pub(crate) fn cmd_condition(args: ConditionArgs) {
+pub(crate) fn cmd_condition(args: ConditionArgs, _ctx: OutputCtx) {
     let ConditionArgs { expr } = args;
     match rsigma_parser::parse_condition(&expr) {
         Ok(ast) => crate::print_json(&ast, true),
@@ -56,7 +58,7 @@ pub(crate) fn cmd_condition(args: ConditionArgs) {
     }
 }
 
-pub(crate) fn cmd_stdin(args: StdinArgs) {
+pub(crate) fn cmd_stdin(args: StdinArgs, _ctx: OutputCtx) {
     let StdinArgs { pretty } = args;
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {

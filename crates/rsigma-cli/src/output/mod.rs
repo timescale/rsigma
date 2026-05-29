@@ -14,11 +14,6 @@
 //! Commands compose these knobs through [`OutputCtx`], built once in `main`
 //! after the existing flag + config resolution.
 
-// Consumers (commands, dispatch) are wired in a follow-up commit. The
-// `pub(crate)` surface below is exercised only by this module's own unit
-// tests until that lands; the allow keeps the foundation commit warning-free.
-#![allow(dead_code)]
-
 use std::io::{self, Write};
 
 use serde::Serialize;
@@ -53,6 +48,8 @@ impl OutputFormat {
     }
 
     /// Lowercase wire name, used for diagnostics and `config show`.
+    // Used by the backend `convert` command, which lands in a follow-up commit.
+    #[allow(dead_code)]
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Json => "json",
@@ -246,6 +243,8 @@ pub(crate) fn render_json<T: Serialize>(value: &T, pretty: bool) {
 
 /// Render `value` as a single NDJSON line on stdout. Same error semantics as
 /// [`render_json`].
+// Used by the lint machine renderer, which lands in a follow-up commit.
+#[allow(dead_code)]
 pub(crate) fn render_ndjson<T: Serialize>(value: &T) {
     render_json(value, false);
 }

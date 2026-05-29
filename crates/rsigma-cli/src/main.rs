@@ -42,6 +42,37 @@ struct Cli {
     #[arg(long = "log-format", value_enum, global = true)]
     log_format: Option<LogFormat>,
 
+    /// Output format for structured CLI data (matches, fields, lint findings).
+    ///
+    /// Values: `json` (default on a TTY), `ndjson` (default when piped),
+    /// `table`, `csv`, `tsv`. Resolution: flag > `RSIGMA_GLOBAL__OUTPUT_FORMAT`
+    /// > `global.output_format` in the config file > TTY-aware default.
+    ///
+    /// `convert` keeps its own `-f/--format` for the backend query format and
+    /// only honors `json` for this flag (wraps queries); other values fall
+    /// back to raw text.
+    #[arg(long = "output-format", value_enum, global = true)]
+    output_format: Option<output::OutputFormat>,
+
+    /// Color policy for human-friendly output (lint findings, summaries).
+    ///
+    /// Values: `auto` (color on a TTY when `NO_COLOR` is unset, the default),
+    /// `always`, `never`. Resolution: flag > `RSIGMA_GLOBAL__COLOR` >
+    /// `global.color` in the config file > `auto`.
+    #[arg(long = "color", value_enum, global = true)]
+    color: Option<output::ColorChoice>,
+
+    /// Suppress all non-data output (progress + stats). Errors still go to
+    /// stderr. Useful in CI when only the matched results matter.
+    #[arg(long = "quiet", short = 'q', global = true)]
+    quiet: bool,
+
+    /// Suppress only the trailing summary / stats line. Progress messages
+    /// stay on stderr. Useful when piping to a tool that does not expect a
+    /// summary footer but the operator still wants to see what happened.
+    #[arg(long = "no-stats", global = true)]
+    no_stats: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -227,15 +258,30 @@ fn main() {
     // The --log-format flag wins; otherwise honor global.log_format from a
     // discovered config file (or an explicit --config path) or
     // RSIGMA_GLOBAL__LOG_FORMAT.
+    let cfg_override = scan_config_flag();
     let log_format = cli.log_format.or_else(|| {
-        let cfg_override = scan_config_flag();
         config::discovered_log_format(cfg_override.as_deref()).and_then(|s| parse_log_format(&s))
     });
     if !is_daemon && let Some(format) = log_format {
         init_cli_log_subscriber(format);
     }
 
-    dispatch(cli.command, &matches);
+    // Build the global output context once, after the config layer is loaded
+    // but before any command runs. The same precedence model that drives
+    // --log-format applies here: flag > env > file > default.
+    let (cfg_format, cfg_color) = config::discovered_global_output(cfg_override.as_deref());
+    let stdout_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let ctx = output::OutputCtx::resolve(
+        cli.output_format,
+        cfg_format.as_deref(),
+        cli.color,
+        cfg_color.as_deref(),
+        cli.quiet,
+        cli.no_stats,
+        stdout_is_tty,
+    );
+
+    dispatch(cli.command, &matches, ctx);
 }
 
 /// Pre-scan argv for an explicit `--config <PATH>` / `--config=<PATH>` so the
@@ -274,12 +320,12 @@ fn deprecation_warn(old: &str, new: &str) {
     );
 }
 
-fn dispatch(command: Commands, matches: &ArgMatches) {
+fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
     match command {
         // -- Grouped commands ------------------------------------------------
-        Commands::Engine { cmd } => dispatch_engine(cmd, matches),
-        Commands::Rule { cmd } => dispatch_rule(cmd),
-        Commands::Backend { cmd } => dispatch_backend(cmd),
+        Commands::Engine { cmd } => dispatch_engine(cmd, matches, ctx),
+        Commands::Rule { cmd } => dispatch_rule(cmd, ctx),
+        Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
         Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
         Commands::Config { cmd } => config::commands::dispatch(cmd),
 
@@ -289,7 +335,7 @@ fn dispatch(command: Commands, matches: &ArgMatches) {
             let em = matches
                 .subcommand_matches("eval")
                 .expect("eval submatches present");
-            run_eval(args, em);
+            run_eval(args, em, ctx);
         }
         #[cfg(feature = "daemon")]
         Commands::Daemon(args) => {
@@ -301,7 +347,7 @@ fn dispatch(command: Commands, matches: &ArgMatches) {
         }
         Commands::Parse(args) => {
             deprecation_warn("parse", "rule parse");
-            commands::cmd_parse(args);
+            commands::cmd_parse(args, ctx);
         }
         Commands::Validate(args) => {
             deprecation_warn("validate", "rule validate");
@@ -309,23 +355,23 @@ fn dispatch(command: Commands, matches: &ArgMatches) {
         }
         Commands::Lint(args) => {
             deprecation_warn("lint", "rule lint");
-            run_lint(args);
+            run_lint(args, ctx);
         }
         Commands::Fields(args) => {
             deprecation_warn("fields", "rule fields");
-            commands::cmd_fields(args);
+            commands::cmd_fields(args, ctx);
         }
         Commands::Condition(args) => {
             deprecation_warn("condition", "rule condition");
-            commands::cmd_condition(args);
+            commands::cmd_condition(args, ctx);
         }
         Commands::Stdin(args) => {
             deprecation_warn("stdin", "rule stdin");
-            commands::cmd_stdin(args);
+            commands::cmd_stdin(args, ctx);
         }
         Commands::Convert(args) => {
             deprecation_warn("convert", "backend convert");
-            commands::cmd_convert(args);
+            commands::cmd_convert(args, ctx);
         }
         Commands::ListTargets => {
             deprecation_warn("list-targets", "backend targets");
@@ -342,14 +388,14 @@ fn dispatch(command: Commands, matches: &ArgMatches) {
     }
 }
 
-fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches) {
+fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::OutputCtx) {
     match cmd {
         EngineCommands::Eval(args) => {
             let em = matches
                 .subcommand_matches("engine")
                 .and_then(|m| m.subcommand_matches("eval"))
                 .expect("engine eval submatches present");
-            run_eval(args, em);
+            run_eval(args, em, ctx);
         }
         #[cfg(feature = "daemon")]
         EngineCommands::Daemon(args) => {
@@ -362,21 +408,21 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches) {
     }
 }
 
-fn dispatch_rule(cmd: RuleCommands) {
+fn dispatch_rule(cmd: RuleCommands, ctx: output::OutputCtx) {
     match cmd {
-        RuleCommands::Parse(args) => commands::cmd_parse(args),
+        RuleCommands::Parse(args) => commands::cmd_parse(args, ctx),
         RuleCommands::Validate(args) => commands::cmd_validate(args),
-        RuleCommands::Lint(args) => run_lint(args),
-        RuleCommands::Fields(args) => commands::cmd_fields(args),
-        RuleCommands::Condition(args) => commands::cmd_condition(args),
-        RuleCommands::Stdin(args) => commands::cmd_stdin(args),
+        RuleCommands::Lint(args) => run_lint(args, ctx),
+        RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
+        RuleCommands::Condition(args) => commands::cmd_condition(args, ctx),
+        RuleCommands::Stdin(args) => commands::cmd_stdin(args, ctx),
         RuleCommands::MigrateSources(args) => commands::cmd_migrate_sources(args),
     }
 }
 
-fn dispatch_backend(cmd: BackendCommands) {
+fn dispatch_backend(cmd: BackendCommands, ctx: output::OutputCtx) {
     match cmd {
-        BackendCommands::Convert(args) => commands::cmd_convert(args),
+        BackendCommands::Convert(args) => commands::cmd_convert(args, ctx),
         BackendCommands::Targets => commands::cmd_list_targets(),
         BackendCommands::Formats(ListFormatsArgs { target }) => commands::cmd_list_formats(target),
     }
@@ -391,10 +437,10 @@ fn dispatch_pipeline(cmd: PipelineCommands) {
 /// Shared eval entry point used by both `engine eval` and the deprecated
 /// `eval` alias. Applies config (CLI flag > env > file > default) before
 /// reading `fail_on_detection`, then centralizes the exit-code handling.
-fn run_eval(mut args: EvalArgs, matches: &ArgMatches) {
+fn run_eval(mut args: EvalArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_eval_config(&mut args, matches);
     let fail_on_detection = args.fail_on_detection;
-    let had_matches = commands::cmd_eval(args);
+    let had_matches = commands::cmd_eval(args, ctx);
     if fail_on_detection && had_matches {
         process::exit(exit_code::FINDINGS);
     }
@@ -402,13 +448,13 @@ fn run_eval(mut args: EvalArgs, matches: &ArgMatches) {
 
 /// Shared lint entry point used by both `rule lint` and the deprecated `lint`
 /// alias. Centralizes the `--fail-level` exit-code handling.
-fn run_lint(args: LintArgs) {
+fn run_lint(args: LintArgs, ctx: output::OutputCtx) {
     let fail_level = args.fail_level.clone();
     let LintCounts {
         errors,
         warnings,
         infos,
-    } = commands::cmd_lint(args);
+    } = commands::cmd_lint(args, ctx);
     let should_fail = match fail_level.as_str() {
         "info" => errors > 0 || warnings > 0 || infos > 0,
         "warning" => errors > 0 || warnings > 0,
@@ -526,19 +572,11 @@ pub(crate) fn print_warnings(errors: &[String]) {
     }
 }
 
+/// Backwards-compatible JSON renderer kept while per-command renderers are
+/// migrated to the new `crate::output` API. Each subsequent commit retires
+/// one set of call sites; the function is removed once the last one is gone.
 pub(crate) fn print_json(value: &impl serde::Serialize, pretty: bool) {
-    let json = if pretty {
-        serde_json::to_string_pretty(value)
-    } else {
-        serde_json::to_string(value)
-    };
-    match json {
-        Ok(j) => println!("{j}"),
-        Err(e) => {
-            eprintln!("JSON serialization error: {e}");
-            process::exit(exit_code::CONFIG_ERROR);
-        }
-    }
+    output::render_json(value, pretty);
 }
 
 // ---------------------------------------------------------------------------

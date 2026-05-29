@@ -4,6 +4,8 @@ use std::process;
 use clap::Args;
 use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file};
 
+use crate::output::OutputCtx;
+
 /// Arguments for `rsigma backend convert` (and the deprecated `rsigma convert`).
 #[derive(Args, Debug)]
 pub(crate) struct ConvertArgs {
@@ -60,7 +62,7 @@ fn get_backend(
     }
 }
 
-pub(crate) fn cmd_convert(args: ConvertArgs) {
+pub(crate) fn cmd_convert(args: ConvertArgs, _ctx: OutputCtx) {
     let ConvertArgs {
         rules,
         target,

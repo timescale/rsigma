@@ -5,6 +5,8 @@ use rsigma_eval::{FieldOrigin, FieldSource, Pipeline, RuleFieldSet};
 use rsigma_parser::SigmaCollection;
 use serde::Serialize;
 
+use crate::output::OutputCtx;
+
 /// Arguments for `rsigma rule fields` (and the deprecated `rsigma fields`).
 #[derive(Args, Debug)]
 pub(crate) struct FieldsArgs {
@@ -26,7 +28,7 @@ pub(crate) struct FieldsArgs {
     pub json: bool,
 }
 
-pub(crate) fn cmd_fields(args: FieldsArgs) {
+pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
     let FieldsArgs {
         rules: path,
         pipelines: pipeline_paths,
@@ -36,7 +38,7 @@ pub(crate) fn cmd_fields(args: FieldsArgs) {
     let collection = crate::load_collection(&path);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
-    if pipelines.iter().any(|p| p.is_dynamic()) {
+    if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
         eprintln!(
             "  note: dynamic sources are not resolved by `rsigma rule fields`. \
              Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
