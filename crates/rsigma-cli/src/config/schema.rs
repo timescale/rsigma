@@ -62,12 +62,13 @@ pub(crate) struct GlobalPartial {
     /// Diagnostic log format on stderr: `text` or `json` (maps to `--log-format`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_format: Option<String>,
-    /// Color policy: `auto`, `always`, `never`. Reserved for the output-format work (#19).
+    /// Color policy: `auto`, `always`, `never` (maps to `--color`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
-    /// Default output format. Reserved for the output-format work (#19).
+    /// Default structured output format: `json`, `ndjson`, `table`, `csv`,
+    /// `tsv` (maps to `--output-format`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
+    pub output_format: Option<String>,
 }
 
 impl Merge for GlobalPartial {
@@ -75,7 +76,7 @@ impl Merge for GlobalPartial {
         Self {
             log_format: over.log_format.or(self.log_format),
             color: over.color.or(self.color),
-            format: over.format.or(self.format),
+            output_format: over.output_format.or(self.output_format),
         }
     }
 }
@@ -365,9 +366,6 @@ pub(crate) struct EvalPartial {
     pub syslog_tz: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on_detection: Option<bool>,
-    /// Default output format. Reserved for the output-format work (#19).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
 }
 
 impl Merge for EvalPartial {
@@ -378,7 +376,6 @@ impl Merge for EvalPartial {
             input_format: over.input_format.or(self.input_format),
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             fail_on_detection: over.fail_on_detection.or(self.fail_on_detection),
-            format: over.format.or(self.format),
         }
     }
 }

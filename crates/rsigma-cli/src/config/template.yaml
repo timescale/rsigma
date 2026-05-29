@@ -13,10 +13,12 @@ version: 1
 global:
   # Diagnostic log format on stderr: text | json (maps to --log-format).
   log_format: text
-  # color and format are reserved for the upcoming output-format work and are
-  # inert today.
+  # Color policy for human-friendly output: auto | always | never.
+  # `auto` honors NO_COLOR and disables color when stdout is not a TTY.
   # color: auto
-  # format: json
+  # Default structured output format: json | ndjson | table | csv | tsv.
+  # Default behavior (when unset): pretty JSON on a TTY, NDJSON when piped.
+  # output_format: json
 
 daemon:
   # Path to a Sigma rule file or directory.
@@ -114,5 +116,3 @@ eval:
   input_format: auto
   syslog_tz: "+00:00"
   fail_on_detection: false
-  # format is reserved for the upcoming output-format work.
-  # format: table
