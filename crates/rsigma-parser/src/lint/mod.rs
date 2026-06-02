@@ -535,8 +535,7 @@ pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
     lint_yaml_value_ext(value, &[])
 }
 
-/// Lint a raw YAML string, returning warnings with resolved source spans.
-pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
+fn lint_yaml_str_ext(text: &str, extra_ns: &[String]) -> Vec<LintWarning> {
     let mut all_warnings = Vec::new();
 
     for doc in yaml_serde::Deserializer::from_str(text) {
@@ -561,14 +560,18 @@ pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
             }
         };
 
-        let warnings = lint_yaml_value(&value);
-        for mut w in warnings {
+        for mut w in lint_yaml_value_ext(&value, extra_ns) {
             w.span = resolve_path_to_span(text, &w.path);
             all_warnings.push(w);
         }
     }
 
     all_warnings
+}
+
+/// Lint a raw YAML string, returning warnings with resolved source spans.
+pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
+    lint_yaml_str_ext(text, &[])
 }
 
 fn resolve_path_to_span(text: &str, path: &str) -> Option<Span> {
@@ -798,7 +801,11 @@ impl LintConfig {
             disabled_rules,
             severity_overrides,
             exclude_patterns: raw.exclude,
-            tag_namespaces: raw.tag_namespaces,
+            tag_namespaces: raw
+                .tag_namespaces
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
         })
     }
 
@@ -982,38 +989,9 @@ pub fn apply_suppressions(
 }
 
 pub fn lint_yaml_str_with_config(text: &str, config: &LintConfig) -> Vec<LintWarning> {
-    let mut all_warnings = Vec::new();
-
-    for doc in yaml_serde::Deserializer::from_str(text) {
-        let value: Value = match Value::deserialize(doc) {
-            Ok(v) => v,
-            Err(e) => {
-                let mut w = err(
-                    LintRule::YamlParseError,
-                    format!("YAML parse error: {e}"),
-                    "/",
-                );
-                if let Some(loc) = e.location() {
-                    w.span = Some(Span {
-                        start_line: loc.line().saturating_sub(1) as u32,
-                        start_col: loc.column() as u32,
-                        end_line: loc.line().saturating_sub(1) as u32,
-                        end_col: loc.column() as u32 + 1,
-                    });
-                }
-                all_warnings.push(w);
-                break;
-            }
-        };
-
-        for mut w in lint_yaml_value_ext(&value, &config.tag_namespaces) {
-            w.span = resolve_path_to_span(text, &w.path);
-            all_warnings.push(w);
-        }
-    }
-
+    let warnings = lint_yaml_str_ext(text, &config.tag_namespaces);
     let inline = parse_inline_suppressions(text);
-    apply_suppressions(all_warnings, config, &inline)
+    apply_suppressions(warnings, config, &inline)
 }
 
 pub fn lint_yaml_file_with_config(
@@ -1577,7 +1555,7 @@ detection:
                 .into_iter()
                 .collect(),
             exclude_patterns: vec!["test/**".to_string()],
-            ..Default::default()
+            tag_namespaces: vec!["myns".to_string()],
         };
 
         base.merge(&other);
@@ -1586,6 +1564,7 @@ detection:
         assert_eq!(base.severity_overrides.get("rule_b"), Some(&Severity::Info));
         assert_eq!(base.severity_overrides.get("rule_d"), Some(&Severity::Hint));
         assert_eq!(base.exclude_patterns, vec!["test/**".to_string()]);
+        assert!(base.tag_namespaces.contains(&"myns".to_string()));
     }
 
     #[test]
@@ -1790,10 +1769,9 @@ tag_namespaces:
   - myorg
   - internal
 "#;
-        let tmp = std::env::temp_dir().join("rsigma_test_tag_ns.yml");
-        std::fs::write(&tmp, yaml).unwrap();
-        let config = LintConfig::load(&tmp).unwrap();
-        std::fs::remove_file(&tmp).ok();
+        let mut tmp = tempfile::NamedTempFile::with_suffix(".yml").unwrap();
+        std::io::Write::write_all(&mut tmp, yaml.as_bytes()).unwrap();
+        let config = LintConfig::load(tmp.path()).unwrap();
 
         assert!(config.tag_namespaces.contains(&"myorg".to_string()));
         assert!(config.tag_namespaces.contains(&"internal".to_string()));

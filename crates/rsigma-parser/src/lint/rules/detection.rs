@@ -200,10 +200,12 @@ pub(crate) fn lint_detection_rule(
                         && !KNOWN_TAG_NAMESPACES.contains(&ns)
                         && !extra_namespaces.iter().any(|n| n.as_str() == ns)
                     {
+                        let mut seen = std::collections::HashSet::new();
                         let known_list: Vec<&str> = KNOWN_TAG_NAMESPACES
                             .iter()
                             .copied()
                             .chain(extra_namespaces.iter().map(String::as_str))
+                            .filter(|n| seen.insert(*n))
                             .collect();
                         warnings.push(warning(
                             LintRule::UnknownTagNamespace,

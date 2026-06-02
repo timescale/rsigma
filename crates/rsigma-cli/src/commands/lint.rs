@@ -608,7 +608,10 @@ fn build_lint_config(
         let cli_config = LintConfig {
             disabled_rules: disable.into_iter().collect(),
             exclude_patterns: exclude,
-            tag_namespaces,
+            tag_namespaces: tag_namespaces
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
             ..Default::default()
         };
         config.merge(&cli_config);
