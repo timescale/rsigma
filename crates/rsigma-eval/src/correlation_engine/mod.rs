@@ -25,7 +25,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule};
 
 use crate::correlation::{
-    CompiledCorrelation, EventBuffer, EventRefBuffer, GroupKey, WindowState, compile_correlation,
+    CompiledCorrelation, EventBuffer, EventRefBuffer, GroupKey, TenantId, WindowState,
+    compile_correlation,
 };
 use crate::engine::Engine;
 use crate::error::{EvalError, Result};
@@ -38,7 +39,18 @@ use crate::result::{CorrelationBody, EvaluationResult, ResultBody, RuleHeader};
 // =============================================================================
 
 /// Current snapshot schema version. Bump when the serialized format changes.
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
+
+/// Composite state key combining tenant isolation with correlation grouping.
+///
+/// In single-tenant mode (`tenant_field` unconfigured), `tenant` is always
+/// `None` — the hash includes one extra discriminant byte (negligible cost).
+#[derive(Debug, Clone, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StateKey {
+    pub tenant: Option<TenantId>,
+    pub corr_idx: usize,
+    pub group_key: GroupKey,
+}
 
 /// Stateful correlation engine.
 ///
@@ -55,14 +67,14 @@ pub struct CorrelationEngine {
     /// Maps detection rule index -> (rule_id, rule_name) for reverse lookup.
     /// Used to find which correlations a detection match triggers.
     rule_ids: Vec<(Option<String>, Option<String>)>,
-    /// Per-(correlation_index, group_key) window state.
-    state: HashMap<(usize, GroupKey), WindowState>,
-    /// Last alert timestamp per (correlation_index, group_key) for suppression.
-    last_alert: HashMap<(usize, GroupKey), i64>,
-    /// Per-(correlation_index, group_key) compressed event buffer (`Full` mode).
-    event_buffers: HashMap<(usize, GroupKey), EventBuffer>,
-    /// Per-(correlation_index, group_key) event reference buffer (`Refs` mode).
-    event_ref_buffers: HashMap<(usize, GroupKey), EventRefBuffer>,
+    /// Per-(tenant, correlation_index, group_key) window state.
+    state: HashMap<StateKey, WindowState>,
+    /// Last alert timestamp per state key for suppression.
+    last_alert: HashMap<StateKey, i64>,
+    /// Per-state-key compressed event buffer (`Full` mode).
+    event_buffers: HashMap<StateKey, EventBuffer>,
+    /// Per-state-key event reference buffer (`Refs` mode).
+    event_ref_buffers: HashMap<StateKey, EventRefBuffer>,
     /// Set of detection rule IDs/names that are "correlation-only"
     /// (referenced by correlations where `generate == false`).
     /// Used to filter detection output when `config.emit_detections == false`.
@@ -446,6 +458,14 @@ impl CorrelationEngine {
     ) -> ProcessResult {
         let timestamp_secs = timestamp_secs.clamp(0, i64::MAX / 2);
 
+        // Resolve tenant (if multi-tenancy is enabled)
+        let tenant = self.resolve_tenant(event);
+        if tenant.is_none() && self.config.tenant.tenant_field.is_some() {
+            // Multi-tenant mode but no tenant extracted — policy says reject
+            // from correlation. Detections still emit.
+            return self.filter_detections(all_detections);
+        }
+
         // Memory management — evict before adding new state to enforce limit
         if self.state.len() >= self.config.max_state_entries {
             self.evict_all(timestamp_secs);
@@ -453,15 +473,35 @@ impl CorrelationEngine {
 
         // Feed detection matches into correlations
         let mut correlations: Vec<EvaluationResult> = Vec::new();
-        self.feed_detections(event, &all_detections, timestamp_secs, &mut correlations);
+        self.feed_detections(event, &all_detections, timestamp_secs, &tenant, &mut correlations);
 
         // Chain — correlation results may trigger higher-level correlations
-        self.chain_correlations(&correlations, timestamp_secs);
+        self.chain_correlations(&correlations, timestamp_secs, &tenant);
 
         // Filter detections by generate flag, then append the correlations.
         let mut out = self.filter_detections(all_detections);
         out.extend(correlations);
         out
+    }
+
+    /// Resolve the tenant for an event based on configuration.
+    ///
+    /// Returns `None` when:
+    /// - Multi-tenancy is disabled (`tenant_field` is `None`) — this is fine,
+    ///   single-tenant mode.
+    /// - Multi-tenancy is enabled but the field is missing and policy is `Reject`.
+    ///
+    /// Returns `Some(TenantId)` when:
+    /// - The tenant field is present and extractable.
+    /// - The field is missing but policy is `DefaultTenant`.
+    fn resolve_tenant(&self, event: &impl Event) -> Option<TenantId> {
+        let field = self.config.tenant.tenant_field.as_deref()?;
+        TenantId::extract(event, field).or_else(|| {
+            match self.config.tenant.missing_tenant_policy {
+                MissingTenantPolicy::DefaultTenant => Some(TenantId::default_tenant()),
+                MissingTenantPolicy::Reject => None,
+            }
+        })
     }
 
     /// Run stateless detection only (no correlation), delegating to the inner engine.
@@ -563,6 +603,7 @@ impl CorrelationEngine {
         event: &impl Event,
         detections: &[EvaluationResult],
         ts: i64,
+        tenant: &Option<TenantId>,
         out: &mut Vec<EvaluationResult>,
     ) {
         // Collect all (corr_idx, rule_id, rule_name) tuples upfront to avoid
@@ -596,7 +637,7 @@ impl CorrelationEngine {
         }
 
         for (corr_idx, rule_id, rule_name) in work {
-            self.update_correlation(corr_idx, event, ts, &rule_id, &rule_name, out);
+            self.update_correlation(corr_idx, event, ts, &rule_id, &rule_name, tenant, out);
         }
     }
 
@@ -636,11 +677,9 @@ impl CorrelationEngine {
         ts: i64,
         rule_id: &Option<String>,
         rule_name: &Option<String>,
+        tenant: &Option<TenantId>,
         out: &mut Vec<EvaluationResult>,
     ) {
-        // Borrow the correlation by reference — no cloning needed.  Rust allows
-        // simultaneous &self.correlations and &mut self.state / &mut self.last_alert
-        // because they are disjoint struct fields.
         let corr = &self.correlations[corr_idx];
         let corr_type = corr.correlation_type;
         let timespan = corr.timespan_secs;
@@ -663,8 +702,12 @@ impl CorrelationEngine {
         // Extract group key
         let group_key = GroupKey::extract(event, &corr.group_by, &ref_strs);
 
-        // Get or create window state
-        let state_key = (corr_idx, group_key.clone());
+        // Build state key with tenant isolation
+        let state_key = StateKey {
+            tenant: tenant.clone(),
+            corr_idx,
+            group_key: group_key.clone(),
+        };
         let state = self
             .state
             .entry(state_key.clone())
@@ -728,7 +771,7 @@ impl CorrelationEngine {
             CorrelationEventMode::None => {}
         }
 
-        // Check condition — after this, `state` is no longer used (NLL drops the borrow).
+        // Check condition
         let fired = state.check_condition(
             &corr.condition,
             corr_type,
@@ -737,11 +780,9 @@ impl CorrelationEngine {
         );
 
         if let Some(agg_value) = fired {
-            let alert_key = (corr_idx, group_key.clone());
-
             // Suppression check: skip if we've already alerted within the suppress window
             let suppressed = if let Some(suppress) = suppress_secs {
-                if let Some(&last_ts) = self.last_alert.get(&alert_key) {
+                if let Some(&last_ts) = self.last_alert.get(&state_key) {
                     (ts - last_ts) < suppress as i64
                 } else {
                     false
@@ -756,7 +797,7 @@ impl CorrelationEngine {
                     CorrelationEventMode::Full => {
                         let stored = self
                             .event_buffers
-                            .get(&alert_key)
+                            .get(&state_key)
                             .map(|buf| buf.decompress_all())
                             .unwrap_or_default();
                         (Some(stored), None)
@@ -764,7 +805,7 @@ impl CorrelationEngine {
                     CorrelationEventMode::Refs => {
                         let stored = self
                             .event_ref_buffers
-                            .get(&alert_key)
+                            .get(&state_key)
                             .map(|buf| buf.refs())
                             .unwrap_or_default();
                         (None, Some(stored))
@@ -788,6 +829,7 @@ impl CorrelationEngine {
                         group_key: group_key.to_pairs(&corr.group_by),
                         aggregated_value: agg_value,
                         timespan_secs: timespan,
+                        tenant_id: tenant.as_ref().map(|t| t.0.clone()),
                         events,
                         event_refs,
                     }),
@@ -795,17 +837,17 @@ impl CorrelationEngine {
                 out.push(result);
 
                 // Record alert time for suppression
-                self.last_alert.insert(alert_key.clone(), ts);
+                self.last_alert.insert(state_key.clone(), ts);
 
                 // Action on match
                 if action == CorrelationAction::Reset {
-                    if let Some(state) = self.state.get_mut(&alert_key) {
+                    if let Some(state) = self.state.get_mut(&state_key) {
                         state.clear();
                     }
-                    if let Some(buf) = self.event_buffers.get_mut(&alert_key) {
+                    if let Some(buf) = self.event_buffers.get_mut(&state_key) {
                         buf.clear();
                     }
-                    if let Some(buf) = self.event_ref_buffers.get_mut(&alert_key) {
+                    if let Some(buf) = self.event_ref_buffers.get_mut(&state_key) {
                         buf.clear();
                     }
                 }
@@ -817,7 +859,13 @@ impl CorrelationEngine {
     ///
     /// When a correlation fires, any correlation that references it (by ID or name)
     /// is updated. Limits chain depth to 10 to prevent infinite loops.
-    fn chain_correlations(&mut self, fired: &[EvaluationResult], ts: i64) {
+    /// The tenant is carried through from the originating event.
+    fn chain_correlations(
+        &mut self,
+        fired: &[EvaluationResult],
+        ts: i64,
+        tenant: &Option<TenantId>,
+    ) {
         const MAX_CHAIN_DEPTH: usize = 10;
         let mut pending: Vec<EvaluationResult> = fired.to_vec();
         let mut depth = 0;
@@ -856,7 +904,11 @@ impl CorrelationEngine {
                 let level = corr.level;
 
                 let group_key = GroupKey::from_pairs(&group_key_pairs, &corr.group_by);
-                let state_key = (corr_idx, group_key.clone());
+                let state_key = StateKey {
+                    tenant: tenant.clone(),
+                    corr_idx,
+                    group_key: group_key.clone(),
+                };
                 let state = self
                     .state
                     .entry(state_key)
@@ -900,9 +952,7 @@ impl CorrelationEngine {
                             group_key: group_key.to_pairs(&corr.group_by),
                             aggregated_value: agg_value,
                             timespan_secs: timespan,
-                            // Chained correlations don't include events
-                            // (they aggregate over correlation results, not
-                            // raw events)
+                            tenant_id: tenant.as_ref().map(|t| t.0.clone()),
                             events: None,
                             event_refs: None,
                         }),
@@ -959,25 +1009,25 @@ impl CorrelationEngine {
         // Phase 1: Time-based eviction — remove entries outside their correlation window
         let timespans: Vec<u64> = self.correlations.iter().map(|c| c.timespan_secs).collect();
 
-        self.state.retain(|&(corr_idx, _), state| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
+        self.state.retain(|key, state| {
+            if key.corr_idx < timespans.len() {
+                let cutoff = now_secs - timespans[key.corr_idx] as i64;
                 state.evict(cutoff);
             }
             !state.is_empty()
         });
 
         // Evict event buffers in sync with window state
-        self.event_buffers.retain(|&(corr_idx, _), buf| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
+        self.event_buffers.retain(|key, buf| {
+            if key.corr_idx < timespans.len() {
+                let cutoff = now_secs - timespans[key.corr_idx] as i64;
                 buf.evict(cutoff);
             }
             !buf.is_empty()
         });
-        self.event_ref_buffers.retain(|&(corr_idx, _), buf| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
+        self.event_ref_buffers.retain(|key, buf| {
+            if key.corr_idx < timespans.len() {
+                let cutoff = now_secs - timespans[key.corr_idx] as i64;
                 buf.evict(cutoff);
             }
             !buf.is_empty()
@@ -1021,8 +1071,8 @@ impl CorrelationEngine {
         // Phase 3: Evict stale last_alert entries — remove if the suppress window
         // has passed or if the corresponding window state no longer exists.
         self.last_alert.retain(|key, &mut alert_ts| {
-            let suppress = if key.0 < self.correlations.len() {
-                self.correlations[key.0]
+            let suppress = if key.corr_idx < self.correlations.len() {
+                self.correlations[key.corr_idx]
                     .suppress_secs
                     .or(self.config.suppress)
                     .unwrap_or(0)
@@ -1077,41 +1127,47 @@ impl CorrelationEngine {
     /// instead of internal indices, so it survives rule reloads as long as
     /// the correlation rules keep the same identifiers.
     pub fn export_state(&self) -> CorrelationSnapshot {
-        let mut windows: HashMap<String, Vec<(GroupKey, WindowState)>> = HashMap::new();
-        for ((idx, gk), ws) in &self.state {
-            let corr_id = self.correlation_stable_id(*idx);
+        let mut windows: HashMap<String, Vec<(Option<String>, GroupKey, WindowState)>> =
+            HashMap::new();
+        for (key, ws) in &self.state {
+            let corr_id = self.correlation_stable_id(key.corr_idx);
+            let tenant_str = key.tenant.as_ref().map(|t| t.0.clone());
             windows
                 .entry(corr_id)
                 .or_default()
-                .push((gk.clone(), ws.clone()));
+                .push((tenant_str, key.group_key.clone(), ws.clone()));
         }
 
-        let mut last_alert: HashMap<String, Vec<(GroupKey, i64)>> = HashMap::new();
-        for ((idx, gk), ts) in &self.last_alert {
-            let corr_id = self.correlation_stable_id(*idx);
+        let mut last_alert: HashMap<String, Vec<(Option<String>, GroupKey, i64)>> = HashMap::new();
+        for (key, ts) in &self.last_alert {
+            let corr_id = self.correlation_stable_id(key.corr_idx);
+            let tenant_str = key.tenant.as_ref().map(|t| t.0.clone());
             last_alert
                 .entry(corr_id)
                 .or_default()
-                .push((gk.clone(), *ts));
+                .push((tenant_str, key.group_key.clone(), *ts));
         }
 
-        let mut event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>> = HashMap::new();
-        for ((idx, gk), buf) in &self.event_buffers {
-            let corr_id = self.correlation_stable_id(*idx);
+        let mut event_buffers: HashMap<String, Vec<(Option<String>, GroupKey, EventBuffer)>> =
+            HashMap::new();
+        for (key, buf) in &self.event_buffers {
+            let corr_id = self.correlation_stable_id(key.corr_idx);
+            let tenant_str = key.tenant.as_ref().map(|t| t.0.clone());
             event_buffers
                 .entry(corr_id)
                 .or_default()
-                .push((gk.clone(), buf.clone()));
+                .push((tenant_str, key.group_key.clone(), buf.clone()));
         }
 
-        let mut event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>> =
+        let mut event_ref_buffers: HashMap<String, Vec<(Option<String>, GroupKey, EventRefBuffer)>> =
             HashMap::new();
-        for ((idx, gk), buf) in &self.event_ref_buffers {
-            let corr_id = self.correlation_stable_id(*idx);
+        for (key, buf) in &self.event_ref_buffers {
+            let corr_id = self.correlation_stable_id(key.corr_idx);
+            let tenant_str = key.tenant.as_ref().map(|t| t.0.clone());
             event_ref_buffers
                 .entry(corr_id)
                 .or_default()
-                .push((gk.clone(), buf.clone()));
+                .push((tenant_str, key.group_key.clone(), buf.clone()));
         }
 
         CorrelationSnapshot {
@@ -1137,32 +1193,52 @@ impl CorrelationEngine {
 
         for (corr_id, groups) in snapshot.windows {
             if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, ws) in groups {
-                    self.state.insert((idx, gk), ws);
+                for (tenant_str, gk, ws) in groups {
+                    let key = StateKey {
+                        tenant: tenant_str.map(TenantId),
+                        corr_idx: idx,
+                        group_key: gk,
+                    };
+                    self.state.insert(key, ws);
                 }
             }
         }
 
         for (corr_id, groups) in snapshot.last_alert {
             if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, ts) in groups {
-                    self.last_alert.insert((idx, gk), ts);
+                for (tenant_str, gk, ts) in groups {
+                    let key = StateKey {
+                        tenant: tenant_str.map(TenantId),
+                        corr_idx: idx,
+                        group_key: gk,
+                    };
+                    self.last_alert.insert(key, ts);
                 }
             }
         }
 
         for (corr_id, groups) in snapshot.event_buffers {
             if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, buf) in groups {
-                    self.event_buffers.insert((idx, gk), buf);
+                for (tenant_str, gk, buf) in groups {
+                    let key = StateKey {
+                        tenant: tenant_str.map(TenantId),
+                        corr_idx: idx,
+                        group_key: gk,
+                    };
+                    self.event_buffers.insert(key, buf);
                 }
             }
         }
 
         for (corr_id, groups) in snapshot.event_ref_buffers {
             if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, buf) in groups {
-                    self.event_ref_buffers.insert((idx, gk), buf);
+                for (tenant_str, gk, buf) in groups {
+                    let key = StateKey {
+                        tenant: tenant_str.map(TenantId),
+                        corr_idx: idx,
+                        group_key: gk,
+                    };
+                    self.event_ref_buffers.insert(key, buf);
                 }
             }
         }

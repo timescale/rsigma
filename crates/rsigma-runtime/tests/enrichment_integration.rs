@@ -115,6 +115,7 @@ fn correlation(rule_id: &str, source_ip: &str, count: u64) -> EvaluationResult {
             group_key: vec![("SourceIP".to_string(), source_ip.to_string())],
             aggregated_value: count as f64,
             timespan_secs: 300,
+            tenant_id: None,
             events: None,
             event_refs: None,
         }),

@@ -187,6 +187,62 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "replay-from-latest", conflicts_with_all = ["replay_from_sequence", "replay_from_time"])]
     pub replay_from_latest: bool,
 
+    // ---------------------------------------------------------------
+    // Kafka (requires the `daemon-kafka` build feature)
+    // ---------------------------------------------------------------
+    /// Kafka bootstrap servers (comma-separated).
+    /// Also reads from KAFKA_BOOTSTRAP_SERVERS.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-bootstrap-servers", env = "KAFKA_BOOTSTRAP_SERVERS")]
+    pub kafka_bootstrap_servers: Option<String>,
+
+    /// Kafka consumer group ID for load balancing across daemon instances.
+    /// Also reads from KAFKA_GROUP_ID.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-group-id", env = "KAFKA_GROUP_ID", default_value = "rsigma")]
+    pub kafka_group_id: String,
+
+    /// Kafka security protocol: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-security-protocol", env = "KAFKA_SECURITY_PROTOCOL")]
+    pub kafka_security_protocol: Option<String>,
+
+    /// Kafka SASL mechanism: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-sasl-mechanism", env = "KAFKA_SASL_MECHANISM")]
+    pub kafka_sasl_mechanism: Option<String>,
+
+    /// Kafka SASL username. Also reads from KAFKA_SASL_USERNAME.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-sasl-username", env = "KAFKA_SASL_USERNAME")]
+    pub kafka_sasl_username: Option<String>,
+
+    /// Kafka SASL password. Also reads from KAFKA_SASL_PASSWORD.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-sasl-password", env = "KAFKA_SASL_PASSWORD")]
+    pub kafka_sasl_password: Option<String>,
+
+    /// Path to CA certificate for Kafka SSL/TLS.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-ssl-ca-cert")]
+    pub kafka_ssl_ca_cert: Option<PathBuf>,
+
+    /// Path to client certificate for Kafka mTLS.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-ssl-cert", requires = "kafka_ssl_key")]
+    pub kafka_ssl_cert: Option<PathBuf>,
+
+    /// Path to client private key for Kafka mTLS.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-ssl-key", requires = "kafka_ssl_cert")]
+    pub kafka_ssl_key: Option<PathBuf>,
+
+    /// Kafka auto.offset.reset policy: earliest or latest.
+    #[cfg(feature = "daemon-kafka")]
+    #[arg(long = "kafka-offset-reset", default_value = "earliest",
+           value_parser = ["earliest", "latest"])]
+    pub kafka_offset_reset: String,
+
     /// Clear correlation state on startup. When used with --replay-from-*,
     /// forces a clean slate even if the replay starts after the stored position.
     #[arg(long = "clear-state", conflicts_with = "keep_state")]
@@ -205,6 +261,19 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "timestamp-fallback", default_value = config::defaults::TIMESTAMP_FALLBACK,
            value_parser = ["wallclock", "skip"])]
     pub timestamp_fallback: String,
+
+    /// Event field for multi-tenant correlation isolation.
+    /// When set, correlation state is partitioned by this field's value.
+    /// Events from different tenants never share correlation windows.
+    #[arg(long = "tenant-field")]
+    pub tenant_field: Option<String>,
+
+    /// Policy when the tenant field is missing from an event.
+    /// 'reject' (default): skip correlation for that event (detections still fire).
+    /// 'default': assign to a synthetic default tenant bucket.
+    #[arg(long = "missing-tenant", default_value = "reject",
+           value_parser = ["reject", "default"])]
+    pub missing_tenant: String,
 
     /// Consumer group name for NATS JetStream load balancing.
     /// Multiple daemon instances using the same group name share the
@@ -390,6 +459,21 @@ pub(crate) struct NatsAuthArgs {
     pub nats_require_tls: bool,
 }
 
+/// Helper struct grouping Kafka connection / auth flags.
+#[cfg(feature = "daemon-kafka")]
+pub(crate) struct KafkaAuthArgs {
+    pub bootstrap_servers: Option<String>,
+    pub group_id: String,
+    pub security_protocol: Option<String>,
+    pub sasl_mechanism: Option<String>,
+    pub sasl_username: Option<String>,
+    pub sasl_password: Option<String>,
+    pub ssl_ca_cert: Option<PathBuf>,
+    pub ssl_cert: Option<PathBuf>,
+    pub ssl_key: Option<PathBuf>,
+    pub offset_reset: String,
+}
+
 /// Entry point for `rsigma engine daemon` (and the deprecated `rsigma daemon`).
 pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
     let base = config::load_and_merge(args.config.as_deref());
@@ -447,9 +531,31 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         replay_from_time,
         #[cfg(feature = "daemon-nats")]
         replay_from_latest,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_bootstrap_servers,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_group_id,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_security_protocol,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_sasl_mechanism,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_sasl_username,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_sasl_password,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_ssl_ca_cert,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_ssl_cert,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_ssl_key,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_offset_reset,
         clear_state,
         keep_state,
         timestamp_fallback,
+        tenant_field,
+        missing_tenant,
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         allow_remote_include,
@@ -508,6 +614,20 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         rsigma_runtime::ReplayPolicy::Resume
     };
 
+    #[cfg(feature = "daemon-kafka")]
+    let kafka_auth = KafkaAuthArgs {
+        bootstrap_servers: kafka_bootstrap_servers,
+        group_id: kafka_group_id,
+        security_protocol: kafka_security_protocol,
+        sasl_mechanism: kafka_sasl_mechanism,
+        sasl_username: kafka_sasl_username,
+        sasl_password: kafka_sasl_password,
+        ssl_ca_cert: kafka_ssl_ca_cert,
+        ssl_cert: kafka_ssl_cert,
+        ssl_key: kafka_ssl_key,
+        offset_reset: kafka_offset_reset,
+    };
+
     let state_restore_mode = if clear_state {
         daemon::server::StateRestoreMode::ForceClear
     } else if keep_state {
@@ -541,6 +661,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         max_correlation_events,
         timestamp_fields,
         timestamp_fallback,
+        tenant_field,
+        missing_tenant,
         state_db,
         state_save_interval,
         input,
@@ -558,6 +680,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         replay_policy,
         #[cfg(feature = "daemon-nats")]
         consumer_group,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_auth,
         allow_remote_include,
         bloom_prefilter,
         bloom_max_bytes,
@@ -753,6 +877,16 @@ fn apply_daemon_config(
         {
             args.no_detections = v;
         }
+        if !explicit("tenant_field")
+            && let Some(v) = correlation.tenant_field
+        {
+            args.tenant_field = Some(v);
+        }
+        if !explicit("missing_tenant")
+            && let Some(v) = correlation.missing_tenant
+        {
+            args.missing_tenant = v;
+        }
     }
 
     if let Some(state) = daemon.state {
@@ -809,6 +943,45 @@ fn apply_daemon_config(
     {
         args.consumer_group = Some(v);
     }
+
+    #[cfg(feature = "daemon-kafka")]
+    if let Some(kafka) = daemon.kafka {
+        if !explicit("kafka_group_id")
+            && let Some(v) = kafka.consumer_group
+        {
+            args.kafka_group_id = v;
+        }
+        if !explicit("kafka_security_protocol")
+            && let Some(v) = kafka.security_protocol
+        {
+            args.kafka_security_protocol = Some(v);
+        }
+        if !explicit("kafka_sasl_mechanism")
+            && let Some(v) = kafka.sasl_mechanism
+        {
+            args.kafka_sasl_mechanism = Some(v);
+        }
+        if !explicit("kafka_ssl_ca_cert")
+            && let Some(v) = kafka.ssl_ca_cert
+        {
+            args.kafka_ssl_ca_cert = Some(v);
+        }
+        if !explicit("kafka_ssl_cert")
+            && let Some(v) = kafka.ssl_client_cert
+        {
+            args.kafka_ssl_cert = Some(v);
+        }
+        if !explicit("kafka_ssl_key")
+            && let Some(v) = kafka.ssl_client_key
+        {
+            args.kafka_ssl_key = Some(v);
+        }
+        if !explicit("kafka_offset_reset")
+            && let Some(v) = kafka.offset_reset
+        {
+            args.kafka_offset_reset = v;
+        }
+    }
 }
 
 /// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
@@ -838,6 +1011,8 @@ fn run_daemon(
     max_correlation_events: usize,
     timestamp_fields: Vec<String>,
     timestamp_fallback: String,
+    tenant_field: Option<String>,
+    missing_tenant: String,
     state_db: Option<PathBuf>,
     state_save_interval: u64,
     input: String,
@@ -852,6 +1027,7 @@ fn run_daemon(
     #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
+    #[cfg(feature = "daemon-kafka")] kafka_auth: KafkaAuthArgs,
     allow_remote_include: bool,
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
@@ -887,6 +1063,8 @@ fn run_daemon(
         max_correlation_events,
         timestamp_fields,
         &timestamp_fallback,
+        tenant_field,
+        &missing_tenant,
     );
 
     let addr: std::net::SocketAddr = api_addr.parse().unwrap_or_else(|e| {
@@ -907,6 +1085,21 @@ fn run_daemon(
         tls_client_cert: nats_auth.nats_tls_cert,
         tls_client_key: nats_auth.nats_tls_key,
         require_tls: nats_auth.nats_require_tls,
+        ..Default::default()
+    };
+
+    #[cfg(feature = "daemon-kafka")]
+    let kafka_config = rsigma_runtime::KafkaConnectConfig {
+        bootstrap_servers: kafka_auth.bootstrap_servers.unwrap_or_default(),
+        consumer_group: kafka_auth.group_id,
+        security_protocol: kafka_auth.security_protocol,
+        sasl_mechanism: kafka_auth.sasl_mechanism,
+        sasl_username: kafka_auth.sasl_username,
+        sasl_password: kafka_auth.sasl_password,
+        ssl_ca_cert: kafka_auth.ssl_ca_cert,
+        ssl_client_cert: kafka_auth.ssl_cert,
+        ssl_client_key: kafka_auth.ssl_key,
+        auto_offset_reset: Some(kafka_auth.offset_reset),
         ..Default::default()
     };
 
@@ -969,6 +1162,8 @@ fn run_daemon(
         replay_policy,
         #[cfg(feature = "daemon-nats")]
         consumer_group,
+        #[cfg(feature = "daemon-kafka")]
+        kafka_config,
         state_restore_mode,
         allow_remote_include,
         bloom_prefilter,

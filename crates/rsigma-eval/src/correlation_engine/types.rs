@@ -93,6 +93,40 @@ pub enum TimestampFallback {
     Skip,
 }
 
+/// What to do when an event lacks the configured tenant field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MissingTenantPolicy {
+    /// Reject the event from correlation (detections still fire).
+    #[default]
+    Reject,
+    /// Assign to a synthetic "__default__" tenant.
+    DefaultTenant,
+}
+
+impl std::str::FromStr for MissingTenantPolicy {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "reject" => Ok(MissingTenantPolicy::Reject),
+            "default" => Ok(MissingTenantPolicy::DefaultTenant),
+            _ => Err(format!(
+                "Unknown missing tenant policy: {s} (expected 'reject' or 'default')"
+            )),
+        }
+    }
+}
+
+/// Multi-tenancy configuration for correlation isolation.
+#[derive(Debug, Clone, Default)]
+pub struct TenantConfig {
+    /// Event field name from which to extract the tenant identifier.
+    /// When `None`, multi-tenancy is disabled (single-tenant mode).
+    pub tenant_field: Option<String>,
+
+    /// Policy when the tenant field is missing from an event.
+    pub missing_tenant_policy: MissingTenantPolicy,
+}
+
 /// Configuration for the correlation engine.
 ///
 /// Provides engine-level defaults that mirror pySigma backend optional arguments.
@@ -153,6 +187,11 @@ pub struct CorrelationConfig {
     /// Bounds memory at: `max_correlation_events × cost_per_event × active_groups`.
     /// Default: 10.
     pub max_correlation_events: usize,
+
+    /// Multi-tenancy configuration. When `tenant.tenant_field` is set,
+    /// correlation state is partitioned by tenant — events from different
+    /// tenants never share correlation windows.
+    pub tenant: TenantConfig,
 }
 
 impl Default for CorrelationConfig {
@@ -172,6 +211,7 @@ impl Default for CorrelationConfig {
             emit_detections: true,
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
+            tenant: TenantConfig::default(),
         }
     }
 }
@@ -193,23 +233,23 @@ pub type ProcessResult = Vec<EvaluationResult>;
 ///
 /// Uses stable string identifiers (correlation id/name/title) as keys so the
 /// snapshot can be restored after a rule reload, even if internal indices change.
-/// Inner maps use `Vec<(GroupKey, T)>` instead of `HashMap<GroupKey, T>` because
-/// `GroupKey` cannot be used as a JSON object key.
+/// Each entry is a tuple of `(Option<tenant_id>, GroupKey, T)`.
+/// The `Option<String>` is the serialized tenant ID (`None` in single-tenant mode).
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CorrelationSnapshot {
     /// Schema version — used to detect incompatible snapshots on load.
     #[serde(default = "default_snapshot_version")]
     pub version: u32,
-    /// Per-correlation, per-group window state.
-    pub windows: HashMap<String, Vec<(GroupKey, WindowState)>>,
-    /// Per-correlation, per-group last alert timestamp (for suppression).
-    pub last_alert: HashMap<String, Vec<(GroupKey, i64)>>,
-    /// Per-correlation, per-group compressed event buffers.
-    pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
-    /// Per-correlation, per-group event reference buffers.
-    pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// Per-correlation, per-(tenant, group) window state.
+    pub windows: HashMap<String, Vec<(Option<String>, GroupKey, WindowState)>>,
+    /// Per-correlation, per-(tenant, group) last alert timestamp (for suppression).
+    pub last_alert: HashMap<String, Vec<(Option<String>, GroupKey, i64)>>,
+    /// Per-correlation, per-(tenant, group) compressed event buffers.
+    pub event_buffers: HashMap<String, Vec<(Option<String>, GroupKey, EventBuffer)>>,
+    /// Per-correlation, per-(tenant, group) event reference buffers.
+    pub event_ref_buffers: HashMap<String, Vec<(Option<String>, GroupKey, EventRefBuffer)>>,
 }
 
 fn default_snapshot_version() -> u32 {
-    1
+    2
 }

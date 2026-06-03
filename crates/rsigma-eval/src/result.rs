@@ -154,6 +154,10 @@ pub struct CorrelationBody {
     pub aggregated_value: f64,
     /// The time window in seconds.
     pub timespan_secs: u64,
+    /// Tenant/organization that produced this correlation.
+    /// `None` in single-tenant mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
     /// Full event bodies, included when `correlation_event_mode` is `Full`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<serde_json::Value>>,
@@ -257,6 +261,7 @@ mod tests {
                 group_key: vec![("SourceIP".to_string(), "203.0.113.4".to_string())],
                 aggregated_value: 73.0,
                 timespan_secs: 300,
+                tenant_id: None,
                 events: None,
                 event_refs: None,
             }),
@@ -295,6 +300,7 @@ mod tests {
                 group_key: vec![],
                 aggregated_value: 0.0,
                 timespan_secs: 0,
+                tenant_id: None,
                 events: None,
                 event_refs: None,
             }),

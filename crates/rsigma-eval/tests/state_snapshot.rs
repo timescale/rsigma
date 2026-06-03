@@ -413,7 +413,7 @@ detection:
     // Engine with only detection rules, no correlations
     let mut engine = corr_engine(yaml);
     let snapshot = CorrelationSnapshot {
-        version: 1,
+        version: 2,
         windows: Default::default(),
         last_alert: Default::default(),
         event_buffers: Default::default(),

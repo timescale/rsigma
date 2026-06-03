@@ -60,6 +60,7 @@ fn correlation_result() -> EvaluationResult {
             group_key: vec![("SourceIP".to_string(), "203.0.113.4".to_string())],
             aggregated_value: 73.0,
             timespan_secs: 300,
+            tenant_id: None,
             events: None,
             event_refs: None,
         }),

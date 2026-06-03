@@ -95,6 +95,8 @@ pub struct DaemonConfig {
     pub replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")]
     pub consumer_group: Option<String>,
+    #[cfg(feature = "daemon-kafka")]
+    pub kafka_config: rsigma_runtime::KafkaConnectConfig,
     pub state_restore_mode: StateRestoreMode,
     pub drain_timeout: u64,
     pub input_format: InputFormat,
@@ -731,10 +733,33 @@ pub async fn run_daemon(config: DaemonConfig) {
                 }
             }
         }
+        #[cfg(feature = "daemon-kafka")]
+        input if input.starts_with("kafka://") => {
+            let (brokers, topics) = parse_kafka_url(input);
+            let mut kafka_cfg = config.kafka_config.clone();
+            if !brokers.is_empty() {
+                kafka_cfg.bootstrap_servers = brokers.clone();
+            }
+            match rsigma_runtime::KafkaSource::connect(&kafka_cfg, &topics) {
+                Ok(source) => {
+                    let h = spawn_source(
+                        source,
+                        event_tx,
+                        Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                    );
+                    tracing::info!(brokers = brokers, topics = ?topics, "Kafka source started");
+                    Some(h)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, brokers = brokers, "Failed to connect Kafka source");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
         other => {
             tracing::error!(
                 input = other,
-                "Unsupported input source (supported: stdin, http, nats://)"
+                "Unsupported input source (supported: stdin, http, nats://, kafka://)"
             );
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
@@ -1171,7 +1196,7 @@ async fn shutdown_signal() {
 async fn build_sink(
     spec: &str,
     pretty: bool,
-    #[cfg_attr(not(feature = "daemon-nats"), allow(unused))] config: &DaemonConfig,
+    #[cfg_attr(not(any(feature = "daemon-nats", feature = "daemon-kafka")), allow(unused))] config: &DaemonConfig,
 ) -> Sink {
     if spec == "stdout" || spec == "stdout://" {
         return Sink::Stdout(StdoutSink::new(pretty));
@@ -1208,9 +1233,32 @@ async fn build_sink(
         };
     }
 
+    #[cfg(feature = "daemon-kafka")]
+    if spec.starts_with("kafka://") {
+        let (brokers, topics) = parse_kafka_url(spec);
+        let topic = topics.into_iter().next().unwrap_or_else(|| {
+            tracing::error!("Kafka sink requires a topic in the URL (kafka://brokers/topic)");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        });
+        let mut kafka_cfg = config.kafka_config.clone();
+        if !brokers.is_empty() {
+            kafka_cfg.bootstrap_servers = brokers.clone();
+        }
+        return match rsigma_runtime::KafkaSink::connect(&kafka_cfg, &topic) {
+            Ok(kafka_sink) => {
+                tracing::info!(brokers = brokers, topic = topic, "Kafka sink started");
+                Sink::Kafka(Box::new(kafka_sink))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, brokers = brokers, "Failed to connect Kafka sink");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        };
+    }
+
     tracing::error!(
         output = spec,
-        "Unsupported output sink (supported: stdout, file://<path>, nats://)"
+        "Unsupported output sink (supported: stdout, file://<path>, nats://, kafka://)"
     );
     std::process::exit(crate::exit_code::CONFIG_ERROR);
 }
@@ -1229,6 +1277,36 @@ fn parse_nats_url(url: &str) -> (String, String) {
             (server, subject)
         }
         None => (format!("nats://{without_scheme}"), ">".to_string()),
+    }
+}
+
+/// Parse a kafka:// URL into (bootstrap_servers, topics).
+///
+/// Input: "kafka://broker1:9092,broker2:9092/topic1,topic2"
+/// Output: ("broker1:9092,broker2:9092", ["topic1", "topic2"])
+///
+/// Regex patterns are passed through as-is:
+/// Input: "kafka://broker:9092/^tenant-.*"
+/// Output: ("broker:9092", ["^tenant-.*"])
+#[cfg(feature = "daemon-kafka")]
+fn parse_kafka_url(url: &str) -> (String, Vec<String>) {
+    let without_scheme = url.strip_prefix("kafka://").unwrap_or(url);
+    match without_scheme.find('/') {
+        Some(pos) => {
+            let brokers = without_scheme[..pos].to_string();
+            let topics_str = &without_scheme[pos + 1..];
+            let topics = if topics_str.starts_with('^') {
+                vec![topics_str.to_string()]
+            } else {
+                topics_str
+                    .split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            };
+            (brokers, topics)
+        }
+        None => (without_scheme.to_string(), vec![]),
     }
 }
 
@@ -2227,5 +2305,46 @@ mod tests {
     #[test]
     fn auto_without_nats_restores() {
         assert!(decide_state_restore(StateRestoreMode::Auto, None));
+    }
+
+    #[cfg(feature = "daemon-kafka")]
+    mod kafka_url {
+        use super::super::parse_kafka_url;
+
+        #[test]
+        fn single_broker_single_topic() {
+            let (brokers, topics) = parse_kafka_url("kafka://localhost:9092/my-topic");
+            assert_eq!(brokers, "localhost:9092");
+            assert_eq!(topics, vec!["my-topic"]);
+        }
+
+        #[test]
+        fn multi_broker_multi_topic() {
+            let (brokers, topics) =
+                parse_kafka_url("kafka://b1:9092,b2:9092/events,alerts");
+            assert_eq!(brokers, "b1:9092,b2:9092");
+            assert_eq!(topics, vec!["events", "alerts"]);
+        }
+
+        #[test]
+        fn regex_pattern() {
+            let (brokers, topics) = parse_kafka_url("kafka://broker:9092/^tenant-.*");
+            assert_eq!(brokers, "broker:9092");
+            assert_eq!(topics, vec!["^tenant-.*"]);
+        }
+
+        #[test]
+        fn missing_topic_path() {
+            let (brokers, topics) = parse_kafka_url("kafka://broker:9092");
+            assert_eq!(brokers, "broker:9092");
+            assert!(topics.is_empty());
+        }
+
+        #[test]
+        fn trailing_slash_empty_topic() {
+            let (brokers, topics) = parse_kafka_url("kafka://broker:9092/");
+            assert_eq!(brokers, "broker:9092");
+            assert!(topics.is_empty());
+        }
     }
 }

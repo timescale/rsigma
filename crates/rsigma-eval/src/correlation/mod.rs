@@ -6,6 +6,7 @@
 mod buffers;
 mod compiler;
 mod keys;
+pub mod tenant;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -14,6 +15,7 @@ mod window;
 pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
+pub use tenant::TenantId;
 pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};
 pub use window::WindowState;
 

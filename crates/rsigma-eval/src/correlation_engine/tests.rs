@@ -3087,3 +3087,168 @@ score: 42
     );
     assert!(!det.header.custom_attributes.contains_key("title"));
 }
+
+// =========================================================================
+// Multi-tenant isolation
+// =========================================================================
+
+#[test]
+fn test_tenant_isolation_prevents_cross_org_correlation() {
+    let yaml = r#"
+title: Login Rule
+id: login-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: login
+    condition: selection
+level: low
+---
+title: Brute Force
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 3
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        tenant: TenantConfig {
+            tenant_field: Some("organizationId".to_string()),
+            missing_tenant_policy: MissingTenantPolicy::Reject,
+        },
+        ..Default::default()
+    });
+    engine.add_collection(&collection).unwrap();
+
+    // Org A sends 2 events for user "admin"
+    let v1 = json!({"action": "login", "User": "admin", "organizationId": "org-a", "@timestamp": 1000});
+    let v2 = json!({"action": "login", "User": "admin", "organizationId": "org-a", "@timestamp": 1001});
+    // Org B sends 2 events for user "admin"
+    let v3 = json!({"action": "login", "User": "admin", "organizationId": "org-b", "@timestamp": 1002});
+    let v4 = json!({"action": "login", "User": "admin", "organizationId": "org-b", "@timestamp": 1003});
+
+    let r1 = engine.process_event(&JsonEvent::borrow(&v1));
+    let r2 = engine.process_event(&JsonEvent::borrow(&v2));
+    let r3 = engine.process_event(&JsonEvent::borrow(&v3));
+    let r4 = engine.process_event(&JsonEvent::borrow(&v4));
+
+    // Neither org has hit 3 events yet — no correlation should fire
+    assert_eq!(r1.correlation_count(), 0);
+    assert_eq!(r2.correlation_count(), 0);
+    assert_eq!(r3.correlation_count(), 0);
+    assert_eq!(r4.correlation_count(), 0);
+
+    // Org A's 3rd event triggers correlation for org-a only
+    let v5 = json!({"action": "login", "User": "admin", "organizationId": "org-a", "@timestamp": 1004});
+    let r5 = engine.process_event(&JsonEvent::borrow(&v5));
+    assert_eq!(r5.correlation_count(), 1);
+
+    // Verify the tenant_id in the output
+    let corr = r5.iter().find(|r| r.is_correlation()).unwrap();
+    let body = corr.as_correlation().unwrap();
+    assert_eq!(body.tenant_id.as_deref(), Some("org-a"));
+
+    // Org B still hasn't hit 3 — no correlation for them
+    assert_eq!(engine.state_count(), 2); // one state per (tenant, group_key)
+}
+
+#[test]
+fn test_tenant_isolation_reject_policy_skips_correlation() {
+    let yaml = r#"
+title: Click Rule
+id: click-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+level: low
+---
+title: Click Flood
+correlation:
+    type: event_count
+    rules:
+        - click-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        tenant: TenantConfig {
+            tenant_field: Some("organizationId".to_string()),
+            missing_tenant_policy: MissingTenantPolicy::Reject,
+        },
+        ..Default::default()
+    });
+    engine.add_collection(&collection).unwrap();
+
+    // Event without organizationId — detection fires, correlation skipped
+    let v1 = json!({"action": "click", "User": "bob", "@timestamp": 1000});
+    let r1 = engine.process_event(&JsonEvent::borrow(&v1));
+    assert!(r1.detection_count() > 0, "detection still fires");
+    assert_eq!(engine.state_count(), 0, "no correlation state created");
+
+    // Same event many times — never correlates
+    let r2 = engine.process_event(&JsonEvent::borrow(&v1));
+    let r3 = engine.process_event(&JsonEvent::borrow(&v1));
+    assert_eq!(r2.correlation_count(), 0);
+    assert_eq!(r3.correlation_count(), 0);
+    assert_eq!(engine.state_count(), 0);
+}
+
+#[test]
+fn test_single_tenant_mode_backwards_compatible() {
+    let yaml = r#"
+title: Base Rule
+id: compat-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: login
+    condition: selection
+level: low
+---
+title: Login Flood
+correlation:
+    type: event_count
+    rules:
+        - compat-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    // Default config — no tenant_field set (single-tenant mode)
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let v1 = json!({"action": "login", "User": "alice", "@timestamp": 1000});
+    let v2 = json!({"action": "login", "User": "alice", "@timestamp": 1001});
+
+    let r1 = engine.process_event(&JsonEvent::borrow(&v1));
+    let r2 = engine.process_event(&JsonEvent::borrow(&v2));
+
+    assert_eq!(r1.correlation_count(), 0);
+    assert_eq!(r2.correlation_count(), 1, "correlation fires normally in single-tenant mode");
+
+    // tenant_id should be None in output
+    let corr = r2.iter().find(|r| r.is_correlation()).unwrap();
+    let body = corr.as_correlation().unwrap();
+    assert_eq!(body.tenant_id, None);
+}

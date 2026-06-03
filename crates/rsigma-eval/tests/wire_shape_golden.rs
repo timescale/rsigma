@@ -82,6 +82,7 @@ fn correlation_golden_ndjson_line() {
             ],
             aggregated_value: 73.0,
             timespan_secs: 300,
+            tenant_id: None,
             events: None,
             event_refs: None,
         }),

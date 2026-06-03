@@ -74,6 +74,8 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 timestamp_fields: None,
                 timestamp_fallback: Some(TIMESTAMP_FALLBACK.to_string()),
                 no_detections: Some(false),
+                tenant_field: None,
+                missing_tenant: None,
             }),
             state: Some(StatePartial {
                 db: None,
@@ -88,6 +90,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 cross_rule_ac: Some(false),
             }),
             nats: None,
+            kafka: None,
         }),
         eval: Some(EvalPartial {
             rules: None,

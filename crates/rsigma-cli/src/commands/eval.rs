@@ -328,6 +328,8 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         max_correlation_events,
         timestamp_fields,
         "wallclock",
+        None,
+        "reject",
     );
 
     // Field observability context, built once before evaluation and

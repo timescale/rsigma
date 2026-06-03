@@ -59,6 +59,7 @@ fn correlation_for_ip(ip: &str) -> EvaluationResult {
             group_key: vec![("SourceIP".to_string(), ip.to_string())],
             aggregated_value: 42.0,
             timespan_secs: 60,
+            tenant_id: None,
             events: None,
             event_refs: None,
         }),

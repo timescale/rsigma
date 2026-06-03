@@ -1,4 +1,10 @@
 mod file;
+#[cfg(feature = "kafka")]
+pub mod kafka_config;
+#[cfg(feature = "kafka")]
+mod kafka_sink;
+#[cfg(feature = "kafka")]
+mod kafka_source;
 #[cfg(feature = "nats")]
 pub mod nats_config;
 #[cfg(feature = "nats")]
@@ -11,6 +17,12 @@ mod stdin;
 mod stdout;
 
 pub use file::FileSink;
+#[cfg(feature = "kafka")]
+pub use kafka_config::KafkaConnectConfig;
+#[cfg(feature = "kafka")]
+pub use kafka_sink::KafkaSink;
+#[cfg(feature = "kafka")]
+pub use kafka_source::KafkaSource;
 #[cfg(feature = "nats")]
 pub use nats_config::NatsConnectConfig;
 #[cfg(feature = "nats")]
@@ -22,26 +34,45 @@ pub use stdout::StdoutSink;
 
 use std::sync::Arc;
 
+#[cfg(feature = "kafka")]
+use rdkafka::consumer::{CommitMode, Consumer};
+#[cfg(feature = "kafka")]
+use rdkafka::consumer::StreamConsumer;
+#[cfg(feature = "kafka")]
+use rdkafka::TopicPartitionList;
+
 use rsigma_eval::ProcessResult;
 
 use crate::error::RuntimeError;
 use crate::metrics::MetricsHook;
 
+/// Data needed to commit a Kafka offset on acknowledgment.
+#[cfg(feature = "kafka")]
+pub struct KafkaAckData {
+    pub(crate) consumer: Arc<StreamConsumer>,
+    pub(crate) offsets: TopicPartitionList,
+}
+
 /// Opaque acknowledgment handle returned alongside each event.
 ///
 /// For NATS JetStream sources, calling `ack()` confirms message delivery to the
-/// server. For stdin/HTTP sources, ack is a no-op. This enum avoids dynamic
-/// dispatch and mirrors the `Sink` enum pattern.
+/// server. For Kafka sources, calling `ack()` commits the consumer offset.
+/// For stdin/HTTP sources, ack is a no-op. This enum avoids dynamic dispatch
+/// and mirrors the `Sink` enum pattern.
 pub enum AckToken {
     /// No acknowledgment needed (stdin, HTTP).
     Noop,
     /// NATS JetStream message that must be acked after processing.
     #[cfg(feature = "nats")]
     Nats(Box<async_nats::jetstream::Message>),
+    /// Kafka consumer offset that must be committed after processing.
+    #[cfg(feature = "kafka")]
+    Kafka(KafkaAckData),
 }
 
 impl AckToken {
     /// Acknowledge the event. For NATS, this confirms delivery to the server.
+    /// For Kafka, this commits the consumer offset.
     pub async fn ack(self) {
         match self {
             AckToken::Noop => {}
@@ -49,6 +80,12 @@ impl AckToken {
             AckToken::Nats(msg) => {
                 if let Err(e) = msg.ack().await {
                     tracing::warn!(error = %e, "Failed to ack NATS message");
+                }
+            }
+            #[cfg(feature = "kafka")]
+            AckToken::Kafka(data) => {
+                if let Err(e) = data.consumer.commit(&data.offsets, CommitMode::Async) {
+                    tracing::warn!(error = %e, "Failed to commit Kafka offset");
                 }
             }
         }
@@ -61,11 +98,11 @@ impl AckToken {
     #[cfg(feature = "nats")]
     pub fn nats_stream_position(&self) -> Option<(u64, i64)> {
         match self {
-            AckToken::Noop => None,
             AckToken::Nats(msg) => msg
                 .info()
                 .ok()
                 .map(|info| (info.stream_sequence, info.published.unix_timestamp())),
+            _ => None,
         }
     }
 }
@@ -102,6 +139,9 @@ pub enum Sink {
     Stdout(StdoutSink),
     /// Append NDJSON to a file.
     File(FileSink),
+    /// Publish NDJSON to a Kafka topic.
+    #[cfg(feature = "kafka")]
+    Kafka(Box<KafkaSink>),
     /// Publish NDJSON to a NATS JetStream subject.
     #[cfg(feature = "nats")]
     Nats(Box<NatsSink>),
@@ -132,6 +172,8 @@ impl Sink {
                     let result = result;
                     tokio::task::block_in_place(|| s.send(result))
                 }
+                #[cfg(feature = "kafka")]
+                Sink::Kafka(s) => s.send(result).await,
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send(result).await,
                 Sink::FanOut(sinks) => {
@@ -162,6 +204,8 @@ impl Sink {
             match self {
                 Sink::Stdout(s) => tokio::task::block_in_place(|| s.send_raw(json)),
                 Sink::File(s) => tokio::task::block_in_place(|| s.send_raw(json)),
+                #[cfg(feature = "kafka")]
+                Sink::Kafka(s) => s.send_raw(json).await,
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send_raw(json).await,
                 Sink::FanOut(sinks) => {
@@ -187,6 +231,8 @@ impl Sink {
         match self {
             Sink::Stdout(_) => "stdout",
             Sink::File(_) => "file",
+            #[cfg(feature = "kafka")]
+            Sink::Kafka(_) => "kafka",
             #[cfg(feature = "nats")]
             Sink::Nats(_) => "nats",
             Sink::FanOut(_) => "fanout",

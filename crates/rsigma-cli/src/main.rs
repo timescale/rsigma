@@ -639,6 +639,8 @@ pub(crate) fn build_correlation_config(
     max_correlation_events: usize,
     extra_timestamp_fields: Vec<String>,
     timestamp_fallback: &str,
+    tenant_field: Option<String>,
+    missing_tenant: &str,
 ) -> CorrelationConfig {
     let suppress_secs = suppress.map(|s| match rsigma_parser::Timespan::parse(&s) {
         Ok(ts) => ts.seconds,
@@ -669,6 +671,18 @@ pub(crate) fn build_correlation_config(
         _ => rsigma_eval::TimestampFallback::WallClock,
     };
 
+    let missing_tenant_policy = missing_tenant
+        .parse::<rsigma_eval::MissingTenantPolicy>()
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            process::exit(exit_code::CONFIG_ERROR);
+        });
+
+    let tenant = rsigma_eval::TenantConfig {
+        tenant_field,
+        missing_tenant_policy,
+    };
+
     let mut config = CorrelationConfig {
         suppress: suppress_secs,
         action_on_match,
@@ -676,6 +690,7 @@ pub(crate) fn build_correlation_config(
         correlation_event_mode: event_mode,
         max_correlation_events,
         timestamp_fallback: ts_fallback,
+        tenant,
         ..Default::default()
     };
 

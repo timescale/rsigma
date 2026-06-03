@@ -111,6 +111,9 @@ pub(crate) struct DaemonPartial {
     /// Non-secret NATS knobs. Ignored unless built with `daemon-nats`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nats: Option<NatsPartial>,
+    /// Non-secret Kafka knobs. Ignored unless built with `daemon-kafka`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kafka: Option<KafkaPartial>,
 }
 
 impl Merge for DaemonPartial {
@@ -127,6 +130,7 @@ impl Merge for DaemonPartial {
             state: merge_opt(self.state, over.state),
             engine: merge_opt(self.engine, over.engine),
             nats: merge_opt(self.nats, over.nats),
+            kafka: merge_opt(self.kafka, over.kafka),
         }
     }
 }
@@ -268,6 +272,12 @@ pub(crate) struct CorrelationPartial {
     /// Suppress detection output for correlation-only rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_detections: Option<bool>,
+    /// Event field for multi-tenant correlation isolation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_field: Option<String>,
+    /// Policy when tenant field is missing: `reject` or `default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_tenant: Option<String>,
 }
 
 impl Merge for CorrelationPartial {
@@ -280,6 +290,8 @@ impl Merge for CorrelationPartial {
             timestamp_fields: over.timestamp_fields.or(self.timestamp_fields),
             timestamp_fallback: over.timestamp_fallback.or(self.timestamp_fallback),
             no_detections: over.no_detections.or(self.no_detections),
+            tenant_field: over.tenant_field.or(self.tenant_field),
+            missing_tenant: over.missing_tenant.or(self.missing_tenant),
         }
     }
 }
@@ -348,6 +360,50 @@ impl Merge for NatsPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             consumer_group: over.consumer_group.or(self.consumer_group),
+        }
+    }
+}
+
+/// Non-secret Kafka knobs. Secrets (SASL credentials) stay env-only.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct KafkaPartial {
+    /// Consumer group ID for load balancing across daemon instances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_group: Option<String>,
+    /// Security protocol: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_protocol: Option<String>,
+    /// SASL mechanism: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sasl_mechanism: Option<String>,
+    /// Path to CA certificate file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl_ca_cert: Option<PathBuf>,
+    /// Path to client certificate file (mTLS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl_client_cert: Option<PathBuf>,
+    /// Path to client key file (mTLS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl_client_key: Option<PathBuf>,
+    /// auto.offset.reset: earliest or latest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_reset: Option<String>,
+    /// session.timeout.ms override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_timeout_ms: Option<u32>,
+}
+
+impl Merge for KafkaPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            consumer_group: over.consumer_group.or(self.consumer_group),
+            security_protocol: over.security_protocol.or(self.security_protocol),
+            sasl_mechanism: over.sasl_mechanism.or(self.sasl_mechanism),
+            ssl_ca_cert: over.ssl_ca_cert.or(self.ssl_ca_cert),
+            ssl_client_cert: over.ssl_client_cert.or(self.ssl_client_cert),
+            ssl_client_key: over.ssl_client_key.or(self.ssl_client_key),
+            offset_reset: over.offset_reset.or(self.offset_reset),
+            session_timeout_ms: over.session_timeout_ms.or(self.session_timeout_ms),
         }
     }
 }
@@ -434,5 +490,53 @@ mod tests {
             merged.global.expect("global").log_format,
             Some("json".into())
         );
+    }
+
+    #[test]
+    fn kafka_partial_merge() {
+        let base = KafkaPartial {
+            consumer_group: Some("base-group".into()),
+            security_protocol: Some("SASL_SSL".into()),
+            offset_reset: Some("earliest".into()),
+            ..Default::default()
+        };
+        let over = KafkaPartial {
+            consumer_group: Some("override-group".into()),
+            sasl_mechanism: Some("SCRAM-SHA-256".into()),
+            ..Default::default()
+        };
+        let merged = base.merge(over);
+        assert_eq!(merged.consumer_group, Some("override-group".into()));
+        assert_eq!(merged.security_protocol, Some("SASL_SSL".into()));
+        assert_eq!(merged.sasl_mechanism, Some("SCRAM-SHA-256".into()));
+        assert_eq!(merged.offset_reset, Some("earliest".into()));
+    }
+
+    #[test]
+    fn daemon_kafka_section_merges() {
+        let base = RsigmaConfigPartial {
+            daemon: Some(DaemonPartial {
+                kafka: Some(KafkaPartial {
+                    consumer_group: Some("my-group".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let over = RsigmaConfigPartial {
+            daemon: Some(DaemonPartial {
+                kafka: Some(KafkaPartial {
+                    security_protocol: Some("SSL".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let merged = base.merge(over);
+        let kafka = merged.daemon.unwrap().kafka.unwrap();
+        assert_eq!(kafka.consumer_group, Some("my-group".into()));
+        assert_eq!(kafka.security_protocol, Some("SSL".into()));
     }
 }

@@ -109,11 +109,12 @@ pub use compiler::{
 };
 pub use correlation::{
     CompiledCondition, CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupByField,
-    GroupKey, WindowState,
+    GroupKey, TenantId, WindowState,
 };
 pub use correlation_engine::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode,
-    CorrelationSnapshot, ProcessResult, TimestampFallback,
+    CorrelationSnapshot, MissingTenantPolicy, ProcessResult, StateKey, TenantConfig,
+    TimestampFallback,
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};

@@ -12,6 +12,7 @@ The crate that produces the `rsigma` binary.
 |---------|---------|----------|-----------------|
 | `daemon` | yes | `rsigma-runtime`, `tokio`, `axum`, `prometheus`, `notify`, `rusqlite`, `tower-http` | `engine daemon`, the HTTP API server, `/metrics`, hot-reload, SQLite state persistence. The default; disable only for a minimal `engine eval` / `rule *` build. |
 | `daemon-nats` | no | `daemon` + `async-nats`, `tokio-stream`, `time`, `rsigma-runtime/nats` | NATS JetStream as `--input` and `--output` (and DLQ). All `--nats-*` flags. `RSIGMA_CONSUMER_GROUP`. See [NATS Streaming](../guide/nats-streaming.md). |
+| `daemon-kafka` | no | `daemon` + `rdkafka` (librdkafka via cmake-build), `rsigma-runtime/kafka` | Apache Kafka as `--input` and `--output`. All `--kafka-*` flags. Supports SASL/PLAIN, SCRAM, mTLS, consumer groups, multi-topic, and regex subscriptions. See [Kafka Streaming](../guide/kafka-streaming.md). |
 | `daemon-otlp` | no | `daemon` + `prost`, `tonic`, `flate2`, `rsigma-runtime/otlp` | OTLP/HTTP and OTLP/gRPC receivers on `/v1/logs`. See [OTLP Integration](../guide/otlp-integration.md). |
 | `daemon-tls` | no | `daemon` + `rustls` (aws-lc-rs), `tokio-rustls`, `rustls-pemfile`, `rustls-pki-types`, `x509-parser`, `hyper`/`hyper-util` | Server-side TLS termination for the API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mTLS client verification, SIGHUP-triggered cert hot-reload, and two extra Prometheus metrics. See [TLS termination](security.md#tls-termination-for-the-api-listener). |
 | `logfmt` | no | `rsigma-runtime/logfmt` | `--input-format logfmt` for the daemon and `engine eval`. |
@@ -35,6 +36,7 @@ The streaming runtime (event sources, sinks, daemon plumbing, dynamic pipelines)
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
 | `nats` | no | `async-nats`, `tokio-stream`, `time`, `futures` | NATS source, sink, and dynamic-pipeline source type. |
+| `kafka` | no | `rdkafka` (librdkafka, cmake-build, ssl, sasl, tokio) | Kafka source and sink with manual offset commit. |
 | `otlp` | no | `opentelemetry-proto`, `prost` | OTLP log decoding. |
 | `logfmt` | no | (none beyond the parser) | `logfmt` input parser. |
 | `cef` | no | (none beyond the parser) | `cef` input parser. |
@@ -53,8 +55,8 @@ No features. The parser is unconditional.
 # Default: daemon + everything that ships with it, no extras.
 cargo install --locked rsigma
 
-# Recommended for production: daemon + NATS + OTLP + EVTX + cross-rule AC.
-cargo install --locked rsigma --features daemon-nats,daemon-otlp,evtx,daachorse-index
+# Recommended for production: daemon + NATS + Kafka + OTLP + EVTX + cross-rule AC.
+cargo install --locked rsigma --features daemon-nats,daemon-kafka,daemon-otlp,evtx,daachorse-index
 
 # Match the prebuilt release archives and Docker image exactly.
 cargo install --locked rsigma --all-features
@@ -77,6 +79,7 @@ The repo's `ci.yml` matrix tests these combinations on every push:
 - `--no-default-features` (`engine eval` + `rule *` + `backend *` only)
 - default (`daemon` on, no extras)
 - `daemon-nats`
+- `daemon-kafka`
 - `daemon-otlp`
 - `daemon-tls`
 - `logfmt`, `cef`, `evtx`, `daachorse-index` individually
@@ -104,4 +107,4 @@ A first-class `rsigma --features` introspection flag would be a nice-to-have but
 
 - [Installation](../getting-started/installation.md) for prebuilt binaries (which use `--all-features`) and source builds.
 - [Performance Tuning](../guide/performance-tuning.md) for when `daachorse-index` actually pays off.
-- [NATS Streaming](../guide/nats-streaming.md), [OTLP Integration](../guide/otlp-integration.md), [Input Formats](../guide/input-formats.md) for what each feature gates in practice.
+- [NATS Streaming](../guide/nats-streaming.md), [Kafka Streaming](../guide/kafka-streaming.md), [OTLP Integration](../guide/otlp-integration.md), [Input Formats](../guide/input-formats.md) for what each feature gates in practice.

@@ -173,7 +173,7 @@ mod tests {
 
     fn empty_snapshot() -> CorrelationSnapshot {
         CorrelationSnapshot {
-            version: 1,
+            version: 2,
             windows: HashMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
@@ -191,7 +191,7 @@ mod tests {
         store.save(&snap, None).await.unwrap();
 
         let (loaded, pos) = store.load().await.unwrap().unwrap();
-        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.version, 2);
         assert!(pos.is_none());
     }
 
@@ -209,7 +209,7 @@ mod tests {
         store.save(&snap, Some(&pos)).await.unwrap();
 
         let (loaded, loaded_pos) = store.load().await.unwrap().unwrap();
-        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.version, 2);
         let p = loaded_pos.unwrap();
         assert_eq!(p.sequence, 42);
         assert_eq!(p.timestamp, 1714500000);
@@ -271,7 +271,7 @@ mod tests {
         // Open with SqliteStateStore, which should auto-migrate.
         let store = SqliteStateStore::open(&db_path).unwrap();
         let (loaded, pos) = store.load().await.unwrap().unwrap();
-        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.version, 2);
         assert!(pos.is_none(), "old rows should have NULL source columns");
 
         // Saving with position should work on the migrated schema.

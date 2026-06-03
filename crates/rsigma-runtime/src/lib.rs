@@ -80,6 +80,9 @@ pub use sources::{
     SourceResolver, TemplateExpander,
 };
 
+#[cfg(feature = "kafka")]
+pub use io::{KafkaConnectConfig, KafkaSink, KafkaSource};
+
 #[cfg(feature = "nats")]
 pub use io::{NatsConnectConfig, NatsSink, NatsSource, ReplayPolicy};
 
