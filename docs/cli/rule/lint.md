@@ -44,6 +44,7 @@ For the narrative version with the full lint-rule catalog and CI patterns see [L
 |------|-------------|
 | `--disable <IDS>` | Disable specific lint rules. Comma-separated: `--disable missing_author,missing_description`. |
 | `--config <PATH>` | Path to a `.rsigma-lint.yml`. If unset, ancestors of `<PATH>` are searched. |
+| `--tag-namespace <NS>` | Allow an additional tag namespace (repeatable). Tags using the given namespace no longer trigger `unknown_tag_namespace`. Example: `--tag-namespace myorg --tag-namespace internal`. |
 
 Inline `# rsigma-disable` and `# rsigma-disable-next-line` comments also work; see [Linting Rules: suppression](../../guide/linting-rules.md#suppression-three-tiers).
 

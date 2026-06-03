@@ -146,7 +146,7 @@ Three operations:
 Two layers, both already implemented:
 
 - **YAML comments.** A line comment `# rsigma-disable-next-line: missing_title, invalid_status` suppresses those rules for the immediately following line; `# rsigma-disable-next-line` (no list) suppresses all rules on the next line. A file-level `# rsigma-disable: missing_title` suppresses those rules across the whole document, and `# rsigma-disable` (no list) suppresses every rule in the document. The parser is in `parse_inline_suppressions`.
-- **`LintConfig`.** Programmatic; CLI flags map as `--disable <id1,id2>` -> `LintConfig.disabled_rules`, `--exclude '<glob>'` -> `LintConfig.exclude_patterns`, and a YAML config file (`rsigma-lint.yml` or `--lint-config`) feeds all three fields plus `severity_overrides`.
+- **`LintConfig`.** Programmatic; CLI flags map as `--disable <id1,id2>` -> `LintConfig.disabled_rules`, `--exclude '<glob>'` -> `LintConfig.exclude_patterns`, `--tag-namespace <ns>` -> `LintConfig.tag_namespaces`, and a YAML config file (`rsigma-lint.yml` or `--lint-config`) feeds all four fields plus `severity_overrides`.
 
 `apply_suppressions(warnings, &LintConfig, &InlineSuppressions) -> Vec<LintWarning>` filters out suppressed warnings and applies the severity overrides. Both the CLI and the LSP call it after linting.
 

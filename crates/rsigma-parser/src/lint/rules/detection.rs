@@ -45,7 +45,11 @@ fn is_valid_logsource_value(s: &str) -> bool {
         })
 }
 
-pub(crate) fn lint_detection_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<LintWarning>) {
+pub(crate) fn lint_detection_rule(
+    m: &yaml_serde::Mapping,
+    warnings: &mut Vec<LintWarning>,
+    extra_namespaces: &[String],
+) {
     // ── level ─────────────────────────────────────────────────────────────
     if !m.contains_key(key("level")) {
         warnings.push(warning(
@@ -194,12 +198,20 @@ pub(crate) fn lint_detection_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<Li
                 } else {
                     if let Some(ns) = tag.split('.').next()
                         && !KNOWN_TAG_NAMESPACES.contains(&ns)
+                        && !extra_namespaces.iter().any(|n| n.as_str() == ns)
                     {
+                        let mut seen = std::collections::HashSet::new();
+                        let known_list: Vec<&str> = KNOWN_TAG_NAMESPACES
+                            .iter()
+                            .copied()
+                            .chain(extra_namespaces.iter().map(String::as_str))
+                            .filter(|n| seen.insert(*n))
+                            .collect();
                         warnings.push(warning(
                             LintRule::UnknownTagNamespace,
                             format!(
                                 "unknown tag namespace \"{ns}\", known namespaces: {}",
-                                KNOWN_TAG_NAMESPACES.join(", ")
+                                known_list.join(", ")
                             ),
                             format!("/tags/{i}"),
                         ));

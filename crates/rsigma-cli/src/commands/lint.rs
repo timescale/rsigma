@@ -59,6 +59,11 @@ pub(crate) struct LintArgs {
     #[arg(long = "fail-level", default_value = "error",
            value_parser = ["error", "warning", "info"])]
     pub fail_level: String,
+
+    /// Allow additional tag namespaces (repeatable).
+    /// Example: --tag-namespace myorg --tag-namespace internal
+    #[arg(long = "tag-namespace")]
+    pub tag_namespaces: Vec<String>,
 }
 
 pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
@@ -71,11 +76,12 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
         exclude,
         fix: apply_fix,
         fail_level: _,
+        tag_namespaces,
     } = args;
     let p = Painter::new(ctx.color);
 
     // 0. Build lint config from file + CLI flags
-    let config = build_lint_config(&path, disable, lint_config_path, exclude);
+    let config = build_lint_config(&path, disable, lint_config_path, exclude, tag_namespaces);
 
     // 1. Run built-in lint checks (with suppression)
     let results: Vec<FileLintResult> = if path.is_dir() {
@@ -559,12 +565,13 @@ fn merge_schema_results(
 // Lint config
 // ---------------------------------------------------------------------------
 
-/// Build a `LintConfig` from a config file (auto-discovered or explicit) + CLI `--disable` flags.
+/// Build a `LintConfig` from a config file (auto-discovered or explicit) + CLI flags.
 fn build_lint_config(
     path: &std::path::Path,
     disable: Vec<String>,
     lint_config_path: Option<PathBuf>,
     exclude: Vec<String>,
+    tag_namespaces: Vec<String>,
 ) -> LintConfig {
     // Load config file
     let mut config = if let Some(explicit) = lint_config_path {
@@ -596,11 +603,15 @@ fn build_lint_config(
         LintConfig::default()
     };
 
-    // Merge --disable and --exclude CLI flags
-    if !disable.is_empty() || !exclude.is_empty() {
+    // Merge --disable, --exclude, and --tag-namespace CLI flags
+    if !disable.is_empty() || !exclude.is_empty() || !tag_namespaces.is_empty() {
         let cli_config = LintConfig {
             disabled_rules: disable.into_iter().collect(),
             exclude_patterns: exclude,
+            tag_namespaces: tag_namespaces
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
             ..Default::default()
         };
         config.merge(&cli_config);

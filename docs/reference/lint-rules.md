@@ -314,6 +314,14 @@ tags:
 
 The recognised tag namespaces are `attack.*`, `cve.*`, `detection.*`, `tlp.*`, `stp.*`, and `informational.*`. The fix is to manually replace the unknown namespace with the closest valid one (the linter doesn't auto-correct; tag namespaces are ambiguous enough that silent rewrites would be unsafe).
 
+To allow organisation-specific namespaces, pass `--tag-namespace <name>` on the CLI (repeatable) or add a `tag_namespaces` list to `.rsigma-lint.yml`:
+
+```yaml
+tag_namespaces:
+  - myorg
+  - internal
+```
+
 ### `null_in_value_list`
 
 Trigger:

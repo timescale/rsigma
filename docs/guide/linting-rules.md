@@ -123,6 +123,9 @@ severity_overrides:
 exclude:
   - "config/**"
   - "**/unsupported/**"
+tag_namespaces:
+  - myorg
+  - internal
 ```
 
 `severity_overrides` lets you keep a rule active but change how loud it is. Setting `title_too_long: info` keeps the check but stops it from failing `--fail-level warning` builds.
