@@ -775,6 +775,14 @@ struct RawLintConfig {
     tag_namespaces: Vec<String>,
 }
 
+/// Remove duplicate entries from a list while keeping the first occurrence of
+/// each, so merged `exclude_patterns` / `tag_namespaces` stay stable and don't
+/// repeat a value that appears in both the config file and a CLI flag.
+fn dedup_preserving_order(items: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
+}
+
 impl LintConfig {
     pub fn load(path: &Path) -> crate::error::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -797,15 +805,21 @@ impl LintConfig {
             severity_overrides.insert(rule.clone(), sev);
         }
 
+        let mut exclude_patterns = raw.exclude;
+        dedup_preserving_order(&mut exclude_patterns);
+
+        let mut tag_namespaces: Vec<String> = raw
+            .tag_namespaces
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        dedup_preserving_order(&mut tag_namespaces);
+
         Ok(LintConfig {
             disabled_rules,
             severity_overrides,
-            exclude_patterns: raw.exclude,
-            tag_namespaces: raw
-                .tag_namespaces
-                .into_iter()
-                .map(|s| s.to_lowercase())
-                .collect(),
+            exclude_patterns,
+            tag_namespaces,
         })
     }
 
@@ -838,8 +852,10 @@ impl LintConfig {
         }
         self.exclude_patterns
             .extend(other.exclude_patterns.iter().cloned());
+        dedup_preserving_order(&mut self.exclude_patterns);
         self.tag_namespaces
             .extend(other.tag_namespaces.iter().cloned());
+        dedup_preserving_order(&mut self.tag_namespaces);
     }
 
     pub fn is_disabled(&self, rule: &LintRule) -> bool {
@@ -1565,6 +1581,63 @@ detection:
         assert_eq!(base.severity_overrides.get("rule_d"), Some(&Severity::Hint));
         assert_eq!(base.exclude_patterns, vec!["test/**".to_string()]);
         assert!(base.tag_namespaces.contains(&"myns".to_string()));
+    }
+
+    #[test]
+    fn lint_config_merge_dedups_lists() {
+        let mut base = LintConfig {
+            exclude_patterns: vec!["config/**".to_string(), "shared/**".to_string()],
+            tag_namespaces: vec!["myorg".to_string(), "shared".to_string()],
+            ..Default::default()
+        };
+        let other = LintConfig {
+            // "shared/**" and "shared" overlap with base on purpose.
+            exclude_patterns: vec!["shared/**".to_string(), "extra/**".to_string()],
+            tag_namespaces: vec!["shared".to_string(), "internal".to_string()],
+            ..Default::default()
+        };
+
+        base.merge(&other);
+
+        assert_eq!(
+            base.exclude_patterns,
+            vec![
+                "config/**".to_string(),
+                "shared/**".to_string(),
+                "extra/**".to_string()
+            ]
+        );
+        assert_eq!(
+            base.tag_namespaces,
+            vec![
+                "myorg".to_string(),
+                "shared".to_string(),
+                "internal".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn lint_config_load_dedups_and_normalises() {
+        let yaml = r#"
+exclude:
+  - "config/**"
+  - "config/**"
+tag_namespaces:
+  - MyOrg
+  - myorg
+  - internal
+"#;
+        let mut tmp = tempfile::NamedTempFile::with_suffix(".yml").unwrap();
+        std::io::Write::write_all(&mut tmp, yaml.as_bytes()).unwrap();
+        let config = LintConfig::load(tmp.path()).unwrap();
+
+        assert_eq!(config.exclude_patterns, vec!["config/**".to_string()]);
+        // "MyOrg" lowercases to "myorg" and then collapses with the duplicate.
+        assert_eq!(
+            config.tag_namespaces,
+            vec!["myorg".to_string(), "internal".to_string()]
+        );
     }
 
     #[test]

@@ -5,6 +5,12 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Custom tag namespaces for the linter (#161)
+
+`rsigma rule lint` no longer forces teams to disable `unknown_tag_namespace` wholesale just to use organisation-specific tags. A repeatable `--tag-namespace <ns>` flag and a `tag_namespaces` list in `.rsigma-lint.yml` register extra namespaces that are recognised alongside the built-in spec set (`attack`, `car`, `cve`, `d3fend`, `detection`, `stp`, `tlp`). Namespace values are normalised to lowercase, and when `unknown_tag_namespace` does fire its message lists the full combined set of known namespaces.
+
+On the library side, `LintConfig` gains a `tag_namespaces` field that layers through the same merge path as `disabled_rules` and `exclude_patterns`. Both list-valued fields, `exclude_patterns` and `tag_namespaces`, are now de-duplicated (first occurrence wins) when a config file and CLI flags are layered, so overlapping entries no longer accumulate. Docs cover the new flag and config key across the lint CLI reference, the linting guide, the lint-rules reference, and the linter developer guide; the CLI and root READMEs list the flag.
+
 ### TTY-aware output + structured output formats (#157)
 
 Every rsigma subcommand can now emit its structured output in one of five formats, selected by a new **global** `--output-format <json|ndjson|table|csv|tsv>` flag. The default is TTY-aware: pretty JSON when stdout is a terminal, plain NDJSON when piped or redirected, so `rsigma engine eval … | jq` does the right thing without any extra flag and `rsigma engine eval` in a terminal is finally readable.

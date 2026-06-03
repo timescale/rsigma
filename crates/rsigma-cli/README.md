@@ -161,6 +161,7 @@ Run 66 built-in lint rules with optional JSON schema validation.
 | `--disable` | string | `""` | Comma-separated lint rule IDs to suppress |
 | `--config` | path | none | Explicit path to `.rsigma-lint.yml` (otherwise auto-discovered by walking ancestor directories) |
 | `--exclude` | string | none | Glob pattern for paths to skip (repeatable, relative to lint root) |
+| `--tag-namespace` | string | none | Allow an additional tag namespace beyond the built-in spec set (repeatable). Tags using the namespace no longer trigger `unknown_tag_namespace`. Values are lowercased. |
 | `--fix` | flag | `false` | Automatically apply safe fixes (lowercase keys, correct typos, remove duplicates, etc.) |
 | `--fail-level` | string | `"error"` | Minimum severity for non-zero exit: `error` (default), `warning`, or `info` |
 
@@ -175,6 +176,7 @@ rsigma rule lint rules/ --disable missing_description,missing_author  # suppress
 rsigma rule lint rules/ --config my-lint.yml        # explicit config file
 rsigma rule lint rules/ --exclude "config/**"       # skip non-rule files
 rsigma rule lint rules/ --exclude "config/**" --exclude "**/unsupported/**"  # multiple patterns
+rsigma rule lint rules/ --tag-namespace myorg --tag-namespace internal  # allow custom tag namespaces
 rsigma rule lint rules/ --fix                       # auto-fix safe issues
 rsigma rule lint rules/ --fail-level warning        # CI: fail on warnings too
 rsigma rule lint rules/ --fail-level info           # CI: fail on any finding
