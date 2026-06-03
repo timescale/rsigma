@@ -895,3 +895,122 @@ fn daemon_state_db_migration_from_old_schema() {
         "schema should be migrated to include source_timestamp"
     );
 }
+
+/// Regression test: a daemon reading from stdin must shut down promptly on
+/// SIGINT even when stdin is idle (open but no pending line, no EOF).
+///
+/// `tokio::io::stdin()` reads via an uncancellable blocking thread that the
+/// runtime waits for at shutdown, so the daemon used to hang on Ctrl+C until
+/// another line or EOF arrived. The dedicated `std::thread`-based stdin reader
+/// fixes that. This is Unix-only because it relies on POSIX signal delivery.
+#[cfg(all(unix, feature = "daemon"))]
+#[test]
+fn daemon_stdin_exits_promptly_on_sigint() {
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpStream;
+    use std::process::{Command as StdCommand, Stdio};
+    use std::time::{Duration, Instant};
+
+    let rules = temp_file(".yml", SIMPLE_RULE);
+
+    let mut child = StdCommand::new(common::rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        // Hold the write end of stdin open for the whole test: the source has
+        // no input and never sees EOF, which is the scenario that used to hang.
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn daemon");
+    let _stdin = child.stdin.take().expect("piped stdin");
+
+    // Forward stderr lines so we can read the bound API address.
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { return };
+            if tx.send(line).is_err() {
+                return;
+            }
+        }
+    });
+
+    let kill_and_reap = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+
+    // Wait for the "API server listening" line and pull out the address.
+    let addr_deadline = Instant::now() + Duration::from_secs(10);
+    let api_addr = loop {
+        let remaining = addr_deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::ZERO);
+        match rx.recv_timeout(remaining) {
+            Ok(line) if line.contains("API server listening") => {
+                let addr = serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
+                    .and_then(|v| v["fields"]["addr"].as_str().map(str::to_string));
+                if let Some(addr) = addr {
+                    break addr;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => {
+                kill_and_reap(&mut child);
+                panic!("daemon never logged its API address within 10s");
+            }
+        }
+    };
+
+    // Connect to the API socket. Once it accepts, the serve task has polled
+    // its graceful-shutdown future, so the SIGINT handler is installed and the
+    // signal will trigger a clean shutdown rather than the default kill.
+    let socket: std::net::SocketAddr = api_addr.parse().expect("valid api addr");
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if TcpStream::connect_timeout(&socket, Duration::from_millis(200)).is_ok() {
+            break;
+        }
+        if Instant::now() >= ready_deadline {
+            kill_and_reap(&mut child);
+            panic!("daemon API never became reachable within 5s");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let signaled = StdCommand::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(signaled.success(), "kill -INT did not succeed");
+
+    // The default drain timeout is 5s; a healthy shutdown is near-instant, so
+    // 10s is a generous bound that still fails fast if the runtime hangs.
+    let exit_deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait().expect("try_wait failed") {
+            Some(status) => break status,
+            None => {
+                if Instant::now() >= exit_deadline {
+                    kill_and_reap(&mut child);
+                    panic!("daemon did not exit within 10s of SIGINT (stdin shutdown hang)");
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    };
+
+    assert!(
+        status.success(),
+        "daemon should exit cleanly on SIGINT, got {status:?}"
+    );
+}

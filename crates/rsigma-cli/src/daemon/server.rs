@@ -776,7 +776,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let engine_dlq_tx = dlq_tx.clone();
     let dlq_enabled = config.dlq.is_some();
     #[cfg(feature = "daemon-otlp")]
-    let engine_source_done = source_done_notify;
+    let engine_source_done = source_done_notify.clone();
     let engine_handle = tokio::spawn(async move {
         let filter_fn = move |v: &serde_json::Value| crate::apply_event_filter(v, &event_filter);
         #[cfg(feature = "daemon-otlp")]
@@ -1102,6 +1102,15 @@ pub async fn run_daemon(config: DaemonConfig) {
             h.abort();
             tracing::info!("Source task aborted");
         }
+
+        // Tell the engine to stop pulling new events and drain what is already
+        // buffered. The stdin reader cannot be cancelled mid-read, so without
+        // this the engine would block on `event_rx.recv()` (holding `sink_tx`
+        // open) until the drain timeout elapses, falsely warning that events
+        // were lost. The engine closes its receiver on this signal, drains the
+        // buffered events, then exits, which lets the sink/ack tasks finish.
+        #[cfg(feature = "daemon-otlp")]
+        source_done_notify.notify_one();
 
         let drain = async {
             let _ = sink_handle.await;
