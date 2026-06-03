@@ -28,7 +28,7 @@ flowchart TD
         ETRAIT --> EPIPE["pipeline/<br/>Pipeline · conditions · transformations<br/>state · finalizers<br/>builtin: ecs_windows · sysmon<br/>dynamic: source-template expansion"]
         EPIPE --> ECOMP["compiler/<br/>compile_rule → CompiledRule<br/>matcher optimizer (AnyOf):<br/>Aho-Corasick batching<br/>RegexSet batching<br/>CaseInsensitiveGroup"]
         ECOMP --> EENG["engine/<br/>Engine (stateless)<br/>prefilters:<br/>RuleIndex (exact-value pruning)<br/>bloom trigram filter*<br/>cross-rule AC index**"]
-        EENG --> ECORR["correlation/<br/>sliding windows · group-by<br/>chaining · suppression"]
+        EENG --> ECORR["correlation/<br/>sliding windows · group-by<br/>chaining · suppression<br/>multi-tenant isolation"]
         ECORR --> ECUST["rsigma.* custom attributes"]
     end
 
@@ -53,7 +53,7 @@ flowchart TD
         RINPUT["input/ format adapters:<br/>JSON · syslog · logfmt* · CEF* · EVTX*<br/>plain text · auto-detect<br/>raw line → EventInputDecoded"]
         RINPUT --> RPROC["LogProcessor<br/>batch evaluation<br/>ArcSwap hot-reload<br/>MetricsHook · EventFilter"]
         RPROC --> RENG["RuntimeEngine<br/>wraps Engine + CorrelationEngine"]
-        RENG --> RIO["io/<br/>EventSource (stdin · HTTP · NATS)<br/>OTLP* (HTTP + gRPC)<br/>Sink (stdout · file · NATS) · DLQ"]
+        RENG --> RIO["io/<br/>EventSource (stdin · HTTP · NATS · Kafka*)<br/>OTLP* (HTTP + gRPC)<br/>Sink (stdout · file · NATS · Kafka*) · DLQ"]
         RSRC["sources/ (dynamic pipelines)<br/>SourceResolver: HTTP · command · file · NATS<br/>TemplateExpander · SourceCache<br/>RefreshScheduler<br/>SIGHUP · NATS control · includes<br/>extract: jq · JSONPath · CEL"]
     end
 
@@ -81,7 +81,7 @@ The dependency direction goes left to right in the diagram above. Higher crates 
 | [`rsigma-parser`](https://docs.rs/rsigma-parser) | YAML → AST. The only crate that touches Sigma source. | `SigmaCollection`, `SigmaRule`, `CorrelationRule`, `FilterRule`, `Condition`, `SigmaStr`, `Modifier` | — |
 | [`rsigma-eval`](https://docs.rs/rsigma-eval) | Compile AST to a matcher tree, evaluate events. Detection and correlation engine. Processing pipeline machinery. | `Engine`, `CorrelationEngine`, `Pipeline`, `Transformation`, `CompiledRule`, `Event`, `JsonEvent`, `MatchResult`, `CorrelationResult` | `parallel`, `daachorse-index` |
 | [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `TestBackend` | — |
-| [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
+| [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, sinks, dynamic-source resolver, NATS/Kafka/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `kafka`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
 | [`rsigma-lsp`](https://docs.rs/rsigma-lsp) | Language Server Protocol for editors. Diagnostics from the linter + parser + compiler, plus completions, hovers, and symbols. | `Backend` (tower-lsp impl), `Diagnostic` mapping | — |
 | `rsigma-cli` | The `rsigma` binary. Wires the other crates into a CLI and the streaming daemon. | `engine eval`, `engine daemon`, `rule *`, `backend *`, `pipeline resolve` | `daemon`, `daemon-nats`, `daemon-otlp`, plus all eval/runtime feature flags. |
 
@@ -113,8 +113,8 @@ No I/O, no thread spawning, no async runtime. The same `Engine` struct backs eve
 
 `rsigma-cli`'s `daemon` subcommand wires `rsigma-runtime`'s `LogProcessor` around `RuntimeEngine` (which embeds `Engine` + `CorrelationEngine`). Adds:
 
-- One `EventSource` (stdin, HTTP, NATS).
-- One or more `Sink`s (stdout, file, NATS), plus an optional DLQ.
+- One `EventSource` (stdin, HTTP, NATS, Kafka).
+- One or more `Sink`s (stdout, file, NATS, Kafka), plus an optional DLQ.
 - Hot-reload via `ArcSwap` (file watcher + `SIGHUP` + `POST /api/v1/reload`).
 - Optional SQLite-backed correlation state (`--state-db`).
 - Optional OTLP receiver (HTTP + gRPC) when built with `daemon-otlp`.
@@ -185,7 +185,8 @@ EventSource ──► bounded mpsc ──► LogProcessor ──► bounded mpsc
    (stdin,                           (batch                          (stdout,
     HTTP,                             evaluation,                     file,
     NATS,                             ArcSwap                         NATS,
-    OTLP)                             hot-reload)                     DLQ)
+    Kafka,                            hot-reload)                     Kafka,
+    OTLP)                                                            DLQ)
 ```
 
 The bounded mpsc channels apply back-pressure: when the engine cannot keep up, the source blocks instead of dropping events. `rsigma_back_pressure_events_total` counts how often that happens. See [Observability](../guide/observability.md#prometheus-metrics).

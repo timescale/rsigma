@@ -57,11 +57,18 @@ daemon:
     action: alert
     event_mode: none
     max_events: 10
+    tenant_field: tenant_id
+    missing_tenant: reject
   state:
     save_interval: 30
   engine:
     bloom_prefilter: false
     observe_fields: false
+  kafka:
+    consumer_group: rsigma-prod
+    security_protocol: SASL_SSL
+    sasl_mechanism: SCRAM-SHA-256
+    offset_reset: earliest
 
 eval:
   rules: ./rules
@@ -80,6 +87,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.nats` | `engine daemon` | Non-secret NATS knobs (e.g. `consumer_group`). Secrets stay env-only. Inert unless built with `daemon-nats`. |
+| `daemon.kafka` | `engine daemon` | Non-secret Kafka knobs (e.g. `consumer_group`, `security_protocol`, `offset_reset`, SSL cert paths). SASL credentials stay env-only. Inert unless built with `daemon-kafka`. |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
 
@@ -88,6 +96,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 The schema deliberately does **not** carry any secret-bearing daemon settings:
 
 - NATS auth (`creds`, `token`, `user`, `password`, `nkey`)
+- Kafka SASL credentials (`sasl_username`, `sasl_password`)
 - TLS key password
 
 Supply these via environment variables (or `--flag` for ad-hoc use). Putting them in a checked-in YAML file would silently widen exposure, so the loader has no way to accept them.

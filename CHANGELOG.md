@@ -5,6 +5,28 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Multi-tenant correlation awareness
+
+Correlation state is now fully isolated per tenant. A new `--tenant-field` flag specifies which event field carries the tenant identifier. All correlation windows, suppression timers, and event buffers use a composite `StateKey` of `(tenant, rule, group_key)`, preventing cross-tenant window contamination.
+
+- **Tenant extraction:** Configurable via `--tenant-field <field_name>` (CLI) or `daemon.correlation.tenant_field` (config file)
+- **Missing-tenant policies:** `--missing-tenant reject` (default) skips correlation for events without the field; `--missing-tenant default` assigns them to a synthetic default bucket
+- **Chain propagation:** Tenant identity carries through correlation chains; fired correlations include `tenant_id` in their output
+- **State persistence:** Snapshot export/import preserves tenant isolation across restarts
+- **Backward compatible:** When `--tenant-field` is not set, the engine operates in single-tenant mode with no overhead
+
+### Apache Kafka input/output (feature: `daemon-kafka`)
+
+Added Apache Kafka as an input source and output sink, following the same patterns as the existing NATS integration. Requires the `daemon-kafka` build feature (`rdkafka` / librdkafka).
+
+- **URL scheme:** `kafka://broker1:9092,broker2:9092/topic1,topic2` or `kafka://broker:9092/^regex-pattern`
+- **Authentication:** SASL/PLAIN, SASL/SCRAM-SHA-256/512 over SSL, and mutual TLS (mTLS)
+- **Consumer groups:** `--kafka-group-id` for horizontal scaling across daemon instances
+- **Multi-topic + regex:** Subscribe to multiple topics or regex patterns (e.g. `^tenant-.*` for multi-tenant fan-in)
+- **At-least-once delivery:** Manual offset commit after successful processing and sink delivery
+- **Configuration:** `daemon.kafka` section in config file for non-secret knobs; SASL credentials stay env/flag-only
+- **CLI flags:** `--kafka-bootstrap-servers`, `--kafka-group-id`, `--kafka-security-protocol`, `--kafka-sasl-mechanism`, `--kafka-sasl-username`, `--kafka-sasl-password`, `--kafka-ssl-ca-cert`, `--kafka-ssl-cert`, `--kafka-ssl-key`, `--kafka-offset-reset`
+
 ### TTY-aware output + structured output formats (#157)
 
 Every rsigma subcommand can now emit its structured output in one of five formats, selected by a new **global** `--output-format <json|ndjson|table|csv|tsv>` flag. The default is TTY-aware: pretty JSON when stdout is a terminal, plain NDJSON when piped or redirected, so `rsigma engine eval … | jq` does the right thing without any extra flag and `rsigma engine eval` in a terminal is finally readable.

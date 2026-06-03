@@ -24,8 +24,16 @@ Every variable here has a corresponding `--flag` that takes precedence.
 | `NATS_USER` | string | unset | same | NATS username (requires `NATS_PASSWORD`). Equivalent to `--nats-user`. |
 | `NATS_PASSWORD` | string | unset | same | NATS password (requires `NATS_USER`). Equivalent to `--nats-password`. |
 | `NATS_NKEY` | NKey seed | unset | same | NATS NKey seed authentication. Equivalent to `--nats-nkey`. |
+| `KAFKA_BOOTSTRAP_SERVERS` | comma-separated host:port | unset | `engine daemon` with Kafka source or sink | Kafka broker addresses. Equivalent to `--kafka-bootstrap-servers`. |
+| `KAFKA_GROUP_ID` | string | `rsigma` | same | Kafka consumer group ID. Equivalent to `--kafka-group-id`. |
+| `KAFKA_SECURITY_PROTOCOL` | string | unset | same | Kafka security protocol (`PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL`). Equivalent to `--kafka-security-protocol`. |
+| `KAFKA_SASL_MECHANISM` | string | unset | same | Kafka SASL mechanism (`PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`). Equivalent to `--kafka-sasl-mechanism`. |
+| `KAFKA_SASL_USERNAME` | string | unset | same | Kafka SASL username. Equivalent to `--kafka-sasl-username`. |
+| `KAFKA_SASL_PASSWORD` | string | unset | same | Kafka SASL password. Equivalent to `--kafka-sasl-password`. |
 
 The five NATS auth variables are mutually exclusive. The first configured method wins, in the order listed in `--nats-*` flag definition. See [NATS Streaming: authentication](../guide/nats-streaming.md#authentication).
+
+The Kafka SASL variables (`KAFKA_SASL_USERNAME`, `KAFKA_SASL_PASSWORD`) are the recommended way to pass credentials without exposing them in shell history. See [Kafka Streaming: authentication](../guide/kafka-streaming.md#authentication).
 
 ## Precedence
 
@@ -50,5 +58,6 @@ Common variables that `rsigma` does NOT consume, in case operators are wondering
 ## See also
 
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the auth-method semantics and TLS flags.
+- [Kafka Streaming: authentication](../guide/kafka-streaming.md#authentication) for SASL and mTLS configuration.
 - [Observability](../guide/observability.md) for the canonical `RUST_LOG` target list and useful filter recipes.
 - [`engine daemon` CLI reference](../cli/engine/daemon.md) for the matching `--flag` versions of every variable.

@@ -19,7 +19,8 @@ For rule quality and editor integration, a built-in linter validates rules again
 
 * **Sigma parsing:** Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
 * **Rule evaluation:** Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
-* **Streaming daemon:** Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
+* **Streaming daemon:** Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/Kafka/OTLP input
+* **Multi-tenant correlation:** Isolate correlation state per tenant via a configurable tenant field, with support for missing-tenant policies (reject or default bucket) and tenant propagation through correlation chains
 * **Input formats:** Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * **Processing pipelines:** Use pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
 * **Dynamic pipelines:** Populate any pipeline value from external sources (HTTP, files, commands, NATS) with template expansion, auto-refresh, and data extraction via jq, JSONPath, or CEL
@@ -29,6 +30,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * **Field observability:** Opt-in `--observe-fields` mode on both `engine daemon` (live, exposed over `GET /api/v1/fields*` with Prometheus counters) and `engine eval` (one-shot JSON report at end-of-run, ideal for CI gap analysis) surfaces which event fields no rule references (gap signal) and which rule fields have never appeared in an event (broken-coverage signal); same JSON shape across runtimes
 * **TLS termination:** Use in-process TLS termination for the daemon API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mutual TLS, `aws-lc-rs` crypto, and cross-platform certificate hot-reload
 * **NATS JetStream:** Use NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
+* **Apache Kafka:** Use Kafka as input and output with SASL/PLAIN, SCRAM, mTLS authentication, consumer groups, multi-topic subscription, and regex patterns for multi-tenant fan-in
 * **OTLP ingestion:** Use OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
 * **Built-in linter:** Validate rules with 66 checks, four severity levels, a full suppression system, and auto-fix (`--fix`) for 13 safe rules
 * **LSP server:** Use real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
@@ -154,6 +156,9 @@ curl -X POST http://localhost:9090/api/v1/events -d '{"CommandLine":"whoami"}'
 # NATS JetStream (requires daemon-nats feature)
 rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --output nats://localhost:4222/detections
 
+# Apache Kafka (requires daemon-kafka feature)
+rsigma engine daemon -r rules/ --input kafka://localhost:9092/events --output kafka://localhost:9092/detections
+
 # OTLP (requires daemon-otlp feature): always active alongside any --input mode
 # Agents (Grafana Alloy, Vector, Fluent Bit, OTel Collector) send logs to /v1/logs (HTTP) or gRPC
 rsigma engine daemon -r rules/ --input http
@@ -184,6 +189,48 @@ rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --consumer
 # Dead-letter queue for events that fail processing
 rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> --dlq file:///var/log/rsigma-dlq.ndjson
 ```
+
+### Kafka Streaming
+
+Production-grade Apache Kafka support with authentication, at-least-once delivery, consumer groups, and multi-topic subscription including regex patterns for multi-tenant fan-in.
+
+```bash
+# Single topic input/output
+rsigma engine daemon -r rules/ --input kafka://localhost:9092/events --output kafka://localhost:9092/detections
+
+# Multiple brokers and topics
+rsigma engine daemon -r rules/ --input kafka://b1:9092,b2:9092/events,alerts
+
+# Regex pattern for multi-tenant fan-in
+rsigma engine daemon -r rules/ --input "kafka://broker:9092/^tenant-.*" \
+  --tenant-field tenant_id --kafka-group-id rsigma-multi-tenant
+
+# SASL/SCRAM authentication over TLS
+rsigma engine daemon -r rules/ --input kafka://broker:9092/events \
+  --kafka-security-protocol SASL_SSL \
+  --kafka-sasl-mechanism SCRAM-SHA-256 \
+  --kafka-sasl-username "$KAFKA_SASL_USERNAME" \
+  --kafka-sasl-password "$KAFKA_SASL_PASSWORD"
+
+# Consumer groups for horizontal scaling
+rsigma engine daemon -r rules/ --input kafka://broker:9092/events --kafka-group-id detection-workers
+```
+
+### Multi-Tenant Correlation
+
+Isolate correlation state per tenant so events from different customers never share correlation windows, even with identical group-by keys.
+
+```bash
+# Partition correlation by tenant_id field
+rsigma engine daemon -r rules/ --input kafka://broker:9092/events \
+  --tenant-field tenant_id --missing-tenant reject
+
+# Assign events without a tenant to a default bucket
+rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
+  --tenant-field organization_id --missing-tenant default
+```
+
+When `--tenant-field` is set, every correlation window, suppression timer, and event buffer is keyed by `(tenant, rule, group_key)`. The `tenant_id` field propagates through correlation chains and appears in output results. Without `--tenant-field`, the engine operates in single-tenant mode (backward-compatible).
 
 ### TLS Termination
 
@@ -409,11 +456,11 @@ From there, the AST can go in three directions depending on what you need:
 
 When running as a streaming detection engine, `rsigma-eval` feeds into `rsigma-runtime`:
 
-- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. EVTX\* files are parsed directly from binary via `EvtxFileReader`. Sources include stdin, HTTP POST, NATS JetStream, and OTLP\* (HTTP protobuf/JSON and gRPC).
+- **Input:** Format adapters parse raw log lines (JSON, syslog, logfmt\*, CEF\*, plain text, with auto-detection) into `EventInputDecoded`. EVTX\* files are parsed directly from binary via `EvtxFileReader`. Sources include stdin, HTTP POST, NATS JetStream, Kafka\*, and OTLP\* (HTTP protobuf/JSON and gRPC).
 - **Dynamic sources:** `SourceResolver` fetches data from files, commands, HTTP APIs, and NATS subjects. Resolved values are injected into pipelines via `TemplateExpander`. A `SourceCache` (in-memory + optional SQLite) provides fallback data. `RefreshScheduler` manages auto-refresh (interval, file watch, NATS push, on-demand). Extraction supports jq, JSONPath, and CEL. `DaemonSourceRegistry` unifies sources from external files (`--source`) and pipeline-embedded declarations with collision-error semantics.
 - **Processing:** `LogProcessor` runs batch evaluation with parallel detection and sequential correlation. `RuntimeEngine` wraps `Engine` and `CorrelationEngine` with rule loading and `ArcSwap` hot-reload.
 - **Enrichment:** `EnrichmentPipeline` runs between the engine and the sinks, injecting context (asset info, IP reputation, identity, GeoIP, KEV flags, runbook URLs, ...) into each result's `RuleHeader.enrichments` map. Four primitives (`template`, `lookup`, `http`, `command`) compose into recipes. Kind-aware template namespaces (`${detection.*}` for detection-kind enrichers, `${correlation.*}` for correlation-kind) are validated at config-load time. Optional HTTP response cache, scope filtering by rule glob, tag set, and severity, and `on_error` policies (`skip`, `null`, `drop`).
-- **Output:** Sinks write evaluation results to stdout, files, or NATS as one flat JSON object per result. Multiple sinks can run in fan-out. The output type is `EvaluationResult` (a composition of `RuleHeader` + `ResultBody::Detection|Correlation`), carrying rule title, id, level, tags, the `enrichments` map written by the enrichment pipeline, matched selections, field matches, aggregated values, and optionally the triggering events.
+- **Output:** Sinks write evaluation results to stdout, files, NATS, or Kafka as one flat JSON object per result. Multiple sinks can run in fan-out. The output type is `EvaluationResult` (a composition of `RuleHeader` + `ResultBody::Detection|Correlation`), carrying rule title, id, level, tags, the `enrichments` map written by the enrichment pipeline, matched selections, field matches, aggregated values, and optionally the triggering events.
 
 Feature-gated items are marked with \* in the diagram.
 
@@ -480,7 +527,8 @@ Feature-gated items are marked with \* in the diagram.
     │  correlation/ ──>       │
     │    sliding windows,     │
     │    group-by, chaining,  │
-    │    suppression, events  │
+    │    suppression, events, │
+    │    multi-tenant isolation│
     │                         │
     │  rsigma.* custom        │
     │    attributes           │
@@ -529,12 +577,14 @@ Feature-gated items are marked with \* in the diagram.
     │    └──> writes RuleHeader.enrichments    │
     │         between engine and sinks         │
     │                                          │
-    │  io/ ──> EventSource (stdin, HTTP, NATS) │
+    │  io/ ──> EventSource (stdin, HTTP, NATS,  │
+    │            Kafka*)                        │
     │          OTLP* (HTTP + gRPC)             │
     │          TLS* termination (mTLS, cert    │
     │            hot-reload) on shared API     │
     │            listener                      │
-    │          Sink (stdout, file, NATS)       │
+    │          Sink (stdout, file, NATS,       │
+    │            Kafka*)                        │
     │          DLQ (failed events)             │
     └──────────────────────────────────────────┘
               │       (*  = feature-gated)
@@ -577,7 +627,7 @@ rsigma config schema                # emit the JSON Schema for editors/CI
 rsigma config reload                # POST /api/v1/reload (cross-platform)
 ```
 
-Both commands also accept `--config <PATH>` (load only that file) and `--dry-run` (print the effective section, exit `0`). Secrets (NATS creds, TLS key password) deliberately stay env/flag-only and never appear in the schema. Full details in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
+Both commands also accept `--config <PATH>` (load only that file) and `--dry-run` (print the effective section, exit `0`). Secrets (NATS creds, Kafka SASL credentials, TLS key password) deliberately stay env/flag-only and never appear in the schema. Full details in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
 ## Reference
 

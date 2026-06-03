@@ -2,7 +2,7 @@
 
 `rsigma engine daemon` runs RSigma as a long-running service: it keeps a compiled engine in memory, reads events from a continuous source, writes detections to one or more sinks, and exposes a small HTTP API for health checks, metrics, and management. This is the mode you deploy in production.
 
-This page covers the daemon's life cycle, input and output options, hot-reload, state persistence, and the HTTP API surface. For NATS-specific operations (auth, replay, consumer groups, DLQ) see [NATS Streaming](nats-streaming.md). For OTLP ingestion see [OTLP Integration](otlp-integration.md).
+This page covers the daemon's life cycle, input and output options, hot-reload, state persistence, and the HTTP API surface. For NATS-specific operations (auth, replay, consumer groups, DLQ) see [NATS Streaming](nats-streaming.md). For Kafka-specific operations (auth, consumer groups, multi-topic) see [Kafka Streaming](kafka-streaming.md). For OTLP ingestion see [OTLP Integration](otlp-integration.md).
 
 ## What the daemon does
 
@@ -10,7 +10,8 @@ This page covers the daemon's life cycle, input and output options, hot-reload, 
                 ┌───────────────┐    ┌──────────────────┐    ┌───────────────┐
 events ───────► │ Event source  ├───►│  LogProcessor    ├───►│  Sinks        ├───► detections
                 │ stdin/HTTP    │    │  + RuntimeEngine │    │ stdout/file   │
-                │ NATS/OTLP     │    │  (Engine + Corr) │    │ NATS/DLQ      │
+                │ NATS/Kafka    │    │  (Engine + Corr) │    │ NATS/Kafka    │
+                │ OTLP          │    │                  │    │ DLQ           │
                 └───────────────┘    └──────────────────┘    └───────────────┘
                                             ▲
                                             │
@@ -58,10 +59,11 @@ The `--input` flag selects the primary event source:
 | stdin | `--input stdin` (default) | Read NDJSON from standard input. |
 | HTTP | `--input http` | Accept NDJSON `POST` requests on `/api/v1/events`. |
 | NATS JetStream | `--input nats://host:port/subject` | Subscribe to a JetStream subject with at-least-once delivery. Requires the `daemon-nats` feature. |
+| Apache Kafka | `--input kafka://brokers/topics` | Subscribe to Kafka topic(s) with at-least-once delivery via manual offset commit. Supports multi-topic and regex patterns. Requires the `daemon-kafka` feature. |
 
 OTLP ingestion is always available alongside the primary source when the daemon is built with the `daemon-otlp` feature. Agents can post to `/v1/logs` (HTTP, protobuf or JSON) or use the gRPC `LogsService/Export` on the same `--api-addr` port.
 
-See [NATS Streaming](nats-streaming.md) for auth, replay, consumer groups, and DLQ. See [OTLP Integration](otlp-integration.md) for agent recipes.
+See [NATS Streaming](nats-streaming.md) for auth, replay, consumer groups, and DLQ. See [Kafka Streaming](kafka-streaming.md) for auth, consumer groups, and multi-tenant patterns. See [OTLP Integration](otlp-integration.md) for agent recipes.
 
 ### Input format and timestamp extraction
 
@@ -91,6 +93,7 @@ The `--output` flag is repeatable, which gives you fan-out for free. Each match 
 | `stdout` | NDJSON to stdout. Default. |
 | `file:///path/to/file.ndjson` | Append NDJSON to a file, rotating only if you wrap it externally (logrotate, etc.). |
 | `nats://host:port/subject` | Publish via JetStream with server-confirmed persistence. Requires `daemon-nats`. |
+| `kafka://brokers/topic` | Produce to a Kafka topic with broker-confirmed delivery (`acks=all`). Requires `daemon-kafka`. |
 
 Failed deliveries are routed to the dead-letter queue when `--dlq` is configured:
 
@@ -215,6 +218,7 @@ If the drain timeout expires before the queue empties, the daemon force-exits wi
 
 - [CLI reference: `engine daemon`](../cli/engine/daemon.md) for every flag.
 - [NATS Streaming](nats-streaming.md) for auth, replay, consumer groups, and DLQ.
+- [Kafka Streaming](kafka-streaming.md) for auth, consumer groups, and multi-tenant fan-in.
 - [OTLP Integration](otlp-integration.md) for Alloy, Vector, Fluent Bit, and OTel Collector recipes.
 - [Observability](observability.md) for `--log-format`, RUST_LOG targets, and tracing spans.
 - [HTTP API](../reference/http-api.md) for the full endpoint reference.
