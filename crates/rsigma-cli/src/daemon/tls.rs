@@ -13,8 +13,6 @@
 //!
 //! Gated behind the `daemon-tls` Cargo feature.
 
-#![cfg(feature = "daemon-tls")]
-
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

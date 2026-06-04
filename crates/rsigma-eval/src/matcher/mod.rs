@@ -2,7 +2,8 @@
 //!
 //! Each `CompiledMatcher` variant is pre-compiled at rule load time.
 //! At evaluation time, `matches()` performs the comparison against an
-//! [`EventValue`] from the event with no dynamic dispatch or allocation.
+//! [`EventValue`](crate::event::EventValue) from the event with no
+//! dynamic dispatch or allocation.
 
 mod helpers;
 mod matching;

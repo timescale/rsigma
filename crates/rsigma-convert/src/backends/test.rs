@@ -334,8 +334,7 @@ impl Backend for TextQueryTestBackend {
             Modifier::Gte => "gte",
             _ => {
                 return Err(ConvertError::UnsupportedModifier(format!(
-                    "compare op {:?}",
-                    op
+                    "compare op {op:?}"
                 )));
             }
         };

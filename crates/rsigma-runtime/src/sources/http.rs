@@ -131,8 +131,7 @@ pub(crate) async fn resolve_http_with_limit(
         return Err(SourceError {
             source_id: String::new(),
             kind: SourceErrorKind::ResourceLimit(format!(
-                "HTTP response Content-Length ({content_length} bytes) exceeds {} byte limit",
-                max_bytes
+                "HTTP response Content-Length ({content_length} bytes) exceeds {max_bytes} byte limit"
             )),
         });
     }
@@ -168,8 +167,7 @@ async fn read_body_capped(
             return Err(SourceError {
                 source_id: String::new(),
                 kind: SourceErrorKind::ResourceLimit(format!(
-                    "HTTP response body exceeds {} byte limit",
-                    max_bytes
+                    "HTTP response body exceeds {max_bytes} byte limit"
                 )),
             });
         }

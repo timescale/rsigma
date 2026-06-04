@@ -760,9 +760,7 @@ fn parse_string_or_list_mapping(
                                 strings.push(s.to_string());
                             } else {
                                 log::warn!(
-                                    "non-string item in mapping list for key '{}': {:?}; skipping",
-                                    key,
-                                    item,
+                                    "non-string item in mapping list for key '{key}': {item:?}; skipping",
                                 );
                             }
                         }

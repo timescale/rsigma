@@ -1,8 +1,13 @@
 [advisories]
+# Surface unmaintained-crate advisories as warnings so they are visible
+# in the audit run without breaking CI; we cannot drop transitive
+# unmaintained deps unilaterally but we want to see them.
+unmaintained = "workspace"
 ignore = [
-    # encoding 0.2.33 (RUSTSEC-2021-0153) -- unmaintained, pulled transitively
-    # via evtx. No safe upgrade available; tracked for removal when evtx drops
-    # the encoding dependency.
+    # encoding 0.2.33 (RUSTSEC-2021-0153) -- unmaintained, pulled
+    # transitively via evtx. No safe upgrade available. Re-evaluate
+    # every quarter; remove this ignore once evtx drops the encoding
+    # dependency. Last reviewed: 2026-06-04.
     "RUSTSEC-2021-0153",
 ]
 
@@ -25,6 +30,10 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
+# Refuse wildcard dependencies. `version = "*"` in a workspace member
+# undermines lockfile reproducibility and makes supply-chain review
+# impossible. Use a concrete version or version range.
+wildcards = "deny"
 
 [sources]
 unknown-registry = "deny"

@@ -42,7 +42,9 @@ use std::sync::{Mutex, OnceLock};
 static SEEN_INLINE_SOURCES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 /// Surface the pipeline-embedded `sources:` deprecation notice for one
-/// pipeline file. Idempotent per canonical path (see [`SEEN_INLINE_SOURCES`]).
+/// pipeline file. Idempotent per canonical path (dedup state lives in
+/// a process-wide `OnceLock<Mutex<HashSet<PathBuf>>>` private to this
+/// module).
 ///
 /// The warning is emitted via both `tracing::warn!` (for structured log
 /// aggregation, with `pipeline` and `path` fields) and `eprintln!` (for

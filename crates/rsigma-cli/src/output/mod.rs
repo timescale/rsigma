@@ -313,9 +313,9 @@ where
         first = false;
         let w = widths.get(i).copied().unwrap_or(0);
         if right_align.get(i).copied().unwrap_or(false) {
-            write!(out, "{cell:>w$}", w = w)?;
+            write!(out, "{cell:>w$}")?;
         } else {
-            write!(out, "{cell:<w$}", w = w)?;
+            write!(out, "{cell:<w$}")?;
         }
     }
     writeln!(out)

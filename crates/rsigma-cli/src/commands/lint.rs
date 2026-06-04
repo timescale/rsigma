@@ -263,13 +263,7 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
     };
 
     println!(
-        "Checked {} file(s): {}, {} ({}, {}, {})",
-        total_files,
-        passed_colored,
-        failed_colored,
-        errors_colored,
-        warnings_colored,
-        infos_colored,
+        "Checked {total_files} file(s): {passed_colored}, {failed_colored} ({errors_colored}, {warnings_colored}, {infos_colored})",
     );
     tracing::info!(
         files = total_files,

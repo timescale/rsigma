@@ -130,52 +130,52 @@ enum Commands {
     },
 
     // ---- Deprecated flat aliases (hidden from `--help`, still functional) ----
-    /// [deprecated] Use `rsigma engine eval` instead
+    /// \[deprecated\] Use `rsigma engine eval` instead
     #[command(hide = true)]
     Eval(EvalArgs),
 
-    /// [deprecated] Use `rsigma engine daemon` instead
+    /// \[deprecated\] Use `rsigma engine daemon` instead
     #[cfg(feature = "daemon")]
     #[command(hide = true)]
     Daemon(DaemonArgs),
 
-    /// [deprecated] Use `rsigma rule parse` instead
+    /// \[deprecated\] Use `rsigma rule parse` instead
     #[command(hide = true)]
     Parse(ParseArgs),
 
-    /// [deprecated] Use `rsigma rule validate` instead
+    /// \[deprecated\] Use `rsigma rule validate` instead
     #[command(hide = true)]
     Validate(ValidateArgs),
 
-    /// [deprecated] Use `rsigma rule lint` instead
+    /// \[deprecated\] Use `rsigma rule lint` instead
     #[command(hide = true)]
     Lint(LintArgs),
 
-    /// [deprecated] Use `rsigma rule fields` instead
+    /// \[deprecated\] Use `rsigma rule fields` instead
     #[command(hide = true)]
     Fields(FieldsArgs),
 
-    /// [deprecated] Use `rsigma rule condition` instead
+    /// \[deprecated\] Use `rsigma rule condition` instead
     #[command(hide = true)]
     Condition(ConditionArgs),
 
-    /// [deprecated] Use `rsigma rule stdin` instead
+    /// \[deprecated\] Use `rsigma rule stdin` instead
     #[command(hide = true)]
     Stdin(StdinArgs),
 
-    /// [deprecated] Use `rsigma backend convert` instead
+    /// \[deprecated\] Use `rsigma backend convert` instead
     #[command(hide = true)]
     Convert(ConvertArgs),
 
-    /// [deprecated] Use `rsigma backend targets` instead
+    /// \[deprecated\] Use `rsigma backend targets` instead
     #[command(name = "list-targets", hide = true)]
     ListTargets,
 
-    /// [deprecated] Use `rsigma backend formats` instead
+    /// \[deprecated\] Use `rsigma backend formats` instead
     #[command(name = "list-formats", hide = true)]
     ListFormats(ListFormatsArgs),
 
-    /// [deprecated] Use `rsigma pipeline resolve` instead
+    /// \[deprecated\] Use `rsigma pipeline resolve` instead
     #[command(hide = true)]
     Resolve(ResolveArgs),
 }

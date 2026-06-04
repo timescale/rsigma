@@ -8,7 +8,7 @@ RUN apk add --no-cache musl-dev
 WORKDIR /build
 
 # Layer 1: dependency compilation (cached unless manifests change)
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/rsigma-parser/Cargo.toml crates/rsigma-parser/Cargo.toml
 COPY crates/rsigma-eval/Cargo.toml crates/rsigma-eval/Cargo.toml
 COPY crates/rsigma-convert/Cargo.toml crates/rsigma-convert/Cargo.toml
@@ -23,11 +23,11 @@ RUN mkdir -p crates/rsigma-parser/src crates/rsigma-eval/src \
              crates/rsigma-lsp/src/lib.rs \
     && echo 'fn main() {}' > crates/rsigma-cli/src/main.rs \
     && echo 'fn main() {}' > crates/rsigma-lsp/src/main.rs \
-    && cargo build --release --all-features -p rsigma 2>/dev/null || true
+    && cargo build --release --all-features --locked -p rsigma 2>/dev/null || true
 
 # Layer 2: full source build
 COPY . .
-RUN cargo build --release --all-features -p rsigma \
+RUN cargo build --release --all-features --locked -p rsigma \
     && strip target/release/rsigma
 
 # Runtime: bare minimum (zero CVEs, no shell, no package manager)

@@ -35,15 +35,14 @@
 //!
 //! # Coordinates
 //!
-//! - Iterate [`Event::field_keys`](crate::Event::field_keys) once per
-//!   event before evaluation. For JSON events this is a recursive
-//!   walk that allocates one `String` per leaf path (dot-joined paths
-//!   are not substrings of the source value); for flat formats like
-//!   `KvEvent` the override returns `Cow::Borrowed`. The cost is
-//!   acceptable in the opt-in diagnostic mode but is not free.
+//! - Iterate [`Event::field_keys`] once per event before evaluation.
+//!   For JSON events this is a recursive walk that allocates one
+//!   `String` per leaf path (dot-joined paths are not substrings of
+//!   the source value); for flat formats like `KvEvent` the override
+//!   returns `Cow::Borrowed`. The cost is acceptable in the opt-in
+//!   diagnostic mode but is not free.
 //! - Render the gap and broken-coverage signals by joining a
-//!   [`snapshot`](FieldObserver::snapshot) against a
-//!   [`RuleFieldSet`](crate::RuleFieldSet).
+//!   [`FieldObserver::snapshot`] against a [`RuleFieldSet`].
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -72,7 +71,7 @@ pub struct FieldObservationEntry {
 ///
 /// Returned by [`FieldObserver::snapshot`]; consumers (the daemon's
 /// HTTP handlers, the `engine eval` report writer) render coverage
-/// reports from this against a [`RuleFieldSet`](crate::RuleFieldSet).
+/// reports from this against a [`RuleFieldSet`].
 #[derive(Debug, Clone, Default)]
 pub struct FieldObservation {
     /// Per-field counters, sorted by descending count then ascending name.

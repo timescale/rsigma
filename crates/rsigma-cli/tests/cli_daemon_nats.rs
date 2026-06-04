@@ -447,8 +447,7 @@ async fn daemon_nats_state_persists_source_position() {
     );
     assert!(
         seq.unwrap() >= 2,
-        "source_sequence should be >= 2 (processed 2 messages), got {:?}",
-        seq
+        "source_sequence should be >= 2 (processed 2 messages), got {seq:?}"
     );
 
     // Verify that a snapshot was actually saved

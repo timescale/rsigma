@@ -6,11 +6,15 @@ on:
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
   pull_request:
     branches: [main]
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
 
 permissions: {}
 
@@ -28,10 +32,18 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      # GitHub-hosted runners ship with `rustup`; install + override
+      # the workspace's `rust-toolchain.toml` pin (MSRV) with stable
+      # for this job inline rather than via a third-party action.
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
+      # Pull `cargo-audit` from prebuilt artifacts rather than building
+      # it from source every run; saves ~30s per audit invocation.
+      - uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
         with:
-          toolchain: stable
-      - run: cargo install cargo-audit --locked
+          tool: cargo-audit
       - run: cargo audit
 
   deny:

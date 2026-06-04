@@ -73,9 +73,14 @@ jobs:
           retention-days: 1
 
   scan:
-    name: Vulnerability scan
+    name: Vulnerability scan (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     permissions:
       contents: read # checkout (implicit)
@@ -89,10 +94,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download amd64 digest
+      - name: Download ${{ matrix.arch }} digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: digests-amd64
+          name: digests-${{ matrix.arch }}
           path: /tmp/digests
 
       - name: Resolve digest
@@ -111,6 +116,7 @@ jobs:
         if: always()
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: docker-${{ matrix.arch }}
 
   push:
     name: Create manifest and sign

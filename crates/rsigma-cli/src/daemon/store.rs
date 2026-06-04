@@ -29,8 +29,8 @@ pub struct SqliteStateStore {
 impl SqliteStateStore {
     /// Open (or create) a SQLite database at `path` and initialize the schema.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| format!("open sqlite {:?}: {}", path, e))?;
+        let conn =
+            rusqlite::Connection::open(path).map_err(|e| format!("open sqlite {path:?}: {e}"))?;
 
         conn.execute_batch(
             r#"

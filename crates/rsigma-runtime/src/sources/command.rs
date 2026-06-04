@@ -74,8 +74,7 @@ pub async fn resolve_command_with_limit(
                     return Err(SourceError {
                         source_id: String::new(),
                         kind: SourceErrorKind::ResourceLimit(format!(
-                            "command stdout exceeds {} byte limit",
-                            max_stdout_bytes
+                            "command stdout exceeds {max_stdout_bytes} byte limit"
                         )),
                     });
                 }

@@ -1,6 +1,4 @@
-rules:
-  superfluous-actions:
-    ignore:
-      - audit.yml
-      - ci.yml
-      - publish.yml
+# Zizmor configuration. Audits inherit zizmor's default behaviour;
+# add rule-level ignores here when a workflow has a deliberate
+# exception that needs justifying.
+rules: {}

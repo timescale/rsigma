@@ -356,8 +356,7 @@ impl Backend for LynxDbBackend {
             Modifier::Gte => "gte",
             _ => {
                 return Err(ConvertError::UnsupportedModifier(format!(
-                    "compare op {:?}",
-                    op
+                    "compare op {op:?}"
                 )));
             }
         };

@@ -49,8 +49,8 @@ impl Scope {
     /// `rules` mixes exact rule IDs (anything without glob metacharacters)
     /// and rule-title globs (anything containing `*`, `?`, or `[`).
     /// `tags` mixes exact tags and prefix-wildcard patterns ending in
-    /// `.*` (e.g. `attack.*`). `levels` is a list of severity strings as
-    /// understood by [`Level::from_str`].
+    /// `.*` (e.g. `attack.*`). `levels` is a list of severity strings
+    /// as understood by `<rsigma_parser::Level as FromStr>::from_str`.
     ///
     /// Returns an error if any glob fails to compile or any level string
     /// fails to parse, so the daemon refuses to start with a malformed

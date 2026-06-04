@@ -59,8 +59,7 @@ fn expand_includes_with_depth(
                 match &source.source_type {
                     SourceType::Http { .. } | SourceType::Nats { .. } => {
                         return Err(format!(
-                            "include references remote source '{}'; use --allow-remote-include to permit",
-                            source_id
+                            "include references remote source '{source_id}'; use --allow-remote-include to permit"
                         ));
                     }
                     _ => {}
@@ -74,8 +73,7 @@ fn expand_includes_with_depth(
                 for parsed_item in &items {
                     if matches!(parsed_item.transformation, Transformation::Include { .. }) {
                         return Err(format!(
-                            "included content from source '{}' contains nested include directives; recursive includes are not allowed (max depth 1)",
-                            source_id
+                            "included content from source '{source_id}' contains nested include directives; recursive includes are not allowed (max depth 1)"
                         ));
                     }
                 }

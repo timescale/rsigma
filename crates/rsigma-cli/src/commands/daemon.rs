@@ -90,12 +90,14 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "state-save-interval", default_value_t = config::defaults::STATE_SAVE_INTERVAL, value_parser = clap::value_parser!(u64).range(1..))]
     pub state_save_interval: u64,
 
-    /// Event input source. Supported schemes: stdin, http, nats://<host>:<port>/<subject>
+    /// Event input source. Supported schemes: `stdin`, `http`,
+    /// `nats://<host>:<port>/<subject>`.
     #[arg(long = "input", default_value = config::defaults::INPUT_SOURCE)]
     pub input: String,
 
     /// Detection output sink (can be repeated for fan-out).
-    /// Supported schemes: stdout, file://<path>, nats://<host>:<port>/<subject>
+    /// Supported schemes: `stdout`, `file://<path>`,
+    /// `nats://<host>:<port>/<subject>`.
     #[arg(long = "output", default_value = config::defaults::STDOUT_SINK)]
     pub output: Vec<String>,
 
@@ -114,8 +116,9 @@ pub(crate) struct DaemonArgs {
     pub drain_timeout: u64,
 
     /// Dead-letter queue target for events that fail processing.
-    /// Accepts same schemes as --output: stdout, file://<path>, nats://<host>:<port>/<subject>.
-    /// When not set, failed events are logged and discarded.
+    /// Accepts the same schemes as `--output`: `stdout`,
+    /// `file://<path>`, `nats://<host>:<port>/<subject>`. When not
+    /// set, failed events are logged and discarded.
     #[arg(long = "dlq")]
     pub dlq: Option<String>,
 

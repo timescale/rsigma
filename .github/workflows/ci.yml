@@ -38,9 +38,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
+      # Runners already ship `rustup`; install + override the
+      # workspace's MSRV pin with stable for this job inline rather
+      # than via a third-party action.
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo check --workspace --all-targets --all-features --locked
 
@@ -53,11 +57,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: "1.88.0"
+      # Install MSRV inline. No `rustup override set` here because the
+      # workspace's `rust-toolchain.toml` already pins to 1.88.0, so
+      # `cargo` will pick that toolchain automatically once it is
+      # installed.
+      - name: Install Rust 1.88.0
+        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - run: cargo check --workspace --all-features --locked
+      # `--all-targets` so tests, examples, and benches compile against
+      # the MSRV too. Without it a contributor can add a test-only
+      # dependency that requires a newer Rust without anyone noticing.
+      - run: cargo check --workspace --all-targets --all-features --locked
 
   fmt:
     name: Format
@@ -68,10 +78,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-          components: rustfmt
+      - name: Install Rust stable with rustfmt
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --no-self-update
+          rustup override set stable
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -83,10 +93,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-          components: clippy
+      - name: Install Rust stable with clippy
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --no-self-update
+          rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
@@ -103,9 +113,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo test --workspace --all-features --locked
 
@@ -118,10 +130,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-          components: llvm-tools-preview
+      - name: Install Rust stable with llvm-tools-preview
+        run: |
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview --no-self-update
+          rustup override set stable
       - uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
         with:
           tool: cargo-llvm-cov
@@ -133,9 +145,19 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov report --summary-only 2>&1 >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+      # Upload the lcov report so external coverage trackers (Codecov,
+      # Coveralls, …) can ingest it without re-running the suite, and
+      # so PR reviewers can download the raw file from the run summary.
+      - name: Upload lcov report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          if-no-files-found: error
+          retention-days: 14
 
-  sigma-corpus:
-    name: Sigma Corpus Regression
+  doc:
+    name: Doc
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -143,14 +165,51 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # Fail the build on broken intra-doc links and any other rustdoc
+      # warning. `--no-deps` keeps the work bounded to first-party
+      # crates so this job does not chase a transitive dep's doc
+      # comment.
+      - env:
+          RUSTDOCFLAGS: "-D warnings -D rustdoc::broken-intra-doc-links"
+        run: cargo doc --workspace --all-features --locked --no-deps
+
+  sigma-corpus:
+    name: Sigma Corpus Regression
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Pin the upstream corpus to a specific commit so a SigmaHQ rule
+    # tweak cannot turn a green run red without a deliberate bump
+    # here. Update by changing the SHA in this block (and `--branch`
+    # is not used because GitHub does not advertise `master` as a
+    # refspec via `--depth 1`).
+    env:
+      SIGMA_CORPUS_SHA: "994da16651194500b607a3007186c29779e1f961"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          toolchain: stable
+          persist-credentials: false
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Build rsigma
         run: cargo build --release --all-features --locked -p rsigma
-      - name: Clone SigmaHQ rules
-        run: git clone --depth 1 https://github.com/SigmaHQ/sigma.git /tmp/sigma
+      - name: Fetch SigmaHQ rules at pinned SHA
+        run: |
+          mkdir -p /tmp/sigma
+          cd /tmp/sigma
+          git init -q
+          git remote add origin https://github.com/SigmaHQ/sigma.git
+          git fetch --depth 1 origin "${SIGMA_CORPUS_SHA}"
+          git checkout -q FETCH_HEAD
+          echo "Checked out SigmaHQ/sigma at ${SIGMA_CORPUS_SHA}"
       - name: Validate and compile all Sigma rules
         run: ./target/release/rsigma rule validate /tmp/sigma/rules/ --verbose
       - name: Validate SigmaHQ corpus with dynamic pipelines

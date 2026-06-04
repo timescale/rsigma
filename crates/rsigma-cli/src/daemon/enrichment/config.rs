@@ -303,10 +303,11 @@ pub fn build_enrichers(file: EnrichersFile) -> Result<EnrichmentPipeline, Enrich
     build_enrichers_full(file, None, std::sync::Arc::new(NoopMetrics))
 }
 
-/// Like [`build_enrichers`] but accepts an optional shared
-/// [`SourceCache`] for `lookup` enrichers and a metrics hook the
-/// pipeline (and per-enricher cache lookups) report into. The daemon
-/// passes its Prometheus-backed `Metrics` here.
+/// Like the test-only `build_enrichers` shim above but accepts an
+/// optional shared [`SourceCache`] for `lookup` enrichers and a
+/// metrics hook the pipeline (and per-enricher cache lookups)
+/// report into. The daemon passes its Prometheus-backed `Metrics`
+/// here.
 pub fn build_enrichers_full(
     file: EnrichersFile,
     source_cache: Option<std::sync::Arc<SourceCache>>,
@@ -336,7 +337,7 @@ pub fn build_enrichers_full(
 /// Build a single [`Enricher`](rsigma_runtime::Enricher) from one YAML
 /// config block.
 ///
-/// Pulled out of [`build_enrichers`] so the loader's match on
+/// Pulled out of `build_enrichers_full` so the loader's match on
 /// `type_name` stays linear and so future primitives can be added by
 /// extending one match arm.
 fn build_one(
@@ -490,10 +491,10 @@ fn build_one(
     }
 }
 
-/// Build an [`ExtractExpr`] from `cfg.extract` + `cfg.extract_type`.
-/// `None` when no extract is configured. Defaults to `jq` when an
-/// extract expression is set without an explicit type, matching the
-/// pipeline-source convention.
+/// Build an [`ExtractExpr`](rsigma_eval::pipeline::sources::ExtractExpr)
+/// from `cfg.extract` + `cfg.extract_type`. `None` when no extract is
+/// configured. Defaults to `jq` when an extract expression is set
+/// without an explicit type, matching the pipeline-source convention.
 fn build_extract_expr(
     cfg: &EnricherConfig,
 ) -> Result<Option<rsigma_eval::pipeline::sources::ExtractExpr>, EnrichersConfigError> {

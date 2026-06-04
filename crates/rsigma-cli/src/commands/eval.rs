@@ -54,7 +54,7 @@ pub(crate) struct EvalArgs {
     pub jq: Option<String>,
 
     /// JSONPath (RFC 9535) query to extract the event payload.
-    /// Example: --jsonpath '$.event' or --jsonpath '$.records[*]'
+    /// Example: `--jsonpath '$.event'` or `--jsonpath '$.records[*]'`.
     #[arg(long = "jsonpath", conflicts_with = "jq")]
     pub jsonpath: Option<String>,
 

@@ -110,7 +110,7 @@ impl HttpEnricher {
     /// Build a new enricher.
     ///
     /// `client` is shared at the process level. `cache` may be a
-    /// disabled cache ([`HttpResponseCache::new(Duration::from_secs(0))`])
+    /// disabled cache (`HttpResponseCache::new(Duration::from_secs(0))`)
     /// when `cache_ttl` is unset; the lookup path treats that as "always
     /// miss".
     #[allow(clippy::too_many_arguments)]

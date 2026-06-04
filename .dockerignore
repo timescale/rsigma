@@ -5,6 +5,19 @@ editors/
 *.md
 LICENSE
 
+# Workspace-root content not needed for the daemon binary build. Each
+# entry trims the build context that buildkit ships to the container
+# layer, which both shrinks the build and tightens the cache key. The
+# leading slash anchors at the build context root so per-crate
+# directories of the same name (e.g. `crates/<crate>/tests/`) are
+# unaffected.
+/fuzz
+/tests
+/docs
+/docs-drafts
+/site
+/benches
+
 # Secrets and credentials -- must never enter build context
 .env
 .env.*

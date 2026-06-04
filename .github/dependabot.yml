@@ -32,3 +32,27 @@ updates:
           - "*"
     cooldown:
       default-days: 7
+
+  # Track base-image updates for the multi-stage Dockerfile. Pinned by
+  # digest in the manifest, so Dependabot will surface a PR whenever
+  # the upstream `rust:1-alpine` tag points at a new digest.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # Track the VS Code extension's npm dependencies (TypeScript types,
+  # @vscode/vsce, eslint, etc.).
+  - package-ecosystem: npm
+    directory: "/editors/vscode"
+    schedule:
+      interval: weekly
+    groups:
+      npm-updates:
+        update-types:
+          - "patch"
+          - "minor"
+    cooldown:
+      default-days: 7

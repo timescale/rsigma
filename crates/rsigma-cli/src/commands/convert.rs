@@ -95,10 +95,7 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
     let backend = get_backend(&target, &options);
 
     if backend.requires_pipeline() && pipelines.is_empty() && !without_pipeline {
-        eprintln!(
-            "Backend '{}' requires a pipeline. Use -p or --without-pipeline.",
-            target
-        );
+        eprintln!("Backend '{target}' requires a pipeline. Use -p or --without-pipeline.");
         process::exit(crate::exit_code::CONFIG_ERROR);
     }
 

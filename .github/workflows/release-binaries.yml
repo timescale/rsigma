@@ -38,14 +38,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust target
+      # Install stable inline; the cross-compile target installs in the
+      # same step so the build step does not need a separate `rustup
+      # target add`. `rustup override set` makes stable take precedence
+      # over the workspace's `rust-toolchain.toml` (MSRV) pin for this
+      # release build.
+      - name: Install Rust stable and target
+        shell: bash
         run: |
-          rustup update
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
           rustup target add "${TARGET}"
         env:
           TARGET: ${{ matrix.target }}
-        shell: bash
 
+      # No build cache here: rust-cache on a release workflow opens a
+      # cache-poisoning vector against the signed artifacts. Release
+      # builds run once per tag, so a cold build is acceptable.
       - name: Build release
         run: cargo build --release --all-features --locked --target "${TARGET}" -p rsigma -p rsigma-lsp
         env:
@@ -91,6 +100,16 @@ jobs:
 
       - name: List artifacts
         run: ls -l distrib/
+
+      # Generate a SHA256SUMS manifest that downstream consumers can
+      # verify against the SLSA build-provenance attestation. The
+      # manifest is uploaded as a separate release asset alongside the
+      # archives.
+      - name: Generate SHA256SUMS
+        working-directory: distrib
+        run: |
+          shasum -a 256 ./* > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0

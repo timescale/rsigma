@@ -1,11 +1,12 @@
 //! Post-evaluation enrichment for the rsigma daemon.
 //!
 //! Enrichment runs in the daemon's sink task, after `Engine::evaluate()` has
-//! produced a [`ProcessResult`] (a flat `Vec<EvaluationResult>`) and before
-//! that result is serialized to a sink. Each enricher inspects an
-//! [`EvaluationResult`], optionally fetches context (HTTP, command, source
-//! cache, pure template), and writes the result into
-//! `result.header.enrichments` under a configured `inject_field`.
+//! produced a [`ProcessResult`](rsigma_eval::ProcessResult) (a flat
+//! `Vec<EvaluationResult>`) and before that result is serialized to a sink.
+//! Each enricher inspects an [`EvaluationResult`], optionally fetches
+//! context (HTTP, command, source cache, pure template), and writes the
+//! result into `result.header.enrichments` under a configured
+//! `inject_field`.
 //!
 //! # Architecture
 //!
@@ -54,7 +55,10 @@ mod template;
 mod tests;
 
 pub use command::{CommandEnricher, OutputFormat};
-pub use http::{HttpEnricher, HttpEnricherClient, build_default_http_client};
+pub use http::{
+    DEFAULT_ENRICHER_MAX_RESPONSE_BYTES, HttpEnricher, HttpEnricherClient,
+    build_default_http_client,
+};
 pub use http_cache::{CacheKey, CacheOutcome, HttpResponseCache};
 pub use lookup::LookupEnricher;
 pub use scope::Scope;
@@ -329,8 +333,10 @@ impl EnrichmentPipeline {
     /// 5. Wraps each remaining `enrich()` call in
     ///    [`tokio::time::timeout`] using the enricher's timeout.
     /// 6. On error, applies the enricher's [`OnError`] policy.
-    /// 7. If any enricher in the chain returns
-    ///    [`EnrichOutcome::Drop`], the result is removed from the output.
+    /// 7. If any enricher in the chain returns the internal `Drop`
+    ///    outcome (via an enricher whose [`OnError`] policy is set
+    ///    to [`OnError::Drop`]), the result is removed from the
+    ///    output.
     ///
     /// The pipeline initializes `result.header.enrichments` to
     /// `Some(empty)` lazily on first successful injection, so the

@@ -5,6 +5,22 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
+### Release pipeline, CI, Docker, and supply-chain hardening
+
+Tightens every link in the release chain before v0.14.0 ships so the act of publishing itself does not undermine the correctness work that already landed.
+
+**`publish.yml`** no longer masks `cargo publish` failures with `|| echo "::warning::… already published or failed"`. A new pre-flight step dry-runs every crate in dependency order before any side-effecting publish; authentication, lockfile drift, and dependency-resolution issues now abort the workflow before any crate hits crates.io. Every actual publish passes `--locked`. The `workflow_dispatch` trigger keeps the dry-run rehearsal path; only `release: published` touches the real registry. The `Swatinem/rust-cache` step was removed to close a cache-poisoning vector against the signed artifacts.
+
+**`release-binaries.yml`** pins the toolchain through `dtolnay/rust-toolchain@... stable` with `targets:` set inline (replacing the unpinned `rustup update` plus follow-up `rustup target add`). After downloading the per-target archives, the release job generates a `SHA256SUMS` manifest and uploads it as a release asset, covered by the same `actions/attest-build-provenance` subject path as the archives. Consumers who do not pull the SLSA attestation can still verify download integrity against the manifest.
+
+**Workspace.** `rust-toolchain.toml` pins ambient `cargo` invocations to the MSRV of 1.88.0, so contributors who do not pass `+stable` build against the same Rust the MSRV CI job uses. A new `[profile.release]` block enables `lto = "thin"`, `codegen-units = 1`, and `strip = true`. The pin surfaced an existing 1.88.0 clippy / rustdoc backlog (collapsible-else, uninlined-format-args, duplicated `#[cfg(feature = "daemon-tls")]`, broken intra-doc links, unclosed `<host>` HTML tags); this release ships the cleanup so `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo doc --workspace --no-deps -D warnings -D rustdoc::broken-intra-doc-links` are gate-green.
+
+**CI.** The Sigma corpus regression job now fetches `SigmaHQ/sigma` at a pinned commit (bumped by editing `SIGMA_CORPUS_SHA` in `ci.yml`) instead of `master` tip, so an upstream rule edit cannot turn the workspace red without a deliberate commit here. The MSRV check gains `--all-targets` so a test- or example-only dependency that requires a newer Rust cannot slip past the MSRV gate. The coverage job uploads `lcov.info` as an artifact for external trackers. A new `doc` job runs `cargo doc --workspace --all-features --locked --no-deps` with the strict rustdoc gate so a future broken intra-doc link fails CI rather than landing silently.
+
+**Docker.** Both `cargo build` stages in the `Dockerfile` add `--locked`, and `rust-toolchain.toml` is part of the dependency-cache layer so the toolchain version is part of the layer's cache key. `.dockerignore` excludes `/fuzz`, `/tests`, `/docs`, `/docs-drafts`, `/site`, and `/benches` from the build context (root-anchored so per-crate `tests/` subdirectories are unaffected). The Grype vulnerability scan runs as a 2-leg matrix (`amd64` × `arm64`) so arch-specific CVEs cannot land on a release image unnoticed; SARIF uploads label findings by arch in the Security tab.
+
+**Supply chain.** `deny.toml` denies wildcard dependency versions (`wildcards = "deny"`), surfaces unmaintained-crate advisories via `unmaintained = "workspace"`, and grows a quarterly-review note plus "Last reviewed" date on the `RUSTSEC-2021-0153` ignore. The `audit` workflow now triggers on `deny.toml` and its own workflow file in addition to manifest and lockfile changes, and pulls `cargo-audit` from `taiki-e/install-action` prebuilds instead of compiling it from source on every invocation. Dependabot picks up two new ecosystems: `docker` against `/` (so a new digest for the pinned `rust:1-alpine` base image surfaces as a PR) and `npm` against `/editors/vscode` (so the extension's TypeScript / `@vscode/vsce` / eslint deps follow the same weekly batching as the Cargo deps).
+
 ### Runtime hardening: HTTP egress policy, body cap, hot-reload tuning, fail-closed dynamic sources (#167)
 
 Cluster of P0 hardening fixes for the daemon's HTTP surfaces and rule hot-reload. None of these were exploitable in a default deployment, but each silently produced behavior different from what the operator (or rule author) wrote, and all of them ship together before v0.14.0.

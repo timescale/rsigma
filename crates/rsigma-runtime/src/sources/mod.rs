@@ -248,7 +248,9 @@ pub async fn resolve_all(
     resolve_all_with_state(resolver, sources, None).await
 }
 
-/// Like [`resolve_all`] but also updates a [`PipelineState`] with source resolution status.
+/// Like [`resolve_all`] but also updates a
+/// [`PipelineState`](rsigma_eval::pipeline::state::PipelineState) with
+/// source resolution status.
 pub async fn resolve_all_with_state(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],

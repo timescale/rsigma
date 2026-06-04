@@ -278,8 +278,8 @@ fn validate_condition_refs(
 ///
 /// This is the public entry point for one-shot rule evaluation. It does no
 /// bloom pre-filtering; every detection item is evaluated directly. Engines
-/// that maintain a [`crate::engine::bloom_index::FieldBloomIndex`] should
-/// instead call [`evaluate_rule_with_bloom`].
+/// that maintain a per-field bloom index should call the crate-private
+/// `evaluate_rule_with_bloom` variant via the `Engine` API instead.
 pub fn evaluate_rule(rule: &CompiledRule, event: &impl Event) -> Option<EvaluationResult> {
     evaluate_rule_with_bloom(rule, event, &crate::engine::bloom_index::NoBloom)
 }

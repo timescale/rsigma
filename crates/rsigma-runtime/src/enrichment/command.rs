@@ -157,10 +157,7 @@ impl Enricher for CommandEnricher {
         if output.stdout.len() > MAX_COMMAND_STDOUT {
             return Err(EnrichError {
                 enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Fetch(format!(
-                    "stdout exceeded {} bytes",
-                    MAX_COMMAND_STDOUT
-                )),
+                kind: EnrichErrorKind::Fetch(format!("stdout exceeded {MAX_COMMAND_STDOUT} bytes")),
             });
         }
 

@@ -17,3 +17,13 @@ rust-version = "1.88.0"
 license = "MIT"
 repository = "https://github.com/timescale/rsigma"
 homepage = "https://github.com/timescale/rsigma"
+
+# Release profile knobs. `lto = "thin"` cuts ~10% off binary size at
+# roughly 1.5x compile cost; `codegen-units = 1` improves runtime perf
+# by giving the optimizer the whole module to look at; `strip = true`
+# drops debug symbols so the published archives stay small. The Docker
+# build runs `strip` separately and is unaffected by this profile.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
