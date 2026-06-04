@@ -382,6 +382,16 @@ pub fn compile_detection(detection: &Detection) -> Result<CompiledDetection> {
 fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem> {
     let ctx = ModCtx::from_modifiers(&item.field.modifiers);
 
+    // Reject contradictory modifier combinations at compile time so a
+    // misconfigured field does not silently resolve to whichever
+    // modifier the dispatch arms below check first. Previously
+    // `Field|cidr|contains` produced a CIDR match (the `contains` was
+    // ignored), `Field|re|contains` produced a regex match (the
+    // `contains` was ignored), `Field|gt|contains` ran numeric `gt`
+    // and dropped `contains`, and so on; the rule still compiled but
+    // its semantics were not what the author wrote.
+    validate_modifiers(&ctx, &item.field.modifiers)?;
+
     // Handle |exists modifier
     if ctx.exists {
         let expect = match item.values.first() {
@@ -441,6 +451,195 @@ fn compile_detection_item(item: &DetectionItem) -> Result<CompiledDetectionItem>
         exists: None,
         bloom_eligible,
     })
+}
+
+// =============================================================================
+// Modifier conflict validation
+// =============================================================================
+
+/// Reject contradictory modifier combinations before any value is compiled.
+///
+/// The compiler dispatch in [`compile_value`] checks modifier flags in a
+/// fixed order (`expand` -> timestamp part -> `fieldref` -> `re` ->
+/// `cidr` -> numeric comparison -> `neq` -> default string/value
+/// matching). Whichever flag the dispatch checks first wins, so a
+/// field declared as `Field|cidr|contains` silently produced a CIDR
+/// match with the `contains` modifier dropped, and a field declared
+/// as `Field|re|contains` silently produced a regex match with the
+/// `contains` modifier dropped. Both are bugs in the rule the author
+/// could not see; the rule still compiled and still matched
+/// *something*. Reject every contradiction up front so the operator
+/// has to clean the rule.
+///
+/// The categories of conflict checked here are:
+///
+/// 1. At most one *operator* modifier per item: `contains`,
+///    `startswith`, `endswith`, `re`, `cidr`, `exists`, `fieldref`,
+///    numeric comparison, and the timestamp parts each describe how
+///    the comparison works and are mutually exclusive.
+/// 2. At most one UTF-16 encoding: `wide`, `utf16`, and `utf16be`
+///    describe different UTF-16 dialects and cannot coexist.
+/// 3. `base64` and `base64offset` are mutually exclusive (each
+///    describes a different base64 encoding strategy).
+/// 4. Value-transformation modifiers (`base64`, `base64offset`,
+///    `wide`, `utf16`, `utf16be`, `windash`, `expand`) only apply to
+///    string operators (default eq plus substring matchers); pairing
+///    them with `re`, `cidr`, numeric comparison, `exists`,
+///    `fieldref`, or a timestamp part means the transformation has
+///    nowhere to land.
+/// 5. The regex flag modifiers (`i`, `m`, `s`) require `re`; outside
+///    a regex context they are no-ops the parser silently accepted.
+fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result<()> {
+    // 1. Multiple operators on a single item.
+    let mut operators: Vec<&'static str> = Vec::new();
+    if ctx.contains {
+        operators.push("contains");
+    }
+    if ctx.startswith {
+        operators.push("startswith");
+    }
+    if ctx.endswith {
+        operators.push("endswith");
+    }
+    if ctx.re {
+        operators.push("re");
+    }
+    if ctx.cidr {
+        operators.push("cidr");
+    }
+    if ctx.exists {
+        operators.push("exists");
+    }
+    if ctx.fieldref {
+        operators.push("fieldref");
+    }
+    if ctx.gt {
+        operators.push("gt");
+    }
+    if ctx.gte {
+        operators.push("gte");
+    }
+    if ctx.lt {
+        operators.push("lt");
+    }
+    if ctx.lte {
+        operators.push("lte");
+    }
+    for m in modifiers {
+        match m {
+            Modifier::Minute => operators.push("minute"),
+            Modifier::Hour => operators.push("hour"),
+            Modifier::Day => operators.push("day"),
+            Modifier::Week => operators.push("week"),
+            Modifier::Month => operators.push("month"),
+            Modifier::Year => operators.push("year"),
+            _ => {}
+        }
+    }
+    if operators.len() > 1 {
+        return Err(EvalError::InvalidModifiers(format!(
+            "conflicting modifiers: at most one operator may be set per field; \
+             got |{}",
+            operators.join(", |")
+        )));
+    }
+
+    // 2. Multiple UTF-16 encodings.
+    let mut wide_encodings: Vec<&'static str> = Vec::new();
+    if ctx.wide {
+        wide_encodings.push("wide");
+    }
+    if ctx.utf16 {
+        wide_encodings.push("utf16");
+    }
+    if ctx.utf16be {
+        wide_encodings.push("utf16be");
+    }
+    if wide_encodings.len() > 1 {
+        return Err(EvalError::InvalidModifiers(format!(
+            "conflicting modifiers: |wide, |utf16, and |utf16be are mutually \
+             exclusive UTF-16 encodings; got |{}",
+            wide_encodings.join(", |")
+        )));
+    }
+
+    // 3. base64 and base64offset cannot coexist.
+    if ctx.base64 && ctx.base64offset {
+        return Err(EvalError::InvalidModifiers(
+            "conflicting modifiers: |base64 and |base64offset are mutually \
+             exclusive base64 strategies; pick one"
+                .into(),
+        ));
+    }
+
+    // 4. Value transformations only apply to string operators (default
+    //    eq plus substring matchers). Pairing them with re/cidr/
+    //    numeric/exists/fieldref/timestamp means the transformation
+    //    has nowhere to land.
+    let has_non_string_operator = ctx.re
+        || ctx.cidr
+        || ctx.exists
+        || ctx.fieldref
+        || ctx.has_numeric_comparison()
+        || ctx.timestamp_part.is_some();
+    if has_non_string_operator {
+        let mut transforms: Vec<&'static str> = Vec::new();
+        if ctx.base64 {
+            transforms.push("base64");
+        }
+        if ctx.base64offset {
+            transforms.push("base64offset");
+        }
+        if ctx.wide {
+            transforms.push("wide");
+        }
+        if ctx.utf16 {
+            transforms.push("utf16");
+        }
+        if ctx.utf16be {
+            transforms.push("utf16be");
+        }
+        if ctx.windash {
+            transforms.push("windash");
+        }
+        if ctx.expand {
+            transforms.push("expand");
+        }
+        if !transforms.is_empty() {
+            return Err(EvalError::InvalidModifiers(format!(
+                "conflicting modifiers: value transformations |{} only apply \
+                 to string match operators (default eq, contains, startswith, \
+                 endswith) and cannot be combined with the operator that is \
+                 also set on this field",
+                transforms.join(", |")
+            )));
+        }
+    }
+
+    // 5. Regex-flag modifiers require |re.
+    if !ctx.re {
+        let mut regex_flags: Vec<&'static str> = Vec::new();
+        if ctx.ignore_case {
+            regex_flags.push("i");
+        }
+        if ctx.multiline {
+            regex_flags.push("m");
+        }
+        if ctx.dotall {
+            regex_flags.push("s");
+        }
+        if !regex_flags.is_empty() {
+            return Err(EvalError::InvalidModifiers(format!(
+                "regex flag modifiers |{} have no effect without |re; \
+                 case sensitivity for substring or equality matching is \
+                 controlled by |cased (or its absence, which keeps the \
+                 default case-insensitive behavior)",
+                regex_flags.join(", |")
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 // =============================================================================

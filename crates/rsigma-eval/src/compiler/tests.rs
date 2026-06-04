@@ -725,3 +725,282 @@ mod proptests {
         }
     }
 }
+
+// =============================================================================
+// Modifier validation
+// =============================================================================
+
+#[cfg(test)]
+mod modifier_validation_tests {
+    use super::*;
+
+    fn assert_rejects(modifiers: &[Modifier], values: Vec<SigmaValue>, needle: &str) {
+        let item = make_item("Field", modifiers, values);
+        let err = compile_detection_item(&item)
+            .err()
+            .unwrap_or_else(|| panic!("expected rejection for modifiers {modifiers:?}"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains(needle),
+            "error message should mention {needle:?}; got: {msg}"
+        );
+    }
+
+    fn assert_accepts(modifiers: &[Modifier], values: Vec<SigmaValue>) {
+        let item = make_item("Field", modifiers, values);
+        compile_detection_item(&item).unwrap_or_else(|e| {
+            panic!("expected accept for modifiers {modifiers:?}, got: {e}");
+        });
+    }
+
+    // ── Multiple-operator rejections ──────────────────────────────────
+
+    #[test]
+    fn rejects_re_with_contains() {
+        assert_rejects(
+            &[Modifier::Re, Modifier::Contains],
+            vec![SigmaValue::String(SigmaString::new("foo.*"))],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_cidr_with_contains() {
+        assert_rejects(
+            &[Modifier::Cidr, Modifier::Contains],
+            vec![SigmaValue::String(SigmaString::new("10.0.0.0/8"))],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_contains_with_startswith() {
+        assert_rejects(
+            &[Modifier::Contains, Modifier::StartsWith],
+            vec![SigmaValue::String(SigmaString::new("admin"))],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_endswith_with_startswith() {
+        assert_rejects(
+            &[Modifier::EndsWith, Modifier::StartsWith],
+            vec![SigmaValue::String(SigmaString::new("admin"))],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_gt_with_contains() {
+        assert_rejects(
+            &[Modifier::Gt, Modifier::Contains],
+            vec![SigmaValue::Integer(5)],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_gt_with_lt() {
+        assert_rejects(
+            &[Modifier::Gt, Modifier::Lt],
+            vec![SigmaValue::Integer(5)],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_exists_with_contains() {
+        assert_rejects(
+            &[Modifier::Exists, Modifier::Contains],
+            vec![SigmaValue::Bool(true)],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_fieldref_with_re() {
+        assert_rejects(
+            &[Modifier::FieldRef, Modifier::Re],
+            vec![SigmaValue::String(SigmaString::new("OtherField"))],
+            "at most one operator",
+        );
+    }
+
+    #[test]
+    fn rejects_two_timestamp_parts() {
+        assert_rejects(
+            &[Modifier::Hour, Modifier::Day],
+            vec![SigmaValue::Integer(3)],
+            "at most one operator",
+        );
+    }
+
+    // ── UTF-16 encoding rejections ────────────────────────────────────
+
+    #[test]
+    fn rejects_wide_with_utf16() {
+        assert_rejects(
+            &[Modifier::Wide, Modifier::Utf16],
+            vec![SigmaValue::String(SigmaString::new("test"))],
+            "mutually exclusive UTF-16 encodings",
+        );
+    }
+
+    #[test]
+    fn rejects_utf16_with_utf16be() {
+        assert_rejects(
+            &[Modifier::Utf16, Modifier::Utf16be],
+            vec![SigmaValue::String(SigmaString::new("test"))],
+            "mutually exclusive UTF-16 encodings",
+        );
+    }
+
+    // ── base64 vs base64offset rejection ──────────────────────────────
+
+    #[test]
+    fn rejects_base64_with_base64offset() {
+        assert_rejects(
+            &[Modifier::Base64, Modifier::Base64Offset],
+            vec![SigmaValue::String(SigmaString::new("test"))],
+            "mutually exclusive base64 strategies",
+        );
+    }
+
+    // ── Transformation + non-string-operator rejections ───────────────
+
+    #[test]
+    fn rejects_base64_with_cidr() {
+        assert_rejects(
+            &[Modifier::Cidr, Modifier::Base64],
+            vec![SigmaValue::String(SigmaString::new("10.0.0.0/8"))],
+            "value transformations",
+        );
+    }
+
+    #[test]
+    fn rejects_wide_with_numeric_gt() {
+        assert_rejects(
+            &[Modifier::Gt, Modifier::Wide],
+            vec![SigmaValue::Integer(5)],
+            "value transformations",
+        );
+    }
+
+    #[test]
+    fn rejects_windash_with_re() {
+        assert_rejects(
+            &[Modifier::Re, Modifier::WindAsh],
+            vec![SigmaValue::String(SigmaString::new("foo"))],
+            "value transformations",
+        );
+    }
+
+    #[test]
+    fn rejects_expand_with_exists() {
+        assert_rejects(
+            &[Modifier::Exists, Modifier::Expand],
+            vec![SigmaValue::Bool(true)],
+            "value transformations",
+        );
+    }
+
+    // ── Regex-flag rejections ─────────────────────────────────────────
+
+    #[test]
+    fn rejects_ignore_case_without_re() {
+        assert_rejects(
+            &[Modifier::IgnoreCase],
+            vec![SigmaValue::String(SigmaString::new("foo"))],
+            "without |re",
+        );
+    }
+
+    #[test]
+    fn rejects_multiline_without_re() {
+        assert_rejects(
+            &[Modifier::Multiline],
+            vec![SigmaValue::String(SigmaString::new("foo"))],
+            "without |re",
+        );
+    }
+
+    #[test]
+    fn rejects_dotall_without_re() {
+        assert_rejects(
+            &[Modifier::DotAll],
+            vec![SigmaValue::String(SigmaString::new("foo"))],
+            "without |re",
+        );
+    }
+
+    // ── Acceptance tests for legal combinations ───────────────────────
+
+    #[test]
+    fn accepts_re_with_ignore_case() {
+        assert_accepts(
+            &[Modifier::Re, Modifier::IgnoreCase],
+            vec![SigmaValue::String(SigmaString::new("Foo.*"))],
+        );
+    }
+
+    #[test]
+    fn accepts_re_with_multiline_and_dotall() {
+        assert_accepts(
+            &[Modifier::Re, Modifier::Multiline, Modifier::DotAll],
+            vec![SigmaValue::String(SigmaString::new("Foo.*"))],
+        );
+    }
+
+    #[test]
+    fn accepts_base64_with_wide() {
+        assert_accepts(
+            &[Modifier::Base64, Modifier::Wide],
+            vec![SigmaValue::String(SigmaString::new("test"))],
+        );
+    }
+
+    #[test]
+    fn accepts_contains_with_cased() {
+        assert_accepts(
+            &[Modifier::Contains, Modifier::Cased],
+            vec![SigmaValue::String(SigmaString::new("admin"))],
+        );
+    }
+
+    #[test]
+    fn accepts_contains_with_all_multi_value() {
+        assert_accepts(
+            &[Modifier::Contains, Modifier::All],
+            vec![
+                SigmaValue::String(SigmaString::new("admin")),
+                SigmaValue::String(SigmaString::new("root")),
+            ],
+        );
+    }
+
+    #[test]
+    fn accepts_contains_with_neq() {
+        // `|neq` negates the comparison: "Field does not contain X".
+        assert_accepts(
+            &[Modifier::Contains, Modifier::Neq],
+            vec![SigmaValue::String(SigmaString::new("admin"))],
+        );
+    }
+
+    #[test]
+    fn accepts_re_with_neq() {
+        assert_accepts(
+            &[Modifier::Re, Modifier::Neq],
+            vec![SigmaValue::String(SigmaString::new("foo.*"))],
+        );
+    }
+
+    #[test]
+    fn accepts_single_timestamp_part() {
+        assert_accepts(
+            &[Modifier::Hour],
+            vec![SigmaValue::Integer(3)],
+        );
+    }
+}
