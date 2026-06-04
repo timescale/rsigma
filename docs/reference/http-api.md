@@ -17,6 +17,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/events` | POST | none | NDJSON event ingest. Only enabled with `--input http`. |
 | `/api/v1/sources` | GET | none | Dynamic pipeline sources currently registered. |
 | `/api/v1/sources/resolve` | POST | none | Force re-resolution of all dynamic sources (with no body) or one specific source (with `{"source_id":"..."}`). |
+| `/api/v1/sources/resolve/{source_id}` | POST | none | Force re-resolution of a single source by path parameter (no body). Equivalent to the body variant above; useful when the caller has to fit inside an HTTP client that does not send a JSON body on `POST`. |
 | `/api/v1/sources/cache/{source_id}` | DELETE | none | Invalidate one source's cache so the next read fetches fresh. |
 | `/api/v1/fields` | GET | none | Combined gap + broken-coverage report. Requires `--observe-fields`. |
 | `/api/v1/fields/unknown` | GET | none | Fields seen in events that no rule references. Requires `--observe-fields`. |
@@ -201,6 +202,20 @@ If no dynamic sources are configured:
 ```json
 {"error":"no dynamic sources configured"}
 ```
+
+### `POST /api/v1/sources/resolve/{source_id}`
+
+Force re-resolution of one named source via a path parameter, with no request body. Equivalent to the body variant of `POST /api/v1/sources/resolve` and useful for clients that cannot send a JSON body on `POST` (some load balancers, the simplest `curl --data ''` recipes, etc.).
+
+```bash
+curl -sS -X POST http://127.0.0.1:9090/api/v1/sources/resolve/ip_blocklist
+```
+
+```json
+{"status":"resolve_triggered","source_id":"ip_blocklist"}
+```
+
+Returns `404 {"error":"no dynamic sources configured"}` when no sources are registered, and `429 {"status":"resolve_already_pending"}` if a refresh for the same `source_id` is still in flight.
 
 ### `DELETE /api/v1/sources/cache/{source_id}`
 
