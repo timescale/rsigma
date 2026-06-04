@@ -153,9 +153,10 @@ The RSigma CLI has been reorganized into noun-led command groups so it can scale
 | Group | Subcommands | Purpose |
 |-------|-------------|---------|
 | `engine` | `eval`, `daemon` | Run rules against events. |
-| `rule` | `parse`, `validate`, `lint`, `fields`, `condition`, `stdin` | Operate on rule files. |
+| `rule` | `parse`, `validate`, `lint`, `fields`, `condition`, `stdin`, `migrate-sources` | Operate on rule files. `migrate-sources` extracts pipeline-embedded sources into standalone files. |
 | `backend` | `convert`, `targets`, `formats` | Generate backend-native queries. |
 | `pipeline` | `resolve` | Test dynamic pipeline source resolution. |
+| `config` | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the layered YAML configuration. |
 
 The previous flat commands (`rsigma eval`, `rsigma daemon`, ...) still work as hidden deprecated aliases that print a migration warning on stderr and forward to the new path; they are removed in v1.0. See the [CLI reference](../cli/index.md) for the full migration table.
 

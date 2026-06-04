@@ -12,7 +12,7 @@ Every rsigma subcommand can emit its structured output in one of five formats. T
 |--------|----------------|
 | `json` | Default on a TTY; a single pretty-printed JSON object per record. |
 | `ndjson` | Default when piped; one compact JSON object per line. Stream-friendly. |
-| `table` | Width-aligned text table for `engine eval` (`LEVEL | RULE | TYPE | DETAIL`), `rule fields`, `rule lint`, and `rule validate`. Numeric columns are right-aligned. |
+| `table` | Width-aligned text table for `engine eval` (`LEVEL | RULE | TYPE | DETAIL`), `rule fields`, and `rule lint`. Numeric columns are right-aligned. `rule validate` keeps its bespoke per-file summary and ignores the format selector. |
 | `csv` | RFC 4180-style comma-separated values. Header row first, then one row per record. |
 | `tsv` | Tab-separated equivalent of `csv`. Friendlier for `cut` and `awk`. |
 
