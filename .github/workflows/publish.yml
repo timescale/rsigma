@@ -33,69 +33,79 @@ jobs:
         with:
           toolchain: stable
 
+      # No build cache here: rust-cache on a publish workflow exposes the
+      # signed crate artifacts to a cache-poisoning vector (a malicious PR
+      # that lands earlier could seed a tampered build cache). Publishing
+      # happens once per release, so the cache miss is acceptable.
+
+      # Pre-flight: dry-run every crate in dependency order before any
+      # side-effecting publish. Catches authentication, dep-version, and
+      # manifest issues up front so a half-released set of crates cannot
+      # leave the workspace in an inconsistent state on crates.io.
+      - name: Pre-flight dry-run
+        run: |
+          for crate in rsigma-parser rsigma-eval rsigma-convert rsigma-runtime rsigma rsigma-lsp; do
+            echo "::group::cargo publish --dry-run -p ${crate}"
+            cargo publish --dry-run --locked -p "${crate}"
+            echo "::endgroup::"
+          done
+
       - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
         id: auth
 
+      # `workflow_dispatch` runs every publish step in dry-run mode for
+      # an end-to-end rehearsal without touching crates.io; the actual
+      # release event runs the real publish.
       - name: Publish rsigma-parser
-        run: |
-          echo "::notice::Publishing rsigma-parser (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-parser || echo "::warning::rsigma-parser already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-parser
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
 
-      - name: Wait for crates.io index update
+      # Wait for the published version to appear in the registry index
+      # before the next crate attempts to resolve it as a dependency.
+      - name: Wait for crates.io index update (rsigma-parser)
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
       - name: Publish rsigma-eval
-        run: |
-          echo "::notice::Publishing rsigma-eval (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-eval || echo "::warning::rsigma-eval already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-eval
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
 
-      - name: Wait for crates.io index update
+      - name: Wait for crates.io index update (rsigma-eval)
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
       - name: Publish rsigma-convert
-        run: |
-          echo "::notice::Publishing rsigma-convert (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-convert || echo "::warning::rsigma-convert already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-convert
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
 
-      - name: Wait for crates.io index update
+      - name: Wait for crates.io index update (rsigma-convert)
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
       - name: Publish rsigma-runtime
-        run: |
-          echo "::notice::Publishing rsigma-runtime (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-runtime || echo "::warning::rsigma-runtime already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-runtime
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
 
-      - name: Wait for crates.io index update
+      - name: Wait for crates.io index update (rsigma-runtime)
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
       - name: Publish rsigma
-        run: |
-          echo "::notice::Publishing rsigma (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma || echo "::warning::rsigma already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
 
       - name: Publish rsigma-lsp
-        run: |
-          echo "::notice::Publishing rsigma-lsp (dry-run: ${DRY_RUN})"
-          cargo publish ${DRY_RUN} -p rsigma-lsp || echo "::warning::rsigma-lsp already published or failed"
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-lsp
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
