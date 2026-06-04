@@ -5,7 +5,7 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
-### Runtime hardening: HTTP egress policy, body cap, hot-reload tuning, fail-closed dynamic sources
+### Runtime hardening: HTTP egress policy, body cap, hot-reload tuning, fail-closed dynamic sources (#167)
 
 Cluster of P0 hardening fixes for the daemon's HTTP surfaces and rule hot-reload. None of these were exploitable in a default deployment, but each silently produced behavior different from what the operator (or rule author) wrote, and all of them ship together before v0.14.0.
 
