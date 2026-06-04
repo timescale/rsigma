@@ -67,7 +67,7 @@
     "@types/vscode": "^1.75.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.3",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "vscode-languageclient": {
