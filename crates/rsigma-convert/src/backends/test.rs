@@ -1217,4 +1217,126 @@ detection:
         // `/` is in re_escape, so both slashes get escaped.
         assert_eq!(queries, vec!["Path=/C:\\/Windows\\/.*/"]);
     }
+
+    /// Convert a rule expected to fail and return the resulting error message.
+    fn convert_rule_yaml_err(yaml: &str) -> ConvertError {
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let backend = TextQueryTestBackend::new();
+        backend
+            .convert_rule(&collection.rules[0], "default", &PipelineState::default())
+            .expect_err("rule should fail to convert")
+    }
+
+    #[test]
+    fn test_default_path_rejects_neq_modifier() {
+        // `Field|neq: value` would silently become equality through the
+        // generic dispatch. Reject loudly with UnsupportedModifier so the
+        // generated query is never wrong.
+        let err = convert_rule_yaml_err(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|neq: forbidden
+    condition: selection
+"#,
+        );
+        assert!(
+            matches!(&err, ConvertError::UnsupportedModifier(m) if m.contains("Neq")),
+            "expected UnsupportedModifier(Neq), got: {err}",
+        );
+    }
+
+    #[test]
+    fn test_default_path_rejects_encoding_modifiers() {
+        // base64, base64offset, wide, utf16, utf16be, windash all transform
+        // the value before comparison. The generic dispatch only emits raw
+        // equality, so the resulting query never matches what the rule
+        // intended.
+        for modifier in ["base64", "base64offset", "wide", "utf16", "utf16be", "windash"] {
+            let yaml = format!(
+                r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|{modifier}: payload
+    condition: selection
+"#
+            );
+            let err = convert_rule_yaml_err(&yaml);
+            assert!(
+                matches!(&err, ConvertError::UnsupportedModifier(_)),
+                "expected UnsupportedModifier for `{modifier}`, got: {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_path_rejects_timestamp_part_modifiers() {
+        for modifier in ["minute", "hour", "day", "week", "month", "year"] {
+            let yaml = format!(
+                r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        TimeField|{modifier}: 5
+    condition: selection
+"#
+            );
+            let err = convert_rule_yaml_err(&yaml);
+            assert!(
+                matches!(&err, ConvertError::UnsupportedModifier(_)),
+                "expected UnsupportedModifier for `{modifier}`, got: {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_path_rejects_regex_flag_without_re() {
+        // `m` (multiline) and `s` (dotall) only have meaning alongside `re`;
+        // outside that branch they would be silently dropped.
+        for modifier in ["m", "s"] {
+            let yaml = format!(
+                r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Field|{modifier}: anything
+    condition: selection
+"#
+            );
+            let err = convert_rule_yaml_err(&yaml);
+            assert!(
+                matches!(&err, ConvertError::UnsupportedModifier(_)),
+                "expected UnsupportedModifier for `{modifier}`, got: {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_path_keeps_safe_modifiers_working() {
+        // Sanity check: modifiers that ARE supported by the generic
+        // dispatch (`contains`, `startswith`, `endswith`, `cased`, `i`)
+        // still produce a query, so the new gate does not over-reject.
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+"#,
+        );
+        assert_eq!(queries.len(), 1);
+    }
 }

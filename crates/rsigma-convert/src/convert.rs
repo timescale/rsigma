@@ -133,6 +133,46 @@ pub fn convert_collection(
     Ok(output)
 }
 
+/// Modifiers whose semantics cannot be expressed by the generic
+/// [`default_convert_detection_item`] dispatch.
+///
+/// The default path emits string or number equality. Any modifier that
+/// changes the comparison operator (`neq` → `!=`), transforms the value
+/// before comparison (`base64`, `base64offset`, `wide`, `utf16`, `utf16be`,
+/// `windash`, `expand`), or needs a backend-specific extraction such as
+/// `date_part` (timestamp parts) or a regex flag without `re` (`m`, `s`)
+/// would be silently dropped by the generic dispatch, producing a query
+/// with different semantics than the rule. Backends that handle these
+/// modifiers natively should override [`Backend::convert_detection_item`]
+/// and bypass the default dispatch.
+const DEFAULT_PATH_UNSUPPORTED_MODIFIERS: &[rsigma_parser::Modifier] = &[
+    rsigma_parser::Modifier::Neq,
+    rsigma_parser::Modifier::Base64,
+    rsigma_parser::Modifier::Base64Offset,
+    rsigma_parser::Modifier::Wide,
+    rsigma_parser::Modifier::Utf16,
+    rsigma_parser::Modifier::Utf16be,
+    rsigma_parser::Modifier::WindAsh,
+    rsigma_parser::Modifier::Expand,
+    rsigma_parser::Modifier::Multiline,
+    rsigma_parser::Modifier::DotAll,
+    rsigma_parser::Modifier::Minute,
+    rsigma_parser::Modifier::Hour,
+    rsigma_parser::Modifier::Day,
+    rsigma_parser::Modifier::Week,
+    rsigma_parser::Modifier::Month,
+    rsigma_parser::Modifier::Year,
+];
+
+fn first_unsupported_default_modifier(
+    modifiers: &[rsigma_parser::Modifier],
+) -> Option<rsigma_parser::Modifier> {
+    DEFAULT_PATH_UNSUPPORTED_MODIFIERS
+        .iter()
+        .copied()
+        .find(|m| modifiers.contains(m))
+}
+
 /// Default detection-item dispatch logic.
 ///
 /// Used by backends that don't need custom item-level handling.
@@ -226,6 +266,20 @@ pub fn default_convert_detection_item(
             };
             return backend.convert_field_compare(field_name, &m, num, state);
         }
+    }
+
+    // The fall-through dispatch below emits string/number equality through
+    // `convert_field_eq_str` / `convert_field_eq_num`. Any modifier that
+    // changes the operator (`neq`), transforms the value (encoding,
+    // `windash`), or requires backend-specific extraction (timestamp parts,
+    // `expand`) cannot be expressed by that path. Reaching this point with
+    // such a modifier means the generic path would silently produce a query
+    // with different semantics than the rule. Reject those modifiers loudly
+    // so backends without explicit support do not ship semantically wrong
+    // SQL/SPL. Backends that handle these modifiers natively can override
+    // `Backend::convert_detection_item` and bypass the default dispatch.
+    if let Some(unsupported) = first_unsupported_default_modifier(modifiers) {
+        return Err(ConvertError::UnsupportedModifier(format!("{unsupported:?}")));
     }
 
     let use_all = item.field.has_modifier(rsigma_parser::Modifier::All);
