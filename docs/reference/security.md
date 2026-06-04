@@ -40,6 +40,24 @@ The `include:` directive resolves to transformation YAML pulled from a source. B
 
 Operators that need remote-included pipelines (for centralised pipeline distribution across many daemons) must opt in explicitly with `--allow-remote-include` on `engine daemon`. The flag is also expected to be paired with mTLS on the upstream HTTP source so an arbitrary network attacker cannot serve content.
 
+### HTTP egress policy (SSRF defense)
+
+The daemon issues HTTP requests in two places: dynamic-source resolution (a Sigma rule or pipeline references `type: http`) and post-evaluation enrichers (`type: http`). Both URLs come from operator-supplied YAML, so a compromised rule or pipeline can otherwise point the daemon at the cloud-metadata IMDS endpoint at `169.254.169.254` and exfiltrate IAM credentials, or at internal admin APIs reachable on link-local addresses.
+
+`rsigma engine daemon` exposes an `--egress-policy <default|strict|permissive>` flag (also `daemon.engine.egress_policy` in the layered YAML config) that selects one of three presets. The policy is enforced at *DNS resolution time* inside the daemon's `reqwest::Client`, so DNS rebinding (resolving a hostname to a public IP at the host-string check, then switching to a private IP between check and connect) cannot defeat it: the connect itself never sees a denied address.
+
+| Preset       | Link-local (`169.254/16`, `fe80::/10`) | Cloud metadata (`fd00:ec2::254`) | Loopback (`127/8`, `::1`) | RFC1918 private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) |
+|--------------|----------------------------------------|----------------------------------|---------------------------|------------------------------------------------------------------|
+| `default`    | denied                                 | denied                           | allowed                   | allowed                                                          |
+| `strict`     | denied                                 | denied                           | denied                    | denied                                                           |
+| `permissive` | allowed                                | allowed                          | allowed                   | allowed                                                          |
+
+The `default` preset balances safety against the common case of internal threat-intel services on private addresses. Pick `strict` if the daemon has no legitimate reason to reach private or loopback addresses; pick `permissive` only in tightly controlled environments where every source / enricher URL has been vetted. The presets are also reachable from library code via `rsigma_runtime::EgressPolicy::{default,strict,permissive}` and `set_default_egress_policy`; per-category builders (`with_block_link_local`, `with_block_cloud_metadata`, `with_block_loopback`, `with_block_private`) cover the in-between cases.
+
+IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host that resolves to `::ffff:169.254.169.254` is rejected as link-local just like the bare IPv4 form.
+
+The policy applies only to the daemon's outbound HTTP clients. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
+
 ## Parser robustness
 
 Every external parser rsigma ships uses panic-free libraries:
