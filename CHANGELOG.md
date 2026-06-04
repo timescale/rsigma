@@ -5,7 +5,7 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
-### Sigma correctness: multi-field correlations, empty median, unsupported convert modifiers
+### Sigma correctness: multi-field correlations, empty median, unsupported convert modifiers (#166)
 
 Closes a cluster of silently-wrong evaluation and conversion behaviors so v0.14.0 ships none of them.
 
