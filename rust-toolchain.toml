@@ -1,0 +1,13 @@
+# Pin every local and release build to the workspace MSRV.
+#
+# This file is honored by `rustup` when no explicit `+toolchain`
+# selector is on the command line. Contributors who run `cargo build`
+# or `cargo test` from a checkout get the same toolchain that the
+# MSRV CI job uses, so MSRV drift can be caught locally before a PR
+# hits CI. CI workflows explicitly select the channel they need
+# (`stable`, `nightly`, …) via `dtolnay/rust-toolchain`, so this file
+# only affects ambient invocations.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
