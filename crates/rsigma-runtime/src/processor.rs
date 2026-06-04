@@ -292,33 +292,38 @@ impl LogProcessor {
     ///
     /// If pipeline or rule loading fails, the old engine remains active.
     pub fn reload_rules(&self) -> Result<crate::engine::EngineStats, String> {
-        let (
-            old_state,
-            rules_path,
-            pipelines,
-            pipeline_paths,
-            corr_config,
-            include_event,
-            resolver,
-            allow_remote_include,
-        ) = {
-            let snapshot = self.engine.load();
-            let old = snapshot.lock();
-            (
-                old.export_state(),
-                old.rules_path().to_path_buf(),
-                old.pipelines().to_vec(),
-                old.pipeline_paths().to_vec(),
-                old.corr_config().clone(),
-                old.include_event(),
-                old.source_resolver().cloned(),
-                old.allow_remote_include(),
-            )
-        };
+        // Snapshot the old engine's configuration AND tuning so the
+        // replacement reaches `load_rules()` with the same flags. Daemon
+        // startup typically sets `set_bloom_prefilter`/`set_bloom_max_bytes`
+        // (and `set_cross_rule_ac` behind `daachorse-index`) before the
+        // first load; carrying those across the swap keeps hot-reload from
+        // silently undoing them.
+        let snapshot = self.engine.load();
+        let old = snapshot.lock();
+        let old_state = old.export_state();
+        let rules_path = old.rules_path().to_path_buf();
+        let pipelines = old.pipelines().to_vec();
+        let pipeline_paths = old.pipeline_paths().to_vec();
+        let corr_config = old.corr_config().clone();
+        let include_event = old.include_event();
+        let resolver = old.source_resolver().cloned();
+        let allow_remote_include = old.allow_remote_include();
+        let bloom_prefilter = old.bloom_prefilter();
+        let bloom_max_bytes = old.bloom_max_bytes();
+        #[cfg(feature = "daachorse-index")]
+        let cross_rule_ac = old.cross_rule_ac();
+        drop(old);
+        drop(snapshot);
 
         let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
         new_engine.set_pipeline_paths(pipeline_paths);
         new_engine.set_allow_remote_include(allow_remote_include);
+        new_engine.set_bloom_prefilter(bloom_prefilter);
+        if let Some(budget) = bloom_max_bytes {
+            new_engine.set_bloom_max_bytes(budget);
+        }
+        #[cfg(feature = "daachorse-index")]
+        new_engine.set_cross_rule_ac(cross_rule_ac);
         if let Some(resolver) = resolver {
             new_engine.set_source_resolver(resolver);
         }
@@ -515,6 +520,66 @@ detection:
 
         let batch2 = vec![r#"{"EventID": 99}"#.to_string()];
         assert!(proc.process_batch_lines(&batch2, &identity_filter)[0].detection_count() > 0);
+
+        std::mem::forget(dir);
+    }
+
+    #[test]
+    fn reload_rules_preserves_bloom_tuning() {
+        // Daemon startup typically calls `set_bloom_prefilter(true)` and
+        // friends on the initial RuntimeEngine. Previously, `reload_rules`
+        // rebuilt a fresh RuntimeEngine via `RuntimeEngine::new`, which
+        // resets those flags to defaults; the daemon then silently lost
+        // bloom pre-filtering on the first hot-reload. This test pins the
+        // fix by checking the underlying engine's setters after reload.
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+
+        let mut engine = RuntimeEngine::new(
+            rule_path.clone(),
+            vec![],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_bloom_prefilter(true);
+        engine.set_bloom_max_bytes(2 * 1024 * 1024);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(true);
+        engine.load_rules().unwrap();
+
+        let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+        proc.reload_rules().unwrap();
+
+        let snapshot = proc.engine_snapshot();
+        let reloaded = snapshot.lock();
+        assert!(
+            reloaded.bloom_prefilter(),
+            "bloom_prefilter must survive reload_rules"
+        );
+        assert_eq!(
+            reloaded.bloom_max_bytes(),
+            Some(2 * 1024 * 1024),
+            "bloom_max_bytes must survive reload_rules"
+        );
+        #[cfg(feature = "daachorse-index")]
+        assert!(
+            reloaded.cross_rule_ac(),
+            "cross_rule_ac must survive reload_rules"
+        );
 
         std::mem::forget(dir);
     }

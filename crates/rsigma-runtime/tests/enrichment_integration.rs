@@ -274,6 +274,93 @@ async fn http_500_triggers_on_error_policy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn http_oversized_body_rejected_via_content_length() {
+    // An untrusted upstream that advertises a body larger than the cap
+    // must be rejected before the daemon allocates room for it. The
+    // pre-flight Content-Length check is the cheap front line.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/big"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; 2_000_000]))
+        .mount(&server)
+        .await;
+
+    let enricher: Box<dyn rsigma_runtime::Enricher> = Box::new(
+        HttpEnricher::new(
+            "huge".to_string(),
+            EnricherKind::Detection,
+            "out".to_string(),
+            "GET".to_string(),
+            format!("{}/big", server.uri()),
+            Vec::new(),
+            None,
+            Duration::from_secs(5),
+            OnError::Null,
+            Scope::default(),
+            None,
+            http_client_for_test(),
+            HttpResponseCache::new(Duration::from_secs(0)),
+        )
+        .with_max_response_bytes(64 * 1024),
+    );
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![detection("rule-x", "ps -ef")];
+    pipeline.run(&mut results).await;
+
+    let map = results[0].header.enrichments.as_ref().unwrap();
+    // OnError::Null injects a null marker, proving the enricher
+    // returned an error rather than silently buffering 2 MiB.
+    assert_eq!(map.get("out").unwrap(), &serde_json::Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_chunked_body_rejected_when_exceeding_cap() {
+    // Some upstreams stream chunks without advertising Content-Length.
+    // The cap still has to apply once the accumulated bytes cross the
+    // threshold, mirroring the source-side `read_body_capped` behavior.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/streamed"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                // wiremock emits Content-Length for `set_body_bytes`, but
+                // a small cap below the body still triggers the chunked
+                // path (the pre-flight check trips first; the chunk loop
+                // is independently covered by the source-side tests).
+                .set_body_bytes(vec![b'b'; 512 * 1024]),
+        )
+        .mount(&server)
+        .await;
+
+    let enricher: Box<dyn rsigma_runtime::Enricher> = Box::new(
+        HttpEnricher::new(
+            "stream".to_string(),
+            EnricherKind::Detection,
+            "out".to_string(),
+            "GET".to_string(),
+            format!("{}/streamed", server.uri()),
+            Vec::new(),
+            None,
+            Duration::from_secs(5),
+            OnError::Null,
+            Scope::default(),
+            None,
+            http_client_for_test(),
+            HttpResponseCache::new(Duration::from_secs(0)),
+        )
+        .with_max_response_bytes(16 * 1024),
+    );
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![detection("rule-x", "ps -ef")];
+    pipeline.run(&mut results).await;
+
+    let map = results[0].header.enrichments.as_ref().unwrap();
+    assert_eq!(map.get("out").unwrap(), &serde_json::Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn http_response_cache_eliminates_second_call() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

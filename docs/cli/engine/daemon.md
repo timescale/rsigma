@@ -57,6 +57,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `sysmon`) or YAML file paths. Repeatable. |
 | `--source <FILE_OR_DIR>` | External source file(s) or directory of source files. Repeatable. Loads dynamic source declarations independently of any pipeline file. A file path loads one YAML file with a top-level `sources:` block; a directory path loads all `*.yml`/`*.yaml` files in it, alphabetically. Source IDs must be unique across every `--source` file (pipeline-embedded `sources:` blocks are deprecated and counted in the same uniqueness check; see [Dynamic Pipeline Sources](../../reference/dynamic-sources.md)). |
 | `--allow-remote-include` | Allow `include:` directives in pipelines to reference remote (HTTP/NATS) sources. Off by default for security. |
+| `--egress-policy <default\|strict\|permissive>` | HTTP egress policy applied to dynamic-source and enrichment HTTP clients. `default` (the default) blocks link-local (`169.254.0.0/16`, `fe80::/10`, includes cloud-metadata `169.254.169.254`) and known cloud-metadata IPv6 (`fd00:ec2::254`). `strict` additionally blocks loopback and RFC1918 private. `permissive` allows everything. Enforced at DNS resolution time so DNS rebinding cannot defeat host-string checks. See [Security](../../reference/security.md#http-egress-policy-ssrf-defense). |
 
 ### Post-evaluation enrichment
 

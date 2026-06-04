@@ -219,6 +219,24 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "allow-remote-include")]
     pub allow_remote_include: bool,
 
+    /// HTTP egress policy applied to dynamic-source and enrichment HTTP clients.
+    ///
+    /// `default` (the default) blocks link-local addresses (which include
+    /// `169.254.169.254` and `fe80::/10`) and known cloud-metadata
+    /// addresses (`fd00:ec2::254`). Loopback and RFC1918 private
+    /// addresses remain reachable so internal threat-intel APIs keep
+    /// working. `strict` additionally blocks loopback and private,
+    /// recommended for hardened deployments that have no legitimate
+    /// internal HTTP target. `permissive` allows every resolved
+    /// address; use only in tightly controlled environments where every
+    /// source / enricher URL has been vetted.
+    ///
+    /// The policy is enforced at DNS resolution time inside the
+    /// daemon's HTTP clients, so DNS rebinding cannot defeat
+    /// host-string checks.
+    #[arg(long = "egress-policy", value_parser = ["default", "strict", "permissive"], default_value = config::defaults::EGRESS_POLICY)]
+    pub egress_policy: String,
+
     /// Enable bloom-filter pre-filtering of positive substring matchers.
     ///
     /// Off by default. When enabled, the engine builds a per-field bloom
@@ -453,6 +471,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         allow_remote_include,
+        egress_policy,
         bloom_prefilter,
         bloom_max_bytes,
         observe_fields,
@@ -559,6 +578,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         allow_remote_include,
+        egress_policy,
         bloom_prefilter,
         bloom_max_bytes,
         observe_fields,
@@ -794,6 +814,11 @@ fn apply_daemon_config(
         {
             args.allow_remote_include = v;
         }
+        if !explicit("egress_policy")
+            && let Some(v) = engine.egress_policy
+        {
+            args.egress_policy = v;
+        }
         #[cfg(feature = "daachorse-index")]
         if !explicit("cross_rule_ac")
             && let Some(v) = engine.cross_rule_ac
@@ -853,6 +878,7 @@ fn run_daemon(
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
     allow_remote_include: bool,
+    egress_policy: String,
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     observe_fields: bool,
@@ -863,6 +889,23 @@ fn run_daemon(
     #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
+
+    // Install the process-wide HTTP egress policy *before* any source
+    // resolver or HTTP enricher builds its client. The runtime caches
+    // the client lazily, so a late install would silently keep the
+    // previous (default) policy in force. `set_default_egress_policy`
+    // is first-set-wins, so a second daemon spawn in the same process
+    // returns Err quietly; we ignore that case.
+    let egress = match egress_policy.as_str() {
+        "default" => rsigma_runtime::EgressPolicy::default(),
+        "strict" => rsigma_runtime::EgressPolicy::strict(),
+        "permissive" => rsigma_runtime::EgressPolicy::permissive(),
+        other => {
+            eprintln!("Invalid --egress-policy '{other}'; expected default | strict | permissive");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
+    let _ = rsigma_runtime::set_default_egress_policy(egress);
 
     // Daemon installs its own JSON subscriber unconditionally so that operators
     // get consistent structured logs regardless of CLI invocation flags.

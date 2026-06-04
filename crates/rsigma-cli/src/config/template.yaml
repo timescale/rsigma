@@ -103,6 +103,11 @@ daemon:
     allow_remote_include: false
     # Enable the cross-rule Aho-Corasick pre-filter (daachorse-index feature).
     # cross_rule_ac: false
+    # HTTP egress policy applied to dynamic-source and enrichment HTTP clients.
+    # default    = block link-local + cloud-metadata (SSRF defense, allow loopback / private).
+    # strict     = also block loopback + RFC1918 private (recommended for hardened deployments).
+    # permissive = allow every resolved address (only for tightly controlled environments).
+    egress_policy: default
 
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.

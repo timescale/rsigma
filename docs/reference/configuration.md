@@ -62,6 +62,7 @@ daemon:
   engine:
     bloom_prefilter: false
     observe_fields: false
+    egress_policy: default
 
 eval:
   rules: ./rules

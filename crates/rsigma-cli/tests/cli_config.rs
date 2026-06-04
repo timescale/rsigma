@@ -216,3 +216,45 @@ fn daemon_dry_run_uses_config_values() {
         .stdout(predicate::str::contains("rules: /tmp/myrules"))
         .stdout(predicate::str::contains("addr: 1.2.3.4:5"));
 }
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_egress_policy_reads_from_config() {
+    // The engine.egress_policy config key must reach the daemon. Use
+    // `--dry-run` so we never actually start a daemon (the test runner
+    // would otherwise spin forever on stdin).
+    let cfg = temp_file(
+        ".yaml",
+        "daemon:\n  rules: /tmp/myrules\n  engine:\n    egress_policy: strict\n",
+    );
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("egress_policy: strict"));
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_rejects_invalid_egress_policy_value() {
+    // clap's `value_parser = [...]` should reject anything off the
+    // allowed list before we even hit the daemon's own check.
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--rules",
+            "/tmp/nope",
+            "--egress-policy",
+            "yolo",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("egress-policy"));
+}

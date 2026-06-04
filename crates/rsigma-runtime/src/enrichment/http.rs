@@ -27,6 +27,13 @@ use super::{
     template::render_template,
 };
 use crate::metrics::{MetricsHook, NoopMetrics};
+use crate::sources::MAX_SOURCE_RESPONSE_BYTES;
+
+/// Default cap on the HTTP enricher response body, mirroring
+/// [`crate::sources::MAX_SOURCE_RESPONSE_BYTES`]. An untrusted upstream
+/// that streams an unbounded body cannot OOM the daemon: the chunked
+/// reader bails out once the cap is reached.
+pub const DEFAULT_ENRICHER_MAX_RESPONSE_BYTES: usize = MAX_SOURCE_RESPONSE_BYTES;
 
 /// One HTTP enricher instance.
 ///
@@ -48,6 +55,12 @@ pub struct HttpEnricher {
     client: HttpEnricherClient,
     cache: HttpResponseCache,
     metrics: Arc<dyn MetricsHook>,
+    /// Maximum number of bytes to read from the upstream response.
+    /// Defaults to [`DEFAULT_ENRICHER_MAX_RESPONSE_BYTES`]. Configurable
+    /// via [`HttpEnricher::with_max_response_bytes`] when an enricher
+    /// genuinely needs a larger payload (and the operator has accepted
+    /// the memory cost).
+    max_response_bytes: usize,
 }
 
 /// Opaque handle around a process-wide `reqwest::Client`. Constructed by
@@ -76,8 +89,18 @@ impl HttpEnricherClient {
 /// Build the default shared HTTP client used by the daemon's enrichment
 /// pipeline. All HTTP enrichers in the same daemon process share one
 /// client to amortize TLS handshakes and DNS resolution.
+///
+/// The client is wired to the
+/// [`default_egress_policy`](crate::egress::default_egress_policy) via a
+/// custom DNS resolver so an enrichment URL that resolves to a denied
+/// address (cloud metadata, link-local) fails fast at connect time
+/// rather than completing a request to a sensitive endpoint.
 pub fn build_default_http_client() -> Result<HttpEnricherClient, String> {
+    let resolver =
+        crate::egress::EgressFilteredResolver::new(crate::egress::default_egress_policy())
+            .into_dns_resolver();
     reqwest::Client::builder()
+        .dns_resolver(resolver)
         .build()
         .map(|c| HttpEnricherClient(Arc::new(c)))
         .map_err(|e| format!("reqwest client build failed: {e}"))
@@ -121,7 +144,19 @@ impl HttpEnricher {
             client,
             cache,
             metrics: Arc::new(NoopMetrics),
+            max_response_bytes: DEFAULT_ENRICHER_MAX_RESPONSE_BYTES,
         }
+    }
+
+    /// Override the maximum response-body size this enricher will read.
+    ///
+    /// The default is [`DEFAULT_ENRICHER_MAX_RESPONSE_BYTES`]. Setting a
+    /// smaller value can help when consuming many small enrichment
+    /// payloads concurrently and tightening the per-call memory bound is
+    /// worth the rejection risk on the occasional larger response.
+    pub fn with_max_response_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_response_bytes = max_bytes;
+        self
     }
 
     /// Replace the metrics hook this enricher reports cache events into.
@@ -229,10 +264,21 @@ impl Enricher for HttpEnricher {
             });
         }
 
-        let bytes = resp.bytes().await.map_err(|e| EnrichError {
-            enricher_id: self.id.clone(),
-            kind: EnrichErrorKind::Fetch(format!("body read: {e}")),
-        })?;
+        // Reject the response up-front if the upstream advertises a body
+        // size beyond the cap; otherwise stream chunks and bail as soon
+        // as the accumulated size crosses the cap.
+        if let Some(content_length) = resp.content_length()
+            && content_length as usize > self.max_response_bytes
+        {
+            return Err(EnrichError {
+                enricher_id: self.id.clone(),
+                kind: EnrichErrorKind::Fetch(format!(
+                    "HTTP response Content-Length ({content_length} bytes) exceeds {} byte limit",
+                    self.max_response_bytes,
+                )),
+            });
+        }
+        let bytes = read_body_capped(resp, self.max_response_bytes, &self.id).await?;
         let parsed: Value = serde_json::from_slice(&bytes).map_err(|e| EnrichError {
             enricher_id: self.id.clone(),
             kind: EnrichErrorKind::Parse(format!("JSON: {e}")),
@@ -247,6 +293,32 @@ impl Enricher for HttpEnricher {
         inject_enrichment(result, &self.inject_field, extracted);
         Ok(())
     }
+}
+
+/// Read a `reqwest::Response` body in chunks, bailing as soon as the
+/// accumulated byte count exceeds `max_bytes`. Mirrors the source-side
+/// helper so the daemon's two HTTP surfaces enforce the same hard cap.
+async fn read_body_capped(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    enricher_id: &str,
+) -> Result<Vec<u8>, EnrichError> {
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| EnrichError {
+        enricher_id: enricher_id.to_string(),
+        kind: EnrichErrorKind::Fetch(format!("body read: {e}")),
+    })? {
+        if buf.len() + chunk.len() > max_bytes {
+            return Err(EnrichError {
+                enricher_id: enricher_id.to_string(),
+                kind: EnrichErrorKind::Fetch(format!(
+                    "HTTP response body exceeds {max_bytes} byte limit"
+                )),
+            });
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 impl HttpEnricher {

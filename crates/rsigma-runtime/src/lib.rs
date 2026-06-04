@@ -42,6 +42,7 @@
 //! }
 //! ```
 
+pub mod egress;
 pub mod engine;
 pub mod enrichment;
 pub mod error;
@@ -53,6 +54,10 @@ pub mod pipeline_deprecation;
 pub mod processor;
 pub mod sources;
 
+pub use egress::{
+    EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
+    set_default_egress_policy,
+};
 pub use engine::{EngineStats, RuntimeEngine};
 pub use enrichment::{
     CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,
