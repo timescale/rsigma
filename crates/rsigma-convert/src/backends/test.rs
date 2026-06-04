@@ -1255,7 +1255,14 @@ detection:
         // the value before comparison. The generic dispatch only emits raw
         // equality, so the resulting query never matches what the rule
         // intended.
-        for modifier in ["base64", "base64offset", "wide", "utf16", "utf16be", "windash"] {
+        for modifier in [
+            "base64",
+            "base64offset",
+            "wide",
+            "utf16",
+            "utf16be",
+            "windash",
+        ] {
             let yaml = format!(
                 r#"
 title: Test

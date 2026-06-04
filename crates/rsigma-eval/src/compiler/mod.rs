@@ -38,8 +38,8 @@ use crate::result::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, Rul
 
 pub(crate) use helpers::yaml_to_json_map;
 use helpers::{
-    base64_offset_patterns, build_regex, expand_windash, sigma_string_to_bytes,
-    to_utf16_bom_bytes, to_utf16be_bytes, to_utf16le_bytes, value_to_f64, value_to_plain_string,
+    base64_offset_patterns, build_regex, expand_windash, sigma_string_to_bytes, to_utf16_bom_bytes,
+    to_utf16be_bytes, to_utf16le_bytes, value_to_f64, value_to_plain_string,
 };
 
 // =============================================================================

@@ -279,7 +279,9 @@ pub fn default_convert_detection_item(
     // SQL/SPL. Backends that handle these modifiers natively can override
     // `Backend::convert_detection_item` and bypass the default dispatch.
     if let Some(unsupported) = first_unsupported_default_modifier(modifiers) {
-        return Err(ConvertError::UnsupportedModifier(format!("{unsupported:?}")));
+        return Err(ConvertError::UnsupportedModifier(format!(
+            "{unsupported:?}"
+        )));
     }
 
     let use_all = item.field.has_modifier(rsigma_parser::Modifier::All);
