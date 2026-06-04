@@ -1450,8 +1450,9 @@ detection:
     assert_eq!(c.rules.len(), 1, "rule should still be accepted");
     assert!(c.rules[0].status.is_none(), "invalid status must be None");
     assert!(
-        c.errors.iter().any(|e| e.contains("invalid status")
-            && e.contains("'bogus'")),
+        c.errors
+            .iter()
+            .any(|e| e.contains("invalid status") && e.contains("'bogus'")),
         "warning should mention invalid status; got {:?}",
         c.errors
     );
@@ -1473,8 +1474,9 @@ detection:
     assert_eq!(c.rules.len(), 1);
     assert!(c.rules[0].level.is_none());
     assert!(
-        c.errors.iter().any(|e| e.contains("invalid level")
-            && e.contains("'cataclysmic'")),
+        c.errors
+            .iter()
+            .any(|e| e.contains("invalid level") && e.contains("'cataclysmic'")),
         "warning should mention invalid level; got {:?}",
         c.errors
     );
@@ -1512,15 +1514,18 @@ detection:
 
     let errs = &c.errors;
     assert!(
-        errs.iter().any(|e| e.contains("related[0]") && e.contains("not a mapping")),
+        errs.iter()
+            .any(|e| e.contains("related[0]") && e.contains("not a mapping")),
         "should warn about the string entry; got {errs:?}"
     );
     assert!(
-        errs.iter().any(|e| e.contains("related[1]") && e.contains("missing 'id'")),
+        errs.iter()
+            .any(|e| e.contains("related[1]") && e.contains("missing 'id'")),
         "should warn about the missing id; got {errs:?}"
     );
     assert!(
-        errs.iter().any(|e| e.contains("related[2]") && e.contains("invalid type 'derved'")),
+        errs.iter()
+            .any(|e| e.contains("related[2]") && e.contains("invalid type 'derved'")),
         "should warn about the unknown type; got {errs:?}"
     );
 }
@@ -1541,7 +1546,9 @@ detection:
     assert_eq!(c.rules.len(), 1);
     assert!(c.rules[0].related.is_empty());
     assert!(
-        c.errors.iter().any(|e| e.contains("'related' must be a sequence")),
+        c.errors
+            .iter()
+            .any(|e| e.contains("'related' must be a sequence")),
         "should warn about the wrong-shape related field; got {:?}",
         c.errors
     );

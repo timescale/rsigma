@@ -130,6 +130,51 @@ impl Default for OutputCtx {
     }
 }
 
+/// Sanitize the raw `global.output_format` and `global.color` values
+/// pulled from a config file before they reach [`OutputCtx::resolve`].
+///
+/// Both values previously round-tripped through
+/// `OutputFormat::parse` / `ColorChoice::parse`, with a `None` from
+/// the parser silently falling through to the default. That meant a
+/// typo such as `output_format: xml` was silently ignored: the
+/// effective format reverted to the TTY-aware default and the
+/// operator had no way to discover the mistake short of reading the
+/// source. This wrapper warns on stderr for each unrecognized value
+/// and strips it from the return so callers fall through cleanly.
+///
+/// Returns the sanitized strings: any input that does not parse is
+/// replaced with `None`. The original strings are accepted by value
+/// so the call site can pass `cfg_format` directly without an extra
+/// clone.
+pub(crate) fn warn_invalid_global_output(
+    output_format: Option<String>,
+    color: Option<String>,
+) -> (Option<String>, Option<String>) {
+    let format = output_format.and_then(|s| match OutputFormat::parse(&s) {
+        Some(_) => Some(s),
+        None => {
+            eprintln!(
+                "warning: invalid global.output_format '{s}' \
+                 (expected one of: json, ndjson, table, csv, tsv); \
+                 falling back to default"
+            );
+            None
+        }
+    });
+    let color = color.and_then(|s| match ColorChoice::parse(&s) {
+        Some(_) => Some(s),
+        None => {
+            eprintln!(
+                "warning: invalid global.color '{s}' \
+                 (expected one of: auto, always, never); \
+                 falling back to default"
+            );
+            None
+        }
+    });
+    (format, color)
+}
+
 impl OutputCtx {
     /// Resolve the effective `OutputCtx` from layered inputs.
     ///
@@ -583,5 +628,42 @@ mod tests {
         let r = Row { name: "rule", n: 3 };
         assert_eq!(Row::headers(), &["NAME", "N"]);
         assert_eq!(r.row(), vec!["rule".to_string(), "3".to_string()]);
+    }
+
+    #[test]
+    fn warn_invalid_global_output_keeps_recognized_values() {
+        // Valid strings pass through untouched. The function is only
+        // responsible for filtering out unrecognized values; the actual
+        // parsing happens later in `OutputCtx::resolve`.
+        let (f, c) = warn_invalid_global_output(Some("ndjson".into()), Some("always".into()));
+        assert_eq!(f.as_deref(), Some("ndjson"));
+        assert_eq!(c.as_deref(), Some("always"));
+    }
+
+    #[test]
+    fn warn_invalid_global_output_strips_unrecognized_format() {
+        // An invalid format string is replaced with `None` so the
+        // downstream resolver falls back to its TTY-aware default
+        // instead of silently keeping the misconfigured value.
+        let (f, c) = warn_invalid_global_output(Some("xml".into()), None);
+        assert!(f.is_none());
+        assert!(c.is_none());
+    }
+
+    #[test]
+    fn warn_invalid_global_output_strips_unrecognized_color() {
+        let (f, c) = warn_invalid_global_output(None, Some("rainbow".into()));
+        assert!(f.is_none());
+        assert!(c.is_none());
+    }
+
+    #[test]
+    fn warn_invalid_global_output_passes_through_none() {
+        // The common case (no global override in the config file) must
+        // not introduce a phantom warning. With both inputs `None`
+        // there is nothing to validate and both outputs are `None`.
+        let (f, c) = warn_invalid_global_output(None, None);
+        assert!(f.is_none());
+        assert!(c.is_none());
     }
 }

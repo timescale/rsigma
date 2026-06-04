@@ -258,3 +258,76 @@ fn daemon_rejects_invalid_egress_policy_value() {
         .failure()
         .stderr(predicate::str::contains("egress-policy"));
 }
+
+#[cfg(feature = "daemon")]
+#[test]
+fn invalid_global_output_format_in_config_warns_then_falls_back() {
+    // Bad `global.output_format` used to be ignored silently. Now the
+    // CLI prints a stderr warning and reverts to the TTY-aware
+    // default. The command itself still succeeds because the bad
+    // value is treated as "unset" by `warn_invalid_global_output`.
+    // Use `engine daemon --dry-run` because it accepts `--config` and
+    // exits without trying to bind any sockets.
+    let cfg = temp_file(
+        ".yaml",
+        "global:\n  output_format: xml\ndaemon:\n  rules: /tmp/myrules\n",
+    );
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("invalid global.output_format 'xml'")
+                .and(predicate::str::contains("falling back to default")),
+        );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn invalid_global_color_in_config_warns_then_falls_back() {
+    let cfg = temp_file(
+        ".yaml",
+        "global:\n  color: rainbow\ndaemon:\n  rules: /tmp/myrules\n",
+    );
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("invalid global.color 'rainbow'"));
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn valid_global_output_in_config_emits_no_warning() {
+    let cfg = temp_file(
+        ".yaml",
+        "global:\n  output_format: ndjson\n  color: never\ndaemon:\n  rules: /tmp/myrules\n",
+    );
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("invalid global.output_format")
+                .not()
+                .and(predicate::str::contains("invalid global.color").not()),
+        );
+}

@@ -24,10 +24,7 @@ use super::{
 /// these so a single typo does not invalidate the whole document.
 ///
 /// Reference: pySigma rule.py SigmaRule.from_yaml / from_dict
-pub(super) fn parse_detection_rule(
-    value: &Value,
-    warnings: &mut Vec<String>,
-) -> Result<SigmaRule> {
+pub(super) fn parse_detection_rule(value: &Value, warnings: &mut Vec<String>) -> Result<SigmaRule> {
     let m = value
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Expected a YAML mapping".into()))?;

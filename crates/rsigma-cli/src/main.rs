@@ -270,6 +270,7 @@ fn main() {
     // but before any command runs. The same precedence model that drives
     // --log-format applies here: flag > env > file > default.
     let (cfg_format, cfg_color) = config::discovered_global_output(cfg_override.as_deref());
+    let (cfg_format, cfg_color) = output::warn_invalid_global_output(cfg_format, cfg_color);
     let stdout_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let ctx = output::OutputCtx::resolve(
         cli.output_format,
