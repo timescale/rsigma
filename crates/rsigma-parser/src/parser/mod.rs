@@ -100,7 +100,10 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
 
                         previous = Some(final_val.clone());
 
-                        match parse_document(&final_val) {
+                        let mut doc_warnings: Vec<String> = Vec::new();
+                        let parsed = parse_document(&final_val, &mut doc_warnings);
+                        collection.errors.extend(doc_warnings);
+                        match parsed {
                             Ok(doc) => match doc {
                                 SigmaDocument::Rule(rule) => collection.rules.push(*rule),
                                 SigmaDocument::Correlation(corr) => {
@@ -139,7 +142,10 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
         previous = Some(merged.clone());
 
         // Determine document type and parse
-        match parse_document(&merged) {
+        let mut doc_warnings: Vec<String> = Vec::new();
+        let parsed = parse_document(&merged, &mut doc_warnings);
+        collection.errors.extend(doc_warnings);
+        match parsed {
             Ok(doc) => match doc {
                 SigmaDocument::Rule(rule) => collection.rules.push(*rule),
                 SigmaDocument::Correlation(corr) => collection.correlations.push(corr),
@@ -201,17 +207,17 @@ pub fn parse_sigma_directory(dir: &Path) -> Result<SigmaCollection> {
 /// Parse a single YAML value into the appropriate Sigma document type.
 ///
 /// Reference: pySigma collection.py from_dicts — checks for 'correlation' and 'filter' keys
-fn parse_document(value: &Value) -> Result<SigmaDocument> {
+fn parse_document(value: &Value, warnings: &mut Vec<String>) -> Result<SigmaDocument> {
     let mapping = value
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Document is not a YAML mapping".into()))?;
 
     if mapping.contains_key(Value::String("correlation".into())) {
-        correlation::parse_correlation_rule(value).map(SigmaDocument::Correlation)
+        correlation::parse_correlation_rule(value, warnings).map(SigmaDocument::Correlation)
     } else if mapping.contains_key(Value::String("filter".into())) {
-        filter::parse_filter_rule(value).map(SigmaDocument::Filter)
+        filter::parse_filter_rule(value, warnings).map(SigmaDocument::Filter)
     } else {
-        detection::parse_detection_rule(value).map(|r| SigmaDocument::Rule(Box::new(r)))
+        detection::parse_detection_rule(value, warnings).map(|r| SigmaDocument::Rule(Box::new(r)))
     }
 }
 
@@ -289,20 +295,74 @@ pub(super) fn parse_logsource(value: &Value) -> Result<LogSource> {
     })
 }
 
-pub(super) fn parse_related(value: Option<&Value>) -> Vec<Related> {
-    let Some(Value::Sequence(seq)) = value else {
+/// Parse a `related:` list. Surfaces invalid entries through
+/// `warnings` instead of silently dropping them so a typo in
+/// `type: derved` (a misspelt `derived`) shows up in
+/// `SigmaCollection.errors` rather than being absent without trace.
+pub(super) fn parse_related(value: Option<&Value>, warnings: &mut Vec<String>) -> Vec<Related> {
+    let Some(seq_val) = value else {
+        return Vec::new();
+    };
+    let Some(seq) = seq_val.as_sequence() else {
+        warnings.push(format!(
+            "'related' must be a sequence of mappings, got: {seq_val:?}"
+        ));
         return Vec::new();
     };
 
     seq.iter()
-        .filter_map(|item| {
-            let m = item.as_mapping()?;
-            let id = get_str(m, "id")?.to_string();
-            let type_str = get_str(m, "type")?;
-            let relation_type = type_str.parse().ok()?;
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let Some(m) = item.as_mapping() else {
+                warnings.push(format!("related[{i}] is not a mapping: {item:?}"));
+                return None;
+            };
+            let id = match get_str(m, "id") {
+                Some(s) => s.to_string(),
+                None => {
+                    warnings.push(format!("related[{i}] missing 'id'"));
+                    return None;
+                }
+            };
+            let type_str = match get_str(m, "type") {
+                Some(s) => s,
+                None => {
+                    warnings.push(format!("related[{i}] missing 'type'"));
+                    return None;
+                }
+            };
+            let relation_type = match type_str.parse() {
+                Ok(t) => t,
+                Err(_) => {
+                    warnings.push(format!(
+                        "related[{i}] invalid type '{type_str}' (expected one of: \
+                         derived, obsolete, merged, renamed, similar)"
+                    ));
+                    return None;
+                }
+            };
             Some(Related { id, relation_type })
         })
         .collect()
+}
+
+/// Parse a string value into an enum, pushing a warning into
+/// `warnings` when the value is present but does not parse. Returns
+/// `None` for both "absent" and "invalid", matching the previous
+/// silent `parse().ok()` contract for downstream consumers.
+pub(super) fn parse_enum_with_warn<T: std::str::FromStr>(
+    raw: Option<&str>,
+    field: &str,
+    warnings: &mut Vec<String>,
+) -> Option<T> {
+    let raw = raw?;
+    match raw.parse() {
+        Ok(v) => Some(v),
+        Err(_) => {
+            warnings.push(format!("invalid {field}: '{raw}'"));
+            None
+        }
+    }
 }
 
 pub(super) fn val_key(s: &str) -> Value {

@@ -7,7 +7,9 @@ use crate::condition::parse_condition;
 use crate::error::{Result, SigmaParserError};
 use crate::value::Timespan;
 
-use super::{collect_custom_attributes, get_str, get_str_list, parse_related, val_key};
+use super::{
+    collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_related, val_key,
+};
 
 // =============================================================================
 // Correlation Rule Parsing
@@ -15,8 +17,15 @@ use super::{collect_custom_attributes, get_str, get_str_list, parse_related, val
 
 /// Parse a correlation rule from a YAML value.
 ///
+/// `warnings` receives non-fatal issues (invalid `status` / `level`
+/// values, malformed `related:` entries); see
+/// [`parse_detection_rule`](super::detection::parse_detection_rule).
+///
 /// Reference: pySigma correlations.py SigmaCorrelationRule.from_dict
-pub(super) fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
+pub(super) fn parse_correlation_rule(
+    value: &Value,
+    warnings: &mut Vec<String>,
+) -> Result<CorrelationRule> {
     let m = value
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidCorrelation("Expected a YAML mapping".into()))?;
@@ -109,19 +118,19 @@ pub(super) fn parse_correlation_rule(value: &Value) -> Result<CorrelationRule> {
         title,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(|s| s.parse().ok()),
+        status: parse_enum_with_warn(get_str(m, "status"), "status", warnings),
         description: get_str(m, "description").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
-        related: parse_related(m.get(val_key("related"))),
+        related: parse_related(m.get(val_key("related")), warnings),
         references: get_str_list(m, "references"),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
         license: get_str(m, "license").map(|s| s.to_string()),
         tags: get_str_list(m, "tags"),
         fields: get_str_list(m, "fields"),
         falsepositives: get_str_list(m, "falsepositives"),
-        level: get_str(m, "level").and_then(|s| s.parse().ok()),
+        level: parse_enum_with_warn(get_str(m, "level"), "level", warnings),
         scope: get_str_list(m, "scope"),
         correlation_type,
         rules,

@@ -5,7 +5,8 @@ use crate::error::{Result, SigmaParserError};
 
 use super::detection::parse_detections;
 use super::{
-    collect_custom_attributes, get_str, get_str_list, parse_logsource, parse_related, val_key,
+    collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_logsource,
+    parse_related, val_key,
 };
 
 // =============================================================================
@@ -13,7 +14,11 @@ use super::{
 // =============================================================================
 
 /// Parse a filter rule from a YAML value.
-pub(super) fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
+///
+/// `warnings` receives non-fatal issues (invalid `status` / `level`
+/// values, malformed `related:` entries); see
+/// [`parse_detection_rule`](super::detection::parse_detection_rule).
+pub(super) fn parse_filter_rule(value: &Value, warnings: &mut Vec<String>) -> Result<FilterRule> {
     let m = value
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Expected a YAML mapping".into()))?;
@@ -97,18 +102,18 @@ pub(super) fn parse_filter_rule(value: &Value) -> Result<FilterRule> {
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(|s| s.parse().ok()),
+        status: parse_enum_with_warn(get_str(m, "status"), "status", warnings),
         description: get_str(m, "description").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
         date: get_str(m, "date").map(|s| s.to_string()),
         modified: get_str(m, "modified").map(|s| s.to_string()),
-        related: parse_related(m.get(val_key("related"))),
+        related: parse_related(m.get(val_key("related")), warnings),
         license: get_str(m, "license").map(|s| s.to_string()),
         references: get_str_list(m, "references"),
         tags: get_str_list(m, "tags"),
         fields: get_str_list(m, "fields"),
         falsepositives: get_str_list(m, "falsepositives"),
-        level: get_str(m, "level").and_then(|s| s.parse().ok()),
+        level: parse_enum_with_warn(get_str(m, "level"), "level", warnings),
         scope: get_str_list(m, "scope"),
         logsource,
         rules,

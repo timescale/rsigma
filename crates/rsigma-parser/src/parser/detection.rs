@@ -8,7 +8,8 @@ use crate::error::{Result, SigmaParserError};
 use crate::value::SigmaValue;
 
 use super::{
-    collect_custom_attributes, get_str, get_str_list, parse_logsource, parse_related, val_key,
+    collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_logsource,
+    parse_related, val_key,
 };
 
 // =============================================================================
@@ -17,8 +18,16 @@ use super::{
 
 /// Parse a detection rule from a YAML value.
 ///
+/// `warnings` receives non-fatal issues that would otherwise be
+/// silently swallowed (invalid `status` / `level` values, malformed
+/// `related:` entries). The parser still returns `Ok(rule)` for
+/// these so a single typo does not invalidate the whole document.
+///
 /// Reference: pySigma rule.py SigmaRule.from_yaml / from_dict
-pub(super) fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
+pub(super) fn parse_detection_rule(
+    value: &Value,
+    warnings: &mut Vec<String>,
+) -> Result<SigmaRule> {
     let m = value
         .as_mapping()
         .ok_or_else(|| SigmaParserError::InvalidRule("Expected a YAML mapping".into()))?;
@@ -72,9 +81,9 @@ pub(super) fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         detection,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
-        related: parse_related(m.get(val_key("related"))),
+        related: parse_related(m.get(val_key("related")), warnings),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),
-        status: get_str(m, "status").and_then(|s| s.parse().ok()),
+        status: parse_enum_with_warn(get_str(m, "status"), "status", warnings),
         description: get_str(m, "description").map(|s| s.to_string()),
         license: get_str(m, "license").map(|s| s.to_string()),
         author: get_str(m, "author").map(|s| s.to_string()),
@@ -83,7 +92,7 @@ pub(super) fn parse_detection_rule(value: &Value) -> Result<SigmaRule> {
         modified: get_str(m, "modified").map(|s| s.to_string()),
         fields: get_str_list(m, "fields"),
         falsepositives: get_str_list(m, "falsepositives"),
-        level: get_str(m, "level").and_then(|s| s.parse().ok()),
+        level: parse_enum_with_warn(get_str(m, "level"), "level", warnings),
         tags: get_str_list(m, "tags"),
         scope: get_str_list(m, "scope"),
         custom_attributes,

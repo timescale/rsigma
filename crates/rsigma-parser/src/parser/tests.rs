@@ -1435,6 +1435,119 @@ detection:
 }
 
 #[test]
+fn parse_surfaces_invalid_status_value() {
+    let yaml = r#"
+title: Bogus status
+logsource:
+    product: test
+status: bogus
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(c.rules.len(), 1, "rule should still be accepted");
+    assert!(c.rules[0].status.is_none(), "invalid status must be None");
+    assert!(
+        c.errors.iter().any(|e| e.contains("invalid status")
+            && e.contains("'bogus'")),
+        "warning should mention invalid status; got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn parse_surfaces_invalid_level_value() {
+    let yaml = r#"
+title: Bogus level
+logsource:
+    product: test
+level: cataclysmic
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(c.rules.len(), 1);
+    assert!(c.rules[0].level.is_none());
+    assert!(
+        c.errors.iter().any(|e| e.contains("invalid level")
+            && e.contains("'cataclysmic'")),
+        "warning should mention invalid level; got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn parse_surfaces_invalid_related_entries() {
+    // Three intentional defects: a non-mapping entry, a missing
+    // `id`, and an unknown `type`. The valid trailing entry must
+    // still survive so a partial parse remains useful.
+    let yaml = r#"
+title: Mixed related
+logsource:
+    product: test
+related:
+    - "not-a-mapping"
+    - type: derived
+    - id: 11111111-2222-3333-4444-555555555555
+      type: derved
+    - id: 99999999-8888-7777-6666-555555555555
+      type: derived
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(c.rules.len(), 1);
+    let related = &c.rules[0].related;
+    assert_eq!(
+        related.len(),
+        1,
+        "only the well-formed related entry should be retained"
+    );
+
+    let errs = &c.errors;
+    assert!(
+        errs.iter().any(|e| e.contains("related[0]") && e.contains("not a mapping")),
+        "should warn about the string entry; got {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("related[1]") && e.contains("missing 'id'")),
+        "should warn about the missing id; got {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("related[2]") && e.contains("invalid type 'derved'")),
+        "should warn about the unknown type; got {errs:?}"
+    );
+}
+
+#[test]
+fn parse_surfaces_invalid_related_top_level_shape() {
+    let yaml = r#"
+title: Wrong-shape related
+logsource:
+    product: test
+related: "should be a sequence"
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(c.rules.len(), 1);
+    assert!(c.rules[0].related.is_empty());
+    assert!(
+        c.errors.iter().any(|e| e.contains("'related' must be a sequence")),
+        "should warn about the wrong-shape related field; got {:?}",
+        c.errors
+    );
+}
+
+#[test]
 fn sigma_collection_into_result_returns_ok_when_clean() {
     let yaml = r#"
 title: Clean Rule
