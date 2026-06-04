@@ -689,7 +689,15 @@ pub struct SigmaCollection {
     pub rules: Vec<SigmaRule>,
     pub correlations: Vec<CorrelationRule>,
     pub filters: Vec<FilterRule>,
-    /// Parsing errors that were collected (when `collect_errors` is true).
+    /// Per-document parse errors accumulated while building the
+    /// collection. Populated by [`parse_sigma_yaml`](crate::parse_sigma_yaml)
+    /// and friends; one entry per document the parser could not
+    /// produce a [`SigmaRule`], [`CorrelationRule`], or [`FilterRule`]
+    /// from. The collection is still returned on `Ok(_)` so callers
+    /// can decide whether a partial parse is acceptable; the
+    /// [`SigmaCollection::has_errors`] / [`SigmaCollection::error_count`]
+    /// / [`SigmaCollection::into_result`] helpers cover the common
+    /// "treat any error as a failure" path.
     #[serde(skip)]
     pub errors: Vec<String>,
 }
@@ -711,6 +719,32 @@ impl SigmaCollection {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// True when the parser recorded one or more per-document parse
+    /// errors while building this collection.
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    /// Number of per-document parse errors recorded while building
+    /// this collection. Equivalent to `self.errors.len()`.
+    pub fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Promote the accumulated errors to a hard failure. Returns the
+    /// collection when [`SigmaCollection::has_errors`] is false;
+    /// otherwise returns the collection's [`errors`](Self::errors) so
+    /// callers can format them. The original collection is consumed
+    /// either way so the success path can move out of `self` without
+    /// re-cloning the documents.
+    pub fn into_result(self) -> Result<Self, Vec<String>> {
+        if self.has_errors() {
+            Err(self.errors)
+        } else {
+            Ok(self)
+        }
     }
 }
 

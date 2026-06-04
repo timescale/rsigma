@@ -1394,3 +1394,61 @@ fn deep_merge_succeeds_at_reasonable_depth() {
     let result = super::deep_merge(nested_map(10), nested_map(10));
     assert!(result.is_ok());
 }
+
+#[test]
+fn sigma_collection_has_errors_and_error_count_are_consistent() {
+    // Per-document parse failures land in `collection.errors` rather
+    // than aborting the whole parse, so the helpers must agree with
+    // the underlying vec.
+    let yaml = r#"
+action: repeat
+title: Orphan
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    assert!(c.has_errors());
+    assert_eq!(c.error_count(), c.errors.len());
+    assert_eq!(c.error_count(), 1);
+}
+
+#[test]
+fn sigma_collection_into_result_promotes_errors_to_err() {
+    let yaml = r#"
+action: repeat
+title: Orphan
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    match c.into_result() {
+        Ok(_) => panic!("collection with errors must surface as Err"),
+        Err(errors) => {
+            assert_eq!(errors.len(), 1);
+            assert!(errors[0].contains("without a previous document"));
+        }
+    }
+}
+
+#[test]
+fn sigma_collection_into_result_returns_ok_when_clean() {
+    let yaml = r#"
+title: Clean Rule
+logsource:
+    product: test
+detection:
+    selection:
+        Field: value
+    condition: selection
+"#;
+    let c = parse_sigma_yaml(yaml).unwrap();
+    let promoted = c
+        .into_result()
+        .expect("clean collection should round-trip through into_result");
+    assert_eq!(promoted.rules.len(), 1);
+    assert!(!promoted.has_errors());
+}
