@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "arc-swap",
  "assert_cmd",
@@ -3885,7 +3885,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-convert"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "insta",
  "log",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -3928,7 +3928,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-lsp"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "env_logger",
  "insta",
@@ -3941,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "criterion",
  "globset",
@@ -3959,7 +3959,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-runtime"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "arc-swap",
  "async-nats",

@@ -3,7 +3,18 @@
 All notable changes to RSigma are documented in this file.
 Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
-## [Unreleased]
+## [0.14.0] - 2026-06-05
+
+**TL;DR**
+RSigma v0.14.0 is the "layered config, structured output, and correctness/hardening" release:
+* Layered YAML configuration with explicit precedence (flag > env > project > user > system > default) plus a new `rsigma config` group (`init`, `validate`, `show`, `schema`, `path`, `reload`).
+* Structured output everywhere: a global `--output-format <json|ndjson|table|csv|tsv>` selector with a TTY-aware default, plus global `--color`, `--quiet`, and `--no-stats`.
+* Custom linter tag namespaces via a repeatable `--tag-namespace` flag and a `tag_namespaces` config key, so organisation-specific tags no longer force disabling `unknown_tag_namespace` wholesale, thanks to @fwosar.
+* Sigma correctness: multi-field `value_count` composite keys, compile-time rejection of multi-field numeric aggregations, empty `value_median` returns `None`, cross-crate detection-name selector consistency, and convert-side rejection of modifiers it cannot express.
+* Runtime hardening: a category-based HTTP egress policy (SSRF/cloud-metadata defense applied at DNS resolution), a 10 MiB enricher response cap, hot-reload that preserves engine tuning, and fail-closed dynamic-source resolution.
+* Evaluator and parser robustness: compile-time rejection of conflicting detection-modifier combinations, allocation-free `JsonEvent` dot-path traversal, and CLI diagnostics that stop silently swallowing invalid `status` / `level` / `related:` metadata.
+* Detached dynamic sources: pipeline-embedded `sources:` now warns louder on stderr and through the daemon hot-reload path.
+* Release pipeline, CI, Docker, and supply-chain hardening before publish, two batched Dependabot rollups, and a docs-accuracy sweep across the site.
 
 ### Documentation accuracy: TLS, feature flags, metric and lint counts, CLI surface, endpoint inventory, benchmark freshness (#181)
 
@@ -1598,6 +1609,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.14.0]: https://github.com/timescale/rsigma/releases/tag/v0.14.0
 [0.13.0]: https://github.com/timescale/rsigma/releases/tag/v0.13.0
 [0.12.0]: https://github.com/timescale/rsigma/releases/tag/v0.12.0
 [0.11.0]: https://github.com/timescale/rsigma/releases/tag/v0.11.0
