@@ -33,8 +33,10 @@ pub fn parse_syslog(line: &str, config: &SyslogConfig) -> EventInputDecoded {
     let tz = chrono::FixedOffset::east_opt(config.default_tz_offset_secs)
         .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
 
+    let cleaned = line.replace('\u{FEFF}', "");
+
     let parsed = syslog_loose::parse_message_with_year_tz(
-        line,
+        &cleaned,
         resolve_year,
         Some(tz),
         syslog_loose::Variant::Either,
