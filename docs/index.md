@@ -137,7 +137,7 @@ A five-part article series on building RSigma and using it in production:
 
 ## At a glance
 
-- **Latest release:** `v{{ rsigma.version }}` (MIT licensed; six crates in the workspace).
+- **Latest release:** `v{{ rsigma.version }}` (MIT licensed; seven crates in the workspace).
 - **MSRV:** Rust `{{ rsigma.msrv }}`, edition `{{ rsigma.edition }}`.
 - **Cross-platform binaries:** Linux, macOS, Windows on amd64 and arm64.
 - **Container image:** `{{ rsigma.docker_image }}:latest` (multi-arch, cosign-signed, SBOM, SLSA Build L3 provenance).

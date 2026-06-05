@@ -1,6 +1,6 @@
 # Architecture
 
-RSigma is a workspace of six crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
+RSigma is a workspace of seven crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
 
 For operator-facing material see the [User Guide](../guide/evaluating-rules.md). For per-crate API docs see [docs.rs/rsigma](https://docs.rs/rsigma).
 
@@ -91,6 +91,7 @@ The dependency direction goes left to right in the diagram above. Higher crates 
 | [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `TestBackend` | — |
 | [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
 | [`rsigma-lsp`](https://docs.rs/rsigma-lsp) | Language Server Protocol for editors. Diagnostics from the linter + parser + compiler, plus completions, hovers, and symbols. | `Backend` (tower-lsp impl), `Diagnostic` mapping | — |
+| `rstix` | STIX 2.1 + TAXII 2.1 library crate under phased implementation. | `parse_bundle` (stub in Phase 0), feature-gated module surface for model/pattern/validate/graph/store/taxii | `serde`, `pattern`, `validate`, `graph`, `marking`, `store`, `enrichment`, `taxii`, `testing` |
 | `rsigma-cli` | The `rsigma` binary. Wires the other crates into a CLI and the streaming daemon. | `engine eval`, `engine daemon`, `rule *`, `backend *`, `pipeline resolve` | `daemon`, `daemon-nats`, `daemon-otlp`, plus all eval/runtime feature flags. |
 
 `rsigma-parser` has no Rust dependencies on the others. `rsigma-eval`, `rsigma-convert`, and `rsigma-lsp` depend on `rsigma-parser` and nothing else above it. `rsigma-runtime` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-cli` depends on everything.

@@ -53,6 +53,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 | [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
 | [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, field catalog, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
+| [`rstix`](crates/rstix/) | STIX 2.1 and TAXII 2.1 library crate under phased implementation |
 
 > [!TIP]
 > To learn more about RSigma, read these articles:

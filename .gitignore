@@ -1,4 +1,6 @@
 /target
+/fuzz/target
+*.profdata
 
 # VSCode extension build artifacts
 editors/vscode/node_modules/
@@ -19,3 +21,5 @@ editors/vscode/*.vsix
 .cursor/
 
 /docs-drafts/
+/plan/
+

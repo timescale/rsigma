@@ -4,3 +4,4 @@ nav:
   - rsigma-eval: eval.md
   - rsigma-convert: convert.md
   - rsigma-runtime: runtime.md
+  - rstix: rstix.md

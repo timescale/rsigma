@@ -10,6 +10,7 @@ This directory contains `rsigma`'s various crates.
 | [`rsigma-runtime`][rsigma-runtime-dir] | Streaming runtime with input adapters, log processor, and hot-reload. |
 | [`rsigma`][rsigma-cli-dir] | CLI for parsing, validating, evaluating, converting rules, and running a detection daemon. |
 | [`rsigma-lsp`][rsigma-lsp-dir] | Language Server Protocol (LSP) server for Sigma detection rules. |
+| [`rstix`][rstix-dir] | STIX 2.1 and TAXII 2.1 library crate under phased implementation. |
 
 [rsigma-parser-dir]: ./rsigma-parser
 [rsigma-eval-dir]: ./rsigma-eval
@@ -17,3 +18,4 @@ This directory contains `rsigma`'s various crates.
 [rsigma-runtime-dir]: ./rsigma-runtime
 [rsigma-cli-dir]: ./rsigma-cli
 [rsigma-lsp-dir]: ./rsigma-lsp
+[rstix-dir]: ./rstix

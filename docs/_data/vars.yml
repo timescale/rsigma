@@ -12,3 +12,4 @@ rsigma:
     - { name: rsigma-runtime, role: "Streaming runtime with input adapters, log processor, and hot-reload" }
     - { name: rsigma, role: "CLI for parsing, validating, linting, evaluating, converting rules, and running the daemon" }
     - { name: rsigma-lsp, role: "Language Server Protocol (LSP) server for IDE support" }
+    - { name: rstix, role: "STIX 2.1 and TAXII 2.1 library for parsing threat intel and running TAXII client workflows" }

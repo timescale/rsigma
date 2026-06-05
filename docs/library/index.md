@@ -13,6 +13,7 @@ For the canonical, line-by-line API reference, follow [docs.rs/rsigma](https://d
 | [`rsigma-convert`](convert.md) | `rsigma-parser` | Emit backend-native query strings (PostgreSQL, LynxDB, or a custom backend you implement). |
 | [`rsigma-runtime`](runtime.md) | `rsigma-parser`, `rsigma-eval` | Wrap the engine in a streaming runtime: input adapters, sinks, hot-reload, dynamic source resolution. |
 | `rsigma-lsp` | `rsigma-parser`, `rsigma-eval` | Run the Sigma language server in your own editor integration. |
+| [`rstix`](rstix.md) | (workspace-internal foundations in progress) | Build STIX 2.1 and TAXII 2.1 parsing, validation, graph, and client workflows. |
 
 `rsigma-cli` (the binary) ties everything together but is not a library and is not published to crates.io.
 
