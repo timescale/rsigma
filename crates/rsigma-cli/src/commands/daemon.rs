@@ -254,6 +254,14 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "bloom-prefilter")]
     pub bloom_prefilter: bool,
 
+    /// Match-detail verbosity for detection output: off (default),
+    /// summary, or full. `summary` adds the matcher kind, selection, and
+    /// case sensitivity (and reports keyword and absence matches); `full`
+    /// also records the matched pattern. Higher levels enlarge each
+    /// detection line; `off` keeps the historical `{ field, value }` shape.
+    #[arg(long = "match-detail", value_parser = ["off", "summary", "full"], default_value = "off")]
+    pub match_detail: String,
+
     /// Memory budget (in bytes) for the bloom index. Defaults to 1 MB
     /// (1048576). Lower the cap on memory-constrained deployments;
     /// raise it for very large rule sets where the default starts
@@ -476,6 +484,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         allow_remote_include,
         egress_policy,
         bloom_prefilter,
+        match_detail,
         bloom_max_bytes,
         observe_fields,
         observe_fields_max_keys,
@@ -583,6 +592,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         allow_remote_include,
         egress_policy,
         bloom_prefilter,
+        match_detail,
         bloom_max_bytes,
         observe_fields,
         observe_fields_max_keys,
@@ -797,6 +807,11 @@ fn apply_daemon_config(
         {
             args.bloom_prefilter = v;
         }
+        if !explicit("match_detail")
+            && let Some(v) = engine.match_detail
+        {
+            args.match_detail = v;
+        }
         if !explicit("bloom_max_bytes")
             && let Some(v) = engine.bloom_max_bytes
         {
@@ -883,6 +898,7 @@ fn run_daemon(
     allow_remote_include: bool,
     egress_policy: String,
     bloom_prefilter: bool,
+    match_detail: String,
     bloom_max_bytes: Option<usize>,
     observe_fields: bool,
     observe_fields_max_keys: usize,
@@ -991,12 +1007,18 @@ fn run_daemon(
         process::exit(exit_code::CONFIG_ERROR);
     });
 
+    // `value_parser` (and the config schema) restrict this to off/summary/full.
+    let match_detail = match_detail
+        .parse::<rsigma_eval::MatchDetailLevel>()
+        .unwrap_or(rsigma_eval::MatchDetailLevel::Off);
+
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
         pipeline_paths: file_pipeline_paths,
         corr_config,
         include_event,
+        match_detail,
         pretty,
         api_addr: addr,
         event_filter,

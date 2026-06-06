@@ -7,8 +7,8 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
-    CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, Pipeline,
-    ResultBody, RuleFieldSet,
+    CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, MatchDetailLevel,
+    Pipeline, ResultBody, RuleFieldSet,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -79,6 +79,14 @@ pub(crate) struct EvalArgs {
     /// Equivalent to the `rsigma.include_event` custom attribute.
     #[arg(long = "include-event")]
     pub include_event: bool,
+
+    /// Match-detail verbosity for detection output.
+    ///   off     — field + value only (default; historical shape)
+    ///   summary — adds the matcher kind, selection, and case sensitivity,
+    ///             and reports keyword and absence matches
+    ///   full    — also records the matched pattern
+    #[arg(long = "match-detail", value_parser = ["off", "summary", "full"], default_value = "off")]
+    pub match_detail: String,
 
     /// Correlation event inclusion mode:
     ///   none  — don't include events (default, zero overhead)
@@ -283,6 +291,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         action,
         no_detections,
         include_event,
+        match_detail,
         correlation_event_mode,
         max_correlation_events,
         timestamp_fields,
@@ -315,6 +324,11 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     }
 
     let has_correlations = !collection.correlations.is_empty();
+
+    // `value_parser` restricts this to off/summary/full, so parsing cannot fail.
+    let match_detail = match_detail
+        .parse::<MatchDetailLevel>()
+        .unwrap_or(MatchDetailLevel::Off);
 
     let event_filter = crate::build_event_filter(jq, jsonpath);
 
@@ -362,6 +376,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &event_filter,
             corr_config,
             include_event,
+            match_detail,
             &input_format,
             &syslog_tz,
             bloom_prefilter,
@@ -379,6 +394,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &pipelines,
             &event_filter,
             include_event,
+            match_detail,
             &input_format,
             &syslog_tz,
             bloom_prefilter,
@@ -409,6 +425,7 @@ fn cmd_eval_with_correlations(
     event_filter: &EventFilter,
     config: rsigma_eval::CorrelationConfig,
     include_event: bool,
+    match_detail: MatchDetailLevel,
     input_format_str: &str,
     syslog_tz_str: &str,
     bloom_prefilter: bool,
@@ -418,6 +435,7 @@ fn cmd_eval_with_correlations(
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
+    engine.set_match_detail(match_detail);
     if let Some(budget) = bloom_max_bytes {
         engine.set_bloom_max_bytes(budget);
     }
@@ -687,6 +705,7 @@ fn cmd_eval_detection_only(
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     include_event: bool,
+    match_detail: MatchDetailLevel,
     input_format_str: &str,
     syslog_tz_str: &str,
     bloom_prefilter: bool,
@@ -696,6 +715,7 @@ fn cmd_eval_detection_only(
 ) -> bool {
     let mut engine = Engine::new();
     engine.set_include_event(include_event);
+    engine.set_match_detail(match_detail);
     if let Some(budget) = bloom_max_bytes {
         engine.set_bloom_max_bytes(budget);
     }

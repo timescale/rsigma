@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use rsigma_eval::{CorrelationConfig, Pipeline, ProcessResult};
+use rsigma_eval::{CorrelationConfig, MatchDetailLevel, Pipeline, ProcessResult};
 use rsigma_runtime::{
     AckToken, EnrichmentPipeline, FieldObserver, FileSink, InputFormat, LogProcessor, MetricsHook,
     RawEvent, RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
@@ -102,6 +102,9 @@ pub struct DaemonConfig {
     /// Enable opt-in bloom-filter pre-filtering of positive substring
     /// matchers. Off by default; benefit is workload-dependent.
     pub bloom_prefilter: bool,
+    /// Match-detail verbosity forwarded to the inner detection engine.
+    /// `Off` by default (historical wire shape).
+    pub match_detail: MatchDetailLevel,
     /// Optional override for the bloom memory budget (bytes). `None` means
     /// the crate default (1 MB).
     pub bloom_max_bytes: Option<usize>,
@@ -168,6 +171,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
     engine.set_allow_remote_include(config.allow_remote_include);
+    engine.set_match_detail(config.match_detail);
     engine.set_bloom_prefilter(config.bloom_prefilter);
     if let Some(budget) = config.bloom_max_bytes {
         engine.set_bloom_max_bytes(budget);

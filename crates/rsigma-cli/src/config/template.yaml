@@ -93,6 +93,10 @@ daemon:
   engine:
     # Enable bloom-filter pre-filtering of positive substring matchers.
     bloom_prefilter: false
+    # Match-detail verbosity for detection output: off (default), summary, full.
+    # summary adds the matcher kind/selection (and keyword/absence matches);
+    # full also records the matched pattern. off keeps the {field, value} shape.
+    match_detail: off
     # Memory budget (bytes) for the bloom index. No effect unless bloom_prefilter.
     # bloom_max_bytes: 1048576
     # Observe event field keys for coverage reporting.

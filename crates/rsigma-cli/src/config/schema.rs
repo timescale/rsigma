@@ -319,6 +319,11 @@ pub(crate) struct EnginePartial {
     /// Cross-rule Aho-Corasick pre-filter. Ignored unless built with `daachorse-index`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_rule_ac: Option<bool>,
+    /// Match-detail verbosity for detection output: `off` (default),
+    /// `summary`, or `full`. Controls how much per-field match information
+    /// is attached to detection results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_detail: Option<String>,
     /// HTTP egress policy applied to dynamic-source and enrichment HTTP clients:
     /// `default` (block link-local + cloud metadata), `strict` (also block
     /// loopback + RFC1918 private), or `permissive` (allow everything).
@@ -337,6 +342,7 @@ impl Merge for EnginePartial {
                 .or(self.observe_fields_max_keys),
             allow_remote_include: over.allow_remote_include.or(self.allow_remote_include),
             cross_rule_ac: over.cross_rule_ac.or(self.cross_rule_ac),
+            match_detail: over.match_detail.or(self.match_detail),
             egress_policy: over.egress_policy.or(self.egress_policy),
         }
     }

@@ -31,6 +31,9 @@ pub(crate) const STDOUT_SINK: &str = "stdout";
 /// (the classic SSRF targets) while leaving loopback and RFC1918 private
 /// addresses reachable so internal threat-intel APIs keep working.
 pub(crate) const EGRESS_POLICY: &str = "default";
+/// Default match-detail verbosity for detection output. `off` preserves the
+/// historical `{ field, value }` wire shape.
+pub(crate) const MATCH_DETAIL: &str = "off";
 /// Default minimum TLS version for the daemon API listener. Only consumed by
 /// the `--tls-min-version` flag, so it is gated on the same `daemon-tls`
 /// feature to avoid a dead-code warning in builds without it.
@@ -94,6 +97,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 observe_fields_max_keys: Some(OBSERVE_FIELDS_MAX_KEYS),
                 allow_remote_include: Some(false),
                 cross_rule_ac: Some(false),
+                match_detail: Some(MATCH_DETAIL.to_string()),
                 egress_policy: Some(EGRESS_POLICY.to_string()),
             }),
             nats: None,

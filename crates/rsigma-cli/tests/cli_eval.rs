@@ -101,6 +101,46 @@ fn eval_bloom_prefilter_flag_is_accepted() {
 }
 
 #[test]
+fn eval_match_detail_full_emits_matcher_and_pattern() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--match-detail",
+            "full",
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""matcher":"contains""#))
+        .stdout(predicate::str::contains(r#""pattern":"malware""#));
+}
+
+#[test]
+fn eval_match_detail_off_is_default_shape() {
+    // Without --match-detail (or with off), the enrichment keys must not
+    // appear, preserving the historical wire shape.
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CommandLine"))
+        .stdout(predicate::str::contains(r#""matcher""#).not());
+}
+
+#[test]
 fn eval_bloom_prefilter_with_max_bytes() {
     // --bloom-max-bytes pairs with --bloom-prefilter; both must be accepted.
     let rule = temp_file(".yml", SIMPLE_RULE);
