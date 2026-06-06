@@ -256,7 +256,7 @@ impl CompiledMatcher {
     /// Handles the string-matching subset of `CompiledMatcher`. Matchers that
     /// require a full `EventValue` (numeric comparisons, field refs, etc.)
     /// return `false` — those are never used in keyword detection.
-    pub(super) fn matches_str(&self, s: &str) -> bool {
+    pub(crate) fn matches_str(&self, s: &str) -> bool {
         match self {
             CompiledMatcher::Exact {
                 value: expected,

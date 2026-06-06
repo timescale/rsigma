@@ -104,6 +104,12 @@ impl CorrelationEngine {
         self.engine.set_include_event(include);
     }
 
+    /// Forward to [`crate::Engine::set_match_detail`] on the inner detection
+    /// engine. Correlation detections inherit the level set here.
+    pub fn set_match_detail(&mut self, level: crate::result::MatchDetailLevel) {
+        self.engine.set_match_detail(level);
+    }
+
     /// Forward to [`crate::Engine::set_bloom_prefilter`] on the inner
     /// detection engine. Off by default; the optimization helps only on
     /// substring-heavy rule sets paired with mostly-non-matching events.

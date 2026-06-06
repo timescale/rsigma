@@ -15,13 +15,11 @@ use rsigma_parser::{
     ConditionExpr, FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule,
 };
 
-use crate::compiler::{
-    CompiledRule, compile_detection, compile_rule, evaluate_rule, evaluate_rule_with_bloom,
-};
+use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule_with_bloom};
 use crate::error::{EvalError, Result};
 use crate::event::Event;
 use crate::pipeline::{Pipeline, apply_pipelines};
-use crate::result::EvaluationResult;
+use crate::result::{EvaluationResult, MatchDetailLevel};
 use crate::rule_index::RuleIndex;
 
 use bloom_index::{BloomCache, FieldBloomIndex};
@@ -69,6 +67,10 @@ pub struct Engine {
     /// Global override: include the full event JSON in all match results.
     /// When `true`, overrides per-rule `rsigma.include_event` custom attributes.
     include_event: bool,
+    /// Verbosity of the match detail recorded on detection results.
+    /// `Off` by default, which preserves the historical `{ field, value }`
+    /// wire shape. See [`Engine::set_match_detail`].
+    match_detail: MatchDetailLevel,
     /// Monotonic counter used to namespace injected filter detections,
     /// preventing key collisions when multiple filters share detection names.
     filter_counter: usize,
@@ -120,6 +122,7 @@ impl Engine {
             rules: Vec::new(),
             pipelines: Vec::new(),
             include_event: false,
+            match_detail: MatchDetailLevel::Off,
             filter_counter: 0,
             rule_index: RuleIndex::empty(),
             bloom_index: FieldBloomIndex::empty(),
@@ -140,6 +143,7 @@ impl Engine {
             rules: Vec::new(),
             pipelines: vec![pipeline],
             include_event: false,
+            match_detail: MatchDetailLevel::Off,
             filter_counter: 0,
             rule_index: RuleIndex::empty(),
             bloom_index: FieldBloomIndex::empty(),
@@ -234,6 +238,23 @@ impl Engine {
     /// the full event JSON regardless of per-rule custom attributes.
     pub fn set_include_event(&mut self, include: bool) {
         self.include_event = include;
+    }
+
+    /// Set the match-detail verbosity for detection results.
+    ///
+    /// `Off` (default) records each match as `{ field, value }`, identical to
+    /// pre-enrichment releases. `Summary` adds the originating selection, the
+    /// matcher kind, and case sensitivity, and reports keyword and absence
+    /// matches that `Off` omits. `Full` additionally records the pattern that
+    /// fired. The extra work runs only when a rule matches and only above
+    /// `Off`, so the default hot path is unchanged.
+    pub fn set_match_detail(&mut self, level: MatchDetailLevel) {
+        self.match_detail = level;
+    }
+
+    /// Returns the configured match-detail verbosity.
+    pub fn match_detail(&self) -> MatchDetailLevel {
+        self.match_detail
     }
 
     /// Add a pipeline to the engine.
@@ -564,7 +585,9 @@ impl Engine {
                 continue;
             }
             let rule = &self.rules[idx];
-            if let Some(mut m) = evaluate_rule(rule, event) {
+            if let Some(mut m) =
+                evaluate_rule_with_bloom(rule, event, &bloom_index::NoBloom, self.match_detail)
+            {
                 if self.include_event
                     && let Some(d) = m.as_detection_mut()
                     && d.event.is_none()
@@ -588,7 +611,7 @@ impl Engine {
                 continue;
             }
             let rule = &self.rules[idx];
-            if let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom) {
+            if let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom, self.match_detail) {
                 if self.include_event
                     && let Some(d) = m.as_detection_mut()
                     && d.event.is_none()
@@ -633,7 +656,8 @@ impl Engine {
             }
             let rule = &self.rules[idx];
             if logsource_matches(&rule.logsource, event_logsource)
-                && let Some(mut m) = evaluate_rule(rule, event)
+                && let Some(mut m) =
+                    evaluate_rule_with_bloom(rule, event, &bloom_index::NoBloom, self.match_detail)
             {
                 if self.include_event
                     && let Some(d) = m.as_detection_mut()
@@ -663,7 +687,8 @@ impl Engine {
             }
             let rule = &self.rules[idx];
             if logsource_matches(&rule.logsource, event_logsource)
-                && let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom)
+                && let Some(mut m) =
+                    evaluate_rule_with_bloom(rule, event, &bloom, self.match_detail)
             {
                 if self.include_event
                     && let Some(d) = m.as_detection_mut()

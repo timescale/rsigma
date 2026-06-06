@@ -35,10 +35,7 @@ fn detection_with_field(field: &str, value: serde_json::Value) -> EvaluationResu
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],
-            matched_fields: vec![FieldMatch {
-                field: field.to_string(),
-                value,
-            }],
+            matched_fields: vec![FieldMatch::new(field, value)],
             event: None,
         }),
     }

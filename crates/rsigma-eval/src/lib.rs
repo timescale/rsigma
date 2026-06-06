@@ -120,7 +120,7 @@ pub use error::{EvalError, Result};
 pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, PlainEvent};
 pub use field_observer::{FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver};
 pub use fields::{FieldOrigin, FieldSource, RuleFieldSet};
-pub use matcher::CompiledMatcher;
+pub use matcher::{CompiledMatcher, MatchDescriptor};
 pub use pipeline::{
     Pipeline, TransformationItem, apply_pipelines, apply_pipelines_with_state,
     builtin::{
@@ -130,6 +130,6 @@ pub use pipeline::{
     parse_transformation_items, validate_source_refs,
 };
 pub use result::{
-    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, ProcessResultExt, ResultBody,
-    RuleHeader,
+    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, MatchDetailLevel, MatcherKind,
+    ProcessResultExt, ResultBody, RuleHeader,
 };

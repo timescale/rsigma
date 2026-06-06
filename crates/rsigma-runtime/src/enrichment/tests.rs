@@ -36,10 +36,10 @@ fn detection_result() -> EvaluationResult {
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],
-            matched_fields: vec![FieldMatch {
-                field: "CommandLine".to_string(),
-                value: serde_json::json!("powershell -enc QQA="),
-            }],
+            matched_fields: vec![FieldMatch::new(
+                "CommandLine",
+                serde_json::json!("powershell -enc QQA="),
+            )],
             event: Some(serde_json::json!({"User": "alice", "Host": "dc01"})),
         }),
     }

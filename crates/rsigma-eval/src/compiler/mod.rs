@@ -34,7 +34,10 @@ use rsigma_parser::{
 use crate::error::{EvalError, Result};
 use crate::event::Event;
 use crate::matcher::{CompiledMatcher, sigma_string_to_regex};
-use crate::result::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader};
+use crate::result::{
+    DetectionBody, EvaluationResult, FieldMatch, MatchDetailLevel, MatcherKind, ResultBody,
+    RuleHeader,
+};
 
 pub(crate) use helpers::yaml_to_json_map;
 use helpers::{
@@ -281,7 +284,12 @@ fn validate_condition_refs(
 /// that maintain a per-field bloom index should call the crate-private
 /// `evaluate_rule_with_bloom` variant via the `Engine` API instead.
 pub fn evaluate_rule(rule: &CompiledRule, event: &impl Event) -> Option<EvaluationResult> {
-    evaluate_rule_with_bloom(rule, event, &crate::engine::bloom_index::NoBloom)
+    evaluate_rule_with_bloom(
+        rule,
+        event,
+        &crate::engine::bloom_index::NoBloom,
+        MatchDetailLevel::Off,
+    )
 }
 
 /// Evaluate a compiled rule against an event with bloom pre-filtering.
@@ -295,6 +303,7 @@ pub(crate) fn evaluate_rule_with_bloom<E, B>(
     rule: &CompiledRule,
     event: &E,
     bloom: &B,
+    level: MatchDetailLevel,
 ) -> Option<EvaluationResult>
 where
     E: Event,
@@ -310,7 +319,7 @@ where
             bloom,
         ) {
             let matched_fields =
-                collect_field_matches(&matched_selections, &rule.detections, event);
+                collect_field_matches(&matched_selections, &rule.detections, event, level);
 
             let event_data = if rule.include_event {
                 Some(event.to_json())
@@ -1097,47 +1106,157 @@ where
     }
 }
 
-/// Collect field matches from matched selections for the MatchResult.
+/// Cap on the number of keyword-match entries recorded per keyword detection
+/// at `Summary` / `Full`. A single high-cardinality event (many string
+/// leaves) cannot blow up the output line.
+const MAX_KEYWORD_MATCHES: usize = 16;
+
+/// Collect field matches from matched selections for the detection result.
+///
+/// At [`MatchDetailLevel::Off`] this reproduces the historical behavior
+/// exactly: one `{ field, value }` entry per field-present `AllOf` item that
+/// matched, with keyword and absence matches omitted. At `Summary` / `Full`
+/// it attaches the matcher descriptor and reports the previously dropped
+/// keyword and `Null`-on-absent matches.
 fn collect_field_matches(
     selection_names: &[String],
     detections: &HashMap<String, CompiledDetection>,
     event: &impl Event,
+    level: MatchDetailLevel,
 ) -> Vec<FieldMatch> {
     let mut matches = Vec::new();
     for name in selection_names {
         if let Some(det) = detections.get(name) {
-            collect_detection_fields(det, event, &mut matches);
+            collect_detection_fields(name, det, event, level, &mut matches);
         }
     }
     matches
 }
 
 fn collect_detection_fields(
+    selection: &str,
     detection: &CompiledDetection,
     event: &impl Event,
+    level: MatchDetailLevel,
     out: &mut Vec<FieldMatch>,
 ) {
     match detection {
         CompiledDetection::AllOf(items) => {
             for item in items {
-                if let Some(field_name) = &item.field
-                    && let Some(value) = event.get_field(field_name)
-                    && item.matcher.matches(&value, event)
-                {
-                    out.push(FieldMatch {
-                        field: field_name.clone(),
-                        value: value.to_json(),
-                    });
+                match &item.field {
+                    Some(field_name) => {
+                        if let Some(value) = event.get_field(field_name) {
+                            if item.matcher.matches(&value, event) {
+                                out.push(make_field_match(
+                                    selection,
+                                    field_name,
+                                    value.to_json(),
+                                    &item.matcher,
+                                    level,
+                                ));
+                            }
+                        } else if level != MatchDetailLevel::Off
+                            && matches!(item.matcher, CompiledMatcher::Null)
+                        {
+                            // Field absent and matched by the `Null` matcher.
+                            // Never reported at `Off` (preserves wire shape).
+                            out.push(make_field_match(
+                                selection,
+                                field_name,
+                                serde_json::Value::Null,
+                                &item.matcher,
+                                level,
+                            ));
+                        }
+                    }
+                    None => {
+                        // Keyword item inside an `AllOf`. Only reported above `Off`.
+                        if level != MatchDetailLevel::Off {
+                            collect_keyword_matches(selection, &item.matcher, event, level, out);
+                        }
+                    }
                 }
             }
         }
         CompiledDetection::AnyOf(dets) => {
             for d in dets {
                 if eval_detection_with_bloom(d, event, &crate::engine::bloom_index::NoBloom) {
-                    collect_detection_fields(d, event, out);
+                    collect_detection_fields(selection, d, event, level, out);
                 }
             }
         }
-        CompiledDetection::Keywords(_) => {}
+        CompiledDetection::Keywords(matcher) => {
+            // Keyword detections produced no entries historically; only
+            // reported above `Off`.
+            if level != MatchDetailLevel::Off {
+                collect_keyword_matches(selection, matcher, event, level, out);
+            }
+        }
+    }
+}
+
+/// Build a [`FieldMatch`] at the requested detail level. `Off` yields the
+/// bare `{ field, value }` shape; `Summary` adds the matcher descriptor;
+/// `Full` additionally records the pattern.
+fn make_field_match(
+    selection: &str,
+    field: &str,
+    value: serde_json::Value,
+    matcher: &CompiledMatcher,
+    level: MatchDetailLevel,
+) -> FieldMatch {
+    match level {
+        MatchDetailLevel::Off => FieldMatch::new(field, value),
+        MatchDetailLevel::Summary | MatchDetailLevel::Full => {
+            let d = matcher.describe();
+            FieldMatch {
+                field: field.to_string(),
+                value,
+                selection: Some(selection.to_string()),
+                matcher: Some(d.kind),
+                pattern: if level == MatchDetailLevel::Full {
+                    d.pattern
+                } else {
+                    None
+                },
+                case_sensitive: d.case_sensitive,
+                negated: d.negated,
+            }
+        }
+    }
+}
+
+/// Record the individual event string values that satisfied a keyword
+/// matcher, capped at [`MAX_KEYWORD_MATCHES`]. Each entry uses the sentinel
+/// field name `"keyword"`.
+fn collect_keyword_matches(
+    selection: &str,
+    matcher: &CompiledMatcher,
+    event: &impl Event,
+    level: MatchDetailLevel,
+    out: &mut Vec<FieldMatch>,
+) {
+    let descriptor = matcher.describe();
+    let mut count = 0;
+    for s in event.all_string_values() {
+        if count >= MAX_KEYWORD_MATCHES {
+            break;
+        }
+        if matcher.matches_str(&s) {
+            count += 1;
+            out.push(FieldMatch {
+                field: "keyword".to_string(),
+                value: serde_json::Value::String(s.into_owned()),
+                selection: Some(selection.to_string()),
+                matcher: Some(MatcherKind::Keyword),
+                pattern: if level == MatchDetailLevel::Full {
+                    descriptor.pattern.clone()
+                } else {
+                    None
+                },
+                case_sensitive: descriptor.case_sensitive,
+                negated: descriptor.negated,
+            });
+        }
     }
 }

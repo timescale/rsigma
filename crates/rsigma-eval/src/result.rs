@@ -162,13 +162,122 @@ pub struct CorrelationBody {
     pub event_refs: Option<Vec<EventRef>>,
 }
 
+/// Verbosity of the match detail attached to detection results.
+///
+/// Gates how much is recorded in each [`FieldMatch`]. `Off` is the default
+/// and produces the historical `{ field, value }` shape with no extra keys,
+/// so existing wire consumers are unaffected unless they opt in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatchDetailLevel {
+    /// Historical behavior: only field-present matches, recorded as
+    /// `{ field, value }`. Keyword and absence matches are not reported.
+    #[default]
+    Off,
+    /// Adds the originating `selection`, the `matcher` kind, and
+    /// `case_sensitive`, and reports previously dropped keyword and
+    /// absence matches.
+    Summary,
+    /// Everything in `Summary` plus the `pattern` that fired.
+    Full,
+}
+
+impl MatchDetailLevel {
+    /// Lowercase wire name (`off` / `summary` / `full`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MatchDetailLevel::Off => "off",
+            MatchDetailLevel::Summary => "summary",
+            MatchDetailLevel::Full => "full",
+        }
+    }
+}
+
+impl std::str::FromStr for MatchDetailLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(MatchDetailLevel::Off),
+            "summary" => Ok(MatchDetailLevel::Summary),
+            "full" => Ok(MatchDetailLevel::Full),
+            other => Err(format!(
+                "invalid match-detail level: {other:?} (expected off, summary, or full)"
+            )),
+        }
+    }
+}
+
+/// The kind of matcher that produced a [`FieldMatch`].
+///
+/// Serialized lowercase. Composite and multi-pattern matchers
+/// (`AnyOf` / `AllOf` / Aho-Corasick / regex sets) collapse to `one_of`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MatcherKind {
+    Exact,
+    Contains,
+    StartsWith,
+    EndsWith,
+    Regex,
+    #[serde(rename = "one_of")]
+    OneOf,
+    Cidr,
+    Numeric,
+    Exists,
+    FieldRef,
+    Null,
+    Bool,
+    Expand,
+    Timestamp,
+    Keyword,
+}
+
+/// Serde helper: skip a `bool` field when it is `false`.
+#[inline]
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A specific field match within a detection.
-#[derive(Debug, Clone, Serialize)]
+///
+/// The `field` and `value` keys are always present and preserve the
+/// historical wire shape. The remaining keys are populated only when the
+/// engine runs above [`MatchDetailLevel::Off`] and are skipped on
+/// serialization when empty, so the default output is byte-identical to
+/// pre-enrichment releases.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FieldMatch {
-    /// The field name that matched.
+    /// The field name that matched (`"keyword"` for keyword matches).
     pub field: String,
-    /// The event value that triggered the match.
+    /// The event value that triggered the match (`null` for absence matches).
     pub value: serde_json::Value,
+    /// The selection (named detection) the match came from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<String>,
+    /// The matcher kind that fired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<MatcherKind>,
+    /// The pattern the matcher tested against (Full level only, truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// Whether the match was case-sensitive, when meaningful for the matcher.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_sensitive: Option<bool>,
+    /// Whether the matcher was negated (`|not` / inverted).
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub negated: bool,
+}
+
+impl FieldMatch {
+    /// Construct a bare match with only `field` and `value` set, matching
+    /// the historical (`MatchDetailLevel::Off`) shape.
+    pub fn new(field: impl Into<String>, value: serde_json::Value) -> Self {
+        FieldMatch {
+            field: field.into(),
+            value,
+            ..Default::default()
+        }
+    }
 }
 
 /// Convenience iterators over a slice of [`EvaluationResult`].
@@ -225,10 +334,10 @@ mod tests {
             header: header("Suspicious PowerShell"),
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec!["selection".to_string()],
-                matched_fields: vec![FieldMatch {
-                    field: "CommandLine".to_string(),
-                    value: serde_json::json!("powershell -enc ..."),
-                }],
+                matched_fields: vec![FieldMatch::new(
+                    "CommandLine",
+                    serde_json::json!("powershell -enc ..."),
+                )],
                 event: None,
             }),
         };

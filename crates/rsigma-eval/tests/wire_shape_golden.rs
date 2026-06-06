@@ -18,7 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rsigma_eval::{
-    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader,
+    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, MatcherKind, ResultBody,
+    RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
 
@@ -43,14 +44,14 @@ fn detection_golden_ndjson_line() {
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection_image".to_string(), "selection_args".to_string()],
             matched_fields: vec![
-                FieldMatch {
-                    field: "Image".to_string(),
-                    value: serde_json::json!("C:\\Windows\\System32\\powershell.exe"),
-                },
-                FieldMatch {
-                    field: "CommandLine".to_string(),
-                    value: serde_json::json!("powershell -nop -w hidden -enc JAB..."),
-                },
+                FieldMatch::new(
+                    "Image",
+                    serde_json::json!("C:\\Windows\\System32\\powershell.exe"),
+                ),
+                FieldMatch::new(
+                    "CommandLine",
+                    serde_json::json!("powershell -nop -w hidden -enc JAB..."),
+                ),
             ],
             event: None,
         }),
@@ -68,6 +69,87 @@ fn detection_golden_ndjson_line() {
     let parsed: serde_json::Value = serde_json::from_str(&actual).unwrap();
     assert!(parsed.get("matched_fields").is_some());
     assert!(parsed.get("correlation_type").is_none());
+}
+
+/// Wire-shape snapshot at `Summary`: enrichment fields appear after
+/// `field`/`value`, the keyword entry has no `pattern`, and `None`
+/// enrichment values are skipped.
+#[test]
+fn detection_summary_golden_ndjson_line() {
+    let result = EvaluationResult {
+        header: header("Suspicious PowerShell Encoded Command"),
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection_args".to_string(), "keywords".to_string()],
+            matched_fields: vec![
+                FieldMatch {
+                    field: "CommandLine".to_string(),
+                    value: serde_json::json!("powershell -nop -w hidden -enc JAB..."),
+                    selection: Some("selection_args".to_string()),
+                    matcher: Some(MatcherKind::Contains),
+                    pattern: None,
+                    case_sensitive: Some(false),
+                    negated: false,
+                },
+                FieldMatch {
+                    field: "keyword".to_string(),
+                    value: serde_json::json!("powershell -nop -w hidden -enc JAB..."),
+                    selection: Some("keywords".to_string()),
+                    matcher: Some(MatcherKind::Keyword),
+                    pattern: None,
+                    case_sensitive: None,
+                    negated: false,
+                },
+            ],
+            event: None,
+        }),
+    };
+
+    let actual = serde_json::to_string(&result).unwrap();
+    let expected = r#"{"rule_title":"Suspicious PowerShell Encoded Command","rule_id":"Suspicious PowerShell Encoded Command-id","level":"high","tags":["attack.execution","attack.t1059.001"],"matched_selections":["selection_args","keywords"],"matched_fields":[{"field":"CommandLine","value":"powershell -nop -w hidden -enc JAB...","selection":"selection_args","matcher":"contains","case_sensitive":false},{"field":"keyword","value":"powershell -nop -w hidden -enc JAB...","selection":"keywords","matcher":"keyword"}]}"#;
+    assert_eq!(
+        actual, expected,
+        "Summary detection wire shape drift. If intentional, update this golden and the CHANGELOG."
+    );
+}
+
+/// Wire-shape snapshot at `Full`: same as `Summary` plus the `pattern` key,
+/// and a negated entry emits `negated: true`.
+#[test]
+fn detection_full_golden_ndjson_line() {
+    let result = EvaluationResult {
+        header: header("Suspicious PowerShell Encoded Command"),
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection_args".to_string()],
+            matched_fields: vec![
+                FieldMatch {
+                    field: "CommandLine".to_string(),
+                    value: serde_json::json!("powershell -nop -w hidden -enc JAB..."),
+                    selection: Some("selection_args".to_string()),
+                    matcher: Some(MatcherKind::Contains),
+                    pattern: Some("-enc".to_string()),
+                    case_sensitive: Some(false),
+                    negated: false,
+                },
+                FieldMatch {
+                    field: "Image".to_string(),
+                    value: serde_json::json!("C:\\Windows\\notepad.exe"),
+                    selection: Some("selection_args".to_string()),
+                    matcher: Some(MatcherKind::EndsWith),
+                    pattern: Some("\\powershell.exe".to_string()),
+                    case_sensitive: Some(false),
+                    negated: true,
+                },
+            ],
+            event: None,
+        }),
+    };
+
+    let actual = serde_json::to_string(&result).unwrap();
+    let expected = r#"{"rule_title":"Suspicious PowerShell Encoded Command","rule_id":"Suspicious PowerShell Encoded Command-id","level":"high","tags":["attack.execution","attack.t1059.001"],"matched_selections":["selection_args"],"matched_fields":[{"field":"CommandLine","value":"powershell -nop -w hidden -enc JAB...","selection":"selection_args","matcher":"contains","pattern":"-enc","case_sensitive":false},{"field":"Image","value":"C:\\Windows\\notepad.exe","selection":"selection_args","matcher":"endswith","pattern":"\\powershell.exe","case_sensitive":false,"negated":true}]}"#;
+    assert_eq!(
+        actual, expected,
+        "Full detection wire shape drift. If intentional, update this golden and the CHANGELOG."
+    );
 }
 
 #[test]
@@ -173,10 +255,7 @@ fn detection_with_custom_attributes_emits_after_tags_before_body() {
         header: h,
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],
-            matched_fields: vec![FieldMatch {
-                field: "EventID".to_string(),
-                value: serde_json::json!(1),
-            }],
+            matched_fields: vec![FieldMatch::new("EventID", serde_json::json!(1))],
             event: None,
         }),
     };

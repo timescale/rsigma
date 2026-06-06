@@ -91,10 +91,7 @@ fn detection(rule_id: &str, command_line: &str) -> EvaluationResult {
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],
-            matched_fields: vec![FieldMatch {
-                field: "CommandLine".to_string(),
-                value: json!(command_line),
-            }],
+            matched_fields: vec![FieldMatch::new("CommandLine", json!(command_line))],
             event: None,
         }),
     }
@@ -146,10 +143,7 @@ async fn http_success_injects_full_response_object() {
     det.as_detection_mut()
         .unwrap()
         .matched_fields
-        .push(FieldMatch {
-            field: "HostName".to_string(),
-            value: json!("dc01"),
-        });
+        .push(FieldMatch::new("HostName", json!("dc01")));
 
     let enricher = Box::new(HttpEnricher::new(
         "asset_lookup".to_string(),
@@ -199,10 +193,7 @@ async fn http_template_renders_path_and_authorization_header() {
     det.as_detection_mut()
         .unwrap()
         .matched_fields
-        .push(FieldMatch {
-            field: "HostName".to_string(),
-            value: json!("dc01"),
-        });
+        .push(FieldMatch::new("HostName", json!("dc01")));
 
     let enricher = Box::new(HttpEnricher::new(
         "asset_lookup_with_auth".to_string(),
