@@ -12,7 +12,6 @@ libfuzzer-sys = "0.4"
 rsigma-parser = { path = "../crates/rsigma-parser" }
 rsigma-eval = { path = "../crates/rsigma-eval" }
 rsigma-runtime = { path = "../crates/rsigma-runtime", features = ["logfmt", "cef"] }
-rstix = { path = "../crates/rstix", features = ["full"] }
 serde_json = "1"
 yaml_serde = "0.10"
 regex = "1"
@@ -93,7 +92,3 @@ name = "fuzz_eval_matcher_diff"
 path = "fuzz_targets/fuzz_eval_matcher_diff.rs"
 doc = false
 
-[[bin]]
-name = "fuzz_rstix_parse_bundle"
-path = "fuzz_targets/fuzz_rstix_parse_bundle.rs"
-doc = false

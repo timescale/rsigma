@@ -13,19 +13,9 @@ homepage.workspace = true
 default = ["serde"]
 
 serde = ["dep:serde"]
-pattern = []
-validate = ["serde", "pattern"]
-graph = []
-marking = []
-store = []
-enrichment = ["store", "graph"]
-taxii = ["serde", "dep:reqwest", "dep:tokio", "dep:secrecy"]
-testing = ["dep:wiremock"]
-
-full = ["pattern", "validate", "graph", "marking", "store", "enrichment", "taxii"]
 
 [dependencies]
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.13", features = ["macros"] }
 serde_jcs = "0.2"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing"] }
@@ -33,8 +23,3 @@ uuid = { version = "1", features = ["v4", "v5"] }
 
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
-
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"], optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
-secrecy = { version = "0.8", optional = true }
-wiremock = { version = "0.6", optional = true }

@@ -1,5 +1,8 @@
 //! Timestamp types for STIX and TAXII.
 
+use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
+
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -26,10 +29,36 @@ fn parse_utc(input: &str) -> Result<OffsetDateTime, TimestampError> {
 }
 
 /// STIX timestamp preserving fractional precision.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub struct StixTimestamp {
     inner: OffsetDateTime,
     subsec_digits: u8,
+}
+
+impl PartialEq for StixTimestamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for StixTimestamp {}
+
+impl PartialOrd for StixTimestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StixTimestamp {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.inner.cmp(&other.inner)
+    }
+}
+
+impl Hash for StixTimestamp {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.inner.hash(state);
+    }
 }
 
 impl StixTimestamp {
@@ -166,5 +195,13 @@ mod tests {
             let parsed = StixTimestamp::parse(input).expect("valid timestamp");
             assert_eq!(parsed.to_rfc3339(), expected);
         }
+    }
+
+    #[test]
+    fn stix_timestamp_compares_by_instant_only() {
+        let bare = StixTimestamp::parse("2016-01-20T12:31:12Z").expect("valid");
+        let padded = StixTimestamp::parse("2016-01-20T12:31:12.000Z").expect("valid");
+        assert_eq!(bare, padded);
+        assert_eq!(bare.cmp(&padded), Ordering::Equal);
     }
 }

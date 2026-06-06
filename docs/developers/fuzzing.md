@@ -1,6 +1,6 @@
 # Fuzzing
 
-The workspace ships 16 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 15 of them weekly (Monday 03:00 UTC) on `libFuzzer`; `fuzz_eval_matcher_diff` remains a manual differential target.
+The workspace ships 15 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 14 of them weekly (Monday 03:00 UTC) on `libFuzzer`; `fuzz_eval_matcher_diff` remains a manual differential target.
 
 ## Harness inventory
 
@@ -21,7 +21,6 @@ The workspace ships 16 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_template_expand` | The `${source.X}` template expander. | 4096 |
 | `fuzz_include_parse` | Include-directive resolution. | 8192 |
 | `fuzz_http_response` | The dynamic-pipeline HTTP-response parsing path. | 65536 |
-| `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` entrypoint for STIX bundle parsing robustness. | 65536 |
 
 All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, and `rsigma-runtime` (with `logfmt` and `cef` features).
 

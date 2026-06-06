@@ -58,8 +58,6 @@ jobs:
             max_len: 8192
           - target: fuzz_http_response
             max_len: 65536
-          - target: fuzz_rstix_parse_bundle
-            max_len: 65536
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

@@ -52,15 +52,6 @@ STIX 2.1 + TAXII 2.1 library crate under phased implementation.
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
 | `serde` | yes | `serde`, `serde_json` | Serialization/deserialization support used by model and TAXII flows. |
-| `pattern` | no | (none) | STIX pattern module surface. |
-| `validate` | no | `serde`, `pattern` | Validation pipeline module surface. |
-| `graph` | no | (none) | Graph traversal module surface. |
-| `marking` | no | (none) | Marking/TLP module surface. |
-| `store` | no | (none) | Storage module surface. |
-| `enrichment` | no | `store`, `graph` | Enrichment module surface. |
-| `taxii` | no | `serde`, `reqwest`, `tokio`, `secrecy` | TAXII client module surface and async/network dependencies. |
-| `testing` | no | `wiremock` | Test utilities and mock-server support. |
-| `full` | no | `pattern`, `validate`, `graph`, `marking`, `store`, `enrichment`, `taxii` | Convenience feature bundle for full functionality (excluding `testing`). |
 
 ## Building with features
 
