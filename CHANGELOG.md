@@ -5,7 +5,7 @@ Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma
 
 ## [Unreleased]
 
-### Gated match-detail enrichment for detection results
+### Gated match-detail enrichment for detection results (#186)
 
 `matched_fields` entries can now explain *why* each field matched, gated behind a new opt-in verbosity level so the default wire shape is byte-for-byte unchanged.
 
