@@ -51,7 +51,7 @@ STIX 2.1 + TAXII 2.1 library crate under phased implementation.
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
-| `serde` | yes | `serde`, `serde_json` | Serialization/deserialization support used by model and TAXII flows. |
+| `serde` | yes | `serde` | Serialization and deserialization support (for example `SpecVersion`). |
 
 ## Building with features
 

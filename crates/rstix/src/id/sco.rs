@@ -36,7 +36,14 @@ fn pick_preferred_hash(
             return Some(out);
         }
     }
-    None
+    // No preferred algorithm is present. STIX 2.1 still requires a single hash to
+    // contribute to the ID, so fall back to the lexicographically first hash. This
+    // is deterministic regardless of map ordering and matches python-stix2 for the
+    // common single-hash case.
+    let (key, value) = hashes.iter().min_by(|a, b| a.0.cmp(b.0))?;
+    let mut out = serde_json::Map::new();
+    out.insert(key.clone(), value.clone());
+    Some(out)
 }
 
 /// Select id-contributing properties for an SCO type.
@@ -184,6 +191,17 @@ mod tests {
         assert_ne!(id1.as_str(), id2.as_str());
         assert!(id1.as_str().starts_with("file--"));
         assert_eq!(id1.uuid().get_version_num(), 4);
+    }
+
+    #[test]
+    fn file_falls_back_to_non_preferred_hash_like_python_stix2() {
+        // Only a non-preferred algorithm is present (no MD5/SHA-1/SHA-256/SHA-512).
+        // The hash still contributes deterministically; golden value from python-stix2.
+        let hash = "c".repeat(64);
+        let full = serde_json::json!({ "hashes": { "SHA3-256": hash } });
+        let id = generate_sco_id(ScoKind::File, &full).expect("file id");
+        assert_eq!(id.as_str(), "file--2550c6b3-e138-5372-aefd-5e65053e724f");
+        assert_eq!(id.uuid().get_version_num(), 5);
     }
 
     #[test]

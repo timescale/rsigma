@@ -33,7 +33,6 @@ This library is part of [rsigma].
 - `core` (always): `StixId`, typed IDs (42 wrappers), `StixObjectKind` + SDO/SCO/SRO/Meta discriminants, `StixTimestamp`, `TaxiiTimestamp`, `Confidence` and built-in scales, `SpecVersion`, `LanguageTag`, `QueryableStixObject`, `QueryValue`.
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
-- `serde_impls` (`serde`): custom serialization/deserialization support.
 
 ## Feature flags
 

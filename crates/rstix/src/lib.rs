@@ -12,10 +12,6 @@ pub mod id;
 /// STIX vocabulary tables.
 pub mod vocab;
 
-/// Serialization and deserialization helpers.
-#[cfg(feature = "serde")]
-pub mod serde_impls;
-
 /// Top-level parse error.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]

@@ -7,12 +7,12 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 ## Input size and depth caps
 
 | Limit | Constant | Value | Scope | Behaviour on overrun |
-| Limit | Constant | Value | Scope | Behaviour on overrun |
+|-------|----------|-------|-------|----------------------|
 | Single event size | `MAX_LINE_BYTES` | 1 MiB | `engine daemon` HTTP/stdin event ingest | Line rejected with a `413`-equivalent error in HTTP mode; counted in `rsigma_events_parse_errors_total`. |
 | Condition expression length | `MAX_CONDITION_LEN` | 64 KiB | Rule parser | Rule rejected at parse time with an `InvalidCondition` error. |
 | Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. |
 | JSON event traversal depth | `MAX_NESTING_DEPTH` | 64 | Keyword search inside nested JSON | Traversal stops; deeper fields are not matched against keyword detections. |
-| Windash expansion | `MAX_WINDASH_DASHES` | 8 | &#124;windash modifier (5^8 variants) | Compile error if a value contains more than 8 dashes. |
+| Windash expansion | `MAX_WINDASH_DASHES` | 8 | `|windash` modifier (5^8 variants) | Compile error if a value contains more than 8 dashes. |
 | Correlation chain depth | `MAX_CHAIN_DEPTH` | 10 | Engine | Stops chaining beyond 10 levels; logs at `WARN` (`rsigma_eval::correlation_engine`). |
 | Correlation state entries | `max_state_entries` | 100,000 | Engine, all correlation rules combined | Hard cap; eviction drops the stalest 10% with a `WARN` log when reached. Watch via `rsigma_correlation_state_entries`. |
 
@@ -23,7 +23,7 @@ These limits are sized so that the engine remains bounded under pathological inp
 `engine daemon` and `pipeline resolve` enforce additional bounds on dynamic sources:
 
 | Limit | Constant | Value | Per-source override |
-| ------- | ---------- | ------- | --------------------- |
+|-------|----------|-------|---------------------|
 | HTTP body, NATS payload, and command stdout | `MAX_SOURCE_RESPONSE_BYTES` | 10 MiB | `max_body_size` (HTTP), `max_stdout` (command) |
 | Command stderr | (hard-coded) | 64 KiB | not configurable |
 | HTTP fetch timeout | (default) | 30 s | `timeout` |
@@ -63,7 +63,7 @@ The policy applies only to the daemon's outbound HTTP clients. Local sources (`f
 Every external parser rsigma ships uses panic-free libraries:
 
 | Component | Library | Notes |
-| ----------- | --------- | ------- |
+|-----------|---------|-------|
 | Sigma rule YAML | `yaml_serde` 0.10 | The maintained fork of `serde_yaml`. Resists the recursion and aliasing attacks that plagued legacy `serde-yaml`. |
 | Sigma condition expression | hand-written recursive descent | Bounded by `MAX_CONDITION_LEN` (64 KiB) and `MAX_CONDITION_DEPTH` (64). |
 | Pipeline YAML | `yaml_serde` 0.10 | Same. |
@@ -73,7 +73,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, rstix STIX bundle parsing, and the conversion backends. Fifteen harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, and the conversion backends. Fourteen harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
