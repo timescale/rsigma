@@ -124,11 +124,33 @@ mod tests {
     fn auto_detect_syslog_respects_config() {
         let config = SyslogConfig {
             default_tz_offset_secs: 5 * 3600,
+            ..SyslogConfig::default()
         };
         let decoded = auto_detect("<34>Oct 11 22:14:15 mymachine su: test", &config);
         assert!(matches!(
             decoded,
             EventInputDecoded::Kv(_) | EventInputDecoded::Json(_)
         ));
+    }
+
+    #[test]
+    fn auto_detect_syslog_strips_bom() {
+        // A BOM-prefixed RFC 5424 line still extracts structured fields, and
+        // the BOM does not leak into any string value.
+        let line =
+            "<34>1 2003-10-11T22:14:15.003Z mymachine.example.com su - ID47 - \u{FEFF}an event";
+        let decoded = auto_detect(line, &cfg());
+        assert!(
+            matches!(
+                decoded,
+                EventInputDecoded::Kv(_) | EventInputDecoded::Json(_)
+            ),
+            "Expected Kv or Json for syslog, got Plain"
+        );
+        assert!(decoded.get_field("hostname").is_some());
+        assert!(
+            !decoded.any_string_value(&|s| s.starts_with('\u{FEFF}')),
+            "no string value should retain the BOM"
+        );
     }
 }

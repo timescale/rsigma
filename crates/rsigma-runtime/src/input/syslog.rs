@@ -17,11 +17,28 @@ use syslog_loose::Message;
 use super::EventInputDecoded;
 
 /// Configuration for the syslog adapter.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyslogConfig {
     /// Default timezone offset in seconds east of UTC for RFC 3164 messages
     /// that lack timezone information.
     pub default_tz_offset_secs: i32,
+    /// Strip a leading UTF-8 BOM (`U+FEFF`) from the syslog message body.
+    ///
+    /// RFC 5424 section 6.4 mandates that a UTF-8 `MSG` begin with a BOM as an
+    /// encoding marker, not as content. `syslog_loose` preserves it verbatim,
+    /// so without this the BOM leaks into `_raw` (breaking anchored matchers)
+    /// and blocks embedded-JSON detection (`serde_json` errors on a leading
+    /// BOM). Defaults to `true`; disable to keep the message byte-for-byte.
+    pub strip_bom: bool,
+}
+
+impl Default for SyslogConfig {
+    fn default() -> Self {
+        Self {
+            default_tz_offset_secs: 0,
+            strip_bom: true,
+        }
+    }
 }
 
 /// Parse a syslog line into an event.
@@ -40,12 +57,21 @@ pub fn parse_syslog(line: &str, config: &SyslogConfig) -> EventInputDecoded {
         syslog_loose::Variant::Either,
     );
 
-    build_event_from_message(&parsed)
+    build_event_from_message(&parsed, config.strip_bom)
 }
 
 /// Build an EventInputDecoded from a parsed syslog message.
-fn build_event_from_message(parsed: &Message<&str>) -> EventInputDecoded {
-    let msg_str = parsed.msg.trim();
+///
+/// When `strip_bom` is set, a single leading UTF-8 BOM (`U+FEFF`) is removed
+/// from the message body before JSON detection and `_raw` extraction. See
+/// [`SyslogConfig::strip_bom`].
+fn build_event_from_message(parsed: &Message<&str>, strip_bom: bool) -> EventInputDecoded {
+    let msg = if strip_bom {
+        parsed.msg.strip_prefix('\u{FEFF}').unwrap_or(parsed.msg)
+    } else {
+        parsed.msg
+    };
+    let msg_str = msg.trim();
 
     // Try to parse the message body as JSON.
     if let Ok(mut json_obj) = serde_json::from_str::<serde_json::Value>(msg_str)
@@ -214,9 +240,69 @@ mod tests {
     fn custom_timezone() {
         let config = SyslogConfig {
             default_tz_offset_secs: 5 * 3600, // UTC+5
+            ..SyslogConfig::default()
         };
         let line = "<34>Oct 11 22:14:15 mymachine su: test message";
         let decoded = parse_syslog(line, &config);
         assert!(decoded.any_string_value(&|s| s.contains("test message")));
+    }
+
+    #[test]
+    fn rfc5424_strips_bom() {
+        // RFC 5424 UTF-8 MSG begins with a BOM (U+FEFF) as an encoding marker.
+        let line =
+            "<34>1 2003-10-11T22:14:15.003Z mymachine.example.com su - ID47 - \u{FEFF}an event";
+        let decoded = parse_syslog(line, &SyslogConfig::default());
+        let raw = decoded
+            .get_field("_raw")
+            .and_then(|v| v.as_str().map(|s| s.into_owned()))
+            .expect("_raw present");
+        assert!(!raw.starts_with('\u{FEFF}'), "BOM should be stripped");
+        assert_eq!(raw, "an event");
+    }
+
+    #[test]
+    fn rfc5424_bom_json_detected() {
+        // A BOM-prefixed JSON payload must still be detected as embedded JSON;
+        // serde_json errors on a leading BOM, so this would degrade to a
+        // KvEvent without the strip.
+        let line = "<134>1 2024-01-15T10:30:00Z docker01 myapp 9876 MSGID1 - \u{FEFF}{\"EventID\": 1, \"user\": \"admin\"}";
+        let decoded = parse_syslog(line, &SyslogConfig::default());
+        assert!(
+            matches!(decoded, EventInputDecoded::Json(_)),
+            "BOM-prefixed JSON should be parsed as JSON"
+        );
+        assert!(decoded.get_field("EventID").is_some());
+        assert!(decoded.get_field("user").is_some());
+        assert!(decoded.get_field("syslog_hostname").is_some());
+    }
+
+    #[test]
+    fn rfc5424_keep_bom_when_disabled() {
+        let config = SyslogConfig {
+            strip_bom: false,
+            ..SyslogConfig::default()
+        };
+        let line =
+            "<34>1 2003-10-11T22:14:15.003Z mymachine.example.com su - ID47 - \u{FEFF}an event";
+        let decoded = parse_syslog(line, &config);
+        let raw = decoded
+            .get_field("_raw")
+            .and_then(|v| v.as_str().map(|s| s.into_owned()))
+            .expect("_raw present");
+        assert!(
+            raw.starts_with('\u{FEFF}'),
+            "BOM should be preserved when stripping is disabled"
+        );
+    }
+
+    #[test]
+    fn bom_only_message() {
+        // A message consisting solely of a BOM collapses to empty after the
+        // strip, so no _raw field is emitted.
+        let line = "<34>1 2003-10-11T22:14:15.003Z mymachine.example.com su - ID47 - \u{FEFF}";
+        let decoded = parse_syslog(line, &SyslogConfig::default());
+        assert!(decoded.get_field("_raw").is_none());
+        assert!(decoded.get_field("hostname").is_some());
     }
 }
