@@ -1,6 +1,6 @@
 # Linting Rules
 
-`rsigma rule lint` runs 66 built-in lint rules derived from the Sigma v2.1.0 specification against your rule files. The linter reads each YAML rule, runs it through a pipeline of checks, and reports findings with severity, location, and an optional auto-fix. Use the linter both locally (before commit) and in CI (as a gate on PRs).
+`rsigma rule lint` runs 68 built-in lint rules derived from the Sigma v2.1.0 specification against your rule files. The linter reads each YAML rule, runs it through a pipeline of checks, and reports findings with severity, location, and an optional auto-fix. Use the linter both locally (before commit) and in CI (as a gate on PRs).
 
 This page covers the four severity levels, the suppression system, auto-fix behaviour, JSON schema validation, and the CI integration patterns we recommend.
 
@@ -53,7 +53,7 @@ rsigma rule lint rules/ --fail-level info     # exit 1 on any finding
 
 In CI we recommend `--fail-level warning` for shared rule repositories and `--fail-level info` for SigmaHQ-style contributions where stricter hygiene matters.
 
-## The 66 rules at a glance
+## The 68 rules at a glance
 
 The lint rules are grouped by what part of a rule they inspect:
 
@@ -70,7 +70,7 @@ See the full catalog in [Lint Rules reference](../reference/lint-rules.md), with
 
 ## Auto-fix with `--fix`
 
-Thirteen of the 66 rules carry safe auto-fixes (no semantic change). Apply them in place with `--fix`:
+Thirteen of the 68 rules carry safe auto-fixes (no semantic change). Apply them in place with `--fix`:
 
 ```bash
 rsigma rule lint rules/ --fix
@@ -234,7 +234,7 @@ Exit code 1 means a fix was applied that you have not yet committed.
 
 ## See also
 
-- [Lint Rules reference](../reference/lint-rules.md) for the full 66-rule catalog.
+- [Lint Rules reference](../reference/lint-rules.md) for the full 68-rule catalog.
 - [CLI reference: `rule lint`](../cli/rule/lint.md) for every flag.
 - [CI/CD](ci-cd.md) for full pipeline examples.
 - [Editor integration](../editors/vscode.md) for the LSP-driven workflow.

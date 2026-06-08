@@ -5,6 +5,27 @@
 
 Many log sources put values in arrays: AWS CloudTrail, GCP, Okta, Azure Activity, Kubernetes audit, and Windows Event Logs all do. rsigma can match against array members in three ways, all expressed with `[...]` selectors on the field path.
 
+## Requires `sigma-version: 3`
+
+Array-matching bracket selectors are gated on the Sigma specification major a document targets, declared with the optional top-level `sigma-version` attribute. They are active only at major `3` or higher:
+
+```yaml
+title: Inbound connection to a suspicious network
+sigma-version: 3
+logsource:
+    category: network_connection
+detection:
+    selection:
+        connections[any]:
+            protocol: 'TCP'
+            ip|cidr: '123.1.0.0/16'
+    condition: selection
+```
+
+When `sigma-version` is absent, a document resolves to a fixed floor (major `2`, the v2.x line). At the floor a trailing `[...]` is **not** a selector but a literal part of the field name, so an unversioned rule keeps its pre-array-matching meaning and is never silently reinterpreted. Only the major matters (a release string such as `"2.1.0"` is read for its major), since breaking changes occur only at major bumps.
+
+The linter helps catch the mismatch: [`array_matching_without_version`](../reference/lint-rules.md) (warning) flags a rule that uses bracket-selector syntax but resolves below major `3`, and [`unsupported_sigma_version`](../reference/lint-rules.md) (error) flags a declared major newer than rsigma implements. To keep a literal bracket in a field name at major `3`, escape it as `\[` / `\]` (see [Escaping literal brackets](#escaping-literal-brackets)).
+
 ## Implicit any-member matching
 
 A plain field expression matches a scalar **or** any member of an array. No special syntax is needed: a scalar is just an array of length one.

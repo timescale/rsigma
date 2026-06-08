@@ -1,9 +1,17 @@
 # Changelog
 
-All notable changes to RSigma are documented in this file.
-Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
+All notable changes to RSigma are documented in this file. Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
 ## [Unreleased]
+
+### `sigma-version`: gate breaking spec changes by the declared specification major
+
+rsigma now reads an optional top-level `sigma-version` attribute on a Sigma document: the Sigma specification MAJOR version the document targets (for example `sigma-version: 3`). It is the reference implementation of the rule-level spec-version mechanism proposed as [SEP #213](https://github.com/SigmaHQ/sigma-specification/issues/213), split out of array matching so that every future breaking spec change is gated by one declared version rather than a per-feature escape.
+
+- **Fixed-floor default.** When `sigma-version` is absent, the document resolves to a fixed floor (major `2`, the v2.x line): a constant defined by the specification, not the latest version the tool supports. Existing rules keep their current semantics and are never silently reinterpreted. Only the major is significant (a release string like `"2.1.0"` is accepted and read for its major), since breaking changes occur only at major bumps.
+- **Array matching is now gated.** Array-matching bracket selectors (`field[any]`, `args[0]`, ...) are active only at major `3` or higher. A rule that declares `sigma-version: 3` reads a trailing `[...]` as an array selector; at the floor (absent or major `2`) brackets are literal field-name characters, normalized to the escaped form (`args\[0\]`) so the escape-aware evaluator and converters resolve them literally. This is a behavior change to the (unreleased) always-on array matching, with no compatibility cost because the feature has not shipped.
+- **Two new lint rules.** `unsupported_sigma_version` (error) flags a declared major newer than this build implements; `array_matching_without_version` (warning) flags a document that uses bracket-selector syntax but resolves below major `3`, where the brackets would be read literally rather than as selectors. The lint catalogue now lists 68 built-in checks plus the 1 reserved enum value (`empty_filter_rules`).
+- **API.** `rsigma-parser` gains a `version` module (`SPEC_VERSION_FLOOR`, `SPEC_VERSION_ARRAY_MATCHING`, `SPEC_VERSION_SUPPORTED`, `resolve_major`, `array_matching_enabled`, `is_unsupported`), an optional `sigma_version: Option<u32>` field on `SigmaRule`, `CorrelationRule`, and `FilterRule`, and a `fieldpath::escape_brackets` helper. Gating happens at parse time, so the evaluator and converters consume the already-gated AST with no version logic of their own.
 
 ### Array matching: `[any]`/`[all]`/`[all_or_empty]`/`[none]` blocks, implicit any-member, and positional indexing (#159)
 

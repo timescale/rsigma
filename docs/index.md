@@ -74,7 +74,7 @@ RSigma is a complete Rust toolkit for the [Sigma](https://sigmahq.io/) detection
 | **Conversion backends** | PostgreSQL, LynxDB, ... | 20+ | No | No |
 | **Streaming daemon** | Yes (NATS, HTTP, OTLP) | No | No | No |
 | **Dynamic pipelines** | Yes (HTTP, file, command, NATS) | No | No | No |
-| **Built-in linter** | 66 rules, auto-fix | Limited | No | No |
+| **Built-in linter** | 68 rules, auto-fix | Limited | No | No |
 | **LSP server** | Yes | No | No | No |
 | **Single binary** | Yes (multi-arch, signed) | No (requires Python) | Library only | Library only |
 | **License** | MIT | LGPL-3.0 | AGPL-3.0 | MIT |

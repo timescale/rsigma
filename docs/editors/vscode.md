@@ -1,6 +1,6 @@
 # VS Code and Cursor
 
-The `rsigma` VS Code extension wraps [`rsigma-lsp`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-lsp) and lights up `.yml` files with the same 66 lint rules, parse errors, and compile errors that `rsigma rule lint` and `rsigma rule validate` produce. Because it is a thin client over the language server, anything that lints in CI also lights up in the editor, and vice versa.
+The `rsigma` VS Code extension wraps [`rsigma-lsp`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-lsp) and lights up `.yml` files with the same 68 lint rules, parse errors, and compile errors that `rsigma rule lint` and `rsigma rule validate` produce. Because it is a thin client over the language server, anything that lints in CI also lights up in the editor, and vice versa.
 
 The extension also runs as-is in [Cursor](https://cursor.sh/) and any other VS Code-compatible editor that supports VSIX installation.
 
@@ -8,7 +8,7 @@ The extension also runs as-is in [Cursor](https://cursor.sh/) and any other VS C
 
 | Capability | Detail |
 |------------|--------|
-| Diagnostics | All 66 lint rules, plus YAML and condition-expression parse errors, plus per-rule compile errors. Three layers run on every save and after a 150 ms debounce on every change. |
+| Diagnostics | All 68 lint rules, plus YAML and condition-expression parse errors, plus per-rule compile errors. Three layers run on every save and after a 150 ms debounce on every change. |
 | Code actions | One-click quick-fixes for 13 of the lint rules (the `Safe` fix set). Cursor over a squiggle, press `Cmd+.` / `Ctrl+.`, pick the suggestion. |
 | Completions | Modifier names after `|`, MITRE ATT&CK tags inside `tags:`, valid `status` / `level` / `product` / `category` / `service` values, top-level keys, selection names referenced from `condition:`. |
 | Hover | Modifier documentation, MITRE ATT&CK tactic and technique descriptions (with link-out to attack.mitre.org). |
@@ -95,7 +95,7 @@ Then in VS Code, set `rsigma.serverPath` to a wrapper script that spawns the ser
 ## See also
 
 - [Linting rules](../guide/linting-rules.md) for the operator-facing CLI workflow.
-- [Lint Rules reference](../reference/lint-rules.md) for the full 66-rule catalogue and which 13 have safe auto-fixes.
+- [Lint Rules reference](../reference/lint-rules.md) for the full 68-rule catalogue and which 13 have safe auto-fixes.
 - [Linter and LSP](../developers/linter-and-lsp.md) for the contributor walkthrough.
 - [Neovim, Helix, Zed](neovim.md) for other LSP-aware editors.
 - [`rsigma-lsp` README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-lsp/README.md) for the full capability matrix and protocol details.

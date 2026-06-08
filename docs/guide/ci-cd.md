@@ -313,7 +313,7 @@ done
 ## See also
 
 - [Evaluating Rules](evaluating-rules.md) for the full `engine eval` flag table and event extraction.
-- [Linting Rules](linting-rules.md) for the 66 lint rules, suppression, and `--fix`.
+- [Linting Rules](linting-rules.md) for the 68 lint rules, suppression, and `--fix`.
 - [Rule Conversion](rule-conversion.md) for the `backend convert` workflow that feeds `views.sql` into Grafana or alerting.
 - [Processing Pipelines](processing-pipelines.md) for dynamic-source validation via `--resolve-sources`.
 - [Exit Codes reference](../reference/exit-codes.md) for the canonical table and source-code link.

@@ -7,7 +7,7 @@ These pages are for contributors hacking on rsigma itself, not consumers of the 
 ```text
 rsigma/
 ├── crates/
-│   ├── rsigma-parser/      # Sigma YAML → AST, 66 lint rules
+│   ├── rsigma-parser/      # Sigma YAML → AST, 68 lint rules
 │   ├── rsigma-eval/        # Compiler, matcher, correlation engine, pipelines
 │   ├── rsigma-convert/     # Backend trait + Postgres and LynxDB implementations
 │   ├── rsigma-runtime/     # Streaming runtime, input parsers, dynamic sources
