@@ -136,6 +136,7 @@ pub enum LintRule {
     IncompatibleModifiers,
     EmptyValueList,
     WildcardOnlyValue,
+    FlattenedArrayCorrelation,
     UnknownKey,
 }
 
@@ -207,6 +208,7 @@ impl fmt::Display for LintRule {
             LintRule::IncompatibleModifiers => "incompatible_modifiers",
             LintRule::EmptyValueList => "empty_value_list",
             LintRule::WildcardOnlyValue => "wildcard_only_value",
+            LintRule::FlattenedArrayCorrelation => "flattened_array_correlation",
             LintRule::UnknownKey => "unknown_key",
         };
         write!(f, "{s}")

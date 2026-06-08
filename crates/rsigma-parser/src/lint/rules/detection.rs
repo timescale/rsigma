@@ -382,6 +382,7 @@ fn lint_detection_logic(det: &yaml_serde::Mapping, warnings: &mut Vec<LintWarnin
 fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWarning>) {
     match value {
         Value::Mapping(m) => {
+            check_flattened_array_correlation(m, det_name, warnings);
             for (field_key, field_val) in m {
                 let field_key_str = field_key.as_str().unwrap_or("");
 
@@ -509,6 +510,62 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
         }
         _ => {}
     }
+}
+
+/// Warn on the declined flattened array-correlation form: two or more sibling
+/// keys that share a quantified array prefix (e.g. `connections[any].protocol`
+/// and `connections[any].ip`).
+///
+/// These keys do NOT bind to the same array element, which is almost always
+/// what the author intends. The portable, same-element construct is an
+/// object-scope block (`connections[any]:` with the fields nested under it).
+fn check_flattened_array_correlation(
+    m: &yaml_serde::Mapping,
+    det_name: &str,
+    warnings: &mut Vec<LintWarning>,
+) {
+    use std::collections::BTreeMap;
+
+    let mut by_prefix: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for field_key in m.keys() {
+        let field_key_str = field_key.as_str().unwrap_or("");
+        let field_part = field_key_str.split('|').next().unwrap_or(field_key_str);
+        if let Some(prefix) = flattened_array_prefix(field_part) {
+            by_prefix
+                .entry(prefix)
+                .or_default()
+                .push(field_key_str.to_string());
+        }
+    }
+
+    for (prefix, keys) in &by_prefix {
+        if keys.len() > 1 {
+            warnings.push(warning(
+                LintRule::FlattenedArrayCorrelation,
+                format!(
+                    "keys {keys:?} in '{det_name}' share the array prefix '{prefix}' but each \
+                     opens an independent scope, so they do not correlate on the same array \
+                     element; rewrite as an object-scope block (`{prefix}:` with the fields \
+                     nested under it) to require one element to satisfy all of them"
+                ),
+                format!("/detection/{det_name}"),
+            ));
+        }
+    }
+}
+
+/// Return the path up to and including the first array-quantified segment, but
+/// only when at least one more path segment follows it (the flattened
+/// correlation shape). Returns `None` for plain fields, trailing quantifiers
+/// (`tags[all]`), and single-predicate shorthands.
+fn flattened_array_prefix(field_part: &str) -> Option<String> {
+    let segments: Vec<&str> = field_part.split('.').collect();
+    for (i, seg) in segments.iter().enumerate() {
+        if (seg.ends_with("[any]") || seg.ends_with("[all]")) && i + 1 < segments.len() {
+            return Some(segments[..=i].join("."));
+        }
+    }
+    None
 }
 
 /// Check field modifier compatibility and return a diagnostic message if
@@ -863,6 +920,60 @@ detection:
 "#,
         );
         assert!(has_rule(&w, LintRule::SingleValueAllModifier));
+    }
+
+    #[test]
+    fn flattened_array_correlation_warns() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        connections[any].protocol: 'TCP'
+        connections[any].ip: '1.2.3.1'
+    condition: selection
+"#,
+        );
+        assert!(has_rule(&w, LintRule::FlattenedArrayCorrelation));
+    }
+
+    #[test]
+    fn single_array_shorthand_is_not_flagged() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        connections[any].ip: '1.2.3.1'
+        EventName: 'x'
+    condition: selection
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::FlattenedArrayCorrelation));
+    }
+
+    #[test]
+    fn object_scope_block_is_not_flagged() {
+        // The block form nests fields under the quantified key, so they are not
+        // sibling keys and must not trigger the flattened-correlation warning.
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        connections[any]:
+            protocol: 'TCP'
+            ip: '1.2.3.1'
+    condition: selection
+"#,
+        );
+        assert!(has_no_rule(&w, LintRule::FlattenedArrayCorrelation));
     }
 
     #[test]
