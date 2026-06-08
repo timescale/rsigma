@@ -503,13 +503,18 @@ async fn resolve_pipelines_async(
 mod tests {
     use super::*;
     use crate::pipeline_deprecation::reset_inline_sources_dedup_for_tests;
-    use std::sync::Mutex;
 
     // The pipeline-embedded `sources:` dedup set is process-wide, so tests
-    // that read it need to serialize. cargo test runs tests in a binary
-    // concurrently; this guard turns those into sequential probes of the
-    // shared set.
-    static DEDUP_TEST_GUARD: Mutex<()> = Mutex::new(());
+    // that read it must serialize against every other test that touches it,
+    // including the unit tests in `pipeline_deprecation`. They share one lock
+    // (`DEDUP_TEST_LOCK`) so cargo's parallel test threads don't race on the
+    // global set. `serial_guard` recovers a poisoned lock so a failing test
+    // does not cascade into the others.
+    fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::pipeline_deprecation::DEDUP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     const RULE_YAML: &str = r#"
 title: TestRule
@@ -552,7 +557,7 @@ transformations:
 
     #[test]
     fn load_rules_surfaces_inline_sources_deprecation_through_runtime() {
-        let _guard = DEDUP_TEST_GUARD.lock().unwrap();
+        let _guard = serial_guard();
         reset_inline_sources_dedup_for_tests();
 
         let dir = tempfile::tempdir().unwrap();
@@ -583,7 +588,7 @@ transformations:
 
     #[test]
     fn load_rules_does_not_warn_when_pipeline_has_no_inline_sources() {
-        let _guard = DEDUP_TEST_GUARD.lock().unwrap();
+        let _guard = serial_guard();
         reset_inline_sources_dedup_for_tests();
 
         let dir = tempfile::tempdir().unwrap();
@@ -612,7 +617,7 @@ transformations:
 
     #[test]
     fn hot_reload_dedups_inline_sources_warning_for_same_pipeline_path() {
-        let _guard = DEDUP_TEST_GUARD.lock().unwrap();
+        let _guard = serial_guard();
         reset_inline_sources_dedup_for_tests();
 
         let dir = tempfile::tempdir().unwrap();

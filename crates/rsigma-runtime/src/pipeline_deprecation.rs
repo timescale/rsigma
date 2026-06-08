@@ -41,6 +41,17 @@ use std::sync::{Mutex, OnceLock};
 /// [`RuntimeEngine::load_rules`]: crate::RuntimeEngine::load_rules
 static SEEN_INLINE_SOURCES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
+/// Process-wide serialization lock for tests that touch [`SEEN_INLINE_SOURCES`].
+///
+/// Both this module's unit tests and the runtime engine tests in `engine.rs`
+/// (which warn through `load_rules`) mutate the shared dedup set, so they must
+/// hold one lock. cargo runs a binary's tests in parallel threads, so two
+/// separate locks would let an engine test and a deprecation test race on the
+/// global set. `lock().unwrap_or_else(into_inner)` recovers a poisoned guard so
+/// one failing test does not cascade into the others.
+#[cfg(test)]
+pub(crate) static DEDUP_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// Surface the pipeline-embedded `sources:` deprecation notice for one
 /// pipeline file. Idempotent per canonical path (dedup state lives in
 /// a process-wide `OnceLock<Mutex<HashSet<PathBuf>>>` private to this
@@ -120,16 +131,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// `SEEN_INLINE_SOURCES` is process-wide, so these tests cannot run
-    /// concurrently: each one resets the set and then asserts on its
-    /// contents, and cargo runs unit tests in parallel by default. This lock
-    /// serialises them. `into_inner` recovers from a poisoned guard left by an
-    /// earlier failing run so one failure does not cascade into the other.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn dedup_suppresses_repeat_warnings_for_same_canonical_path() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = DEDUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut file = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
         writeln!(file, "name: deprecated_pipeline").unwrap();
         reset_inline_sources_dedup_for_tests();
@@ -149,7 +153,7 @@ mod tests {
 
     #[test]
     fn dedup_distinguishes_distinct_canonical_paths() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = DEDUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let a = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
         let b = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
         reset_inline_sources_dedup_for_tests();
