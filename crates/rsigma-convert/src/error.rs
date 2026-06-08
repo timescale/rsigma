@@ -9,6 +9,9 @@ pub enum ConvertError {
     #[error("backend does not support keyword/unbound detection")]
     UnsupportedKeyword,
 
+    #[error("backend does not support array object-scope matching (field[any]/field[all])")]
+    UnsupportedArrayMatching,
+
     #[error("backend does not support correlation type: {0}")]
     UnsupportedCorrelation(String),
 

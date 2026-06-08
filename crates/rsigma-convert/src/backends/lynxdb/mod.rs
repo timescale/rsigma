@@ -589,6 +589,56 @@ mod tests {
         results
     }
 
+    #[test]
+    fn positional_index_is_unsupported() {
+        // SPL2 supports array indices via `mvindex`/bracket access, but the
+        // LynxDB backend does not lower them yet; it must error rather than
+        // emit a literal `args[0]` field reference.
+        let collection = parse_sigma_yaml(
+            r#"
+title: T
+logsource: { category: test }
+detection:
+    selection:
+        args[0]: 'cmd.exe'
+    condition: selection
+"#,
+        )
+        .unwrap();
+        let backend = LynxDbBackend::new();
+        let result =
+            backend.convert_rule(&collection.rules[0], "default", &PipelineState::default());
+        assert!(matches!(
+            result,
+            Err(ConvertError::UnsupportedArrayMatching)
+        ));
+    }
+
+    #[test]
+    fn array_object_scope_is_unsupported() {
+        // LynxDB cannot express array object-scope matching; it must fail
+        // loudly rather than emit a query with different semantics.
+        let collection = parse_sigma_yaml(
+            r#"
+title: T
+logsource: { category: test }
+detection:
+    selection:
+        connections[any]:
+            protocol: 'TCP'
+    condition: selection
+"#,
+        )
+        .unwrap();
+        let backend = LynxDbBackend::new();
+        let result =
+            backend.convert_rule(&collection.rules[0], "default", &PipelineState::default());
+        assert!(matches!(
+            result,
+            Err(ConvertError::UnsupportedArrayMatching)
+        ));
+    }
+
     fn convert_minimal(yaml: &str) -> Vec<String> {
         let collection = parse_sigma_yaml(yaml).unwrap();
         let backend = LynxDbBackend::new();

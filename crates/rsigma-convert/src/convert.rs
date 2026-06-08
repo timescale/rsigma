@@ -133,6 +133,26 @@ pub fn convert_collection(
     Ok(output)
 }
 
+/// True if any dot-segment of a field path is a positional array index
+/// (`name[N]`, including a negative `name[-N]`). The quantifier selectors never
+/// reach field names (the parser desugars them into `Detection::ArrayMatch`),
+/// so a bracketed integer is the positional-index signal.
+fn field_has_positional_index(field: &str) -> bool {
+    field.split('.').any(|seg| {
+        // Only an unescaped trailing `[...]` is a selector; `\[` / `\]` are a
+        // literal bracket in the field name, not a positional index.
+        let Some(open) = rsigma_parser::fieldpath::first_unescaped(seg, b'[') else {
+            return false;
+        };
+        if !rsigma_parser::fieldpath::ends_with_unescaped(seg, b']') {
+            return false;
+        }
+        let inner = &seg[open + 1..seg.len() - 1];
+        let digits = inner.strip_prefix('-').unwrap_or(inner);
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
 /// Modifiers whose semantics cannot be expressed by the generic
 /// [`default_convert_detection_item`] dispatch.
 ///
@@ -186,6 +206,15 @@ pub fn default_convert_detection_item(
         .name
         .as_deref()
         .ok_or(ConvertError::MissingFieldName)?;
+
+    // A positional array index (`field[N]`) reaches conversion as part of the
+    // field path. Backends that cannot lower it must fail loudly rather than
+    // emit a literal field reference that diverges from the evaluator's
+    // element-N semantics.
+    if field_has_positional_index(field_name) && !backend.supports_field_index() {
+        return Err(ConvertError::UnsupportedArrayMatching);
+    }
+
     let modifiers = &item.field.modifiers;
 
     if item.field.has_modifier(rsigma_parser::Modifier::Exists) {
@@ -358,5 +387,115 @@ pub fn default_convert_detection(
                 .collect::<Result<Vec<_>>>()?;
             backend.convert_condition_or(&parts)
         }
+        // Array object-scope matching: dispatch to the backend hook (which
+        // fails loudly by default and is overridden by backends that can
+        // express member quantification, e.g. PostgreSQL JSONB).
+        rsigma_parser::Detection::ArrayMatch {
+            field,
+            quantifier,
+            body,
+        } => backend.convert_array_match(field, *quantifier, body, state),
+        // AND of heterogeneous sub-detections (a mapping mixing plain items
+        // with array object-scope blocks).
+        rsigma_parser::Detection::And(dets) => {
+            let parts: Vec<String> = dets
+                .iter()
+                .map(|d| backend.convert_detection(d, state))
+                .collect::<Result<Vec<_>>>()?;
+            backend.convert_condition_and(&parts)
+        }
+        // Extended array block body: lower each named sub-selection, then fold
+        // them per the `condition` (and/or/not). Reached when a backend's
+        // `convert_array_match` recurses into a `condition:` block body
+        // relative to the per-element binding.
+        rsigma_parser::Detection::Conditional { named, condition } => {
+            convert_block_condition(backend, condition, named, state)
+        }
+    }
+}
+
+/// Lower an extended array block-body `condition` into a single boolean
+/// expression by converting each referenced named sub-selection and combining
+/// them with the backend's `and`/`or`/`not` (and selector expansion).
+fn convert_block_condition(
+    backend: &dyn Backend,
+    expr: &rsigma_parser::ConditionExpr,
+    named: &std::collections::HashMap<String, rsigma_parser::Detection>,
+    state: &mut ConversionState,
+) -> Result<String> {
+    use rsigma_parser::{ConditionExpr, Quantifier};
+    match expr {
+        ConditionExpr::Identifier(name) => {
+            let det = named
+                .get(name)
+                .ok_or_else(|| ConvertError::InvalidIdentifier(name.clone()))?;
+            backend.convert_detection(det, state)
+        }
+        ConditionExpr::And(exprs) => {
+            // Parenthesize OR sub-expressions: SQL `AND` binds tighter than
+            // `OR`, so `a AND (b OR c)` must keep the OR grouped.
+            let parts = exprs
+                .iter()
+                .map(|e| {
+                    let sql = convert_block_condition(backend, e, named, state)?;
+                    Ok(if matches!(e, ConditionExpr::Or(_)) {
+                        format!("({sql})")
+                    } else {
+                        sql
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            backend.convert_condition_and(&parts)
+        }
+        ConditionExpr::Or(exprs) => {
+            let parts = exprs
+                .iter()
+                .map(|e| convert_block_condition(backend, e, named, state))
+                .collect::<Result<Vec<_>>>()?;
+            backend.convert_condition_or(&parts)
+        }
+        ConditionExpr::Not(inner) => {
+            let part = convert_block_condition(backend, inner, named, state)?;
+            // Parenthesize: SQL `NOT` binds looser than the inner comparison
+            // operators, so a bare multi-token operand would mis-associate.
+            backend.convert_condition_not(&format!("({part})"))
+        }
+        ConditionExpr::Selector {
+            quantifier,
+            pattern,
+        } => {
+            let mut names: Vec<&String> = named
+                .keys()
+                .filter(|n| pattern.matches_detection_name(n))
+                .collect();
+            names.sort();
+            let parts = names
+                .iter()
+                .map(|n| backend.convert_detection(&named[*n], state))
+                .collect::<Result<Vec<_>>>()?;
+            match quantifier {
+                Quantifier::Any => backend.convert_condition_or(&parts),
+                Quantifier::All => backend.convert_condition_and(&parts),
+                Quantifier::Count(_) => Err(ConvertError::UnsupportedArrayMatching),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::field_has_positional_index;
+
+    #[test]
+    fn positional_index_detection_respects_escaping() {
+        assert!(field_has_positional_index("args[0]"));
+        assert!(field_has_positional_index("args[-1]"));
+        assert!(field_has_positional_index("connections[0].ip"));
+        // Escaped brackets are a literal field name, not a positional index.
+        assert!(!field_has_positional_index("args\\[0\\]"));
+        assert!(!field_has_positional_index("weird\\[x\\]"));
+        // Quantifier selectors never reach field names, and plain fields have
+        // no index.
+        assert!(!field_has_positional_index("process.args"));
     }
 }
