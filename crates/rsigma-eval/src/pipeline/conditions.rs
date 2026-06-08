@@ -445,6 +445,7 @@ mod tests {
     #[test]
     fn test_logsource_condition() {
         let rule = SigmaRule {
+            sigma_version: None,
             title: "Test".to_string(),
             logsource: LogSource {
                 category: Some("process_creation".to_string()),
@@ -498,6 +499,7 @@ mod tests {
     fn test_is_sigma_rule_condition() {
         let state = PipelineState::default();
         let rule = SigmaRule {
+            sigma_version: None,
             title: "Test".to_string(),
             logsource: LogSource::default(),
             detection: rsigma_parser::Detections {
@@ -533,6 +535,7 @@ mod tests {
     fn test_tag_condition() {
         let state = PipelineState::default();
         let rule = SigmaRule {
+            sigma_version: None,
             title: "Test".to_string(),
             logsource: LogSource::default(),
             detection: rsigma_parser::Detections {
@@ -615,6 +618,7 @@ mod tests {
             processing_item_id: "my_transform".to_string(),
         };
         let rule = SigmaRule {
+            sigma_version: None,
             title: "Test".to_string(),
             logsource: LogSource::default(),
             detection: rsigma_parser::Detections {

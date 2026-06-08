@@ -1427,6 +1427,7 @@ fn array_implicit_any_flat_scalar_array() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1451,6 +1452,7 @@ fn array_implicit_any_through_object_array_fans_out() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1465,10 +1467,30 @@ detection:
 }
 
 #[test]
+fn array_brackets_literal_field_below_v3() {
+    // Without sigma-version (floor major 2), `args[0]` is a literal field name,
+    // not a positional index: it matches an event whose key is literally
+    // "args[0]" and does NOT index into an `args` array.
+    let engine = make_engine_with_rule(
+        r#"
+title: T
+logsource: { category: test }
+detection:
+    selection:
+        args[0]: 'cmd.exe'
+    condition: selection
+"#,
+    );
+    assert!(matches(&engine, &json!({"args[0]": "cmd.exe"})));
+    assert!(!matches(&engine, &json!({"args": ["cmd.exe", "-flag"]})));
+}
+
+#[test]
 fn array_object_scope_any_correlates_same_element() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1502,6 +1524,7 @@ fn array_object_scope_all_requires_every_member_and_nonempty() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1528,6 +1551,7 @@ fn array_scalar_member_all_with_modifier() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1550,6 +1574,7 @@ fn array_nested_quantifiers() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1581,6 +1606,7 @@ fn array_mixed_map_and_semantics() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1612,6 +1638,7 @@ fn array_okta_scopes_cloud_shape() {
     let engine = make_engine_with_rule(
         r#"
 title: Okta high-priv scope grant
+sigma-version: 3
 logsource: { product: okta, service: system }
 detection:
     selection:
@@ -1635,6 +1662,7 @@ fn array_positional_index_scalar() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1660,6 +1688,7 @@ fn array_positional_index_does_not_fan_out() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1680,6 +1709,7 @@ fn array_positional_index_dotted_path() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1705,6 +1735,7 @@ fn array_escaped_brackets_match_literal_field() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1723,6 +1754,7 @@ fn array_negative_index_counts_from_end() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1750,6 +1782,7 @@ fn array_negative_index_dotted_path() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1773,6 +1806,7 @@ fn array_index_inside_quantifier() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1800,6 +1834,7 @@ fn array_object_scope_none_is_dual_of_any() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1828,6 +1863,7 @@ fn array_object_scope_all_or_empty_matches_empty() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1855,6 +1891,7 @@ fn array_extended_block_per_element_negation() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1891,6 +1928,7 @@ fn array_extended_block_per_element_disjunction() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1918,6 +1956,7 @@ fn array_extended_block_all_quantifier() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1955,6 +1994,7 @@ fn array_extended_block_scalar_element_marker() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1981,6 +2021,7 @@ fn array_scalar_element_marker_basic_block() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -1998,6 +2039,7 @@ fn array_scalar_member_none() {
     let engine = make_engine_with_rule(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:

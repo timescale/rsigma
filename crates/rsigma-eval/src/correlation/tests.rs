@@ -915,6 +915,7 @@ fn test_compile_correlation_with_custom_attributes() {
     );
 
     let rule = CorrelationRule {
+        sigma_version: None,
         title: "Test Corr".to_string(),
         id: Some("corr-1".to_string()),
         name: None,

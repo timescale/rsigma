@@ -21,6 +21,7 @@ fn make_test_rule() -> SigmaRule {
     );
 
     SigmaRule {
+        sigma_version: None,
         title: "Test Rule".to_string(),
         logsource: LogSource {
             category: Some("process_creation".to_string()),
@@ -192,6 +193,7 @@ fn test_field_name_mapping_cartesian_expansion_capped() {
     let mut named = HashMap::new();
     named.insert("selection".to_string(), Detection::AllOf(items));
     let mut rule = SigmaRule {
+        sigma_version: None,
         title: "Cartesian Bomb".to_string(),
         logsource: LogSource {
             category: None,
@@ -452,6 +454,7 @@ fn test_value_placeholders() {
     );
 
     let mut rule = SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: LogSource::default(),
         detection: Detections {
@@ -966,6 +969,7 @@ fn test_wildcard_placeholders_replaces_unresolved() {
     );
 
     let mut rule = SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: LogSource::default(),
         detection: Detections {
@@ -1022,6 +1026,7 @@ fn test_wildcard_placeholders_with_known_var() {
     );
 
     let mut rule = SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: LogSource::default(),
         detection: Detections {
