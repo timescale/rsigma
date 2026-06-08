@@ -337,6 +337,46 @@ impl fmt::Display for SelectorPattern {
 // Detection Section
 // =============================================================================
 
+/// Quantifier for matching the members of an array-valued field.
+///
+/// Used by array object-scope blocks (`field[any]:` / `field[all]:`). This is
+/// deliberately distinct from the `all` value-list modifier ([`Modifier::All`]),
+/// which links several *values* of one field with AND. An array quantifier
+/// instead ranges over the *members* of an array-valued field.
+///
+/// Reference: proposed Sigma array-matching extension (sigma-specification
+/// Discussion #106).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArrayQuantifier {
+    /// At least one array member must satisfy the nested detection.
+    Any,
+    /// Every array member must satisfy the nested detection, and the array
+    /// must be non-empty.
+    All,
+    /// Every array member must satisfy the nested detection, but an empty or
+    /// missing array also matches (the vacuously-true reading of [`All`]).
+    ///
+    /// [`All`]: ArrayQuantifier::All
+    AllOrEmpty,
+    /// No array member satisfies the nested detection (the dual of [`Any`]).
+    /// Matches an empty or missing array (vacuously, no member matches).
+    ///
+    /// [`Any`]: ArrayQuantifier::Any
+    None,
+}
+
+impl fmt::Display for ArrayQuantifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArrayQuantifier::Any => write!(f, "any"),
+            ArrayQuantifier::All => write!(f, "all"),
+            ArrayQuantifier::AllOrEmpty => write!(f, "all_or_empty"),
+            ArrayQuantifier::None => write!(f, "none"),
+        }
+    }
+}
+
 /// A single detection item: a field (with modifiers) mapped to one or more values.
 ///
 /// Examples:
@@ -367,6 +407,46 @@ pub enum Detection {
     AnyOf(Vec<Detection>),
     /// Keyword detection: plain value(s) without a field.
     Keywords(Vec<SigmaValue>),
+    /// Array object-scope quantifier block: `field[any]:` / `field[all]:`
+    /// opening a nested detection that is evaluated against a single array
+    /// member.
+    ///
+    /// - `field` is the dot-path to the array (quantifier markers stripped).
+    /// - `quantifier` decides whether one (`any`) or every (`all`) member must
+    ///   satisfy `body`.
+    /// - `body` is the nested detection applied per member. A `body` item with
+    ///   no field name (`FieldSpec::name == None`) matches the array member
+    ///   value itself (the scalar-array case `field[all]: value`).
+    ///
+    /// This is the only construct that expresses same-member correlation across
+    /// multiple predicates, and the only one that lowers cleanly to backend
+    /// array primitives (Elasticsearch `nested`, KQL `mv-apply`, SQL
+    /// `jsonb_array_elements`, Splunk `mvexpand`).
+    ArrayMatch {
+        /// Dot-path to the array field (quantifier markers stripped).
+        field: String,
+        /// Whether one or all members must satisfy `body`.
+        quantifier: ArrayQuantifier,
+        /// Nested detection evaluated against a single array member.
+        body: Box<Detection>,
+    },
+    /// AND of heterogeneous sub-detections. Produced when a YAML mapping mixes
+    /// plain detection items with one or more array object-scope blocks, which
+    /// [`Detection::AllOf`] (a list of simple items) cannot represent.
+    And(Vec<Detection>),
+    /// Extended object-scope block body: named element-scoped sub-selections
+    /// combined by a `condition` expression (the recursive "mini-event" form),
+    /// enabling per-element `and`/`or`/`not`. Produced only as an
+    /// [`ArrayMatch`](Detection::ArrayMatch) body when the block map carries a
+    /// `condition:` key. The basic conjunction-map body is the degenerate case
+    /// (an implicit AND of items); this is the explicit-condition form.
+    Conditional {
+        /// Element-scoped named sub-selections (each a nested detection).
+        named: HashMap<String, Detection>,
+        /// Boolean combination of the named sub-selections, evaluated per
+        /// array member.
+        condition: ConditionExpr,
+    },
 }
 
 /// The complete detection section of a Sigma rule.
