@@ -26,7 +26,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 
 * **Sigma parsing:** Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
 * **Rule evaluation:** Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
-* **Array matching (experimental):** Match members of arrays in nested event data: implicit any-member matching, `[any]`/`[all]` object-scope blocks for same-element correlation, and positional `[N]` indexing. Evaluated natively and lowered to PostgreSQL JSONB; see the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
+* **Array matching (experimental):** Match members of arrays in nested event data: implicit any-member matching, `[any]`/`[all]` object-scope blocks for same-element correlation, and positional `[N]` indexing, opt-in via `sigma-version: 3`. Evaluated natively and lowered to PostgreSQL JSONB; see the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
 * **Streaming daemon:** Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
 * **Input formats:** Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * **Processing pipelines:** Use pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers

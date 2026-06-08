@@ -32,6 +32,17 @@ This library is part of [rsigma].
 | `parse_inline_suppressions(text: &str)` | Parse `# rsigma-disable` comments from YAML text |
 | `apply_suppressions(warnings, config, inline)` | Filter and override warnings using config and inline suppressions |
 
+### Specification Version
+
+A document may declare the Sigma specification major it targets via the top-level `sigma-version` attribute; version-sensitive syntax (array-matching brackets) is gated on it.
+
+| Function / Constant | Description |
+|---------------------|-------------|
+| `version::resolve_major(declared)` | Resolve a `sigma-version` major, defaulting to the fixed floor when absent |
+| `version::array_matching_enabled(declared)` | Whether array-matching bracket selectors are active at the resolved major |
+| `version::is_unsupported(declared)` | Whether a declared major exceeds what this build supports |
+| `SPEC_VERSION_FLOOR` / `SPEC_VERSION_ARRAY_MATCHING` / `SPEC_VERSION_SUPPORTED` | The floor (2), array-matching (3), and highest supported majors |
+
 ### Auto-Fix Types
 
 Each `LintWarning` can carry an optional `Fix` describing how to automatically correct the issue.
@@ -115,11 +126,11 @@ The full PEG grammar is defined in [`src/sigma.pest`](src/sigma.pest). It implem
 | Type | Description |
 |------|-------------|
 | `SigmaCollection` | Collection of rules, correlations, filters, and errors |
-| `SigmaRule` | A parsed detection rule with metadata, logsource, and detections |
+| `SigmaRule` | A parsed detection rule with metadata, an optional `sigma_version` (the targeted spec major), logsource, and detections |
 | `CorrelationRule` | A correlation rule with type, referenced rules, timespan, and conditions |
 | `FilterRule` | A filter rule that injects `AND NOT` conditions into referenced rules |
 | `Detections` | Named detections, condition expressions, and optional timeframe |
-| `Detection` | `AllOf` (AND-linked items), `AnyOf` (OR-linked), or `Keywords` (plain values) |
+| `Detection` | `AllOf` (AND-linked items), `AnyOf` (OR-linked), `Keywords` (plain values), `ArrayMatch` (object-scope array block), `And`, or `Conditional` (extended array block) |
 | `FieldSpec` | Field name + modifier chain; `name` is `None` for keyword detections |
 | `ConditionExpr` | `And`, `Or`, `Not`, `Identifier`, or `Selector` with quantifier and pattern |
 | `SigmaValue` | `String`, `Integer`, `Float`, `Bool`, or `Null` |
@@ -133,6 +144,7 @@ The full PEG grammar is defined in [`src/sigma.pest`](src/sigma.pest). It implem
 | `Level` | `Informational`, `Low`, `Medium`, `High`, `Critical` |
 | `RelationType` | `Derived`, `Obsolete`, `Merged`, `Renamed`, `Similar` |
 | `Quantifier` | `Any`, `All`, `Count(u64)` |
+| `ArrayQuantifier` | `Any`, `All`, `AllOrEmpty`, `None` (array object-scope quantifiers) |
 | `SelectorPattern` | `Them`, `Pattern(String)` |
 | `CorrelationType` | `EventCount`, `ValueCount`, `Temporal`, `TemporalOrdered`, `ValueSum`, `ValueAvg`, `ValuePercentile`, `ValueMedian` |
 
@@ -143,6 +155,7 @@ The full PEG grammar is defined in [`src/sigma.pest`](src/sigma.pest). It implem
 - **YAML list of plain values** → `Detection::Keywords` (keyword search across all fields)
 - **Condition as list** (`condition: [s1, s2]`) → multiple `ConditionExpr` parsed independently
 - **Empty field name** (`parse_field_spec("")`) → `FieldSpec { name: None, modifiers: [] }` (keyword)
+- **Array selectors** (`field[any]`, `field[all]`, `field[N]`) → desugared on the field path only when the document targets `sigma-version: 3` or higher; below that they are literal field-name characters. See the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
 
 ## Field Modifiers (30)
 
@@ -220,7 +233,7 @@ The string must be at least 2 characters (e.g. `1h`). The last character is the 
 
 ## Linter (70 rules)
 
-70 built-in lint rules derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
+70 built-in lint rules (plus the reserved `empty_filter_rules`, declared but not emitted) derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 The linter operates on raw YAML values to catch issues the parser silently ignores.
 
@@ -295,20 +308,20 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `condition_value_not_numeric` | Error | | Condition value not numeric |
 | `generate_not_boolean` | Error | | `generate` is not a boolean |
 
-### Filter Rules (8)
+### Filter Rules (8 IDs, 7 emitted)
 
 | Rule | Severity | Fix | Trigger |
 |------|----------|-----|---------|
 | `missing_filter` | Error | | No `filter` or not a mapping |
 | `missing_filter_rules` | Error | | No `filter.rules` |
-| `empty_filter_rules` | Warning | | `filter.rules` is empty |
+| `empty_filter_rules` | reserved | | Declared in the enum but not emitted in production today |
 | `missing_filter_selection` | Error | | No `filter.selection` |
 | `missing_filter_condition` | Error | | No `filter.condition` |
 | `filter_has_level` | Warning | Yes | Filter has `level` (not applicable) |
 | `filter_has_status` | Warning | Yes | Filter has `status` (not applicable) |
 | `missing_filter_logsource` | Warning | | No `logsource` |
 
-### Detection Logic (7)
+### Detection Logic (8)
 
 | Rule | Severity | Fix | Trigger |
 |------|----------|-----|---------|
@@ -318,7 +331,17 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `incompatible_modifiers` | Warning | | Incompatible modifier combination (e.g. `contains\|startswith`, `re\|contains`, `gt\|contains`, regex flags without `re`) |
 | `empty_value_list` | Warning | | Empty value list |
 | `wildcard_only_value` | Warning | Yes | Lone `*` value (suggests `\|exists: true` instead) |
+| `flattened_array_correlation` | Warning | | Sibling keys share a quantified array prefix (e.g. `connections[any].protocol` and `connections[any].ip`); they open independent scopes and don't correlate on one element, so an object-scope block is needed |
 | `unknown_key` | Info | Yes | Top-level key likely a typo of a known key (edit distance ≤ 2); custom fields are allowed per the Sigma spec |
+
+### Specification Version and References (4)
+
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `unsupported_sigma_version` | Error | | `sigma-version` declares a major newer than this build supports |
+| `array_matching_without_version` | Warning | | Array-matching bracket syntax used below `sigma-version: 3` (brackets read literally) |
+| `sigma_version_mismatch` | Warning | | A correlation/filter and a rule it references declare different majors |
+| `unknown_rule_reference` | Warning | | A `correlation.rules`/`filter.rules` entry resolves to no rule (directory linting only, where the index is complete) |
 
 ### Rule Suppression
 
@@ -352,7 +375,7 @@ The `schema_violation` lint rule optionally validates rules against a JSON schem
 ## Directory Parsing and Linting
 
 - **`parse_sigma_directory`:** Recursively walks directories; only processes `.yml`/`.yaml` files. File-level parse errors are accumulated in `collection.errors` (not fatal). Sub-collections (rules, correlations, filters) are merged.
-- **`lint_yaml_directory`:** Skips hidden directories (`.` prefix). Canonicalizes paths to detect symlink cycles. Sorts entries by path for deterministic output.
+- **`lint_yaml_directory`:** Skips hidden directories (`.` prefix). Canonicalizes paths to detect symlink cycles. Sorts entries by path for deterministic output. Runs a two-pass directory-global rule index so cross-document reference checks (`sigma_version_mismatch`, `unknown_rule_reference`) resolve rules (by `id` or `name`) across sibling files.
 
 ## Error Types
 
