@@ -371,7 +371,7 @@ mod tests {
         // parent-technique label because doing so would diverge from
         // the rule author's stated tags.
         let labels = labels_from_tags(&["attack.t1055.001".to_string()]);
-        assert!(labels.get("technique.id").is_none());
+        assert!(!labels.contains_key("technique.id"));
         assert_eq!(
             labels.get("subtechnique.id").map(String::as_str),
             Some("T1055.001"),
@@ -389,7 +389,7 @@ mod tests {
             labels.get("technique.id").map(String::as_str),
             Some("T1055"),
         );
-        assert!(labels.get("subtechnique.id").is_none());
+        assert!(!labels.contains_key("subtechnique.id"));
     }
 
     #[test]
