@@ -329,6 +329,43 @@ impl Backend for FibratusBackend {
         item: &DetectionItem,
         state: &mut ConversionState,
     ) -> Result<String> {
+        // Multi-value `|re` (without `|all`) lowers to a single
+        // `regex(field, pat1, pat2, ...) = true` call, the idiomatic
+        // Fibratus form (the `regex()` filter function accepts a
+        // variadic pattern list and returns true if any pattern
+        // matches). Without this override the generic dispatch would
+        // OR N separate single-pattern calls together, which is
+        // semantically correct but cluttered; with `|all` the
+        // generic AND-join is the right thing and we fall through.
+        if item.field.has_modifier(Modifier::Re)
+            && item.values.len() >= 2
+            && !item.field.has_modifier(Modifier::All)
+        {
+            let field_name = item
+                .field
+                .name
+                .as_deref()
+                .ok_or(ConvertError::MissingFieldName)?;
+            let mut patterns: Vec<String> = Vec::with_capacity(item.values.len());
+            for v in &item.values {
+                let pat = match v {
+                    SigmaValue::String(s) => s.original.clone(),
+                    _ => return Err(ConvertError::UnsupportedValue("re requires string".into())),
+                };
+                if !shared::is_re2_compatible(&pat) {
+                    return Err(ConvertError::UnsupportedModifier(format!(
+                        "regex pattern uses PCRE-only construct (lookaround/backreference) Fibratus's RE2 engine does not support: {pat}"
+                    )));
+                }
+                patterns.push(pat);
+            }
+            let f = self.escape_and_quote_field(field_name);
+            let quoted: Vec<String> = patterns
+                .iter()
+                .map(|p| shared::quote_plain_str(p))
+                .collect();
+            return Ok(format!("regex({f}, {}) = true", quoted.join(", ")));
+        }
         default_convert_detection_item(self, item, state)
     }
 

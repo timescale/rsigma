@@ -499,6 +499,73 @@ detection:
 }
 
 // ---------------------------------------------------------------------
+// Multi-value |re and |cidr (generic-dispatch OR/AND fold)
+// ---------------------------------------------------------------------
+
+#[test]
+fn multi_value_re_collapses_to_single_regex_call() {
+    // Fibratus's `regex()` filter function takes a variadic pattern
+    // list and returns true if any pattern matches, so multi-value
+    // `|re` collapses to a single call rather than OR'd separate
+    // calls (the idiomatic Fibratus form).
+    let q = convert(
+        r#"
+title: T
+detection:
+  s:
+    ps.cmdline|re:
+      - '^safe'
+      - '^trusted'
+  condition: s
+"#,
+    );
+    assert_eq!(q, vec!["regex(ps.cmdline, '^safe', '^trusted') = true"]);
+}
+
+#[test]
+fn multi_value_re_with_all_modifier_uses_and() {
+    let q = convert(
+        r#"
+title: T
+detection:
+  s:
+    ps.cmdline|re|all:
+      - '\bwhoami\b'
+      - '\bnet user\b'
+  condition: s
+"#,
+    );
+    assert_eq!(
+        q,
+        vec![
+            r"regex(ps.cmdline, '\\bwhoami\\b') = true and regex(ps.cmdline, '\\bnet user\\b') = true"
+        ],
+    );
+}
+
+#[test]
+fn multi_value_cidr_or_joins_each_block() {
+    let q = convert(
+        r#"
+title: T
+detection:
+  s:
+    net.dip|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+  condition: s
+"#,
+    );
+    assert_eq!(
+        q,
+        vec![
+            "(cidr_contains(net.dip, '10.0.0.0/8') or cidr_contains(net.dip, '172.16.0.0/12') or cidr_contains(net.dip, '192.168.0.0/16'))"
+        ],
+    );
+}
+
+// ---------------------------------------------------------------------
 // CIDR via cidr_contains() function call
 // ---------------------------------------------------------------------
 

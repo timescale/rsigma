@@ -186,7 +186,6 @@ min-engine-version: 3.0.0
 
 ## Caveats and follow-ups
 
-- **Multi-value CIDR / regex.** The shared `default_convert_detection_item` dispatch only reads the first value when the field carries `|cidr` or `|re`. This affects every text backend in the workspace; the Fibratus backend inherits the gap. Workaround: emit one rule per CIDR/regex value, or split with `|` alternation inside a single regex pattern.
 - **Cross-process target fields.** The `create_remote_thread` and `process_access` field mappings cover the source-process side and (for create_remote_thread) the start-address triple, but they do not rename Sigma's `TargetImage` field for either category. Fibratus exposes `thread.pid` for the target process on a `CreateThread` event and `ps.access.status` on `OpenProcess`, but no documented `thread.image` or `ps.access.image` field for the target executable. Rules that reference `TargetImage`/`TargetProcessId`/`GrantedAccess` will fail conversion with an unsupported-field error rather than emit an invented field name; pair them with a custom pipeline if your Fibratus build exposes these fields under different names.
 
 ## Related material

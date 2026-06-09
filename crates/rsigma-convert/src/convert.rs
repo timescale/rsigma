@@ -246,35 +246,11 @@ pub fn default_convert_detection_item(
     }
 
     if item.field.has_modifier(rsigma_parser::Modifier::Re) {
-        let pattern = match item.values.first() {
-            Some(rsigma_parser::SigmaValue::String(s)) => s.original.clone(),
-            _ => return Err(ConvertError::UnsupportedValue("re requires string".into())),
-        };
-        return match backend.convert_field_eq_re(field_name, &pattern, modifiers, state)? {
-            crate::state::ConvertResult::Query(q) => Ok(q),
-            crate::state::ConvertResult::Deferred(d) => {
-                state.add_deferred(d);
-                Ok(String::new())
-            }
-        };
+        return convert_multi_value_re(backend, item, field_name, modifiers, state);
     }
 
     if item.field.has_modifier(rsigma_parser::Modifier::Cidr) {
-        let cidr_str = match item.values.first() {
-            Some(rsigma_parser::SigmaValue::String(s)) => s.original.clone(),
-            _ => {
-                return Err(ConvertError::UnsupportedValue(
-                    "cidr requires string".into(),
-                ));
-            }
-        };
-        return match backend.convert_field_eq_cidr(field_name, &cidr_str, state)? {
-            crate::state::ConvertResult::Query(q) => Ok(q),
-            crate::state::ConvertResult::Deferred(d) => {
-                state.add_deferred(d);
-                Ok(String::new())
-            }
-        };
+        return convert_multi_value_cidr(backend, item, field_name, state);
     }
 
     for m in [
@@ -354,6 +330,100 @@ pub fn default_convert_detection_item(
         backend.convert_condition_and(&value_parts)
     } else {
         backend.convert_condition_or(&value_parts)
+    }
+}
+
+/// Handle `field|re: [<pat1>, <pat2>, ...]` by lowering each pattern
+/// through the backend's `convert_field_eq_re` hook and combining the
+/// results with `or` (`|all`: `and`). The single-value case keeps the
+/// original semantics (one direct call). All values must be strings;
+/// non-string values produce `UnsupportedValue`. Deferred results are
+/// queued in the conversion state and contribute an empty
+/// placeholder, matching the equality fall-through's contract.
+fn convert_multi_value_re(
+    backend: &dyn Backend,
+    item: &rsigma_parser::DetectionItem,
+    field_name: &str,
+    modifiers: &[rsigma_parser::Modifier],
+    state: &mut ConversionState,
+) -> Result<String> {
+    let use_all = item.field.has_modifier(rsigma_parser::Modifier::All);
+    let mut parts: Vec<String> = Vec::with_capacity(item.values.len());
+    for value in &item.values {
+        let pattern = match value {
+            rsigma_parser::SigmaValue::String(s) => s.original.clone(),
+            _ => return Err(ConvertError::UnsupportedValue("re requires string".into())),
+        };
+        match backend.convert_field_eq_re(field_name, &pattern, modifiers, state)? {
+            crate::state::ConvertResult::Query(q) => {
+                if !q.is_empty() {
+                    parts.push(q);
+                }
+            }
+            crate::state::ConvertResult::Deferred(d) => {
+                state.add_deferred(d);
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Ok(String::new());
+    }
+    if parts.len() == 1 {
+        return Ok(parts.into_iter().next().unwrap());
+    }
+    if use_all {
+        backend.convert_condition_and(&parts)
+    } else {
+        backend.convert_condition_or(&parts)
+    }
+}
+
+/// Handle `field|cidr: [<a/n>, <b/m>, ...]` analogously to
+/// `convert_multi_value_re`: each CIDR is lowered through the
+/// backend's `convert_field_eq_cidr` hook and the resulting predicates
+/// are OR-joined (`|all`: AND-joined). Single-value input keeps the
+/// existing one-call semantics so backends with custom rendering for
+/// a single CIDR (`field::inet <<= 'value'::cidr` for PostgreSQL,
+/// `cidr_contains(field, '...')` for Fibratus) emit the same string
+/// they did before this generalization.
+fn convert_multi_value_cidr(
+    backend: &dyn Backend,
+    item: &rsigma_parser::DetectionItem,
+    field_name: &str,
+    state: &mut ConversionState,
+) -> Result<String> {
+    let use_all = item.field.has_modifier(rsigma_parser::Modifier::All);
+    let mut parts: Vec<String> = Vec::with_capacity(item.values.len());
+    for value in &item.values {
+        let cidr_str = match value {
+            rsigma_parser::SigmaValue::String(s) => s.original.clone(),
+            _ => {
+                return Err(ConvertError::UnsupportedValue(
+                    "cidr requires string".into(),
+                ));
+            }
+        };
+        match backend.convert_field_eq_cidr(field_name, &cidr_str, state)? {
+            crate::state::ConvertResult::Query(q) => {
+                if !q.is_empty() {
+                    parts.push(q);
+                }
+            }
+            crate::state::ConvertResult::Deferred(d) => {
+                state.add_deferred(d);
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Ok(String::new());
+    }
+    if parts.len() == 1 {
+        return Ok(parts.into_iter().next().unwrap());
+    }
+    if use_all {
+        backend.convert_condition_and(&parts)
+    } else {
+        backend.convert_condition_or(&parts)
     }
 }
 
