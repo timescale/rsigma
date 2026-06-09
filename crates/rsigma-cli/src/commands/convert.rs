@@ -167,12 +167,21 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
                     ctx.format.as_str(),
                 );
             }
-            let all_queries: Vec<&str> = output_data
+            let all_queries: Vec<String> = output_data
                 .queries
                 .iter()
-                .flat_map(|r| r.queries.iter().map(|q| q.as_str()))
+                .flat_map(|r| r.queries.iter().cloned())
                 .collect();
-            let output_str = all_queries.join("\n");
+            // Defer to the backend so format-aware separators land in
+            // the joined output (e.g. `---\n` between YAML rule
+            // documents for the Fibratus backend, `;\n\n` between
+            // PostgreSQL `view`/`continuous_aggregate` statements).
+            let output_str = backend
+                .finalize_output(all_queries, &format)
+                .unwrap_or_else(|e| {
+                    eprintln!("Output finalization failed: {e}");
+                    process::exit(crate::exit_code::RULE_ERROR);
+                });
             write_output(&output_str, output.as_deref());
         }
         Err(e) => {
