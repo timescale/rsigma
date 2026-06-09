@@ -31,6 +31,7 @@
 //!   bare condition for piping into other tooling.
 
 pub mod config;
+pub mod correlation;
 pub mod envelope;
 pub mod macros;
 pub mod shared;
@@ -658,5 +659,20 @@ impl Backend for FibratusBackend {
                 "unknown output format: {other}"
             ))),
         }
+    }
+
+    // --- Correlation rule conversion ---
+
+    fn supports_correlation(&self) -> bool {
+        true
+    }
+
+    fn convert_correlation_rule(
+        &self,
+        rule: &CorrelationRule,
+        output_format: &str,
+        pipeline_state: &PipelineState,
+    ) -> Result<Vec<String>> {
+        correlation::convert(self, rule, output_format, pipeline_state)
     }
 }

@@ -15,12 +15,12 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use rsigma_parser::SigmaRule;
+use rsigma_parser::{CorrelationRule, SigmaRule};
 
 use super::config::FibratusConfig;
 use super::shared::labels_from_tags;
 
-/// Render one Sigma rule as a Fibratus YAML rule document.
+/// Render one Sigma detection rule as a Fibratus YAML rule document.
 ///
 /// `condition_expr` is the already-converted Fibratus filter expression
 /// (the output of the `Backend::convert_condition` walk). The envelope
@@ -28,18 +28,63 @@ use super::shared::labels_from_tags;
 /// the multi-line `description` and `condition` fields so the output
 /// matches upstream's hand-authored rule style.
 pub fn render_rule_yaml(rule: &SigmaRule, condition_expr: &str, cfg: &FibratusConfig) -> String {
+    render_envelope(
+        &rule.title,
+        rule.id.as_deref(),
+        rule.description.as_deref(),
+        &rule.tags,
+        condition_expr,
+        cfg,
+    )
+}
+
+/// Render one Sigma correlation rule as a Fibratus YAML rule document.
+///
+/// The body of `condition_expr` is the already-built `sequence`/`maxspan`
+/// DSL produced by [`super::correlation`]. The envelope shape is
+/// identical to a detection rule (`name`/`id`/`description`/`labels`/
+/// `condition`/`min-engine-version`/`action`); only the condition body
+/// differs.
+pub fn render_correlation_yaml(
+    rule: &CorrelationRule,
+    condition_expr: &str,
+    cfg: &FibratusConfig,
+) -> String {
+    render_envelope(
+        &rule.title,
+        rule.id.as_deref(),
+        rule.description.as_deref(),
+        &rule.tags,
+        condition_expr,
+        cfg,
+    )
+}
+
+/// Inner envelope builder shared by [`render_rule_yaml`] and
+/// [`render_correlation_yaml`]. Hand-rolling rather than routing through
+/// [`yaml_serde`] keeps field ordering, block-scalar style for long
+/// `condition:` values, and folding behavior deterministic so golden
+/// tests do not flap on serializer-internal whitespace changes.
+fn render_envelope(
+    title: &str,
+    id: Option<&str>,
+    description: Option<&str>,
+    tags: &[String],
+    condition_expr: &str,
+    cfg: &FibratusConfig,
+) -> String {
     let mut out = String::with_capacity(condition_expr.len() + 256);
 
-    let _ = writeln!(out, "name: {}", yaml_inline_str(&rule.title));
+    let _ = writeln!(out, "name: {}", yaml_inline_str(title));
 
-    if let Some(id) = &rule.id
+    if let Some(id) = id
         && !id.is_empty()
     {
         let _ = writeln!(out, "id: {}", yaml_inline_str(id));
     }
 
     if cfg.emit_metadata {
-        if let Some(desc) = &rule.description
+        if let Some(desc) = description
             && !desc.is_empty()
         {
             out.push_str("description: |\n");
@@ -48,7 +93,7 @@ pub fn render_rule_yaml(rule: &SigmaRule, condition_expr: &str, cfg: &FibratusCo
             }
         }
 
-        let labels = labels_from_tags(&rule.tags);
+        let labels = labels_from_tags(tags);
         write_labels(&mut out, &labels);
     }
 
@@ -72,17 +117,28 @@ pub fn render_rule_yaml(rule: &SigmaRule, condition_expr: &str, cfg: &FibratusCo
     out
 }
 
-/// Render the `condition:` block. Single-line conditions use a flow
-/// scalar; longer ones use the folded `>` indicator and are broken on
-/// the existing `and`/`or` boundaries the Fibratus author prefers.
+/// Render the `condition:` block.
+///
+/// - Single short single-line conditions use a plain flow scalar.
+/// - Author-provided multi-line conditions (the `sequence`/`maxspan` DSL
+///   the correlation builder emits) are wrapped in the folded `>`
+///   indicator with line breaks preserved verbatim.
+/// - Long single-line conditions are soft-wrapped on top-level
+///   `and`/`or` boundaries, again under the folded indicator.
 fn write_condition(out: &mut String, expr: &str) {
     if expr.len() <= 100 && !expr.contains('\n') {
         let _ = writeln!(out, "condition: {expr}");
         return;
     }
     out.push_str("condition: >\n");
-    for line in soft_wrap(expr, 100) {
-        let _ = writeln!(out, "  {line}");
+    if expr.contains('\n') {
+        for line in expr.lines() {
+            let _ = writeln!(out, "  {line}");
+        }
+    } else {
+        for line in soft_wrap(expr, 100) {
+            let _ = writeln!(out, "  {line}");
+        }
     }
 }
 
