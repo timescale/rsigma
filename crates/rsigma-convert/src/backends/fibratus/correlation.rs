@@ -45,10 +45,24 @@ use crate::error::{ConvertError, Result};
 // Entry point
 // ---------------------------------------------------------------------
 
-/// Convert a Sigma correlation rule into a Fibratus YAML rule document
-/// (one document per output query). The returned strings are full rule
-/// envelopes already; [`FibratusBackend`]'s `finalize_output` joins
-/// multiple correlations with `---` like detection rules.
+/// Convert a Sigma correlation rule into one or more Fibratus YAML rule
+/// documents.
+///
+/// Single-document output is the default. With
+/// `-O temporal_permute=true` and a `temporal` (any-order) correlation
+/// of N <= 3 referenced rules, the backend emits one document per
+/// stage permutation (N!: 1/2/6 docs) so any matching order alerts.
+/// Each permutation gets a distinct title suffix (`(order: r1 -> r2)`)
+/// and id suffix (`-perm-<idx>`) so the Fibratus loader treats them as
+/// separate rules. The cap stops the exponential at N <= 3; for larger
+/// any-order correlations the user should either drop
+/// `-O temporal_permute` (and accept the documented ordered fallback)
+/// or split the correlation into smaller groups.
+///
+/// The returned strings are full rule envelopes already;
+/// [`FibratusBackend`]'s `finalize_output` joins multiple documents
+/// (whether multiple correlations or multiple permutations of one
+/// correlation) with `---` like detection rules.
 pub fn convert(
     backend: &FibratusBackend,
     rule: &CorrelationRule,
@@ -56,10 +70,16 @@ pub fn convert(
     pipeline_state: &PipelineState,
 ) -> Result<Vec<String>> {
     let rule_queries = load_rule_queries(pipeline_state);
-    let condition = build_sequence_condition(rule, &rule_queries, &backend.fibratus)?;
+    let cfg = &backend.fibratus;
+
+    if should_emit_permutations(rule, cfg) {
+        return build_temporal_permutations(backend, rule, &rule_queries, output_format);
+    }
+
+    let condition = build_sequence_condition(rule, &rule_queries, cfg)?;
     let rendered = match output_format {
         "expr" => condition,
-        "default" | "yaml" | "rule" => render_correlation_yaml(rule, &condition, &backend.fibratus),
+        "default" | "yaml" | "rule" => render_correlation_yaml(rule, &condition, cfg),
         other => {
             return Err(ConvertError::RuleConversion(format!(
                 "unknown output format: {other}"
@@ -67,6 +87,112 @@ pub fn convert(
         }
     };
     Ok(vec![rendered])
+}
+
+// ---------------------------------------------------------------------
+// temporal_permute: any-order temporal -> N! ordered sequences
+// ---------------------------------------------------------------------
+
+/// Whether this correlation should expand into one document per stage
+/// permutation rather than a single ordered sequence. Only `temporal`
+/// (any-order) with `-O temporal_permute=true` qualifies; the hard cap
+/// on N is enforced later in [`build_temporal_permutations`].
+fn should_emit_permutations(rule: &CorrelationRule, cfg: &FibratusConfig) -> bool {
+    cfg.temporal_permute
+        && rule.correlation_type == CorrelationType::Temporal
+        && !rule.rules.is_empty()
+}
+
+/// Generate N! ordered sequence documents for a `temporal` correlation.
+///
+/// Caps at N <= 3 (so at most 6 permutations) to keep the output
+/// bounded; larger correlations return `UnsupportedCorrelation` with a
+/// rationale rather than silently producing dozens of rules.
+fn build_temporal_permutations(
+    backend: &FibratusBackend,
+    rule: &CorrelationRule,
+    rule_queries: &HashMap<String, String>,
+    output_format: &str,
+) -> Result<Vec<String>> {
+    const MAX_PERMUTABLE_RULES: usize = 3;
+
+    if rule.rules.len() > MAX_PERMUTABLE_RULES {
+        return Err(ConvertError::UnsupportedCorrelation(format!(
+            "temporal_permute=true with {} referenced rules would emit {}! rule documents; cap is N <= {}. Drop -O temporal_permute (the backend falls back to an ordered sequence) or split the correlation into smaller groups.",
+            rule.rules.len(),
+            rule.rules.len(),
+            MAX_PERMUTABLE_RULES,
+        )));
+    }
+
+    let perms = permutations(&rule.rules);
+    let cfg = &backend.fibratus;
+    let mut out: Vec<String> = Vec::with_capacity(perms.len());
+
+    for (idx, perm) in perms.iter().enumerate() {
+        // Build a single-permutation `CorrelationRule` clone with the
+        // referenced rules in this order and a permutation-tagged
+        // title/id so each document is a distinct Fibratus rule.
+        let mut perm_rule = rule.clone();
+        perm_rule.rules = perm.clone();
+
+        let suffix_label = perm.join(" -> ");
+        perm_rule.title = format!("{} (order: {suffix_label})", rule.title);
+        perm_rule.id = rule.id.as_ref().map(|id| format!("{id}-perm-{idx}"));
+
+        let stages: Vec<String> = perm
+            .iter()
+            .map(|name| resolve_query(name, rule_queries))
+            .collect::<Result<Vec<_>>>()?;
+        let mut stages_with_bindings: Vec<String> = Vec::with_capacity(stages.len());
+        for (i, body) in stages.iter().enumerate() {
+            stages_with_bindings.push(pin_group_by_after_first(body, &rule.group_by, i));
+        }
+        let condition = format_sequence(
+            &rule.timespan.original,
+            &stages_with_bindings,
+            &rule.group_by,
+        );
+
+        let rendered = match output_format {
+            "expr" => condition,
+            "default" | "yaml" | "rule" => render_correlation_yaml(&perm_rule, &condition, cfg),
+            other => {
+                return Err(ConvertError::RuleConversion(format!(
+                    "unknown output format: {other}"
+                )));
+            }
+        };
+        out.push(rendered);
+    }
+    Ok(out)
+}
+
+/// Generate every permutation of `items` in lexicographic order (a
+/// simple Heap-style enumeration tweaked to preserve the input order
+/// when N <= 1). Used by [`build_temporal_permutations`]; the small
+/// cap (N <= 3) means the O(N!) cost is bounded at 6 calls per
+/// correlation.
+fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    if items.is_empty() {
+        return vec![Vec::new()];
+    }
+    if items.len() == 1 {
+        return vec![items.to_vec()];
+    }
+    let mut out: Vec<Vec<T>> = Vec::new();
+    for (i, head) in items.iter().enumerate() {
+        let mut rest: Vec<T> = Vec::with_capacity(items.len() - 1);
+        rest.extend_from_slice(&items[..i]);
+        rest.extend_from_slice(&items[i + 1..]);
+        for tail in permutations(&rest) {
+            let mut full = Vec::with_capacity(items.len());
+            full.push(head.clone());
+            full.extend(tail);
+            out.push(full);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------
@@ -460,8 +586,15 @@ mod tests {
     }
 
     fn run_with_format(yaml: &str, format: &str) -> crate::Result<Vec<String>> {
+        run_with_backend(yaml, format, FibratusBackend::new())
+    }
+
+    fn run_with_backend(
+        yaml: &str,
+        format: &str,
+        backend: FibratusBackend,
+    ) -> crate::Result<Vec<String>> {
         let coll = collection(yaml);
-        let backend = FibratusBackend::new();
         let result = crate::convert_collection(&backend, &coll, &[], format)?;
         let mut out = Vec::new();
         for query_group in &result.queries {
@@ -477,6 +610,14 @@ mod tests {
             )));
         }
         Ok(out)
+    }
+
+    /// Build a `FibratusBackend` with `temporal_permute=true` so the
+    /// any-order tests below opt into the permutation path.
+    fn backend_with_temporal_permute() -> FibratusBackend {
+        let mut opts = std::collections::HashMap::new();
+        opts.insert("temporal_permute".to_string(), "true".to_string());
+        FibratusBackend::from_options(&opts)
     }
 
     // -----------------------------------------------------------------
@@ -592,6 +733,202 @@ correlation:
         // Same DSL shape as temporal_ordered; the divergence is documented
         // in the rule's description block by the docs layer.
         assert!(q[0].contains("sequence\nmaxspan 5m\n"));
+    }
+
+    #[test]
+    fn temporal_permute_emits_n_factorial_rules_for_n2() {
+        let q = run_with_backend(
+            r#"
+title: R1
+id: 00000000-0000-0000-0000-000000000010
+detection:
+  s:
+    evt.name: A
+  condition: s
+---
+title: R2
+id: 00000000-0000-0000-0000-000000000011
+detection:
+  s:
+    evt.name: B
+  condition: s
+---
+title: Any-order
+id: deadbeef-0000-0000-0000-000000000000
+correlation:
+  type: temporal
+  rules:
+    - 00000000-0000-0000-0000-000000000010
+    - 00000000-0000-0000-0000-000000000011
+  group-by:
+    - ps.pid
+  timespan: 5m
+"#,
+            "expr",
+            backend_with_temporal_permute(),
+        )
+        .unwrap();
+        // N=2 -> 2 permutations. Both orderings must appear; the helper
+        // strips the YAML envelope so we compare the bare sequence body.
+        assert_eq!(q.len(), 2, "expected 2 permutations, got {q:?}");
+        let joined = q.join("\n===\n");
+        // Stage A first ordering
+        assert!(
+            joined.contains(
+                "|evt.name imatches 'A'\n  | by ps.pid\n  |evt.name imatches 'B'\n  | by ps.pid"
+            ),
+            "missing A->B ordering, joined: {joined}"
+        );
+        // Stage B first ordering
+        assert!(
+            joined.contains(
+                "|evt.name imatches 'B'\n  | by ps.pid\n  |evt.name imatches 'A'\n  | by ps.pid"
+            ),
+            "missing B->A ordering, joined: {joined}"
+        );
+    }
+
+    #[test]
+    fn temporal_permute_n3_emits_six_documents_with_distinct_titles() {
+        let q = run_with_backend(
+            r#"
+title: R1
+id: 00000000-0000-0000-0000-000000000020
+detection:
+  s:
+    evt.name: A
+  condition: s
+---
+title: R2
+id: 00000000-0000-0000-0000-000000000021
+detection:
+  s:
+    evt.name: B
+  condition: s
+---
+title: R3
+id: 00000000-0000-0000-0000-000000000022
+detection:
+  s:
+    evt.name: C
+  condition: s
+---
+title: Three any-order
+id: 11111111-1111-1111-1111-111111111111
+correlation:
+  type: temporal
+  rules:
+    - 00000000-0000-0000-0000-000000000020
+    - 00000000-0000-0000-0000-000000000021
+    - 00000000-0000-0000-0000-000000000022
+  group-by:
+    - ps.pid
+  timespan: 5m
+"#,
+            "default",
+            backend_with_temporal_permute(),
+        )
+        .unwrap();
+        assert_eq!(q.len(), 6, "expected 3! = 6 permutations, got {}", q.len());
+        // Each permutation gets a distinct id suffix.
+        for idx in 0..6 {
+            let needle = format!("id: 11111111-1111-1111-1111-111111111111-perm-{idx}");
+            assert!(
+                q.iter().any(|doc| doc.contains(&needle)),
+                "missing permutation id suffix `{needle}` in {q:?}",
+            );
+        }
+        // And a distinct order-tagged title.
+        assert!(q.iter().any(|d| d.contains("(order: 00000000-0000-0000-0000-000000000020 -> 00000000-0000-0000-0000-000000000021 -> 00000000-0000-0000-0000-000000000022)")));
+        assert!(q.iter().any(|d| d.contains("(order: 00000000-0000-0000-0000-000000000022 -> 00000000-0000-0000-0000-000000000021 -> 00000000-0000-0000-0000-000000000020)")));
+    }
+
+    #[test]
+    fn temporal_permute_rejects_n_above_cap() {
+        let yaml = r#"
+title: R1
+id: 00000000-0000-0000-0000-000000000030
+detection:
+  s:
+    evt.name: A
+  condition: s
+---
+title: R2
+id: 00000000-0000-0000-0000-000000000031
+detection:
+  s:
+    evt.name: B
+  condition: s
+---
+title: R3
+id: 00000000-0000-0000-0000-000000000032
+detection:
+  s:
+    evt.name: C
+  condition: s
+---
+title: R4
+id: 00000000-0000-0000-0000-000000000033
+detection:
+  s:
+    evt.name: D
+  condition: s
+---
+title: Too many
+correlation:
+  type: temporal
+  rules:
+    - 00000000-0000-0000-0000-000000000030
+    - 00000000-0000-0000-0000-000000000031
+    - 00000000-0000-0000-0000-000000000032
+    - 00000000-0000-0000-0000-000000000033
+  group-by:
+    - ps.pid
+  timespan: 5m
+"#;
+        let err = run_with_backend(yaml, "expr", backend_with_temporal_permute()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("temporal_permute") && msg.contains("cap is N <="),
+            "expected cap-exceeded error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn temporal_permute_does_not_affect_temporal_ordered() {
+        // `temporal_ordered` is already strictly ordered; the
+        // permutation flag must not duplicate it into N! rules.
+        let q = run_with_backend(
+            r#"
+title: R1
+id: 00000000-0000-0000-0000-000000000040
+detection:
+  s:
+    evt.name: A
+  condition: s
+---
+title: R2
+id: 00000000-0000-0000-0000-000000000041
+detection:
+  s:
+    evt.name: B
+  condition: s
+---
+title: Ordered
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000040
+    - 00000000-0000-0000-0000-000000000041
+  group-by:
+    - ps.pid
+  timespan: 5m
+"#,
+            "expr",
+            backend_with_temporal_permute(),
+        )
+        .unwrap();
+        assert_eq!(q.len(), 1, "temporal_ordered must stay single-document");
     }
 
     // -----------------------------------------------------------------

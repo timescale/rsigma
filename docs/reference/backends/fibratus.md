@@ -26,7 +26,7 @@ Pass with `-O key=value` (repeatable). Unknown keys are silently ignored so forw
 | `default_logsource` | `windows` | Default `product:` to assume when a Sigma rule lacks an explicit logsource. Used by the matching pipeline transformations. |
 | `emit_metadata` | `true` | When `false`, omit the `description:` and `labels:` blocks. Useful when the target Fibratus install already enriches rule metadata from another source. |
 | `max_repeated_slots` | `5` | Maximum number of repeated/distinct sequence stages the backend generates when emulating `event_count` / `value_count` correlation. Thresholds above the cap return `UnsupportedCorrelation`. |
-| `temporal_permute` | `false` | Reserved for emitting `N!` permutation rules under the same group for `temporal` (any-order) correlations. Currently the backend falls back to the ordered form. |
+| `temporal_permute` | `false` | When `true`, expands a `temporal` (any-order) correlation into one ordered sequence document per permutation of the referenced rules (so any matching order alerts), capped at N <= 3 (1/2/6 documents). Larger correlations return `UnsupportedCorrelation`. Each document gets a distinct title and id suffix so Fibratus treats them as separate rules. |
 | `case_sensitive` | `false` | Force the bare (case-sensitive) operators globally. Equivalent to setting `|cased` on every value. |
 
 ## Modifier mapping
@@ -149,7 +149,7 @@ Fibratus 1.10+ uses an inline DSL inside `condition:` for stateful sequences; th
 | Sigma correlation type | Fibratus mapping | Notes |
 |------------------------|------------------|-------|
 | `temporal_ordered` | `sequence` with one stage per referenced rule in declaration order, `\| by <primary group_by field>` per stage. | First-class. |
-| `temporal` (any-order) | Same shape; Fibratus sequences are ordered. | Document the divergence in your rule description. |
+| `temporal` (any-order) | Same shape by default (ordered fallback documented in the rule description). With `-O temporal_permute=true` and N <= 3 referenced rules, the backend emits one ordered sequence per permutation (N!: 1, 2, or 6 documents per correlation) so any matching order alerts; permutations get distinct title and id suffixes (`(order: r1 -> r2)`, `-perm-<idx>`). | N > 3 returns `UnsupportedCorrelation`. |
 | `event_count` with `gte`/`gt` threshold up to `-O max_repeated_slots` | `sequence` with N repeated stages of the referenced rule. | Default cap: 5. |
 | `value_count` over a single `field:` with the same threshold cap | `sequence` with N aliased stages (`\| as e1`, `\| as e2`, ...) plus pairwise inequality constraints (`field != $e1.field and field != $e2.field and ...`). | Single-field only. |
 | `event_count` / `value_count` with `lt`/`lte`/`eq`/`neq` predicates, ranges, or thresholds above the cap | `UnsupportedCorrelation` | The bounded-sequence emulation only expresses "at least N occurrences". |
@@ -185,7 +185,6 @@ min-engine-version: 3.0.0
 ## Caveats and follow-ups
 
 - **Multi-value CIDR / regex.** The shared `default_convert_detection_item` dispatch only reads the first value when the field carries `|cidr` or `|re`. This affects every text backend in the workspace; the Fibratus backend inherits the gap. Workaround: emit one rule per CIDR/regex value, or split with `|` alternation inside a single regex pattern.
-- **`temporal_permute`.** The CLI option is reserved; the backend currently falls back to the ordered form for `temporal` correlations even with the flag set. Permutation emission is a follow-up.
 - **Macro recognition (`use_macros`).** The macro library is loaded at backend init, but the AST-level recognition pass that rewrites recognized sub-trees into idiomatic macro calls (`spawn_process`, `open_file`, ...) is not wired yet. The flag has no effect today; the rendered output uses the raw `evt.name imatches '...'` forms instead of macros.
 - **Cross-process target fields.** The `create_remote_thread` and `process_access` field mappings cover the source-process side and (for create_remote_thread) the start-address triple, but they do not rename Sigma's `TargetImage` field for either category. Fibratus exposes `thread.pid` for the target process on a `CreateThread` event and `ps.access.status` on `OpenProcess`, but no documented `thread.image` or `ps.access.image` field for the target executable. Rules that reference `TargetImage`/`TargetProcessId`/`GrantedAccess` will fail conversion with an unsupported-field error rather than emit an invented field name; pair them with a custom pipeline if your Fibratus build exposes these fields under different names.
 
