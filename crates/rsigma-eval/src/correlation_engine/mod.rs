@@ -22,11 +22,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule};
+use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule, WindowMode};
 
 use crate::correlation::{
-    CompiledCorrelation, EventBuffer, EventRefBuffer, GroupKey, WindowState, apply_window_open,
-    compile_correlation,
+    CompiledCorrelation, EventBuffer, EventRefBuffer, GroupKey, WindowDecision, WindowState,
+    apply_window_open, compile_correlation,
 };
 use crate::engine::Engine;
 use crate::error::{EvalError, Result};
@@ -680,10 +680,16 @@ impl CorrelationEngine {
             .or_insert_with(|| WindowState::new_for(corr_type));
 
         // Apply the window's pre-insert maintenance (sliding evict, tumbling
-        // bucket reset, or session gap/cap reset). `reset` is true when the
-        // window rolled over, so the event buffers below are cleared in sync.
+        // bucket reset/late-event discard, or session gap/cap reset). On
+        // `Reset` the event buffers below are cleared in sync; on `Discard`
+        // (a late arrival in an earlier tumbling bucket) the event is dropped
+        // without touching the state or buffers.
         let cutoff = ts - timespan as i64;
-        let reset = apply_window_open(state, ts, timespan, window_mode, gap_secs);
+        let decision = apply_window_open(state, ts, timespan, window_mode, gap_secs);
+        if decision == WindowDecision::Discard {
+            return;
+        }
+        let reset = decision == WindowDecision::Reset;
 
         // Push the new event into the state
         match corr_type {
@@ -883,7 +889,14 @@ impl CorrelationEngine {
                     .entry(state_key)
                     .or_insert_with(|| WindowState::new_for(corr_type));
 
-                apply_window_open(state, ts, timespan, window_mode, gap_secs);
+                // Late arrivals in an earlier tumbling bucket are discarded;
+                // chained correlations keep no event buffers, so `Reset` needs
+                // no extra bookkeeping here.
+                if apply_window_open(state, ts, timespan, window_mode, gap_secs)
+                    == WindowDecision::Discard
+                {
+                    continue;
+                }
 
                 match corr_type {
                     CorrelationType::EventCount => {
@@ -976,29 +989,73 @@ impl CorrelationEngine {
 
     /// Evict expired entries and remove empty states.
     fn evict_all(&mut self, now_secs: i64) {
-        // Phase 1: Time-based eviction — remove entries outside their correlation window
-        let timespans: Vec<u64> = self.correlations.iter().map(|c| c.timespan_secs).collect();
+        // Phase 1: Time-based eviction — remove entries outside their correlation
+        // window. Eviction is window-mode aware:
+        //
+        // - Sliding: trim entries older than the trailing cutoff, as always.
+        // - Tumbling/session: never trim from the front — that would forget the
+        //   bucket/session start and silently weaken the `timespan` cap (the
+        //   window would drift toward sliding semantics). Instead, drop the
+        //   whole group once it is stale (no event within its bucket span /
+        //   session gap), which is exactly the point at which the next arrival
+        //   would reset it anyway.
+        let specs: Vec<(u64, WindowMode, Option<u64>)> = self
+            .correlations
+            .iter()
+            .map(|c| (c.timespan_secs, c.window_mode, c.gap_secs))
+            .collect();
 
         self.state.retain(|&(corr_idx, _), state| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
-                state.evict(cutoff);
+            if let Some(&(timespan, mode, gap)) = specs.get(corr_idx) {
+                match mode {
+                    WindowMode::Sliding => {
+                        state.evict(now_secs - timespan as i64);
+                    }
+                    WindowMode::Tumbling | WindowMode::Session => {
+                        let staleness = if mode == WindowMode::Session {
+                            gap.unwrap_or(timespan)
+                        } else {
+                            timespan
+                        } as i64;
+                        if state
+                            .latest_timestamp()
+                            .is_some_and(|last| now_secs - last > staleness)
+                        {
+                            state.clear();
+                        }
+                    }
+                }
             }
             !state.is_empty()
         });
 
-        // Evict event buffers in sync with window state
-        self.event_buffers.retain(|&(corr_idx, _), buf| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
-                buf.evict(cutoff);
+        // Evict event buffers in sync with window state: sliding buffers trim by
+        // the trailing cutoff, tumbling/session buffers live and die with their
+        // window state (dropped above when the group went stale).
+        let state = &self.state;
+        self.event_buffers.retain(|key, buf| {
+            if let Some(&(timespan, mode, _)) = specs.get(key.0) {
+                match mode {
+                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
+                    WindowMode::Tumbling | WindowMode::Session => {
+                        if !state.contains_key(key) {
+                            return false;
+                        }
+                    }
+                }
             }
             !buf.is_empty()
         });
-        self.event_ref_buffers.retain(|&(corr_idx, _), buf| {
-            if corr_idx < timespans.len() {
-                let cutoff = now_secs - timespans[corr_idx] as i64;
-                buf.evict(cutoff);
+        self.event_ref_buffers.retain(|key, buf| {
+            if let Some(&(timespan, mode, _)) = specs.get(key.0) {
+                match mode {
+                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
+                    WindowMode::Tumbling | WindowMode::Session => {
+                        if !state.contains_key(key) {
+                            return false;
+                        }
+                    }
+                }
             }
             !buf.is_empty()
         });

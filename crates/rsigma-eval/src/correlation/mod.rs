@@ -15,7 +15,7 @@ pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
 pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};
-pub use window::{WindowState, apply_window_open};
+pub use window::{WindowDecision, WindowState, apply_window_open};
 
 #[cfg(test)]
 use buffers::{compress_event, decompress_event, extract_event_id};

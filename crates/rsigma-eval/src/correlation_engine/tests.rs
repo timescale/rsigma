@@ -478,6 +478,63 @@ fn test_session_window_caps_at_timespan() {
     assert_eq!(r.correlation_count(), 0);
 }
 
+#[test]
+fn test_tumbling_late_event_does_not_wipe_bucket() {
+    let mut engine = windowed_engine("    timespan: 10s\n    window: tumbling");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // t=12,15 accumulate in bucket [10,20).
+    engine.process_event_at(&event, 12);
+    engine.process_event_at(&event, 15);
+    // A late arrival from the previous bucket [0,10) is discarded instead of
+    // resetting the active bucket.
+    let late = engine.process_event_at(&event, 9);
+    assert_eq!(late.correlation_count(), 0);
+    // The bucket still holds t=12,15, so the third in-bucket event fires.
+    let r = engine.process_event_at(&event, 16);
+    assert_eq!(r.correlation_count(), 1);
+}
+
+#[test]
+fn test_evict_expired_preserves_session_cap() {
+    // Regression: time-based eviction must not trim the front of a live
+    // session. Doing so forgets the true session start and lets the window
+    // exceed the `timespan` cap (drifting toward sliding semantics).
+    let mut engine = windowed_engine("    window: session\n    gap: 10s\n    timespan: 20s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // Session: t=0,9,16 (gaps 9s and 7s, span 16s <= 20s cap) -> fires.
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 9);
+    let r = engine.process_event_at(&event, 16);
+    assert_eq!(r.correlation_count(), 1);
+    // At now=21 the session is live (21-16=5s <= 10s gap). A trailing-cutoff
+    // eviction would trim t=0 (21-20=1) and forget the session start.
+    engine.evict_expired(21);
+    // t=24 extends within the gap (24-16=8s) but exceeds the cap from the true
+    // start (24-0=24s > 20s), so the session must restart with count 1, not
+    // accumulate t=9,16,24 and fire again.
+    let r = engine.process_event_at(&event, 24);
+    assert_eq!(r.correlation_count(), 0);
+}
+
+#[test]
+fn test_evict_expired_drops_stale_session_group() {
+    let mut engine = windowed_engine("    window: session\n    gap: 10s\n    timespan: 20s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 9);
+    // At now=40 the session is dead (40-9=31s > 10s gap): the whole group is
+    // dropped rather than partially trimmed.
+    engine.evict_expired(40);
+    // A fresh event starts a new session from scratch.
+    engine.process_event_at(&event, 41);
+    let r = engine.process_event_at(&event, 45);
+    // Only two events in the new session -> no fire (gte 3).
+    assert_eq!(r.correlation_count(), 0);
+}
+
 // =========================================================================
 // Value count correlation
 // =========================================================================

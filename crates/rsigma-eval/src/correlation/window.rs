@@ -290,15 +290,29 @@ fn bucket_start(ts: i64, timespan: i64) -> i64 {
     ts - ts.rem_euclid(timespan)
 }
 
+/// Outcome of a window's pre-insert maintenance for a new event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowDecision {
+    /// The current window continues; push the event into it.
+    Extend,
+    /// The window rolled over and the state was cleared; push the event into
+    /// the fresh window. Callers must also clear any associated event buffers
+    /// so they stay in sync with the state.
+    Reset,
+    /// The event predates the current window (a late arrival in an earlier
+    /// tumbling bucket); do not push it and leave the state untouched.
+    Discard,
+}
+
 /// Apply a correlation window's pre-insert maintenance for a new event at `ts`,
 /// before the event is pushed into `state`.
 ///
-/// Returns `true` when the window was reset (the caller should also clear any
-/// associated event buffers so they stay in sync with the state).
-///
-/// - `Sliding` evicts entries older than `ts - timespan` (the existing default).
-/// - `Tumbling` resets the window when `ts` falls in a different
-///   boundary-aligned bucket than the latest retained entry.
+/// - `Sliding` evicts entries older than `ts - timespan` (the existing default)
+///   and always extends.
+/// - `Tumbling` resets the window when `ts` falls in a *later*
+///   boundary-aligned bucket than the latest retained entry, and discards
+///   events that fall in an *earlier* bucket (a late arrival must not wipe the
+///   active bucket's accumulation).
 /// - `Session` resets when `ts` is more than `gap` after the latest entry, or
 ///   when extending would push the total span past `timespan` (the hard cap).
 ///
@@ -310,22 +324,27 @@ pub fn apply_window_open(
     timespan_secs: u64,
     window: WindowMode,
     gap_secs: Option<u64>,
-) -> bool {
+) -> WindowDecision {
     let timespan = timespan_secs as i64;
     match window {
         WindowMode::Sliding => {
             state.evict(ts - timespan);
-            false
+            WindowDecision::Extend
         }
         WindowMode::Tumbling => {
-            let reset = timespan > 0
-                && state
-                    .latest_timestamp()
-                    .is_some_and(|last| bucket_start(last, timespan) != bucket_start(ts, timespan));
-            if reset {
-                state.clear();
+            if timespan <= 0 {
+                return WindowDecision::Extend;
             }
-            reset
+            match state.latest_timestamp() {
+                Some(last) if bucket_start(ts, timespan) > bucket_start(last, timespan) => {
+                    state.clear();
+                    WindowDecision::Reset
+                }
+                Some(last) if bucket_start(ts, timespan) < bucket_start(last, timespan) => {
+                    WindowDecision::Discard
+                }
+                _ => WindowDecision::Extend,
+            }
         }
         WindowMode::Session => {
             // `gap` is required for session windows; fall back to `timespan` if
@@ -339,8 +358,10 @@ pub fn apply_window_open(
             };
             if reset {
                 state.clear();
+                WindowDecision::Reset
+            } else {
+                WindowDecision::Extend
             }
-            reset
         }
     }
 }
