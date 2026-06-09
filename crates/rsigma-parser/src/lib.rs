@@ -60,6 +60,7 @@ pub mod lint;
 pub mod parser;
 pub mod selector;
 pub mod value;
+pub mod version;
 
 // Re-export the most commonly used types and functions at crate root
 pub use ast::{
@@ -79,3 +80,7 @@ pub use lint::{
 pub use parser::{parse_field_spec, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
 pub use selector::detection_name_matches;
 pub use value::{SigmaString, SigmaValue, SpecialChar, StringPart, Timespan};
+pub use version::{
+    SPEC_VERSION_ARRAY_MATCHING, SPEC_VERSION_FLOOR, SPEC_VERSION_SUPPORTED,
+    array_matching_enabled, is_unsupported, resolve_major,
+};

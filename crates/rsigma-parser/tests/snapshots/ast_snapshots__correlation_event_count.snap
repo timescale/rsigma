@@ -4,6 +4,7 @@ expression: "&collection.correlations[0]"
 ---
 CorrelationRule {
     title: "Brute Force Correlation",
+    sigma_version: None,
     id: None,
     name: Some(
         "brute_force",

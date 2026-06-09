@@ -437,6 +437,7 @@ fn make_test_sigma_rule(
 ) -> SigmaRule {
     use rsigma_parser::{Detections, LogSource};
     SigmaRule {
+        sigma_version: None,
         title: title.to_string(),
         id: Some("test-id".to_string()),
         name: None,

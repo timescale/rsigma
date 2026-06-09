@@ -148,7 +148,7 @@ Parsed 1 documents from rules/
   Compile errors:    0
 ```
 
-Both commands return [structured exit codes](../reference/exit-codes.md) so they slot into CI without parsing stdout. `lint --fix` will apply safe auto-fixes for 13 of the 66 rules.
+Both commands return [structured exit codes](../reference/exit-codes.md) so they slot into CI without parsing stdout. `lint --fix` will apply safe auto-fixes for {{ rsigma.lint.autofix }} of the {{ rsigma.lint.rules }} rules.
 
 ## 5. Run as a streaming daemon
 

@@ -80,7 +80,7 @@ Shows one line per file with its parse/compile status.
 
 ## See also
 
-- [`rule lint`](lint.md) for the spec-conformance gate (66 lint rules, auto-fix).
+- [`rule lint`](lint.md) for the spec-conformance gate ({{ rsigma.lint.rules }} lint rules, auto-fix).
 - [`rule parse`](parse.md) for a single-file AST dump.
 - [Linting Rules](../../guide/linting-rules.md) and [Processing Pipelines](../../guide/processing-pipelines.md).
 - [CI/CD](../../guide/ci-cd.md) for the validate/lint/eval pipeline pattern.

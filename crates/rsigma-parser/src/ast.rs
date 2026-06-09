@@ -509,6 +509,14 @@ pub struct SigmaRule {
     pub logsource: LogSource,
     pub detection: Detections,
 
+    /// The Sigma specification MAJOR version this rule targets (the
+    /// `sigma-version` attribute, e.g. `3`). `None` means absent, which resolves
+    /// to the fixed floor [`crate::version::SPEC_VERSION_FLOOR`]. Only the major
+    /// is stored, since breaking spec changes occur only at major bumps; it
+    /// gates version-sensitive interpretation such as array-matching brackets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_version: Option<u32>,
+
     // Optional metadata
     pub id: Option<String>,
     pub name: Option<String>,
@@ -663,6 +671,11 @@ pub struct FieldAlias {
 pub struct CorrelationRule {
     // Metadata (shared with detection rules)
     pub title: String,
+    /// The Sigma specification MAJOR version this document targets (the
+    /// `sigma-version` attribute). See [`SigmaRule::sigma_version`]. A
+    /// correlation rule and the rules it aggregates should share a major.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_version: Option<u32>,
     pub id: Option<String>,
     pub name: Option<String>,
     pub status: Option<Status>,
@@ -720,6 +733,11 @@ pub enum FilterRuleTarget {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FilterRule {
     pub title: String,
+    /// The Sigma specification MAJOR version this document targets (the
+    /// `sigma-version` attribute). See [`SigmaRule::sigma_version`]. A filter and
+    /// the rules it targets should share a major.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_version: Option<u32>,
     pub id: Option<String>,
     pub name: Option<String>,
     pub taxonomy: Option<String>,

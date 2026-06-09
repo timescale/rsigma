@@ -95,6 +95,7 @@ SigmaRule {
         ],
         timeframe: None,
     },
+    sigma_version: None,
     id: None,
     name: None,
     related: [],

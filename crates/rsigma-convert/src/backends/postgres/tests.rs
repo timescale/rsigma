@@ -2065,6 +2065,7 @@ fn array_any_object_scope_emits_exists() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2091,6 +2092,7 @@ fn array_all_object_scope_emits_not_exists_with_nonempty_guard() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2118,6 +2120,7 @@ fn array_all_or_empty_object_scope_drops_nonempty_guard() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2146,6 +2149,7 @@ fn array_extended_block_lowers_boolean_inner_predicate() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2179,6 +2183,7 @@ fn array_none_object_scope_emits_guarded_not_exists() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2207,6 +2212,7 @@ fn array_scalar_member_uses_elements_text() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2228,6 +2234,7 @@ fn array_nested_quantifiers_use_distinct_aliases() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2257,6 +2264,7 @@ fn array_mixed_map_emits_and() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2283,6 +2291,7 @@ fn array_positional_index_scalar_sql() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2301,6 +2310,7 @@ fn array_negative_index_sql() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2318,6 +2328,7 @@ fn array_positional_index_dotted_sql() {
     let queries = convert_json(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2342,6 +2353,7 @@ fn array_positional_index_unsupported_in_flat_column_mode() {
     let collection = parse_sigma_yaml(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -2361,6 +2373,7 @@ fn array_unsupported_without_jsonb_mode() {
     let collection = parse_sigma_yaml(
         r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:

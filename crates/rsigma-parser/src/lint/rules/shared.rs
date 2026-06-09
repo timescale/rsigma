@@ -5,6 +5,7 @@ use super::super::{
 /// Known top-level keys shared across all Sigma document types.
 pub(crate) const KNOWN_KEYS_SHARED: &[&str] = &[
     "title",
+    "sigma-version",
     "id",
     "name",
     "status",

@@ -31,14 +31,15 @@ The crate has no rsigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `parse_sigma_yaml(&str) -> Result<SigmaCollection, SigmaParserError>` | The main entry point. Accepts single-document or multi-document YAML (`---` separator). |
 | `parse_sigma_file(&Path)`, `parse_sigma_directory(&Path)` | File and directory variants. |
 | `SigmaCollection` | A bag of `SigmaRule`, `CorrelationRule`, and `FilterRule` parsed from one input. |
-| `SigmaRule` | A detection rule (`title`, `id`, `logsource`, `detection`, `condition`, …). |
+| `SigmaRule` | A detection rule (`title`, `id`, `sigma_version`, `logsource`, `detection`, `condition`, …). |
 | `CorrelationRule` | A correlation rule (`correlation:` block plus shared metadata). |
 | `FilterRule` | A filter rule (`filter:` block plus shared metadata). |
+| `version::{resolve_major, array_matching_enabled, is_unsupported, SPEC_VERSION_*}` | Sigma specification-version targeting: resolves the optional `sigma-version` attribute (absent ⇒ fixed floor, major 2) and gates version-sensitive syntax such as array-matching brackets (active at major 3+). |
 | `ConditionExpr`, `ConditionOperator` | The parsed condition expression AST (Pratt parser, `not > and > or` precedence). |
 | `parse_condition(&str) -> Result<ConditionExpr, SigmaParserError>` | Standalone condition-expression parser. |
 | `Detection`, `DetectionItem`, `FieldSpec`, `SigmaValue`, `Modifier` | Detection-block building blocks. |
 | `LogSource` | The `logsource:` block (`product`, `category`, `service`). |
-| Linter (`lint::*`) | 66 spec-conformance checks. See [Lint Rules reference](../reference/lint-rules.md). |
+| Linter (`lint::*`) | {{ rsigma.lint.rules }} spec-conformance checks (including cross-document reference checks over a directory). See [Lint Rules reference](../reference/lint-rules.md). |
 
 The full enumeration of modifiers (30+), correlation types (8), and condition operators lives in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/README.md).
 
@@ -67,7 +68,7 @@ assert_eq!(collection.rules[0].title.as_deref(), Some("Whoami"));
 
 ## Linting
 
-The linter runs the 66 spec-conformance checks against parsed (or partially parsed) rules and returns `LintWarning`s:
+The linter runs the {{ rsigma.lint.rules }} spec-conformance checks against parsed (or partially parsed) rules and returns `LintWarning`s:
 
 ```rust
 use rsigma_parser::lint::{lint_yaml_directory, LintConfig};
@@ -105,6 +106,6 @@ Bounds: `MAX_CONDITION_LEN = 64 KiB`, `MAX_CONDITION_DEPTH = 64`. See [Security 
 
 - [`rsigma-eval`](eval.md) for the next layer: compile and evaluate.
 - [`rsigma-convert`](convert.md) for generating backend queries from the AST.
-- [Lint Rules reference](../reference/lint-rules.md) for the 66 lint checks the crate ships.
+- [Lint Rules reference](../reference/lint-rules.md) for the {{ rsigma.lint.rules }} lint checks the crate ships.
 - [`rsigma-parser` README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/README.md) for the full AST reference and modifier matrix.
 - [docs.rs/rsigma-parser](https://docs.rs/rsigma-parser) for the generated API documentation.

@@ -97,6 +97,7 @@ transformations:
 
     // Create a rule that matches the condition
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("windows".to_string()),
@@ -173,6 +174,7 @@ transformations:
 
     // Create a Linux rule — should NOT be modified
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Linux Rule".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("linux".to_string()),
@@ -419,6 +421,7 @@ transformations:
 
     // Windows + process_creation => both match, OR is true => prefix applied
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("windows".to_string()),
@@ -494,6 +497,7 @@ transformations:
     let pipeline = parse_pipeline(yaml).unwrap();
 
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Linux Process".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("linux".to_string()),
@@ -568,6 +572,7 @@ transformations:
 
     // Linux + process_creation => is_windows=false => AND fails => no prefix
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Linux Rule".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("linux".to_string()),
@@ -640,6 +645,7 @@ transformations:
     assert!(pipeline.transformations[0].rule_conditions[1].id.is_none());
 
     let mut rule = rsigma_parser::SigmaRule {
+        sigma_version: None,
         title: "Test".to_string(),
         logsource: rsigma_parser::LogSource {
             product: Some("linux".to_string()),
@@ -699,6 +705,7 @@ transformations:
 
 fn make_test_correlation() -> CorrelationRule {
     CorrelationRule {
+        sigma_version: None,
         title: "Test Correlation".to_string(),
         id: Some("corr-1".to_string()),
         name: Some("test_corr".to_string()),

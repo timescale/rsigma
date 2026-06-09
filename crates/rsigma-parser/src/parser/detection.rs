@@ -5,12 +5,12 @@ use yaml_serde::Value;
 use crate::ast::*;
 use crate::condition::parse_condition;
 use crate::error::{Result, SigmaParserError};
-use crate::fieldpath::{ends_with_unescaped, first_unescaped};
+use crate::fieldpath::{ends_with_unescaped, escape_brackets, first_unescaped};
 use crate::value::SigmaValue;
 
 use super::{
     collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_logsource,
-    parse_related, val_key,
+    parse_related, parse_sigma_version, val_key,
 };
 
 // =============================================================================
@@ -34,10 +34,15 @@ pub(super) fn parse_detection_rule(value: &Value, warnings: &mut Vec<String>) ->
         .ok_or_else(|| SigmaParserError::MissingField("title".into()))?
         .to_string();
 
+    let sigma_version = parse_sigma_version(m, warnings);
+
     let detection_val = m
         .get(val_key("detection"))
         .ok_or_else(|| SigmaParserError::MissingField("detection".into()))?;
-    let detection = parse_detections(detection_val)?;
+    let detection = parse_detections(
+        detection_val,
+        crate::version::array_matching_enabled(sigma_version),
+    )?;
 
     let logsource = m
         .get(val_key("logsource"))
@@ -51,6 +56,7 @@ pub(super) fn parse_detection_rule(value: &Value, warnings: &mut Vec<String>) ->
     // Mirrors pySigma's `SigmaRule.custom_attributes` dict.
     let standard_rule_keys: &[&str] = &[
         "title",
+        "sigma-version",
         "id",
         "related",
         "name",
@@ -77,6 +83,7 @@ pub(super) fn parse_detection_rule(value: &Value, warnings: &mut Vec<String>) ->
         title,
         logsource,
         detection,
+        sigma_version,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
         related: parse_related(m.get(val_key("related")), warnings),
@@ -109,7 +116,7 @@ pub(super) fn parse_detection_rule(value: &Value, warnings: &mut Vec<String>) ->
 /// - Everything else: named detection identifiers
 ///
 /// Reference: pySigma rule/detection.py SigmaDetections.from_dict
-pub(super) fn parse_detections(value: &Value) -> Result<Detections> {
+pub(super) fn parse_detections(value: &Value, array_matching: bool) -> Result<Detections> {
     let m = value.as_mapping().ok_or_else(|| {
         SigmaParserError::InvalidDetection("Detection section must be a mapping".into())
     })?;
@@ -158,7 +165,7 @@ pub(super) fn parse_detections(value: &Value) -> Result<Detections> {
         if key_str == "condition" || key_str == "timeframe" {
             continue;
         }
-        named.insert(key_str.to_string(), parse_detection(val)?);
+        named.insert(key_str.to_string(), parse_detection(val, array_matching)?);
     }
 
     Ok(Detections {
@@ -177,7 +184,7 @@ pub(super) fn parse_detections(value: &Value) -> Result<Detections> {
 /// 3. A list of mappings (OR-linked sub-detections)
 ///
 /// Reference: pySigma rule/detection.py SigmaDetection.from_definition
-fn parse_detection(value: &Value) -> Result<Detection> {
+fn parse_detection(value: &Value, array_matching: bool) -> Result<Detection> {
     match value {
         Value::Mapping(m) => {
             // Case 1: key-value mapping → AND-linked detection items.
@@ -191,7 +198,7 @@ fn parse_detection(value: &Value) -> Result<Detection> {
             let mut items: Vec<DetectionItem> = Vec::new();
             let mut blocks: Vec<Detection> = Vec::new();
             for (k, v) in m.iter() {
-                match parse_map_entry(k.as_str().unwrap_or(""), v)? {
+                match parse_map_entry(k.as_str().unwrap_or(""), v, array_matching)? {
                     ParsedEntry::Item(item) => items.push(item),
                     ParsedEntry::Block(block) => blocks.push(block),
                 }
@@ -209,7 +216,7 @@ fn parse_detection(value: &Value) -> Result<Detection> {
                 // Case 3: list of mappings → OR-linked sub-detections
                 let subs: Vec<Detection> = seq
                     .iter()
-                    .map(parse_detection)
+                    .map(|v| parse_detection(v, array_matching))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Detection::AnyOf(subs))
             }
@@ -307,7 +314,7 @@ fn combine_entries(items: Vec<DetectionItem>, blocks: Vec<Detection>) -> Detecti
 
 /// Parse one `key: value` mapping entry, desugaring `any`/`all` array
 /// quantifiers and indexed object-scope blocks.
-fn parse_map_entry(key: &str, value: &Value) -> Result<ParsedEntry> {
+fn parse_map_entry(key: &str, value: &Value, array_matching: bool) -> Result<ParsedEntry> {
     // Split the field path from the trailing modifier chain (`field|mod1|mod2`).
     let (field_part, modifier_part) = match key.split_once('|') {
         Some((f, m)) => (f, Some(m)),
@@ -318,6 +325,19 @@ fn parse_map_entry(key: &str, value: &Value) -> Result<ParsedEntry> {
     // existing field-spec parser, which already handles these cases.
     if field_part.is_empty() {
         return Ok(ParsedEntry::Item(parse_detection_item(key, value)?));
+    }
+
+    // Below the array-matching spec version, a trailing `[...]` is not a
+    // selector: brackets are literal field-name characters. Escape any
+    // unescaped bracket so the escape-aware field resolver (evaluator and
+    // converters) reads the name literally, and keep the entry a plain item.
+    if !array_matching {
+        let escaped = escape_brackets(field_part);
+        let plain_key = match modifier_part {
+            Some(m) => format!("{escaped}|{m}"),
+            None => escaped.into_owned(),
+        };
+        return Ok(ParsedEntry::Item(parse_detection_item(&plain_key, value)?));
     }
 
     let segments = parse_field_path(field_part)?;
@@ -333,7 +353,8 @@ fn parse_map_entry(key: &str, value: &Value) -> Result<ParsedEntry> {
                 .map(PathSegment::path_str)
                 .collect::<Vec<_>>()
                 .join(".");
-            let body = build_block_body(&segments[idx + 1..], modifier_part, value)?;
+            let body =
+                build_block_body(&segments[idx + 1..], modifier_part, value, array_matching)?;
             Ok(ParsedEntry::Block(Detection::ArrayMatch {
                 field: array_field,
                 quantifier,
@@ -347,7 +368,11 @@ fn parse_map_entry(key: &str, value: &Value) -> Result<ParsedEntry> {
             let has_index = segments.iter().any(|s| s.index.is_some());
             if value.is_mapping() && has_index {
                 let prefix = reconstruct_key(&segments, None);
-                Ok(ParsedEntry::Block(parse_block_with_prefix(&prefix, value)?))
+                Ok(ParsedEntry::Block(parse_block_with_prefix(
+                    &prefix,
+                    value,
+                    array_matching,
+                )?))
             } else {
                 Ok(ParsedEntry::Item(parse_detection_item(key, value)?))
             }
@@ -360,6 +385,7 @@ fn build_block_body(
     remaining: &[PathSegment],
     modifier_part: Option<&str>,
     value: &Value,
+    array_matching: bool,
 ) -> Result<Detection> {
     if remaining.is_empty() {
         // The quantifier was on the final path segment.
@@ -377,9 +403,9 @@ fn build_block_body(
                 // named element-scoped sub-selections combined with and/or/not.
                 // Without it, the body is the basic conjunction map.
                 if m.iter().any(|(k, _)| k.as_str() == Some("condition")) {
-                    parse_extended_block_body(value)
+                    parse_extended_block_body(value, array_matching)
                 } else {
-                    parse_detection(value)
+                    parse_detection(value, array_matching)
                 }
             }
             // `field[all]: value` (or a list) → match the array member itself.
@@ -398,12 +424,12 @@ fn build_block_body(
         // A map value after more path segments: the element's sub-object must
         // satisfy the block. Expand it under the remaining path prefix.
         let prefix = reconstruct_key(remaining, None);
-        parse_block_with_prefix(&prefix, value)
+        parse_block_with_prefix(&prefix, value, array_matching)
     } else {
         // A selector in the middle of the path with a scalar/list leaf: recurse
         // on the remainder so further selectors and the leaf predicate desugar.
         let remaining_key = reconstruct_key(remaining, modifier_part);
-        match parse_map_entry(&remaining_key, value)? {
+        match parse_map_entry(&remaining_key, value, array_matching)? {
             ParsedEntry::Item(item) => Ok(Detection::AllOf(vec![item])),
             ParsedEntry::Block(block) => Ok(block),
         }
@@ -413,7 +439,7 @@ fn build_block_body(
 /// Parse the **extended** object-scope block body: named element-scoped
 /// sub-selections plus a `condition:` combining them with `and`/`or`/`not`,
 /// evaluated against a single array member (the recursive "mini-event" form).
-fn parse_extended_block_body(value: &Value) -> Result<Detection> {
+fn parse_extended_block_body(value: &Value, array_matching: bool) -> Result<Detection> {
     let m = value.as_mapping().ok_or_else(|| {
         SigmaParserError::InvalidDetection("extended array block body must be a mapping".into())
     })?;
@@ -426,7 +452,7 @@ fn parse_extended_block_body(value: &Value) -> Result<Detection> {
         if key == "condition" {
             condition = Some(parse_block_condition(v)?);
         } else {
-            named.insert(key.to_string(), parse_detection(v)?);
+            named.insert(key.to_string(), parse_detection(v, array_matching)?);
         }
     }
     let condition = condition.ok_or_else(|| {
@@ -467,7 +493,7 @@ fn parse_block_condition(value: &Value) -> Result<ConditionExpr> {
 
 /// Parse a YAML mapping as a detection, prefixing every key with `prefix.` so
 /// the entries are scoped to an indexed element or a nested object.
-fn parse_block_with_prefix(prefix: &str, value: &Value) -> Result<Detection> {
+fn parse_block_with_prefix(prefix: &str, value: &Value, array_matching: bool) -> Result<Detection> {
     let m = value.as_mapping().ok_or_else(|| {
         SigmaParserError::InvalidDetection("array block body must be a mapping".into())
     })?;
@@ -476,7 +502,7 @@ fn parse_block_with_prefix(prefix: &str, value: &Value) -> Result<Detection> {
     for (k, v) in m.iter() {
         let sub = k.as_str().unwrap_or("");
         let key = format!("{prefix}.{sub}");
-        match parse_map_entry(&key, v)? {
+        match parse_map_entry(&key, v, array_matching)? {
             ParsedEntry::Item(item) => items.push(item),
             ParsedEntry::Block(block) => blocks.push(block),
         }

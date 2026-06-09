@@ -1400,13 +1400,66 @@ fn deep_merge_succeeds_at_reasonable_depth() {
 // =============================================================================
 
 /// Parse a single-selection rule and return its `selection` detection.
+///
+/// The rule declares `sigma-version: 3` so array-matching bracket selectors are
+/// enabled (they are gated off at the floor major 2).
 fn parse_selection(detection_body: &str) -> Detection {
     let yaml = format!(
-        "title: T\nlogsource:\n    category: test\ndetection:\n{detection_body}    condition: selection\n"
+        "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n{detection_body}    condition: selection\n"
     );
     let collection =
         parse_sigma_yaml(&yaml).unwrap_or_else(|e| panic!("parse failed: {e}\n{yaml}"));
     collection.rules[0].detection.named["selection"].clone()
+}
+
+#[test]
+fn sigma_version_parsed_as_major() {
+    // Integer major, release string (major only), and absent (None -> floor).
+    let v3 = "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\n";
+    assert_eq!(
+        parse_sigma_yaml(v3).unwrap().rules[0].sigma_version,
+        Some(3)
+    );
+
+    let release = "title: T\nsigma-version: \"3.2.1\"\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\n";
+    assert_eq!(
+        parse_sigma_yaml(release).unwrap().rules[0].sigma_version,
+        Some(3)
+    );
+
+    let absent = "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\n";
+    assert_eq!(
+        parse_sigma_yaml(absent).unwrap().rules[0].sigma_version,
+        None
+    );
+}
+
+#[test]
+fn array_brackets_are_literal_below_v3() {
+    // Without sigma-version (floor major 2), a quantifier selector is NOT a
+    // selector: `connections[any]` is a literal field name (escaped), and the
+    // detection stays a plain item rather than an ArrayMatch.
+    let yaml = "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[any]:\n            protocol: \"TCP\"\n    condition: selection\n";
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(collection.rules.len(), 1, "errors: {:?}", collection.errors);
+    let det = collection.rules[0].detection.named["selection"].clone();
+    assert!(
+        !matches!(det, Detection::ArrayMatch { .. }),
+        "brackets must not be a selector below v3, got {det:?}"
+    );
+}
+
+#[test]
+fn positional_index_is_literal_field_below_v3() {
+    // Below v3 a positional `args[0]` is a literal field name; the brackets are
+    // escaped so the escape-aware resolver treats them literally.
+    let yaml = "title: T\nsigma-version: 2\nlogsource:\n    category: test\ndetection:\n    selection:\n        args[0]: \"cmd.exe\"\n    condition: selection\n";
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let det = collection.rules[0].detection.named["selection"].clone();
+    let Detection::AllOf(items) = det else {
+        panic!("expected AllOf, got {det:?}");
+    };
+    assert_eq!(items[0].field.name.as_deref(), Some("args\\[0\\]"));
 }
 
 #[test]
@@ -1480,7 +1533,7 @@ fn array_extended_block_parses_condition_and_named() {
 #[test]
 fn array_extended_block_requires_named_selections() {
     // A `condition:` with no sibling selections is an error.
-    let yaml = "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[any]:\n            condition: foo\n    condition: selection\n";
+    let yaml = "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[any]:\n            condition: foo\n    condition: selection\n";
     let collection = parse_sigma_yaml(yaml).unwrap();
     assert!(collection.rules.is_empty());
     assert!(!collection.errors.is_empty());
@@ -1652,7 +1705,7 @@ fn array_flattened_correlation_parses_as_independent_scopes() {
 
 #[test]
 fn array_unknown_quantifier_is_error() {
-    let yaml = "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[one]: \"x\"\n    condition: selection\n";
+    let yaml = "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[one]: \"x\"\n    condition: selection\n";
     let collection = parse_sigma_yaml(yaml).unwrap();
     assert!(collection.rules.is_empty());
     assert!(
@@ -1742,7 +1795,7 @@ fn array_index_inside_quantifier_block() {
 
 #[test]
 fn array_unknown_selector_is_error() {
-    let yaml = "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[oops]: \"x\"\n    condition: selection\n";
+    let yaml = "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[oops]: \"x\"\n    condition: selection\n";
     let collection = parse_sigma_yaml(yaml).unwrap();
     assert!(collection.rules.is_empty());
     assert!(

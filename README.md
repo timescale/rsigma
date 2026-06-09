@@ -20,13 +20,13 @@ RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into opt
 
 You can send events in many formats, including JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP (OpenTelemetry Protocol), with auto-detection by default. pySigma-compatible processing pipelines handle field mapping and backend configuration. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to RSigma via HTTP or gRPC for detection.
 
-For rule quality and editor integration, a built-in linter validates rules against 66 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+For rule quality and editor integration, a built-in linter validates rules against 70 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
 
 ## Supported Features
 
 * **Sigma parsing:** Parse Sigma YAML into a strongly-typed AST with support for detection, correlation, and filter rules
 * **Rule evaluation:** Compile and evaluate rules against JSON events in real time with stateless detection and stateful correlation (sliding windows, group-by, chaining, suppression)
-* **Array matching (experimental):** Match members of arrays in nested event data: implicit any-member matching, `[any]`/`[all]` object-scope blocks for same-element correlation, and positional `[N]` indexing. Evaluated natively and lowered to PostgreSQL JSONB; see the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
+* **Array matching (experimental):** Match members of arrays in nested event data: implicit any-member matching, `[any]`/`[all]` object-scope blocks for same-element correlation, and positional `[N]` indexing, opt-in via `sigma-version: 3`. Evaluated natively and lowered to PostgreSQL JSONB; see the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
 * **Streaming daemon:** Run as a streaming detection daemon with hot-reload, Prometheus metrics, and HTTP/NATS/OTLP input
 * **Input formats:** Accept JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP logs with format auto-detection
 * **Processing pipelines:** Use pySigma-compatible processing pipelines for field mapping, transformations, conditions, and finalizers
@@ -38,7 +38,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * **TLS termination:** Use in-process TLS termination for the daemon API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mutual TLS, `aws-lc-rs` crypto, and cross-platform certificate hot-reload
 * **NATS JetStream:** Use NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
 * **OTLP ingestion:** Use OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
-* **Built-in linter:** Validate rules with 66 checks, four severity levels, a full suppression system, configurable custom tag namespaces (`--tag-namespace`), and auto-fix (`--fix`) for 13 safe rules
+* **Built-in linter:** Validate rules with 70 checks, four severity levels, a full suppression system, configurable custom tag namespaces (`--tag-namespace`), and auto-fix (`--fix`) for 13 safe rules
 * **LSP server:** Use real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
 * **Docker images:** Use multi-arch Docker images (linux/amd64, linux/arm64) with cosign signatures, SBOM, and SLSA Build L3 provenance
 * **Release binaries:** Use cross-platform binaries for Linux, macOS, and Windows on amd64 and arm64

@@ -1,6 +1,6 @@
 # Linter and LSP
 
-The 66 lint rules are the single source of authority for "is this Sigma file well-formed"; the language server reuses them so an in-editor squiggle and a CI `rsigma rule lint` failure are byte-identical.
+The {{ rsigma.lint.rules }} lint rules are the single source of authority for "is this Sigma file well-formed"; the language server reuses them so an in-editor squiggle and a CI `rsigma rule lint` failure are byte-identical.
 
 This page explains how the two pieces fit together, how to add a new lint rule, and how to extend the LSP (`rsigma-lsp`).
 

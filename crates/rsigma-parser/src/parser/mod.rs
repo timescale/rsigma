@@ -365,6 +365,28 @@ pub(super) fn parse_enum_with_warn<T: std::str::FromStr>(
     }
 }
 
+/// Parse the optional top-level `sigma-version` attribute into its
+/// specification MAJOR version. Accepts an integer major (`3`) or a release
+/// string (`"2.1.0"`); only the major is significant, since breaking spec
+/// changes occur only at major bumps. A present-but-malformed value is reported
+/// through `warnings` and treated as absent (resolving to the fixed floor).
+pub(super) fn parse_sigma_version(
+    m: &yaml_serde::Mapping,
+    warnings: &mut Vec<String>,
+) -> Option<u32> {
+    let value = m.get(val_key("sigma-version"))?;
+    match crate::version::major_from_value(value) {
+        Some(major) => Some(major),
+        None => {
+            warnings.push(format!(
+                "invalid sigma-version: {value:?} (expected a major version integer like 3, \
+                 or a release string like \"2.1.0\")"
+            ));
+            None
+        }
+    }
+}
+
 pub(super) fn val_key(s: &str) -> Value {
     Value::String(s.to_string())
 }

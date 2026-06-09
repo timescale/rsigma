@@ -38,7 +38,7 @@ rsigma
 ├── rule
 │   ├── parse                  parse a single rule file, dump AST as JSON
 │   ├── validate               parse + compile a directory of rules
-│   ├── lint                   run the 66 lint checks
+│   ├── lint                   run the {{ rsigma.lint.rules }} lint checks
 │   ├── migrate-sources        extract pipeline-embedded sources into standalone files
 │   ├── fields                 list every field referenced by the rules
 │   ├── condition              parse a condition expression, dump AST

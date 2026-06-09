@@ -1,6 +1,6 @@
 # `rsigma rule lint`
 
-Lint Sigma rules against the v2.1.0 specification with 66 built-in checks.
+Lint Sigma rules against the v2.1.0 specification with {{ rsigma.lint.rules }} built-in checks.
 
 ## Synopsis
 
@@ -12,7 +12,7 @@ rsigma rule lint [OPTIONS] <PATH>
 
 Reads one rule file or every `*.yml`/`*.yaml` in a directory, runs each rule through the linter's check pipeline, and reports findings on stdout. Each finding has a severity (`error`, `warning`, `info`, `hint`), a rule ID, a message, and a JSON-pointer location.
 
-Thirteen of the 66 rules carry safe auto-fixes; pass `--fix` to apply them in place. Optional JSON schema validation, three suppression tiers (CLI, config file, inline comments), and a tiered `--fail-level` for CI gating.
+{{ rsigma.lint.autofix }} of the {{ rsigma.lint.rules }} rules carry safe auto-fixes; pass `--fix` to apply them in place. Optional JSON schema validation, three suppression tiers (CLI, config file, inline comments), and a tiered `--fail-level` for CI gating.
 
 For the narrative version with the full lint-rule catalog and CI patterns see [Linting Rules](../../guide/linting-rules.md).
 
@@ -138,5 +138,5 @@ Checked 1 file(s): 1 passed, 0 failed (0 error(s), 0 warning(s), 2 info(s))
 
 - [Linting Rules](../../guide/linting-rules.md) for the full rule catalog, suppression tiers, and CI patterns.
 - [`rule validate`](validate.md) for the cheaper parse-and-compile gate.
-- [Lint Rules reference](../../reference/lint-rules.md) for the complete 66-rule catalog.
+- [Lint Rules reference](../../reference/lint-rules.md) for the complete {{ rsigma.lint.rules }}-rule catalog.
 - [CI/CD](../../guide/ci-cd.md#-fail-level-for-rule-lint) for pre-commit hooks and pipeline patterns.

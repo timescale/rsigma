@@ -8,7 +8,8 @@ use crate::error::{Result, SigmaParserError};
 use crate::value::Timespan;
 
 use super::{
-    collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_related, val_key,
+    collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_related,
+    parse_sigma_version, val_key,
 };
 
 // =============================================================================
@@ -93,6 +94,7 @@ pub(super) fn parse_correlation_rule(
     let standard_correlation_keys: &[&str] = &[
         "author",
         "correlation",
+        "sigma-version",
         "custom_attributes",
         "date",
         "description",
@@ -116,6 +118,7 @@ pub(super) fn parse_correlation_rule(
 
     Ok(CorrelationRule {
         title,
+        sigma_version: parse_sigma_version(m, warnings),
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
         status: parse_enum_with_warn(get_str(m, "status"), "status", warnings),

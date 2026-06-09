@@ -168,5 +168,5 @@ In `Preferences -> Package Settings -> LSP -> Settings`:
 ## See also
 
 - [`rsigma-lsp` README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-lsp/README.md) for the full protocol-level capability list (sync mode, debounce, completion contexts, hover sources, document-symbol shape).
-- [Lint Rules reference](../reference/lint-rules.md) for the catalogue of 66 lint rules and which ones have safe auto-fixes.
+- [Lint Rules reference](../reference/lint-rules.md) for the catalogue of {{ rsigma.lint.rules }} lint rules and which ones have safe auto-fixes.
 - [VS Code and Cursor](vscode.md) for the equivalent setup with the wrapping extension.

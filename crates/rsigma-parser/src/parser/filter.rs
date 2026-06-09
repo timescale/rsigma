@@ -6,7 +6,7 @@ use crate::error::{Result, SigmaParserError};
 use super::detection::parse_detections;
 use super::{
     collect_custom_attributes, get_str, get_str_list, parse_enum_with_warn, parse_logsource,
-    parse_related, val_key,
+    parse_related, parse_sigma_version, val_key,
 };
 
 // =============================================================================
@@ -26,6 +26,9 @@ pub(super) fn parse_filter_rule(value: &Value, warnings: &mut Vec<String>) -> Re
     let title = get_str(m, "title")
         .ok_or_else(|| SigmaParserError::MissingField("title".into()))?
         .to_string();
+
+    let sigma_version = parse_sigma_version(m, warnings);
+    let array_matching = crate::version::array_matching_enabled(sigma_version);
 
     // Get filter section for rules list
     let filter_val = m.get(val_key("filter"));
@@ -63,7 +66,7 @@ pub(super) fn parse_filter_rule(value: &Value, warnings: &mut Vec<String>) -> Re
         if det_map.is_empty() {
             return Err(SigmaParserError::MissingField("filter.selection".into()));
         }
-        parse_detections(&Value::Mapping(det_map))?
+        parse_detections(&Value::Mapping(det_map), array_matching)?
     } else {
         return Err(SigmaParserError::MissingField("filter".into()));
     };
@@ -76,6 +79,7 @@ pub(super) fn parse_filter_rule(value: &Value, warnings: &mut Vec<String>) -> Re
     let standard_filter_keys: &[&str] = &[
         "author",
         "custom_attributes",
+        "sigma-version",
         "date",
         "description",
         "falsepositives",
@@ -99,6 +103,7 @@ pub(super) fn parse_filter_rule(value: &Value, warnings: &mut Vec<String>) -> Re
 
     Ok(FilterRule {
         title,
+        sigma_version,
         id: get_str(m, "id").map(|s| s.to_string()),
         name: get_str(m, "name").map(|s| s.to_string()),
         taxonomy: get_str(m, "taxonomy").map(|s| s.to_string()),

@@ -137,6 +137,10 @@ pub enum LintRule {
     EmptyValueList,
     WildcardOnlyValue,
     FlattenedArrayCorrelation,
+    UnsupportedSigmaVersion,
+    ArrayMatchingWithoutVersion,
+    SigmaVersionMismatch,
+    UnknownRuleReference,
     UnknownKey,
 }
 
@@ -209,6 +213,10 @@ impl fmt::Display for LintRule {
             LintRule::EmptyValueList => "empty_value_list",
             LintRule::WildcardOnlyValue => "wildcard_only_value",
             LintRule::FlattenedArrayCorrelation => "flattened_array_correlation",
+            LintRule::UnsupportedSigmaVersion => "unsupported_sigma_version",
+            LintRule::ArrayMatchingWithoutVersion => "array_matching_without_version",
+            LintRule::SigmaVersionMismatch => "sigma_version_mismatch",
+            LintRule::UnknownRuleReference => "unknown_rule_reference",
             LintRule::UnknownKey => "unknown_key",
         };
         write!(f, "{s}")
@@ -345,6 +353,7 @@ static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
         "scope",
         "selection",
         "service",
+        "sigma-version",
         "status",
         "tags",
         "taxonomy",
@@ -500,6 +509,157 @@ fn is_action_fragment(m: &yaml_serde::Mapping) -> bool {
 }
 
 // =============================================================================
+// Cross-document reference resolution
+// =============================================================================
+
+/// An index of referenceable rules (detection rules and correlation rules) by
+/// their identifiers (`id` and `name`), each mapped to its resolved
+/// specification major. Built file-local for single-text linting and
+/// directory-global for directory linting.
+struct RuleIndex {
+    majors: HashMap<String, u32>,
+    /// Whether the index covers the whole set being linted. Only then is an
+    /// unresolved reference genuinely missing rather than living in a file
+    /// outside the linted scope.
+    complete: bool,
+}
+
+impl RuleIndex {
+    fn new(complete: bool) -> Self {
+        Self {
+            majors: HashMap::new(),
+            complete,
+        }
+    }
+
+    /// Index every referenceable document in one multi-document YAML text.
+    fn add_text(&mut self, text: &str) {
+        for doc in yaml_serde::Deserializer::from_str(text) {
+            let Ok(value) = Value::deserialize(doc) else {
+                break;
+            };
+            self.add_value(&value);
+        }
+    }
+
+    fn add_value(&mut self, value: &Value) {
+        let Some(m) = value.as_mapping() else {
+            return;
+        };
+        if is_action_fragment(m) {
+            return;
+        }
+        // Only detection rules and correlation rules can be referenced.
+        if matches!(
+            detect_doc_type(m),
+            DocType::Detection | DocType::Correlation
+        ) {
+            let major = crate::version::resolve_major(
+                m.get(key("sigma-version"))
+                    .and_then(crate::version::major_from_value),
+            );
+            for id_key in ["id", "name"] {
+                if let Some(v) = get_str(m, id_key) {
+                    self.majors.insert(v.to_string(), major);
+                }
+            }
+        }
+    }
+}
+
+/// Extract a `rules:` reference list (a single string or a sequence of strings).
+fn reference_list(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// References declared by a correlation rule (`correlation.rules`).
+fn correlation_rule_refs(m: &yaml_serde::Mapping) -> Vec<String> {
+    m.get(key("correlation"))
+        .and_then(|c| c.as_mapping())
+        .map(|c| reference_list(c.get(key("rules"))))
+        .unwrap_or_default()
+}
+
+/// References declared by a filter rule (`filter.rules`). Returns `None` when the
+/// filter targets every rule (`rules: any`), which is not resolvable.
+fn filter_rule_refs(m: &yaml_serde::Mapping) -> Option<Vec<String>> {
+    let f = m.get(key("filter"))?.as_mapping()?;
+    let rules = f.get(key("rules"))?;
+    if let Some(s) = rules.as_str()
+        && s.eq_ignore_ascii_case("any")
+    {
+        return None;
+    }
+    Some(reference_list(Some(rules)))
+}
+
+/// Cross-document lints over the documents in one YAML text, resolving each
+/// correlation/filter reference against `index`:
+///
+/// - `sigma_version_mismatch` (warning): a referencing document and a resolved
+///   referenced rule declare different specification majors.
+/// - `unknown_rule_reference` (warning): a reference resolves to no rule and the
+///   index is complete (so it is genuinely missing, not out of the linted scope).
+fn lint_cross_references(docs: &[Value], index: &RuleIndex, warnings: &mut Vec<LintWarning>) {
+    for value in docs {
+        let Some(m) = value.as_mapping() else {
+            continue;
+        };
+        if is_action_fragment(m) {
+            continue;
+        }
+        let (refs, path) = match detect_doc_type(m) {
+            DocType::Correlation => (correlation_rule_refs(m), "/correlation/rules"),
+            DocType::Filter => match filter_rule_refs(m) {
+                Some(refs) => (refs, "/filter/rules"),
+                None => continue,
+            },
+            DocType::Detection => continue,
+        };
+        if refs.is_empty() {
+            continue;
+        }
+        let self_major = crate::version::resolve_major(
+            m.get(key("sigma-version"))
+                .and_then(crate::version::major_from_value),
+        );
+        let label = get_str(m, "title")
+            .or_else(|| get_str(m, "name"))
+            .unwrap_or("<rule>");
+        for r in refs {
+            match index.majors.get(&r).copied() {
+                Some(target) if target != self_major => warnings.push(warning(
+                    LintRule::SigmaVersionMismatch,
+                    format!(
+                        "'{label}' targets sigma-version major {self_major} but references rule \
+                         '{r}' which targets major {target}; cross-referencing rules must share a \
+                         specification major"
+                    ),
+                    path,
+                )),
+                Some(_) => {}
+                None if index.complete => warnings.push(warning(
+                    LintRule::UnknownRuleReference,
+                    format!(
+                        "'{label}' references rule '{r}', which was not found among the linted \
+                         rules (matched by id or name)"
+                    ),
+                    path,
+                )),
+                None => {}
+            }
+        }
+    }
+}
+
+// =============================================================================
 // Public API
 // =============================================================================
 
@@ -527,6 +687,7 @@ fn lint_yaml_value_ext(value: &Value, extra_ns: &[String]) -> Vec<LintWarning> {
         DocType::Filter => rules::filter::lint_filter_rule(m, &mut warnings),
     }
 
+    rules::version::lint_sigma_version(m, doc_type, &mut warnings);
     rules::shared::lint_unknown_keys(m, doc_type, &mut warnings);
 
     warnings
@@ -538,7 +699,20 @@ pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
 }
 
 fn lint_yaml_str_ext(text: &str, extra_ns: &[String]) -> Vec<LintWarning> {
+    lint_yaml_str_indexed(text, extra_ns, None)
+}
+
+/// Lint one YAML text. When `external_index` is `Some` (directory linting) it is
+/// the directory-global rule index used for cross-reference checks; when `None`,
+/// a file-local index is built from this text, so cross-file references are out
+/// of scope and `unknown_rule_reference` does not fire.
+fn lint_yaml_str_indexed(
+    text: &str,
+    extra_ns: &[String],
+    external_index: Option<&RuleIndex>,
+) -> Vec<LintWarning> {
     let mut all_warnings = Vec::new();
+    let mut docs: Vec<Value> = Vec::new();
 
     for doc in yaml_serde::Deserializer::from_str(text) {
         let value: Value = match Value::deserialize(doc) {
@@ -566,6 +740,28 @@ fn lint_yaml_str_ext(text: &str, extra_ns: &[String]) -> Vec<LintWarning> {
             w.span = resolve_path_to_span(text, &w.path);
             all_warnings.push(w);
         }
+        docs.push(value);
+    }
+
+    // Cross-document checks resolve references against the directory-global index
+    // when given, otherwise a file-local index built from this text's documents.
+    let local_index;
+    let index = match external_index {
+        Some(idx) => idx,
+        None => {
+            let mut idx = RuleIndex::new(false);
+            for v in &docs {
+                idx.add_value(v);
+            }
+            local_index = idx;
+            &local_index
+        }
+    };
+    let mut xref = Vec::new();
+    lint_cross_references(&docs, index, &mut xref);
+    for mut w in xref {
+        w.span = resolve_path_to_span(text, &w.path);
+        all_warnings.push(w);
     }
 
     all_warnings
@@ -692,63 +888,107 @@ pub fn lint_yaml_file(path: &Path) -> crate::error::Result<FileLintResult> {
     })
 }
 
-/// Lint all `.yml`/`.yaml` files in a directory recursively.
-pub fn lint_yaml_directory(dir: &Path) -> crate::error::Result<Vec<FileLintResult>> {
-    let mut results = Vec::new();
-    let mut visited = HashSet::new();
-
-    fn walk(
-        dir: &Path,
-        results: &mut Vec<FileLintResult>,
-        visited: &mut HashSet<std::path::PathBuf>,
-    ) -> crate::error::Result<()> {
-        let canonical = match dir.canonicalize() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
-        if !visited.insert(canonical) {
-            return Ok(());
-        }
-
-        let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
-        entries.sort_by_key(|e| e.path());
-
-        for entry in entries {
-            let path = entry.path();
-
-            if path.is_dir() {
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with('.'))
-                {
-                    continue;
-                }
-                walk(&path, results, visited)?;
-            } else if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("yml" | "yaml")
-            ) {
-                match crate::lint::lint_yaml_file(&path) {
-                    Ok(file_result) => results.push(file_result),
-                    Err(e) => {
-                        results.push(FileLintResult {
-                            path: path.clone(),
-                            warnings: vec![err(
-                                LintRule::FileReadError,
-                                format!("error reading file: {e}"),
-                                "/",
-                            )],
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
+/// Recursively collect `.yml`/`.yaml` file paths under `dir`, in sorted
+/// depth-first order, skipping hidden directories and any path matching the
+/// exclude set (relative to `base`). Symlink loops are guarded by `visited`.
+fn collect_yaml_files(
+    dir: &Path,
+    base: &Path,
+    exclude_set: Option<&globset::GlobSet>,
+    files: &mut Vec<std::path::PathBuf>,
+    visited: &mut HashSet<std::path::PathBuf>,
+) -> crate::error::Result<()> {
+    let canonical = match dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Ok(()),
+    };
+    if !visited.insert(canonical) {
+        return Ok(());
     }
 
-    walk(dir, &mut results, &mut visited)?;
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        let path = entry.path();
+
+        if let Some(gs) = exclude_set
+            && let Ok(rel) = path.strip_prefix(base)
+            && gs.is_match(rel)
+        {
+            continue;
+        }
+
+        if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'))
+            {
+                continue;
+            }
+            collect_yaml_files(&path, base, exclude_set, files, visited)?;
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Two-pass directory lint: collect and read every file once to build a
+/// directory-global rule index, then lint each file against it so
+/// cross-reference checks see rules defined in sibling files.
+fn lint_directory_impl(
+    dir: &Path,
+    config: Option<&LintConfig>,
+) -> crate::error::Result<Vec<FileLintResult>> {
+    let exclude_set = config.and_then(LintConfig::build_exclude_set);
+    let mut files = Vec::new();
+    let mut visited = HashSet::new();
+    collect_yaml_files(dir, dir, exclude_set.as_ref(), &mut files, &mut visited)?;
+
+    // Read each file once and index every referenceable rule across the tree.
+    let mut index = RuleIndex::new(true);
+    let mut contents: Vec<(std::path::PathBuf, std::result::Result<String, String>)> =
+        Vec::with_capacity(files.len());
+    for path in files {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                index.add_text(&text);
+                contents.push((path, Ok(text)));
+            }
+            Err(e) => contents.push((path, Err(format!("error reading file: {e}")))),
+        }
+    }
+
+    let mut results = Vec::with_capacity(contents.len());
+    for (path, content) in contents {
+        match content {
+            Ok(text) => {
+                let warnings = match config {
+                    Some(cfg) => {
+                        let w = lint_yaml_str_indexed(&text, &cfg.tag_namespaces, Some(&index));
+                        apply_suppressions(w, cfg, &parse_inline_suppressions(&text))
+                    }
+                    None => lint_yaml_str_indexed(&text, &[], Some(&index)),
+                };
+                results.push(FileLintResult { path, warnings });
+            }
+            Err(msg) => results.push(FileLintResult {
+                path,
+                warnings: vec![err(LintRule::FileReadError, msg, "/")],
+            }),
+        }
+    }
     Ok(results)
+}
+
+/// Lint all `.yml`/`.yaml` files in a directory recursively.
+pub fn lint_yaml_directory(dir: &Path) -> crate::error::Result<Vec<FileLintResult>> {
+    lint_directory_impl(dir, None)
 }
 
 // =============================================================================
@@ -1028,72 +1268,7 @@ pub fn lint_yaml_directory_with_config(
     dir: &Path,
     config: &LintConfig,
 ) -> crate::error::Result<Vec<FileLintResult>> {
-    let mut results = Vec::new();
-    let mut visited = HashSet::new();
-    let exclude_set = config.build_exclude_set();
-
-    fn walk(
-        dir: &Path,
-        base: &Path,
-        config: &LintConfig,
-        exclude_set: &Option<globset::GlobSet>,
-        results: &mut Vec<FileLintResult>,
-        visited: &mut HashSet<std::path::PathBuf>,
-    ) -> crate::error::Result<()> {
-        let canonical = match dir.canonicalize() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
-        if !visited.insert(canonical) {
-            return Ok(());
-        }
-
-        let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
-        entries.sort_by_key(|e| e.path());
-
-        for entry in entries {
-            let path = entry.path();
-
-            if let Some(gs) = exclude_set
-                && let Ok(rel) = path.strip_prefix(base)
-                && gs.is_match(rel)
-            {
-                continue;
-            }
-
-            if path.is_dir() {
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with('.'))
-                {
-                    continue;
-                }
-                walk(&path, base, config, exclude_set, results, visited)?;
-            } else if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("yml" | "yaml")
-            ) {
-                match lint_yaml_file_with_config(&path, config) {
-                    Ok(file_result) => results.push(file_result),
-                    Err(e) => {
-                        results.push(FileLintResult {
-                            path: path.clone(),
-                            warnings: vec![err(
-                                LintRule::FileReadError,
-                                format!("error reading file: {e}"),
-                                "/",
-                            )],
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    walk(dir, dir, config, &exclude_set, &mut results, &mut visited)?;
-    Ok(results)
+    lint_directory_impl(dir, Some(config))
 }
 
 // =============================================================================
@@ -1712,6 +1887,146 @@ exclude:
         assert!(gs.is_match("config/data_mapping/foo.yaml"));
         assert!(gs.is_match("config/nested/deep/bar.yml"));
         assert!(!gs.is_match("rules/windows/test.yml"));
+    }
+
+    #[test]
+    fn cross_ref_version_mismatch_within_file() {
+        // A correlation (major 3) referencing a base rule (major 2) by name, in
+        // the same file, flags the mismatch. unknown_rule_reference does NOT
+        // fire for a single file (the index is not complete).
+        let yaml = r#"
+title: Base Rule
+name: base_rule
+sigma-version: 2
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Brute Force
+sigma-version: 3
+correlation:
+    type: event_count
+    rules:
+        - base_rule
+    group-by:
+        - SourceIP
+    timespan: 5m
+    condition:
+        gte: 10
+"#;
+        let w = lint_yaml_str(yaml);
+        assert!(has_rule(&w, LintRule::SigmaVersionMismatch));
+        assert!(has_no_rule(&w, LintRule::UnknownRuleReference));
+    }
+
+    #[test]
+    fn cross_ref_matching_version_no_mismatch() {
+        let yaml = r#"
+title: Base Rule
+name: base_rule
+sigma-version: 3
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Brute Force
+sigma-version: 3
+correlation:
+    type: event_count
+    rules:
+        - base_rule
+    group-by:
+        - SourceIP
+    timespan: 5m
+    condition:
+        gte: 10
+"#;
+        assert!(has_no_rule(
+            &lint_yaml_str(yaml),
+            LintRule::SigmaVersionMismatch
+        ));
+    }
+
+    #[test]
+    fn cross_ref_unknown_only_with_complete_index() {
+        let yaml = r#"
+title: Brute Force
+correlation:
+    type: event_count
+    rules:
+        - nonexistent_rule
+    group-by:
+        - SourceIP
+    timespan: 5m
+    condition:
+        gte: 10
+"#;
+        // Single file: the referenced rule may live elsewhere, so it is out of
+        // scope and unknown_rule_reference must not fire.
+        assert!(has_no_rule(
+            &lint_yaml_str(yaml),
+            LintRule::UnknownRuleReference
+        ));
+
+        // Directory: the index is complete, so the missing reference is flagged.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("corr.yml"), yaml).unwrap();
+        let results = lint_yaml_directory(tmp.path()).unwrap();
+        assert!(
+            results
+                .iter()
+                .flat_map(|r| &r.warnings)
+                .any(|w| w.rule == LintRule::UnknownRuleReference)
+        );
+    }
+
+    #[test]
+    fn cross_ref_resolves_across_files() {
+        // Base rule in one file, correlation in another: the directory index
+        // resolves the reference and flags the major mismatch across files.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("base.yml"),
+            r#"
+title: Base Rule
+name: base_rule
+sigma-version: 2
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("corr.yml"),
+            r#"
+title: Brute Force
+sigma-version: 3
+correlation:
+    type: event_count
+    rules:
+        - base_rule
+    group-by:
+        - SourceIP
+    timespan: 5m
+    condition:
+        gte: 10
+"#,
+        )
+        .unwrap();
+        let results = lint_yaml_directory(tmp.path()).unwrap();
+        let all: Vec<_> = results.iter().flat_map(|r| &r.warnings).collect();
+        assert!(all.iter().any(|w| w.rule == LintRule::SigmaVersionMismatch));
+        assert!(!all.iter().any(|w| w.rule == LintRule::UnknownRuleReference));
     }
 
     #[test]

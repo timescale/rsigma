@@ -4,6 +4,7 @@ expression: "&collection.filters[0]"
 ---
 FilterRule {
     title: "Exclude Known Good",
+    sigma_version: None,
     id: None,
     name: None,
     taxonomy: None,

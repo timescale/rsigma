@@ -151,7 +151,7 @@ rsigma rule validate rules/ -p pipe.yml --source sources.yml --resolve-sources  
 
 ### `rule lint`: Lint rules against the Sigma specification
 
-Run 66 built-in lint rules with optional JSON schema validation.
+Run 70 built-in lint rules with optional JSON schema validation.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|

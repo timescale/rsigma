@@ -597,6 +597,7 @@ mod tests {
         let collection = parse_sigma_yaml(
             r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:
@@ -621,6 +622,7 @@ detection:
         let collection = parse_sigma_yaml(
             r#"
 title: T
+sigma-version: 3
 logsource: { category: test }
 detection:
     selection:

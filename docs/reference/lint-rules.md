@@ -1,6 +1,6 @@
 # Lint Rules
 
-`rsigma rule lint` runs 66 built-in checks derived from the Sigma v2.1.0 specification, plus 1 reserved enum value (`empty_filter_rules`) that no production code currently emits. This page is the canonical catalogue: every rule's ID, default severity, what it flags, and whether `--fix` can auto-correct it.
+`rsigma rule lint` runs {{ rsigma.lint.rules }} built-in checks derived from the Sigma v2.1.0 specification, plus {{ rsigma.lint.reserved }} reserved enum value (`empty_filter_rules`) that no production code currently emits. This page is the canonical catalogue: every rule's ID, default severity, what it flags, and whether `--fix` can auto-correct it.
 
 For the workflow and CLI surface see [Linting Rules](../guide/linting-rules.md) and the [`rule lint` CLI reference](../cli/rule/lint.md). For the source of truth see [`crates/rsigma-parser/src/lint`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-parser/src/lint).
 
@@ -19,12 +19,12 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 
 | Severity | Rules |
 |----------|------:|
-| `error` | 33 |
-| `warning` | 30 |
+| `error` | 34 |
+| `warning` | 33 |
 | `info` | 3 |
 | `hint` | 0 |
-| Reserved (no production emission yet) | 1 |
-| **Total** | **67** (13 of which have safe auto-fixes via `--fix`) |
+| Reserved (no production emission yet) | {{ rsigma.lint.reserved }} |
+| **Total** | **{{ rsigma.lint.total }}** ({{ rsigma.lint.autofix }} of which have safe auto-fixes via `--fix`) |
 
 The `hint` severity is defined but not yet used by any of the shipped rules. Future rules may use it.
 
@@ -154,6 +154,17 @@ These also apply to detection rules but sit apart from the core detection-block 
 | `invalid_related_type` | `error` | — | `related[].type` is not one of `derived`, `obsolete`, `merged`, `renamed`, `similar`. |
 | `related_missing_required` | `error` | — | `related[]` entry is missing the required `id:` or `type:` field. |
 | `deprecated_without_related` | `warning` | — | A rule with `status: deprecated` should declare `related:` pointing at the replacement. |
+
+## Specification version and rule references (4)
+
+The first two apply to any document type, based on the top-level `sigma-version` attribute (the Sigma specification major the document targets); see [Array Matching: requires `sigma-version: 3`](../guide/array-matching.md#requires-sigma-version-3). The last two resolve cross-document references (a correlation rule and the rules it aggregates, a filter and the rules it targets) by `id` or `name`. Reference resolution spans the whole directory when linting a directory; for a single file or string, only references to rules in the same input are resolved, and `unknown_rule_reference` is suppressed (the target may live in a file outside the linted scope).
+
+| Rule | Severity | Fix | Description |
+|------|----------|-----|-------------|
+| `unsupported_sigma_version` | `error` | — | `sigma-version` declares a specification major newer than this build implements, so the document cannot be interpreted correctly. Upgrade rsigma or target a supported major. |
+| `array_matching_without_version` | `warning` | — | The document uses array-matching selector syntax (`field[any]`, `args[0]`, ...) but resolves below the major that enables it (absent or `sigma-version: 2`), so the brackets are read as literal field-name characters. Add `sigma-version: 3` to read them as array selectors, or escape the brackets (`\[` / `\]`) to keep them literal. |
+| `sigma_version_mismatch` | `warning` | — | A correlation or filter and a rule it references declare different `sigma-version` majors. Cross-referencing rules must share a specification major, since the referencing rule's semantics depend on a consistent reading of the referenced ones. |
+| `unknown_rule_reference` | `warning` | — | A correlation's `rules:` or a filter's `rules:` entry references a rule (by `id` or `name`) that does not exist among the linted rules. Only emitted when linting a directory, where the rule index is complete. |
 
 ## Selected findings, with worked examples
 

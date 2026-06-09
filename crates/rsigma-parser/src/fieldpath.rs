@@ -27,6 +27,29 @@ pub fn unescape_brackets(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Escape every *unescaped* `[` and `]` as `\[` / `\]`, leaving already-escaped
+/// brackets and every other character untouched. The inverse of
+/// [`unescape_brackets`]. Used to render a field name whose brackets must be
+/// read literally (for example below the array-matching spec version), so the
+/// escape-aware field resolver does not treat a trailing `[...]` as a selector.
+/// Returns a borrow when there is nothing to escape (the common case).
+pub fn escape_brackets(s: &str) -> Cow<'_, str> {
+    let bytes = s.as_bytes();
+    let is_unescaped_bracket =
+        |i: usize| (bytes[i] == b'[' || bytes[i] == b']') && (i == 0 || bytes[i - 1] != b'\\');
+    if !(0..bytes.len()).any(is_unescaped_bracket) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, c) in s.char_indices() {
+        if is_unescaped_bracket(i) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    Cow::Owned(out)
+}
+
 /// Index of the first occurrence of the ASCII byte `ch` that is not escaped by
 /// an immediately preceding backslash. `ch` must be ASCII (`[` or `]` here);
 /// scanning bytes is safe because those never appear inside a UTF-8 multibyte
@@ -64,6 +87,17 @@ mod tests {
         assert_eq!(unescape_brackets("a\\[b\\]c"), "a[b]c");
         // A backslash not before a bracket is preserved.
         assert_eq!(unescape_brackets("a\\b"), "a\\b");
+    }
+
+    #[test]
+    fn escape_only_unescaped_brackets() {
+        assert_eq!(escape_brackets("plain"), "plain");
+        assert_eq!(escape_brackets("args[0]"), "args\\[0\\]");
+        assert_eq!(escape_brackets("connections[any]"), "connections\\[any\\]");
+        // Already-escaped brackets are left as-is (no double escaping).
+        assert_eq!(escape_brackets("args\\[0\\]"), "args\\[0\\]");
+        // Round-trips with unescape_brackets.
+        assert_eq!(unescape_brackets(&escape_brackets("a[b]c")), "a[b]c");
     }
 
     #[test]
