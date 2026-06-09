@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Correlation window modes: declarable `sliding`/`tumbling`/`session` windows and a session `gap` (parser, lint, LSP) (#TBD)
+### Correlation window modes: declarable `sliding`/`tumbling`/`session` windows and a session `gap` (parser, lint, LSP) (#192)
 
 rsigma correlation rules can now declare how their `timespan` is anchored to the event stream, via an optional `window` attribute, plus a `gap` field for dynamic session windows. This is the parser-and-validation slice of the feature; runtime evaluation and query conversion follow in later changes. It is the reference implementation of a proposed Sigma enhancement that makes correlation window semantics declarable and adds the gap-based session window the spec cannot express today.
 
