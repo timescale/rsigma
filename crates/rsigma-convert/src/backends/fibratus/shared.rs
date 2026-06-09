@@ -171,7 +171,8 @@ const ATTACK_TACTICS: &[(&str, &str, &str)] = &[
 /// names ATT&CK labels:
 ///
 /// - `attack.<tactic_short_name>` → `tactic.id`, `tactic.name`,
-///   `tactic.ref`, looked up from [`ATTACK_TACTICS`].
+///   `tactic.ref`, looked up from a small static `ATTACK_TACTICS`
+///   table (kept private; expand it here if a new MITRE tactic ships).
 /// - `attack.t<NNNN>` (base technique) → `technique.id`,
 ///   `technique.ref`.
 /// - `attack.t<NNNN>.<sub>` (sub-technique) → `subtechnique.id`,

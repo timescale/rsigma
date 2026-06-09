@@ -25,8 +25,8 @@
 //!   on a few constructs (lookarounds, backreferences), so patterns that
 //!   use those return `ConvertError::UnsupportedModifier` rather than
 //!   emit something Fibratus would reject at load time.
-//! - **YAML envelope, not query string.** [`finalize_query`] builds a
-//!   per-rule YAML document and [`finalize_output`] joins documents with
+//! - **YAML envelope, not query string.** `finalize_query` builds a
+//!   per-rule YAML document and `finalize_output` joins documents with
 //!   `---`. The `expr` output format strips the envelope and emits the
 //!   bare condition for piping into other tooling.
 

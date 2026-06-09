@@ -47,7 +47,7 @@ use crate::error::{ConvertError, Result};
 
 /// Convert a Sigma correlation rule into a Fibratus YAML rule document
 /// (one document per output query). The returned strings are full rule
-/// envelopes already; [`super::FibratusBackend::finalize_output`] joins
+/// envelopes already; [`FibratusBackend`]'s `finalize_output` joins
 /// multiple correlations with `---` like detection rules.
 pub fn convert(
     backend: &FibratusBackend,
