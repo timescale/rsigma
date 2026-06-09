@@ -166,21 +166,25 @@ const ATTACK_TACTICS: &[(&str, &str, &str)] = &[
 
 /// Convert Sigma `tags:` into the flat Fibratus `labels:` block.
 ///
-/// The mapping is best-effort:
+/// The mapping is best-effort and mirrors how the upstream
+/// [Fibratus rules library](https://github.com/rabbitstack/fibratus/tree/master/rules)
+/// names ATT&CK labels:
 ///
-/// - `attack.t<NNNN>` → `technique.id`, `technique.name` (when known),
-///   `technique.ref`.
-/// - `attack.t<NNNN>.<sub>` → `technique.id` (full sub-technique ID),
-///   `technique.ref`.
 /// - `attack.<tactic_short_name>` → `tactic.id`, `tactic.name`,
 ///   `tactic.ref`, looked up from [`ATTACK_TACTICS`].
-/// - Anything else is preserved verbatim as `tag.<original>: <original>`
-///   so downstream YAML loaders see a string value, not a typed bool.
+/// - `attack.t<NNNN>` (base technique) → `technique.id`,
+///   `technique.ref`.
+/// - `attack.t<NNNN>.<sub>` (sub-technique) → `subtechnique.id`,
+///   `subtechnique.ref`. The parent `technique.*` keys are only set
+///   if the rule *also* carries the base-technique tag, mirroring
+///   the upstream convention that techniques and sub-techniques live
+///   in separate namespaces rather than overwriting one another.
+/// - Anything else is preserved verbatim as `tag.<original>:
+///   <original>` so downstream YAML loaders see a string value, not
+///   a typed bool.
 ///
-/// When the same key would be set twice the later tag wins; rsigma rules
-/// rarely carry conflicting tactic tags, but if they do the explicit ATT&CK
-/// IDs take precedence over the short-name lookups because they appear
-/// later in canonical Sigma tag ordering.
+/// Tag iteration order is the rule's source order; the BTreeMap
+/// values are written by key, which gives stable golden-test output.
 pub fn labels_from_tags(tags: &[String]) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     for tag in tags {
@@ -189,17 +193,20 @@ pub fn labels_from_tags(tags: &[String]) -> BTreeMap<String, String> {
             if let Some(stripped) = rest.strip_prefix('t')
                 && stripped.chars().next().is_some_and(|c| c.is_ascii_digit())
             {
-                // Technique or sub-technique. Preserve the original case
-                // for the URL hint; ATT&CK uses uppercase Txxxx in refs.
+                // ATT&CK technique or sub-technique. The presence of a
+                // `.` in the stripped tail distinguishes the two:
+                // `t1055`     → technique  `T1055`
+                // `t1055.001` → sub-tech.  `T1055.001`
                 let upper = format!("T{}", stripped.to_uppercase());
-                labels.insert("technique.id".to_string(), upper.clone());
-                labels.insert(
-                    "technique.ref".to_string(),
-                    format!(
-                        "https://attack.mitre.org/techniques/{}/",
-                        upper.replace('.', "/")
-                    ),
-                );
+                let url_path = upper.replace('.', "/");
+                let ref_url = format!("https://attack.mitre.org/techniques/{url_path}/");
+                if upper.contains('.') {
+                    labels.insert("subtechnique.id".to_string(), upper);
+                    labels.insert("subtechnique.ref".to_string(), ref_url);
+                } else {
+                    labels.insert("technique.id".to_string(), upper);
+                    labels.insert("technique.ref".to_string(), ref_url);
+                }
                 continue;
             }
             if let Some((_, id, name)) = ATTACK_TACTICS.iter().find(|(s, ..)| *s == rest) {
@@ -317,13 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn labels_from_tags_maps_tactics_and_techniques() {
+    fn labels_from_tags_maps_tactic_technique_and_subtechnique_separately() {
         let tags = vec![
             "attack.defense_evasion".to_string(),
             "attack.t1055".to_string(),
             "attack.t1055.001".to_string(),
         ];
         let labels = labels_from_tags(&tags);
+
         assert_eq!(labels.get("tactic.id").map(String::as_str), Some("TA0005"));
         assert_eq!(
             labels.get("tactic.name").map(String::as_str),
@@ -333,10 +341,55 @@ mod tests {
             labels.get("tactic.ref").map(String::as_str),
             Some("https://attack.mitre.org/tactics/TA0005/"),
         );
-        // The two technique tags both write to the same keys; the later
-        // sub-technique tag wins in iteration order.
-        let tech_id = labels.get("technique.id").cloned().unwrap();
-        assert!(tech_id == "T1055" || tech_id == "T1055.001");
+
+        // Base technique and sub-technique live in separate label
+        // namespaces (matching the upstream Fibratus rules library
+        // convention) so the sub-technique tag no longer overwrites
+        // the parent technique tag.
+        assert_eq!(
+            labels.get("technique.id").map(String::as_str),
+            Some("T1055"),
+        );
+        assert_eq!(
+            labels.get("technique.ref").map(String::as_str),
+            Some("https://attack.mitre.org/techniques/T1055/"),
+        );
+        assert_eq!(
+            labels.get("subtechnique.id").map(String::as_str),
+            Some("T1055.001"),
+        );
+        assert_eq!(
+            labels.get("subtechnique.ref").map(String::as_str),
+            Some("https://attack.mitre.org/techniques/T1055/001/"),
+        );
+    }
+
+    #[test]
+    fn labels_from_tags_subtechnique_only_does_not_synthesize_parent_technique() {
+        // A rule that tags only `attack.t1055.001` (no `attack.t1055`)
+        // emits `subtechnique.*` only. The backend does not invent a
+        // parent-technique label because doing so would diverge from
+        // the rule author's stated tags.
+        let labels = labels_from_tags(&["attack.t1055.001".to_string()]);
+        assert!(labels.get("technique.id").is_none());
+        assert_eq!(
+            labels.get("subtechnique.id").map(String::as_str),
+            Some("T1055.001"),
+        );
+        assert_eq!(
+            labels.get("subtechnique.ref").map(String::as_str),
+            Some("https://attack.mitre.org/techniques/T1055/001/"),
+        );
+    }
+
+    #[test]
+    fn labels_from_tags_base_technique_only_does_not_emit_subtechnique() {
+        let labels = labels_from_tags(&["attack.t1055".to_string()]);
+        assert_eq!(
+            labels.get("technique.id").map(String::as_str),
+            Some("T1055"),
+        );
+        assert!(labels.get("subtechnique.id").is_none());
     }
 
     #[test]

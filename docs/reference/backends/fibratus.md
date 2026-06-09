@@ -84,11 +84,17 @@ A final `change_logsource` transformation tags every matched rule with `product:
 
 ## ATT&CK tags
 
-Sigma `tags:` entries are flattened into the `labels:` block Fibratus expects. `attack.<tactic_short_name>` becomes `tactic.id` + `tactic.name` + `tactic.ref` via a static MITRE ATT&CK lookup; `attack.t<NNNN>` (and `attack.t<NNNN>.<sub>` sub-techniques) becomes `technique.id` + `technique.ref`. Unrecognized tags pass through as `tag.<original>: <original>` so the YAML loader sees a string value rather than a typed bool.
+Sigma `tags:` entries are flattened into the `labels:` block Fibratus expects. The mapping mirrors how the [upstream Fibratus rules library](https://github.com/rabbitstack/fibratus/tree/master/rules) names ATT&CK labels:
+
+- `attack.<tactic_short_name>` becomes `tactic.id` + `tactic.name` + `tactic.ref` via a static MITRE ATT&CK lookup.
+- `attack.t<NNNN>` (a base technique) becomes `technique.id` + `technique.ref`.
+- `attack.t<NNNN>.<sub>` (a sub-technique) becomes `subtechnique.id` + `subtechnique.ref`. The parent `technique.*` keys are only emitted if the rule *also* carries the base-technique tag; the backend does not invent a parent technique because doing so would diverge from the rule author's stated tags.
+- Anything else passes through as `tag.<original>: <original>` so the YAML loader sees a string value rather than a typed bool.
 
 ```yaml
 tags:
   - attack.defense_evasion
+  - attack.t1055
   - attack.t1055.001
 ```
 
@@ -99,8 +105,10 @@ labels:
   tactic.id: TA0005
   tactic.name: Defense Evasion
   tactic.ref: 'https://attack.mitre.org/tactics/TA0005/'
-  technique.id: T1055.001
-  technique.ref: 'https://attack.mitre.org/techniques/T1055/001/'
+  technique.id: T1055
+  technique.ref: 'https://attack.mitre.org/techniques/T1055/'
+  subtechnique.id: T1055.001
+  subtechnique.ref: 'https://attack.mitre.org/techniques/T1055/001/'
 ```
 
 ## Output formats
