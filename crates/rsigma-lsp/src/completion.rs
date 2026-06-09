@@ -410,8 +410,8 @@ fn top_level_key_completions(prefix: &str) -> Vec<CompletionItem> {
         ),
         (
             "correlation-session",
-            "correlation:\n    type: $1\n    rules:\n        - $2\n    group-by:\n        - $3\n    window: session\n    gap: $4\n    timespan: $5\n    condition:\n        gte: $0",
-            "Correlation rule (session window)",
+            "correlation:\n    type: $1\n    rules:\n        - $2\n    group-by:\n        - $3\n    timespan: $4\n    condition:\n        gte: $5\nrsigma.window: session\nrsigma.gap: $0",
+            "Correlation rule (session window, rsigma.* extension)",
         ),
         (
             "filter",
