@@ -211,7 +211,7 @@ A correlation rule's `window` attribute selects the windowing strategy, independ
 | `tumbling` | Boundary-aligned buckets sized to the rule's `timespan`: `time_bucket('<timespan> seconds', <ts>)` on TimescaleDB, `date_bin('<timespan> seconds', <ts>, TIMESTAMPTZ 'epoch')` on plain PostgreSQL, added to the `GROUP BY`. |
 | `session` | Gaps-and-islands: `LAG` marks the first event of each session (gap larger than `gap`), a running `SUM` assigns a per-group `session_id`, and the aggregate is grouped per session. |
 
-Tumbling and session apply to the aggregate types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`). On a `temporal`/`temporal_ordered` rule they return an unsupported-correlation error.
+Tumbling and session apply to every correlation type. For the aggregate types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`) the per-window aggregate is computed over the events; for `temporal`/`temporal_ordered` the combined detections are bucketed (tumbling) or sessionized (session) and each window counts the distinct referenced rules. Order is not enforced for `temporal_ordered`, matching the default temporal path.
 
 For session windows the `gap` is honored exactly, but the `timespan` cap is enforced as a `HAVING (MAX(<ts>) - MIN(<ts>)) <= INTERVAL '<timespan> seconds'` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does. `rsigma backend convert` emits a stderr warning noting this approximation.
 

@@ -1035,45 +1035,58 @@ impl Backend for PostgresBackend {
             CorrelationType::Temporal | CorrelationType::TemporalOrdered
         );
         if matches!(rule.window, WindowMode::Tumbling) {
-            if temporal {
-                return Err(ConvertError::UnsupportedCorrelation(
-                    "tumbling window is not supported for temporal correlations by the \
-                     PostgreSQL backend; use the default (sliding) window"
-                        .into(),
-                ));
-            }
-            let query = self.build_tumbling_correlation(
-                rule,
-                &cte_prefix,
-                &source_table,
-                ts,
-                window_secs,
-                value_field,
-                use_time_bucket,
-            )?;
+            let query = if temporal {
+                self.build_temporal_tumbling(
+                    rule,
+                    &table,
+                    ts,
+                    window_secs,
+                    use_time_bucket,
+                    &having_clause,
+                    &rule_tables,
+                    pipeline_state,
+                )?
+            } else {
+                self.build_tumbling_correlation(
+                    rule,
+                    &cte_prefix,
+                    &source_table,
+                    ts,
+                    window_secs,
+                    value_field,
+                    use_time_bucket,
+                )?
+            };
             return Ok(vec![query]);
         }
         if matches!(rule.window, WindowMode::Session) {
-            if temporal {
-                return Err(ConvertError::UnsupportedCorrelation(
-                    "session window is not supported for temporal correlations by the \
-                     PostgreSQL backend; use an event_count or value_count rule"
-                        .into(),
-                ));
-            }
             let gap_secs = rule.gap.as_ref().map(|g| g.seconds).ok_or_else(|| {
                 ConvertError::UnsupportedCorrelation("session window requires a 'gap'".into())
             })?;
-            let query = self.build_session_correlation(
-                rule,
-                &cte_prefix,
-                &source_table,
-                ts,
-                window_secs,
-                gap_secs,
-                value_field,
-                warnings,
-            )?;
+            let query = if temporal {
+                self.build_temporal_session(
+                    rule,
+                    &table,
+                    ts,
+                    window_secs,
+                    gap_secs,
+                    &having_clause,
+                    &rule_tables,
+                    pipeline_state,
+                    warnings,
+                )?
+            } else {
+                self.build_session_correlation(
+                    rule,
+                    &cte_prefix,
+                    &source_table,
+                    ts,
+                    window_secs,
+                    gap_secs,
+                    value_field,
+                    warnings,
+                )?
+            };
             return Ok(vec![query]);
         }
 

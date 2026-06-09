@@ -200,7 +200,7 @@ GROUP BY "User", session_id
 HAVING COUNT(*) >= 3 AND (MAX(time) - MIN(time)) <= INTERVAL '3600 seconds'
 ```
 
-The `gap` is honored exactly. The `timespan` cap is enforced as the trailing `HAVING` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does; `rsigma backend convert` prints a warning to stderr noting this. Tumbling and session are supported for the aggregate correlation types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`); `window: tumbling` or `window: session` on a `temporal`/`temporal_ordered` rule returns an unsupported-correlation error.
+The `gap` is honored exactly. The `timespan` cap is enforced as the trailing `HAVING` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does; `rsigma backend convert` prints a warning to stderr noting this. Tumbling and session apply to every correlation type. For `temporal`/`temporal_ordered`, the combined detections (the `matched` CTE) are bucketed or sessionized and each window counts the distinct referenced rules with `COUNT(DISTINCT rule_name)`; order is not enforced for `temporal_ordered`, the same limitation as the default temporal path.
 
 ### Multi-table temporal correlations
 

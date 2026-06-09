@@ -2525,8 +2525,8 @@ correlation:
 }
 
 #[test]
-fn test_tumbling_temporal_is_unsupported() {
-    let collection = parse_sigma_yaml(
+fn test_tumbling_temporal_buckets_distinct_rules() {
+    let q = &convert_corr(
         r#"
 title: Temporal tumbling
 correlation:
@@ -2538,21 +2538,26 @@ correlation:
         - User
     timespan: 10m
     window: tumbling
+    condition:
+        gte: 2
 "#,
-    )
-    .unwrap();
-    let backend = PostgresBackend::new();
-    let err = backend.convert_correlation_rule(
-        &collection.correlations[0],
         "default",
-        &PipelineState::default(),
+    )[0];
+    assert!(q.contains("WITH matched AS ("), "{q}");
+    assert!(q.contains("date_bin('600 seconds'"), "{q}");
+    assert!(q.contains("AS correlation_bucket"), "{q}");
+    assert!(
+        q.contains("COUNT(DISTINCT rule_name) AS distinct_rules"),
+        "{q}"
     );
-    assert!(matches!(err, Err(ConvertError::UnsupportedCorrelation(_))));
+    assert!(q.contains("HAVING COUNT(DISTINCT rule_name) >= 2"), "{q}");
 }
 
 #[test]
-fn test_session_temporal_is_unsupported() {
-    let collection = parse_sigma_yaml(
+fn test_session_temporal_gaps_and_islands() {
+    // temporal_ordered renders like temporal (order is not enforced by the
+    // PostgreSQL backend), sessionized with an exact gap and a capped span.
+    let q = &convert_corr(
         r#"
 title: Temporal session
 correlation:
@@ -2565,16 +2570,23 @@ correlation:
     window: session
     gap: 10m
     timespan: 6h
+    condition:
+        gte: 2
 "#,
-    )
-    .unwrap();
-    let backend = PostgresBackend::new();
-    let err = backend.convert_correlation_rule(
-        &collection.correlations[0],
         "default",
-        &PipelineState::default(),
+    )[0];
+    assert!(q.contains("WITH matched AS ("), "{q}");
+    assert!(q.contains("LAG("), "{q}");
+    assert!(q.contains("INTERVAL '600 seconds'"), "session gap 10m: {q}");
+    assert!(q.contains("AS session_id"), "{q}");
+    assert!(
+        q.contains("COUNT(DISTINCT rule_name) AS distinct_rules"),
+        "{q}"
     );
-    assert!(matches!(err, Err(ConvertError::UnsupportedCorrelation(_))));
+    assert!(
+        q.contains("<= INTERVAL '21600 seconds'"),
+        "session cap 6h: {q}"
+    );
 }
 
 #[test]
