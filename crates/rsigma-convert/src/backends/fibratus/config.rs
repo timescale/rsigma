@@ -49,6 +49,23 @@ pub struct FibratusConfig {
     /// (`contains`/`startswith`/... instead of their `i`-prefixed
     /// cousins). Equivalent to setting `|cased` on every value.
     pub case_sensitive: bool,
+
+    /// Correlation method selected via the `correlation_method` option
+    /// (`sliding`/`session`), mirroring pySigma's `correlation_methods`.
+    /// `None` falls back to each rule's own `window`. `tumbling` is not
+    /// in the advertised list because Fibratus has no calendar-aligned
+    /// bucket primitive and the corresponding window mode returns
+    /// `UnsupportedCorrelation`.
+    pub correlation_method: Option<String>,
+
+    /// Default session gap in seconds, from the `gap` option (e.g.
+    /// `gap=5m`). Used when a `session` window is requested via
+    /// `correlation_method=session` and the rule does not declare its
+    /// own `gap`. A rule's own `gap` always wins. Fibratus's `sequence`
+    /// DSL has no native gap primitive, so the value is only used to
+    /// derive the warning text the degraded-conversion path emits; the
+    /// emitted query still relies on `maxspan` for the time-window cap.
+    pub session_gap_secs: Option<u64>,
 }
 
 impl Default for FibratusConfig {
@@ -62,6 +79,8 @@ impl Default for FibratusConfig {
             max_repeated_slots: 5,
             temporal_permute: false,
             case_sensitive: false,
+            correlation_method: None,
+            session_gap_secs: None,
         }
     }
 }
@@ -109,6 +128,17 @@ impl FibratusConfig {
         }
         if let Some(v) = options.get("case_sensitive") {
             cfg.case_sensitive = parse_bool(v).unwrap_or(false);
+        }
+        if let Some(v) = options.get("correlation_method") {
+            cfg.correlation_method = Some(v.clone());
+        }
+        if let Some(v) = options.get("gap") {
+            // Invalid durations are ignored here for the same reason
+            // PostgreSQL's `from_options` ignores them: the CLI
+            // validates the format up front when the operator passes
+            // -O gap=..., and per-rule `gap:` declarations are
+            // validated by the parser.
+            cfg.session_gap_secs = rsigma_parser::Timespan::parse(v).ok().map(|t| t.seconds);
         }
         cfg
     }

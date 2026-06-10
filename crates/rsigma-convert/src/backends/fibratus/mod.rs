@@ -719,12 +719,32 @@ impl Backend for FibratusBackend {
         true
     }
 
-    fn convert_correlation_rule(
+    fn correlation_methods(&self) -> &[(&str, &str)] {
+        &[
+            (
+                "sliding",
+                "Native sliding sequence with `maxspan` (default; the Fibratus sequence DSL's only \
+                 time-window primitive is a total-span cap, which is a sliding constraint per stage)",
+            ),
+            (
+                "session",
+                "Degraded: emits a sliding sequence and a warning that the requested per-step gap \
+                 is not enforced (Fibratus has no `maxpause`-style inactivity timeout)",
+            ),
+        ]
+    }
+
+    fn default_correlation_method(&self) -> &str {
+        "sliding"
+    }
+
+    fn convert_correlation_rule_with_warnings(
         &self,
         rule: &CorrelationRule,
         output_format: &str,
         pipeline_state: &PipelineState,
+        warnings: &mut Vec<String>,
     ) -> Result<Vec<String>> {
-        correlation::convert(self, rule, output_format, pipeline_state)
+        correlation::convert(self, rule, output_format, pipeline_state, warnings)
     }
 }

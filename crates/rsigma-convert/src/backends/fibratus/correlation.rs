@@ -34,12 +34,15 @@
 use std::collections::HashMap;
 
 use rsigma_eval::pipeline::state::PipelineState;
-use rsigma_parser::{ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType};
+use rsigma_parser::{
+    ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType, WindowMode,
+};
 
 use super::FibratusBackend;
 use super::config::FibratusConfig;
 use super::envelope::render_correlation_yaml;
 use super::macros;
+use crate::backend::Backend;
 use crate::error::{ConvertError, Result};
 
 /// Apply backend-level macro recognition to a single stage body. Each
@@ -83,9 +86,57 @@ pub fn convert(
     rule: &CorrelationRule,
     output_format: &str,
     pipeline_state: &PipelineState,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<String>> {
     let rule_queries = load_rule_queries(pipeline_state);
     let cfg = &backend.fibratus;
+
+    // Honor the user's per-conversion override (`-O correlation_method`)
+    // first, falling back to the rule's own `window` attribute (default
+    // `WindowMode::Sliding`).
+    let window = resolve_window_mode(backend, rule)?;
+
+    match window {
+        WindowMode::Sliding => {
+            // Fibratus's `sequence ... maxspan <duration>` is itself a
+            // sliding total-span constraint per stage, so the existing
+            // builders are already a faithful sliding lowering. Nothing
+            // window-specific to do.
+        }
+        WindowMode::Tumbling => {
+            // Fibratus has no calendar-aligned bucket primitive; the
+            // intent of a tumbling window (fixed boundaries) cannot be
+            // represented without changing semantics. Per the SEP this
+            // is a "must error" case.
+            return Err(ConvertError::UnsupportedCorrelation(format!(
+                "tumbling window is unsupported (Fibratus has no calendar-aligned bucket primitive; the `sequence ... maxspan` DSL is sliding by construction). \
+                 Drop `window: tumbling` (rule defaults to sliding) or convert with `-O correlation_method=sliding`. \
+                 Affected rule: `{}`",
+                rule.title,
+            )));
+        }
+        WindowMode::Session => {
+            // Fibratus has `maxspan` (total-span cap) but no `maxpause`
+            // / per-step inactivity timeout. Per the SEP this is a
+            // "should warn" case: emit the closest faithful
+            // approximation (sliding sequence with the rule's
+            // `timespan` as `maxspan`) and surface a warning that the
+            // `gap` is not enforced.
+            let declared_gap = rule
+                .gap
+                .as_ref()
+                .map(|g| g.original.clone())
+                .or_else(|| cfg.session_gap_secs.map(|s| format!("{s}s")));
+            let gap_phrase = declared_gap
+                .as_deref()
+                .map(|g| format!("the requested {g} gap"))
+                .unwrap_or_else(|| "the session gap".to_string());
+            warnings.push(format!(
+                "Fibratus session window: {gap_phrase} is NOT enforced (no `maxpause`-style primitive); emitted a sliding sequence with `maxspan {}` as the closest faithful approximation. Rule: `{}`",
+                rule.timespan.original, rule.title,
+            ));
+        }
+    }
 
     if should_emit_permutations(rule, cfg) {
         return build_temporal_permutations(backend, rule, &rule_queries, output_format);
@@ -102,6 +153,40 @@ pub fn convert(
         }
     };
     Ok(vec![rendered])
+}
+
+/// Resolve the effective window mode for this conversion.
+///
+/// `correlation_method` (when set) is the converting user's explicit
+/// pySigma-style choice and overrides the rule's own `window` hint
+/// for this run; otherwise the rule's `window` (default `Sliding`) is
+/// used. A `correlation_method` value that is not in the backend's
+/// advertised [`Backend::correlation_methods`] is rejected with a
+/// rationale.
+fn resolve_window_mode(backend: &FibratusBackend, rule: &CorrelationRule) -> Result<WindowMode> {
+    let Some(method) = backend.fibratus.correlation_method.as_deref() else {
+        return Ok(rule.window);
+    };
+    if !backend
+        .correlation_methods()
+        .iter()
+        .any(|(n, _)| *n == method)
+    {
+        let available = backend
+            .correlation_methods()
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ConvertError::UnsupportedCorrelation(format!(
+            "unknown correlation_method '{method}' for the Fibratus backend; available: {available}"
+        )));
+    }
+    method.parse::<WindowMode>().map_err(|_| {
+        ConvertError::UnsupportedCorrelation(format!(
+            "correlation_method '{method}' has no window mapping"
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -908,6 +993,282 @@ correlation:
         assert!(
             msg.contains("temporal_permute") && msg.contains("cap is N <="),
             "expected cap-exceeded error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // window: sliding / tumbling / session (#192)
+    // -----------------------------------------------------------------
+
+    fn collection_and_backend(
+        yaml: &str,
+        backend: FibratusBackend,
+    ) -> (rsigma_parser::SigmaCollection, FibratusBackend) {
+        (collection(yaml), backend)
+    }
+
+    /// Convert a multi-doc YAML (detections + one correlation) with the
+    /// supplied backend, returning `(queries, warnings)` for the
+    /// correlation rule(s).
+    fn convert_with_warnings(
+        yaml: &str,
+        backend: &FibratusBackend,
+    ) -> crate::Result<(Vec<String>, Vec<String>)> {
+        let coll = collection(yaml);
+        let result = crate::convert_collection(backend, &coll, &[], "expr")?;
+        let mut queries = Vec::new();
+        let mut warnings = Vec::new();
+        for group in &result.queries {
+            for q in &group.queries {
+                if q.contains("sequence") {
+                    queries.push(q.clone());
+                }
+            }
+            warnings.extend(group.warnings.iter().cloned());
+        }
+        if let Some((title, err)) = result.errors.into_iter().next() {
+            return Err(crate::ConvertError::RuleConversion(format!(
+                "{title}: {err}"
+            )));
+        }
+        Ok((queries, warnings))
+    }
+
+    fn backend_with_correlation_method(method: &str) -> FibratusBackend {
+        let mut opts = std::collections::HashMap::new();
+        opts.insert("correlation_method".to_string(), method.to_string());
+        FibratusBackend::from_options(&opts)
+    }
+
+    fn backend_with_session_gap_default(gap: &str) -> FibratusBackend {
+        let mut opts = std::collections::HashMap::new();
+        opts.insert("correlation_method".to_string(), "session".to_string());
+        opts.insert("gap".to_string(), gap.to_string());
+        FibratusBackend::from_options(&opts)
+    }
+
+    const TWO_RULE_TEMPORAL: &str = r#"
+title: R1
+id: 00000000-0000-0000-0000-000000000050
+detection:
+  s:
+    evt.name: A
+  condition: s
+---
+title: R2
+id: 00000000-0000-0000-0000-000000000051
+detection:
+  s:
+    evt.name: B
+  condition: s
+"#;
+
+    #[test]
+    fn sliding_window_is_a_native_pass_through() {
+        // Sliding is the default; the Fibratus sequence DSL's `maxspan`
+        // is already a sliding total-span constraint per stage, so the
+        // rendered output should be byte-identical to the existing
+        // temporal_ordered path and the warnings list should stay
+        // empty.
+        let (q, w) = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Sliding
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 5m
+rsigma.window: sliding
+"#,
+            ),
+            &FibratusBackend::new(),
+        )
+        .unwrap();
+        assert_eq!(q.len(), 1);
+        assert!(q[0].contains("sequence\nmaxspan 5m\n"));
+        assert!(w.is_empty(), "sliding must not warn, got: {w:?}");
+    }
+
+    #[test]
+    fn tumbling_window_returns_unsupported_with_actionable_message() {
+        let (_coll, backend) = collection_and_backend(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Tumbling
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 1h
+rsigma.window: tumbling
+"#,
+            ),
+            FibratusBackend::new(),
+        );
+        let err = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Tumbling
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 1h
+rsigma.window: tumbling
+"#,
+            ),
+            &backend,
+        )
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("tumbling")
+                && msg.contains("calendar-aligned")
+                && msg.contains("Tumbling"),
+            "tumbling error must explain the gap and name the rule, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn session_window_degrades_to_sliding_with_warning() {
+        let (q, w) = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Session degrade
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 1h
+rsigma.window: session
+rsigma.gap: 5m
+"#,
+            ),
+            &FibratusBackend::new(),
+        )
+        .unwrap();
+        assert_eq!(q.len(), 1, "session must still emit one rule, got {q:?}");
+        // The condition body is the same shape as a sliding emission
+        // (no native gap primitive); we just expect `maxspan 1h`.
+        assert!(q[0].contains("maxspan 1h"), "got: {q:?}");
+        assert_eq!(w.len(), 1, "expected one warning, got {w:?}");
+        let warn = &w[0];
+        assert!(
+            warn.contains("session window") && warn.contains("NOT enforced") && warn.contains("5m"),
+            "warning must explain the degradation, got: {warn}",
+        );
+    }
+
+    #[test]
+    fn correlation_method_session_default_gap_supplies_warning_text() {
+        // The rule does not declare its own `gap`; the `-O gap=` option
+        // provides the fallback that ends up in the warning text.
+        let backend = backend_with_session_gap_default("10m");
+        let (q, w) = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Method session
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 30m
+"#,
+            ),
+            &backend,
+        )
+        .unwrap();
+        assert_eq!(q.len(), 1);
+        assert!(q[0].contains("maxspan 30m"));
+        assert_eq!(w.len(), 1);
+        assert!(
+            w[0].contains("600s") || w[0].contains("10m"),
+            "got: {}",
+            w[0]
+        );
+    }
+
+    #[test]
+    fn correlation_method_overrides_rule_window() {
+        // Rule asks for sliding; the operator passes
+        // `-O correlation_method=session`, so the conversion runs as
+        // session (and warns), even though the rule itself didn't
+        // declare a session window.
+        let backend = backend_with_session_gap_default("15m");
+        let (q, w) = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: Method overrides rule
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 1h
+rsigma.window: sliding
+"#,
+            ),
+            &backend,
+        )
+        .unwrap();
+        assert_eq!(q.len(), 1);
+        assert_eq!(w.len(), 1, "operator override must surface the warning");
+    }
+
+    #[test]
+    fn correlation_method_unknown_is_rejected() {
+        let backend = backend_with_correlation_method("tumbling");
+        // `tumbling` is intentionally absent from the Fibratus
+        // backend's `correlation_methods()` list because Fibratus
+        // cannot represent it; the override must be rejected up front.
+        let err = convert_with_warnings(
+            &format!(
+                r#"{TWO_RULE_TEMPORAL}
+---
+title: t
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000050
+    - 00000000-0000-0000-0000-000000000051
+  group-by:
+    - ps.pid
+  timespan: 1h
+"#,
+            ),
+            &backend,
+        )
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown correlation_method 'tumbling'")
+                && msg.contains("sliding")
+                && msg.contains("session"),
+            "rejection must name the available methods, got: {msg}",
         );
     }
 
