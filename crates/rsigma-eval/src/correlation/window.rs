@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use rsigma_parser::{ConditionExpr, CorrelationType};
+use rsigma_parser::{ConditionExpr, CorrelationType, WindowMode};
 use serde::Serialize;
 
 use super::CompiledCondition;
@@ -98,6 +98,23 @@ impl WindowState {
                 rule_hits.values().filter_map(|ts| ts.back().copied()).max()
             }
             WindowState::NumericAgg { entries } => entries.back().map(|(t, _)| *t),
+        }
+    }
+
+    /// Returns the oldest timestamp in this window, or `None` if empty.
+    ///
+    /// Entries are appended in arrival order, so the front of each deque holds
+    /// the earliest timestamp. For temporal state the minimum is taken across
+    /// all per-rule deques.
+    pub fn earliest_timestamp(&self) -> Option<i64> {
+        match self {
+            WindowState::EventCount { timestamps } => timestamps.front().copied(),
+            WindowState::ValueCount { entries } => entries.front().map(|(t, _)| *t),
+            WindowState::Temporal { rule_hits } => rule_hits
+                .values()
+                .filter_map(|ts| ts.front().copied())
+                .min(),
+            WindowState::NumericAgg { entries } => entries.front().map(|(t, _)| *t),
         }
     }
 
@@ -261,6 +278,90 @@ impl WindowState {
             Some(value)
         } else {
             None
+        }
+    }
+}
+
+/// Start of the tumbling bucket that contains `ts`, aligned to epoch.
+///
+/// Uses `rem_euclid` so negative timestamps align to the bucket below them
+/// rather than toward zero.
+fn bucket_start(ts: i64, timespan: i64) -> i64 {
+    ts - ts.rem_euclid(timespan)
+}
+
+/// Outcome of a window's pre-insert maintenance for a new event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowDecision {
+    /// The current window continues; push the event into it.
+    Extend,
+    /// The window rolled over and the state was cleared; push the event into
+    /// the fresh window. Callers must also clear any associated event buffers
+    /// so they stay in sync with the state.
+    Reset,
+    /// The event predates the current window (a late arrival in an earlier
+    /// tumbling bucket); do not push it and leave the state untouched.
+    Discard,
+}
+
+/// Apply a correlation window's pre-insert maintenance for a new event at `ts`,
+/// before the event is pushed into `state`.
+///
+/// - `Sliding` evicts entries older than `ts - timespan` (the existing default)
+///   and always extends.
+/// - `Tumbling` resets the window when `ts` falls in a *later*
+///   boundary-aligned bucket than the latest retained entry, and discards
+///   events that fall in an *earlier* bucket (a late arrival must not wipe the
+///   active bucket's accumulation).
+/// - `Session` resets when `ts` is more than `gap` after the latest entry, or
+///   when extending would push the total span past `timespan` (the hard cap).
+///
+/// Out-of-order arrivals follow the engine's arrival-order contract: decisions
+/// are made relative to the entries currently retained, not a global watermark.
+pub fn apply_window_open(
+    state: &mut WindowState,
+    ts: i64,
+    timespan_secs: u64,
+    window: WindowMode,
+    gap_secs: Option<u64>,
+) -> WindowDecision {
+    let timespan = timespan_secs as i64;
+    match window {
+        WindowMode::Sliding => {
+            state.evict(ts - timespan);
+            WindowDecision::Extend
+        }
+        WindowMode::Tumbling => {
+            if timespan <= 0 {
+                return WindowDecision::Extend;
+            }
+            match state.latest_timestamp() {
+                Some(last) if bucket_start(ts, timespan) > bucket_start(last, timespan) => {
+                    state.clear();
+                    WindowDecision::Reset
+                }
+                Some(last) if bucket_start(ts, timespan) < bucket_start(last, timespan) => {
+                    WindowDecision::Discard
+                }
+                _ => WindowDecision::Extend,
+            }
+        }
+        WindowMode::Session => {
+            // `gap` is required for session windows; fall back to `timespan` if
+            // it is somehow absent so the window still has a bound.
+            let gap = gap_secs.map(|g| g as i64).unwrap_or(timespan);
+            let reset = match (state.earliest_timestamp(), state.latest_timestamp()) {
+                (Some(start), Some(last)) => {
+                    (ts - last) > gap || (timespan > 0 && (ts - start) > timespan)
+                }
+                _ => false,
+            };
+            if reset {
+                state.clear();
+                WindowDecision::Reset
+            } else {
+                WindowDecision::Extend
+            }
         }
     }
 }

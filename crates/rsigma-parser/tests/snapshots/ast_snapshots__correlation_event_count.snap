@@ -40,6 +40,8 @@ CorrelationRule {
         seconds: 300,
         original: "5m",
     },
+    window: Sliding,
+    gap: None,
     condition: Threshold {
         predicates: [
             (

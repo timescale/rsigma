@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use rsigma_parser::{
     ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType,
-    FieldAlias,
+    FieldAlias, WindowMode,
 };
 
 use crate::error::{EvalError, Result};
@@ -37,6 +37,24 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
 
     // Compile condition
     let (condition, extended_expr) = compile_condition(&rule.condition, rule.correlation_type)?;
+
+    // Window mode and session gap. The parser already enforces this invariant,
+    // but re-validate here so correlations built directly through the API (not
+    // via the parser) cannot reach the engine in an inconsistent state.
+    let gap_secs = rule.gap.as_ref().map(|t| t.seconds);
+    match rule.window {
+        WindowMode::Session if gap_secs.is_none() => {
+            return Err(EvalError::CorrelationError(
+                "session window requires a 'gap'".to_string(),
+            ));
+        }
+        WindowMode::Sliding | WindowMode::Tumbling if gap_secs.is_some() => {
+            return Err(EvalError::CorrelationError(
+                "'gap' is only valid with a session window".to_string(),
+            ));
+        }
+        _ => {}
+    }
 
     // Resolve per-correlation overrides from custom attributes.
     // These mirror the engine-level `rsigma.*` attributes but apply only
@@ -84,6 +102,8 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         rule_refs: rule.rules.clone(),
         group_by,
         timespan_secs: rule.timespan.seconds,
+        window_mode: rule.window,
+        gap_secs,
         condition,
         extended_expr,
         generate: rule.generate,

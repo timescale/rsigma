@@ -937,6 +937,8 @@ fn test_compile_correlation_with_custom_attributes() {
         rules: vec!["rule-1".to_string()],
         group_by: vec!["User".to_string()],
         timespan: Timespan::parse("60s").unwrap(),
+        window: WindowMode::Sliding,
+        gap: None,
         condition: CorrelationCondition::Threshold {
             predicates: vec![(ConditionOperator::Gte, 5)],
             field: None,
@@ -960,4 +962,110 @@ fn test_compile_correlation_with_custom_attributes() {
         compiled.action,
         Some(crate::correlation_engine::CorrelationAction::Reset)
     );
+}
+
+// =========================================================================
+// Window modes (apply_window_open)
+// =========================================================================
+
+#[test]
+fn test_apply_window_open_sliding_evicts() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(0);
+    state.push_event_count(5);
+    // Sliding 10s window at t=12 keeps entries with ts >= 2.
+    let decision = apply_window_open(&mut state, 12, 10, rsigma_parser::WindowMode::Sliding, None);
+    assert_eq!(decision, WindowDecision::Extend);
+    assert_eq!(state.earliest_timestamp(), Some(5));
+}
+
+#[test]
+fn test_apply_window_open_tumbling_resets_on_new_bucket() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(8);
+    state.push_event_count(9);
+    // t=12 falls in bucket [10,20); retained entries are in [0,10) -> reset.
+    let decision = apply_window_open(
+        &mut state,
+        12,
+        10,
+        rsigma_parser::WindowMode::Tumbling,
+        None,
+    );
+    assert_eq!(decision, WindowDecision::Reset);
+    assert!(state.is_empty());
+}
+
+#[test]
+fn test_apply_window_open_tumbling_same_bucket_keeps() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(1);
+    state.push_event_count(2);
+    let decision = apply_window_open(&mut state, 3, 10, rsigma_parser::WindowMode::Tumbling, None);
+    assert_eq!(decision, WindowDecision::Extend);
+    assert_eq!(state.earliest_timestamp(), Some(1));
+}
+
+#[test]
+fn test_apply_window_open_tumbling_discards_late_event() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(12);
+    state.push_event_count(15);
+    // t=9 falls in the earlier bucket [0,10); the active bucket [10,20) must
+    // not be wiped by the late arrival, and the event itself is discarded.
+    let decision = apply_window_open(&mut state, 9, 10, rsigma_parser::WindowMode::Tumbling, None);
+    assert_eq!(decision, WindowDecision::Discard);
+    assert_eq!(state.earliest_timestamp(), Some(12));
+    assert_eq!(state.latest_timestamp(), Some(15));
+}
+
+#[test]
+fn test_apply_window_open_session_extends_within_gap() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(0);
+    state.push_event_count(4);
+    // 8 - 4 = 4 <= gap 5 and 8 - 0 = 8 <= timespan 100 -> extend.
+    let decision = apply_window_open(
+        &mut state,
+        8,
+        100,
+        rsigma_parser::WindowMode::Session,
+        Some(5),
+    );
+    assert_eq!(decision, WindowDecision::Extend);
+    assert_eq!(state.earliest_timestamp(), Some(0));
+}
+
+#[test]
+fn test_apply_window_open_session_resets_after_gap() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(0);
+    state.push_event_count(4);
+    // 20 - 4 = 16 > gap 5 -> reset.
+    let decision = apply_window_open(
+        &mut state,
+        20,
+        100,
+        rsigma_parser::WindowMode::Session,
+        Some(5),
+    );
+    assert_eq!(decision, WindowDecision::Reset);
+    assert!(state.is_empty());
+}
+
+#[test]
+fn test_apply_window_open_session_caps_at_timespan() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(0);
+    state.push_event_count(5);
+    // 12 - 5 = 7 <= gap 100, but 12 - 0 = 12 > timespan 10 -> reset on the cap.
+    let decision = apply_window_open(
+        &mut state,
+        12,
+        10,
+        rsigma_parser::WindowMode::Session,
+        Some(100),
+    );
+    assert_eq!(decision, WindowDecision::Reset);
+    assert!(state.is_empty());
 }

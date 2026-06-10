@@ -169,6 +169,15 @@ pub struct PostgresBackend {
     pub database: Option<String>,
     /// Enable TimescaleDB-specific features.
     pub timescaledb: bool,
+    /// Correlation method selected via the `correlation_method` option
+    /// (`sliding`/`tumbling`/`session`), mirroring pySigma's
+    /// `correlation_methods`. `None` falls back to each rule's own `window`.
+    pub correlation_method: Option<String>,
+    /// Default session gap in seconds, from the `gap` option (e.g. `gap=5m`).
+    /// Used when a session window is requested (via the rule or
+    /// `correlation_method=session`) and the rule does not declare its own
+    /// `gap`. A rule's own `gap` always wins.
+    pub session_gap_secs: Option<u64>,
 }
 
 impl PostgresBackend {
@@ -182,13 +191,16 @@ impl PostgresBackend {
             schema: None,
             database: None,
             timescaledb: false,
+            correlation_method: None,
+            session_gap_secs: None,
         }
     }
 
     /// Create a backend from CLI-style key=value option pairs.
     ///
     /// Recognized keys: `table`, `schema`, `database`, `timestamp_field`,
-    /// `json_field`, `case_sensitive_re` (true/false).
+    /// `json_field`, `case_sensitive_re` (true/false), `correlation_method`
+    /// (sliding/tumbling/session), `gap` (default session gap, e.g. `5m`).
     /// Unknown keys are silently ignored so forward-compatible options can be
     /// added without breaking existing invocations.
     pub fn from_options(options: &HashMap<String, String>) -> Self {
@@ -211,7 +223,45 @@ impl PostgresBackend {
         if let Some(v) = options.get("case_sensitive_re") {
             backend.case_sensitive_re = v == "true";
         }
+        if let Some(v) = options.get("correlation_method") {
+            backend.correlation_method = Some(v.clone());
+        }
+        if let Some(v) = options.get("gap") {
+            // Invalid durations are ignored here (consistent with the lenient
+            // option handling above); the CLI validates the format up front.
+            backend.session_gap_secs = Timespan::parse(v).ok().map(|t| t.seconds);
+        }
         backend
+    }
+
+    /// Resolve the effective window mode for a correlation conversion.
+    ///
+    /// The `correlation_method` backend option, when set, is the converting
+    /// user's explicit choice and overrides the rule's own `window` hint;
+    /// otherwise the rule's `window` (default `sliding`) is used. An option that
+    /// is not one of [`Self::correlation_methods`] is rejected.
+    fn resolve_window_mode(&self, rule: &CorrelationRule) -> Result<WindowMode> {
+        match self.correlation_method.as_deref() {
+            None => Ok(rule.window),
+            Some(method) => {
+                if !self.correlation_methods().iter().any(|(n, _)| *n == method) {
+                    let available = self
+                        .correlation_methods()
+                        .iter()
+                        .map(|(n, _)| *n)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(ConvertError::UnsupportedCorrelation(format!(
+                        "unknown correlation_method '{method}'; available: {available}"
+                    )));
+                }
+                method.parse::<WindowMode>().map_err(|_| {
+                    ConvertError::UnsupportedCorrelation(format!(
+                        "correlation_method '{method}' has no window mapping"
+                    ))
+                })
+            }
+        }
     }
 
     /// Resolve the fully qualified table name `[schema.]table` using this
@@ -420,6 +470,8 @@ impl PostgresBackend {
             schema: self.schema.clone(),
             database: self.database.clone(),
             timescaledb: self.timescaledb,
+            correlation_method: self.correlation_method.clone(),
+            session_gap_secs: self.session_gap_secs,
         }
     }
 
@@ -963,11 +1015,33 @@ impl Backend for PostgresBackend {
         true
     }
 
-    fn convert_correlation_rule(
+    fn correlation_methods(&self) -> &[(&str, &str)] {
+        &[
+            (
+                "sliding",
+                "Trailing per-event window (default; preserves existing SQL)",
+            ),
+            (
+                "tumbling",
+                "Fixed boundary-aligned buckets (time_bucket/date_bin)",
+            ),
+            (
+                "session",
+                "Gaps-and-islands sessionization (requires a gap)",
+            ),
+        ]
+    }
+
+    fn default_correlation_method(&self) -> &str {
+        "sliding"
+    }
+
+    fn convert_correlation_rule_with_warnings(
         &self,
         rule: &CorrelationRule,
         output_format: &str,
         pipeline_state: &PipelineState,
+        warnings: &mut Vec<String>,
     ) -> Result<Vec<String>> {
         let table = self.resolve_table(&rule.custom_attributes, &pipeline_state.state)?;
         let ts = &self.timestamp_field;
@@ -1024,6 +1098,86 @@ impl Backend for PostgresBackend {
 
         let (cte_prefix, source_table, time_filter) =
             self.build_correlation_source(&rule.rules, &rule_queries, &table, ts, window_secs);
+
+        // The windowing strategy (sliding/tumbling/session). The
+        // `correlation_method` option is the converting user's explicit choice
+        // (pySigma-style) and overrides the rule's own `window` hint; otherwise
+        // the rule's `window` is used. `sliding` (the default, also what an
+        // absent `window` resolves to) preserves the existing per-output_format
+        // behavior, so existing rules are unaffected. `tumbling` and `session`
+        // are opt-in.
+        let window = self.resolve_window_mode(rule)?;
+        let temporal = matches!(
+            rule.correlation_type,
+            CorrelationType::Temporal | CorrelationType::TemporalOrdered
+        );
+        if matches!(window, WindowMode::Tumbling) {
+            let query = if temporal {
+                self.build_temporal_tumbling(
+                    rule,
+                    &table,
+                    ts,
+                    window_secs,
+                    use_time_bucket,
+                    &having_clause,
+                    &rule_tables,
+                    pipeline_state,
+                )?
+            } else {
+                self.build_tumbling_correlation(
+                    rule,
+                    &cte_prefix,
+                    &source_table,
+                    ts,
+                    window_secs,
+                    value_field,
+                    use_time_bucket,
+                )?
+            };
+            return Ok(vec![query]);
+        }
+        if matches!(window, WindowMode::Session) {
+            // The rule's own `gap` wins; the `gap` backend option provides the
+            // default so `correlation_method=session` works for rules that do
+            // not declare one.
+            let gap_secs = rule
+                .gap
+                .as_ref()
+                .map(|g| g.seconds)
+                .or(self.session_gap_secs)
+                .ok_or_else(|| {
+                    ConvertError::UnsupportedCorrelation(
+                        "session window requires a 'gap' (set it on the rule or pass \
+                         -O gap=5m as a conversion default)"
+                            .into(),
+                    )
+                })?;
+            let query = if temporal {
+                self.build_temporal_session(
+                    rule,
+                    &table,
+                    ts,
+                    window_secs,
+                    gap_secs,
+                    &having_clause,
+                    &rule_tables,
+                    pipeline_state,
+                    warnings,
+                )?
+            } else {
+                self.build_session_correlation(
+                    rule,
+                    &cte_prefix,
+                    &source_table,
+                    ts,
+                    window_secs,
+                    gap_secs,
+                    value_field,
+                    warnings,
+                )?
+            };
+            return Ok(vec![query]);
+        }
 
         let query = match rule.correlation_type {
             CorrelationType::EventCount if output_format == "sliding_window" => self

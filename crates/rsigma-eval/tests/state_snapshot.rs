@@ -459,3 +459,51 @@ fn import_rejects_incompatible_version() {
     );
     assert_eq!(engine2.state_count(), 0, "no state should be imported");
 }
+
+const SESSION_YAML: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Login Session
+id: login-session
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    window: session
+    gap: 30s
+    timespan: 3600s
+    condition:
+        gte: 3
+level: high
+"#;
+
+#[test]
+fn export_import_preserves_session_window() {
+    // A session window's state is the per-group timestamp deque, which is what
+    // the snapshot already serializes; the window mode is re-derived from the
+    // rule on reload. Two events in the session survive the round-trip, and a
+    // third within the gap fires the correlation.
+    let mut engine = corr_engine(SESSION_YAML);
+    process(&mut engine, login_event("admin"), 1000);
+    process(&mut engine, login_event("admin"), 1010);
+
+    let snapshot = engine.export_state();
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let restored: CorrelationSnapshot = serde_json::from_str(&json).unwrap();
+
+    let mut engine2 = corr_engine(SESSION_YAML);
+    engine2.import_state(restored);
+
+    // t=1030 is within the 30s gap of t=1010 -> same session, count reaches 3.
+    let r = process(&mut engine2, login_event("admin"), 1030);
+    assert_eq!(r.correlation_count(), 1);
+}

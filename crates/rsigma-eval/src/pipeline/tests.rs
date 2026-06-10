@@ -727,6 +727,8 @@ fn make_test_correlation() -> CorrelationRule {
         rules: vec!["rule_a".to_string()],
         group_by: vec!["SourceIP".to_string(), "DestinationIP".to_string()],
         timespan: rsigma_parser::Timespan::parse("5m").unwrap(),
+        window: rsigma_parser::WindowMode::Sliding,
+        gap: None,
         condition: rsigma_parser::CorrelationCondition::Threshold {
             predicates: vec![(rsigma_parser::ConditionOperator::Gte, 10)],
             field: None,

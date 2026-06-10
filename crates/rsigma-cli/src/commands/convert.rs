@@ -116,6 +116,33 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
+    if let Some(method) = options.get("correlation_method") {
+        let methods = backend.correlation_methods();
+        if !methods.iter().any(|(n, _)| n == method) {
+            eprintln!("Unknown correlation_method '{method}' for backend '{target}'");
+            if methods.is_empty() {
+                eprintln!("Backend '{target}' does not support selectable correlation methods.");
+            } else {
+                eprintln!(
+                    "Available: {}",
+                    methods
+                        .iter()
+                        .map(|(n, d)| format!("{n} ({d})"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+
+    if let Some(gap) = options.get("gap")
+        && rsigma_parser::Timespan::parse(gap).is_err()
+    {
+        eprintln!("Invalid gap '{gap}': expected a duration like 30s, 5m, 1h, 7d");
+        process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+
     let result =
         rsigma_convert::convert_collection(backend.as_ref(), &collection, &pipelines, &format);
     match result {
@@ -126,6 +153,9 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
                 } else {
                     eprintln!("Error: rule '{rule_title}' failed: {error}");
                 }
+            }
+            for (rule_title, warning) in output_data.warnings() {
+                eprintln!("Warning: rule '{rule_title}': {warning}");
             }
             if !skip_unsupported && !output_data.errors.is_empty() {
                 process::exit(crate::exit_code::RULE_ERROR);
@@ -204,6 +234,16 @@ pub(crate) fn cmd_list_formats(target: String) {
     println!("Available formats for '{target}':");
     for (name, desc) in backend.formats() {
         println!("  {name}  - {desc}");
+    }
+    let methods = backend.correlation_methods();
+    if !methods.is_empty() {
+        println!(
+            "\nCorrelation methods for '{target}' (select with -O correlation_method=NAME, default: {}):",
+            backend.default_correlation_method()
+        );
+        for (name, desc) in methods {
+            println!("  {name}  - {desc}");
+        }
     }
 }
 

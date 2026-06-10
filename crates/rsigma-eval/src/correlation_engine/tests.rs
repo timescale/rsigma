@@ -364,6 +364,178 @@ level: medium
 }
 
 // =========================================================================
+// Window modes: tumbling and session
+// =========================================================================
+
+/// Build an `event_count` correlation with the given window/gap settings.
+fn window_mode_yaml(window_lines: &str) -> String {
+    format!(
+        r#"
+title: Base
+id: base-win
+logsource:
+    category: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: Windowed Clicks
+id: corr-win
+correlation:
+    type: event_count
+    rules:
+        - base-win
+    group-by:
+        - User
+{window_lines}
+    condition:
+        gte: 3
+level: medium
+"#
+    )
+}
+
+fn windowed_engine(window_lines: &str) -> CorrelationEngine {
+    let collection = parse_sigma_yaml(&window_mode_yaml(window_lines)).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+#[test]
+fn test_tumbling_window_fires_within_bucket() {
+    let mut engine = windowed_engine("    timespan: 10s\n    window: tumbling");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // t=1,2,3 are all in bucket [0,10): three events -> fires.
+    engine.process_event_at(&event, 1);
+    engine.process_event_at(&event, 2);
+    let r = engine.process_event_at(&event, 3);
+    assert_eq!(r.correlation_count(), 1);
+}
+
+#[test]
+fn test_tumbling_window_misses_across_boundary() {
+    let mut engine = windowed_engine("    timespan: 10s\n    window: tumbling");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // t=8,9 are in bucket [0,10); t=12 starts bucket [10,20) and resets state.
+    engine.process_event_at(&event, 8);
+    engine.process_event_at(&event, 9);
+    let r = engine.process_event_at(&event, 12);
+    // Three events within 4s, but split across the tumbling boundary -> no fire.
+    assert_eq!(r.correlation_count(), 0);
+}
+
+#[test]
+fn test_sliding_window_catches_across_boundary() {
+    // The same timestamps the tumbling test misses fire under a sliding window,
+    // which is the boundary-miss the feature lets authors avoid.
+    let mut engine = windowed_engine("    timespan: 10s\n    window: sliding");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    engine.process_event_at(&event, 8);
+    engine.process_event_at(&event, 9);
+    let r = engine.process_event_at(&event, 12);
+    // Window (2,12] contains all three events -> fires.
+    assert_eq!(r.correlation_count(), 1);
+}
+
+#[test]
+fn test_session_window_extends_within_gap() {
+    let mut engine = windowed_engine("    window: session\n    gap: 5s\n    timespan: 100s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // Steps 4s apart stay in one session; total span 8s is under the 100s cap.
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 4);
+    let r = engine.process_event_at(&event, 8);
+    assert_eq!(r.correlation_count(), 1);
+}
+
+#[test]
+fn test_session_window_resets_after_gap() {
+    let mut engine = windowed_engine("    window: session\n    gap: 5s\n    timespan: 100s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // The 16s gap before t=20 exceeds the 5s gap, so the session restarts.
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 4);
+    let r = engine.process_event_at(&event, 20);
+    assert_eq!(r.correlation_count(), 0);
+}
+
+#[test]
+fn test_session_window_caps_at_timespan() {
+    let mut engine = windowed_engine("    window: session\n    gap: 100s\n    timespan: 10s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // Gaps are small, but t=12 would push the span past the 10s cap -> restart.
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 5);
+    let r = engine.process_event_at(&event, 12);
+    assert_eq!(r.correlation_count(), 0);
+}
+
+#[test]
+fn test_tumbling_late_event_does_not_wipe_bucket() {
+    let mut engine = windowed_engine("    timespan: 10s\n    window: tumbling");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // t=12,15 accumulate in bucket [10,20).
+    engine.process_event_at(&event, 12);
+    engine.process_event_at(&event, 15);
+    // A late arrival from the previous bucket [0,10) is discarded instead of
+    // resetting the active bucket.
+    let late = engine.process_event_at(&event, 9);
+    assert_eq!(late.correlation_count(), 0);
+    // The bucket still holds t=12,15, so the third in-bucket event fires.
+    let r = engine.process_event_at(&event, 16);
+    assert_eq!(r.correlation_count(), 1);
+}
+
+#[test]
+fn test_evict_expired_preserves_session_cap() {
+    // Regression: time-based eviction must not trim the front of a live
+    // session. Doing so forgets the true session start and lets the window
+    // exceed the `timespan` cap (drifting toward sliding semantics).
+    let mut engine = windowed_engine("    window: session\n    gap: 10s\n    timespan: 20s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    // Session: t=0,9,16 (gaps 9s and 7s, span 16s <= 20s cap) -> fires.
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 9);
+    let r = engine.process_event_at(&event, 16);
+    assert_eq!(r.correlation_count(), 1);
+    // At now=21 the session is live (21-16=5s <= 10s gap). A trailing-cutoff
+    // eviction would trim t=0 (21-20=1) and forget the session start.
+    engine.evict_expired(21);
+    // t=24 extends within the gap (24-16=8s) but exceeds the cap from the true
+    // start (24-0=24s > 20s), so the session must restart with count 1, not
+    // accumulate t=9,16,24 and fire again.
+    let r = engine.process_event_at(&event, 24);
+    assert_eq!(r.correlation_count(), 0);
+}
+
+#[test]
+fn test_evict_expired_drops_stale_session_group() {
+    let mut engine = windowed_engine("    window: session\n    gap: 10s\n    timespan: 20s");
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    engine.process_event_at(&event, 0);
+    engine.process_event_at(&event, 9);
+    // At now=40 the session is dead (40-9=31s > 10s gap): the whole group is
+    // dropped rather than partially trimmed.
+    engine.evict_expired(40);
+    // A fresh event starts a new session from scratch.
+    engine.process_event_at(&event, 41);
+    let r = engine.process_event_at(&event, 45);
+    // Only two events in the new session -> no fire (gte 3).
+    assert_eq!(r.correlation_count(), 0);
+}
+
+// =========================================================================
 // Value count correlation
 // =========================================================================
 

@@ -19,7 +19,7 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 
 | Severity | Rules |
 |----------|------:|
-| `error` | 34 |
+| `error` | 38 |
 | `warning` | 33 |
 | `info` | 3 |
 | `hint` | 0 |
@@ -106,7 +106,7 @@ Apply to detection rules (`detection:` block + `condition:`).
 | `deprecated_aggregation_syntax` | `warning` | — | The condition uses the deprecated aggregation pipe syntax (`condition: selection \| count() > 5`). Use the modern `correlation:` block instead. |
 | `flattened_array_correlation` | `warning` | — | Two or more sibling keys share a quantified array prefix (e.g. `connections[any].protocol` and `connections[any].ip`). Each opens an independent scope, so they do **not** correlate on the same array element. Use an object-scope block (`connections[any]:` with the fields nested) to require one element to satisfy all of them. See [Array Matching](../guide/array-matching.md). |
 
-## Correlation rules (13)
+## Correlation rules (17)
 
 Apply to correlation rules (`correlation:` block).
 
@@ -119,6 +119,10 @@ Apply to correlation rules (`correlation:` block).
 | `empty_correlation_rules` | `warning` | — | `correlation.rules:` is present but empty. |
 | `missing_correlation_timespan` | `error` | — | `correlation:` has no `timespan:`. |
 | `invalid_timespan_format` | `error` | — | `timespan:` is not a valid duration (`5m`, `1h`, `30s`). |
+| `invalid_window_mode` | `error` | — | `correlation.window:` is not one of `sliding`, `tumbling`, `session`. |
+| `missing_session_gap` | `error` | — | `window: session` without a `gap:`. A session window needs an inactivity timeout. |
+| `gap_without_session` | `error` | — | `gap:` is set without `window: session`. The gap only applies to session windows. |
+| `invalid_gap_format` | `error` | — | `gap:` is not a valid duration (`5m`, `1h`, `30s`). |
 | `missing_correlation_condition` | `error` | — | `correlation:` has no `condition:` block. |
 | `missing_condition_field` | `error` | — | `correlation.condition` is missing the required field for the chosen correlation type (e.g. `gte` for `event_count`, `field` for `value_sum`). |
 | `condition_value_not_numeric` | `error` | — | The numeric threshold in `correlation.condition` is not a number. |

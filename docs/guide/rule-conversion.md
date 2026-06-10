@@ -172,6 +172,57 @@ SELECT * FROM event_counts WHERE correlation_event_count >= 5
 
 This is the right format when you want per-event explanations of why a brute-force correlation fired, rather than a single aggregate row.
 
+### Correlation window modes
+
+A correlation rule can declare how its `timespan` is anchored to the event stream with the optional `window` attribute (`sliding`, `tumbling`, or `session`). The PostgreSQL backend renders the windowing strategy from this attribute, independent of the output format:
+
+- `window` absent or `sliding`: the SQL is unchanged from before this attribute existed (the per-format aggregate, or the window-function form under `sliding_window`), so existing rules and queries are unaffected.
+- `window: tumbling`: fixed, boundary-aligned buckets sized to the rule's `timespan`. On TimescaleDB this is `time_bucket('<timespan> seconds', time)`; on plain PostgreSQL it is `date_bin('<timespan> seconds', time, TIMESTAMPTZ 'epoch')`, both added to the `GROUP BY` alongside the group-by columns.
+- `window: session`: a gaps-and-islands query. `LAG` flags the first event of each session (a gap larger than `gap`), a running `SUM` assigns a per-group `session_id`, and the aggregate is computed per session:
+
+```sql
+WITH source AS (SELECT * FROM security_events),
+marked AS (
+    SELECT *,
+        CASE WHEN LAG(time) OVER (PARTITION BY "User" ORDER BY time) IS NULL
+             OR time - LAG(time) OVER (PARTITION BY "User" ORDER BY time) > INTERVAL '30 seconds'
+        THEN 1 ELSE 0 END AS is_new_session
+    FROM source
+),
+sessions AS (
+    SELECT *, SUM(is_new_session) OVER (
+        PARTITION BY "User" ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS session_id
+    FROM marked
+)
+SELECT "User", session_id, COUNT(*) AS event_count,
+    MIN(time) AS first_seen, MAX(time) AS last_seen
+FROM sessions
+GROUP BY "User", session_id
+HAVING COUNT(*) >= 3 AND (MAX(time) - MIN(time)) <= INTERVAL '3600 seconds'
+```
+
+The `gap` is honored exactly. The `timespan` cap is enforced as the trailing `HAVING` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does; `rsigma backend convert` prints a warning to stderr noting this. Tumbling and session apply to every correlation type. For `temporal`/`temporal_ordered`, the combined detections (the `matched` CTE) are bucketed or sessionized and each window counts the distinct referenced rules with `COUNT(DISTINCT rule_name)`; order is not enforced for `temporal_ordered`, the same limitation as the default temporal path.
+
+#### Choosing the strategy at conversion time
+
+The window strategy can also be selected at conversion time rather than taken from the rule, following pySigma's `correlation_methods` model: the converting user knows the target backend's limits, so they get the final say. The backend advertises its strategies, which `rsigma backend formats postgres` lists, and you pick one with `-O correlation_method=NAME`:
+
+```bash
+# Render every correlation as a session window, regardless of each rule's own window hint
+rsigma backend convert -t postgres -O correlation_method=session rules/
+```
+
+The PostgreSQL backend offers `sliding` (default), `tumbling`, and `session`. The option overrides a rule's own `window` for that conversion; an unknown method is rejected up front. When no option is given, each rule's own `window` (default `sliding`) is used.
+
+Because most rules declare no `gap`, batch conversions with `correlation_method=session` take a conversion-time default:
+
+```bash
+rsigma backend convert -t postgres -O correlation_method=session -O gap=5m rules/
+```
+
+A rule's own `gap` always wins over the option; a session window with no gap from either source is an error.
+
 ### Multi-table temporal correlations
 
 When a `temporal` correlation references detection rules that target different tables (via per-logsource pipeline routing or the `postgres.table` custom attribute), the backend automatically generates a `UNION ALL` CTE:

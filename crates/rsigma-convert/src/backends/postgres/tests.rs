@@ -2386,3 +2386,401 @@ detection:
     let err = backend.convert_rule(&collection.rules[0], "default", &PipelineState::default());
     assert!(matches!(err, Err(ConvertError::UnsupportedArrayMatching)));
 }
+
+// --- Correlation window modes (tumbling / session) ---
+
+fn convert_corr(yaml: &str, format: &str) -> Vec<String> {
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let backend = PostgresBackend::new();
+    backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            format,
+            &PipelineState::default(),
+        )
+        .unwrap()
+}
+
+#[test]
+fn test_tumbling_event_count_default_uses_date_bin() {
+    let q = &convert_corr(
+        r#"
+title: Hourly clicks
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - User
+    timespan: 10m
+    window: tumbling
+    condition:
+        gte: 100
+"#,
+        "default",
+    )[0];
+    assert!(
+        q.contains("date_bin('600 seconds'"),
+        "tumbling default should bucket via date_bin: {q}"
+    );
+    assert!(q.contains("AS correlation_bucket"), "{q}");
+    assert!(q.contains("COUNT(*) AS event_count"), "{q}");
+    assert!(q.contains("HAVING COUNT(*) >= 100"), "{q}");
+}
+
+#[test]
+fn test_tumbling_event_count_timescaledb_uses_time_bucket_with_timespan() {
+    let q = &convert_corr(
+        r#"
+title: Hourly clicks
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - User
+    timespan: 10m
+    window: tumbling
+    condition:
+        gte: 100
+"#,
+        "timescaledb",
+    )[0];
+    // Buckets by the rule's timespan, not the legacy hardcoded '1 hour'.
+    assert!(
+        q.contains("time_bucket('600 seconds'"),
+        "tumbling timescaledb should bucket by the rule timespan: {q}"
+    );
+    assert!(!q.contains("time_bucket('1 hour'"), "{q}");
+}
+
+#[test]
+fn test_session_event_count_gaps_and_islands() {
+    let q = &convert_corr(
+        r#"
+title: Login session
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - User
+    window: session
+    gap: 30s
+    timespan: 1h
+    condition:
+        gte: 3
+"#,
+        "default",
+    )[0];
+    assert!(q.contains("LAG("), "session should use LAG: {q}");
+    assert!(
+        q.contains("INTERVAL '30 seconds'"),
+        "session gap should be 30s: {q}"
+    );
+    assert!(q.contains("AS session_id"), "{q}");
+    assert!(q.contains("AS is_new_session"), "{q}");
+    assert!(q.contains("HAVING COUNT(*) >= 3"), "{q}");
+    // The timespan cap is approximated as a post-aggregation filter.
+    assert!(
+        q.contains("<= INTERVAL '3600 seconds'"),
+        "session should cap total span at the timespan: {q}"
+    );
+}
+
+#[test]
+fn test_session_emits_cap_warning() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: Login session
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - User
+    window: session
+    gap: 30s
+    timespan: 1h
+    condition:
+        gte: 3
+"#,
+    )
+    .unwrap();
+    let backend = PostgresBackend::new();
+    let mut warnings = Vec::new();
+    let queries = backend
+        .convert_correlation_rule_with_warnings(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+            &mut warnings,
+        )
+        .unwrap();
+    assert_eq!(queries.len(), 1);
+    assert!(
+        warnings.iter().any(|w| w.contains("session")),
+        "expected a session degrade warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_tumbling_temporal_buckets_distinct_rules() {
+    let q = &convert_corr(
+        r#"
+title: Temporal tumbling
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 10m
+    window: tumbling
+    condition:
+        gte: 2
+"#,
+        "default",
+    )[0];
+    assert!(q.contains("WITH matched AS ("), "{q}");
+    assert!(q.contains("date_bin('600 seconds'"), "{q}");
+    assert!(q.contains("AS correlation_bucket"), "{q}");
+    assert!(
+        q.contains("COUNT(DISTINCT rule_name) AS distinct_rules"),
+        "{q}"
+    );
+    assert!(q.contains("HAVING COUNT(DISTINCT rule_name) >= 2"), "{q}");
+}
+
+#[test]
+fn test_session_temporal_gaps_and_islands() {
+    // temporal_ordered renders like temporal (order is not enforced by the
+    // PostgreSQL backend), sessionized with an exact gap and a capped span.
+    let q = &convert_corr(
+        r#"
+title: Temporal session
+correlation:
+    type: temporal_ordered
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    window: session
+    gap: 10m
+    timespan: 6h
+    condition:
+        gte: 2
+"#,
+        "default",
+    )[0];
+    assert!(q.contains("WITH matched AS ("), "{q}");
+    assert!(q.contains("LAG("), "{q}");
+    assert!(q.contains("INTERVAL '600 seconds'"), "session gap 10m: {q}");
+    assert!(q.contains("AS session_id"), "{q}");
+    assert!(
+        q.contains("COUNT(DISTINCT rule_name) AS distinct_rules"),
+        "{q}"
+    );
+    assert!(
+        q.contains("<= INTERVAL '21600 seconds'"),
+        "session cap 6h: {q}"
+    );
+}
+
+#[test]
+fn test_correlation_methods_listed() {
+    let backend = PostgresBackend::new();
+    let names: Vec<&str> = backend
+        .correlation_methods()
+        .iter()
+        .map(|(n, _)| *n)
+        .collect();
+    assert_eq!(names, ["sliding", "tumbling", "session"]);
+    assert_eq!(backend.default_correlation_method(), "sliding");
+}
+
+#[test]
+fn test_correlation_method_option_overrides_rule_window() {
+    // A sliding rule converted with `-O correlation_method=tumbling` renders as
+    // a tumbling bucket, regardless of the rule's own window.
+    let yaml = r#"
+title: Method override
+correlation:
+    type: event_count
+    rules:
+        - a
+    group-by:
+        - User
+    timespan: 10m
+    window: sliding
+    condition:
+        gte: 5
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let opts = std::collections::HashMap::from([(
+        "correlation_method".to_string(),
+        "tumbling".to_string(),
+    )]);
+    let backend = PostgresBackend::from_options(&opts);
+    let q = &backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap()[0];
+    assert!(q.contains("date_bin('600 seconds'"), "{q}");
+}
+
+#[test]
+fn test_gap_option_provides_default_session_gap() {
+    // `-O correlation_method=session -O gap=5m` converts a rule that declares
+    // no gap of its own.
+    let yaml = r#"
+title: Session via options
+correlation:
+    type: event_count
+    rules:
+        - a
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let opts = std::collections::HashMap::from([
+        ("correlation_method".to_string(), "session".to_string()),
+        ("gap".to_string(), "5m".to_string()),
+    ]);
+    let backend = PostgresBackend::from_options(&opts);
+    let q = &backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap()[0];
+    assert!(q.contains("INTERVAL '300 seconds'"), "gap 5m: {q}");
+    assert!(q.contains("AS session_id"), "{q}");
+}
+
+#[test]
+fn test_rule_gap_wins_over_gap_option() {
+    let yaml = r#"
+title: Rule gap precedence
+correlation:
+    type: event_count
+    rules:
+        - a
+    group-by:
+        - User
+    window: session
+    gap: 10m
+    timespan: 1h
+    condition:
+        gte: 3
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let opts = std::collections::HashMap::from([("gap".to_string(), "5m".to_string())]);
+    let backend = PostgresBackend::from_options(&opts);
+    let q = &backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap()[0];
+    assert!(q.contains("INTERVAL '600 seconds'"), "rule gap 10m: {q}");
+    assert!(
+        !q.contains("INTERVAL '300 seconds'"),
+        "option gap must not override the rule's own gap: {q}"
+    );
+}
+
+#[test]
+fn test_session_without_any_gap_errors_with_hint() {
+    let yaml = r#"
+title: No gap anywhere
+correlation:
+    type: event_count
+    rules:
+        - a
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let opts = std::collections::HashMap::from([(
+        "correlation_method".to_string(),
+        "session".to_string(),
+    )]);
+    let backend = PostgresBackend::from_options(&opts);
+    let err = backend.convert_correlation_rule(
+        &collection.correlations[0],
+        "default",
+        &PipelineState::default(),
+    );
+    match err {
+        Err(ConvertError::UnsupportedCorrelation(msg)) => {
+            assert!(msg.contains("-O gap="), "{msg}");
+        }
+        other => panic!("expected UnsupportedCorrelation, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_unknown_correlation_method_errors() {
+    let yaml = r#"
+title: Bad method
+correlation:
+    type: event_count
+    rules:
+        - a
+    group-by:
+        - User
+    timespan: 10m
+    condition:
+        gte: 5
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let opts = std::collections::HashMap::from([(
+        "correlation_method".to_string(),
+        "rolling".to_string(),
+    )]);
+    let backend = PostgresBackend::from_options(&opts);
+    let err = backend.convert_correlation_rule(
+        &collection.correlations[0],
+        "default",
+        &PipelineState::default(),
+    );
+    assert!(matches!(err, Err(ConvertError::UnsupportedCorrelation(_))));
+}
+
+#[test]
+fn test_absent_window_keeps_legacy_aggregate() {
+    // No `window` attribute: output must be unchanged from before the feature
+    // (relative-filter aggregate, no date_bin/session machinery).
+    let q = &convert_corr(
+        r#"
+title: Brute force
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 10
+"#,
+        "default",
+    )[0];
+    assert!(q.contains("NOW() - INTERVAL '300 seconds'"), "{q}");
+    assert!(!q.contains("date_bin("), "{q}");
+    assert!(!q.contains("session_id"), "{q}");
+}

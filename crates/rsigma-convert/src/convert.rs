@@ -82,6 +82,7 @@ pub fn convert_collection(
                     rule_title: rule.title.clone(),
                     rule_id: rule.id.clone(),
                     queries,
+                    warnings: Vec::new(),
                 });
             }
             Err(e) => {
@@ -115,12 +116,19 @@ pub fn convert_collection(
                 pipeline_state.set_state("_rule_queries".to_string(), map_value);
             }
 
-            match backend.convert_correlation_rule(&corr, output_format, &pipeline_state) {
+            let mut warnings = Vec::new();
+            match backend.convert_correlation_rule_with_warnings(
+                &corr,
+                output_format,
+                &pipeline_state,
+                &mut warnings,
+            ) {
                 Ok(queries) => {
                     output.queries.push(ConversionResult {
                         rule_title: corr.title.clone(),
                         rule_id: corr.id.clone(),
                         queries,
+                        warnings,
                     });
                 }
                 Err(e) => {

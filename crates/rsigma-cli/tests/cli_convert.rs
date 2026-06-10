@@ -421,6 +421,11 @@ fn list_formats_postgres() {
       timescaledb  - TimescaleDB-optimized queries with time_bucket()
       continuous_aggregate  - CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)
       sliding_window  - Correlation queries using window functions for per-row sliding detection
+
+    Correlation methods for 'postgres' (select with -O correlation_method=NAME, default: sliding):
+      sliding  - Trailing per-event window (default; preserves existing SQL)
+      tumbling  - Fixed boundary-aligned buckets (time_bucket/date_bin)
+      session  - Gaps-and-islands sessionization (requires a gap)
     ");
 }
 

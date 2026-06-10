@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rsigma_parser::{ConditionExpr, ConditionOperator, CorrelationType, Level};
+use rsigma_parser::{ConditionExpr, ConditionOperator, CorrelationType, Level, WindowMode};
 
 // =============================================================================
 // Compiled types
@@ -22,6 +22,12 @@ pub struct CompiledCorrelation {
     pub group_by: Vec<GroupByField>,
     /// Time window in seconds.
     pub timespan_secs: u64,
+    /// Window semantics for `timespan_secs`: sliding (default), tumbling, or
+    /// session. Controls how the window is anchored to the event stream.
+    pub window_mode: WindowMode,
+    /// Maximum inactivity (seconds) between consecutive in-group events for a
+    /// session window. `Some` only when `window_mode` is `Session`.
+    pub gap_secs: Option<u64>,
     /// Compiled threshold condition.
     pub condition: CompiledCondition,
     /// Extended boolean condition expression for temporal correlations.

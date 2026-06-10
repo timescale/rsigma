@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes a 70-rule linter derived from the Sigma v2.1.0 spec.
+`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes a 74-rule linter derived from the Sigma v2.1.0 spec.
 
 This library is part of [rsigma].
 
@@ -127,7 +127,7 @@ The full PEG grammar is defined in [`src/sigma.pest`](src/sigma.pest). It implem
 |------|-------------|
 | `SigmaCollection` | Collection of rules, correlations, filters, and errors |
 | `SigmaRule` | A parsed detection rule with metadata, an optional `sigma_version` (the targeted spec major), logsource, and detections |
-| `CorrelationRule` | A correlation rule with type, referenced rules, timespan, and conditions |
+| `CorrelationRule` | A correlation rule with type, referenced rules, timespan, window mode, and conditions |
 | `FilterRule` | A filter rule that injects `AND NOT` conditions into referenced rules |
 | `Detections` | Named detections, condition expressions, and optional timeframe |
 | `Detection` | `AllOf` (AND-linked items), `AnyOf` (OR-linked), `Keywords` (plain values), `ArrayMatch` (object-scope array block), `And`, or `Conditional` (extended array block) |
@@ -197,6 +197,21 @@ When the `re` modifier is present, string values are parsed with `SigmaValue::fr
 - **Default (temporal, no condition):** `Threshold { predicates: [(Gte, 1)], field: None }`.
 - **Timeframe/timespan:** The parser accepts both `timeframe` and `timespan` keys.
 - **Custom attributes:** Both detection and correlation rules expose a unified `custom_attributes` map (`HashMap<String, yaml_serde::Value>`). It merges (a) any arbitrary top-level YAML key that is not part of the Sigma schema, (b) entries of the optional top-level `custom_attributes:` mapping (explicit block wins over arbitrary keys of the same name), and (c) values set by pipeline `SetCustomAttribute` transformations (applied last, last-write-wins). Engines read `rsigma.*` extensions (`rsigma.suppress`, `rsigma.action`, `rsigma.correlation_event_mode`, etc.) from this map.
+
+### Window Modes
+
+Correlation rules accept an optional `window` attribute that controls how `timespan` is anchored to the event stream, plus a `gap` for session windows:
+
+- `sliding` (default): trailing per-event window `(t - timespan, t]`. Omitting `window` is equivalent and preserves existing behavior.
+- `tumbling`: fixed, boundary-aligned, non-overlapping buckets of size `timespan`.
+- `session`: dynamic window that extends while consecutive in-group events stay within `gap`, capped by `timespan` as the maximum total span. `gap` is required for `session` and must not be set for the other modes.
+
+This is an rsigma extension (a portable-spec version was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace, with the bare keys kept as aliases:
+
+- Primary: top-level `rsigma.window` / `rsigma.gap` (alongside `rsigma.suppress`, `rsigma.action`).
+- Alias: nested `correlation.window` / `correlation.gap`.
+
+The `rsigma.*` spelling wins when both are present. Either spelling maps to `CorrelationRule::window` (a `WindowMode` of `Sliding`/`Tumbling`/`Session`) and `CorrelationRule::gap` (an `Option<Timespan>`), so consumers read one place regardless of how the rule was written.
 
 ## Filter Rules
 
@@ -290,7 +305,7 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `condition_references_unknown` | Error | | Condition references non-existent detection identifier |
 | `deprecated_aggregation_syntax` | Warning | | Condition uses deprecated Sigma v1.x pipe-aggregation syntax (`\| count/min/max/avg/sum/near`); use a correlation rule instead |
 
-### Correlation Rules (13)
+### Correlation Rules (17)
 
 | Rule | Severity | Fix | Trigger |
 |------|----------|-----|---------|
@@ -301,6 +316,10 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `empty_correlation_rules` | Warning | | `correlation.rules` is empty |
 | `missing_correlation_timespan` | Error | | No `correlation.timespan` or `correlation.timeframe` |
 | `invalid_timespan_format` | Error | | Timespan format invalid |
+| `invalid_window_mode` | Error | | `correlation.window` not `sliding`/`tumbling`/`session` |
+| `missing_session_gap` | Error | | `window: session` without a `gap` |
+| `gap_without_session` | Error | | `gap` set without `window: session` |
+| `invalid_gap_format` | Error | | `gap` format invalid |
 | `missing_group_by` | Error | | No `correlation.group-by` |
 | `missing_correlation_condition` | Error | | Non-temporal type without condition |
 | `missing_condition_field` | Error | | `value_count`/`value_sum`/`value_avg`/`value_percentile` without `condition.field` |

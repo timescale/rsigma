@@ -163,7 +163,7 @@ When a Sigma rule specifies `fields:`, the backend emits `SELECT field1, field2,
 
 ### CLI backend options
 
-Backend configuration can be set via `-O key=value` flags on the CLI, which are wired through to `PostgresBackend::from_options`. Recognized keys: `table`, `schema`, `database`, `timestamp_field`, `json_field`, `case_sensitive_re`.
+Backend configuration can be set via `-O key=value` flags on the CLI, which are wired through to `PostgresBackend::from_options`. Recognized keys: `table`, `schema`, `database`, `timestamp_field`, `json_field`, `case_sensitive_re`, `correlation_method`, `gap`.
 
 ```bash
 rsigma backend convert -r rules/ -t postgres -O table=security_logs -O schema=public -O timestamp_field=created_at
@@ -324,6 +324,10 @@ event_counts AS (
 SELECT * FROM event_counts WHERE correlation_event_count >= 5
 ```
 
+A correlation rule's `window` attribute selects the windowing strategy (independent of output format). An absent or `sliding` window keeps the SQL above unchanged; `tumbling` emits boundary-aligned buckets sized to the rule's `timespan` (`time_bucket` on TimescaleDB, `date_bin` on plain PostgreSQL); `session` emits a gaps-and-islands query (`LAG` + a running `session_id`) that honors the `gap` exactly and enforces the `timespan` cap as a `HAVING` filter. Backends can attach non-fatal diagnostics for such approximations: `ConversionResult` carries a `warnings` field, populated via `Backend::convert_correlation_rule_with_warnings`, and the CLI prints them to stderr.
+
+Following pySigma's model, the windowing strategy can also be chosen at conversion time rather than taken from the rule. A backend advertises its strategies through `Backend::correlation_methods` (name/description pairs) and `default_correlation_method`; the PostgreSQL backend offers `sliding`/`tumbling`/`session` with `sliding` as the default. The CLI exposes the choice as `rsigma backend convert -O correlation_method=NAME`, which overrides a rule's own `window` hint for that conversion and is validated against the advertised methods. `rsigma backend formats <target>` lists them. For `correlation_method=session` over rules without a `gap`, `-O gap=5m` supplies the conversion-time default (a rule's own `gap` always wins).
+
 ### Configuration
 
 `PostgresBackend` fields:
@@ -337,6 +341,8 @@ SELECT * FROM event_counts WHERE correlation_event_count >= 5
 | `schema` | `Option<String>` | `None` | PostgreSQL schema name (overridden by pipeline state or `postgres.schema` custom attribute) |
 | `database` | `Option<String>` | `None` | PostgreSQL database name (connection-level metadata) |
 | `timescaledb` | `bool` | `false` | Enable TimescaleDB-specific features |
+| `correlation_method` | `Option<String>` | `None` | Windowing strategy override for correlations (`sliding`/`tumbling`/`session`); `None` uses each rule's own `window` |
+| `session_gap_secs` | `Option<u64>` | `None` | Default session gap in seconds (from `-O gap=5m`), used when a session window is requested and the rule declares no `gap` |
 
 ### JSONB field access
 

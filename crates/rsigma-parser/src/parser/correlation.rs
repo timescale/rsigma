@@ -75,6 +75,64 @@ pub(super) fn parse_correlation_rule(
         .ok_or_else(|| SigmaParserError::InvalidCorrelation("Missing timeframe".into()))?;
     let timespan = Timespan::parse(timespan_str)?;
 
+    // Window mode (optional, defaults to sliding) and the session `gap`.
+    //
+    // Two spellings are accepted. The `rsigma.*` engine-extension namespace
+    // (top-level `rsigma.window` / `rsigma.gap`, alongside `rsigma.suppress`
+    // and friends) is the primary form; the first-class `correlation.window` /
+    // `correlation.gap` keys are accepted as aliases. The `rsigma.*` spelling
+    // wins when both are present. Presence is checked before type so a key set
+    // to a non-string value (e.g. an unquoted `gap: 300`) errors instead of
+    // being silently treated as absent.
+    let window_val = m
+        .get(val_key("rsigma.window"))
+        .map(|v| ("rsigma.window", v))
+        .or_else(|| corr.get(val_key("window")).map(|v| ("window", v)));
+    let window = match window_val {
+        Some((key_name, v)) => {
+            let w = v.as_str().ok_or_else(|| {
+                SigmaParserError::InvalidCorrelation(format!(
+                    "'{key_name}' must be a string: sliding, tumbling, or session"
+                ))
+            })?;
+            w.parse::<WindowMode>().map_err(|_| {
+                SigmaParserError::InvalidCorrelation(format!(
+                    "Unknown window mode: {w} (expected sliding, tumbling, or session)"
+                ))
+            })?
+        }
+        None => WindowMode::default(),
+    };
+    let gap_val = m
+        .get(val_key("rsigma.gap"))
+        .map(|v| ("rsigma.gap", v))
+        .or_else(|| corr.get(val_key("gap")).map(|v| ("gap", v)));
+    let gap = match gap_val {
+        Some((key_name, v)) => {
+            let g = v.as_str().ok_or_else(|| {
+                SigmaParserError::InvalidCorrelation(format!(
+                    "'{key_name}' must be a string duration like \"5m\" (quote numeric values)"
+                ))
+            })?;
+            Some(Timespan::parse(g)?)
+        }
+        None => None,
+    };
+    match window {
+        WindowMode::Session if gap.is_none() => {
+            return Err(SigmaParserError::InvalidCorrelation(
+                "window: session requires a gap (gap: or rsigma.gap:, e.g. 5m)".into(),
+            ));
+        }
+        WindowMode::Sliding | WindowMode::Tumbling if gap.is_some() => {
+            return Err(SigmaParserError::InvalidCorrelation(format!(
+                "'gap' is only valid with window: session, not window: {}",
+                window.as_str()
+            )));
+        }
+        _ => {}
+    }
+
     // Generate flag - Sigma correlation schema defines `generate` at document root.
     // Nested `correlation.generate` is accepted for backward compatibility.
     let generate = m
@@ -139,6 +197,8 @@ pub(super) fn parse_correlation_rule(
         rules,
         group_by,
         timespan,
+        window,
+        gap,
         condition,
         aliases,
         generate,

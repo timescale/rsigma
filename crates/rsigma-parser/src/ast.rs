@@ -601,6 +601,49 @@ impl FromStr for CorrelationType {
     }
 }
 
+/// Window semantics for a correlation rule's `timespan`.
+///
+/// Controls how `timespan` is anchored to the event stream. `Sliding` is the
+/// default and matches the behavior the Sigma correlation specification already
+/// prefers (a trailing per-event window), so omitting `window` never changes the
+/// meaning of an existing rule.
+///
+/// - `Sliding`: trailing window `(t - timespan, t]` evaluated per event.
+/// - `Tumbling`: fixed, boundary-aligned, non-overlapping buckets of size
+///   `timespan`.
+/// - `Session`: dynamic window that extends while consecutive in-group events
+///   stay within `gap`, capped by `timespan` as the maximum total span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    #[default]
+    Sliding,
+    Tumbling,
+    Session,
+}
+
+impl WindowMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WindowMode::Sliding => "sliding",
+            WindowMode::Tumbling => "tumbling",
+            WindowMode::Session => "session",
+        }
+    }
+}
+
+impl FromStr for WindowMode {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "sliding" => Ok(WindowMode::Sliding),
+            "tumbling" => Ok(WindowMode::Tumbling),
+            "session" => Ok(WindowMode::Session),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Comparison operator in a correlation condition.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationConditionOperator
@@ -698,6 +741,13 @@ pub struct CorrelationRule {
     pub rules: Vec<String>,
     pub group_by: Vec<String>,
     pub timespan: Timespan,
+    /// Window semantics for `timespan`: `sliding` (default), `tumbling`, or
+    /// `session`. Absent in the source defaults to [`WindowMode::Sliding`].
+    pub window: WindowMode,
+    /// Maximum inactivity between consecutive in-group events for a `session`
+    /// window. Required when `window` is `session`, and unset otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap: Option<Timespan>,
     pub condition: CorrelationCondition,
     pub aliases: Vec<FieldAlias>,
     pub generate: bool,

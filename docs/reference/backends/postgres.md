@@ -16,6 +16,8 @@ Pass options via `-O key=value` on the command line. Unknown keys are silently i
 | `timestamp_field` | `time` | Column used for time-windowed queries (correlation `timespan`, `time_bucket` in TimescaleDB mode). |
 | `json_field` | unset | When set, fields are accessed via JSONB extraction. See [JSONB mode](#jsonb-mode). |
 | `case_sensitive_re` | `false` | Use `~` instead of `~*` for regex. Setting to `true` makes regex matches case-sensitive globally. |
+| `correlation_method` | unset | Windowing strategy for correlation rules (`sliding`/`tumbling`/`session`), overriding each rule's own `window`. See [Window modes](#window-modes). |
+| `gap` | unset | Default session gap (e.g. `5m`) used when a session window is requested and the rule declares no `gap`. A rule's own `gap` wins. |
 
 Pipeline `set_state` with keys `table`, `schema`, `database` overrides the corresponding `-O` option for the duration of one rule's conversion. Per-rule `custom_attributes` of `postgres.table`, `postgres.schema`, `postgres.database` override pipeline state. The full precedence chain is documented in [Custom Attributes](../custom-attributes.md#postgres-attributes).
 
@@ -200,6 +202,24 @@ The backend handles every aggregation type:
 | `temporal_ordered` | Roadmap: `LAG()`/`LEAD()` based ordering. Not yet implemented. |
 
 Non-temporal correlations that reference detection rules in the same collection auto-wrap the detection logic in `WITH combined_events AS (q1 UNION ALL q2 ...)`. Multi-table temporal correlations (where referenced detection rules target different tables via pipeline routing) generate `UNION ALL` CTEs with a `rule_name` discriminator column.
+
+### Window modes
+
+A correlation rule's `window` attribute selects the windowing strategy, independent of the output format:
+
+| `window` | Strategy |
+|----------|----------|
+| absent or `sliding` | Unchanged from before the attribute existed: the per-format aggregate (or the window-function form under `sliding_window`). |
+| `tumbling` | Boundary-aligned buckets sized to the rule's `timespan`: `time_bucket('<timespan> seconds', <ts>)` on TimescaleDB, `date_bin('<timespan> seconds', <ts>, TIMESTAMPTZ 'epoch')` on plain PostgreSQL, added to the `GROUP BY`. |
+| `session` | Gaps-and-islands: `LAG` marks the first event of each session (gap larger than `gap`), a running `SUM` assigns a per-group `session_id`, and the aggregate is grouped per session. |
+
+Tumbling and session apply to every correlation type. For the aggregate types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`) the per-window aggregate is computed over the events; for `temporal`/`temporal_ordered` the combined detections are bucketed (tumbling) or sessionized (session) and each window counts the distinct referenced rules. Order is not enforced for `temporal_ordered`, matching the default temporal path.
+
+For session windows the `gap` is honored exactly, but the `timespan` cap is enforced as a `HAVING (MAX(<ts>) - MIN(<ts>)) <= INTERVAL '<timespan> seconds'` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does. `rsigma backend convert` emits a stderr warning noting this approximation.
+
+The strategy can also be chosen at conversion time with `-O correlation_method=NAME`, following pySigma's `correlation_methods` model. The backend advertises `sliding` (default), `tumbling`, and `session` (run `rsigma backend formats postgres` to list them); the option overrides a rule's own `window` for that conversion and is rejected if it is not one of the advertised methods. With no option, the rule's own `window` is used. For `correlation_method=session` over rules that declare no `gap`, pass `-O gap=5m` as the conversion default; a rule's own `gap` always wins over the option.
+
+Unlike the sliding queries, tumbling and session queries carry no `NOW() - INTERVAL` bound (their windows derive from the data, and a session may extend arbitrarily far back), so they scan the whole table or view they run against. Schedule them against time-partitioned tables (hypertables) or bound the source with a view to keep scan costs predictable.
 
 ## Custom attributes
 

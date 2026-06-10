@@ -246,11 +246,58 @@ pub trait Backend: Send + Sync {
         false
     }
 
+    /// Correlation generation methods this backend offers, as
+    /// `(name, description)` pairs, mirroring pySigma's `correlation_methods`.
+    ///
+    /// The converting user selects one with the `correlation_method` backend
+    /// option, which overrides a rule's own `window` hint for that conversion.
+    /// An empty slice (the default) means the backend exposes no per-conversion
+    /// choice.
+    fn correlation_methods(&self) -> &[(&str, &str)] {
+        &[]
+    }
+
+    /// The correlation method used when the converting user selects none.
+    fn default_correlation_method(&self) -> &str {
+        "default"
+    }
+
+    /// Convert a correlation rule, discarding any non-fatal warnings.
+    ///
+    /// Convenience wrapper over [`convert_correlation_rule_with_warnings`]; the
+    /// `convert_collection` entry point uses the warnings-aware form so it can
+    /// surface diagnostics. Backends should override the warnings-aware method,
+    /// not this one.
+    ///
+    /// [`convert_correlation_rule_with_warnings`]: Backend::convert_correlation_rule_with_warnings
     fn convert_correlation_rule(
+        &self,
+        rule: &CorrelationRule,
+        output_format: &str,
+        pipeline_state: &PipelineState,
+    ) -> Result<Vec<String>> {
+        let mut warnings = Vec::new();
+        self.convert_correlation_rule_with_warnings(
+            rule,
+            output_format,
+            pipeline_state,
+            &mut warnings,
+        )
+    }
+
+    /// Convert a correlation rule, appending any non-fatal diagnostics to
+    /// `warnings`.
+    ///
+    /// A backend pushes a warning when it can only approximate a requested
+    /// feature but still emits a usable query (the Sigma "should warn" case),
+    /// and returns [`ConvertError`] when a feature cannot be represented at all
+    /// (the "must error" case).
+    fn convert_correlation_rule_with_warnings(
         &self,
         _rule: &CorrelationRule,
         _output_format: &str,
         _pipeline_state: &PipelineState,
+        _warnings: &mut Vec<String>,
     ) -> Result<Vec<String>> {
         Err(ConvertError::UnsupportedCorrelation(
             "correlation rules not supported by this backend".into(),

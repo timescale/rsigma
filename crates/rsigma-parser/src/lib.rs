@@ -67,7 +67,7 @@ pub use ast::{
     ArrayQuantifier, ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule,
     CorrelationType, Detection, DetectionItem, Detections, FieldAlias, FieldSpec, FilterRule,
     FilterRuleTarget, Level, LogSource, Modifier, Quantifier, Related, RelationType,
-    SelectorPattern, SigmaCollection, SigmaDocument, SigmaRule, Status,
+    SelectorPattern, SigmaCollection, SigmaDocument, SigmaRule, Status, WindowMode,
 };
 pub use condition::parse_condition;
 pub use error::{Result, SigmaParserError, SourceLocation};

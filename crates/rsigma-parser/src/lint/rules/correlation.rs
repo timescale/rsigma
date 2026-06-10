@@ -15,6 +15,9 @@ const VALID_CORRELATION_TYPES: &[&str] = &[
 /// Valid condition operators.
 const VALID_CONDITION_OPERATORS: &[&str] = &["gt", "gte", "lt", "lte", "eq", "neq"];
 
+/// Valid window modes.
+const VALID_WINDOW_MODES: &[&str] = &["sliding", "tumbling", "session"];
+
 /// Correlation types that require a condition section.
 const TYPES_REQUIRING_CONDITION: &[&str] = &[
     "event_count",
@@ -118,6 +121,96 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
             "missing required field 'correlation.timespan'",
             "/correlation/timespan",
         ));
+    }
+
+    // ── window + gap ──────────────────────────────────────────────────────
+    // Accept both spellings: the `rsigma.*` extension namespace (top-level
+    // `rsigma.window` / `rsigma.gap`) is primary, and the first-class
+    // `correlation.window` / `correlation.gap` keys are aliases. The `rsigma.*`
+    // spelling wins when both are present, and the diagnostic points at it.
+    // Presence is checked before type so a key set to a non-string value (e.g.
+    // an unquoted `gap: 300`) is reported as invalid instead of missing.
+    let (window, window_present, window_ptr) = match m.get(key("rsigma.window")) {
+        Some(v) => (v.as_str(), true, "/rsigma.window"),
+        None => match corr.get(key("window")) {
+            Some(v) => (v.as_str(), true, "/correlation/window"),
+            None => (None, false, "/correlation/window"),
+        },
+    };
+    let (gap, gap_present, gap_ptr) = match m.get(key("rsigma.gap")) {
+        Some(v) => (v.as_str(), true, "/rsigma.gap"),
+        None => match corr.get(key("gap")) {
+            Some(v) => (v.as_str(), true, "/correlation/gap"),
+            None => (None, false, "/correlation/gap"),
+        },
+    };
+
+    let window_known = match (window_present, window) {
+        (false, _) => true,
+        (true, Some(w)) => VALID_WINDOW_MODES.contains(&w),
+        (true, None) => false,
+    };
+    if window_present {
+        match window {
+            Some(w) if !VALID_WINDOW_MODES.contains(&w) => {
+                warnings.push(err(
+                    LintRule::InvalidWindowMode,
+                    format!(
+                        "invalid window mode \"{w}\", expected one of: {}",
+                        VALID_WINDOW_MODES.join(", ")
+                    ),
+                    window_ptr,
+                ));
+            }
+            None => {
+                warnings.push(err(
+                    LintRule::InvalidWindowMode,
+                    "window must be a string: sliding, tumbling, or session",
+                    window_ptr,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if gap_present {
+        match gap {
+            Some(g) if !is_valid_timespan(g) => {
+                warnings.push(err(
+                    LintRule::InvalidGapFormat,
+                    format!("invalid gap \"{g}\", expected format like 5m, 1h, 30s, 7d"),
+                    gap_ptr,
+                ));
+            }
+            None => {
+                warnings.push(err(
+                    LintRule::InvalidGapFormat,
+                    "gap must be a string duration like \"5m\" (quote numeric values)",
+                    gap_ptr,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Only reason about the gap/window relationship when the window is a known
+    // value; an invalid mode is already reported by InvalidWindowMode. A gap of
+    // the wrong type still counts as present (the author did set one).
+    if window_known {
+        let is_session = window == Some("session");
+        if is_session && !gap_present {
+            warnings.push(err(
+                LintRule::MissingSessionGap,
+                "window: session requires a 'gap' (e.g. gap: 5m)",
+                gap_ptr,
+            ));
+        } else if !is_session && gap_present {
+            warnings.push(err(
+                LintRule::GapWithoutSession,
+                "'gap' is only valid with window: session",
+                gap_ptr,
+            ));
+        }
     }
 
     // ── Conditional requirements per correlation type ─────────────────────
@@ -395,5 +488,192 @@ correlation:
         assert!(is_valid_timespan("1w"));
         assert!(is_valid_timespan("1M"));
         assert!(is_valid_timespan("1y"));
+    }
+
+    #[test]
+    fn invalid_window_mode() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: event_count
+    rules:
+        - some-rule
+    group-by:
+        - User
+    timespan: 1h
+    window: rolling
+    condition:
+        gte: 10
+"#,
+        );
+        assert!(has_rule(&w, LintRule::InvalidWindowMode));
+    }
+
+    #[test]
+    fn missing_session_gap() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+    window: session
+"#,
+        );
+        assert!(has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn gap_without_session() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: event_count
+    rules:
+        - some-rule
+    group-by:
+        - User
+    timespan: 1h
+    gap: 5m
+    condition:
+        gte: 10
+"#,
+        );
+        assert!(has_rule(&w, LintRule::GapWithoutSession));
+    }
+
+    #[test]
+    fn invalid_gap_format() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+    window: session
+    gap: 5minutes
+"#,
+        );
+        assert!(has_rule(&w, LintRule::InvalidGapFormat));
+    }
+
+    #[test]
+    fn valid_session_window_no_errors() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+    window: session
+    gap: 5m
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::InvalidWindowMode));
+        assert!(!has_rule(&w, LintRule::MissingSessionGap));
+        assert!(!has_rule(&w, LintRule::GapWithoutSession));
+        assert!(!has_rule(&w, LintRule::InvalidGapFormat));
+    }
+
+    #[test]
+    fn rsigma_namespace_session_missing_gap() {
+        // The lint also reasons about the rsigma.* extension spelling.
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+rsigma.window: session
+"#,
+        );
+        assert!(has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn non_string_gap_is_invalid_format_not_missing() {
+        // An unquoted numeric gap is a type error, not a missing gap.
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+    window: session
+    gap: 300
+"#,
+        );
+        assert!(has_rule(&w, LintRule::InvalidGapFormat));
+        assert!(!has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn non_string_window_is_invalid_mode() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: event_count
+    rules:
+        - some-rule
+    group-by:
+        - User
+    timespan: 1h
+    window: 5
+    condition:
+        gte: 10
+"#,
+        );
+        assert!(has_rule(&w, LintRule::InvalidWindowMode));
+    }
+
+    #[test]
+    fn rsigma_namespace_valid_session_no_errors() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+rsigma.window: session
+rsigma.gap: 5m
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::InvalidWindowMode));
+        assert!(!has_rule(&w, LintRule::MissingSessionGap));
+        assert!(!has_rule(&w, LintRule::GapWithoutSession));
+        assert!(!has_rule(&w, LintRule::InvalidGapFormat));
     }
 }
