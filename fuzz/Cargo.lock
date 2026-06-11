@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "globset",
  "log",
@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-runtime"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "arc-swap",
  "async-trait",

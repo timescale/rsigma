@@ -2,7 +2,18 @@
 
 All notable changes to RSigma are documented in this file. Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
-## [Unreleased]
+## [0.15.0] - 2026-06-11
+
+**TL;DR**
+RSigma v0.15.0 is the "new conversion target and Sigma extensions" release:
+* Fibratus conversion backend: convert Sigma rules into Fibratus rule YAML for the first endpoint-sensor target, with a `fibratus_windows` field-mapping pipeline, idiomatic macro recognition, ATT&CK label flattening, and sequence-DSL correlation lowering (#191).
+* Array matching: `[any]`/`[all]`/`[all_or_empty]`/`[none]` object-scope blocks, implicit any-member matching, and positional indexing (`args[0]`, negative indices), evaluated in the engine and lowered to PostgreSQL JSONB (#159).
+* Declarable correlation window modes: `sliding`/`tumbling`/`session` windows plus a session `gap`, end to end across the parser, runtime evaluator, and PostgreSQL conversion, with pySigma-style `correlation_method` selection at convert time (#192).
+* `sigma-version`: an optional top-level spec-major attribute that gates breaking spec changes by the declared version (array matching now activates only at major `3`), plus cross-document reference lints (#188).
+* `rstix`: a new STIX 2.1 + TAXII 2.1 library crate; Phase 1 lands the core foundation (validated typed IDs, timestamps, deterministic SCO IDs, controlled vocabularies) (#185).
+* Gated match-detail enrichment: a new `MatchDetailLevel` (`off`/`summary`/`full`) that explains why each field matched, off by default so the default wire shape is byte-for-byte unchanged (#186).
+* RFC 5424 syslog now strips a leading UTF-8 BOM by default, fixing corrupted `_raw` fields, broken anchored matchers, and BOM-blocked embedded-JSON detection (#187).
+* Daemon shutdown fix: `SIGINT`/`SIGTERM` handlers are now installed before the API listener is announced, closing a startup race that could hard-kill the process instead of draining cleanly.
 
 ### Fixed
 
@@ -95,6 +106,8 @@ Introduces `rstix`, a new workspace library crate for native STIX 2.1 and TAXII 
 - **Closed two long-standing reporting gaps** (visible only at `Summary`/`Full`, so `Off` is untouched): keyword detections, which previously contributed nothing to `matched_fields`, are now reported under the sentinel field `"keyword"`; and `null`-on-absent matches, previously invisible because the field had no value, are now reported with `value: null`.
 - **New `CompiledMatcher::describe()`** (returning `MatchDescriptor`) produces the structural description used to populate these fields. It runs only when a rule matches and only above `Off`, so the non-matching hot path is unchanged.
 - **CLI/runtime plumbing**: `rsigma engine eval --match-detail <off|summary|full>`, `rsigma engine daemon --match-detail <…>` plus the `daemon.engine.match_detail` config key, and `RuntimeEngine::set_match_detail` (carried across hot reloads).
+
+[v0.14.0...v0.15.0](https://github.com/timescale/rsigma/compare/v0.14.0...v0.15.0)
 
 ## [0.14.0] - 2026-06-05
 
@@ -1702,6 +1715,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.15.0]: https://github.com/timescale/rsigma/releases/tag/v0.15.0
 [0.14.0]: https://github.com/timescale/rsigma/releases/tag/v0.14.0
 [0.13.0]: https://github.com/timescale/rsigma/releases/tag/v0.13.0
 [0.12.0]: https://github.com/timescale/rsigma/releases/tag/v0.12.0
