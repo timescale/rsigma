@@ -381,6 +381,7 @@ transformations:
       SourceImage: ps.exe
       SourceProcessId: ps.pid
       TargetProcessId: thread.pid
+      TargetImage: evt.arg[exe]
       StartAddress: thread.start_address
       StartModule: thread.start_address.module
       StartFunction: thread.start_address.symbol
