@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Correlation window-mode benchmarks: throughput and peak-memory stress suite (#TBD)
+### Correlation window-mode benchmarks: throughput and peak-memory stress suite (#199)
 
 Two new benchmark surfaces for the correlation window modes shipped in #192, prompted by the [SEP #214](https://github.com/SigmaHQ/sigma-specification/issues/214) discussion on memory becoming the bottleneck in stateful window correlation (high-cardinality group keys, long-lived sessions).
 
