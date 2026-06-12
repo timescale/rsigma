@@ -363,6 +363,27 @@ macro_rules! define_typed_id {
                 &self.0
             }
         }
+
+        #[cfg(feature = "serde")]
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                self.0.serialize(serializer)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let id = <StixId as serde::Deserialize>::deserialize(deserializer)?;
+                Self::from_stix_id(id).map_err(serde::de::Error::custom)
+            }
+        }
     };
 }
 
@@ -499,14 +520,32 @@ mod tests {
         );
     }
 
-    mod phantom {
-        use super::*;
+    #[test]
+    #[cfg(feature = "serde")]
+    fn stix_id_serde_is_plain_string() {
+        let id =
+            StixId::parse("indicator--550e8400-e29b-41d4-a716-446655440000").expect("valid id");
+        let encoded = serde_json::to_string(&id).expect("serialize");
+        assert_eq!(
+            encoded,
+            "\"indicator--550e8400-e29b-41d4-a716-446655440000\""
+        );
+        let decoded: StixId = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, id);
+        assert!(serde_json::from_str::<StixId>("\"notanid\"").is_err());
+    }
 
-        #[test]
-        fn wrong_type_prefix_is_rejected() {
-            let malware_id =
-                StixId::parse("malware--550e8400-e29b-41d4-a716-446655440000").expect("valid id");
-            assert!(IndicatorId::from_stix_id(malware_id).is_err());
-        }
+    #[test]
+    #[cfg(feature = "serde")]
+    fn typed_id_serde_validates_prefix() {
+        let encoded = "\"indicator--550e8400-e29b-41d4-a716-446655440000\"";
+        let decoded: IndicatorId = serde_json::from_str(encoded).expect("deserialize");
+        assert_eq!(serde_json::to_string(&decoded).expect("serialize"), encoded);
+        assert!(
+            serde_json::from_str::<IndicatorId>(
+                "\"malware--550e8400-e29b-41d4-a716-446655440000\""
+            )
+            .is_err()
+        );
     }
 }

@@ -37,6 +37,27 @@ impl LanguageTag {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for LanguageTag {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LanguageTag {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +72,16 @@ mod tests {
     fn rejects_invalid_tags() {
         assert!(LanguageTag::parse("").is_err());
         assert!(LanguageTag::parse("1n").is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_round_trips_and_validates() {
+        let tag = LanguageTag::parse("en-US").expect("valid");
+        let encoded = serde_json::to_string(&tag).expect("serialize");
+        assert_eq!(encoded, "\"en-US\"");
+        let decoded: LanguageTag = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, tag);
+        assert!(serde_json::from_str::<LanguageTag>("\"1n\"").is_err());
     }
 }

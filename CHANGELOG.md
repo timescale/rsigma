@@ -13,6 +13,14 @@ The correlation engine's memory bounds are now fully operator-configurable. Prev
 - **API.** `CorrelationConfig` gains `max_group_entries: Option<usize>`, `CompiledCorrelation` gains the matching per-rule override, and `WindowState` gains `truncate_oldest(cap, preserve_front)`. The per-rule attribute follows the same resolution order as the other `rsigma.*` correlation attributes: rule override wins over the engine default.
 - **Docs.** New flags documented on the `engine eval` and `engine daemon` CLI pages, the configuration file reference, the custom-attributes reference, the processing-pipelines attribute table, and the Performance Tuning guide's correlation-memory section (which also now states that the global cap bounds group count, not bytes within a group, and is global rather than per-rule).
 
+### `rstix`: Phase 2 slice 1 — model skeleton and common properties
+
+Phase 2 (Data Model + Serialization) begins with slice 1 of ~7. This slice is not releasable on its own.
+
+- **`model` module:** `ModelError` and `model::common` property containers — `SdoSroCommonProps` (required `spec_version`, `created`, `modified`), `ScoCommonProps` (SCO-only fields), `ExternalReference` (non-empty `source_name` enforced on construction and deserialization), `GranularMarking` (`marking_ref` XOR `lang`), and `ExtensionMap` / `ExtensionType`.
+- **Leaf-type serde:** `serde_impls/` for `StixId` and timestamps; typed-ID serde in the `define_typed_id!` macro; inline `LanguageTag` serde.
+- **Tests:** fixture-backed integration tests in `tests/spec.rs` (`tests/fixtures/spec/common/`); core serde unit tests in `src/core/`.
+
 ### Correlation window-mode benchmarks: throughput and peak-memory stress suite (#199)
 
 Two new benchmark surfaces for the correlation window modes shipped in #192, prompted by the [SEP #214](https://github.com/SigmaHQ/sigma-specification/issues/214) discussion on memory becoming the bottleneck in stateful window correlation (high-cardinality group keys, long-lived sessions).

@@ -204,4 +204,25 @@ mod tests {
         assert_eq!(bare, padded);
         assert_eq!(bare.cmp(&padded), Ordering::Equal);
     }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn stix_timestamp_serde_preserves_precision() {
+        let ts = StixTimestamp::parse("2017-05-31T21:32:29.203Z").expect("valid");
+        let encoded = serde_json::to_string(&ts).expect("serialize");
+        assert_eq!(encoded, "\"2017-05-31T21:32:29.203Z\"");
+        let decoded: StixTimestamp = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, ts);
+        assert!(serde_json::from_str::<StixTimestamp>("\"2017-05-31 21:32:29\"").is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn taxii_timestamp_serde_uses_six_digits() {
+        let ts = TaxiiTimestamp::parse("2024-01-01T00:00:00Z").expect("valid");
+        let encoded = serde_json::to_string(&ts).expect("serialize");
+        assert_eq!(encoded, "\"2024-01-01T00:00:00.000000Z\"");
+        let decoded: TaxiiTimestamp = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, ts);
+    }
 }

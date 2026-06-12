@@ -1,0 +1,18 @@
+{
+  "type": "attack-pattern",
+  "id": "attack-pattern--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+  "spec_version": "2.1",
+  "created": "2016-05-12T08:17:27.000Z",
+  "modified": "2017-05-31T21:32:29.203Z",
+  "created_by_ref": "identity--c78cb6e5-0c4b-4611-8297-d1b8b55e40b5",
+  "name": "Spear Phishing",
+  "external_references": [
+    {
+      "source_name": "capec",
+      "external_id": "CAPEC-163"
+    }
+  ],
+  "object_marking_refs": [
+    "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+  ]
+}

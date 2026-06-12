@@ -3,8 +3,13 @@
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
 `rstix` is a Rust library crate for STIX 2.1 and TAXII 2.1 in the rsigma workspace.
-Phase 1 (Core Foundation) is now implemented: core primitive types, deterministic SCO ID helpers,
+Phase 1 (Core Foundation) is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
+
+Phase 2 (Data Model + Serialization) is **in progress**. Slice 1 lands the model skeleton,
+leaf-type serde, and shared common property structures (`model::common`). This slice is
+not releasable on its own; typed object enums, bundle parsing, and validation follow in
+later slices.
 
 This library is part of [rsigma].
 
@@ -22,6 +27,7 @@ This library is part of [rsigma].
 ### Error types
 
 - `ParseError`: top-level parse error enum. The current phase includes only `NotImplemented`.
+- `model::ModelError`: model-level invariant violations (for example non-empty `source_name`, granular-marking exclusivity).
 - `core::StixIdError`: errors for STIX ID parsing and typed-ID conversion.
 - `core::TimestampError`: errors for STIX/TAXII timestamp parsing.
 - `core::ConfidenceError`: confidence range and scale-label errors.
@@ -31,8 +37,10 @@ This library is part of [rsigma].
 ### Module surface
 
 - `core` (always): `StixId`, typed IDs (42 wrappers), `StixObjectKind` + SDO/SCO/SRO/Meta discriminants, `StixTimestamp`, `TaxiiTimestamp`, `Confidence` and built-in scales, `SpecVersion`, `LanguageTag`, `QueryableStixObject`, `QueryValue`.
+- `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, and related types.
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
+- `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId` and timestamps; typed-ID serde is generated in the `define_typed_id!` macro.
 
 ## Feature flags
 
@@ -40,32 +48,34 @@ This library is part of [rsigma].
 
 ## Current Phase Status
 
-- **Phase:** 1 (Core Foundation) complete
-- **Implemented in this phase:** core primitives (`core`), deterministic SCO ID helpers (`id`), and vocabulary tables (`vocab`) with tests and strict lint/build validation.
-- **Deferred to later phases:** STIX object model, serialization dispatch, pattern engine, validation pipeline, graph/marking/store/taxii runtime behaviors.
+- **Phase:** 2 in progress (slice 1 of ~7)
+- **Implemented in slice 1:** `model` skeleton, leaf-type serde (`StixId`, timestamps, typed IDs, `LanguageTag`), and `model::common` property containers with fixture-backed integration tests.
+- **Deferred to later slices:** typed SDO/SCO/SRO/Meta objects, `StixObject` dispatch, `Bundle` parsing, validation pipeline, graph/marking/store/TAXII runtime behaviors.
 
 ## Usage
 
 ```rust
-use rstix::core::{IndicatorId, StixId};
-use rstix::id::generate_sco_id;
+use rstix::core::{IndicatorId, StixId, StixTimestamp};
+use rstix::model::common::SdoSroCommonProps;
 use rstix::{parse_bundle, ParseError};
 
 let result = parse_bundle(r#"{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000000"}"#);
 assert!(matches!(result, Err(ParseError::NotImplemented)));
 
-let id = StixId::parse("indicator--550e8400-e29b-41d4-a716-446655440000").unwrap();
+let id = StixId::generate("indicator");
 let typed = IndicatorId::from_stix_id(id).unwrap();
 assert_eq!(typed.as_stix_id().type_name(), "indicator");
 
-let file = serde_json::json!({"hashes":{"SHA-256":"abc"}});
-let sco_id = generate_sco_id(rstix::core::ScoKind::File, &file).unwrap();
-assert!(sco_id.as_str().starts_with("file--"));
+let ts = StixTimestamp::parse("2016-05-12T08:17:27.000Z").unwrap();
+let common = SdoSroCommonProps::new(StixId::generate("campaign"), ts.clone(), ts);
+let json = serde_json::to_string(&common).unwrap();
+assert!(json.contains("\"spec_version\":\"2.1\""));
 ```
 
 ## Development Notes
 
 - `rstix` follows rsigma workspace standards for MSRV, edition, lint policy, and CI checks.
+- STIX wire-format tests: `tests/spec.rs` with JSON fixtures under `tests/fixtures/spec/`. Core parse/serde unit tests stay in `src/`.
 - Release notes belong to the repository root `CHANGELOG.md` only.
 - Public API and behavior updates must be synchronized with workspace docs under `docs/`.
 

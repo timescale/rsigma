@@ -12,6 +12,12 @@ pub mod id;
 /// STIX vocabulary tables.
 pub mod vocab;
 
+/// STIX 2.1 data model: typed objects and common properties.
+pub mod model;
+
+#[cfg(feature = "serde")]
+mod serde_impls;
+
 /// Top-level parse error.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
