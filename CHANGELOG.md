@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Configurable correlation state caps: `--max-state-entries` and a new per-group entry cap (#200)
+
+The correlation engine's memory bounds are now fully operator-configurable. Previously the global `(correlation, group-key)` entry cap (`max_state_entries`, default 100,000) was a library-only setting with no CLI surface, and nothing bounded the growth of a single group's window state, which grows with `timespan` x event rate on chatty groups.
+
+- **`--max-state-entries <N>`** on `engine eval` and `engine daemon` (config key `daemon.correlation.max_state_entries`) exposes the existing global hard cap. When reached, the stalest entries are evicted down to 90% capacity and a warning is logged, as before. A drift-guard test pins the CLI default to the engine's `CorrelationConfig` default across the two crates.
+- **`--max-group-entries <N>`** (config key `daemon.correlation.max_group_entries`, per-rule `rsigma.max_group_entries` custom attribute) is a new, opt-in cap on retained entries within a single group's window state: timestamps for `event_count`, `(timestamp, value)` pairs for `value_count` and the numeric aggregations, and per-referenced-rule hits for the temporal types. On overflow the oldest entries are dropped, which can only under-count (aggregates saturate; a correlation that needed the evicted entries may not fire). Session windows always keep their oldest entry as the span anchor, so truncation cannot silently extend the `timespan` cap. Unset means unbounded, the historical behavior, so existing deployments are unaffected.
+- **API.** `CorrelationConfig` gains `max_group_entries: Option<usize>`, `CompiledCorrelation` gains the matching per-rule override, and `WindowState` gains `truncate_oldest(cap, preserve_front)`. The per-rule attribute follows the same resolution order as the other `rsigma.*` correlation attributes: rule override wins over the engine default.
+- **Docs.** New flags documented on the `engine eval` and `engine daemon` CLI pages, the configuration file reference, the custom-attributes reference, the processing-pipelines attribute table, and the Performance Tuning guide's correlation-memory section (which also now states that the global cap bounds group count, not bytes within a group, and is global rather than per-rule).
+
 ### Correlation window-mode benchmarks: throughput and peak-memory stress suite (#199)
 
 Two new benchmark surfaces for the correlation window modes shipped in #192, prompted by the [SEP #214](https://github.com/SigmaHQ/sigma-specification/issues/214) discussion on memory becoming the bottleneck in stateful window correlation (high-cardinality group keys, long-lived sessions).

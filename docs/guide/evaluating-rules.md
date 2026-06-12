@@ -105,6 +105,8 @@ rsigma engine eval -r rules/ --correlation-event-mode full --max-correlation-eve
 | `--no-detections` | Drop detection-level output, only emit correlation results. |
 | `--correlation-event-mode <none,full,refs>` | Whether to include contributing events in correlation output: `none` (zero overhead), `full` (deflate-compressed bodies), `refs` (timestamp + ID only). |
 | `--max-correlation-events N` | Cap the number of events stored per correlation window. Default 10. |
+| `--max-state-entries N` | Hard cap on correlation state entries across all correlations and group keys. Default 100,000. |
+| `--max-group-entries N` | Cap on retained entries within a single group's window state. Unset = unbounded. |
 | `--timestamp-field FIELD` | Add a field name to the front of the timestamp extraction list (default `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`). |
 
 For continuous correlation that survives restarts, switch to [streaming detection](streaming-detection.md) where state is persisted to SQLite.
