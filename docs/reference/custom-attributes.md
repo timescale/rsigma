@@ -17,6 +17,7 @@ CLI flags and library API calls always take precedence over `custom_attributes` 
 | `rsigma.include_event` | Embed the full event JSON in detection output for this rule. `"true"` or `"false"`. | `--include-event` | Per-rule |
 | `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). | `--correlation-event-mode` | Per-correlation |
 | `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. | `--max-correlation-events` | Per-correlation |
+| `rsigma.max_group_entries` | Cap on retained entries within a single group's window state for this rule (timestamps, value pairs, or per-rule hits). Oldest entries are dropped; session windows keep their span anchor. Integer, quoted. | `--max-group-entries` | Per-correlation |
 
 ### Example: keep full events for a brute-force rule, default for everything else
 

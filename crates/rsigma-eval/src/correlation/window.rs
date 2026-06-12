@@ -118,6 +118,54 @@ impl WindowState {
         }
     }
 
+    /// Enforce a per-group entry cap by dropping the oldest entries.
+    ///
+    /// `cap` is the maximum number of retained entries (clamped to at least
+    /// 1). For temporal state the cap applies to each referenced rule's hit
+    /// deque independently, since the deques are what grow with event rate.
+    ///
+    /// When `preserve_front` is set (session windows), the oldest entry is
+    /// kept and truncation happens behind it: the front entry anchors the
+    /// session's total-span cap (`timespan`), so dropping it would silently
+    /// let the session extend past the cap. Truncation can only under-count;
+    /// it never extends a window.
+    pub fn truncate_oldest(&mut self, cap: usize, preserve_front: bool) {
+        let cap = cap.max(1);
+
+        fn truncate_deque<T>(deque: &mut VecDeque<T>, cap: usize, preserve_front: bool) {
+            if deque.len() <= cap {
+                return;
+            }
+            if preserve_front {
+                let anchor = deque.pop_front().expect("len > cap >= 1");
+                // Keep the anchor plus the newest cap - 1 entries.
+                let excess = deque.len() - (cap - 1);
+                deque.drain(..excess);
+                deque.push_front(anchor);
+            } else {
+                let excess = deque.len() - cap;
+                deque.drain(..excess);
+            }
+        }
+
+        match self {
+            WindowState::EventCount { timestamps } => {
+                truncate_deque(timestamps, cap, preserve_front);
+            }
+            WindowState::ValueCount { entries } => {
+                truncate_deque(entries, cap, preserve_front);
+            }
+            WindowState::Temporal { rule_hits } => {
+                for timestamps in rule_hits.values_mut() {
+                    truncate_deque(timestamps, cap, preserve_front);
+                }
+            }
+            WindowState::NumericAgg { entries } => {
+                truncate_deque(entries, cap, preserve_front);
+            }
+        }
+    }
+
     /// Clear all entries from the window state (used by `CorrelationAction::Reset`).
     pub fn clear(&mut self) {
         match self {

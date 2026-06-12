@@ -57,6 +57,8 @@ daemon:
     action: alert
     event_mode: none
     max_events: 10
+    max_state_entries: 100000   # hard cap across all correlations and groups
+    # max_group_entries: 10000  # per-group window-state cap; unset = unbounded
   state:
     save_interval: 30
   engine:

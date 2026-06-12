@@ -102,6 +102,20 @@ pub(crate) struct EvalArgs {
     #[arg(long = "max-correlation-events", default_value = "10")]
     pub max_correlation_events: usize,
 
+    /// Hard cap on correlation state entries across all correlations and
+    /// group keys. When reached, the stalest entries are evicted down to
+    /// 90% capacity and a warning is logged.
+    #[arg(long = "max-state-entries", default_value_t = crate::config::defaults::MAX_STATE_ENTRIES, value_parser = clap::value_parser!(usize))]
+    pub max_state_entries: usize,
+
+    /// Cap on retained entries within a single correlation group's window
+    /// state (timestamps, value pairs, or per-rule hits). Bounds the
+    /// within-window growth of chatty groups; oldest entries are dropped
+    /// (session windows keep their span anchor). Unset = unbounded.
+    /// Equivalent to the `rsigma.max_group_entries` custom attribute.
+    #[arg(long = "max-group-entries")]
+    pub max_group_entries: Option<usize>,
+
     /// Event field name(s) to use for timestamp extraction in correlations.
     /// Can be specified multiple times; tried in order before built-in
     /// defaults (@timestamp, timestamp, EventTime, …).
@@ -306,6 +320,8 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         match_detail,
         correlation_event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fields,
         input_format,
         syslog_tz,
@@ -353,6 +369,8 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         no_detections,
         correlation_event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fields,
         "wallclock",
     );

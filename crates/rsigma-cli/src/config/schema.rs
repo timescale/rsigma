@@ -263,6 +263,14 @@ pub(crate) struct CorrelationPartial {
     pub event_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_events: Option<usize>,
+    /// Hard cap on `(correlation, group-key)` state entries before
+    /// stalest-first eviction (default 100,000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_state_entries: Option<usize>,
+    /// Cap on retained entries within a single group's window state.
+    /// Unset means unbounded (the historical behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_group_entries: Option<usize>,
     /// Extra event field names for timestamp extraction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp_fields: Option<Vec<String>>,
@@ -281,6 +289,8 @@ impl Merge for CorrelationPartial {
             action: over.action.or(self.action),
             event_mode: over.event_mode.or(self.event_mode),
             max_events: over.max_events.or(self.max_events),
+            max_state_entries: over.max_state_entries.or(self.max_state_entries),
+            max_group_entries: over.max_group_entries.or(self.max_group_entries),
             timestamp_fields: over.timestamp_fields.or(self.timestamp_fields),
             timestamp_fallback: over.timestamp_fallback.or(self.timestamp_fallback),
             no_detections: over.no_detections.or(self.no_detections),

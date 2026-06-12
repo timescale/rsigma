@@ -536,6 +536,147 @@ fn test_evict_expired_drops_stale_session_group() {
 }
 
 // =========================================================================
+// Per-group entry cap (max_group_entries)
+// =========================================================================
+
+fn windowed_engine_with_group_cap(window_lines: &str, cap: usize) -> CorrelationEngine {
+    let collection = parse_sigma_yaml(&window_mode_yaml(window_lines)).unwrap();
+    let config = CorrelationConfig {
+        max_group_entries: Some(cap),
+        ..Default::default()
+    };
+    let mut engine = CorrelationEngine::new(config);
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+#[test]
+fn test_max_group_entries_caps_event_count() {
+    // Cap of 2 retained entries: the gte-3 threshold can never be met,
+    // no matter how many events land in the window.
+    let mut engine = windowed_engine_with_group_cap("    timespan: 100s", 2);
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    let mut fired = 0;
+    for ts in 0..10 {
+        fired += engine.process_event_at(&event, ts).correlation_count();
+    }
+    assert_eq!(fired, 0);
+
+    // Control: the same stream without a cap fires.
+    let mut engine = windowed_engine("    timespan: 100s");
+    let mut fired = 0;
+    for ts in 0..10 {
+        fired += engine.process_event_at(&event, ts).correlation_count();
+    }
+    assert!(fired > 0);
+}
+
+#[test]
+fn test_max_group_entries_session_keeps_span_anchor() {
+    // Cap of 2 on a session window (gap 10s, span cap 20s). Truncation must
+    // keep the session's oldest entry: if the anchor were dropped, the span
+    // would be measured from a later event and the t=24 arrival would extend
+    // the session (24-9=15s <= 20s) instead of resetting it (24-0=24s > 20s),
+    // letting the count reach the gte-3 threshold.
+    let mut engine =
+        windowed_engine_with_group_cap("    window: session\n    gap: 10s\n    timespan: 20s", 2);
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    let mut fired = 0;
+    for ts in [0, 5, 9, 16, 24] {
+        fired += engine.process_event_at(&event, ts).correlation_count();
+    }
+    assert_eq!(fired, 0);
+}
+
+#[test]
+fn test_rsigma_max_group_entries_attribute_overrides_engine_default() {
+    // The per-correlation `rsigma.max_group_entries` custom attribute wins
+    // over the engine-level default (here: unbounded engine, capped rule).
+    let yaml = r#"
+title: Base
+id: base-cap
+logsource:
+    category: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: Capped Clicks
+id: corr-cap
+rsigma.max_group_entries: '2'
+correlation:
+    type: event_count
+    rules:
+        - base-cap
+    group-by:
+        - User
+    timespan: 100s
+    condition:
+        gte: 3
+level: medium
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let v = json!({"action": "click", "User": "admin"});
+    let event = JsonEvent::borrow(&v);
+    let mut fired = 0;
+    for ts in 0..10 {
+        fired += engine.process_event_at(&event, ts).correlation_count();
+    }
+    assert_eq!(fired, 0);
+}
+
+#[test]
+fn test_max_group_entries_value_count_saturates_distinct() {
+    // value_count with a cap of 2: at most 2 distinct values retained, so a
+    // gte-3 distinct threshold cannot fire.
+    let yaml = r#"
+title: Login
+id: base-vc-cap
+logsource:
+    category: test
+detection:
+    selection:
+        action: login
+    condition: selection
+---
+title: Many Users
+id: corr-vc-cap
+correlation:
+    type: value_count
+    rules:
+        - base-vc-cap
+    group-by:
+        - Host
+    timespan: 100s
+    condition:
+        field: User
+        gte: 3
+level: medium
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let config = CorrelationConfig {
+        max_group_entries: Some(2),
+        ..Default::default()
+    };
+    let mut engine = CorrelationEngine::new(config);
+    engine.add_collection(&collection).unwrap();
+
+    let mut fired = 0;
+    for (ts, user) in [(1, "a"), (2, "b"), (3, "c"), (4, "d"), (5, "e")] {
+        let v = json!({"action": "login", "Host": "srv01", "User": user});
+        let event = JsonEvent::borrow(&v);
+        fired += engine.process_event_at(&event, ts).correlation_count();
+    }
+    assert_eq!(fired, 0);
+}
+
+// =========================================================================
 // Value count correlation
 // =========================================================================
 

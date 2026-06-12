@@ -76,6 +76,18 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "max-correlation-events", default_value_t = config::defaults::MAX_CORRELATION_EVENTS)]
     pub max_correlation_events: usize,
 
+    /// Hard cap on correlation state entries across all correlations and
+    /// group keys. When reached, the stalest entries are evicted down to
+    /// 90% capacity and a warning is logged.
+    #[arg(long = "max-state-entries", default_value_t = config::defaults::MAX_STATE_ENTRIES)]
+    pub max_state_entries: usize,
+
+    /// Cap on retained entries within a single correlation group's window
+    /// state. Bounds within-window growth of chatty groups; oldest entries
+    /// are dropped (session windows keep their span anchor). Unset = unbounded.
+    #[arg(long = "max-group-entries")]
+    pub max_group_entries: Option<usize>,
+
     /// Event field name(s) for timestamp extraction in correlations
     #[arg(long = "timestamp-field")]
     pub timestamp_fields: Vec<String>,
@@ -450,6 +462,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         no_detections,
         correlation_event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fields,
         state_db,
         state_save_interval,
@@ -578,6 +592,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         no_detections,
         correlation_event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fields,
         timestamp_fallback,
         state_db,
@@ -785,6 +801,16 @@ fn apply_daemon_config(
         {
             args.max_correlation_events = v;
         }
+        if !explicit("max_state_entries")
+            && let Some(v) = correlation.max_state_entries
+        {
+            args.max_state_entries = v;
+        }
+        if !explicit("max_group_entries")
+            && let Some(v) = correlation.max_group_entries
+        {
+            args.max_group_entries = Some(v);
+        }
         if !explicit("timestamp_fields")
             && let Some(v) = correlation.timestamp_fields
         {
@@ -893,6 +919,8 @@ fn run_daemon(
     no_detections: bool,
     correlation_event_mode: String,
     max_correlation_events: usize,
+    max_state_entries: usize,
+    max_group_entries: Option<usize>,
     timestamp_fields: Vec<String>,
     timestamp_fallback: String,
     state_db: Option<PathBuf>,
@@ -962,6 +990,8 @@ fn run_daemon(
         no_detections,
         correlation_event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fields,
         &timestamp_fallback,
     );

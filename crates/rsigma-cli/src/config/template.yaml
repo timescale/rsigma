@@ -80,6 +80,12 @@ daemon:
     event_mode: none
     # Max events stored per correlation window group.
     max_events: 10
+    # Hard cap on correlation state entries across all correlations and
+    # group keys; stalest entries are evicted at the cap.
+    max_state_entries: 100000
+    # Cap on retained entries within a single group's window state.
+    # Unset = unbounded.
+    # max_group_entries: 10000
     # Extra event field names for timestamp extraction.
     # timestamp_fields: ["@timestamp"]
     # Behavior when no timestamp field is found: wallclock | skip

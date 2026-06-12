@@ -67,6 +67,8 @@ The global `--output-format` / `--color` / `--quiet` / `--no-stats` flags apply 
 | `--action <ACTION>` | `alert` | Post-fire action for correlations: `alert` (keep state, re-alert on next match) or `reset` (clear window state). |
 | `--correlation-event-mode <MODE>` | `none` | Whether to embed contributing events in correlation output: `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). |
 | `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window when `--correlation-event-mode` is not `none`. Oldest evicted. |
+| `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
+| `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded. Equivalent to the `rsigma.max_group_entries` custom attribute. |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction priority list. Default list: `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`. Repeatable. |
 
 ### Performance (advanced)

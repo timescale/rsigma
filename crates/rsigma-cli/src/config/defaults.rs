@@ -23,6 +23,10 @@ pub(crate) const DRAIN_TIMEOUT: u64 = 5;
 pub(crate) const CORRELATION_ACTION: &str = "alert";
 pub(crate) const CORRELATION_EVENT_MODE: &str = "none";
 pub(crate) const MAX_CORRELATION_EVENTS: usize = 10;
+/// Default hard cap on `(correlation, group-key)` state entries. Must match
+/// `CorrelationConfig::default().max_state_entries` in rsigma-eval; a
+/// drift-guard test pins the two together.
+pub(crate) const MAX_STATE_ENTRIES: usize = 100_000;
 pub(crate) const TIMESTAMP_FALLBACK: &str = "wallclock";
 pub(crate) const STATE_SAVE_INTERVAL: u64 = 30;
 pub(crate) const OBSERVE_FIELDS_MAX_KEYS: usize = 10_000;
@@ -84,6 +88,8 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 action: Some(CORRELATION_ACTION.to_string()),
                 event_mode: Some(CORRELATION_EVENT_MODE.to_string()),
                 max_events: Some(MAX_CORRELATION_EVENTS),
+                max_state_entries: Some(MAX_STATE_ENTRIES),
+                max_group_entries: None,
                 timestamp_fields: None,
                 timestamp_fallback: Some(TIMESTAMP_FALLBACK.to_string()),
                 no_detections: Some(false),

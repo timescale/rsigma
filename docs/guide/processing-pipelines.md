@@ -181,6 +181,7 @@ Transformations can write per-rule attributes that the engine and backends read.
 | `rsigma.include_event` | detection engine | Embed the full event JSON in detection output for this rule. |
 | `rsigma.correlation_event_mode` | correlation engine | `none`, `full`, `refs` for one rule. |
 | `rsigma.max_correlation_events` | correlation engine | Per-window event cap for one rule. |
+| `rsigma.max_group_entries` | correlation engine | Per-group window-state entry cap for one rule. |
 | `postgres.table` | PostgreSQL backend | Override the target table for one rule. |
 | `postgres.schema` | PostgreSQL backend | Override the schema. |
 | `postgres.database` | PostgreSQL backend | Override the database. |

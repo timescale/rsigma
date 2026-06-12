@@ -181,6 +181,7 @@ Stateful processing with sliding time windows, group-by aggregation, and all 8 c
 | `timestamp_fields` | `Vec<String>` | `["@timestamp", "timestamp", "EventTime", "TimeCreated", "eventTime"]` | Field names to try for timestamp extraction, in priority order |
 | `timestamp_fallback` | `TimestampFallback` | `WallClock` | `WallClock` (use `Utc::now()`) or `Skip` (skip event from correlation) |
 | `max_state_entries` | `usize` | `100,000` | Hard cap across all correlations and group keys |
+| `max_group_entries` | `Option<usize>` | `None` | Cap on retained entries within a single group's window state; `None` = unbounded. Oldest entries dropped on overflow (session windows keep their span anchor) |
 | `suppress` | `Option<u64>` | `None` | Default suppression window in seconds |
 | `action_on_match` | `CorrelationAction` | `Alert` | `Alert` (keep state) or `Reset` (clear window state) |
 | `emit_detections` | `bool` | `true` | Whether to emit detection-level matches for correlation-only rules |
@@ -431,6 +432,7 @@ Pipeline transformations can configure engine behavior via `SetCustomAttribute`,
 | `rsigma.include_event` | Embeds the full event JSON in detection output | `--include-event` | Per-rule |
 | `rsigma.correlation_event_mode` | Sets event inclusion mode (`full` or `refs`) | `--correlation-event-mode` | Per-correlation |
 | `rsigma.max_correlation_events` | Caps stored events per correlation window (integer) | `--max-correlation-events` | Per-correlation |
+| `rsigma.max_group_entries` | Caps retained entries within a single group's window state (integer, quoted) | `--max-group-entries` | Per-correlation |
 
 CLI flags and the library API always take precedence over pipeline attributes. Engine-level attributes (`timestamp_field`, `suppress`, `action`) are only applied when the CLI did not already set the corresponding flag. Per-correlation attributes override engine defaults for individual correlation rules.
 

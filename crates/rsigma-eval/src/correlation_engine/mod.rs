@@ -635,6 +635,13 @@ impl CorrelationEngine {
             .unwrap_or(self.config.max_correlation_events)
     }
 
+    /// Resolve the per-group window-state entry cap for a given correlation.
+    /// `None` means unbounded.
+    fn resolve_max_group_entries(&self, corr_idx: usize) -> Option<usize> {
+        let corr = &self.correlations[corr_idx];
+        corr.max_group_entries.or(self.config.max_group_entries)
+    }
+
     /// Update a single correlation's state and check its condition.
     fn update_correlation(
         &mut self,
@@ -658,6 +665,7 @@ impl CorrelationEngine {
         let action = corr.action.unwrap_or(self.config.action_on_match);
         let event_mode = self.resolve_event_mode(corr_idx);
         let max_events = self.resolve_max_events(corr_idx);
+        let max_group_entries = self.resolve_max_group_entries(corr_idx);
 
         // Determine the rule_ref strings for alias resolution and temporal tracking.
         let mut ref_strs: Vec<&str> = Vec::new();
@@ -718,6 +726,13 @@ impl CorrelationEngine {
                     state.push_numeric(ts, n);
                 }
             }
+        }
+
+        // Enforce the per-group entry cap. Session windows keep their oldest
+        // entry as the span anchor so truncation cannot silently extend the
+        // `timespan` cap.
+        if let Some(cap) = max_group_entries {
+            state.truncate_oldest(cap, window_mode == WindowMode::Session);
         }
 
         // Push event into buffer based on event mode. Keep the buffer's retained
@@ -908,6 +923,12 @@ impl CorrelationEngine {
                     _ => {
                         state.push_event_count(ts);
                     }
+                }
+
+                // Same per-group cap as the direct path; session windows
+                // keep the span anchor.
+                if let Some(cap) = corr.max_group_entries.or(self.config.max_group_entries) {
+                    state.truncate_oldest(cap, window_mode == WindowMode::Session);
                 }
 
                 let fired = state.check_condition(

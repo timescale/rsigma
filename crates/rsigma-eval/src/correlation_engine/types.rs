@@ -117,6 +117,23 @@ pub struct CorrelationConfig {
     /// Default: 100_000.
     pub max_state_entries: usize,
 
+    /// Maximum number of retained entries within a single group's window
+    /// state (timestamps for `event_count`, `(timestamp, value)` pairs for
+    /// `value_count` and the numeric aggregations, per-rule hits for
+    /// temporal types). Bounds the within-window growth that
+    /// `max_state_entries` does not: a group's deque otherwise grows with
+    /// `timespan` x event rate.
+    ///
+    /// When the cap is exceeded the oldest entries are dropped, which can
+    /// only under-count (aggregates saturate; correlations that would have
+    /// fired on evicted entries may not). Session windows always keep their
+    /// oldest entry as the span anchor so truncation cannot silently extend
+    /// the `timespan` cap.
+    ///
+    /// `None` (default) means unbounded, preserving existing behavior.
+    /// Can be overridden per-correlation via `rsigma.max_group_entries`.
+    pub max_group_entries: Option<usize>,
+
     /// Default suppression window in seconds.
     ///
     /// After a correlation fires for a `(correlation, group_key)`, suppress
@@ -167,6 +184,7 @@ impl Default for CorrelationConfig {
             ],
             timestamp_fallback: TimestampFallback::default(),
             max_state_entries: 100_000,
+            max_group_entries: None,
             suppress: None,
             action_on_match: CorrelationAction::default(),
             emit_detections: true,

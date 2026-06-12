@@ -132,16 +132,16 @@ The trade-off: a higher `--batch-size` increases tail latency (an event waits up
 
 ## Memory pressure and correlation state
 
-Correlation state lives in memory unless `--state-db` writes periodic snapshots to SQLite. The hard cap is `max_state_entries`, default 100,000 `(correlation, group-key)` entries across all correlation rules. When the cap is hit, the engine evicts the stalest 10% and emits a warning.
+Correlation state lives in memory unless `--state-db` writes periodic snapshots to SQLite. The hard cap is `max_state_entries`, default 100,000 `(correlation, group-key)` entries across all correlation rules, settable with `--max-state-entries` (or `daemon.correlation.max_state_entries` in the config file). When the cap is hit, the engine evicts the stalest 10% and emits a warning.
 
-The cap bounds the number of groups, not bytes. Within a live group, the window state grows with `timespan` x event rate: 8 bytes per in-window event for `event_count`, 16 for the numeric aggregations (`value_sum`/`value_avg`/`value_percentile`/`value_median`), and roughly 32 bytes plus the value string for `value_count`. The measured shape (see [Benchmarks](../benchmarks.md#window-mode-memory-stress-0150)): 1M unique session keys against the default cap peaked at 39.8 MiB, and a fully chatty `event_count` workload (100 groups sustaining 1 event/s through a 2h session cap) held 6.3 MiB. A live but quiet session group costs ~256 bytes, dominated by the group-key strings.
+The cap bounds the number of groups, not the bytes within one. A single group's window state grows with `timespan` x event rate: 8 bytes per in-window event for `event_count`, 16 for the numeric aggregations (`value_sum`/`value_avg`/`value_percentile`/`value_median`), and roughly 32 bytes plus the value string for `value_count`. `--max-group-entries` (or the per-rule `rsigma.max_group_entries` custom attribute) caps that within-window growth; when a group exceeds it, the oldest entries are dropped, which can only under-count. Session windows always keep their oldest entry as the span anchor so truncation cannot silently extend the `timespan` cap. Unset means unbounded, the historical behavior. The measured shape (see [Benchmarks](../benchmarks.md#window-mode-memory-stress-0150)): 1M unique session keys against the default cap peaked at 39.8 MiB, and a fully chatty `event_count` workload (100 groups sustaining 1 event/s through a 2h session cap) held 6.3 MiB. A live but quiet session group costs ~256 bytes, dominated by the group-key strings.
 
 Window modes (`sliding`/`tumbling`/`session`) have identical per-event cost; they differ only in how long entries are retained. `tumbling` resets per-group state at each bucket boundary and is the cheapest under sustained load; `session` retains everything between the first event and the `timespan` cap, so it is the mode to watch on chatty groups.
 
 Two workload shapes deserve attention:
 
-- **`value_count` with high-cardinality values.** Every `(timestamp, value)` pair is retained for the window, and the distinct count is recomputed per event over the whole window — O(window size) per event. At 1,800 distinct values per window, measured throughput drops from ~1.1M to 63K events/s. CPU collapses before memory does. Prefer `event_count` where distinctness is not actually required, or shorten the window.
-- **Group-key cardinality floods.** Under cap pressure the stalest groups are evicted first, so a burst of unique keys can push a slow-burning session out of state before it completes. The eviction warning in the log is the tripwire; raise `max_state_entries` if the warning fires during legitimate traffic.
+- **`value_count` with high-cardinality values.** Every `(timestamp, value)` pair is retained for the window, and the distinct count is recomputed per event over the whole window — O(window size) per event. At 1,800 distinct values per window, measured throughput drops from ~1.1M to 63K events/s. CPU collapses before memory does. Prefer `event_count` where distinctness is not actually required, shorten the window, or set `--max-group-entries` to bound the retained pairs.
+- **Group-key cardinality floods.** Under cap pressure the stalest groups are evicted first, so a burst of unique keys can push a slow-burning session out of state before it completes. The eviction warning in the log is the tripwire; raise `--max-state-entries` if the warning fires during legitimate traffic.
 
 Watch:
 
@@ -151,6 +151,8 @@ Watch:
 Tune by:
 
 - Lowering the per-correlation window (`timespan: 5m` instead of `1h`) so older state expires faster.
+- Setting `--max-group-entries` (or `rsigma.max_group_entries` per-rule) to cap within-window growth on chatty groups, e.g. `value_count` rules over high-rate telemetry.
+- Lowering `--max-state-entries` on memory-constrained deployments, or raising it when the eviction warning fires during legitimate high-cardinality traffic.
 - Setting `--max-correlation-events 5` (or via `rsigma.max_correlation_events` per-rule) to cap the per-window event list.
 - Setting `--correlation-event-mode refs` to store lightweight references instead of full event bodies. `refs` mode keeps timestamps and event IDs only; `full` retains the deflate-compressed event JSON. `none` (the default) keeps no events.
 
@@ -188,7 +190,7 @@ Replace the synthetic Criterion inputs with rules and events that mirror your ow
 | Eval latency too high at 5k+ pure-substring rules | `--cross-rule-ac` (needs the `daachorse-index` build). |
 | Eval latency too high on substring-heavy rules with mostly-non-matching events | `--bloom-prefilter`. |
 | Daemon queue depth (`rsigma_input_queue_depth`) climbing under load | Raise `--batch-size` to 64 or 128, then `--buffer-size` to absorb bursts. |
-| `rsigma_correlation_state_entries` near 100k and growing | Shorter `timespan`, lower `max_correlation_events`, or `--correlation-event-mode refs`. |
+| `rsigma_correlation_state_entries` near 100k and growing | Shorter `timespan`, `--max-group-entries`, lower `max_correlation_events`, or `--correlation-event-mode refs`. Raise `--max-state-entries` if the traffic is legitimately high-cardinality. |
 | `rsigma_back_pressure_events_total` increasing rapidly | Upstream input is faster than the engine. Raise `--batch-size`, scale horizontally with NATS consumer groups (see [NATS Streaming](nats-streaming.md#consumer-groups)), or shed load upstream. |
 | Tail latency too high after raising `--batch-size` | Lower the batch size; the trade-off has reached the wrong side of the curve. |
 

@@ -632,12 +632,15 @@ pub(crate) fn build_event_filter(jq: Option<String>, jsonpath: Option<String>) -
 }
 
 /// Build a `CorrelationConfig` from CLI arguments. Exits on parse errors.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_correlation_config(
     suppress: Option<String>,
     action: Option<String>,
     no_detections: bool,
     correlation_event_mode: String,
     max_correlation_events: usize,
+    max_state_entries: usize,
+    max_group_entries: Option<usize>,
     extra_timestamp_fields: Vec<String>,
     timestamp_fallback: &str,
 ) -> CorrelationConfig {
@@ -676,6 +679,8 @@ pub(crate) fn build_correlation_config(
         emit_detections: !no_detections,
         correlation_event_mode: event_mode,
         max_correlation_events,
+        max_state_entries,
+        max_group_entries,
         timestamp_fallback: ts_fallback,
         ..Default::default()
     };
@@ -805,12 +810,26 @@ mod config_default_drift {
             Some(defaults::MAX_CORRELATION_EVENTS.to_string())
         );
         assert_eq!(
+            daemon_default("max_state_entries"),
+            Some(defaults::MAX_STATE_ENTRIES.to_string())
+        );
+        assert_eq!(
             daemon_default("state_save_interval"),
             Some(defaults::STATE_SAVE_INTERVAL.to_string())
         );
         assert_eq!(
             daemon_default("observe_fields_max_keys"),
             Some(defaults::OBSERVE_FIELDS_MAX_KEYS.to_string())
+        );
+    }
+
+    /// The CLI default must match the engine's own `CorrelationConfig`
+    /// default; the two are defined in different crates.
+    #[test]
+    fn max_state_entries_matches_engine_default() {
+        assert_eq!(
+            defaults::MAX_STATE_ENTRIES,
+            CorrelationConfig::default().max_state_entries
         );
     }
 }

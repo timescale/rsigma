@@ -90,6 +90,12 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<usize>().ok());
 
+    let max_group_entries = rule
+        .custom_attributes
+        .get("rsigma.max_group_entries")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<usize>().ok());
+
     let custom_attributes = Arc::new(crate::compiler::yaml_to_json_map(&rule.custom_attributes));
 
     Ok(CompiledCorrelation {
@@ -111,6 +117,7 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         action,
         event_mode,
         max_events,
+        max_group_entries,
         custom_attributes,
     })
 }

@@ -48,6 +48,10 @@ pub struct CompiledCorrelation {
     /// Maximum events to store per window group for event inclusion.
     /// `None` means use the engine default (`CorrelationConfig.max_correlation_events`).
     pub max_events: Option<usize>,
+    /// Maximum retained entries within a single group's window state,
+    /// resolved from the `rsigma.max_group_entries` custom attribute.
+    /// `None` means use the engine default (`CorrelationConfig.max_group_entries`).
+    pub max_group_entries: Option<usize>,
     /// Custom attributes from the original Sigma correlation rule (merged).
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
     pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,

@@ -1069,3 +1069,95 @@ fn test_apply_window_open_session_caps_at_timespan() {
     assert_eq!(decision, WindowDecision::Reset);
     assert!(state.is_empty());
 }
+
+// =============================================================================
+// Per-group entry cap: WindowState::truncate_oldest
+// =============================================================================
+
+#[test]
+fn test_truncate_oldest_drops_oldest_entries() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    for ts in 0..5 {
+        state.push_event_count(ts);
+    }
+    state.truncate_oldest(3, false);
+    // Oldest entries (0, 1) dropped; newest 3 retained.
+    assert_eq!(state.earliest_timestamp(), Some(2));
+    assert_eq!(state.latest_timestamp(), Some(4));
+}
+
+#[test]
+fn test_truncate_oldest_noop_under_cap() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(1);
+    state.push_event_count(2);
+    state.truncate_oldest(3, false);
+    assert_eq!(state.earliest_timestamp(), Some(1));
+    assert_eq!(state.latest_timestamp(), Some(2));
+}
+
+#[test]
+fn test_truncate_oldest_preserve_front_keeps_session_anchor() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    for ts in 0..5 {
+        state.push_event_count(ts);
+    }
+    state.truncate_oldest(3, true);
+    // The anchor (0) survives; the middle entries are dropped instead.
+    assert_eq!(state.earliest_timestamp(), Some(0));
+    assert_eq!(state.latest_timestamp(), Some(4));
+}
+
+#[test]
+fn test_truncate_oldest_cap_clamps_to_one() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    for ts in 0..4 {
+        state.push_event_count(ts);
+    }
+    // A nonsensical cap of 0 is clamped to 1.
+    state.truncate_oldest(0, false);
+    assert_eq!(state.earliest_timestamp(), Some(3));
+    assert_eq!(state.latest_timestamp(), Some(3));
+}
+
+#[test]
+fn test_truncate_oldest_preserve_front_cap_one_keeps_anchor() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    for ts in 0..4 {
+        state.push_event_count(ts);
+    }
+    state.truncate_oldest(1, true);
+    // Cap 1 with anchor preservation keeps exactly the anchor.
+    assert_eq!(state.earliest_timestamp(), Some(0));
+    assert_eq!(state.latest_timestamp(), Some(0));
+}
+
+#[test]
+fn test_truncate_oldest_value_count_drops_oldest_values() {
+    let mut state = WindowState::new_for(CorrelationType::ValueCount);
+    for (ts, v) in [(1, "a"), (2, "b"), (3, "c"), (4, "d")] {
+        state.push_value_count(ts, v.to_string());
+    }
+    state.truncate_oldest(2, false);
+    let cond = CompiledCondition {
+        field: Some(vec!["User".to_string()]),
+        predicates: vec![(ConditionOperator::Gte, 1.0)],
+        percentile: None,
+    };
+    // Only the two newest distinct values remain.
+    let value = state.check_condition(&cond, CorrelationType::ValueCount, &[], None);
+    assert_eq!(value, Some(2.0));
+}
+
+#[test]
+fn test_truncate_oldest_temporal_caps_each_rule_deque() {
+    let mut state = WindowState::new_for(CorrelationType::Temporal);
+    for ts in 0..5 {
+        state.push_temporal(ts, "rule_a");
+    }
+    state.push_temporal(10, "rule_b");
+    state.truncate_oldest(2, false);
+    // rule_a trimmed to its 2 newest hits; rule_b untouched (1 <= cap).
+    assert_eq!(state.earliest_timestamp(), Some(3));
+    assert_eq!(state.latest_timestamp(), Some(10));
+}
