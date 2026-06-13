@@ -1,0 +1,56 @@
+// Remote Sigma backend service.
+//
+// A thin transport layer on top of sigma_ir.proto: a backend, written once,
+// responds to strongly typed messages so any engine (pySigma, RSigma, or a
+// future engine) can reuse it. The backend can run as a go-plugin-style local
+// subprocess or as a remote endpoint; both speak this contract.
+
+syntax = "proto3";
+
+package sigma.ir.v1;
+
+import "sigma_ir.proto";
+
+service SigmaBackend {
+  // What this backend supports, so an engine can fail fast on unsupported
+  // matcher/detection kinds rather than receiving wrong output.
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+
+  // Convert a pack into target queries.
+  rpc Convert(ConvertRequest) returns (ConvertResponse);
+}
+
+message CapabilitiesRequest {}
+
+message CapabilitiesResponse {
+  string backend_name = 1;
+  SchemaVersion max_schema_version = 2;
+  // Named output formats, e.g. "default", "siem_rule", "ndjson".
+  repeated string output_formats = 3;
+  // Capability tokens this backend understands, e.g. "ARRAY_MATCH",
+  // "CONDITIONAL", "QUERY_EXPR", "DYNAMIC_REF", "CORRELATION",
+  // "WINDOW_MODES".
+  repeated string capabilities = 4;
+}
+
+message ConvertRequest {
+  Pack pack = 1;
+  string output_format = 2; // empty => backend default
+  // Backend-specific knobs (e.g. index name, field prefix).
+  map<string, string> options = 3;
+}
+
+message ConvertResponse {
+  message RuleResult {
+    string rule_id = 1; // metadata.id or name
+    repeated string queries = 2;
+    // Set instead of queries when this rule cannot be expressed.
+    optional Unsupported unsupported = 3;
+  }
+  repeated RuleResult results = 1;
+}
+
+message Unsupported {
+  string rule_id = 1;
+  string reason = 2;
+}

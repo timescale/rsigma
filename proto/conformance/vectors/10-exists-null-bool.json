@@ -1,0 +1,22 @@
+{
+  "name": "exists-null-bool",
+  "description": "Three single-value matchers in one AND selection: field existence check, explicit null match, and a boolean value match.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Exists, null, bool\nlogsource:\n  category: registry_event\n  product: windows\ndetection:\n  selection:\n    Image|exists: true\n    TargetObject: null\n    Reversible: true\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Exists, null, bool" },
+    "logsource": { "category": "registry_event", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            { "field": "Image", "matcher": { "exists": { "exists": true } } },
+            { "field": "TargetObject", "matcher": { "null": {} } },
+            { "field": "Reversible", "matcher": { "boolean": { "value": true } } }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

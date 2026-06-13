@@ -1,0 +1,28 @@
+{
+  "name": "selector-resolved",
+  "description": "Selector '1 of selection_*' is resolved at lowering time into an explicit OR (disjunction) over the matching named detections. No selector ever crosses the wire.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Selector resolution\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_a:\n    EventID: 1\n  selection_b:\n    EventID: 2\n  condition: 1 of selection_*\n",
+  "ir": {
+    "metadata": { "title": "Selector resolution" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection_a": {
+        "allOf": { "items": [ { "field": "EventID", "matcher": { "numeric": { "op": "COMPARE_OP_EQ", "value": { "intValue": "1" } } } } ] }
+      },
+      "selection_b": {
+        "allOf": { "items": [ { "field": "EventID", "matcher": { "numeric": { "op": "COMPARE_OP_EQ", "value": { "intValue": "2" } } } } ] }
+      }
+    },
+    "conditions": [
+      {
+        "disjunction": {
+          "conditions": [
+            { "detectionRef": "selection_a" },
+            { "detectionRef": "selection_b" }
+          ]
+        }
+      }
+    ]
+  }
+}

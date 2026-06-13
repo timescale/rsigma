@@ -1,0 +1,31 @@
+{
+  "name": "string-escaped-wildcard",
+  "description": "Adversarial: an escaped \\* is a LITERAL asterisk, not a wildcard. So 'C:\\Windows\\*' is plain text with no wildcard parts. original renders the literal star re-escaped.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Escaped wildcard\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image: 'C:\\Windows\\*'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Escaped wildcard" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "Image",
+              "matcher": {
+                "stringMatch": {
+                  "value": {
+                    "parts": [ { "plain": "C:\\Windows*" } ],
+                    "original": "C:\\Windows\\*"
+                  },
+                  "hint": "STRING_MATCH_HINT_EXACT"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

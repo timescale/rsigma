@@ -1,0 +1,464 @@
+// Sigma portable intermediate representation (IR).
+//
+// A language-neutral schema for a post-pipeline, modifier-resolved,
+// selector-resolved Sigma rule. It is the single source of truth that an
+// engine's internal HIR is generated from or conformance-locked against, and
+// the wire message a remote backend (pySigma, RSigma, or any future engine)
+// responds to.
+//
+// Level: this sits at the post-modifier, selector-resolved layer that both
+// pySigma (after modifier application + condition postprocess) and RSigma
+// (its planned IrMatcher/IrCondition HIR) independently arrive at.
+//
+// Conventions:
+//   * Field numbers are stable once published. `reserved` ranges mark room
+//     for additive growth.
+//   * oneof is used wherever the source model is a sum type, so an unknown
+//     arm round-trips as an unset field rather than coercing.
+//   * oneof field names avoid language keywords (negation/conjunction/
+//     disjunction/boolean) so generated code is clean in Python/Rust/Go.
+//   * Comparison of two encodings is by decoding to the message and comparing
+//     structurally; proto3 JSON default-value omission is therefore harmless.
+
+syntax = "proto3";
+
+package sigma.ir.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/sigma/ir/v1;sigmairv1";
+
+// ---------------------------------------------------------------------------
+// Schema + pack envelope
+// ---------------------------------------------------------------------------
+
+// Independent of any engine version. Bump major on a breaking field-number or
+// semantic change; minor on additive fields.
+message SchemaVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+// A self-describing bundle of rules: the unit a pack file or a gRPC request
+// carries.
+message Pack {
+  SchemaVersion schema_version = 1;
+  // Free-form producer identity, e.g. "rsigma 0.14.0" or "pySigma 0.11.2".
+  string producer = 2;
+  // Static pipelines already applied at build time, so a load-time pipeline
+  // does not double-apply field mappings.
+  repeated string applied_pipelines = 3;
+  // True if any value still carries a dynamic_ref placeholder (needs
+  // specialization against a source cache before it can be compiled).
+  bool requires_specialization = 4;
+  // source_ids referenced by surviving dynamic_ref placeholders, so a loader
+  // fails fast when a required source is undeclared.
+  repeated string required_source_ids = 5;
+
+  repeated IrRule rules = 16;
+  repeated IrCorrelation correlations = 17;
+  repeated IrFilter filters = 18;
+
+  // reserved 6 to 15 for envelope growth; 19+ for new top-level doc kinds.
+}
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+message Empty {}
+
+message SigmaString {
+  message Part {
+    oneof part {
+      string plain = 1;
+      Empty wildcard_multi = 2;   // '*'
+      Empty wildcard_single = 3;  // '?'
+      Placeholder placeholder = 4;
+    }
+  }
+  repeated Part parts = 1;
+  // Original raw value as authored, retained for round-trip and diagnostics.
+  string original = 2;
+}
+
+// A placeholder string-part. Resolved forms have already been substituted by
+// the producer; an unresolved placeholder survives as one of these.
+message Placeholder {
+  oneof kind {
+    // pySigma %name% style placeholder, resolved by a processing pipeline.
+    string name = 1;
+    // RSigma ${source.*} style deferred reference, resolved at load time.
+    DynamicSourceRef dynamic_ref = 2;
+  }
+}
+
+message DynamicSourceRef {
+  string source_id = 1;
+  ExtractExpr extract = 2; // optional
+}
+
+message ExtractExpr {
+  oneof expr {
+    string jq = 1;
+    string jsonpath = 2;
+    string cel = 3;
+  }
+}
+
+message IrNumber {
+  oneof value {
+    sint64 int_value = 1;   // preserves integers above 2^53
+    double double_value = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Matchers (post-modifier semantic forms)
+// ---------------------------------------------------------------------------
+
+enum StringMatchHint {
+  STRING_MATCH_HINT_UNSPECIFIED = 0; // derive from wildcard positions
+  STRING_MATCH_HINT_EXACT = 1;
+  STRING_MATCH_HINT_CONTAINS = 2;
+  STRING_MATCH_HINT_STARTS_WITH = 3;
+  STRING_MATCH_HINT_ENDS_WITH = 4;
+}
+
+enum CompareOp {
+  COMPARE_OP_EQ = 0;
+  COMPARE_OP_LT = 1;
+  COMPARE_OP_LTE = 2;
+  COMPARE_OP_GT = 3;
+  COMPARE_OP_GTE = 4;
+}
+
+enum TimePart {
+  TIME_PART_UNSPECIFIED = 0;
+  TIME_PART_MINUTE = 1;
+  TIME_PART_HOUR = 2;
+  TIME_PART_DAY = 3;
+  TIME_PART_WEEK = 4;
+  TIME_PART_MONTH = 5;
+  TIME_PART_YEAR = 6;
+}
+
+message StringMatch {
+  SigmaString value = 1;     // wildcards encode contains/startswith/endswith
+  bool cased = 2;            // false = Sigma default case-insensitive
+  StringMatchHint hint = 3;  // advisory; `value` is authoritative
+}
+
+message RegexMatch {
+  string pattern = 1;
+  bool ignorecase = 2; // i
+  bool multiline = 3;  // m
+  bool dotall = 4;     // s
+}
+
+message CidrMatch { string network = 1; }
+
+message NumericMatch {
+  CompareOp op = 1;
+  IrNumber value = 2;
+}
+
+message FieldRefMatch {
+  string field = 1;
+  bool starts_with = 2;
+  bool ends_with = 3;
+  bool cased = 4;
+}
+
+message ExistsMatch { bool exists = 1; }
+message NullMatch {}
+message BoolMatch { bool value = 1; }
+
+message TimestampMatch {
+  TimePart part = 1;
+  IrMatcher inner = 2;
+}
+
+// pySigma SigmaQueryExpression: backend-specific late-stage injection.
+// Extension: consumers that do not advertise QUERY_EXPR reject this.
+message QueryExprMatch {
+  string expr = 1; // may contain a {field} placeholder
+  string id = 2;
+}
+
+message MatcherList { repeated IrMatcher matchers = 1; }
+
+message IrMatcher {
+  oneof matcher {
+    StringMatch string_match = 1;
+    RegexMatch regex = 2;
+    CidrMatch cidr = 3;
+    NumericMatch numeric = 4;
+    FieldRefMatch field_ref = 5;
+    ExistsMatch exists = 6;
+    NullMatch null = 7;
+    BoolMatch boolean = 8;
+    TimestampMatch timestamp = 9;
+
+    // Combinators (base64offset/windash expansions, value-linked groups).
+    MatcherList any_of = 10;
+    MatcherList all_of = 11;
+    IrMatcher negation = 12;
+
+    // Extensions (capability-gated).
+    QueryExprMatch query_expr = 13;
+  }
+  // reserved 14 to 31 for new matcher kinds.
+}
+
+// ---------------------------------------------------------------------------
+// Detections
+// ---------------------------------------------------------------------------
+
+message IrDetectionItem {
+  // Absent field => keyword/value match (against the array member or event).
+  optional string field = 1;
+  IrMatcher matcher = 2;
+  bool negated = 3; // pySigma detection_item.negated / RSigma neq
+}
+
+enum ArrayQuantifier {
+  ARRAY_QUANTIFIER_UNSPECIFIED = 0;
+  ARRAY_QUANTIFIER_ANY = 1;
+  ARRAY_QUANTIFIER_ALL = 2;
+  ARRAY_QUANTIFIER_ALL_OR_EMPTY = 3;
+  ARRAY_QUANTIFIER_NONE = 4;
+}
+
+message DetectionItemList { repeated IrDetectionItem items = 1; }
+message DetectionList { repeated IrDetection detections = 1; }
+
+// Extension: field[any]:/field[all]: object-scope matching (spec proposal).
+message ArrayMatch {
+  string field = 1;
+  ArrayQuantifier quantifier = 2;
+  IrDetection body = 3;
+}
+
+// Extension: explicit-condition object-scope body.
+message Conditional {
+  map<string, IrDetection> named = 1;
+  IrCondition condition = 2;
+}
+
+message IrDetection {
+  oneof detection {
+    DetectionItemList all_of = 1;   // AND-linked items (YAML mapping)
+    DetectionList any_of = 2;       // OR-linked sub-detections (YAML list)
+    IrMatcher keywords = 3;         // field-less keyword detection
+    DetectionList conjunction = 4;  // AND of heterogeneous sub-detections
+
+    // Extensions (spec proposal, capability-gated).
+    ArrayMatch array_match = 5;
+    Conditional conditional = 6;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conditions (selector-resolved boolean tree over named detections)
+// ---------------------------------------------------------------------------
+
+message ConditionList { repeated IrCondition conditions = 1; }
+
+message IrCondition {
+  oneof condition {
+    string detection_ref = 1;       // name of a detection in IrRule.detections
+    ConditionList conjunction = 2;  // AND
+    ConditionList disjunction = 3;  // OR
+    IrCondition negation = 4;       // NOT
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Metadata
+// ---------------------------------------------------------------------------
+
+enum Level {
+  LEVEL_UNSPECIFIED = 0;
+  LEVEL_INFORMATIONAL = 1;
+  LEVEL_LOW = 2;
+  LEVEL_MEDIUM = 3;
+  LEVEL_HIGH = 4;
+  LEVEL_CRITICAL = 5;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_STABLE = 1;
+  STATUS_TEST = 2;
+  STATUS_EXPERIMENTAL = 3;
+  STATUS_DEPRECATED = 4;
+  STATUS_UNSUPPORTED = 5;
+}
+
+enum RelationType {
+  RELATION_TYPE_UNSPECIFIED = 0;
+  RELATION_TYPE_DERIVED = 1;
+  RELATION_TYPE_OBSOLETE = 2;
+  RELATION_TYPE_MERGED = 3;
+  RELATION_TYPE_RENAMED = 4;
+  RELATION_TYPE_SIMILAR = 5;
+  RELATION_TYPE_CORRELATION = 6;
+}
+
+message Related {
+  string id = 1;
+  RelationType relation_type = 2;
+}
+
+message LogSource {
+  optional string category = 1;
+  optional string product = 2;
+  optional string service = 3;
+  optional string definition = 4;
+  map<string, string> custom = 5;
+}
+
+message IrRuleMetadata {
+  string title = 1;
+  optional string id = 2;
+  optional string name = 3;
+  optional Level level = 4;
+  optional Status status = 5;
+  optional string description = 6;
+  optional string author = 7;
+  optional string date = 8;     // YYYY-MM-DD or YYYY/MM/DD as authored
+  optional string modified = 9;
+  optional string taxonomy = 10;
+  optional string license = 11;
+  repeated string references = 12;
+  repeated string falsepositives = 13;
+  repeated string fields = 14;
+  repeated string tags = 15;
+  repeated string scope = 16;
+  repeated Related related = 17;
+  map<string, google.protobuf.Value> custom_attributes = 18;
+  // Only the spec MAJOR is meaningful (gates version-sensitive interpretation).
+  optional uint32 sigma_version = 19;
+}
+
+// ---------------------------------------------------------------------------
+// Detection rule
+// ---------------------------------------------------------------------------
+
+message IrRule {
+  IrRuleMetadata metadata = 1;
+  LogSource logsource = 2;
+  map<string, IrDetection> detections = 3;
+  repeated IrCondition conditions = 4;
+  // Optional raw condition string(s) for round-trip/debug only; consumers
+  // must use `conditions`, never re-parse this.
+  repeated string source_conditions = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Correlation rule
+// ---------------------------------------------------------------------------
+
+enum TimeUnit {
+  TIME_UNIT_UNSPECIFIED = 0;
+  TIME_UNIT_SECOND = 1;
+  TIME_UNIT_MINUTE = 2;
+  TIME_UNIT_HOUR = 3;
+  TIME_UNIT_DAY = 4;
+  TIME_UNIT_WEEK = 5;
+  TIME_UNIT_MONTH = 6;
+  TIME_UNIT_YEAR = 7;
+}
+
+message Timespan {
+  uint64 count = 1;
+  TimeUnit unit = 2;
+  uint64 seconds = 3; // approximate for month/year
+  string original = 4;
+}
+
+enum CorrelationType {
+  CORRELATION_TYPE_UNSPECIFIED = 0;
+  CORRELATION_TYPE_EVENT_COUNT = 1;
+  CORRELATION_TYPE_VALUE_COUNT = 2;
+  CORRELATION_TYPE_TEMPORAL = 3;
+  CORRELATION_TYPE_TEMPORAL_ORDERED = 4;
+  CORRELATION_TYPE_VALUE_SUM = 5;
+  CORRELATION_TYPE_VALUE_AVG = 6;
+  CORRELATION_TYPE_VALUE_PERCENTILE = 7;
+  CORRELATION_TYPE_VALUE_MEDIAN = 8;
+}
+
+enum WindowMode {
+  WINDOW_MODE_UNSPECIFIED = 0; // treated as sliding
+  WINDOW_MODE_SLIDING = 1;
+  WINDOW_MODE_TUMBLING = 2;
+  WINDOW_MODE_SESSION = 3;
+}
+
+enum ConditionOperator {
+  CONDITION_OPERATOR_UNSPECIFIED = 0;
+  CONDITION_OPERATOR_LT = 1;
+  CONDITION_OPERATOR_LTE = 2;
+  CONDITION_OPERATOR_GT = 3;
+  CONDITION_OPERATOR_GTE = 4;
+  CONDITION_OPERATOR_EQ = 5;
+  CONDITION_OPERATOR_NEQ = 6;
+}
+
+message FieldAlias {
+  string alias = 1;
+  map<string, string> mapping = 2; // rule ref/name -> field name
+}
+
+message ThresholdCondition {
+  message Predicate {
+    ConditionOperator op = 1;
+    uint64 count = 2;
+  }
+  repeated Predicate predicates = 1; // all must hold (range support)
+  repeated string field = 2;         // for value_count and friends
+  optional uint32 percentile = 3;    // for value_percentile
+}
+
+message CorrelationCondition {
+  oneof condition {
+    ThresholdCondition threshold = 1;
+    IrCondition extended = 2; // boolean tree over rule references
+  }
+}
+
+message IrCorrelation {
+  IrRuleMetadata metadata = 1;
+  CorrelationType correlation_type = 2;
+  repeated string rules = 3;     // referenced rule ids/names
+  repeated string group_by = 4;
+  Timespan timespan = 5;
+  WindowMode window = 6;         // extension; default sliding
+  optional Timespan gap = 7;     // required when window = session
+  CorrelationCondition condition = 8;
+  repeated FieldAlias aliases = 9;
+  bool generate = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Filter rule
+// ---------------------------------------------------------------------------
+
+message StringList { repeated string values = 1; }
+
+message FilterTarget {
+  oneof target {
+    Empty any = 1;
+    StringList specific = 2; // rule ids/names
+  }
+}
+
+message IrFilter {
+  IrRuleMetadata metadata = 1;
+  FilterTarget rules = 2;
+  optional LogSource logsource = 3;
+  map<string, IrDetection> detections = 4;
+  repeated IrCondition conditions = 5;
+}

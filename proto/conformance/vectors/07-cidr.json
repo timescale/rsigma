@@ -1,0 +1,23 @@
+{
+  "name": "cidr",
+  "description": "cidr modifier yields a CidrMatch carrying the network as a string; the backend expands or matches it natively.",
+  "message_type": "IrRule",
+  "input_yaml": "title: CIDR match\nlogsource:\n  category: firewall\ndetection:\n  selection:\n    SourceIp|cidr: '10.0.0.0/8'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "CIDR match" },
+    "logsource": { "category": "firewall" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "SourceIp",
+              "matcher": { "cidr": { "network": "10.0.0.0/8" } }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

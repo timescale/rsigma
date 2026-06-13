@@ -1,0 +1,20 @@
+{
+  "name": "keywords",
+  "description": "Field-less keyword detection. The keywords arm carries an IrMatcher with no field; consumers apply full-text (substring) matching semantics. Hint left unspecified because keyword search semantics are the consumer's, not encoded as wildcards here.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Keyword search\nlogsource:\n  product: linux\ndetection:\n  keywords: 'mimikatz'\n  condition: keywords\n",
+  "ir": {
+    "metadata": { "title": "Keyword search" },
+    "logsource": { "product": "linux" },
+    "detections": {
+      "keywords": {
+        "keywords": {
+          "stringMatch": {
+            "value": { "parts": [ { "plain": "mimikatz" } ], "original": "mimikatz" }
+          }
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "keywords" } ]
+  }
+}

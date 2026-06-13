@@ -1,0 +1,23 @@
+{
+  "name": "fieldref",
+  "description": "fieldref modifier compares one field against the value of another field rather than a literal.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Field reference\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  selection:\n    TargetFilename|fieldref: 'SourceFilename'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Field reference" },
+    "logsource": { "category": "file_event", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "TargetFilename",
+              "matcher": { "fieldRef": { "field": "SourceFilename" } }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

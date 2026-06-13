@@ -1,0 +1,34 @@
+{
+  "name": "string-endswith",
+  "description": "endswith modifier prepends a leading multi-wildcard. Canonical Image-endswith pattern; backslash before a non-special char stays literal.",
+  "message_type": "IrRule",
+  "input_yaml": "title: String endswith\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\cmd.exe'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "String endswith" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "Image",
+              "matcher": {
+                "stringMatch": {
+                  "value": {
+                    "parts": [
+                      { "wildcardMulti": {} },
+                      { "plain": "\\cmd.exe" }
+                    ],
+                    "original": "*\\cmd.exe"
+                  },
+                  "hint": "STRING_MATCH_HINT_ENDS_WITH"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

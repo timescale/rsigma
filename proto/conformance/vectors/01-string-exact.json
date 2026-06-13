@@ -1,0 +1,28 @@
+{
+  "name": "string-exact",
+  "description": "Default full-value string match (case-insensitive). No modifier, no wildcards.",
+  "message_type": "IrRule",
+  "input_yaml": "title: String exact\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image: 'cmd.exe'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "String exact" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "Image",
+              "matcher": {
+                "stringMatch": {
+                  "value": { "parts": [ { "plain": "cmd.exe" } ], "original": "cmd.exe" },
+                  "hint": "STRING_MATCH_HINT_EXACT"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

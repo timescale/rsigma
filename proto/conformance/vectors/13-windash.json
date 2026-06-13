@@ -1,0 +1,33 @@
+{
+  "name": "windash",
+  "description": "windash expands an interchangeable dash/slash at a word boundary into five forms (-, /, en-dash U+2013, em-dash U+2014, horizontal-bar U+2015), OR-linked. The trailing |contains wraps each. Expansion computed with pySigma's exact regex (\\B[-/]\\b) and replacement set.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Windash\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    CommandLine|windash|contains: '-encodedcommand'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Windash" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "anyOf": {
+                  "matchers": [
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "-encodedcommand" }, { "wildcardMulti": {} } ], "original": "*-encodedcommand*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "/encodedcommand" }, { "wildcardMulti": {} } ], "original": "*/encodedcommand*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "\u2013encodedcommand" }, { "wildcardMulti": {} } ], "original": "*\u2013encodedcommand*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "\u2014encodedcommand" }, { "wildcardMulti": {} } ], "original": "*\u2014encodedcommand*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "\u2015encodedcommand" }, { "wildcardMulti": {} } ], "original": "*\u2015encodedcommand*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}
