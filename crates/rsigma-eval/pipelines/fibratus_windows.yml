@@ -38,12 +38,21 @@ transformations:
     mapping:
       Image: ps.exe
       CommandLine: ps.cmdline
+      OriginalFileName: ps.pe.file.name
+      CurrentDirectory: ps.cwd
+      ProcessGuid: ps.uuid
       ProcessId: ps.pid
       User: ps.username
       LogonId: ps.sessionid
       ParentImage: ps.parent.exe
       ParentCommandLine: ps.parent.cmdline
       ParentProcessId: ps.parent.pid
+      ParentProcessGuid: ps.parent.uuid
+      IntegrityLevel: ps.token.integrity_level
+      Company: ps.pe.company
+      Description: ps.pe.description
+      Product: ps.pe.product
+      FileVersion: process.pe.file.version
     rule_conditions:
       - type: logsource
         category: process_creation
@@ -67,7 +76,22 @@ transformations:
     type: field_name_mapping
     mapping:
       Image: ps.exe
+      CommandLine: ps.cmdline
+      OriginalFileName: ps.pe.file.name
+      CurrentDirectory: ps.cwd
+      ProcessGuid: ps.uuid
       ProcessId: ps.pid
+      User: ps.username
+      LogonId: ps.sessionid
+      ParentImage: ps.parent.exe
+      ParentCommandLine: ps.parent.cmdline
+      ParentProcessId: ps.parent.pid
+      ParentProcessGuid: ps.parent.uuid
+      IntegrityLevel: ps.token.integrity_level
+      Company: ps.pe.company
+      Description: ps.pe.description
+      Product: ps.pe.product
+      FileVersion: process.pe.file.version
     rule_conditions:
       - type: logsource
         category: process_termination
@@ -263,6 +287,19 @@ transformations:
         category: registry_event
         product: windows
 
+  - id: fibratus_registry_event
+    type: add_condition
+    # Put the event-name discriminator first so Fibratus's
+    # left-to-right evaluation short-circuits on the cheapest, most
+    # selective predicate before the rule body.
+    prepend: true
+    conditions:
+      evt.category: 'registry'
+    rule_conditions:
+      - type: logsource
+        category: registry_event
+        product: windows
+
   - id: fibratus_registry_set_fields
     type: field_name_mapping
     mapping:
@@ -357,6 +394,7 @@ transformations:
       SourceImage: ps.exe
       SourceProcessId: ps.pid
       TargetProcessId: thread.pid
+      TargetImage: evt.arg[exe]
       StartAddress: thread.start_address
       StartModule: thread.start_address.module
       StartFunction: thread.start_address.symbol
