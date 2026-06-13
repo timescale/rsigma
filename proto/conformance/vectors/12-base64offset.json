@@ -1,0 +1,31 @@
+{
+  "name": "base64offset",
+  "description": "base64offset expands the value into three offset-aligned base64 encodings, OR-linked (any_of). Encodings computed with pySigma's exact algorithm (start_offsets=(0,2,3), end_offsets=(None,-3,-2)). The trailing |contains is the canonical real-world usage. Encoding modifiers are fully resolved on the wire; no base64 logic crosses it.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Base64 offset\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    CommandLine|base64offset|contains: 'cmd.exe'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Base64 offset" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "anyOf": {
+                  "matchers": [
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "Y21kLmV4Z" }, { "wildcardMulti": {} } ], "original": "*Y21kLmV4Z*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "NtZC5leG" }, { "wildcardMulti": {} } ], "original": "*NtZC5leG*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "jbWQuZXhl" }, { "wildcardMulti": {} } ], "original": "*jbWQuZXhl*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

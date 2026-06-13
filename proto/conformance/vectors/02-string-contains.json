@@ -1,0 +1,35 @@
+{
+  "name": "string-contains",
+  "description": "contains modifier inserts a leading and trailing multi-wildcard. hint records the intent.",
+  "message_type": "IrRule",
+  "input_yaml": "title: String contains\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    CommandLine|contains: 'whoami'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "String contains" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "stringMatch": {
+                  "value": {
+                    "parts": [
+                      { "wildcardMulti": {} },
+                      { "plain": "whoami" },
+                      { "wildcardMulti": {} }
+                    ],
+                    "original": "*whoami*"
+                  },
+                  "hint": "STRING_MATCH_HINT_CONTAINS"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "correlation-event-count",
+  "description": "An event_count correlation. timespan parsed to count/unit/seconds (original kept). Threshold condition with a single gte predicate. window defaults to sliding (omitted = WINDOW_MODE_UNSPECIFIED, treated as sliding). uint64 fields encode as JSON strings.",
+  "message_type": "IrCorrelation",
+  "input_yaml": "title: Multiple failed logins\ncorrelation:\n  type: event_count\n  rules:\n    - failed_login\n  group-by:\n    - User\n  timespan: 5m\n  condition:\n    gte: 10\n",
+  "ir": {
+    "metadata": { "title": "Multiple failed logins" },
+    "correlationType": "CORRELATION_TYPE_EVENT_COUNT",
+    "rules": [ "failed_login" ],
+    "groupBy": [ "User" ],
+    "timespan": { "count": "5", "unit": "TIME_UNIT_MINUTE", "seconds": "300", "original": "5m" },
+    "condition": {
+      "threshold": {
+        "predicates": [ { "op": "CONDITION_OPERATOR_GTE", "count": "10" } ]
+      }
+    }
+  }
+}

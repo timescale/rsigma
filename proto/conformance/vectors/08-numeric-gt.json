@@ -1,0 +1,28 @@
+{
+  "name": "numeric-gt",
+  "description": "gt modifier yields a numeric compare. A plain integer value (no modifier) would be COMPARE_OP_EQ. Note sint64 is encoded as a JSON string in proto3 JSON.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Numeric greater-than\nlogsource:\n  product: windows\n  service: security\ndetection:\n  selection:\n    EventID|gt: 4000\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Numeric greater-than" },
+    "logsource": { "product": "windows", "service": "security" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "EventID",
+              "matcher": {
+                "numeric": {
+                  "op": "COMPARE_OP_GT",
+                  "value": { "intValue": "4000" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

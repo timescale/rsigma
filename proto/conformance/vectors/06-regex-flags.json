@@ -1,0 +1,29 @@
+{
+  "name": "regex-flags",
+  "description": "re modifier yields a RegexMatch; trailing i and m modifiers set the ignorecase and multiline flags. Wildcards are NOT interpreted in regex values.",
+  "message_type": "IrRule",
+  "input_yaml": "title: Regex with flags\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    CommandLine|re|i|m: 'foo.*bar'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Regex with flags" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "regex": {
+                  "pattern": "foo.*bar",
+                  "ignorecase": true,
+                  "multiline": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

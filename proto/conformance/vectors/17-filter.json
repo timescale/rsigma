@@ -1,0 +1,29 @@
+{
+  "name": "filter",
+  "description": "A global filter rule targeting specific rule IDs, with its own logsource, detections, and condition. The target is a FilterTarget.specific list ('any' would be the Empty arm).",
+  "message_type": "IrFilter",
+  "input_yaml": "title: Exclude admin baseline\nlogsource:\n  product: windows\nfilter:\n  rules:\n    - 0e2f7e1a-1111-2222-3333-444455556666\n  selection:\n    User: 'admin'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "Exclude admin baseline" },
+    "rules": { "specific": { "values": [ "0e2f7e1a-1111-2222-3333-444455556666" ] } },
+    "logsource": { "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "User",
+              "matcher": {
+                "stringMatch": {
+                  "value": { "parts": [ { "plain": "admin" } ], "original": "admin" },
+                  "hint": "STRING_MATCH_HINT_EXACT"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

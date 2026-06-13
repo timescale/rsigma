@@ -1,0 +1,52 @@
+{
+  "name": "condition-and-not",
+  "description": "Boolean condition 'selection and not filter' lowers to a conjunction whose second arm is a negation of a detection reference. Negation here is a condition combinator (distinct from per-item negation / neq).",
+  "message_type": "IrRule",
+  "input_yaml": "title: And not\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\rundll32.exe'\n  filter:\n    CommandLine|contains: 'legitimate'\n  condition: selection and not filter\n",
+  "ir": {
+    "metadata": { "title": "And not" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "Image",
+              "matcher": {
+                "stringMatch": {
+                  "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "\\rundll32.exe" } ], "original": "*\\rundll32.exe" },
+                  "hint": "STRING_MATCH_HINT_ENDS_WITH"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "filter": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "stringMatch": {
+                  "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "legitimate" }, { "wildcardMulti": {} } ], "original": "*legitimate*" },
+                  "hint": "STRING_MATCH_HINT_CONTAINS"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [
+      {
+        "conjunction": {
+          "conditions": [
+            { "detectionRef": "selection" },
+            { "negation": { "detectionRef": "filter" } }
+          ]
+        }
+      }
+    ]
+  }
+}

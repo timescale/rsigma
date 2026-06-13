@@ -1,0 +1,42 @@
+{
+  "name": "metadata-superset",
+  "description": "Exercises the IrRuleMetadata superset: id, status, level, author, date, references, tags, falsepositives, related, sigma_version, and custom_attributes (map<string, google.protobuf.Value> carrying a bool and a number). Also a per-item negated match (neq).",
+  "message_type": "IrRule",
+  "input_yaml": "title: Suspicious service install\nid: 0e2f7e1a-aaaa-bbbb-cccc-444455556666\nstatus: test\nlevel: high\nauthor: Jane Doe\ndate: 2026/06/13\nreferences:\n  - https://example.com/threat\ntags:\n  - attack.persistence\n  - attack.t1543.003\nfalsepositives:\n  - Legitimate software installs\nrelated:\n  - id: 11112222-3333-4444-5555-666677778888\n    type: derived\ndetection:\n  selection:\n    EventID: 7045\n    ServiceName|endswith|neq: '.sys'\n  condition: selection\n",
+  "ir": {
+    "metadata": {
+      "title": "Suspicious service install",
+      "id": "0e2f7e1a-aaaa-bbbb-cccc-444455556666",
+      "status": "STATUS_TEST",
+      "level": "LEVEL_HIGH",
+      "author": "Jane Doe",
+      "date": "2026/06/13",
+      "references": [ "https://example.com/threat" ],
+      "tags": [ "attack.persistence", "attack.t1543.003" ],
+      "falsepositives": [ "Legitimate software installs" ],
+      "related": [ { "id": "11112222-3333-4444-5555-666677778888", "relationType": "RELATION_TYPE_DERIVED" } ],
+      "customAttributes": { "rsigma.suppress": true, "risk_score": 75 }
+    },
+    "logsource": {},
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            { "field": "EventID", "matcher": { "numeric": { "op": "COMPARE_OP_EQ", "value": { "intValue": "7045" } } } },
+            {
+              "field": "ServiceName",
+              "negated": true,
+              "matcher": {
+                "stringMatch": {
+                  "value": { "parts": [ { "wildcardMulti": {} }, { "plain": ".sys" } ], "original": "*.sys" },
+                  "hint": "STRING_MATCH_HINT_ENDS_WITH"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

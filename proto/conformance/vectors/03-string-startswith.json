@@ -1,0 +1,34 @@
+{
+  "name": "string-startswith",
+  "description": "startswith modifier appends a trailing multi-wildcard.",
+  "message_type": "IrRule",
+  "input_yaml": "title: String startswith\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|startswith: 'C:\\Windows\\System32'\n  condition: selection\n",
+  "ir": {
+    "metadata": { "title": "String startswith" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "selection": {
+        "allOf": {
+          "items": [
+            {
+              "field": "Image",
+              "matcher": {
+                "stringMatch": {
+                  "value": {
+                    "parts": [
+                      { "plain": "C:\\Windows\\System32" },
+                      { "wildcardMulti": {} }
+                    ],
+                    "original": "C:\\Windows\\System32*"
+                  },
+                  "hint": "STRING_MATCH_HINT_STARTS_WITH"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [ { "detectionRef": "selection" } ]
+  }
+}

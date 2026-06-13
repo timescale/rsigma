@@ -1,0 +1,56 @@
+{
+  "name": "value-linking",
+  "description": "Value-list linking. sel_all uses |all so the two contains values are AND-linked (all_of). sel_any uses the default, so the two values are OR-linked (any_of).",
+  "message_type": "IrRule",
+  "input_yaml": "title: Value linking\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel_all:\n    CommandLine|contains|all:\n      - '-enc'\n      - '-noprofile'\n  sel_any:\n    CommandLine|contains:\n      - 'powershell'\n      - 'pwsh'\n  condition: sel_all and sel_any\n",
+  "ir": {
+    "metadata": { "title": "Value linking" },
+    "logsource": { "category": "process_creation", "product": "windows" },
+    "detections": {
+      "sel_all": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "allOf": {
+                  "matchers": [
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "-enc" }, { "wildcardMulti": {} } ], "original": "*-enc*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "-noprofile" }, { "wildcardMulti": {} } ], "original": "*-noprofile*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "sel_any": {
+        "allOf": {
+          "items": [
+            {
+              "field": "CommandLine",
+              "matcher": {
+                "anyOf": {
+                  "matchers": [
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "powershell" }, { "wildcardMulti": {} } ], "original": "*powershell*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } },
+                    { "stringMatch": { "value": { "parts": [ { "wildcardMulti": {} }, { "plain": "pwsh" }, { "wildcardMulti": {} } ], "original": "*pwsh*" }, "hint": "STRING_MATCH_HINT_CONTAINS" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "conditions": [
+      {
+        "conjunction": {
+          "conditions": [
+            { "detectionRef": "sel_all" },
+            { "detectionRef": "sel_any" }
+          ]
+        }
+      }
+    ]
+  }
+}
