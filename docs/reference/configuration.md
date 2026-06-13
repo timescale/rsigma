@@ -86,6 +86,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.nats` | `engine daemon` | Non-secret NATS knobs (e.g. `consumer_group`). Secrets stay env-only. Inert unless built with `daemon-nats`. |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
+| `mcp` | `mcp serve` | `mcp.http_addr` (the `--http` bind address; unset means stdio), `mcp.lint_config`, and `mcp.rules_dir`. The auth token is secret and stays flag/env-only. Inert unless built with the `mcp` feature. |
 
 ### Secrets policy
 
@@ -107,6 +108,7 @@ Two parallel schemes are honoured:
     | `RSIGMA_DAEMON__API__ADDR=127.0.0.1:9090` | `daemon.api.addr` |
     | `RSIGMA_DAEMON__INPUT__BUFFER_SIZE=20000` | `daemon.input.buffer_size` |
     | `RSIGMA_GLOBAL__LOG_FORMAT=json` | `global.log_format` |
+    | `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100` | `mcp.http_addr` |
 
 2. **Legacy clap-bound names** with a single underscore (`NATS_CREDS`, `RSIGMA_CONSUMER_GROUP`, `RSIGMA_TLS_KEY_PASSWORD`). These continue to work at the flag layer and are listed in [Environment Variables](environment-variables.md). Secrets are *only* readable this way.
 

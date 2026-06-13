@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### MCP server: Streamable HTTP transport, bearer auth, and `mcp` config keys (#TBD)
+
+Adds a remote transport and configuration to the MCP server.
+
+- **Streamable HTTP transport.** `rsigma mcp serve --http <addr>` serves the MCP endpoint at `/mcp` over HTTP (stdio stays the default). Built on rmcp's `StreamableHttpService` mounted on axum.
+- **Bearer-token auth.** `--auth-token <token>` (or `RSIGMA_MCP_AUTH_TOKEN`) requires a static token on every request, compared in constant time; requests without it get `401`. The token is flag/env-only and never read from config files.
+- **TLS.** `--tls-cert`/`--tls-key` terminate TLS in-process using the daemon's rustls loader (requires the `daemon-tls` feature). Plaintext binds on non-loopback addresses are refused unless `--allow-plaintext`.
+- **Config keys.** A new `mcp` config section (`mcp.http_addr`, `mcp.lint_config`, `mcp.rules_dir`) is wired through `rsigma config init/validate/show/schema` and the `RSIGMA_MCP__*` environment layer. The auth token stays flag/env-only by design.
+
 ### MCP server: `rsigma mcp serve` and the `rsigma-mcp` crate (#208)
 
 A new [Model Context Protocol](https://modelcontextprotocol.io) server exposes the rsigma Sigma toolchain to AI agents (Cursor, Claude Code, ...) as structured tools. Instead of scraping CLI text, an agent calls typed tools and gets back JSON: ASTs, lint findings with spans and fix availability, evaluation matches, backend queries, and field inventories.

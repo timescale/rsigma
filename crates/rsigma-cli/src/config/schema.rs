@@ -43,6 +43,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma engine eval` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eval: Option<EvalPartial>,
+    /// `rsigma mcp serve` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpPartial>,
 }
 
 impl Merge for RsigmaConfigPartial {
@@ -52,6 +55,7 @@ impl Merge for RsigmaConfigPartial {
             global: merge_opt(self.global, over.global),
             daemon: merge_opt(self.daemon, over.daemon),
             eval: merge_opt(self.eval, over.eval),
+            mcp: merge_opt(self.mcp, over.mcp),
         }
     }
 }
@@ -410,6 +414,32 @@ impl Merge for EvalPartial {
     }
 }
 
+/// `mcp serve` settings. The auth token is deliberately absent: secrets stay
+/// flag/env-only (`--auth-token` / `RSIGMA_MCP_AUTH_TOKEN`).
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct McpPartial {
+    /// Bind address for the Streamable HTTP transport (maps to `--http`).
+    /// Unset means stdio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_addr: Option<String>,
+    /// Lint config file applied by the `lint_rules` tool (maps to `--lint-config`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lint_config: Option<PathBuf>,
+    /// Default root for relative path-based tool calls (maps to `--rules-dir`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_dir: Option<PathBuf>,
+}
+
+impl Merge for McpPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            http_addr: over.http_addr.or(self.http_addr),
+            lint_config: over.lint_config.or(self.lint_config),
+            rules_dir: over.rules_dir.or(self.rules_dir),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +478,21 @@ mod tests {
             Some("127.0.0.1:8080".into())
         );
         assert_eq!(merged.version, Some(1));
+    }
+
+    #[test]
+    fn mcp_section_parses_and_merges() {
+        let base: RsigmaConfigPartial = yaml_serde::from_str(
+            "mcp:\n  http_addr: 127.0.0.1:9100\n  rules_dir: /etc/rsigma/rules\n",
+        )
+        .expect("parses mcp section");
+        let over: RsigmaConfigPartial =
+            yaml_serde::from_str("mcp:\n  rules_dir: /override/rules\n").expect("parses override");
+        let merged = base.merge(over);
+        let mcp = merged.mcp.expect("mcp section");
+        // higher layer wins per-field; untouched fields are preserved
+        assert_eq!(mcp.http_addr.as_deref(), Some("127.0.0.1:9100"));
+        assert_eq!(mcp.rules_dir, Some(PathBuf::from("/override/rules")));
     }
 
     #[test]

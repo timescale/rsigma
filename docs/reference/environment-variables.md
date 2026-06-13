@@ -16,7 +16,8 @@ Every variable here has a corresponding `--flag` that takes precedence.
 | `RSIGMA_GLOBAL__OUTPUT_FORMAT` | `json`/`ndjson`/`table`/`csv`/`tsv` | unset | All | Default value for `--output-format`. See [Output Formats](output.md). |
 | `RSIGMA_GLOBAL__COLOR` | `auto`/`always`/`never` | unset | All | Default value for `--color`. |
 | `XDG_CONFIG_HOME` | path | `~/.config` | All | Honoured when locating the user config (`$XDG_CONFIG_HOME/rsigma/config.yaml`). See [Configuration discovery](configuration.md#discovery). |
-| `RSIGMA_<SECTION>__<KEY>` | YAML scalar | unset | `engine daemon`, `engine eval` | Uniform env layer for non-secret config keys (e.g. `RSIGMA_DAEMON__API__ADDR`, `RSIGMA_GLOBAL__LOG_FORMAT`). See [Configuration: environment layer](configuration.md#environment-layer). |
+| `RSIGMA_<SECTION>__<KEY>` | YAML scalar | unset | `engine daemon`, `engine eval`, `mcp serve` | Uniform env layer for non-secret config keys (e.g. `RSIGMA_DAEMON__API__ADDR`, `RSIGMA_GLOBAL__LOG_FORMAT`, `RSIGMA_MCP__HTTP_ADDR`). See [Configuration: environment layer](configuration.md#environment-layer). |
+| `RSIGMA_MCP_AUTH_TOKEN` | string | unset | `mcp serve --http` | Static bearer token required on every HTTP request (`Authorization: Bearer <token>`). Equivalent to `--auth-token`. Secret: flag/env only, never read from config files. |
 | `RSIGMA_CONSUMER_GROUP` | string | unset | `engine daemon` with `--input nats://` | NATS JetStream consumer group name. Equivalent to `--consumer-group`. Multiple daemons sharing the same group name load-balance across a single durable pull consumer. |
 | `RSIGMA_TLS_KEY_PASSWORD` | string | unset | `engine daemon` with `--tls-key` | Password for an encrypted TLS key. Currently rejected at startup; reserved for a future release. |
 | `NATS_CREDS` | path to `.creds` file | unset | `engine daemon` with NATS source or sink | NATS credentials file (JWT + NKey). Equivalent to `--nats-creds`. |

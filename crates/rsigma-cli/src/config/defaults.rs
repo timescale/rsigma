@@ -118,5 +118,8 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
             fail_on_detection: Some(false),
         }),
+        // The `mcp` section has no compiled defaults: stdio is the default
+        // transport, and the lint-config / rules-dir roots have no default.
+        mcp: None,
     }
 }

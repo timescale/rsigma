@@ -11,9 +11,13 @@
 //! handlers are thin synchronous wrappers over the underlying rsigma crates,
 //! which keeps stdout reserved for the transport (all diagnostics go to stderr).
 
+#[cfg(feature = "http")]
+mod http;
 mod input;
 mod tools;
 
+#[cfg(feature = "http")]
+pub use http::{http_router, serve_http};
 pub use tools::RsigmaMcp;
 
 use rmcp::ServiceExt;

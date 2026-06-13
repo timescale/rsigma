@@ -136,3 +136,13 @@ eval:
   # Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Set false to keep it.
   syslog_strip_bom: true
   fail_on_detection: false
+
+# `rsigma mcp serve` settings. The auth token is NOT configurable here by
+# design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
+mcp:
+  # Bind address for the Streamable HTTP transport (`--http`). Unset = stdio.
+  # http_addr: 127.0.0.1:9100
+  # Lint config file applied by the lint_rules tool (`--lint-config`).
+  # lint_config: .rsigma-lint.yml
+  # Default root for relative path-based tool calls (`--rules-dir`).
+  # rules_dir: ./rules
