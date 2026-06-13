@@ -40,6 +40,9 @@ The crate has no rsigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `Detection`, `DetectionItem`, `FieldSpec`, `SigmaValue`, `Modifier` | Detection-block building blocks. |
 | `LogSource` | The `logsource:` block (`product`, `category`, `service`). |
 | Linter (`lint::*`) | {{ rsigma.lint.rules }} spec-conformance checks (including cross-document reference checks over a directory). See [Lint Rules reference](../reference/lint-rules.md). |
+| `lint::catalogue::catalogue() -> Vec<LintRuleInfo>` | Programmatic metadata for every lint rule: stable id, default severity, fix disposition, one-line description. |
+| `lint::fix::apply_fixes_to_source(&str, &[&LintWarning]) -> SourceFixOutcome` | Apply every safe fix to a YAML source string, preserving comments and formatting; reports applied/failed counts. |
+| `reference::{MODIFIERS, MITRE_TACTICS}` | Field-modifier descriptions and MITRE ATT&CK tactic metadata, shared with the LSP and the MCP server. |
 
 The full enumeration of modifiers (30+), correlation types (8), and condition operators lives in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/README.md).
 
@@ -84,6 +87,30 @@ for file in &results {
 ```
 
 The full lint catalogue (severities, fix availability, worked examples) is the [Lint Rules reference](../reference/lint-rules.md). The `lint::Fix` machinery powers `rule lint --fix`.
+
+### Programmatic catalogue and fixes
+
+`lint::catalogue::catalogue()` returns the rule metadata as data, so a tool can enumerate the vocabulary without scraping the rule modules:
+
+```rust
+use rsigma_parser::lint::catalogue::catalogue;
+
+for info in catalogue() {
+    println!("{} ({}) fixable={}", info.name, info.default_severity, info.fix.is_some());
+}
+```
+
+`lint::fix::apply_fixes_to_source` applies the safe fixes attached to a set of `LintWarning`s directly to a YAML string (the string-level core behind `rule lint --fix`, also used by the LSP and MCP server):
+
+```rust
+use rsigma_parser::lint::{lint_yaml_str, fix::apply_fixes_to_source};
+
+let source = "title: Test\nStatus: test\nlogsource:\n    category: test\ndetection:\n    sel: {field: value}\n    condition: sel\n";
+let warnings = lint_yaml_str(source);
+let fixable: Vec<_> = warnings.iter().filter(|w| w.fix.is_some()).collect();
+let outcome = apply_fixes_to_source(source, &fixable);
+println!("applied {} fix(es)", outcome.applied);
+```
 
 ## Condition parsing
 

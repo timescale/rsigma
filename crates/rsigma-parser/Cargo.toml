@@ -16,6 +16,8 @@ pest = "2"
 pest_derive = "2"
 serde = { version = "1", features = ["derive"] }
 yaml_serde = "0.10"
+yamlpath = "1.25"
+yamlpatch = "1.25"
 serde_json = "1"
 thiserror = "2"
 

@@ -19,6 +19,8 @@
 //! }
 //! ```
 
+pub mod catalogue;
+pub mod fix;
 mod rules;
 
 use std::collections::{HashMap, HashSet};

@@ -92,3 +92,8 @@ name = "fuzz_eval_matcher_diff"
 path = "fuzz_targets/fuzz_eval_matcher_diff.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_lint_fix"
+path = "fuzz_targets/fuzz_lint_fix.rs"
+doc = false
+

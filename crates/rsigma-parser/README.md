@@ -53,7 +53,23 @@ Each `LintWarning` can carry an optional `Fix` describing how to automatically c
 | `FixDisposition` | `Safe` (no semantic change) or `Unsafe` (may change meaning) |
 | `FixPatch` | A single edit: `ReplaceValue`, `ReplaceKey`, or `Remove` with a JSON-pointer path |
 
-Fix types are yamlpath/yamlpatch-agnostic (all owned data, no external dependencies). Consumers (CLI, LSP) convert `FixPatch` to concrete patch operations at apply time.
+The `lint::fix` module turns these into concrete edits on a YAML source string while preserving comments and formatting:
+
+| Function / Type | Description |
+|-----------------|-------------|
+| `lint::fix::apply_fixes_to_source(source: &str, &[&LintWarning]) -> SourceFixOutcome` | Apply every `Safe` fix to a YAML string; returns the rewritten source plus applied/failed counts |
+| `lint::fix::json_pointer_to_route` / `apply_single_fix_patch` / `apply_rename_key` | Lower-level helpers over `yamlpath`/`yamlpatch` |
+| `SourceFixOutcome` | `{ fixed_source, applied, failed }` |
+
+The CLI (`rule lint --fix`), the LSP, and the MCP server's `fix_rules` tool all share this one implementation.
+
+### Lint Catalogue
+
+`lint::catalogue::catalogue() -> Vec<LintRuleInfo>` returns programmatic metadata for every lint rule (stable id, default severity, fix disposition, one-line description). It is generated from a single list whose exhaustive match makes adding a `LintRule` variant without a catalogue entry a compile error.
+
+### Reference Data
+
+`reference::MODIFIERS` and `reference::MITRE_TACTICS` are `(name, description)` tables for the field modifiers and MITRE ATT&CK tactics, shared with the LSP (hover/completion) and the MCP server (reference resources).
 
 ### Value Types
 

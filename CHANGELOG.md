@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### MCP server prerequisites: shared fix applier, reference data, and lint catalogue (#TBD)
+
+Internal refactors that lift three pieces of lint and reference machinery into `rsigma-parser` so the CLI, the LSP, and the upcoming MCP server share one implementation. Behavior is unchanged for existing commands.
+
+- **`rsigma_parser::lint::fix`.** The string-level auto-fix applier (`json_pointer_to_route`, `apply_single_fix_patch`, `apply_rename_key`) moves from `rsigma-cli` into the parser, with a new `apply_fixes_to_source(source, &[&LintWarning]) -> SourceFixOutcome` entry point that applies every safe fix to a YAML string and reports applied/failed counts. The `yamlpath`/`yamlpatch` dependencies move with it. `rsigma rule lint --fix` keeps its file-on-disk behavior through a thin wrapper.
+- **`rsigma_parser::reference`.** The `MODIFIERS` and `MITRE_TACTICS` tables move out of the LSP binary (where they were unreachable cross-crate) into a public parser module; the LSP re-exports them so hover/completion are unchanged.
+- **`rsigma_parser::lint::catalogue`.** A new `catalogue()` returns per-rule metadata (id, default severity, fix disposition, one-line description) for all 75 lint rules, generated from a single list whose exhaustive match makes adding a rule without a catalogue entry a compile error.
+
 ### `backend convert`: per-rule file output when `--output` is a directory (#205)
 
 `rsigma backend convert` can now write one file per converted rule instead of a single concatenated stream. When `--output` points at a directory (an existing directory, or a path with a trailing separator that is created on demand), each rule is written to its own file named after a snake_case slug of the rule title, with the backend's native extension. This was prompted by Fibratus rule-deployment ergonomics: the engine loads one YAML rule per file from its `Rules/` directory, so the split output drops straight in without hand-separating the `---`-joined stream.

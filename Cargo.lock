@@ -3903,8 +3903,6 @@ dependencies = [
  "wiremock",
  "x509-parser",
  "yaml_serde",
- "yamlpatch",
- "yamlpath",
 ]
 
 [[package]]
@@ -3979,6 +3977,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "yaml_serde",
+ "yamlpatch",
+ "yamlpath",
 ]
 
 [[package]]

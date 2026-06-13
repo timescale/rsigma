@@ -58,6 +58,7 @@ pub mod error;
 pub mod fieldpath;
 pub mod lint;
 pub mod parser;
+pub mod reference;
 pub mod selector;
 pub mod value;
 pub mod version;
@@ -71,6 +72,8 @@ pub use ast::{
 };
 pub use condition::parse_condition;
 pub use error::{Result, SigmaParserError, SourceLocation};
+pub use lint::catalogue::{LintRuleInfo, catalogue};
+pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};
 pub use lint::{
     FileLintResult, Fix, FixDisposition, FixPatch, InlineSuppressions, LintConfig, LintRule,
     LintWarning, Severity, Span, apply_suppressions, lint_yaml_directory,

@@ -47,8 +47,6 @@ serde_json_path = "0.7.2"
 jsonschema = "0.46"
 ureq = "3"
 dirs = "6"
-yamlpath = "1.25"
-yamlpatch = "1.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
