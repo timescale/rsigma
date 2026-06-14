@@ -53,6 +53,18 @@ Three read-only resources expose reference data: `rsigma://lint/catalogue` (the 
 - `RsigmaMcp` is the cloneable handler; the tool methods are thin wrappers over the underlying rsigma crates.
 - The CLI owns the tokio runtime entry point (`serve_stdio`), mirroring how the daemon is wired.
 
+## Smoke test
+
+[`scripts/mcp-smoke.py`](../../scripts/mcp-smoke.py) drives a built binary end to end over both transports and exercises every tool and resource. The `mcp` feature is opt-in, so build with it first:
+
+```bash
+cargo build --release -p rsigma --features mcp
+python3 scripts/mcp-smoke.py            # stdio
+python3 scripts/mcp-smoke.py --http     # Streamable HTTP + bearer auth
+```
+
+It is a post-build sanity check; CI correctness is covered by this crate's Rust tests.
+
 ## See also
 
 - [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/) for client setup and the full workflow.

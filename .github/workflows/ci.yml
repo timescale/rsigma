@@ -244,3 +244,27 @@ jobs:
             echo "::error::Golden file comparison failed. Run 'rsigma pipeline resolve' locally and update golden files."
             exit 1
           fi
+
+  mcp-smoke:
+    name: MCP Smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # Build the CLI with the opt-in `mcp` feature, then drive the
+      # built binary end to end over both transports. `python3` ships
+      # on the runner and the harness uses only the standard library.
+      - name: Build rsigma with the mcp feature
+        run: cargo build --locked -p rsigma --features mcp
+      - name: Smoke-test the MCP server (stdio + HTTP)
+        run: |
+          python3 scripts/mcp-smoke.py --bin target/debug/rsigma
+          python3 scripts/mcp-smoke.py --http --bin target/debug/rsigma
