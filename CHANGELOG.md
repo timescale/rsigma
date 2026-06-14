@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### MCP server: Streamable HTTP transport, bearer auth, and `mcp` config keys (#TBD)
+### MCP server: Streamable HTTP transport, bearer auth, and `mcp` config keys (#209)
 
 Adds a remote transport and configuration to the MCP server.
 
