@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Developer tooling: MCP smoke harness (#210)
+
+`scripts/mcp-smoke.py` drives a built `rsigma mcp serve` binary end to end over stdio and Streamable HTTP (with bearer auth), exercising all 11 tools and 3 resources as a post-build sanity check, and runs as the `MCP Smoke` CI job. Standard-library only.
+
 ### MCP server: Streamable HTTP transport, bearer auth, and `mcp` config keys (#209)
 
 Adds a remote transport and configuration to the MCP server.
