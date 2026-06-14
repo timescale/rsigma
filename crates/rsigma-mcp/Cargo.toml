@@ -1,0 +1,40 @@
+[package]
+name = "rsigma-mcp"
+description = "Model Context Protocol (MCP) server exposing the rsigma Sigma toolchain as tools and resources"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = []
+# Streamable HTTP transport: mounts the MCP service on an axum router with
+# optional bearer-token auth. stdio works without this feature.
+http = ["dep:axum", "rmcp/transport-streamable-http-server"]
+
+[dependencies]
+rsigma-parser = { path = "../rsigma-parser", version = "0.15.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.15.0" }
+rsigma-convert = { path = "../rsigma-convert", version = "0.15.0" }
+rsigma-runtime = { path = "../rsigma-runtime", version = "0.15.0" }
+rmcp = { version = "1.7", features = ["server", "macros", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+yaml_serde = "0.10"
+anyhow = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt", "net"] }
+axum = { version = "0.8", optional = true }
+
+[dev-dependencies]
+rmcp = { version = "1.7", features = ["client", "transport-streamable-http-client-reqwest"] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+insta = { version = "1.46", features = ["json"] }

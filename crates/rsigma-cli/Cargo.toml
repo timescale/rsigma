@@ -12,6 +12,12 @@ homepage.workspace = true
 [features]
 default = ["daemon"]
 daemon = ["rsigma-runtime", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http"]
+# MCP server (`rsigma mcp serve`). Pulls in rmcp via rsigma-mcp and needs a
+# tokio runtime; opt-in, build with --features mcp (the prebuilt binaries and
+# Docker image, built with --all-features, include it).
+# Includes the Streamable HTTP transport (`--http`); TLS for it reuses the
+# `daemon-tls` rustls loader when that feature is also enabled.
+mcp = ["dep:rsigma-mcp", "rsigma-mcp/http", "tokio", "axum"]
 daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time"]
 daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2", "tokio-stream"]
 daemon-tls = [
@@ -34,6 +40,7 @@ rsigma-parser = { path = "../rsigma-parser", version = "0.15.0" }
 rsigma-eval = { path = "../rsigma-eval", version = "0.15.0", features = ["parallel"] }
 rsigma-convert = { path = "../rsigma-convert", version = "0.15.0" }
 rsigma-runtime = { path = "../rsigma-runtime", version = "0.15.0", optional = true }
+rsigma-mcp = { path = "../rsigma-mcp", version = "0.15.0", optional = true }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -51,6 +58,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
 humantime = "2"
+anyhow = "1"
 arc-swap = "1"
 
 # daemon mode dependencies

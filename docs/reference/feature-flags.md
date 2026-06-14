@@ -1,6 +1,6 @@
 # Feature Flags
 
-`rsigma` is a workspace of six crates (`rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime`, `rsigma-cli`, `rsigma-lsp`), several of which expose Cargo features that gate optional dependencies and code paths. This page documents every feature, its default state, what it pulls in, and how to enable it when building from source.
+`rsigma` is a workspace of seven crates (`rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime`, `rsigma-mcp`, `rsigma-cli`, `rsigma-lsp`), several of which expose Cargo features that gate optional dependencies and code paths. This page documents every feature, its default state, what it pulls in, and how to enable it when building from source.
 
 The CLI ships with sensible defaults; the precompiled release archives and the GHCR Docker image are built with `--all-features`, so every feature documented here is available out of the box.
 
@@ -11,6 +11,7 @@ The crate that produces the `rsigma` binary.
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
 | `daemon` | yes | `rsigma-runtime`, `tokio`, `axum`, `prometheus`, `notify`, `rusqlite`, `tower-http` | `engine daemon`, the HTTP API server, `/metrics`, hot-reload, SQLite state persistence. The default; disable only for a minimal `engine eval` / `rule *` build. |
+| `mcp` | no | `rsigma-mcp` (pulls in `rmcp`, `schemars`), `tokio` | `mcp serve`, the Model Context Protocol server exposing the toolchain to AI agents. Opt-in: build with `--features mcp`. The prebuilt binaries and Docker image (`--all-features`) include it. See the [MCP server guide](../guide/mcp-server.md). |
 | `daemon-nats` | no | `daemon` + `async-nats`, `tokio-stream`, `time`, `rsigma-runtime/nats` | NATS JetStream as `--input` and `--output` (and DLQ). All `--nats-*` flags. `RSIGMA_CONSUMER_GROUP`. See [NATS Streaming](../guide/nats-streaming.md). |
 | `daemon-otlp` | no | `daemon` + `prost`, `tonic`, `flate2`, `rsigma-runtime/otlp` | OTLP/HTTP and OTLP/gRPC receivers on `/v1/logs`. See [OTLP Integration](../guide/otlp-integration.md). |
 | `daemon-tls` | no | `daemon` + `rustls` (aws-lc-rs), `tokio-rustls`, `rustls-pki-types`, `x509-parser`, `hyper`, `hyper-util`, `tower-service` | Server-side TLS termination for the API listener (HTTP REST, `/metrics`, OTLP/HTTP, OTLP/gRPC) with optional mTLS client verification, SIGHUP-triggered cert hot-reload, and two extra Prometheus metrics. See [TLS termination](security.md#tls-termination-for-the-api-listener). |
@@ -44,6 +45,10 @@ The streaming runtime (event sources, sinks, daemon plumbing, dynamic pipelines)
 ## `rsigma-parser`
 
 No features. The parser is unconditional.
+
+## `rsigma-mcp`
+
+The Model Context Protocol server library. No Cargo features of its own; it is gated into the CLI by the `mcp` feature above.
 
 ## `rstix`
 

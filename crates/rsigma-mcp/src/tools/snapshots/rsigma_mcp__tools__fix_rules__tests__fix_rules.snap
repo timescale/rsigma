@@ -1,0 +1,14 @@
+---
+source: crates/rsigma-mcp/src/tools.rs
+expression: v
+---
+{
+  "applied": 2,
+  "changed": true,
+  "failed": 1,
+  "fixed_yaml": "title: T\nstatus: test\ntags:\n  - attack.execution\nlogsource:\n  category: test\ndetection:\n  sel:\n    a: b\n  condition: sel\n",
+  "ok": true,
+  "skipped_unsafe": 0,
+  "source": "<inline>",
+  "written": false
+}

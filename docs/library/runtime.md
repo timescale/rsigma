@@ -52,6 +52,7 @@ tokio = { version = "1", features = ["full"] }
 | `EnricherKind`, `OnError`, `Scope`, `EnrichError`, `EnrichErrorKind` | Configuration types: declared kind, error policy, scope filter, and the typed error returned by `Enricher::enrich`. |
 | `HttpResponseCache` (re-exported from `enrichment::http_cache`) | `(method, url, body_hash)`-keyed in-memory response cache with TTL and lazy eviction. Each `HttpEnricher` instance owns its own. |
 | `register_builtin(name, factory) -> Result<(), String>` | Process-global, append-only registry hook. External crates use it to ship a bespoke Rust-coded enricher type addressable via `type: <name>` in the daemon's enrichers config. Reserved names (`template` / `lookup` / `http` / `command`) and duplicate registrations are rejected. |
+| `enrichment::config::{load_enrichers_file, build_enrichers, build_enrichers_full, EnrichersFile}` | YAML loader for an enrichers config, shared by the daemon and the MCP server. Validates template namespaces, scopes, and bespoke `type:` values. |
 | `lookup_builtin(name)` | Read-only registry probe used by the daemon config loader. |
 
 The full pipeline architecture, source resolution flow, and dynamic-pipeline contract are in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-runtime/README.md) and the [Architecture reference](../reference/architecture.md).
@@ -143,7 +144,7 @@ let pipeline = EnrichmentPipeline::new(
 
 Wire a `MetricsHook` via `EnrichmentPipeline::with_metrics` to surface `rsigma_enrichment_total` / `rsigma_enrichment_duration_seconds` / `rsigma_enrichment_queue_depth` (and the HTTP cache counters) into your own metrics backend. The daemon's Prometheus-backed `Metrics` struct implements the hook.
 
-For YAML-driven configuration, use the `rsigma-cli` `daemon::enrichment::build_enrichers_full` entry point in your own daemon, or copy the loader pattern from `rsigma-cli/src/daemon/enrichment/config.rs`.
+For YAML-driven configuration, use the `enrichment::config` loader: `load_enrichers_file(path)` parses an enrichers config file into an `EnrichersFile`, and `build_enrichers(file)` / `build_enrichers_full(file, source_cache, metrics)` turn it into an `EnrichmentPipeline` (validating template namespaces and bespoke types). The daemon and the MCP server's `evaluate_events` tool share this loader.
 
 For the operator-facing schema, the four primitives, and the recipe catalog, see [Enrichers](../guide/enrichers.md).
 

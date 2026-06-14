@@ -1,16 +1,9 @@
-//! Daemon-side enrichment configuration loader.
+//! Daemon-side enrichment configuration.
 //!
-//! Parses the `enrichers:` block from the daemon's enrichers config file
-//! (loaded via `--enrichers <path>`), validates template-namespace
-//! references at load time, and produces an
-//! [`EnrichmentPipeline`](rsigma_runtime::EnrichmentPipeline) that the
-//! daemon's sink task uses to enrich each result before sink delivery.
-//!
-//! Splitting this module out from `enrichment` in `rsigma-runtime` keeps
-//! YAML parsing (a CLI-shaped concern) out of the runtime crate, which
-//! must stay deserialization-agnostic so library consumers can build
-//! enrichers programmatically.
+//! The enrichers YAML loader now lives in
+//! [`rsigma_runtime::enrichment::config`] so every in-process consumer of the
+//! enrichment pipeline (the daemon and the MCP server) shares one loader. This
+//! module re-exports the pieces the daemon uses so the call sites in
+//! `daemon/server.rs` stay unchanged.
 
-pub mod config;
-
-pub use config::{build_enrichers_full, load_enrichers_file};
+pub use rsigma_runtime::enrichment::config::{build_enrichers_full, load_enrichers_file};

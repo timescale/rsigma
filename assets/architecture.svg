@@ -155,7 +155,19 @@
   <text x="837" y="526" font-size="10.5" text-anchor="middle" fill="#4d4d4d">object store &#183; alerting</text>
   <text x="837" y="542" font-size="10.5" text-anchor="middle" fill="#808080">Prometheus scrape /metrics</text>
 
+  <!-- ===================== AI agents (MCP) ===================== -->
+  <path d="M245,470 L302,470 L302,392 L330,392" fill="none" stroke="#808080" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
+  <text x="250" y="464" font-size="11" fill="#4d4d4d">tools over MCP</text>
+
+  <rect x="40" y="428" width="205" height="112" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
+  <text x="142" y="447" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">AI agents (MCP)</text>
+  <rect x="44" y="454" width="197" height="82" fill="#e6f2ff" stroke="none"/>
+  <text x="142" y="471" font-size="10.5" text-anchor="middle" fill="#4d4d4d">via rsigma mcp serve</text>
+  <text x="142" y="489" font-size="10.5" text-anchor="middle" fill="#4d4d4d">parse &#183; lint &#183; fix &#183; validate</text>
+  <text x="142" y="505" font-size="10.5" text-anchor="middle" fill="#4d4d4d">evaluate &#183; convert &#183; fields</text>
+  <text x="142" y="523" font-size="10.5" text-anchor="middle" fill="#808080">stdio &#183; HTTP* (bearer &#183; TLS)</text>
+
   <!-- ===================== legend ===================== -->
   <text x="22" y="566" font-size="11" fill="#4d4d4d">*  feature-gated</text>
-  <text x="22" y="582" font-size="11" fill="#808080">The runtime wraps the stateless library Engine. The same engine also powers the one-shot CLI, the embedded library API, and backend conversion (see internal_architecture.svg).</text>
+  <text x="22" y="582" font-size="11" fill="#808080">The runtime wraps the stateless library Engine. The same engine also powers the CLI, library API, backend conversion, and the rsigma-mcp server (see internal_architecture.svg).</text>
 </svg>

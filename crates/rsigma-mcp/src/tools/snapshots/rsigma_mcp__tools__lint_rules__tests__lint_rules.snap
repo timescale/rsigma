@@ -1,0 +1,66 @@
+---
+source: crates/rsigma-mcp/src/tools.rs
+expression: v
+---
+{
+  "files": [
+    {
+      "findings": [
+        {
+          "fix_title": null,
+          "fixable": false,
+          "line": null,
+          "message": "missing recommended field 'description'",
+          "path": "/description",
+          "rule": "missing_description",
+          "severity": "info"
+        },
+        {
+          "fix_title": null,
+          "fixable": false,
+          "line": null,
+          "message": "missing recommended field 'author'",
+          "path": "/author",
+          "rule": "missing_author",
+          "severity": "info"
+        },
+        {
+          "fix_title": "rename 'Status' to 'status'",
+          "fixable": true,
+          "line": 2,
+          "message": "key \"Status\" should be lowercase",
+          "path": "/Status",
+          "rule": "non_lowercase_key",
+          "severity": "warning"
+        },
+        {
+          "fix_title": null,
+          "fixable": false,
+          "line": null,
+          "message": "missing recommended field 'level'",
+          "path": "/level",
+          "rule": "missing_level",
+          "severity": "warning"
+        },
+        {
+          "fix_title": "rename 'Status' to 'status'",
+          "fixable": true,
+          "line": 2,
+          "message": "unknown top-level key \"Status\"; did you mean \"status\"?",
+          "path": "/Status",
+          "rule": "unknown_key",
+          "severity": "info"
+        }
+      ],
+      "path": "<inline>"
+    }
+  ],
+  "ok": true,
+  "summary": {
+    "errors": 0,
+    "files": 1,
+    "hints": 0,
+    "infos": 3,
+    "warnings": 2
+  }
+}

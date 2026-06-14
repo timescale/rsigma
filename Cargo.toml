@@ -5,6 +5,7 @@ members = [
     "crates/rsigma-eval",
     "crates/rsigma-convert",
     "crates/rsigma-runtime",
+    "crates/rsigma-mcp",
     "crates/rsigma-cli",
     "crates/rsigma-lsp",
     "crates/rstix",

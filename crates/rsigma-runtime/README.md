@@ -11,6 +11,7 @@ Streaming runtime for [rsigma](https://github.com/timescale/rsigma) — input fo
 - **`DaemonSourceRegistry`**: unified registry of every dynamic source the daemon resolves, loaded from external `--source` files with collision-error semantics. (Pipeline-embedded `sources:` blocks are also merged in for backward compatibility but are deprecated and removed in v1.0.) Used by the daemon to manage all dynamic sources from a single point.
 - **I/O**: `EventSource` trait (stdin, HTTP, NATS) and `Sink` enum (stdout, file, NATS) with fan-out support.
 - **Field observability**: re-exports `FieldObserver` / `FieldObservation` / `FieldObservationEntry` / `FieldCoverage` from `rsigma-eval` (the canonical home, since they only need the `Event` trait) so downstream consumers can keep importing from `rsigma_runtime`. Attach via `LogProcessor::set_field_observer(Some(observer))`; inspect via `snapshot()` / `reset()`; join against a `RuleFieldSet` via `FieldObservation::coverage()`.
+- **Post-evaluation enrichment**: the `Enricher` trait and `EnrichmentPipeline` (four primitives: `template`, `lookup`, `http`, `command`, plus bespoke types via `register_builtin`), with a YAML loader in `enrichment::config` (`load_enrichers_file`, `build_enrichers`, `build_enrichers_full`) shared by the daemon and the MCP server.
 - **OTLP**: `LogRecord`-to-JSON conversion for OpenTelemetry log ingestion (feature-gated under `otlp`). Resource and log attributes are flattened for direct Sigma rule matching.
 
 ## Usage

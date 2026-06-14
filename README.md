@@ -14,7 +14,7 @@
     <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT" /></a>
 </p>
 
-RSigma is a complete Rust toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, and LSP.
+RSigma is a complete Rust toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, MCP and LSP.
 
 RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
 
@@ -39,6 +39,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * **NATS JetStream:** Use NATS JetStream support with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
 * **OTLP ingestion:** Use OTLP support for any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC
 * **Built-in linter:** Validate rules with 70 checks, four severity levels, a full suppression system, configurable custom tag namespaces (`--tag-namespace`), and auto-fix (`--fix`) for 13 safe rules
+* **MCP server:** Expose the toolchain to AI agents (Cursor, Claude Code, ...) via `rsigma mcp serve`: parse, lint, validate, evaluate, convert, fields, and pipeline tools over the Model Context Protocol, with structured JSON results
 * **LSP server:** Use real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions
 * **Docker images:** Use multi-arch Docker images (linux/amd64, linux/arm64) with cosign signatures, SBOM, and SLSA Build L3 provenance
 * **Release binaries:** Use cross-platform binaries for Linux, macOS, and Windows on amd64 and arm64
@@ -51,6 +52,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
 | [`rsigma-convert`](crates/rsigma-convert/) | Transform rules into backend-native query strings |
 | [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
+| [`rsigma-mcp`](crates/rsigma-mcp/) | Model Context Protocol (MCP) server exposing the toolchain as tools for AI agents |
 | [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, field catalog, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 | [`rstix`](crates/rstix/) | STIX 2.1 and TAXII 2.1 library crate under phased implementation |
@@ -323,6 +325,17 @@ rsigma backend targets
 rsigma backend formats postgres
 ```
 
+### MCP Server (AI agents)
+
+Expose the toolchain to MCP-aware agents (Cursor, Claude Code, ...) over stdio:
+
+```bash
+# Run the MCP server (register it in your agent's mcp.json / via `claude mcp add`)
+rsigma mcp serve --rules-dir rules/
+```
+
+The agent then calls structured tools (`parse_rule`, `lint_rules`, `validate_rules`, `evaluate_events`, `convert_rules`, `list_fields`, ...) and gets back JSON. See the [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/).
+
 ### Library Usage
 
 Or use the library directly:
@@ -565,6 +578,27 @@ Feature-gated items are marked with \* in the diagram.
      │      Detection /       │    events
      │      Correlation       │
      └────────────────────────┘
+
+   - - - - - - - - - - - - agent-facing surface - - - - - - - - - - - -
+
+    AI agents (Cursor, Claude Code, ...)
+              │  JSON-RPC over MCP
+              ▼
+    ┌──────────────────────────────────────────────┐
+    │  rsigma-mcp  (agent-facing tool surface)     │
+    │  driven by:  rsigma mcp serve                │
+    │  transports: stdio · Streamable HTTP         │
+    │                (bearer auth · TLS)           │
+    │                                              │
+    │  11 tools: parse · lint · fix · validate     │
+    │    · evaluate · convert · fields             │
+    │    · pipelines                               │
+    │  3 resources: lint catalogue · modifiers     │
+    │    · MITRE tactics                           │
+    │                                              │
+    │  wraps rsigma-parser · rsigma-eval           │
+    │    · rsigma-convert · rsigma-runtime         │
+    └──────────────────────────────────────────────┘
 ```
 
 </details>

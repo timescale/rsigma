@@ -5,6 +5,8 @@ flowchart TD
     OUTPUT["EvaluationResult\nRuleHeader: title · id · level · tags · enrichments\nResultBody: Detection (matched fields/selections) ·\nCorrelation (correlation_type · group_key · aggregated_value)"]
     QUERIES["SQL · SPL · KQL · Lucene"]
     EDITOR["Editor diagnostics + code actions"]
+    AGENTS["MCP clients\nCursor · Claude Code · remote agents"]
+    MCPJSON["Structured JSON\nAST · lint findings · matches · queries · fields"]
     LEGEND["* = feature-gated\n** = requires daachorse-index feature"]
 
     subgraph rsigma-parser
@@ -50,6 +52,12 @@ flowchart TD
         RSRC["sources/ (dynamic pipelines)\nDaemonSourceRegistry: external (--source) +\npipeline-embedded (deprecated) · collision-error\nSourceResolver: HTTP · command · file · NATS\nTemplateExpander · SourceCache (SQLite TTL)\nRefreshScheduler: interval · watch · push\nSIGHUP · NATS control · includes\nextract: jq · JSONPath · CEL"]
     end
 
+    subgraph rsigma-mcp
+        direction TB
+        MCPSERVE["rsigma mcp serve\nstdio · Streamable HTTP (bearer auth · TLS)"]
+        MCPSERVE --> MCPH["RsigmaMcp handler\n11 tools: parse_rule · parse_condition · lint_rules\nvalidate_rules · evaluate_events · convert_rules\nlist_backends · list_fields · resolve_pipeline\nlist_builtin_pipelines · fix_rules\n3 resources: lint catalogue · modifiers · MITRE tactics"]
+    end
+
     YAML -->|"Raw YAML Value"| SERDE
     SERDE --> PARSE
     PEST --> ETRAIT
@@ -61,3 +69,10 @@ flowchart TD
     CENDS --> QUERIES
     LEDIT --> EDITOR
     RSRC -.->|"${source.*} values"| EPIPE
+
+    AGENTS -->|"JSON-RPC"| MCPSERVE
+    MCPH -.->|"parse · lint · fix · reference"| PARSE
+    MCPH -.->|"compile · evaluate · fields"| ETRAIT
+    MCPH -.->|"convert"| CBACK
+    MCPH -.->|"sources · enrichment"| RSRC
+    MCPH --> MCPJSON

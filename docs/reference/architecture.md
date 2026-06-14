@@ -1,6 +1,6 @@
 # Architecture
 
-RSigma is a workspace of seven crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
+RSigma is a workspace of eight crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
 
 For operator-facing material see the [User Guide](../guide/evaluating-rules.md). For per-crate API docs see [docs.rs/rsigma](https://docs.rs/rsigma).
 
@@ -22,6 +22,8 @@ flowchart TD
     OUTPUT["MatchResult · CorrelationResult<br/>rule title · id · level · tags<br/>matched selections · field matches<br/>aggregated values · optional events"]
     QUERIES["SQL · SPL · KQL · Lucene"]
     EDITOR["Editor diagnostics + code actions"]
+    AGENTS["MCP clients<br/>Cursor · Claude Code · remote agents"]
+    MCPJSON["Structured JSON<br/>AST · lint findings · matches · queries · fields"]
 
     subgraph rsigma-parser
         direction TB
@@ -65,6 +67,12 @@ flowchart TD
         RSRC["sources/ (dynamic pipelines)<br/>SourceResolver: HTTP · command · file · NATS<br/>TemplateExpander · SourceCache<br/>RefreshScheduler<br/>SIGHUP · NATS control · includes<br/>extract: jq · JSONPath · CEL"]
     end
 
+    subgraph rsigma-mcp
+        direction TB
+        MCPSERVE["rsigma mcp serve<br/>stdio · Streamable HTTP (bearer auth · TLS)"]
+        MCPSERVE --> MCPH["RsigmaMcp handler<br/>11 tools: parse · lint · fix · validate<br/>evaluate · convert · fields · pipelines<br/>3 resources: lint catalogue · modifiers · MITRE"]
+    end
+
     YAML -->|"Raw YAML Value"| SERDE
     SERDE --> PARSE
     PEST --> ETRAIT
@@ -76,6 +84,13 @@ flowchart TD
     CENDS --> QUERIES
     LEDIT --> EDITOR
     RSRC -.->|"source values"| EPIPE
+
+    AGENTS -->|"JSON-RPC"| MCPSERVE
+    MCPH -.-> PARSE
+    MCPH -.-> ETRAIT
+    MCPH -.-> CBACK
+    MCPH -.-> RSRC
+    MCPH --> MCPJSON
 ```
 
 `*` feature-gated. `**` requires the `daachorse-index` feature.
@@ -91,10 +106,11 @@ The dependency direction goes left to right in the diagram above. Higher crates 
 | [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `TestBackend` | — |
 | [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
 | [`rsigma-lsp`](https://docs.rs/rsigma-lsp) | Language Server Protocol for editors. Diagnostics from the linter + parser + compiler, plus completions, hovers, and symbols. | `Backend` (tower-lsp impl), `Diagnostic` mapping | — |
+| [`rsigma-mcp`](https://docs.rs/rsigma-mcp) | Model Context Protocol server. Exposes the parser, linter, fixer, evaluator, converter, field extraction, and pipeline resolution as MCP tools and resources for AI agents, returning structured JSON. | `RsigmaMcp` handler, `serve_stdio` | `http` |
 | `rstix` | STIX 2.1 + TAXII 2.1 library crate under phased implementation. | `parse_bundle` placeholder, core primitives, `model::common` property containers, leaf-type serde (`serde_impls/`), deterministic SCO-ID helpers, vocabulary tables | `serde` |
 | `rsigma-cli` | The `rsigma` binary. Wires the other crates into a CLI and the streaming daemon. | `engine eval`, `engine daemon`, `rule *`, `backend *`, `pipeline resolve` | `daemon`, `daemon-nats`, `daemon-otlp`, plus all eval/runtime feature flags. |
 
-`rsigma-parser` has no Rust dependencies on the others. `rsigma-eval`, `rsigma-convert`, and `rsigma-lsp` depend on `rsigma-parser` and nothing else above it. `rsigma-runtime` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-cli` depends on everything.
+`rsigma-parser` has no Rust dependencies on the others. `rsigma-eval`, `rsigma-convert`, and `rsigma-lsp` depend on `rsigma-parser` and nothing else above it. `rsigma-runtime` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-mcp` depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, and `rsigma-runtime`. `rsigma-cli` depends on everything.
 
 ## The four execution shapes
 
@@ -140,6 +156,10 @@ PostgreSQL/TimescaleDB and LynxDB are the two production targets today. See [`ba
 ### Plus: LSP
 
 `rsigma-lsp` runs over stdio via `tower-lsp`. On every save, it parses, lints, and compiles the buffer through `rsigma-parser` + `rsigma-eval`, then maps any findings into LSP diagnostics. It also exposes completions, hovers, and document symbols. See [VS Code](../editors/vscode.md) and [Neovim](../editors/neovim.md).
+
+### Plus: MCP
+
+`rsigma-mcp` exposes the toolchain to MCP-aware agents (Cursor, Claude Code, ...) over stdio, and over Streamable HTTP (with bearer-token auth and TLS) behind the `http` feature. The `RsigmaMcp` handler wraps `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, and `rsigma-runtime` behind 11 tools (parse, lint, fix, validate, evaluate, convert, list backends and fields, resolve and list pipelines) and 3 resources (the lint catalogue, modifier reference, and MITRE tactics), returning structured JSON. It is driven by `rsigma mcp serve`. See the [MCP server guide](../guide/mcp-server.md).
 
 ## Data flow
 

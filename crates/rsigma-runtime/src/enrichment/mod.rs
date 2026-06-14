@@ -46,6 +46,7 @@ use tokio::sync::Semaphore;
 use crate::metrics::{MetricsHook, NoopMetrics};
 
 mod command;
+pub mod config;
 mod http;
 pub mod http_cache;
 mod lookup;

@@ -1,27 +1,29 @@
-//! YAML schema and loader for the daemon's enrichers config file.
+//! YAML schema and loader for an enrichers config file.
 //!
-//! Loaded at daemon startup (and again on hot-reload). Validates that:
+//! Loaded by the daemon at startup (and again on hot-reload) and by the MCP
+//! server's `evaluate_events` tool. Validates that:
 //! - every enricher declares a `kind: detection | correlation`,
 //! - templated fields reference only the declared kind's namespace
 //!   (`${detection.*}` or `${correlation.*}`) plus `${ENV_VAR}`,
 //! - `scope.rules`, `scope.tags`, and `scope.levels` parse correctly,
 //! - bespoke `type:` values map to a registered factory.
 //!
-//! Failures abort daemon startup with a clear error pointing at the
-//! offending enricher id and field.
+//! Failures abort with a clear error pointing at the offending enricher id and
+//! field. This lives in `rsigma-runtime` (rather than the CLI) so every
+//! in-process consumer of the enrichment pipeline shares one loader.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-#[cfg(test)]
-use rsigma_runtime::NoopMetrics;
-use rsigma_runtime::{
-    CommandEnricher, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
-    HttpResponseCache, LookupEnricher, MetricsHook, OnError, OutputFormat, Scope, SourceCache,
-    TemplateEnricher, build_default_http_client, lookup_builtin, validate_template_namespace,
-};
 use serde::Deserialize;
+
+use crate::{
+    CommandEnricher, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
+    HttpResponseCache, LookupEnricher, MetricsHook, NoopMetrics, OnError, OutputFormat, Scope,
+    SourceCache, TemplateEnricher, build_default_http_client, lookup_builtin,
+    validate_template_namespace,
+};
 
 /// Default per-enricher timeout when YAML omits `timeout:`.
 const DEFAULT_ENRICHER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,7 +66,7 @@ pub struct EnricherConfig {
     pub kind: KindLabel,
     /// Primitive type name (`template`, `lookup`, `http`, `command`) or
     /// the `type:` of a bespoke enricher registered via
-    /// [`register_builtin`](rsigma_runtime::register_builtin).
+    /// [`register_builtin`](crate::register_builtin).
     #[serde(rename = "type")]
     pub type_name: String,
     /// Field under `enrichments` to write the result into.
@@ -87,10 +89,9 @@ pub struct EnricherConfig {
     pub template: Option<String>,
 
     // The remaining fields are reserved for the http / command / lookup
-    // primitives shipped in Phases 2 and 3. They live on the same
-    // struct so YAML files round-trip with the loader without needing
-    // per-phase reparse logic; missing values produce a clear error
-    // when the matching primitive is selected.
+    // primitives. They live on the same struct so YAML files round-trip
+    // with the loader without needing per-phase reparse logic; missing
+    // values produce a clear error when the matching primitive is selected.
     /// `http`: target URL.
     #[serde(default)]
     pub url: Option<String>,
@@ -223,7 +224,7 @@ pub enum EnrichersConfigError {
         field: &'static str,
     },
     /// Template-namespace validator rejected a reference.
-    Template(rsigma_runtime::TemplateError),
+    Template(crate::TemplateError),
     /// Scope construction failed.
     Scope {
         enricher_id: String,
@@ -284,30 +285,26 @@ pub fn load_enrichers_file(path: &Path) -> Result<EnrichersFile, EnrichersConfig
     Ok(parsed)
 }
 
-/// Construct an [`EnrichmentPipeline`] from a parsed config.
+/// Construct an [`EnrichmentPipeline`] from a parsed config with default
+/// (no-op) metrics and no source cache.
 ///
-/// This is split from [`load_enrichers_file`] so unit tests and the
-/// hot-reload path can build a pipeline from a programmatically
-/// constructed [`EnrichersFile`] without going through the disk.
-///
-/// `source_cache` is the dynamic-pipelines source cache shared across
-/// the daemon. Pass `None` if no `lookup` enrichers will be configured;
-/// the loader returns a clear error if a `lookup` enricher is encountered
-/// without a cache.
-///
-/// All HTTP enrichers in the resulting pipeline share a single
-/// `reqwest::Client` (wrapped in [`HttpEnricherClient`]) so connection
-/// pooling works at the daemon level.
-#[cfg(test)]
+/// This is split from [`load_enrichers_file`] so unit tests and in-process
+/// consumers can build a pipeline from a programmatically constructed
+/// [`EnrichersFile`] without going through the disk. `lookup` enrichers require
+/// a source cache and will error here; use [`build_enrichers_full`] to provide
+/// one.
 pub fn build_enrichers(file: EnrichersFile) -> Result<EnrichmentPipeline, EnrichersConfigError> {
     build_enrichers_full(file, None, std::sync::Arc::new(NoopMetrics))
 }
 
-/// Like the test-only `build_enrichers` shim above but accepts an
-/// optional shared [`SourceCache`] for `lookup` enrichers and a
-/// metrics hook the pipeline (and per-enricher cache lookups)
-/// report into. The daemon passes its Prometheus-backed `Metrics`
+/// Like [`build_enrichers`] but accepts an optional shared [`SourceCache`] for
+/// `lookup` enrichers and a metrics hook the pipeline (and per-enricher cache
+/// lookups) report into. The daemon passes its Prometheus-backed `Metrics`
 /// here.
+///
+/// All HTTP enrichers in the resulting pipeline share a single
+/// `reqwest::Client` (wrapped in [`HttpEnricherClient`]) so connection
+/// pooling works at the process level.
 pub fn build_enrichers_full(
     file: EnrichersFile,
     source_cache: Option<std::sync::Arc<SourceCache>>,
@@ -318,8 +315,7 @@ pub fn build_enrichers_full(
             enricher_id: "<global>".to_string(),
             message,
         })?;
-    let mut enrichers: Vec<Box<dyn rsigma_runtime::Enricher>> =
-        Vec::with_capacity(file.enrichers.len());
+    let mut enrichers: Vec<Box<dyn crate::Enricher>> = Vec::with_capacity(file.enrichers.len());
     for cfg in file.enrichers {
         enrichers.push(build_one(
             cfg,
@@ -334,8 +330,7 @@ pub fn build_enrichers_full(
     Ok(EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics))
 }
 
-/// Build a single [`Enricher`](rsigma_runtime::Enricher) from one YAML
-/// config block.
+/// Build a single [`Enricher`](crate::Enricher) from one YAML config block.
 ///
 /// Pulled out of `build_enrichers_full` so the loader's match on
 /// `type_name` stays linear and so future primitives can be added by
@@ -345,7 +340,7 @@ fn build_one(
     http_client: HttpEnricherClient,
     source_cache: Option<std::sync::Arc<SourceCache>>,
     metrics: std::sync::Arc<dyn MetricsHook>,
-) -> Result<Box<dyn rsigma_runtime::Enricher>, EnrichersConfigError> {
+) -> Result<Box<dyn crate::Enricher>, EnrichersConfigError> {
     let kind: EnricherKind = cfg.kind.into();
     let on_error: OnError = cfg.on_error.into();
     let timeout = cfg.timeout.unwrap_or(DEFAULT_ENRICHER_TIMEOUT);
@@ -738,13 +733,6 @@ enrichers:
 
     #[test]
     fn two_kind_aware_entries_for_one_logical_enricher() {
-        // The plan documents a "YAML anchor pattern" for kind-agnostic
-        // enrichers: declare two YAML entries that share everything
-        // except `kind` and the namespace of their template. We verify
-        // here that two such entries (regardless of how the operator
-        // reduces duplication via YAML anchors / merge keys, which is a
-        // YAML-loader concern) build into two valid enrichers, one per
-        // kind, with no cross-namespace leakage.
         let yaml = r#"
 enrichers:
   - id: runbook_det

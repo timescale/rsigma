@@ -190,6 +190,24 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 
 **Schema validation skips** documents with `action: global`, `action: reset`, or `action: repeat` (action fragments).
 
+### `mcp serve`: Run the MCP server for AI agents
+
+Expose the toolchain to MCP-aware agents (Cursor, Claude Code, ...) over stdio. The agent calls structured tools (`parse_rule`, `parse_condition`, `lint_rules`, `validate_rules`, `evaluate_events`, `convert_rules`, `list_backends`, `list_fields`, `resolve_pipeline`, `list_builtin_pipelines`) and gets back JSON.
+
+```bash
+rsigma mcp serve                                   # stdio MCP server
+rsigma mcp serve --rules-dir rules/                # default root for relative path args
+rsigma mcp serve --lint-config .rsigma-lint.yml    # config for the lint_rules tool
+```
+
+Register it in your agent's config, e.g. Cursor `mcp.json`:
+
+```json
+{ "mcpServers": { "rsigma": { "command": "rsigma", "args": ["mcp", "serve"] } } }
+```
+
+The command is gated behind the opt-in `mcp` Cargo feature (build with `--features mcp`; the prebuilt binaries and Docker image, built with `--all-features`, include it). See the [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/).
+
 ### `engine daemon`: Run as a long-running detection service
 
 Run rsigma as a long-running daemon that continuously reads NDJSON from stdin, evaluates against rules, writes matches to stdout, and exposes health/metrics/management APIs over HTTP.

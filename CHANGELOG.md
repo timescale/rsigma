@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### MCP server: `rsigma mcp serve` and the `rsigma-mcp` crate (#208)
+
+A new [Model Context Protocol](https://modelcontextprotocol.io) server exposes the rsigma Sigma toolchain to AI agents (Cursor, Claude Code, ...) as structured tools. Instead of scraping CLI text, an agent calls typed tools and gets back JSON: ASTs, lint findings with spans and fix availability, evaluation matches, backend queries, and field inventories.
+
+- **`rsigma mcp serve`.** A new command group (`Commands::Mcp`) running the server over stdio, gated behind a new opt-in `mcp` Cargo feature (build with `--features mcp`; the prebuilt binaries and Docker image include it). Flags: `--lint-config` (applied by the lint tool) and `--rules-dir` (a default root for relative path-based tool calls).
+- **`rsigma-mcp` crate.** A new library crate built on `rmcp` 1.7 with the `RsigmaMcp` handler and `serve_stdio`. Ten core tools: `parse_rule`, `parse_condition`, `lint_rules`, `validate_rules`, `evaluate_events`, `convert_rules`, `list_backends`, `list_fields`, `resolve_pipeline`, and `list_builtin_pipelines`. Every tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path`; stdout is reserved for the transport and diagnostics go to stderr.
+- **`fix_rules` tool.** Applies safe auto-fixes to Sigma YAML (lowercase keys, status/level typos, duplicate removal, ...) preserving comments and formatting, and returns the fixed YAML plus applied/failed/skipped-unsafe counts. Unsafe fixes are never auto-applied. `write: true` (only valid with a file `path`) persists the change to disk; an optional `lint_rules` filter restricts which lint rules are fixed.
+- **MCP resources.** `rsigma://lint/catalogue` (the 75-rule catalogue as JSON), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics` let agents ground themselves on the exact lint vocabulary and modifier semantics without spending tool calls.
+- **Enrichment-aware `evaluate_events`.** An optional `enrichers` (inline YAML/JSON) or `enrichers_path` parameter builds an enrichment pipeline and enriches results before returning; loader validation errors (including template-namespace checks) come back as structured errors, so the tool doubles as an enricher-config validator.
+- **`rsigma_runtime::enrichment::config`.** The enrichers YAML loader (`load_enrichers_file`, `build_enrichers`, `build_enrichers_full`, `EnrichersFile`) moves from the CLI daemon into `rsigma-runtime` so the daemon and the MCP server share one loader. The daemon is rewired to the moved loader with behavior and error text unchanged.
+- **Docs.** A new [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/), the [`mcp serve` CLI page](https://timescale.github.io/rsigma/cli/mcp/serve/), an `rsigma-mcp` library page, and the `mcp` feature entry in the feature-flags reference.
+
 ### MCP server prerequisites: shared fix applier, reference data, and lint catalogue (#207)
 
 Internal refactors that lift three pieces of lint and reference machinery into `rsigma-parser` so the CLI, the LSP, and the upcoming MCP server share one implementation. Behavior is unchanged for existing commands.

@@ -2167,6 +2167,7 @@ checksum = "7b4a6248eb93a4401ed2f37dfe8ea592d3cf05b7cf4f8efa867b6895af7e094e"
 dependencies = [
  "console",
  "once_cell",
+ "serde",
  "similar",
  "tempfile",
 ]
@@ -3794,12 +3795,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
 ]
 
@@ -3847,9 +3850,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmcp"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0810a9f717d9828f475fe1f629f4c305c8464b7f496c3a854b58d29e65f4058e"
+dependencies = [
+ "async-trait",
+ "base64",
+ "bytes",
+ "chrono",
+ "futures",
+ "http",
+ "http-body",
+ "http-body-util",
+ "pastey",
+ "pin-project-lite",
+ "rand 0.10.1",
+ "reqwest 0.13.3",
+ "rmcp-macros",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sse-stream",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower-service",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "rmcp-macros"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aefac48c364756e97f04c0401ba3231e8607882c7c1d92da0437dc16307904d"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "rsigma"
 version = "0.15.0"
 dependencies = [
+ "anyhow",
  "arc-swap",
  "assert_cmd",
  "async-nats",
@@ -3877,6 +3926,7 @@ dependencies = [
  "rcgen",
  "rsigma-convert",
  "rsigma-eval",
+ "rsigma-mcp",
  "rsigma-parser",
  "rsigma-runtime",
  "rusqlite",
@@ -3962,6 +4012,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsigma-mcp"
+version = "0.15.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "insta",
+ "reqwest 0.12.28",
+ "rmcp",
+ "rsigma-convert",
+ "rsigma-eval",
+ "rsigma-parser",
+ "rsigma-runtime",
+ "rustls",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
 name = "rsigma-parser"
 version = "0.15.0"
 dependencies = [
@@ -3995,6 +4068,7 @@ dependencies = [
  "evtx",
  "futures",
  "globset",
+ "humantime",
  "jaq-core",
  "jaq-json",
  "jaq-std",
@@ -4009,6 +4083,7 @@ dependencies = [
  "rsigma-eval",
  "rsigma-parser",
  "rusqlite",
+ "serde",
  "serde_json",
  "syslog_loose",
  "tempfile",
@@ -4241,6 +4316,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",
@@ -4710,6 +4786,19 @@ dependencies = [
  "js-sys",
  "rsqlite-vfs",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3962b63f038885f15bce2c6e02c0e7925c072f1ac86bb60fd44c5c6b762fb72"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -5710,6 +5799,19 @@ dependencies = [
  "indexmap 2.14.0",
  "wasm-encoder",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

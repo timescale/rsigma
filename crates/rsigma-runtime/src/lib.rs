@@ -59,6 +59,10 @@ pub use egress::{
     set_default_egress_policy,
 };
 pub use engine::{EngineStats, RuntimeEngine};
+pub use enrichment::config::{
+    EnricherConfig, EnrichersConfigError, EnrichersFile, build_enrichers, build_enrichers_full,
+    load_enrichers_file,
+};
 pub use enrichment::{
     CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,
     EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,

@@ -1,0 +1,18 @@
+---
+source: crates/rsigma-mcp/src/tools.rs
+expression: v
+---
+{
+  "errors": [],
+  "format": "default",
+  "ok": true,
+  "queries": [
+    {
+      "query": "SELECT * FROM security_events WHERE \"CommandLine\" ILIKE '%whoami%'",
+      "rule_id": "8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a",
+      "rule_title": "Whoami Execution"
+    }
+  ],
+  "target": "postgres",
+  "warnings": []
+}

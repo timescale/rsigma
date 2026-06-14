@@ -16,6 +16,8 @@ use commands::{
 };
 #[cfg(feature = "daemon")]
 use commands::{DaemonArgs, cmd_daemon};
+#[cfg(feature = "mcp")]
+use commands::{McpCommands, dispatch_mcp};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
 use jaq_json::Val;
@@ -121,6 +123,13 @@ enum Commands {
     Pipeline {
         #[command(subcommand)]
         cmd: PipelineCommands,
+    },
+
+    /// Run the Model Context Protocol (MCP) server for AI agents
+    #[cfg(feature = "mcp")]
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCommands,
     },
 
     /// Manage rsigma configuration files (init, validate, schema, path)
@@ -328,6 +337,8 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
         Commands::Rule { cmd } => dispatch_rule(cmd, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
         Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
+        #[cfg(feature = "mcp")]
+        Commands::Mcp { cmd } => dispatch_mcp(cmd),
         Commands::Config { cmd } => config::commands::dispatch(cmd),
 
         // -- Deprecated flat aliases ----------------------------------------

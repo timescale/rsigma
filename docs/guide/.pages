@@ -4,6 +4,7 @@ nav:
   - Rule Conversion: rule-conversion.md
   - Array Matching: array-matching.md
   - Linting Rules: linting-rules.md
+  - MCP Server: mcp-server.md
   - Processing Pipelines: processing-pipelines.md
   - Enrichers: enrichers.md
   - Input Formats: input-formats.md

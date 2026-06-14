@@ -101,6 +101,16 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
+      - name: Publish rsigma-mcp
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-mcp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Wait for crates.io index update (rsigma-mcp)
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
       - name: Publish rsigma
         if: github.event_name != 'workflow_dispatch'
         run: cargo publish --locked -p rsigma

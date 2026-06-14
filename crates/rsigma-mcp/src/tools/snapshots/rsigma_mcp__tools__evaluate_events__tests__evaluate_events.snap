@@ -1,0 +1,38 @@
+---
+source: crates/rsigma-mcp/src/tools.rs
+expression: v
+---
+{
+  "ok": true,
+  "results": [
+    {
+      "event_index": 0,
+      "result": {
+        "level": "medium",
+        "matched_fields": [
+          {
+            "case_sensitive": false,
+            "field": "CommandLine",
+            "matcher": "contains",
+            "selection": "selection",
+            "value": "cmd /c whoami /priv"
+          }
+        ],
+        "matched_selections": [
+          "selection"
+        ],
+        "rule_id": "8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a",
+        "rule_title": "Whoami Execution",
+        "tags": [
+          "attack.execution"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "correlation_matches": 0,
+    "detection_matches": 1,
+    "enriched": false,
+    "events_evaluated": 2
+  }
+}
