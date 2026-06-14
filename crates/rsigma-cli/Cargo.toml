@@ -36,11 +36,11 @@ evtx = ["rsigma-runtime/evtx"]
 daachorse-index = ["rsigma-eval/daachorse-index", "rsigma-runtime?/daachorse-index"]
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.15.0" }
-rsigma-eval = { path = "../rsigma-eval", version = "0.15.0", features = ["parallel"] }
-rsigma-convert = { path = "../rsigma-convert", version = "0.15.0" }
-rsigma-runtime = { path = "../rsigma-runtime", version = "0.15.0", optional = true }
-rsigma-mcp = { path = "../rsigma-mcp", version = "0.15.0", optional = true }
+rsigma-parser = { path = "../rsigma-parser", version = "0.16.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.16.0", features = ["parallel"] }
+rsigma-convert = { path = "../rsigma-convert", version = "0.16.0" }
+rsigma-runtime = { path = "../rsigma-runtime", version = "0.16.0", optional = true }
+rsigma-mcp = { path = "../rsigma-mcp", version = "0.16.0", optional = true }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
