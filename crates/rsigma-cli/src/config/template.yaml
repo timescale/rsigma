@@ -137,6 +137,23 @@ eval:
   syslog_strip_bom: true
   fail_on_detection: false
 
+backtest:
+  # Default rules path for `rsigma rule backtest`.
+  # rules: ./rules
+  # Event corpus file(s) or directory(ies), walked recursively.
+  # corpus: [./corpus]
+  # Expectations YAML (per-rule fire-count assertions).
+  # expectations: ./expectations.yml
+  # Policy for a rule that fires with no covering expectation: fail | warn | ignore.
+  # Unset here so the expectations-file default applies; the CLI flag overrides both.
+  # unexpected: warn
+  # pipelines: [sysmon]
+  # Input log format for non-NDJSON corpus files.
+  input_format: auto
+  syslog_tz: "+00:00"
+  # Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Set false to keep it.
+  syslog_strip_bom: true
+
 # `rsigma mcp serve` settings. The auth token is NOT configurable here by
 # design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
 mcp:

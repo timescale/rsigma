@@ -1,0 +1,35 @@
+title: Whoami Execution
+id: 11111111-1111-1111-1111-111111111111
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\whoami.exe'
+    condition: selection
+level: low
+---
+title: Netstat Execution
+id: 22222222-2222-2222-2222-222222222222
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\netstat.exe'
+    condition: selection
+level: informational
+---
+title: Ping Execution
+id: 33333333-3333-3333-3333-333333333333
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\ping.exe'
+    condition: selection
+level: informational

@@ -11,8 +11,8 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    ConditionArgs, ConvertArgs, EvalArgs, FieldsArgs, LintArgs, LintCounts, ListFormatsArgs,
-    MigrateSourcesArgs, ParseArgs, StdinArgs, ValidateArgs,
+    BacktestArgs, ConditionArgs, ConvertArgs, EvalArgs, FieldsArgs, LintArgs, LintCounts,
+    ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StdinArgs, ValidateArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -221,6 +221,9 @@ enum RuleCommands {
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
 
+    /// Replay an event corpus and diff per-rule fires against expectations
+    Backtest(BacktestArgs),
+
     /// Parse a condition expression and print the AST
     Condition(ConditionArgs),
 
@@ -342,7 +345,7 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
     match command {
         // -- Grouped commands ------------------------------------------------
         Commands::Engine { cmd } => dispatch_engine(cmd, matches, ctx),
-        Commands::Rule { cmd } => dispatch_rule(cmd, ctx),
+        Commands::Rule { cmd } => dispatch_rule(cmd, matches, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
         #[cfg(feature = "daemon")]
         Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
@@ -430,12 +433,19 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::Outpu
     }
 }
 
-fn dispatch_rule(cmd: RuleCommands, ctx: output::OutputCtx) {
+fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx) {
     match cmd {
         RuleCommands::Parse(args) => commands::cmd_parse(args, ctx),
         RuleCommands::Validate(args) => commands::cmd_validate(args),
         RuleCommands::Lint(args) => run_lint(args, ctx),
         RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
+        RuleCommands::Backtest(args) => {
+            let bm = matches
+                .subcommand_matches("rule")
+                .and_then(|m| m.subcommand_matches("backtest"))
+                .expect("rule backtest submatches present");
+            run_backtest(args, bm, ctx);
+        }
         RuleCommands::Condition(args) => commands::cmd_condition(args, ctx),
         RuleCommands::Stdin(args) => commands::cmd_stdin(args, ctx),
         RuleCommands::MigrateSources(args) => commands::cmd_migrate_sources(args),
@@ -467,6 +477,15 @@ fn run_eval(mut args: EvalArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     if fail_on_detection && had_matches {
         process::exit(exit_code::FINDINGS);
     }
+}
+
+/// Entry point for `rule backtest`. Applies config (CLI flag > env > file >
+/// default) before running, then exits with the report's house exit code
+/// (0 pass, 1 findings, 2 rule error, 3 config error).
+fn run_backtest(mut args: BacktestArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
+    commands::apply_backtest_config(&mut args, matches);
+    let code = commands::cmd_backtest(args, ctx);
+    process::exit(code);
 }
 
 /// Shared lint entry point used by both `rule lint` and the deprecated `lint`
@@ -791,6 +810,36 @@ mod config_default_drift {
             .get_default_values()
             .first()
             .map(|s| s.to_string_lossy().into_owned())
+    }
+
+    fn backtest_default(id: &str) -> Option<String> {
+        let cmd = Cli::command();
+        let rule = cmd.find_subcommand("rule")?;
+        let backtest = rule.find_subcommand("backtest")?;
+        backtest
+            .get_arguments()
+            .find(|a| a.get_id() == id)?
+            .get_default_values()
+            .first()
+            .map(|s| s.to_string_lossy().into_owned())
+    }
+
+    /// The `rule backtest` input-handling flags share the single-source config
+    /// defaults, just like the daemon flags.
+    #[test]
+    fn clap_backtest_defaults_match_config_defaults() {
+        assert_eq!(
+            backtest_default("input_format").as_deref(),
+            Some(defaults::INPUT_FORMAT)
+        );
+        assert_eq!(
+            backtest_default("syslog_tz").as_deref(),
+            Some(defaults::SYSLOG_TZ)
+        );
+        assert_eq!(
+            backtest_default("syslog_strip_bom"),
+            Some(defaults::SYSLOG_STRIP_BOM.to_string())
+        );
     }
 
     #[test]
