@@ -911,6 +911,40 @@ detection:
 }
 
 #[test]
+fn pipeline_routes_file_access_to_open_file_macro() {
+    use rsigma_eval::pipeline::{apply_pipelines_with_state, builtin::resolve_builtin};
+
+    let yaml = r#"
+title: Crypto wallet access
+logsource:
+  category: file_access
+  product: windows
+detection:
+  selection:
+    FileName|contains: '\AppData\Roaming\Ethereum\keystore\'
+  condition: selection
+"#;
+    let mut collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
+    let pipeline = resolve_builtin("fibratus_windows").unwrap().unwrap();
+    let backend = FibratusBackend::new();
+    let rule = &mut collection.rules[0];
+    let state = apply_pipelines_with_state(&[pipeline], rule).unwrap();
+    let q = backend.convert_rule(rule, "expr", &state).unwrap();
+
+    // Sigma file_access is a file open: the `CreateFile` + `OPEN` +
+    // `Success` discriminator triple is injected first, in macro order, so
+    // the recognizer collapses it to the `open_file` macro. `FileName`
+    // renames to `file.path` and `Image` (absent here) would rename to
+    // `ps.exe`.
+    let out = &q[0];
+    assert!(out.starts_with("open_file"), "got: {out}");
+    assert!(
+        out.contains(r"file.path icontains '\\AppData\\Roaming\\Ethereum\\keystore\\'"),
+        "got: {out}",
+    );
+}
+
+#[test]
 fn pipeline_routes_dns_query_with_dns_namespace() {
     use rsigma_eval::pipeline::{apply_pipelines_with_state, builtin::resolve_builtin};
 

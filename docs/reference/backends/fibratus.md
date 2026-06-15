@@ -71,6 +71,7 @@ The pipeline maps logsource categories to `evt.name` discriminators and renames 
 | `process_creation` | `CreateProcess` | `Image -> ps.exe`, `CommandLine -> ps.cmdline`, `ProcessId -> ps.pid`, `User -> ps.username` (on a Fibratus 3.0.0 `CreateProcess` event `ps.*` is the *created* child process); `ParentImage -> ps.parent.exe`, `ParentCommandLine -> ps.parent.cmdline`, `ParentProcessId -> ps.parent.pid` (the spawning process) |
 | `process_termination` | `TerminateProcess` | `Image -> ps.exe`, `ProcessId -> ps.pid` |
 | `file_event` (file creation) | `CreateFile` with `not (file.operation ~= 'OPEN')` | `TargetFilename -> file.path`, `Image -> ps.exe`. Sigma `file_event` is a file *creation* event, so the disposition guard excludes plain opens (the `create_file` macro semantics) and the rule does not fire on file access. |
+| `file_access` (file open) | `open_file` macro (`CreateFile` + `file.operation = 'OPEN'` + `file.status = 'Success'`) | `FileName -> file.path`, `Image -> ps.exe`. Sigma `file_access` (Microsoft-Windows-Kernel-File ETW provider) is a file *open* event, so the disposition guard keeps only opens. |
 | `file_delete` | `DeleteFile` | `TargetFilename -> file.path` |
 | `network_connection` | `Connect` | `DestinationIp -> net.dip`, `DestinationPort -> net.dport`, `DestinationPortName -> net.dport.name`, `SourceIp -> net.sip`, `Protocol -> net.l4.proto` |
 | `dns_query` | `QueryDns` | `QueryName -> dns.name`, `QueryStatus -> dns.rcode`, `QueryResults -> dns.answers` |

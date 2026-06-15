@@ -156,6 +156,61 @@ transformations:
         category: file_event
         product: windows
 
+  # --- File access (file open) ---
+  #
+  # Sigma's `file_access` is a file *open* event (Microsoft-Windows-Kernel-File
+  # ETW provider). Fibratus's `CreateFile` kernel event covers both opens and
+  # creations, so the access case is the `open_file` macro: a `CreateFile`
+  # event whose disposition is `OPEN` and whose status is `Success`. The three
+  # discriminator clauses are injected with `prepend: true` in reverse order so
+  # the rendered condition leads with the macro's exact clause sequence
+  # (`evt.name = 'CreateFile' and file.operation = 'OPEN' and file.status =
+  # 'Success'`), which the backend's macro recognizer collapses to `open_file`.
+  # Because each `add_condition prepend` wraps as `new AND existing`, the step
+  # applied last ends up first; listing them status -> operation -> event-name
+  # therefore yields event-name -> operation -> status left to right.
+  - id: fibratus_file_access_fields
+    type: field_name_mapping
+    mapping:
+      FileName: file.path
+      Image: ps.exe
+      ProcessId: ps.pid
+      User: ps.username
+    rule_conditions:
+      - type: logsource
+        category: file_access
+        product: windows
+
+  - id: fibratus_file_access_status
+    type: add_condition
+    prepend: true
+    conditions:
+      file.status: Success
+    rule_conditions:
+      - type: logsource
+        category: file_access
+        product: windows
+
+  - id: fibratus_file_access_operation
+    type: add_condition
+    prepend: true
+    conditions:
+      file.operation: OPEN
+    rule_conditions:
+      - type: logsource
+        category: file_access
+        product: windows
+
+  - id: fibratus_file_access_event
+    type: add_condition
+    prepend: true
+    conditions:
+      evt.name: CreateFile
+    rule_conditions:
+      - type: logsource
+        category: file_access
+        product: windows
+
   # --- File delete ---
   - id: fibratus_file_delete_fields
     type: field_name_mapping
