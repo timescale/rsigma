@@ -2,6 +2,7 @@ mod convert;
 #[cfg(feature = "daemon")]
 mod daemon;
 mod eval;
+mod eval_stream;
 mod fields;
 mod lint;
 #[cfg(feature = "mcp")]

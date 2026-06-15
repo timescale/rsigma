@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
@@ -7,11 +7,14 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
-    CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, MatchDetailLevel,
+    CorrelationEngine, Engine, EvaluationResult, FieldObserver, JsonEvent, MatchDetailLevel,
     Pipeline, ResultBody, RuleFieldSet,
 };
 use rsigma_parser::SigmaCollection;
 
+#[cfg(feature = "evtx")]
+use super::eval_stream::stream_evtx_events;
+use super::eval_stream::{CorrelationProcessor, DetectionProcessor, stream_events};
 use crate::EventFilter;
 use crate::config;
 use crate::exit_code;
@@ -512,7 +515,9 @@ fn cmd_eval_with_correlations(
             let mut had_matches = false;
             for payload in crate::apply_event_filter(&value, event_filter) {
                 let event = JsonEvent::borrow(&payload);
-                observe_event(observe, &event);
+                if let Some(octx) = observe {
+                    octx.observer.observe(&event);
+                }
                 let result = engine.process_event(&event);
 
                 if result.is_empty() {
@@ -534,16 +539,31 @@ fn cmd_eval_with_correlations(
                 process::exit(crate::exit_code::RULE_ERROR);
             });
             let reader = BufReader::new(file);
-            let (det_count, corr_count, line_num) = eval_stream_corr(
-                &mut engine,
-                reader,
-                event_filter,
-                renderer,
-                input_format_str,
-                syslog_tz_str,
-                syslog_strip_bom,
-                observe,
-            );
+            let mut det_count = 0u64;
+            let mut corr_count = 0u64;
+            let line_num = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = CorrelationProcessor {
+                    engine: &mut engine,
+                };
+                stream_events(
+                    reader,
+                    event_filter,
+                    input_format_str,
+                    syslog_tz_str,
+                    syslog_strip_bom,
+                    observer,
+                    &mut processor,
+                    &mut |m| {
+                        if m.is_detection() {
+                            det_count += 1;
+                        } else {
+                            corr_count += 1;
+                        }
+                        renderer.emit(m);
+                    },
+                )
+            };
             if renderer.ctx().show_stats() {
                 eprintln!(
                     "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
@@ -553,8 +573,22 @@ fn cmd_eval_with_correlations(
         }
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
-            let (det_count, corr_count, rec_count) =
-                eval_evtx_corr(&mut engine, &path, event_filter, renderer, observe);
+            let mut det_count = 0u64;
+            let mut corr_count = 0u64;
+            let rec_count = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = CorrelationProcessor {
+                    engine: &mut engine,
+                };
+                stream_evtx_events(&path, event_filter, observer, &mut processor, &mut |m| {
+                    if m.is_detection() {
+                        det_count += 1;
+                    } else {
+                        corr_count += 1;
+                    }
+                    renderer.emit(m);
+                })
+            };
             if renderer.ctx().show_stats() {
                 eprintln!(
                     "Processed {rec_count} EVTX records, {det_count} detection matches, {corr_count} correlation matches."
@@ -564,171 +598,37 @@ fn cmd_eval_with_correlations(
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
-            let (det_count, corr_count, line_num) = eval_stream_corr(
-                &mut engine,
-                stdin.lock(),
-                event_filter,
-                renderer,
-                input_format_str,
-                syslog_tz_str,
-                syslog_strip_bom,
-                observe,
-            );
+            let mut det_count = 0u64;
+            let mut corr_count = 0u64;
+            let line_num = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = CorrelationProcessor {
+                    engine: &mut engine,
+                };
+                stream_events(
+                    stdin.lock(),
+                    event_filter,
+                    input_format_str,
+                    syslog_tz_str,
+                    syslog_strip_bom,
+                    observer,
+                    &mut processor,
+                    &mut |m| {
+                        if m.is_detection() {
+                            det_count += 1;
+                        } else {
+                            corr_count += 1;
+                        }
+                        renderer.emit(m);
+                    },
+                )
+            };
             if renderer.ctx().show_stats() {
                 eprintln!(
                     "Processed {line_num} events, {det_count} detection matches, {corr_count} correlation matches."
                 );
             }
             det_count > 0 || corr_count > 0
-        }
-    }
-}
-
-/// Stream lines through the correlation engine with format-aware parsing.
-/// Returns (det_count, corr_count, line_count).
-#[allow(clippy::too_many_arguments)]
-fn eval_stream_corr(
-    engine: &mut CorrelationEngine,
-    reader: impl BufRead,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    input_format_str: &str,
-    syslog_tz_str: &str,
-    syslog_strip_bom: bool,
-    observe: Option<&ObserveContext>,
-) -> (u64, u64, u64) {
-    let mut line_num = 0u64;
-    let mut det_count = 0u64;
-    let mut corr_count = 0u64;
-
-    #[cfg(feature = "daemon")]
-    let format =
-        crate::commands::parse_input_format(input_format_str, syslog_tz_str, syslog_strip_bom);
-    #[cfg(not(feature = "daemon"))]
-    let _ = (input_format_str, syslog_tz_str, syslog_strip_bom);
-
-    for line in reader.lines() {
-        line_num += 1;
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Error reading line {line_num}: {e}");
-                continue;
-            }
-        };
-
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        // Format-aware parsing: use rsigma-runtime's input adapters when available.
-        #[cfg(feature = "daemon")]
-        {
-            eval_line_corr(
-                engine,
-                &line,
-                &format,
-                event_filter,
-                renderer,
-                &mut det_count,
-                &mut corr_count,
-                observe,
-            );
-        }
-        #[cfg(not(feature = "daemon"))]
-        {
-            eval_line_corr_json(
-                engine,
-                &line,
-                event_filter,
-                renderer,
-                &mut det_count,
-                &mut corr_count,
-                observe,
-            );
-        }
-    }
-
-    (det_count, corr_count, line_num)
-}
-
-/// Evaluate a single line through the correlation engine using format-aware parsing.
-#[cfg(feature = "daemon")]
-#[allow(clippy::too_many_arguments)]
-fn eval_line_corr(
-    engine: &mut CorrelationEngine,
-    line: &str,
-    format: &rsigma_runtime::InputFormat,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    det_count: &mut u64,
-    corr_count: &mut u64,
-    observe: Option<&ObserveContext>,
-) {
-    if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
-        // For JSON events, apply the event filter (which may produce multiple payloads).
-        if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
-            let json_value = decoded.to_json();
-            for payload in crate::apply_event_filter(&json_value, event_filter) {
-                let event = JsonEvent::borrow(&payload);
-                observe_event(observe, &event);
-                let result = engine.process_event(&event);
-                for m in &result {
-                    if m.is_detection() {
-                        *det_count += 1;
-                    } else {
-                        *corr_count += 1;
-                    }
-                    renderer.emit(m);
-                }
-            }
-        } else {
-            // Non-JSON events: evaluate directly (no event filter).
-            observe_event(observe, &decoded);
-            let result = engine.process_event(&decoded);
-            for m in &result {
-                if m.is_detection() {
-                    *det_count += 1;
-                } else {
-                    *corr_count += 1;
-                }
-                renderer.emit(m);
-            }
-        }
-    }
-}
-
-/// Evaluate a single line through the correlation engine (JSON-only fallback).
-#[cfg(not(feature = "daemon"))]
-#[allow(clippy::too_many_arguments)]
-fn eval_line_corr_json(
-    engine: &mut CorrelationEngine,
-    line: &str,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    det_count: &mut u64,
-    corr_count: &mut u64,
-    observe: Option<&ObserveContext>,
-) {
-    let value: serde_json::Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Invalid JSON: {e}");
-            return;
-        }
-    };
-
-    for payload in crate::apply_event_filter(&value, event_filter) {
-        let event = JsonEvent::borrow(&payload);
-        observe_event(observe, &event);
-        let result = engine.process_event(&event);
-        for m in &result {
-            if m.is_detection() {
-                *det_count += 1;
-            } else {
-                *corr_count += 1;
-            }
-            renderer.emit(m);
         }
     }
 }
@@ -802,7 +702,9 @@ fn cmd_eval_detection_only(
             } else {
                 for payload in &payloads {
                     let event = JsonEvent::borrow(payload);
-                    observe_event(observe, &event);
+                    if let Some(octx) = observe {
+                        octx.observer.observe(&event);
+                    }
                     let matches = engine.evaluate(&event);
 
                     if matches.is_empty() {
@@ -825,16 +727,24 @@ fn cmd_eval_detection_only(
                 process::exit(crate::exit_code::RULE_ERROR);
             });
             let reader = BufReader::new(file);
-            let (match_count, line_num) = eval_stream_detect(
-                &engine,
-                reader,
-                event_filter,
-                renderer,
-                input_format_str,
-                syslog_tz_str,
-                syslog_strip_bom,
-                observe,
-            );
+            let mut match_count = 0u64;
+            let line_num = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = DetectionProcessor { engine: &engine };
+                stream_events(
+                    reader,
+                    event_filter,
+                    input_format_str,
+                    syslog_tz_str,
+                    syslog_strip_bom,
+                    observer,
+                    &mut processor,
+                    &mut |m| {
+                        match_count += 1;
+                        renderer.emit(m);
+                    },
+                )
+            };
             if renderer.ctx().show_stats() {
                 eprintln!("Processed {line_num} events, {match_count} matches.");
             }
@@ -842,8 +752,15 @@ fn cmd_eval_detection_only(
         }
         #[cfg(feature = "evtx")]
         EventSource::EvtxFile(path) => {
-            let (match_count, rec_count) =
-                eval_evtx_detect(&engine, &path, event_filter, renderer, observe);
+            let mut match_count = 0u64;
+            let rec_count = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = DetectionProcessor { engine: &engine };
+                stream_evtx_events(&path, event_filter, observer, &mut processor, &mut |m| {
+                    match_count += 1;
+                    renderer.emit(m);
+                })
+            };
             if renderer.ctx().show_stats() {
                 eprintln!("Processed {rec_count} EVTX records, {match_count} matches.");
             }
@@ -851,16 +768,24 @@ fn cmd_eval_detection_only(
         }
         EventSource::Stdin => {
             let stdin = io::stdin();
-            let (match_count, line_num) = eval_stream_detect(
-                &engine,
-                stdin.lock(),
-                event_filter,
-                renderer,
-                input_format_str,
-                syslog_tz_str,
-                syslog_strip_bom,
-                observe,
-            );
+            let mut match_count = 0u64;
+            let line_num = {
+                let observer = observe.map(|c| c.observer.as_ref());
+                let mut processor = DetectionProcessor { engine: &engine };
+                stream_events(
+                    stdin.lock(),
+                    event_filter,
+                    input_format_str,
+                    syslog_tz_str,
+                    syslog_strip_bom,
+                    observer,
+                    &mut processor,
+                    &mut |m| {
+                        match_count += 1;
+                        renderer.emit(m);
+                    },
+                )
+            };
             if renderer.ctx().show_stats() {
                 eprintln!("Processed {line_num} events, {match_count} matches.");
             }
@@ -869,231 +794,14 @@ fn cmd_eval_detection_only(
     }
 }
 
-/// Stream lines through the detection engine with format-aware parsing.
-/// Returns (match_count, line_count).
-#[allow(clippy::too_many_arguments)]
-fn eval_stream_detect(
-    engine: &Engine,
-    reader: impl BufRead,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    input_format_str: &str,
-    syslog_tz_str: &str,
-    syslog_strip_bom: bool,
-    observe: Option<&ObserveContext>,
-) -> (u64, u64) {
-    let mut line_num = 0u64;
-    let mut match_count = 0u64;
-
-    #[cfg(feature = "daemon")]
-    let format =
-        crate::commands::parse_input_format(input_format_str, syslog_tz_str, syslog_strip_bom);
-    #[cfg(not(feature = "daemon"))]
-    let _ = (input_format_str, syslog_tz_str, syslog_strip_bom);
-
-    for line in reader.lines() {
-        line_num += 1;
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Error reading line {line_num}: {e}");
-                continue;
-            }
-        };
-
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        #[cfg(feature = "daemon")]
-        {
-            eval_line_detect(
-                engine,
-                &line,
-                &format,
-                event_filter,
-                renderer,
-                &mut match_count,
-                observe,
-            );
-        }
-        #[cfg(not(feature = "daemon"))]
-        {
-            eval_line_detect_json(
-                engine,
-                &line,
-                event_filter,
-                renderer,
-                &mut match_count,
-                observe,
-            );
-        }
-    }
-
-    (match_count, line_num)
-}
-
-/// Evaluate a single line through the detection engine using format-aware parsing.
-#[cfg(feature = "daemon")]
-#[allow(clippy::too_many_arguments)]
-fn eval_line_detect(
-    engine: &Engine,
-    line: &str,
-    format: &rsigma_runtime::InputFormat,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    match_count: &mut u64,
-    observe: Option<&ObserveContext>,
-) {
-    if let Some(decoded) = rsigma_runtime::parse_line(line, format) {
-        if matches!(decoded, rsigma_runtime::EventInputDecoded::Json(_)) {
-            let json_value = decoded.to_json();
-            for payload in crate::apply_event_filter(&json_value, event_filter) {
-                let event = JsonEvent::borrow(&payload);
-                observe_event(observe, &event);
-                for m in &engine.evaluate(&event) {
-                    *match_count += 1;
-                    renderer.emit(m);
-                }
-            }
-        } else {
-            observe_event(observe, &decoded);
-            for m in &engine.evaluate(&decoded) {
-                *match_count += 1;
-                renderer.emit(m);
-            }
-        }
-    }
-}
-
-/// Evaluate a single line through the detection engine (JSON-only fallback).
-#[cfg(not(feature = "daemon"))]
-fn eval_line_detect_json(
-    engine: &Engine,
-    line: &str,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    match_count: &mut u64,
-    observe: Option<&ObserveContext>,
-) {
-    let value: serde_json::Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Invalid JSON: {e}");
-            return;
-        }
-    };
-
-    for payload in crate::apply_event_filter(&value, event_filter) {
-        let event = JsonEvent::borrow(&payload);
-        observe_event(observe, &event);
-        for m in &engine.evaluate(&event) {
-            *match_count += 1;
-            renderer.emit(m);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// EVTX file evaluation
-// ---------------------------------------------------------------------------
-
-/// Evaluate all records from an EVTX file through the correlation engine.
-/// Returns (det_count, corr_count, record_count).
-#[cfg(feature = "evtx")]
-fn eval_evtx_corr(
-    engine: &mut CorrelationEngine,
-    path: &std::path::Path,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    observe: Option<&ObserveContext>,
-) -> (u64, u64, u64) {
-    let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
-        eprintln!("Error opening EVTX file '{}': {e}", path.display());
-        process::exit(crate::exit_code::RULE_ERROR);
-    });
-
-    let mut rec_count = 0u64;
-    let mut det_count = 0u64;
-    let mut corr_count = 0u64;
-
-    for record in reader.records() {
-        rec_count += 1;
-        let value = match record {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Error reading EVTX record {rec_count}: {e}");
-                continue;
-            }
-        };
-
-        for payload in crate::apply_event_filter(&value, event_filter) {
-            let event = JsonEvent::borrow(&payload);
-            observe_event(observe, &event);
-            let result = engine.process_event(&event);
-            for m in &result {
-                if m.is_detection() {
-                    det_count += 1;
-                } else {
-                    corr_count += 1;
-                }
-                renderer.emit(m);
-            }
-        }
-    }
-
-    (det_count, corr_count, rec_count)
-}
-
-/// Evaluate all records from an EVTX file through the detection engine.
-/// Returns (match_count, record_count).
-#[cfg(feature = "evtx")]
-fn eval_evtx_detect(
-    engine: &Engine,
-    path: &std::path::Path,
-    event_filter: &EventFilter,
-    renderer: &mut MatchRenderer,
-    observe: Option<&ObserveContext>,
-) -> (u64, u64) {
-    let mut reader = rsigma_runtime::EvtxFileReader::open(path).unwrap_or_else(|e| {
-        eprintln!("Error opening EVTX file '{}': {e}", path.display());
-        process::exit(crate::exit_code::RULE_ERROR);
-    });
-
-    let mut rec_count = 0u64;
-    let mut match_count = 0u64;
-
-    for record in reader.records() {
-        rec_count += 1;
-        let value = match record {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Error reading EVTX record {rec_count}: {e}");
-                continue;
-            }
-        };
-
-        for payload in crate::apply_event_filter(&value, event_filter) {
-            let event = JsonEvent::borrow(&payload);
-            observe_event(observe, &event);
-            for m in &engine.evaluate(&event) {
-                match_count += 1;
-                renderer.emit(m);
-            }
-        }
-    }
-
-    (match_count, rec_count)
-}
-
 // ---------------------------------------------------------------------------
 // Field observability for `engine eval`
 // ---------------------------------------------------------------------------
 
 /// Shared context for the eval-time field observer. Built once before
-/// the event loop and threaded through the helpers via
-/// `Option<&ObserveContext>` so the no-op (`None`) case stays a single
-/// pointer-comparison branch.
+/// the event loop. The observer itself is handed to the shared stream loop
+/// as an `Option<&FieldObserver>`; the rest of the context is consumed by
+/// [`render_field_report`] at end-of-run.
 struct ObserveContext {
     observer: Arc<FieldObserver>,
     rule_field_set: RuleFieldSet,
@@ -1102,15 +810,6 @@ struct ObserveContext {
     /// truncated). Stdout is intentionally not a destination: the
     /// detection NDJSON stream lives there.
     report_path: Option<PathBuf>,
-}
-
-/// Observe one event if the context is set; no-op otherwise. Inlined
-/// to keep the disabled path a single null pointer check.
-#[inline]
-fn observe_event<E: Event + ?Sized>(ctx: Option<&ObserveContext>, event: &E) {
-    if let Some(ctx) = ctx {
-        ctx.observer.observe(event);
-    }
 }
 
 /// Maximum number of rule titles surfaced per missing-field entry in
