@@ -221,6 +221,7 @@ fn parse_transformation(obj: &yaml_serde::Mapping) -> Result<Transformation> {
 
         "add_condition" => {
             let conditions = parse_value_mapping(obj.get(ykey("conditions")))?;
+            let field_refs = parse_string_mapping(obj.get(ykey("field_refs")))?;
             let negated = obj
                 .get(ykey("negated"))
                 .and_then(|v| v.as_bool())
@@ -231,6 +232,7 @@ fn parse_transformation(obj: &yaml_serde::Mapping) -> Result<Transformation> {
                 .unwrap_or(false);
             Ok(Transformation::AddCondition {
                 conditions,
+                field_refs,
                 negated,
                 prepend,
             })

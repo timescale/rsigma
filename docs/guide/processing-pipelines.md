@@ -86,7 +86,7 @@ Pipelines compose 26 transformation types. The most common ones in practice are:
 | `field_name_prefix_mapping` | Rename fields by prefix. |
 | `field_name_prefix`/`field_name_suffix` | Add a static prefix or suffix to every field name. |
 | `field_name_transform` | Case conversion (`lower`, `upper`, `snake_case`, `title`). |
-| `add_condition` | Inject extra detection conditions (e.g. add `EventID: 1`). |
+| `add_condition` | Inject extra detection conditions (e.g. add `EventID: 1`); `field_refs` injects field-to-field comparisons (`evt.pid: thread.pid`) instead of literals. |
 | `drop_detection_item` | Remove matching detection items. |
 | `change_logsource` | Modify `category`, `product`, `service`. |
 | `replace_string` | Regex string replacement in values. |

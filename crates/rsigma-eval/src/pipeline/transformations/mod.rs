@@ -57,6 +57,13 @@ pub enum Transformation {
     /// Add field=value conditions to the rule's detection.
     AddCondition {
         conditions: HashMap<String, SigmaValue>,
+        /// Field-to-field equality conditions (`field` equals the value of
+        /// another field). The value of each entry is a *field name*, not a
+        /// literal, lowered through the `fieldref` modifier so backends
+        /// render it as `field = other_field` rather than a string compare.
+        /// Combined with `negated` this expresses inequalities such as the
+        /// Fibratus `create_remote_thread` macro's `evt.pid != thread.pid`.
+        field_refs: HashMap<String, String>,
         /// If true, negate the added conditions.
         negated: bool,
         /// If true, AND the added conditions *before* the existing
@@ -264,10 +271,11 @@ impl Transformation {
 
             Transformation::AddCondition {
                 conditions,
+                field_refs,
                 negated,
                 prepend,
             } => {
-                helpers::add_conditions(rule, conditions, *negated, *prepend);
+                helpers::add_conditions(rule, conditions, field_refs, *negated, *prepend);
                 Ok(true)
             }
 

@@ -346,6 +346,7 @@ fn test_add_condition() {
     );
     let t = Transformation::AddCondition {
         conditions: conds,
+        field_refs: HashMap::new(),
         negated: false,
         prepend: false,
     };
@@ -383,6 +384,7 @@ fn test_add_condition_prepend_puts_added_condition_first() {
     );
     let t = Transformation::AddCondition {
         conditions: conds,
+        field_refs: HashMap::new(),
         negated: false,
         prepend: true,
     };
@@ -1178,6 +1180,7 @@ fn test_add_condition_negated() {
     );
     let t = Transformation::AddCondition {
         conditions: conds,
+        field_refs: HashMap::new(),
         negated: true,
         prepend: false,
     };
@@ -1196,6 +1199,86 @@ fn test_add_condition_negated() {
     } else {
         panic!("Expected And condition");
     }
+}
+
+#[test]
+fn test_add_condition_field_refs_lowers_to_fieldref_modifier() {
+    use rsigma_parser::{Detection, Modifier};
+
+    let mut rule = make_test_rule();
+    let mut state = PipelineState::default();
+    let mut field_refs = HashMap::new();
+    field_refs.insert("evt.pid".to_string(), "thread.pid".to_string());
+    let t = Transformation::AddCondition {
+        conditions: HashMap::new(),
+        field_refs,
+        // Negated so this expresses an inequality (`evt.pid != thread.pid`),
+        // the shape the Fibratus create_remote_thread macro needs.
+        negated: true,
+        prepend: true,
+    };
+    t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+    // The injected named detection carries a single fieldref item whose
+    // value is the *target field name*, not a string literal.
+    let added = rule
+        .detection
+        .named
+        .iter()
+        .find(|(k, _)| k.starts_with("__pipeline_cond_"))
+        .map(|(_, v)| v)
+        .expect("pipeline condition detection added");
+    let Detection::AllOf(items) = added else {
+        panic!("expected AllOf, got: {added:?}");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].field.name.as_deref(), Some("evt.pid"));
+    assert!(items[0].field.has_modifier(Modifier::FieldRef));
+    assert_eq!(
+        items[0].values,
+        vec![SigmaValue::String(SigmaString::new("thread.pid"))],
+    );
+
+    // The reference is wrapped under a NOT (negated inequality).
+    if let ConditionExpr::And(parts) = &rule.detection.conditions[0] {
+        assert!(
+            matches!(&parts[0], ConditionExpr::Not(_)),
+            "prepended negated fieldref should be the first AND operand, got: {:?}",
+            parts[0],
+        );
+    } else {
+        panic!("Expected And condition");
+    }
+}
+
+#[test]
+fn parse_add_condition_with_field_refs() {
+    use crate::pipeline::parse_pipeline;
+
+    let yaml = r#"
+name: t
+priority: 1
+transformations:
+  - id: add_remote
+    type: add_condition
+    prepend: true
+    negated: true
+    field_refs:
+      evt.pid: thread.pid
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let Transformation::AddCondition {
+        field_refs,
+        negated,
+        prepend,
+        ..
+    } = &pipeline.transformations[0].transformation
+    else {
+        panic!("expected AddCondition");
+    };
+    assert!(*negated);
+    assert!(*prepend);
+    assert_eq!(field_refs.get("evt.pid").map(String::as_str), Some("thread.pid"));
 }
 
 // =========================================================================

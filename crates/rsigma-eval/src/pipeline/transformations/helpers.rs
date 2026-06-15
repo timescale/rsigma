@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use regex::Regex;
 
 use rsigma_parser::{
-    ConditionExpr, Detection, DetectionItem, FieldSpec, SigmaRule, SigmaString, SigmaValue,
-    SpecialChar, StringPart,
+    ConditionExpr, Detection, DetectionItem, FieldSpec, Modifier, SigmaRule, SigmaString,
+    SigmaValue, SpecialChar, StringPart,
 };
 
 use super::super::conditions::{DetectionItemCondition, FieldNameCondition};
@@ -352,16 +352,25 @@ fn should_drop_item(
 pub(super) fn add_conditions(
     rule: &mut SigmaRule,
     conditions: &HashMap<String, SigmaValue>,
+    field_refs: &HashMap<String, String>,
     negated: bool,
     prepend: bool,
 ) {
-    let items: Vec<DetectionItem> = conditions
+    let mut items: Vec<DetectionItem> = conditions
         .iter()
         .map(|(field, value)| DetectionItem {
             field: FieldSpec::new(Some(field.clone()), Vec::new()),
             values: vec![value.clone()],
         })
         .collect();
+
+    // Field-to-field equalities lower through the `fieldref` modifier so the
+    // value is treated as another field name (`field = other_field`), not a
+    // string literal.
+    items.extend(field_refs.iter().map(|(field, target)| DetectionItem {
+        field: FieldSpec::new(Some(field.clone()), vec![Modifier::FieldRef]),
+        values: vec![SigmaValue::String(SigmaString::new(target))],
+    }));
 
     let det_name = format!("__pipeline_cond_{}", rule.detection.named.len());
     rule.detection
