@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Fibratus conversion: file and remote-thread macro fixes (#NNN)
+
+Three Fibratus conversion bugs reported by @rabbitstack are fixed, so the converted rules now use the idiomatic macros the upstream loader expects instead of raw or unmapped predicates.
+
+- **`file_access` rules now map to the `open_file` macro.** The `fibratus_windows` pipeline had no `file_access` handler, so file open rules (Microsoft-Windows-Kernel-File ETW provider) emitted the raw Sigma fields `FileName`/`Image` with no event scope, which the loader rejects. The pipeline now renames `FileName -> file.path` and `Image -> ps.exe` and injects the `open_file` discriminator triple (`evt.name = 'CreateFile' and file.operation = 'OPEN' and file.status = 'Success'`).
+- **`file_event` rules now collapse to the `create_file` macro.** The disposition guard was appended after the rule body and lacked the success-status clause, so the run never matched the macro and left a raw `evt.name = 'CreateFile' ... and not (file.operation ~= 'OPEN')` body. The full `create_file` triple is now injected contiguously and in macro order.
+- **`create_remote_thread` rules now use the `create_remote_thread` macro** instead of degrading to the bare `create_thread`. The pipeline injects the cross-process guards (`evt.pid != 4`, `evt.pid != thread.pid`) the macro requires.
+- **Recognizer.** The macro recognizer now accepts the De Morgan negated-equality form (`not (field ~= 'x')`) as equivalent to a macro's `field != 'x'` clause, so disposition and cross-process guards injected through the pipeline fold back into their macros. `use_macros=false` still emits the raw expansion.
+- **Pipelines.** The `add_condition` transformation gained an optional `field_refs` map that injects field-to-field comparisons (lowered through the `fieldref` modifier) rather than literals.
+
 ### `rule backtest`: corpus replay with per-rule expectations (#216)
 
 A new `rsigma rule backtest` subcommand replays an event corpus against a ruleset and diffs the per-rule fire counts against declared expectations, the per-rule fixture harness that `engine eval --fail-on-detection` could not provide (that check is corpus-global and passes when any rule fires).
