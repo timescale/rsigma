@@ -22,8 +22,16 @@ fn fixture(name: &str) -> String {
     fixtures().join(name).to_string_lossy().into_owned()
 }
 
+/// Normalize line endings (CRLF -> LF) so the committed goldens compare equal
+/// regardless of checkout: on Windows, git may rewrite the LF golden files to
+/// CRLF, which `include_str!` then embeds, while the binary always writes LF.
+fn normalize_eol(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}
+
 /// Replace the volatile `duration_ms` value with 0 so the timing-free report
-/// can be compared byte-for-byte against the committed golden.
+/// can be compared byte-for-byte against the committed golden. Splitting on
+/// `lines()` also normalizes CRLF to LF.
 fn normalize_duration(s: &str) -> String {
     s.lines()
         .map(|line| match line.find("\"duration_ms\":") {
@@ -65,14 +73,14 @@ fn backtest_report_and_junit_match_golden() {
     let actual_report = std::fs::read_to_string(report.path()).unwrap();
     assert_eq!(
         normalize_duration(&actual_report).trim_end(),
-        REPORT_GOLDEN.trim_end(),
+        normalize_duration(REPORT_GOLDEN).trim_end(),
         "JSON report drifted from golden"
     );
 
     let actual_junit = std::fs::read_to_string(junit.path()).unwrap();
     assert_eq!(
-        actual_junit.trim_end(),
-        JUNIT_GOLDEN.trim_end(),
+        normalize_eol(&actual_junit).trim_end(),
+        normalize_eol(JUNIT_GOLDEN).trim_end(),
         "JUnit XML drifted from golden"
     );
 }

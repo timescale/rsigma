@@ -629,7 +629,10 @@ fn rollup_by_logsource(unexpected: &[UnexpectedStat]) -> Vec<LogSourceRollup> {
 }
 
 /// Escape the five XML predefined entities for use in element text and
-/// double-quoted attribute values alike.
+/// double-quoted attribute values alike, and drop characters that are not
+/// legal in XML 1.0 (the C0 control range except tab, LF, and CR). Rule titles
+/// are operator-controlled, so this keeps a stray control byte from producing
+/// a report a strict XML parser would reject.
 fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -639,6 +642,9 @@ fn xml_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            // Legal XML 1.0 control chars are kept; the rest of C0 is dropped.
+            '\t' | '\n' | '\r' => out.push(c),
+            c if (c as u32) < 0x20 => {}
             _ => out.push(c),
         }
     }
@@ -832,5 +838,12 @@ level: informational
             xml_escape(r#"a & b < c > "d" 'e'"#),
             "a &amp; b &lt; c &gt; &quot;d&quot; &apos;e&apos;"
         );
+    }
+
+    #[test]
+    fn junit_drops_invalid_xml_control_chars_but_keeps_tab_nl_cr() {
+        // A NUL and a vertical tab are illegal in XML 1.0 and are dropped;
+        // tab/newline/carriage-return are legal and preserved.
+        assert_eq!(xml_escape("a\u{0}b\u{0B}c\td\ne"), "abc\td\ne");
     }
 }
