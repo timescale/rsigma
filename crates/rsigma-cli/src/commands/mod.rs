@@ -8,6 +8,9 @@ mod lint;
 mod mcp;
 mod migrate_sources;
 mod parse;
+// `pipeline resolve` needs the async runtime + source resolver, which only
+// ship with the `daemon` feature.
+#[cfg(feature = "daemon")]
 mod resolve;
 mod validate;
 
@@ -23,5 +26,6 @@ pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
 pub(crate) use mcp::{McpCommands, dispatch_mcp};
 pub(crate) use migrate_sources::{MigrateSourcesArgs, cmd_migrate_sources};
 pub(crate) use parse::{ConditionArgs, ParseArgs, StdinArgs, cmd_condition, cmd_parse, cmd_stdin};
+#[cfg(feature = "daemon")]
 pub(crate) use resolve::{ResolveArgs, cmd_resolve};
 pub(crate) use validate::{ValidateArgs, cmd_validate};

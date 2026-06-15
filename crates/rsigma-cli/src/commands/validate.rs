@@ -37,82 +37,26 @@ pub(crate) fn cmd_validate(args: ValidateArgs) {
         resolve_sources,
         source_files,
     } = args;
-    let mut pipelines = crate::load_pipelines(&pipeline_paths);
-
-    // Load and resolve external sources alongside pipeline-embedded ones
-    let external_sources = if !source_files.is_empty() {
-        match rsigma_runtime::sources::registry::load_external_sources(&source_files) {
-            Ok(ext) => ext.into_iter().map(|(s, _)| s).collect::<Vec<_>>(),
-            Err(e) => {
-                eprintln!("Error loading external sources: {e}");
-                process::exit(crate::exit_code::CONFIG_ERROR);
-            }
+    // Dynamic source resolution (`--resolve-sources` / `--source`) needs the
+    // async runtime + source resolver, which ship with the `daemon` feature.
+    #[cfg(feature = "daemon")]
+    let pipelines = resolve_validate_sources(
+        crate::load_pipelines(&pipeline_paths),
+        resolve_sources,
+        &source_files,
+    );
+    #[cfg(not(feature = "daemon"))]
+    let pipelines = {
+        let loaded = crate::load_pipelines(&pipeline_paths);
+        if resolve_sources || !source_files.is_empty() {
+            eprintln!(
+                "error: --resolve-sources/--source require the `daemon` feature; \
+                 rebuild with `--features daemon`"
+            );
+            process::exit(crate::exit_code::CONFIG_ERROR);
         }
-    } else {
-        Vec::new()
+        loaded
     };
-
-    if resolve_sources {
-        let has_dynamic = pipelines.iter().any(|p| p.is_dynamic()) || !external_sources.is_empty();
-        if has_dynamic {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to create async runtime for source resolution: {e}");
-                    process::exit(crate::exit_code::CONFIG_ERROR);
-                });
-
-            let resolver = rsigma_runtime::DefaultSourceResolver::new();
-            let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
-            let mut source_errors: Vec<String> = Vec::new();
-
-            // Resolve external sources first so they populate the cache
-            if !external_sources.is_empty()
-                && let Err(e) = rt.block_on(rsigma_runtime::sources::resolve_all(
-                    &resolver,
-                    &external_sources,
-                ))
-            {
-                source_errors.push(format!("external sources: {e}"));
-            }
-
-            for pipeline in &pipelines {
-                if pipeline.is_dynamic() {
-                    match rt.block_on(rsigma_runtime::sources::resolve_all(
-                        &resolver,
-                        &pipeline.sources,
-                    )) {
-                        Ok(resolved_data) => {
-                            let expanded =
-                                rsigma_runtime::sources::template::TemplateExpander::expand(
-                                    pipeline,
-                                    &resolved_data,
-                                );
-                            resolved_pipelines.push(expanded);
-                        }
-                        Err(e) => {
-                            source_errors.push(format!("pipeline '{}': {e}", pipeline.name));
-                            resolved_pipelines.push(pipeline.clone());
-                        }
-                    }
-                } else {
-                    resolved_pipelines.push(pipeline.clone());
-                }
-            }
-
-            if !source_errors.is_empty() {
-                eprintln!("Source resolution errors:");
-                for err in &source_errors {
-                    eprintln!("  - {err}");
-                }
-                process::exit(crate::exit_code::CONFIG_ERROR);
-            }
-
-            pipelines = resolved_pipelines;
-            println!("  Sources resolved:  OK");
-        }
-    }
 
     match parse_sigma_directory(&path) {
         Ok(collection) => {
@@ -187,4 +131,92 @@ pub(crate) fn cmd_validate(args: ValidateArgs) {
             process::exit(crate::exit_code::RULE_ERROR);
         }
     }
+}
+
+/// Load external sources and, when `--resolve-sources` is set, resolve every
+/// dynamic pipeline and external source, returning the expanded pipelines.
+/// Exits with `CONFIG_ERROR` on a load or resolution failure.
+#[cfg(feature = "daemon")]
+fn resolve_validate_sources(
+    mut pipelines: Vec<rsigma_eval::Pipeline>,
+    resolve_sources: bool,
+    source_files: &[PathBuf],
+) -> Vec<rsigma_eval::Pipeline> {
+    // Load external sources alongside pipeline-embedded ones (validating that
+    // the source files parse, regardless of whether we resolve them).
+    let external_sources = if !source_files.is_empty() {
+        match rsigma_runtime::sources::registry::load_external_sources(source_files) {
+            Ok(ext) => ext.into_iter().map(|(s, _)| s).collect::<Vec<_>>(),
+            Err(e) => {
+                eprintln!("Error loading external sources: {e}");
+                process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    if resolve_sources {
+        let has_dynamic = pipelines.iter().any(|p| p.is_dynamic()) || !external_sources.is_empty();
+        if has_dynamic {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to create async runtime for source resolution: {e}");
+                    process::exit(crate::exit_code::CONFIG_ERROR);
+                });
+
+            let resolver = rsigma_runtime::DefaultSourceResolver::new();
+            let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
+            let mut source_errors: Vec<String> = Vec::new();
+
+            // Resolve external sources first so they populate the cache
+            if !external_sources.is_empty()
+                && let Err(e) = rt.block_on(rsigma_runtime::sources::resolve_all(
+                    &resolver,
+                    &external_sources,
+                ))
+            {
+                source_errors.push(format!("external sources: {e}"));
+            }
+
+            for pipeline in &pipelines {
+                if pipeline.is_dynamic() {
+                    match rt.block_on(rsigma_runtime::sources::resolve_all(
+                        &resolver,
+                        &pipeline.sources,
+                    )) {
+                        Ok(resolved_data) => {
+                            let expanded =
+                                rsigma_runtime::sources::template::TemplateExpander::expand(
+                                    pipeline,
+                                    &resolved_data,
+                                );
+                            resolved_pipelines.push(expanded);
+                        }
+                        Err(e) => {
+                            source_errors.push(format!("pipeline '{}': {e}", pipeline.name));
+                            resolved_pipelines.push(pipeline.clone());
+                        }
+                    }
+                } else {
+                    resolved_pipelines.push(pipeline.clone());
+                }
+            }
+
+            if !source_errors.is_empty() {
+                eprintln!("Source resolution errors:");
+                for err in &source_errors {
+                    eprintln!("  - {err}");
+                }
+                process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+
+            pipelines = resolved_pipelines;
+            println!("  Sources resolved:  OK");
+        }
+    }
+
+    pipelines
 }

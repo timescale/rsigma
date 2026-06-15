@@ -1,5 +1,7 @@
 //! Integration tests for daemon state persistence and streaming pipeline.
 
+#![cfg(feature = "daemon")]
+
 mod common;
 
 use common::{SIMPLE_RULE, rsigma, temp_file};

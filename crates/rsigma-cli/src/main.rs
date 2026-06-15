@@ -12,8 +12,13 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     ConditionArgs, ConvertArgs, EvalArgs, FieldsArgs, LintArgs, LintCounts, ListFormatsArgs,
-    MigrateSourcesArgs, ParseArgs, ResolveArgs, StdinArgs, ValidateArgs,
+    MigrateSourcesArgs, ParseArgs, StdinArgs, ValidateArgs,
 };
+// `pipeline resolve` resolves dynamic sources, which needs the async runtime
+// (tokio) and the source resolver from rsigma-runtime. Both ship with the
+// `daemon` feature, so the command is gated on it.
+#[cfg(feature = "daemon")]
+use commands::ResolveArgs;
 #[cfg(feature = "daemon")]
 use commands::{DaemonArgs, cmd_daemon};
 #[cfg(feature = "mcp")]
@@ -120,6 +125,7 @@ enum Commands {
     },
 
     /// Pipeline tooling (resolve dynamic sources, …)
+    #[cfg(feature = "daemon")]
     Pipeline {
         #[command(subcommand)]
         cmd: PipelineCommands,
@@ -185,6 +191,7 @@ enum Commands {
     ListFormats(ListFormatsArgs),
 
     /// \[deprecated\] Use `rsigma pipeline resolve` instead
+    #[cfg(feature = "daemon")]
     #[command(hide = true)]
     Resolve(ResolveArgs),
 }
@@ -236,6 +243,7 @@ enum BackendCommands {
     Formats(ListFormatsArgs),
 }
 
+#[cfg(feature = "daemon")]
 #[derive(Subcommand)]
 enum PipelineCommands {
     /// Resolve dynamic pipeline sources and display their data
@@ -336,6 +344,7 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
         Commands::Engine { cmd } => dispatch_engine(cmd, matches, ctx),
         Commands::Rule { cmd } => dispatch_rule(cmd, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
+        #[cfg(feature = "daemon")]
         Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
         #[cfg(feature = "mcp")]
         Commands::Mcp { cmd } => dispatch_mcp(cmd),
@@ -393,6 +402,7 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
             deprecation_warn("list-formats", "backend formats");
             commands::cmd_list_formats(target);
         }
+        #[cfg(feature = "daemon")]
         Commands::Resolve(args) => {
             deprecation_warn("resolve", "pipeline resolve");
             commands::cmd_resolve(args);
@@ -440,6 +450,7 @@ fn dispatch_backend(cmd: BackendCommands, ctx: output::OutputCtx) {
     }
 }
 
+#[cfg(feature = "daemon")]
 fn dispatch_pipeline(cmd: PipelineCommands) {
     match cmd {
         PipelineCommands::Resolve(args) => commands::cmd_resolve(args),
@@ -530,6 +541,10 @@ pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
                             p.sources.iter().map(|s| s.id.as_str()).collect();
                         eprintln!("  dynamic source(s): {}", source_ids.join(", "));
                     }
+                    // The inline-sources deprecation warning lives in
+                    // rsigma-runtime, which is only linked with the `daemon`
+                    // feature. Builds without it cannot resolve sources anyway.
+                    #[cfg(feature = "daemon")]
                     if !p.sources.is_empty() {
                         rsigma_runtime::warn_pipeline_inline_sources(path, &p.name);
                     }
