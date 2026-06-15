@@ -2,7 +2,21 @@
 
 All notable changes to RSigma are documented in this file. Each entry corresponds to a [GitHub Release](https://github.com/timescale/rsigma/releases).
 
-## [Unreleased]
+## [0.16.0] - 2026-06-15
+
+**TL;DR**
+RSigma v0.16.0 is the "MCP server" release:
+* MCP server: a new [Model Context Protocol](https://modelcontextprotocol.io) integration that exposes the Sigma toolchain to AI agents.
+  * `rsigma-mcp` crate and `rsigma mcp serve` (opt-in `mcp` feature): typed tools (parse, lint, validate, evaluate, convert, fix) plus field/backend/pipeline introspection and reference resources, with enrichment-aware evaluation (#208).
+  * Remote transport and config: Streamable HTTP (`rsigma mcp serve --http`), constant-time bearer-token auth, in-process TLS, and a new `mcp` config section wired through `rsigma config` and the environment layer (#209).
+  * Smoke harness: `scripts/mcp-smoke.py` drives a built server end to end over stdio and HTTP across every tool and resource as a standard-library CI job (#210).
+  * Prerequisite refactor: the auto-fix applier, modifier/MITRE reference data, and the 75-rule lint catalogue move into `rsigma-parser` so the CLI, the LSP, and the MCP server share one implementation, behavior unchanged (#207).
+* `backend convert` per-rule file output: point `--output` at a directory to write one file per converted rule, named from the rule title with the backend's native extension (#205).
+* Configurable correlation state caps: `--max-state-entries` exposes the global entry cap and a new `--max-group-entries` bounds a single group's window state, with matching config keys and a per-rule attribute (#200).
+* Fibratus conversion fixes: corrected `process_creation`/`process_termination`/`create_remote_thread` field mappings and `registry_event` scoping against the Fibratus 3.0.0 vocabulary, thanks to @rabbitstack (#202).
+* Correlation window-mode benchmarks: a throughput suite plus a non-Criterion peak-memory stress target for the `sliding`/`tumbling`/`session` modes shipped in v0.15.0 (#199).
+* `rstix`: data-model skeleton and common property containers for the STIX 2.1 library, with leaf-type serde, thanks to @SecurityEnthusiast (not yet releasable on its own) (#201).
+* Dependency and security bumps: rolls up six Dependabot PRs and patches three RustSec PostgreSQL advisories (#206).
 
 ### Developer tooling: MCP smoke harness (#210)
 
@@ -53,7 +67,7 @@ Three correctness fixes to the `fibratus_windows` pipeline shipped in #191, foun
 - **Thread events.** `create_remote_thread` maps `TargetImage` -> `evt.arg[exe]`, so a rule that scopes the injected-into process converts rather than dropping the field.
 - **Registry event scoping.** The `registry_event` logsource category now prepends an `evt.category = 'registry'` discriminator as its first condition, the same treatment the other categories already get. Fibratus rejects a rule at load time when it has no event-type scoping by name or category, so without this the converted `registry_event` rules would not load.
 
-### `rstix`: Phase 2 slice 1 — model skeleton and common properties
+### `rstix`: Phase 2 slice 1 — model skeleton and common properties (#201)
 
 Phase 2 (Data Model + Serialization) begins with slice 1 of ~7. This slice is not releasable on its own.
 
@@ -81,6 +95,8 @@ Two new benchmark surfaces for the correlation window modes shipped in #192, pro
 ### Dependency and security bumps (#206)
 
 Rolls up six open Dependabot PRs into a single merge and patches three RustSec advisories. Rust (workspace `Cargo.lock`), batched via the `patch-updates` group (#197): `log` 0.4.30 to 0.4.32, `chrono` 0.4.44 to 0.4.45, `daachorse` 3.0.0 to 3.0.1, `async-nats` 0.49.0 to 0.49.1, `hyper` 1.10.0 to 1.10.1, and `uuid` 1.23.1 to 1.23.2; `libfuzzer-sys` 0.4.12 to 0.4.13 in `fuzz/Cargo.lock` (#195). CI (all repinned by commit SHA, batched via the `actions-updates` group, #198): `actions/checkout` v6.0.2 to v6.0.3, `github/codeql-action` v4.36.0 to v4.36.2, and `taiki-e/install-action` v2.79.12 to v2.81.4. VS Code extension: `vscode-languageclient` 9.0.1 to 10.0.0 (#196), `@vscode/vsce` 3.9.1 to 3.9.2 (#194), and `esbuild` 0.28.0 to 0.28.1 (#203); the three all touched `editors/vscode/package.json` and `package-lock.json`, resolved by keeping the newest of each and regenerating the lockfile. Security: the transitive PostgreSQL client stack pulled in through `rsigma-convert` moves `postgres-protocol` 0.6.11 to 0.6.12 and `postgres-types` 0.2.13 to 0.2.14 (RUSTSEC-2026-0179, RUSTSEC-2026-0180) and `tokio-postgres` 0.7.17 to 0.7.18 (RUSTSEC-2026-0178), closing the three denial-of-service advisories published 2026-06-12.
+
+[v0.15.0...v0.16.0](https://github.com/timescale/rsigma/compare/v0.15.0...v0.16.0)
 
 ## [0.15.0] - 2026-06-11
 
@@ -1795,6 +1811,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.16.0]: https://github.com/timescale/rsigma/releases/tag/v0.16.0
 [0.15.0]: https://github.com/timescale/rsigma/releases/tag/v0.15.0
 [0.14.0]: https://github.com/timescale/rsigma/releases/tag/v0.14.0
 [0.13.0]: https://github.com/timescale/rsigma/releases/tag/v0.13.0
