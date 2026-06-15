@@ -327,6 +327,52 @@ fn backtest_table_output_is_human_readable() {
         .stdout(predicate::str::contains("FAIL"));
 }
 
+#[cfg(feature = "evtx")]
+#[test]
+fn backtest_evtx_corpus() {
+    // Reuse the runtime crate's committed EVTX fixture. A `.evtx` corpus path
+    // routes through the feature-gated adapter.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../rsigma-runtime/tests/fixtures/security.evtx");
+    let rule = temp_file(
+        ".yml",
+        r#"
+title: Windows Logon
+id: 00000000-0000-0000-0000-000000004624
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        Event.System.EventID: 4624
+    condition: selection
+level: medium
+"#,
+    );
+    let exp = temp_file(
+        ".yml",
+        "expectations:\n  - rule: 00000000-0000-0000-0000-000000004624\n    at_least: 1\n",
+    );
+    rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--corpus",
+            fixture.to_str().unwrap(),
+            "--expectations",
+            exp.path().to_str().unwrap(),
+            "--unexpected",
+            "ignore",
+            "--output-format",
+            "ndjson",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Windows Logon"));
+}
+
 #[test]
 fn backtest_dry_run_prints_config() {
     rsigma()
