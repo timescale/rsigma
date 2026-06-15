@@ -6,8 +6,8 @@
 //! default is written, and a drift-guard test pins clap to these values.
 
 use super::schema::{
-    ApiPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial, GlobalPartial,
-    InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial,
+    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
+    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -117,6 +117,20 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
             fail_on_detection: Some(false),
+        }),
+        backtest: Some(BacktestPartial {
+            // rules, corpus, and expectations are required at runtime and have
+            // no compiled default. `unexpected` is intentionally absent here so
+            // the expectations-file default can take effect when neither the
+            // CLI flag nor the config sets it.
+            rules: None,
+            corpus: None,
+            expectations: None,
+            unexpected: None,
+            pipelines: Some(Vec::new()),
+            input_format: Some(INPUT_FORMAT.to_string()),
+            syslog_tz: Some(SYSLOG_TZ.to_string()),
+            syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
         }),
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.

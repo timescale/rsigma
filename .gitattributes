@@ -1,0 +1,3 @@
+# Golden test outputs are compared byte-for-byte against tool output, which is
+# always LF. Pin them to LF so a Windows checkout does not rewrite them to CRLF.
+crates/rsigma-cli/tests/golden/** text eol=lf

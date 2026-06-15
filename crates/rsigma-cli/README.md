@@ -63,7 +63,7 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 
 ## Subcommands
 
-Commands are grouped into four noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / condition / stdin), `backend` (convert / targets / formats), and `pipeline` (resolve).
+Commands are grouped into four noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / backtest / condition / stdin), `backend` (convert / targets / formats), and `pipeline` (resolve).
 
 ### Migrating from the old flat commands
 
@@ -110,7 +110,7 @@ rsigma config path
 rsigma config reload
 ```
 
-`engine daemon` and `engine eval` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+`engine daemon`, `engine eval`, and `rule backtest` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
 Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
@@ -767,6 +767,34 @@ rsigma rule fields -r rules/ --json | jq '.fields[] | select(.sources[] == "dete
 **Table output** writes field data to stdout and a summary line to stderr, so you can pipe the table or redirect it without mixing in summary text.
 
 **JSON output** includes a `summary` object (rule/correlation/filter counts, unique fields, pipelines applied), a `fields` array, and when pipelines are applied, a `pipeline_mappings` array showing each field name transformation.
+
+### `rule backtest`: Replay a corpus and diff per-rule fires against expectations
+
+Walks an event corpus (a file or a directory, recursively), evaluates every record, tallies per-rule and per-corpus-file fire counts, and diffs them against an optional expectations file. It is the per-rule fixture harness: a positive fixture can require a rule to fire at least once, a negative fixture can require a rule to fire exactly zero times, and any rule that fires without a covering expectation is surfaced as a potential false positive.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | path | required | Sigma rule file or directory (or `backtest.rules` in a config file) |
+| `--corpus` | repeatable | required | Corpus file or directory; `.ndjson`/`.jsonl` as NDJSON, `.evtx` via the evtx feature, else `--input-format` |
+| `--expectations` | path | none | Expectations YAML (per-rule assertions); without it, backtest prints per-rule stats only |
+| `--unexpected` | string | `warn` | Policy for an uncovered fire: `fail`, `warn`, `ignore`. Overrides the expectations-file default |
+| `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline(s) to apply |
+| `--junit` | path | none | Write a JUnit XML report |
+| `--report` | path | none | Write the full JSON report to a file |
+
+```bash
+# Assert a fixture suite against expectations
+rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectations.yml
+
+# Fail CI on any uncovered fire and emit a JUnit report
+rsigma rule backtest -r rules/ --corpus ci/benign/ \
+    --expectations ci/expectations.yml --unexpected fail --junit backtest.xml
+
+# Per-rule statistics with no expectations
+rsigma rule backtest -r rules/ --corpus samples/ --output-format json | jq '.rules'
+```
+
+Exit codes: `0` all expectations met, `1` a failed expectation (or an uncovered fire under `--unexpected fail`), `2` unreadable rules, `3` a bad expectations file or missing corpus path. The full flag table, expectations schema, and report shape are in the [`rule backtest` reference](https://timescale.github.io/rsigma/cli/rule/backtest/).
 
 ### `pipeline resolve`: Test dynamic source resolution
 

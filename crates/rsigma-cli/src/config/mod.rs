@@ -219,7 +219,7 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
             let message = if raw.contains("expected struct RsigmaConfigPartial") {
                 format!(
                     "top-level config must be a YAML mapping of sections \
-                 (global, daemon, eval, mcp); got {raw}"
+                 (global, daemon, eval, backtest, mcp); got {raw}"
                 )
             } else {
                 raw

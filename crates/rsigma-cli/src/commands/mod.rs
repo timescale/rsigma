@@ -1,3 +1,4 @@
+mod backtest;
 mod convert;
 #[cfg(feature = "daemon")]
 mod daemon;
@@ -15,6 +16,7 @@ mod parse;
 mod resolve;
 mod validate;
 
+pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
 pub(crate) use convert::{
     ConvertArgs, ListFormatsArgs, cmd_convert, cmd_list_formats, cmd_list_targets,
 };

@@ -4,6 +4,7 @@ nav:
   - validate: validate.md
   - lint: lint.md
   - fields: fields.md
+  - backtest: backtest.md
   - condition: condition.md
   - stdin: stdin.md
   - migrate-sources: migrate-sources.md

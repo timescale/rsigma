@@ -1,8 +1,8 @@
 # CI/CD
 
-RSigma is designed to drop into a detection-as-code workflow. The four CLI surfaces that matter for CI are `rule lint`, `rule validate`, `engine eval`, and `backend convert`. Each exits with a structured code that lets CI runners distinguish "no findings, clean exit" from "the tool ran but reported findings" from "the tool could not run because of a configuration or rule error."
+RSigma is designed to drop into a detection-as-code workflow. The CLI surfaces that matter for CI are `rule lint`, `rule validate`, `rule backtest`, `engine eval`, and `backend convert`. Each exits with a structured code that lets CI runners distinguish "no findings, clean exit" from "the tool ran but reported findings" from "the tool could not run because of a configuration or rule error."
 
-This page covers the exit-code model, the failure-controlling flags (`--fail-on-detection`, `--fail-level`), and copy-paste pipelines for GitHub Actions, GitLab CI, pre-commit, and a generic shell runner.
+This page covers the exit-code model, the fixture harness (`rule backtest`), the failure-controlling flags (`--fail-on-detection`, `--fail-level`), and copy-paste pipelines for GitHub Actions, GitLab CI, pre-commit, and a generic shell runner.
 
 ## Exit codes
 
@@ -22,10 +22,43 @@ A few non-obvious behaviours worth pinning down:
 - `engine eval` exits `0` when a rule file contains a Sigma parse error (it logs a warning to stderr and continues with the rules that did load). Use `rule validate` if you want a parse error to fail the build.
 - `engine eval` exits `0` by default even when matches fire. Pass `--fail-on-detection` if you want detections to fail the build.
 - `rule lint` exits `0` for findings below `--fail-level`. The default threshold is `error`, so a clean lint with only info/warning findings still returns `0`.
+- `rule backtest` exits `1` on a failed expectation or, under `--unexpected fail`, on a rule firing with no covering expectation. A bad expectations file or a missing corpus path is exit `3`, and unreadable rules are exit `2`.
+
+## `rule backtest` for fixture suites
+
+`rule backtest` is the recommended fixture harness. It replays a corpus (a file or a directory walked recursively), tallies how many times each rule fired, and diffs those counts against an expectations file. Unlike `engine eval --fail-on-detection`, which is corpus-global and passes when *any* rule fires, backtest asserts per rule, so a broken rule cannot be masked by an unrelated rule matching the same fixture.
+
+Declare what each rule must do in an expectations file:
+
+```yaml
+# ci/expectations.yml
+defaults:
+  unexpected_detections: warn   # fail | warn | ignore
+expectations:
+  - rule: 5f0d7d3c-3aab-43fa-952f-8f7b2d966ee5   # positive fixture: must fire
+    at_least: 1
+  - rule: Suspicious Whoami Execution             # negative fixture: must not fire
+    exactly: 0
+```
+
+Then run the whole suite in one command:
+
+```bash
+rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectations.yml
+```
+
+Exit `1` means an expectation failed (or, under `--unexpected fail`, that a rule fired with no covering expectation, the false-positive signal on a benign corpus). Emit a JUnit report for CI annotation with `--junit`, and the full JSON report with `--report`:
+
+```bash
+rsigma rule backtest -r rules/ --corpus ci/corpus/ \
+    --expectations ci/expectations.yml --junit backtest.xml --unexpected fail
+```
+
+Correlation rules are asserted the same way, by id or title. See [`rule backtest`](../cli/rule/backtest.md) for the full flag table, expectations schema, and report shape.
 
 ## `--fail-on-detection` for `engine eval`
 
-`engine eval` is the right tool for CI tests against fixtures: gold-standard "this event should match" / "this event should not match" pairs that catch detection regressions before they ship.
+`engine eval --fail-on-detection` is the zero-setup fallback when you do not want an expectations file: a single fixture and a single rule, where exit `1` means "something fired."
 
 ```bash
 rsigma engine eval -r rules/ --fail-on-detection -e @ci/should-not-match.ndjson
@@ -40,7 +73,7 @@ if rsigma engine eval -r rules/ --fail-on-detection -e @ci/should-match.ndjson; 
 fi
 ```
 
-The same pattern works for fingerprinting suppression and correlation behaviour. Pair `--fail-on-detection` with `--no-detections` if you only care whether correlations fire:
+Because this check is corpus-global, prefer `rule backtest` once a fixture exercises more than one rule. Pair `--fail-on-detection` with `--no-detections` if you only care whether correlations fire:
 
 ```bash
 rsigma engine eval -r rules/ --fail-on-detection --no-detections \
@@ -95,7 +128,7 @@ See [Linting Rules](linting-rules.md) and [Processing Pipelines](processing-pipe
 
 ## GitHub Actions
 
-A four-job workflow that mirrors a typical detection-engineering loop: lint, validate, fixture eval, then convert and publish.
+A four-job workflow that mirrors a typical detection-engineering loop: lint, validate, backtest, then convert and publish.
 
 ```yaml
 name: detections
@@ -134,7 +167,7 @@ jobs:
       - run: cargo install --locked rsigma --version "${RSIGMA_VERSION}"
       - run: rsigma rule validate rules/ -p pipelines/ecs.yml
 
-  eval-fixtures:
+  backtest:
     runs-on: ubuntu-latest
     needs: [lint, validate]
     permissions:
@@ -144,14 +177,18 @@ jobs:
         with:
           persist-credentials: false
       - run: cargo install --locked rsigma --version "${RSIGMA_VERSION}"
-      - name: Negative fixtures must not match
-        run: rsigma engine eval -r rules/ --fail-on-detection -e @ci/negative.ndjson
-      - name: Positive fixtures must match
+      - name: Backtest fixtures against expectations
         run: |
-          if rsigma engine eval -r rules/ --fail-on-detection -e @ci/positive.ndjson; then
-              echo "::error::positive fixture produced no detection"
-              exit 1
-          fi
+          rsigma rule backtest -r rules/ \
+            --corpus ci/corpus/ \
+            --expectations ci/expectations.yml \
+            --unexpected fail \
+            --junit backtest.xml
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backtest-junit
+          path: backtest.xml
 
   convert:
     runs-on: ubuntu-latest
@@ -218,11 +255,15 @@ validate:
   script:
     - rsigma rule validate rules/ -p pipelines/ecs.yml
 
-negative-fixtures:
+backtest:
   stage: eval
   <<: *install-rsigma
   script:
-    - rsigma engine eval -r rules/ --fail-on-detection -e @ci/negative.ndjson
+    - rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectations.yml --unexpected fail --junit backtest.xml
+  artifacts:
+    when: always
+    reports:
+      junit: backtest.xml
 
 convert-postgres:
   stage: build
@@ -286,21 +327,13 @@ PIPELINE="${PIPELINE:-pipelines/ecs.yml}"
 $RSIGMA_BIN rule lint    "$RULES_DIR" --fail-level warning
 $RSIGMA_BIN rule validate "$RULES_DIR" -p "$PIPELINE"
 
-for fixture in ci/negative/*.ndjson; do
-    $RSIGMA_BIN engine eval -r "$RULES_DIR" -p "$PIPELINE" \
-        --fail-on-detection -e "@$fixture"
-done
-
-for fixture in ci/positive/*.ndjson; do
-    if $RSIGMA_BIN engine eval -r "$RULES_DIR" -p "$PIPELINE" \
-        --fail-on-detection -e "@$fixture"; then
-        echo "positive fixture $fixture produced no detection" >&2
-        exit 1
-    fi
-done
+$RSIGMA_BIN rule backtest -r "$RULES_DIR" -p "$PIPELINE" \
+    --corpus ci/corpus/ \
+    --expectations ci/expectations.yml \
+    --unexpected fail
 ```
 
-`set -e` plus `set -o pipefail` makes any non-zero exit fail the script, so the structured exit codes work without explicit `if` branches except for the positive-fixture inversion.
+`set -e` plus `set -o pipefail` makes any non-zero exit fail the script, so the structured exit codes work without explicit `if` branches: a failed expectation or an unexpected fire returns exit `1` and stops the run.
 
 ## Tips and gotchas
 
@@ -317,4 +350,4 @@ done
 - [Rule Conversion](rule-conversion.md) for the `backend convert` workflow that feeds `views.sql` into Grafana or alerting.
 - [Processing Pipelines](processing-pipelines.md) for dynamic-source validation via `--resolve-sources`.
 - [Exit Codes reference](../reference/exit-codes.md) for the canonical table and source-code link.
-- [CLI reference: `engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
+- [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).

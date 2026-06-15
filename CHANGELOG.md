@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `rule backtest`: corpus replay with per-rule expectations (#216)
+
+A new `rsigma rule backtest` subcommand replays an event corpus against a ruleset and diffs the per-rule fire counts against declared expectations, the per-rule fixture harness that `engine eval --fail-on-detection` could not provide (that check is corpus-global and passes when any rule fires).
+
+- **Corpus replay.** `--corpus` takes a file or a directory walked recursively, with extension dispatch (`.ndjson`/`.jsonl` as NDJSON, `.evtx` via the evtx feature, everything else through `--input-format`). Correlation state is reset per corpus file so each file is an independent time slice.
+- **Expectations.** An optional `--expectations` YAML asserts per rule (by id or title): `at_least`, `at_most`, or `exactly`, optionally scoped to one corpus file. A rule that fires with no covering expectation is surfaced as a potential false positive, governed by `--unexpected` (`fail`/`warn`/`ignore`).
+- **Reports.** The report renders through the shared output layer (`table`, `json`, `ndjson`/`csv`/`tsv` per-rule rows) and can be written to `--report` (JSON) and `--junit` (a hand-rolled JUnit XML, no new dependency). It carries per-rule fires, a per-corpus-file breakdown, the unexpected-fire set, and a per-logsource false-positive-density rollup.
+- **Exit codes** follow the house scheme: `0` all expectations met, `1` a failed expectation or a policy-failing unexpected fire, `2` unreadable rules, `3` a bad expectations file or corpus path.
+- **Config.** A `backtest` section (`rules`, `corpus`, `expectations`, `unexpected`, `pipelines`, and the syslog input knobs) flows through `rsigma config init/validate/show/schema`, the `RSIGMA_BACKTEST__*` environment layer, `--config`, and `--dry-run`.
+- **Internal.** The format-aware eval stream loop moved into a shared `commands::eval_stream` module so `engine eval` and `rule backtest` cannot drift on input parsing; eval behavior is unchanged.
+
 ### `rstix`: Phase 2 — STIX meta objects (#213)
 
 Phase 2 adds STIX meta objects (not releasable on its own until `StixObject` dispatch and `Bundle` parsing land).

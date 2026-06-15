@@ -12,7 +12,7 @@ rsigma engine eval [OPTIONS] --rules <RULES>
 
 Loads rules from a file or directory, optionally applies one or more processing pipelines, reads events from `--event` (or stdin), and writes matched `MatchResult` JSON to stdout. Exits when the event source is exhausted.
 
-This is the right tool for CI fixtures, ad-hoc threat hunting, forensic replay over `.evtx` and NDJSON files, and any "run rules against this data, then exit" workflow. For a long-running daemon with hot-reload and metrics, use [`engine daemon`](daemon.md).
+This is the right tool for ad-hoc threat hunting, forensic replay over `.evtx` and NDJSON files, and any "run rules against this data, then exit" workflow. For a long-running daemon with hot-reload and metrics, use [`engine daemon`](daemon.md). For per-rule assertions over a corpus (a CI fixture harness with expected-vs-actual fire counts and a JUnit report), use [`rule backtest`](../rule/backtest.md).
 
 For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md).
 
@@ -188,4 +188,5 @@ rsigma engine eval -r rules/ --suppress 5m --action reset \
 - [Processing Pipelines](../../guide/processing-pipelines.md) for `-p` semantics and the builtin pipelines.
 - [Performance Tuning](../../guide/performance-tuning.md) for `--bloom-prefilter` and `--cross-rule-ac`.
 - [CI/CD](../../guide/ci-cd.md) for `--fail-on-detection` patterns.
+- [`rule backtest`](../rule/backtest.md) for per-rule corpus assertions and CI reports.
 - [`engine daemon`](daemon.md) for the long-running streaming counterpart.

@@ -43,6 +43,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma engine eval` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eval: Option<EvalPartial>,
+    /// `rsigma rule backtest` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backtest: Option<BacktestPartial>,
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
@@ -55,6 +58,7 @@ impl Merge for RsigmaConfigPartial {
             global: merge_opt(self.global, over.global),
             daemon: merge_opt(self.daemon, over.daemon),
             eval: merge_opt(self.eval, over.eval),
+            backtest: merge_opt(self.backtest, over.backtest),
             mcp: merge_opt(self.mcp, over.mcp),
         }
     }
@@ -410,6 +414,50 @@ impl Merge for EvalPartial {
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
             fail_on_detection: over.fail_on_detection.or(self.fail_on_detection),
+        }
+    }
+}
+
+/// `rsigma rule backtest` settings.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BacktestPartial {
+    /// Default rules path for `rsigma rule backtest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<PathBuf>,
+    /// Event corpus file(s) or directory(ies), walked recursively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus: Option<Vec<PathBuf>>,
+    /// Expectations YAML file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expectations: Option<PathBuf>,
+    /// Policy for unexpected fires: `fail`, `warn`, or `ignore`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unexpected: Option<String>,
+    /// Builtin pipeline names or YAML file paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipelines: Option<Vec<PathBuf>>,
+    /// Input log format for non-NDJSON corpus files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_format: Option<String>,
+    /// Default timezone offset for RFC 3164 syslog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syslog_tz: Option<String>,
+    /// Strip a leading UTF-8 BOM from RFC 5424 syslog messages (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syslog_strip_bom: Option<bool>,
+}
+
+impl Merge for BacktestPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            rules: over.rules.or(self.rules),
+            corpus: over.corpus.or(self.corpus),
+            expectations: over.expectations.or(self.expectations),
+            unexpected: over.unexpected.or(self.unexpected),
+            pipelines: over.pipelines.or(self.pipelines),
+            input_format: over.input_format.or(self.input_format),
+            syslog_tz: over.syslog_tz.or(self.syslog_tz),
+            syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
         }
     }
 }
