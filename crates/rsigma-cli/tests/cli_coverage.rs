@@ -174,6 +174,41 @@ fn coverage_atomics_directory_clone() {
 }
 
 #[test]
+fn coverage_warns_on_parse_errors_but_still_reports_valid_rules() {
+    // A directory with one valid rule and one malformed rule (missing the
+    // required detection block). Coverage warns about the parse error on
+    // stderr but still reports the valid rule's technique.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("good.yml"),
+        "title: Good\nid: 00000000-0000-0000-0000-0000000000e1\n\
+         logsource: {category: process_creation, product: windows}\n\
+         detection: {sel: {Image: a}, condition: sel}\ntags: [attack.t1059]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("bad.yml"),
+        "title: Missing Detection\nid: 00000000-0000-0000-0000-0000000000e2\n\
+         logsource: {category: process_creation, product: windows}\n",
+    )
+    .unwrap();
+
+    rsigma()
+        .args([
+            "rule",
+            "coverage",
+            "--rules",
+            dir.path().to_str().unwrap(),
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("parse errors"))
+        .stdout(predicate::str::contains("\"id\":\"T1059\""));
+}
+
+#[test]
 fn coverage_missing_rules_is_config_error() {
     rsigma()
         .args(["rule", "coverage"])

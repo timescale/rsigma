@@ -630,10 +630,13 @@ pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {
 
 /// Load and merge a Sigma collection from one or more file/directory paths.
 ///
-/// Directories are parsed recursively; each path's rules, correlations, and
-/// filters are concatenated. Exits with `RULE_ERROR` if any path is missing or
-/// unreadable, or if no rules were found across all paths. Shared by
-/// `backend convert` and `rule coverage`.
+/// Directories are parsed recursively; each path's rules, correlations,
+/// filters, and per-rule parse errors are concatenated. Exits with
+/// `RULE_ERROR` if any path is missing or unreadable, or if no rules were
+/// found across all paths. Accumulated per-rule parse errors are reported as a
+/// stderr warning (matching [`load_collection`]) rather than aborting, so a
+/// single malformed rule in a large directory does not silently vanish. Shared
+/// by `backend convert` and `rule coverage`.
 pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
     let mut collection = SigmaCollection::new();
     for path in paths {
@@ -643,6 +646,7 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
                     collection.rules.extend(dir_collection.rules);
                     collection.correlations.extend(dir_collection.correlations);
                     collection.filters.extend(dir_collection.filters);
+                    collection.errors.extend(dir_collection.errors);
                 }
                 Err(e) => {
                     eprintln!("Error parsing directory {}: {e}", path.display());
@@ -655,6 +659,7 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
                     collection.rules.extend(file_collection.rules);
                     collection.correlations.extend(file_collection.correlations);
                     collection.filters.extend(file_collection.filters);
+                    collection.errors.extend(file_collection.errors);
                 }
                 Err(e) => {
                     eprintln!("Error parsing {}: {e}", path.display());
@@ -665,6 +670,12 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
             eprintln!("Path not found: {}", path.display());
             process::exit(exit_code::RULE_ERROR);
         }
+    }
+    if !collection.errors.is_empty() {
+        eprintln!(
+            "Warning: {} parse errors while loading rules",
+            collection.errors.len()
+        );
     }
     if collection.rules.is_empty() && collection.correlations.is_empty() {
         eprintln!("No rules found in specified path(s)");
