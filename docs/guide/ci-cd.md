@@ -1,6 +1,6 @@
 # CI/CD
 
-RSigma is designed to drop into a detection-as-code workflow. The CLI surfaces that matter for CI are `rule lint`, `rule validate`, `rule backtest`, `engine eval`, and `backend convert`. Each exits with a structured code that lets CI runners distinguish "no findings, clean exit" from "the tool ran but reported findings" from "the tool could not run because of a configuration or rule error."
+RSigma is designed to drop into a detection-as-code workflow. The CLI surfaces that matter for CI are `rule lint`, `rule validate`, `rule backtest`, `rule coverage`, `engine eval`, and `backend convert`. Each exits with a structured code that lets CI runners distinguish "no findings, clean exit" from "the tool ran but reported findings" from "the tool could not run because of a configuration or rule error."
 
 This page covers the exit-code model, the fixture harness (`rule backtest`), the failure-controlling flags (`--fail-on-detection`, `--fail-level`), and copy-paste pipelines for GitHub Actions, GitLab CI, pre-commit, and a generic shell runner.
 
@@ -55,6 +55,16 @@ rsigma rule backtest -r rules/ --corpus ci/corpus/ \
 ```
 
 Correlation rules are asserted the same way, by id or title. See [`rule backtest`](../cli/rule/backtest.md) for the full flag table, expectations schema, and report shape.
+
+## `rule coverage` for ATT&CK gaps
+
+`rule backtest` proves your rules fire correctly; `rule coverage` proves you have rules for the techniques you care about. It exports an ATT&CK Navigator layer and, with `--fail-on-gaps`, fails the build when a target technique list loses its last covering rule:
+
+```bash
+rsigma rule coverage -r rules/ --targets ci/threat-model.txt --fail-on-gaps
+```
+
+It can also surface techniques that have an Atomic Red Team test but no rule (`--atomics`) or that the SigmaHQ baseline covers but you do not (`--baseline`). See [ATT&CK Coverage](attack-coverage.md) and the [`rule coverage`](../cli/rule/coverage.md) reference.
 
 ## `--fail-on-detection` for `engine eval`
 
@@ -350,4 +360,5 @@ $RSIGMA_BIN rule backtest -r "$RULES_DIR" -p "$PIPELINE" \
 - [Rule Conversion](rule-conversion.md) for the `backend convert` workflow that feeds `views.sql` into Grafana or alerting.
 - [Processing Pipelines](processing-pipelines.md) for dynamic-source validation via `--resolve-sources`.
 - [Exit Codes reference](../reference/exit-codes.md) for the canonical table and source-code link.
-- [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
+- [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`rule coverage`](../cli/rule/coverage.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
+- [ATT&CK Coverage](attack-coverage.md) for the coverage workflow.

@@ -1,0 +1,11 @@
+{
+  "name": "SigmaHQ baseline (test fixture)",
+  "versions": { "attack": "16", "navigator": "4.8.1", "layer": "4.4" },
+  "domain": "enterprise-attack",
+  "techniques": [
+    { "techniqueID": "T1059", "score": 5 },
+    { "techniqueID": "T1047", "score": 2 },
+    { "techniqueID": "T1566", "score": 1 },
+    { "techniqueID": "T1003", "score": 3 }
+  ]
+}

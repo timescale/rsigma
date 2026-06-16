@@ -1,0 +1,86 @@
+{
+    "summary": {
+        "rules_total": 5,
+        "rules_tagged": 4,
+        "rules_untagged": 1,
+        "techniques": 4,
+        "subtechniques": 2,
+        "tactics": 2
+    },
+    "techniques": [
+        {
+            "id": "T1047",
+            "tactics": [
+                "execution"
+            ],
+            "rule_count": 1,
+            "rules": [
+                "WMI"
+            ]
+        },
+        {
+            "id": "T1059",
+            "tactics": [
+                "execution"
+            ],
+            "rule_count": 1,
+            "rules": [
+                "Cmd"
+            ]
+        },
+        {
+            "id": "T1059.001",
+            "tactics": [
+                "execution"
+            ],
+            "rule_count": 1,
+            "rules": [
+                "PowerShell"
+            ]
+        },
+        {
+            "id": "T1218.001",
+            "tactics": [
+                "defense-evasion"
+            ],
+            "rule_count": 1,
+            "rules": [
+                "Rundll32"
+            ]
+        }
+    ],
+    "untagged_rules": [
+        "Untagged Rule"
+    ],
+    "atomics": {
+        "atomics_total": 4,
+        "covered": 3,
+        "atomics_without_rule": [
+            "T1566"
+        ],
+        "rules_without_atomic": [
+            "T1047"
+        ]
+    },
+    "baseline": {
+        "baseline_total": 4,
+        "covered": 2,
+        "baseline_not_covered": [
+            "T1003",
+            "T1566"
+        ],
+        "ahead_of_baseline": [
+            "T1218.001"
+        ]
+    },
+    "targets": {
+        "targets_total": 3,
+        "covered": 2,
+        "uncovered": [
+            "T1003"
+        ],
+        "covered_via_subtechnique": [
+            "T1218"
+        ]
+    }
+}

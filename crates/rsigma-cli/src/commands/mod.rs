@@ -1,5 +1,6 @@
 mod backtest;
 mod convert;
+mod coverage;
 #[cfg(feature = "daemon")]
 mod daemon;
 mod eval;
@@ -20,6 +21,7 @@ pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
 pub(crate) use convert::{
     ConvertArgs, ListFormatsArgs, cmd_convert, cmd_list_formats, cmd_list_targets,
 };
+pub(crate) use coverage::{CoverageArgs, apply_coverage_config, cmd_coverage};
 #[cfg(feature = "daemon")]
 pub(crate) use daemon::{DaemonArgs, cmd_daemon, parse_input_format};
 pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};

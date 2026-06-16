@@ -1,0 +1,71 @@
+title: PowerShell
+id: 00000000-0000-0000-0000-0000000000a1
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\powershell.exe'
+    condition: sel
+tags:
+    - attack.execution
+    - attack.t1059.001
+level: high
+---
+title: Cmd
+id: 00000000-0000-0000-0000-0000000000a2
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\cmd.exe'
+    condition: sel
+tags:
+    - attack.execution
+    - attack.t1059
+level: medium
+---
+title: WMI
+id: 00000000-0000-0000-0000-0000000000a3
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\wmic.exe'
+    condition: sel
+tags:
+    - attack.execution
+    - attack.t1047
+level: medium
+---
+title: Rundll32
+id: 00000000-0000-0000-0000-0000000000a4
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\rundll32.exe'
+    condition: sel
+tags:
+    - attack.defense_evasion
+    - attack.t1218.001
+level: medium
+---
+title: Untagged Rule
+id: 00000000-0000-0000-0000-0000000000a5
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\untagged.exe'
+    condition: sel
+level: low

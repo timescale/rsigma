@@ -154,6 +154,17 @@ backtest:
   # Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Set false to keep it.
   syslog_strip_bom: true
 
+coverage:
+  # Cross-reference against the Atomic Red Team index: a local index.yaml, an
+  # atomic-red-team `atomics/` directory, or a URL.
+  # atomics: https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/Indexes/index.yaml
+  # Baseline ATT&CK Navigator layer (local path or URL); e.g. the SigmaHQ heatmap.
+  # baseline: https://raw.githubusercontent.com/SigmaHQ/sigma/master/other/sigma_attack_nav_coverage.json
+  # Target technique list (one technique ID per line; `#` comments allowed).
+  # targets: ./threat-model-techniques.txt
+  # Exit non-zero when a requested cross-reference reports uncovered techniques.
+  # fail_on_gaps: false
+
 # `rsigma mcp serve` settings. The auth token is NOT configurable here by
 # design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
 mcp:

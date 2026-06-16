@@ -110,7 +110,7 @@ rsigma config path
 rsigma config reload
 ```
 
-`engine daemon`, `engine eval`, and `rule backtest` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+`engine daemon`, `engine eval`, `rule backtest`, and `rule coverage` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
 Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
@@ -795,6 +795,32 @@ rsigma rule backtest -r rules/ --corpus samples/ --output-format json | jq '.rul
 ```
 
 Exit codes: `0` all expectations met, `1` a failed expectation (or an uncovered fire under `--unexpected fail`), `2` unreadable rules, `3` a bad expectations file or missing corpus path. The full flag table, expectations schema, and report shape are in the [`rule backtest` reference](https://timescale.github.io/rsigma/cli/rule/backtest/).
+
+### `rule coverage`: Map a ruleset onto MITRE ATT&CK
+
+Reads the `attack.*` tags off every detection and correlation rule, exports an ATT&CK Navigator layer (format 4.5, scored by rule count), and reports coverage gaps against three optional cross-references.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | repeatable | required | Sigma rule file or directory of rules |
+| `--navigator` | path | none | Write an ATT&CK Navigator layer (format 4.5) to this file |
+| `--atomics` | path/URL | none | Atomic Red Team index (bare flag = upstream `index.yaml`), a local `index.yaml`, or an `atomics/` directory (or `coverage.atomics`) |
+| `--baseline` | path/URL | none | Baseline Navigator layer (bare flag = SigmaHQ heatmap) (or `coverage.baseline`) |
+| `--targets` | path | none | Target technique list, one ID per line (or `coverage.targets`) |
+| `--fail-on-gaps` | flag | off | Exit `1` when a requested cross-reference reports uncovered techniques (or `coverage.fail_on_gaps`) |
+
+```bash
+# Export a Navigator heatmap of the ruleset
+rsigma rule coverage -r rules/ --navigator coverage.json
+
+# Find techniques that have an Atomic Red Team test but no rule
+rsigma rule coverage -r rules/ --atomics --output-format json | jq '.atomics.atomics_without_rule'
+
+# Gate CI on a target technique list
+rsigma rule coverage -r rules/ --targets threat-model.txt --fail-on-gaps
+```
+
+Exit codes: `0` success, `1` uncovered techniques under `--fail-on-gaps`, `2` unreadable rules, `3` an unfetchable cross-reference input. The full flag table and report shape are in the [`rule coverage` reference](https://timescale.github.io/rsigma/cli/rule/coverage/).
 
 ### `pipeline resolve`: Test dynamic source resolution
 

@@ -1,0 +1,4 @@
+# Internal threat-model: techniques we want covered.
+T1059        # covered directly (Cmd rule)
+T1218        # covered via sub-technique (Rundll32 -> T1218.001)
+T1003        # uncovered (no rule)

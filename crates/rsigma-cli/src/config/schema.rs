@@ -46,6 +46,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma rule backtest` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backtest: Option<BacktestPartial>,
+    /// `rsigma rule coverage` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<CoveragePartial>,
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
@@ -59,6 +62,7 @@ impl Merge for RsigmaConfigPartial {
             daemon: merge_opt(self.daemon, over.daemon),
             eval: merge_opt(self.eval, over.eval),
             backtest: merge_opt(self.backtest, over.backtest),
+            coverage: merge_opt(self.coverage, over.coverage),
             mcp: merge_opt(self.mcp, over.mcp),
         }
     }
@@ -458,6 +462,36 @@ impl Merge for BacktestPartial {
             input_format: over.input_format.or(self.input_format),
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
+        }
+    }
+}
+
+/// `rsigma rule coverage` settings. `rules` is intentionally absent: it is a
+/// required, invocation-specific CLI argument, not a project default.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct CoveragePartial {
+    /// Atomic Red Team index path/URL, or an `atomics/` directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atomics: Option<String>,
+    /// Baseline ATT&CK Navigator layer path/URL (e.g. the SigmaHQ heatmap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<String>,
+    /// Target technique list file (one technique ID per line).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<PathBuf>,
+    /// Exit non-zero when a requested cross-reference reports uncovered
+    /// techniques.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_on_gaps: Option<bool>,
+}
+
+impl Merge for CoveragePartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            atomics: over.atomics.or(self.atomics),
+            baseline: over.baseline.or(self.baseline),
+            targets: over.targets.or(self.targets),
+            fail_on_gaps: over.fail_on_gaps.or(self.fail_on_gaps),
         }
     }
 }

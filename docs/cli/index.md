@@ -9,7 +9,7 @@ This reference documents every subcommand with its flag table, verified examples
 | Group | Subcommands | What it does |
 |-------|-------------|--------------|
 | [`engine`](engine/eval.md) | `eval`, `daemon` | Run Sigma rules against events: one-shot or long-running. |
-| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `condition`, `stdin` | Inspect, validate, and lint Sigma rule files. |
+| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `backtest`, `coverage`, `condition`, `stdin` | Inspect, validate, lint, backtest, and ATT&CK-map Sigma rule files. |
 | [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, …). |
 | [`pipeline`](pipeline/resolve.md) | `resolve` | Inspect and test processing pipelines, including dynamic sources. |
 | [`config`](config/init.md) | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the YAML config file. |
@@ -41,6 +41,8 @@ rsigma
 │   ├── lint                   run the {{ rsigma.lint.rules }} lint checks
 │   ├── migrate-sources        extract pipeline-embedded sources into standalone files
 │   ├── fields                 list every field referenced by the rules
+│   ├── backtest               replay a corpus and diff per-rule fires vs expectations
+│   ├── coverage               map rules onto ATT&CK; Navigator export + gap analysis
 │   ├── condition              parse a condition expression, dump AST
 │   └── stdin                  parse a rule from stdin
 ├── backend

@@ -11,8 +11,8 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    BacktestArgs, ConditionArgs, ConvertArgs, EvalArgs, FieldsArgs, LintArgs, LintCounts,
-    ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StdinArgs, ValidateArgs,
+    BacktestArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs, LintArgs,
+    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StdinArgs, ValidateArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -223,6 +223,9 @@ enum RuleCommands {
 
     /// Replay an event corpus and diff per-rule fires against expectations
     Backtest(BacktestArgs),
+
+    /// Map rules onto MITRE ATT&CK: Navigator layer export + coverage gaps
+    Coverage(CoverageArgs),
 
     /// Parse a condition expression and print the AST
     Condition(ConditionArgs),
@@ -446,6 +449,13 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
                 .expect("rule backtest submatches present");
             run_backtest(args, bm, ctx);
         }
+        RuleCommands::Coverage(args) => {
+            let cm = matches
+                .subcommand_matches("rule")
+                .and_then(|m| m.subcommand_matches("coverage"))
+                .expect("rule coverage submatches present");
+            run_coverage(args, cm, ctx);
+        }
         RuleCommands::Condition(args) => commands::cmd_condition(args, ctx),
         RuleCommands::Stdin(args) => commands::cmd_stdin(args, ctx),
         RuleCommands::MigrateSources(args) => commands::cmd_migrate_sources(args),
@@ -485,6 +495,15 @@ fn run_eval(mut args: EvalArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
 fn run_backtest(mut args: BacktestArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_backtest_config(&mut args, matches);
     let code = commands::cmd_backtest(args, ctx);
+    process::exit(code);
+}
+
+/// Entry point for `rule coverage`. Applies config (CLI flag > env > file >
+/// default) before running, then exits with the report's house exit code
+/// (0 success, 1 gaps under --fail-on-gaps, 2 rule error, 3 config error).
+fn run_coverage(mut args: CoverageArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
+    commands::apply_coverage_config(&mut args, matches);
+    let code = commands::cmd_coverage(args, ctx);
     process::exit(code);
 }
 
@@ -606,6 +625,62 @@ pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {
         );
     }
 
+    collection
+}
+
+/// Load and merge a Sigma collection from one or more file/directory paths.
+///
+/// Directories are parsed recursively; each path's rules, correlations,
+/// filters, and per-rule parse errors are concatenated. Exits with
+/// `RULE_ERROR` if any path is missing or unreadable, or if no rules were
+/// found across all paths. Accumulated per-rule parse errors are reported as a
+/// stderr warning (matching [`load_collection`]) rather than aborting, so a
+/// single malformed rule in a large directory does not silently vanish. Shared
+/// by `backend convert` and `rule coverage`.
+pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
+    let mut collection = SigmaCollection::new();
+    for path in paths {
+        if path.is_dir() {
+            match parse_sigma_directory(path) {
+                Ok(dir_collection) => {
+                    collection.rules.extend(dir_collection.rules);
+                    collection.correlations.extend(dir_collection.correlations);
+                    collection.filters.extend(dir_collection.filters);
+                    collection.errors.extend(dir_collection.errors);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing directory {}: {e}", path.display());
+                    process::exit(exit_code::RULE_ERROR);
+                }
+            }
+        } else if path.is_file() {
+            match parse_sigma_file(path) {
+                Ok(file_collection) => {
+                    collection.rules.extend(file_collection.rules);
+                    collection.correlations.extend(file_collection.correlations);
+                    collection.filters.extend(file_collection.filters);
+                    collection.errors.extend(file_collection.errors);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing {}: {e}", path.display());
+                    process::exit(exit_code::RULE_ERROR);
+                }
+            }
+        } else {
+            eprintln!("Path not found: {}", path.display());
+            process::exit(exit_code::RULE_ERROR);
+        }
+    }
+    if !collection.errors.is_empty() {
+        eprintln!(
+            "Warning: {} parse errors while loading rules",
+            collection.errors.len()
+        );
+    }
+    if collection.rules.is_empty() && collection.correlations.is_empty() {
+        eprintln!("No rules found in specified path(s)");
+        process::exit(exit_code::RULE_ERROR);
+    }
     collection
 }
 

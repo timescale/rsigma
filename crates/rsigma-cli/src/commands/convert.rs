@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::Args;
-use rsigma_parser::{SigmaCollection, parse_sigma_directory, parse_sigma_file};
 
 use crate::output::{OutputCtx, OutputFormat, render_json};
 
@@ -77,7 +76,7 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         backend_options,
     } = args;
 
-    let collection = load_collection_multi(&rules);
+    let collection = crate::load_collection_multi(&rules);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) {
@@ -263,45 +262,6 @@ pub(crate) fn cmd_list_formats(target: String) {
 pub(crate) struct ListFormatsArgs {
     /// Target backend name
     pub target: String,
-}
-
-fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
-    let mut collection = SigmaCollection::new();
-    for path in paths {
-        if path.is_dir() {
-            match parse_sigma_directory(path) {
-                Ok(dir_collection) => {
-                    collection.rules.extend(dir_collection.rules);
-                    collection.correlations.extend(dir_collection.correlations);
-                    collection.filters.extend(dir_collection.filters);
-                }
-                Err(e) => {
-                    eprintln!("Error parsing directory {}: {e}", path.display());
-                    process::exit(crate::exit_code::RULE_ERROR);
-                }
-            }
-        } else if path.is_file() {
-            match parse_sigma_file(path) {
-                Ok(file_collection) => {
-                    collection.rules.extend(file_collection.rules);
-                    collection.correlations.extend(file_collection.correlations);
-                    collection.filters.extend(file_collection.filters);
-                }
-                Err(e) => {
-                    eprintln!("Error parsing {}: {e}", path.display());
-                    process::exit(crate::exit_code::RULE_ERROR);
-                }
-            }
-        } else {
-            eprintln!("Path not found: {}", path.display());
-            process::exit(crate::exit_code::RULE_ERROR);
-        }
-    }
-    if collection.rules.is_empty() && collection.correlations.is_empty() {
-        eprintln!("No rules found in specified path(s)");
-        process::exit(crate::exit_code::RULE_ERROR);
-    }
-    collection
 }
 
 fn write_output(content: &str, output: Option<&std::path::Path>) {

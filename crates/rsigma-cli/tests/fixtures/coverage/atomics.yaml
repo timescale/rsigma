@@ -1,0 +1,18 @@
+execution:
+  T1059:
+    technique:
+      x_mitre_is_subtechnique: false
+    atomic_tests: []
+  T1059.001:
+    technique:
+      x_mitre_is_subtechnique: true
+    atomic_tests: []
+  T1566:
+    technique:
+      x_mitre_is_subtechnique: false
+    atomic_tests: []
+defense-evasion:
+  T1218.001:
+    technique:
+      x_mitre_is_subtechnique: true
+    atomic_tests: []

@@ -132,6 +132,9 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
         }),
+        // The `coverage` section has no compiled defaults: the cross-reference
+        // inputs are opt-in and `fail_on_gaps` defaults to off via clap.
+        coverage: None,
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.
         mcp: None,

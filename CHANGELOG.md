@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `rule coverage`: ATT&CK Navigator export and coverage-gap analysis (#221)
+
+A new `rsigma rule coverage` subcommand maps a rule set onto MITRE ATT&CK. It reads the `attack.*` tags off every detection and correlation rule, exports an ATT&CK Navigator layer, and reports coverage gaps against external references, the companion to `rule backtest` in a detection-as-code pipeline.
+
+- **Navigator export.** `--navigator <FILE>` writes an ATT&CK Navigator layer (format 4.5) scored by rule count per technique, the same "score function count" semantics SigmaHQ uses, so a rsigma layer overlays cleanly on the SigmaHQ baseline. Sub-technique scores are kept exact.
+- **Cross-references.** `--atomics` diffs against the Atomic Red Team index (techniques with atomics but no rule, and rules whose technique has no atomic), `--baseline` diffs against a baseline Navigator layer (the SigmaHQ heatmap by default), and `--targets` diffs against a plain-text technique list. Bare `--atomics`/`--baseline` fetch their upstream defaults over HTTP with a 7-day on-disk cache and stale-cache fallback; both also accept a local path or an atomic-red-team `atomics/` directory.
+- **Sub-technique roll-up.** A rule on `attack.t1059.001` covers a `T1059` target (reported as `covered_via_subtechnique`); a parent rule does not vouch for a specific sub-technique target.
+- **Output and exit codes.** The report renders through the shared output layer (`table`, `json`, `ndjson`/`csv`/`tsv` per-technique rows). `--fail-on-gaps` exits `1` when any requested cross-reference reports uncovered techniques; `2` for unreadable rules, `3` for an unfetchable cross-reference input.
+- **Config.** A `coverage` section (`atomics`, `baseline`, `targets`, `fail_on_gaps`) flows through `rsigma config init/validate/show/schema`, the `RSIGMA_COVERAGE__*` environment layer, `--config`, and `--dry-run`.
+- **Internal.** The multi-path rule loader shared with `backend convert` moved into a crate-level helper so the two commands cannot drift on rule loading.
+
 ### `rstix`: Phase 2 — STIX relationship and sighting objects
 
 Phase 2 adds typed STIX relationship and sighting objects (not releasable on its own until `StixObject` dispatch and `Bundle` parsing land).
