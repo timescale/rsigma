@@ -2,8 +2,8 @@
 //!
 //! Each Sigma rule produces one YAML document. The envelope wraps a
 //! pre-rendered Fibratus filter expression in the metadata Fibratus
-//! expects on disk (`name`, `id`, `description`, `labels`, `condition`,
-//! `min-engine-version`, optional `action`).
+//! expects on disk (`name`, `id`, `version`, `description`, `labels`,
+//! `condition`, `min-engine-version`, optional `action`).
 //!
 //! YAML is hand-rolled rather than routed through [`yaml_serde`] so the
 //! emitter has full control over field ordering, block-scalar style for
@@ -42,9 +42,9 @@ pub fn render_rule_yaml(rule: &SigmaRule, condition_expr: &str, cfg: &FibratusCo
 ///
 /// The body of `condition_expr` is the already-built `sequence`/`maxspan`
 /// DSL produced by [`super::correlation`]. The envelope shape is
-/// identical to a detection rule (`name`/`id`/`description`/`labels`/
-/// `condition`/`min-engine-version`/`action`); only the condition body
-/// differs.
+/// identical to a detection rule (`name`/`id`/`version`/`description`/
+/// `labels`/`condition`/`min-engine-version`/`action`); only the
+/// condition body differs.
 pub fn render_correlation_yaml(
     rule: &CorrelationRule,
     condition_expr: &str,
@@ -82,6 +82,12 @@ fn render_envelope(
     {
         let _ = writeln!(out, "id: {}", yaml_inline_str(id));
     }
+
+    // `version` is a required top-level attribute; the Fibratus loader
+    // rejects a rule that omits it. It is emitted regardless of
+    // `emit_metadata` (a minimal envelope still has to load) and carries
+    // the rule *content* version, distinct from `min-engine-version`.
+    let _ = writeln!(out, "version: {}", yaml_inline_str(&cfg.rule_version));
 
     if cfg.emit_metadata {
         if let Some(desc) = description
@@ -345,6 +351,7 @@ detection:
         let expected = "\
 name: Test Rule
 id: 12345678-1234-1234-1234-1234567890ab
+version: 1.0.0
 condition: >
   ps.name = 'cmd.exe'
 min-engine-version: 3.0.0
@@ -463,5 +470,29 @@ detection:
         assert!(!out.contains("description:"));
         assert!(!out.contains("labels:"));
         assert!(!out.contains("tactic.id"));
+        // The required `version` is emitted even in the minimal envelope.
+        assert!(out.contains("version: 1.0.0\n"));
+    }
+
+    #[test]
+    fn render_rule_emits_configured_version() {
+        let r = rule(
+            r#"
+title: Versioned
+id: 11111111-2222-3333-4444-555555555555
+detection:
+  selection:
+    ps.name: x
+  condition: selection
+"#,
+        );
+        let mut c = cfg();
+        c.rule_version = "2.3.1".to_string();
+        let out = render_rule_yaml(&r, "ps.name = 'x'", &c);
+        // `version` follows `id` and precedes the condition body.
+        assert!(
+            out.contains("id: 11111111-2222-3333-4444-555555555555\nversion: 2.3.1\n"),
+            "got: {out}",
+        );
     }
 }
