@@ -10,7 +10,7 @@ Fibratus is a runtime detection engine, not a log store. Three differences drive
 
 - **Case-insensitive matching needs an operator switch, not a wrapper.** Fibratus's plain operators (`=`, `contains`, `startswith`, `endswith`, `matches`, `in`, `intersects`) are case-sensitive; the `i`-prefixed cousins (`icontains`, `istartswith`, ...) and the `~=` string-equality operator are not. Sigma defaults to case-insensitive matching, so the backend emits the case-insensitive forms by default and flips to the bare forms only when Sigma's `|cased` modifier is present (or when `-O case_sensitive=true` is set globally). Plain literal equality (no `*`/`?` wildcards) uses the dedicated string-equality operators (`~=` default, `=` cased) instead of a wildcard match because they evaluate more efficiently and read the way the upstream rules library writes literal equality; `imatches`/`matches` are reserved for values that actually carry wildcards. The `evt.name` event discriminator always uses the exact `=` operator, matching the macro and rules libraries.
 - **Regex is a function call, not an operator.** Fibratus has no `=~`-style regex operator; instead it exposes the [`regex(field, 'pat1', 'pat2', ...) = true`](https://www.fibratus.io/) filter function. Sigma `|re` lowers to that call; the negated form uses a leading `not`. The underlying RE2 engine rejects PCRE-only constructs (lookarounds, backreferences); patterns that use those return a structured `UnsupportedModifier` rather than emitting something Fibratus would reject at load time.
-- **YAML envelope, not query string.** Every rule emits as a complete YAML document with `name`, `id`, `description`, `labels`, `condition`, `min-engine-version`, and optional `action`. Multi-rule output is `---`-separated so the entire stream loads as a valid YAML stream.
+- **YAML envelope, not query string.** Every rule emits as a complete YAML document with `name`, `id`, `version`, `description`, `labels`, `condition`, `min-engine-version`, and optional `action`. The `version` field is the rule content version, required by the loader. Multi-rule output is `---`-separated so the entire stream loads as a valid YAML stream.
 
 Fibratus has a native `not` operator and no parser envelope, so the backend ships no De Morgan negation push-down (unlike Loki) and no stream-selector machinery.
 
@@ -22,6 +22,7 @@ Pass with `-O key=value` (repeatable). Unknown keys are silently ignored so forw
 |--------|---------|---------|
 | `action` | unset | Comma-separated list of Fibratus actions to append to each rule envelope (`-O action=kill,isolate` emits `action: [- name: kill, - name: isolate]`). |
 | `min_engine` | `3.0.0` | Value written to the `min-engine-version:` field of every emitted rule. |
+| `version` | `1.0.0` | Value written to the required `version:` field (the rule content version) of every emitted rule. Sigma has no equivalent attribute; the Fibratus loader rejects a rule that omits it. |
 | `use_macros` | `true` | When `true`, rewrites recognized condition clause runs into idiomatic Fibratus macro calls (`spawn_process`, `create_thread`, `write_file`, `read_file`, `open_file`, `create_file`, `set_value`, `open_process`, `open_thread`, ...). The recognizer walks top-level `and` clauses and greedy-longest-match-replaces contiguous runs that match a macro's clause sequence (single-clause forms like `evt.name = 'CreateProcess'` and multi-clause runs like `evt.name = 'CreateFile' and file.operation ~= 'OPEN' and file.status ~= 'Success'`). Each clause is matched against both the exact (`=`) and case-insensitive (`~=`) operator forms, so it recognizes the same macros regardless of `-O case_sensitive`. Set to `false` to keep the raw `evt.name = '...'` forms. |
 | `default_logsource` | `windows` | Default `product:` to assume when a Sigma rule lacks an explicit logsource. Used by the matching pipeline transformations. |
 | `emit_metadata` | `true` | When `false`, omit the `description:` and `labels:` blocks. Useful when the target Fibratus install already enriches rule metadata from another source. |
@@ -129,6 +130,7 @@ One YAML rule document per Sigma rule, separated by `---`:
 ```yaml
 name: Suspicious cmd via Explorer
 id: 11111111-2222-3333-4444-555555555555
+version: 1.0.0
 description: |
   Detect cmd.exe spawned by explorer.exe with whoami in args.
 labels:
@@ -184,6 +186,7 @@ Example: 3 failed authentications from the same source IP within 5 minutes lower
 ```yaml
 name: Brute force from single source
 id: 22222222-aaaa-bbbb-cccc-000000000002
+version: 1.0.0
 description: |
   3 failed logins from the same source within 5 minutes.
 labels:

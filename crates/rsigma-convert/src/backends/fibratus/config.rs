@@ -18,6 +18,14 @@ pub struct FibratusConfig {
     /// Value emitted in the `min-engine-version:` field of every rule.
     pub min_engine_version: String,
 
+    /// Value emitted in the required `version:` field of every rule. This
+    /// is the rule *content* version (a free-form string the upstream
+    /// rules library writes as semver, e.g. `1.0.1`), distinct from
+    /// `min-engine-version`. Sigma has no equivalent attribute, so it
+    /// defaults to `1.0.0` and is overridable with `-O version=<value>`.
+    /// The Fibratus loader rejects a rule that omits it.
+    pub rule_version: String,
+
     /// Whether to walk the condition AST and rewrite recognized
     /// sub-trees into idiomatic Fibratus macros
     /// (`spawn_process`/`open_file`/...). Phase 3 wires the recognition;
@@ -73,6 +81,7 @@ impl Default for FibratusConfig {
         Self {
             action: None,
             min_engine_version: "3.0.0".to_string(),
+            rule_version: "1.0.0".to_string(),
             use_macros: true,
             default_logsource: "windows".to_string(),
             emit_metadata: true,
@@ -108,6 +117,11 @@ impl FibratusConfig {
         }
         if let Some(v) = options.get("min_engine") {
             cfg.min_engine_version = v.clone();
+        }
+        if let Some(v) = options.get("version")
+            && !v.trim().is_empty()
+        {
+            cfg.rule_version = v.clone();
         }
         if let Some(v) = options.get("use_macros") {
             cfg.use_macros = parse_bool(v).unwrap_or(true);
@@ -168,12 +182,23 @@ mod tests {
         let cfg = FibratusConfig::default();
         assert_eq!(cfg.action, None);
         assert_eq!(cfg.min_engine_version, "3.0.0");
+        assert_eq!(cfg.rule_version, "1.0.0");
         assert!(cfg.use_macros);
         assert_eq!(cfg.default_logsource, "windows");
         assert!(cfg.emit_metadata);
         assert_eq!(cfg.max_repeated_slots, 5);
         assert!(!cfg.temporal_permute);
         assert!(!cfg.case_sensitive);
+    }
+
+    #[test]
+    fn from_options_overrides_rule_version() {
+        let cfg = FibratusConfig::from_options(&opts(&[("version", "2.3.1")]));
+        assert_eq!(cfg.rule_version, "2.3.1");
+        // An empty value keeps the required default rather than emitting a
+        // blank `version:` the loader would reject.
+        let cfg_empty = FibratusConfig::from_options(&opts(&[("version", "  ")]));
+        assert_eq!(cfg_empty.rule_version, "1.0.0");
     }
 
     #[test]

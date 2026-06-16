@@ -345,7 +345,7 @@ Always pair the backend with the bundled `fibratus_windows` pipeline so Sigma's 
 rsigma backend convert rules/windows/process_creation/ -t fibratus -p fibratus_windows
 ```
 
-Two output formats: `default` (also aliased as `yaml`/`rule`) emits a complete YAML rule document per Sigma rule with the `name`/`id`/`description`/`labels`/`condition`/`min-engine-version`/`action` envelope, with `---` separators when multiple rules are converted at once. `expr` strips the envelope and emits only the bare filter expression for piping into ad-hoc Fibratus commands.
+Two output formats: `default` (also aliased as `yaml`/`rule`) emits a complete YAML rule document per Sigma rule with the `name`/`id`/`version`/`description`/`labels`/`condition`/`min-engine-version`/`action` envelope, with `---` separators when multiple rules are converted at once. `expr` strips the envelope and emits only the bare filter expression for piping into ad-hoc Fibratus commands.
 
 Because Fibratus loads one rule per file from its `Rules/` directory, point `--output` at a directory to get a separate `<title-slug>.yml` file per rule instead of one combined stream, ready to drop straight into the sensor:
 
