@@ -15,7 +15,7 @@ A new `rsigma rule coverage` subcommand maps a rule set onto MITRE ATT&CK. It re
 - **Config.** A `coverage` section (`atomics`, `baseline`, `targets`, `fail_on_gaps`) flows through `rsigma config init/validate/show/schema`, the `RSIGMA_COVERAGE__*` environment layer, `--config`, and `--dry-run`.
 - **Internal.** The multi-path rule loader shared with `backend convert` moved into a crate-level helper so the two commands cannot drift on rule loading.
 
-### `rstix`: Phase 2 — STIX relationship and sighting objects
+### `rstix`: Phase 2 — STIX relationship and sighting objects (#220)
 
 Phase 2 adds typed STIX relationship and sighting objects (not releasable on its own until `StixObject` dispatch and `Bundle` parsing land).
 
