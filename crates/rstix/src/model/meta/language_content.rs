@@ -37,7 +37,6 @@ pub struct LanguageContent {
         feature = "serde",
         serde(
             rename = "type",
-            default = "language_content_type",
             deserialize_with = "deserialize_language_content_type"
         )
     )]
@@ -60,9 +59,42 @@ impl LanguageContent {
     pub const TYPE_NAME: &'static str = "language-content";
 }
 
-#[cfg(feature = "serde")]
-fn language_content_type() -> String {
-    LanguageContent::TYPE_NAME.to_string()
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_wrong_type_field() {
+        let json = include_str!(
+            "../../../tests/fixtures/spec/meta/marking-definition-tlp-v1-white-stix21.json"
+        );
+        let msg = serde_json::from_str::<LanguageContent>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("expected STIX type `language-content`"));
+        assert!(msg.contains("got `marking-definition`"));
+    }
+
+    #[test]
+    fn rejects_missing_type_field() {
+        let json = include_str!("../../../tests/fixtures/spec/meta/language-content.json");
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        let mut obj = value.as_object().expect("object").clone();
+        obj.remove("type");
+        let err =
+            serde_json::from_value::<LanguageContent>(serde_json::Value::Object(obj)).unwrap_err();
+        assert!(err.to_string().contains("missing field `type`"));
+    }
+
+    #[test]
+    fn get_field_exposes_object_ref() {
+        let json = include_str!("../../../tests/fixtures/spec/meta/language-content.json");
+        let content: LanguageContent = serde_json::from_str(json).expect("parse");
+        assert!(matches!(
+            content.get_field(&["object_ref"]),
+            Some(QueryValue::Id(_))
+        ));
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -97,6 +129,12 @@ impl QueryableStixObject for LanguageContent {
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
             ["object_modified"] => Some(QueryValue::Bool(self.object_modified)),
+            ["object_ref"] => Some(QueryValue::Id(&self.object_ref)),
+            ["created_by_ref"] => self
+                .common
+                .created_by_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             _ => None,
         }
     }

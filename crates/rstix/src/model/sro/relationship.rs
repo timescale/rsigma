@@ -4,6 +4,11 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::SdoSroCommonProps;
 
+/// Source object reference (STIX §5.1.2 — SDO or SCO; target validation deferred).
+pub type RelSourceRef = StixId;
+/// Target object reference (STIX §5.1.2 — SDO or SCO; target validation deferred).
+pub type RelTargetRef = StixId;
+
 /// A STIX relationship linking a source object to a target object.
 ///
 /// `source_ref` and `target_ref` must reference SDOs or SCOs per STIX §5.1.2.
@@ -38,11 +43,7 @@ pub struct Relationship {
     /// STIX object type (`relationship`).
     #[cfg_attr(
         feature = "serde",
-        serde(
-            rename = "type",
-            default = "relationship_type_name",
-            deserialize_with = "deserialize_relationship_type"
-        )
+        serde(rename = "type", deserialize_with = "deserialize_relationship_type")
     )]
     object_type: String,
     /// SDO/SRO common properties.
@@ -51,9 +52,9 @@ pub struct Relationship {
     /// Name of the relationship (for example `uses`, `related-to`).
     pub relationship_type: String,
     /// Source object id.
-    pub source_ref: StixId,
+    pub source_ref: RelSourceRef,
     /// Target object id.
-    pub target_ref: StixId,
+    pub target_ref: RelTargetRef,
     /// Human-readable description.
     #[cfg_attr(
         feature = "serde",
@@ -81,10 +82,10 @@ impl Relationship {
     /// Check relationship-specific invariants (type charset, time ordering).
     pub fn validate(&self) -> Result<(), ModelError> {
         validate_relationship_type(&self.relationship_type)?;
-        if let (Some(start_time), Some(stop_time)) = (&self.start_time, &self.stop_time) {
-            if stop_time <= start_time {
-                return Err(ModelError::RelationshipStopTimeBeforeStartTime);
-            }
+        if let (Some(start_time), Some(stop_time)) = (&self.start_time, &self.stop_time)
+            && stop_time <= start_time
+        {
+            return Err(ModelError::RelationshipStopTimeBeforeStartTime);
         }
         Ok(())
     }
@@ -99,11 +100,6 @@ fn validate_relationship_type(relationship_type: &str) -> Result<(), ModelError>
         return Err(ModelError::RelationshipTypeInvalid);
     }
     Ok(())
-}
-
-#[cfg(feature = "serde")]
-fn relationship_type_name() -> String {
-    Relationship::TYPE_NAME.to_string()
 }
 
 #[cfg(feature = "serde")]
@@ -122,17 +118,13 @@ impl<'de> serde::Deserialize<'de> for Relationship {
     {
         #[derive(serde::Deserialize)]
         struct Raw {
-            #[serde(
-                rename = "type",
-                default = "relationship_type_name",
-                deserialize_with = "deserialize_relationship_type"
-            )]
+            #[serde(rename = "type", deserialize_with = "deserialize_relationship_type")]
             object_type: String,
             #[serde(flatten)]
             common: SdoSroCommonProps,
             relationship_type: String,
-            source_ref: StixId,
-            target_ref: StixId,
+            source_ref: RelSourceRef,
+            target_ref: RelTargetRef,
             #[serde(default)]
             description: Option<String>,
             #[serde(default)]
@@ -184,6 +176,13 @@ impl QueryableStixObject for Relationship {
             ["description"] => self.description.as_deref().map(QueryValue::Str),
             ["start_time"] => self.start_time.as_ref().map(QueryValue::Timestamp),
             ["stop_time"] => self.stop_time.as_ref().map(QueryValue::Timestamp),
+            ["source_ref"] => Some(QueryValue::Id(&self.source_ref)),
+            ["target_ref"] => Some(QueryValue::Id(&self.target_ref)),
+            ["created_by_ref"] => self
+                .common
+                .created_by_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             _ => None,
         }
     }
@@ -196,8 +195,36 @@ mod tests {
     #[test]
     fn rejects_wrong_type_field() {
         let json = include_str!("../../../tests/fixtures/spec/sro/sighting-minimal.json");
-        let err = serde_json::from_str::<Relationship>(json).unwrap_err();
-        assert!(err.to_string().contains("relationship"));
+        let msg = serde_json::from_str::<Relationship>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("expected STIX type `relationship`"));
+        assert!(msg.contains("got `sighting`"));
+    }
+
+    #[test]
+    fn rejects_missing_type_field() {
+        let json = include_str!("../../../tests/fixtures/spec/sro/relationship.json");
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        let mut obj = value.as_object().expect("object").clone();
+        obj.remove("type");
+        let err =
+            serde_json::from_value::<Relationship>(serde_json::Value::Object(obj)).unwrap_err();
+        assert!(err.to_string().contains("missing field `type`"));
+    }
+
+    #[test]
+    fn get_field_exposes_refs() {
+        let json = include_str!("../../../tests/fixtures/spec/sro/relationship.json");
+        let relationship: Relationship = serde_json::from_str(json).expect("parse");
+        assert!(matches!(
+            relationship.get_field(&["source_ref"]),
+            Some(QueryValue::Id(_))
+        ));
+        assert!(matches!(
+            relationship.get_field(&["target_ref"]),
+            Some(QueryValue::Id(_))
+        ));
     }
 
     #[test]

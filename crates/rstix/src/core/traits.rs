@@ -31,6 +31,8 @@ pub enum QueryValue<'a> {
     Bool(bool),
     /// Timestamp value.
     Timestamp(&'a StixTimestamp),
+    /// STIX object reference id.
+    Id(&'a StixId),
     /// Null value.
     Null,
 }

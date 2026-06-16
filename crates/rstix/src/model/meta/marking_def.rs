@@ -84,11 +84,7 @@ pub struct MarkingDefinition {
     /// STIX object type (`marking-definition`).
     #[cfg_attr(
         feature = "serde",
-        serde(
-            rename = "type",
-            default = "default_type",
-            deserialize_with = "deserialize_marking_type"
-        )
+        serde(rename = "type", deserialize_with = "deserialize_marking_type")
     )]
     object_type: String,
     /// Object identifier.
@@ -170,11 +166,6 @@ impl MarkingDefinition {
 }
 
 #[cfg(feature = "serde")]
-fn default_type() -> String {
-    MarkingDefinition::TYPE_NAME.to_string()
-}
-
-#[cfg(feature = "serde")]
 fn deserialize_marking_type<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -210,6 +201,10 @@ impl QueryableStixObject for MarkingDefinition {
         match path {
             ["definition_type"] => self.definition_type.as_deref().map(QueryValue::Str),
             ["name"] => self.name.as_deref().map(QueryValue::Str),
+            ["created_by_ref"] => self
+                .created_by_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             _ => None,
         }
     }
@@ -266,7 +261,35 @@ mod tests {
     #[test]
     fn rejects_wrong_type_field() {
         let json = include_str!("../../../tests/fixtures/spec/meta/language-content.json");
-        let err = serde_json::from_str::<MarkingDefinition>(json).unwrap_err();
-        assert!(err.to_string().contains("marking-definition"));
+        let msg = serde_json::from_str::<MarkingDefinition>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("expected STIX type `marking-definition`"));
+        assert!(msg.contains("got `language-content`"));
+    }
+
+    #[test]
+    fn rejects_missing_type_field() {
+        let json = include_str!(
+            "../../../tests/fixtures/spec/meta/marking-definition-tlp-v1-white-stix21.json"
+        );
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        let mut obj = value.as_object().expect("object").clone();
+        obj.remove("type");
+        let err = serde_json::from_value::<MarkingDefinition>(serde_json::Value::Object(obj))
+            .unwrap_err();
+        assert!(err.to_string().contains("missing field `type`"));
+    }
+
+    #[test]
+    fn get_field_exposes_created_by_ref() {
+        let json = include_str!(
+            "../../../tests/fixtures/spec/meta/marking-definition-with-common-props-stix21.json"
+        );
+        let marking: MarkingDefinition = serde_json::from_str(json).expect("parse");
+        assert!(matches!(
+            marking.get_field(&["created_by_ref"]),
+            Some(QueryValue::Id(_))
+        ));
     }
 }

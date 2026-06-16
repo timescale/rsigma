@@ -7,8 +7,8 @@ use crate::core::{
 use crate::model::ModelError;
 use crate::model::common::SdoSroCommonProps;
 
-/// Maximum inclusive value for [`Sighting::count`] (STIX §5.2.1).
-pub const SIGHTING_COUNT_MAX: u32 = 999_999_999;
+/// SDO reference for [`Sighting::sighting_of_ref`] (STIX §5.2.1; SDO-only validation deferred).
+pub type SightingOfRef = StixId;
 
 /// Identity or location reference in [`Sighting::where_sighted_refs`] (STIX §5.2.1).
 #[derive(Clone, Debug, PartialEq)]
@@ -92,11 +92,7 @@ pub struct Sighting {
     /// STIX object type (`sighting`).
     #[cfg_attr(
         feature = "serde",
-        serde(
-            rename = "type",
-            default = "sighting_type_name",
-            deserialize_with = "deserialize_sighting_type"
-        )
+        serde(rename = "type", deserialize_with = "deserialize_sighting_type")
     )]
     object_type: String,
     /// SDO/SRO common properties.
@@ -133,7 +129,7 @@ pub struct Sighting {
     )]
     pub summary: Option<bool>,
     /// SDO that was sighted.
-    pub sighting_of_ref: StixId,
+    pub sighting_of_ref: SightingOfRef,
     /// Observed-data objects that contributed to the sighting.
     #[cfg_attr(
         feature = "serde",
@@ -152,25 +148,23 @@ impl Sighting {
     /// STIX type name for sightings.
     pub const TYPE_NAME: &'static str = "sighting";
 
+    /// Maximum inclusive value for [`Self::count`] (STIX §5.2.1).
+    pub const COUNT_MAX: u32 = 999_999_999;
+
     /// Check sighting-specific invariants (count range, time window ordering).
     pub fn validate(&self) -> Result<(), ModelError> {
-        if let Some(count) = self.count {
-            if count > SIGHTING_COUNT_MAX {
-                return Err(ModelError::SightingCountOutOfRange);
-            }
+        if let Some(count) = self.count
+            && count > Self::COUNT_MAX
+        {
+            return Err(ModelError::SightingCountOutOfRange);
         }
-        if let (Some(first_seen), Some(last_seen)) = (&self.first_seen, &self.last_seen) {
-            if last_seen < first_seen {
-                return Err(ModelError::SightingLastSeenBeforeFirstSeen);
-            }
+        if let (Some(first_seen), Some(last_seen)) = (&self.first_seen, &self.last_seen)
+            && last_seen < first_seen
+        {
+            return Err(ModelError::SightingLastSeenBeforeFirstSeen);
         }
         Ok(())
     }
-}
-
-#[cfg(feature = "serde")]
-fn sighting_type_name() -> String {
-    Sighting::TYPE_NAME.to_string()
 }
 
 #[cfg(feature = "serde")]
@@ -189,11 +183,7 @@ impl<'de> serde::Deserialize<'de> for Sighting {
     {
         #[derive(serde::Deserialize)]
         struct Raw {
-            #[serde(
-                rename = "type",
-                default = "sighting_type_name",
-                deserialize_with = "deserialize_sighting_type"
-            )]
+            #[serde(rename = "type", deserialize_with = "deserialize_sighting_type")]
             object_type: String,
             #[serde(flatten)]
             common: SdoSroCommonProps,
@@ -207,7 +197,7 @@ impl<'de> serde::Deserialize<'de> for Sighting {
             count: Option<u32>,
             #[serde(default)]
             summary: Option<bool>,
-            sighting_of_ref: StixId,
+            sighting_of_ref: SightingOfRef,
             #[serde(default)]
             observed_data_refs: Vec<ObservedDataId>,
             #[serde(default)]
@@ -260,6 +250,22 @@ impl QueryableStixObject for Sighting {
             ["last_seen"] => self.last_seen.as_ref().map(QueryValue::Timestamp),
             ["count"] => self.count.map(|count| QueryValue::Int(i64::from(count))),
             ["summary"] => self.summary.map(QueryValue::Bool),
+            ["sighting_of_ref"] => Some(QueryValue::Id(&self.sighting_of_ref)),
+            ["created_by_ref"] => self
+                .common
+                .created_by_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["observed_data_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.observed_data_refs.get(i))
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["where_sighted_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.where_sighted_refs.get(i))
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             _ => None,
         }
     }
@@ -272,8 +278,39 @@ mod tests {
     #[test]
     fn rejects_wrong_type_field() {
         let json = include_str!("../../../tests/fixtures/spec/sro/relationship.json");
-        let err = serde_json::from_str::<Sighting>(json).unwrap_err();
-        assert!(err.to_string().contains("sighting"));
+        let msg = serde_json::from_str::<Sighting>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("expected STIX type `sighting`"));
+        assert!(msg.contains("got `relationship`"));
+    }
+
+    #[test]
+    fn rejects_missing_type_field() {
+        let json = include_str!("../../../tests/fixtures/spec/sro/sighting-minimal.json");
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        let mut obj = value.as_object().expect("object").clone();
+        obj.remove("type");
+        let err = serde_json::from_value::<Sighting>(serde_json::Value::Object(obj)).unwrap_err();
+        assert!(err.to_string().contains("missing field `type`"));
+    }
+
+    #[test]
+    fn get_field_exposes_refs() {
+        let json = include_str!("../../../tests/fixtures/spec/sro/sighting-rich.json");
+        let sighting: Sighting = serde_json::from_str(json).expect("parse");
+        assert!(matches!(
+            sighting.get_field(&["sighting_of_ref"]),
+            Some(QueryValue::Id(_))
+        ));
+        assert!(matches!(
+            sighting.get_field(&["observed_data_refs", "0"]),
+            Some(QueryValue::Id(_))
+        ));
+        assert!(matches!(
+            sighting.get_field(&["where_sighted_refs", "0"]),
+            Some(QueryValue::Id(_))
+        ));
     }
 
     #[test]
@@ -284,7 +321,7 @@ mod tests {
             description: None,
             first_seen: None,
             last_seen: None,
-            count: Some(SIGHTING_COUNT_MAX + 1),
+            count: Some(Sighting::COUNT_MAX + 1),
             summary: None,
             sighting_of_ref: StixId::generate("indicator"),
             observed_data_refs: Vec::new(),

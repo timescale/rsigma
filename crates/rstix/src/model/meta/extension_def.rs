@@ -38,7 +38,10 @@ pub struct ExtensionDefinition {
     /// STIX object type (`extension-definition`).
     #[cfg_attr(
         feature = "serde",
-        serde(rename = "type", default = "extension_definition_type")
+        serde(
+            rename = "type",
+            deserialize_with = "deserialize_extension_definition_type"
+        )
     )]
     object_type: String,
     /// SDO/SRO common properties (`created_by_ref` required).
@@ -105,6 +108,11 @@ impl QueryableStixObject for ExtensionDefinition {
             ["name"] => Some(QueryValue::Str(&self.name)),
             ["schema"] => Some(QueryValue::Str(&self.schema)),
             ["version"] => Some(QueryValue::Str(&self.version)),
+            ["created_by_ref"] => self
+                .common
+                .created_by_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             _ => None,
         }
     }
@@ -120,7 +128,6 @@ impl<'de> serde::Deserialize<'de> for ExtensionDefinition {
         struct Raw {
             #[serde(
                 rename = "type",
-                default = "extension_definition_type",
                 deserialize_with = "deserialize_extension_definition_type"
             )]
             object_type: String,
@@ -183,14 +190,23 @@ mod tests {
     #[test]
     fn rejects_wrong_type_field() {
         let json = include_str!("../../../tests/fixtures/spec/meta/language-content.json");
-        let err = serde_json::from_str::<ExtensionDefinition>(json).unwrap_err();
-        assert!(err.to_string().contains("language-content"));
+        let msg = serde_json::from_str::<ExtensionDefinition>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("expected STIX type `extension-definition`"));
+        assert!(msg.contains("got `language-content`"));
     }
-}
 
-#[cfg(feature = "serde")]
-fn extension_definition_type() -> String {
-    ExtensionDefinition::TYPE_NAME.to_string()
+    #[test]
+    fn rejects_missing_type_field() {
+        let json = include_str!("../../../tests/fixtures/spec/meta/extension-definition.json");
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        let mut obj = value.as_object().expect("object").clone();
+        obj.remove("type");
+        let err = serde_json::from_value::<ExtensionDefinition>(serde_json::Value::Object(obj))
+            .unwrap_err();
+        assert!(err.to_string().contains("missing field `type`"));
+    }
 }
 
 #[cfg(feature = "serde")]

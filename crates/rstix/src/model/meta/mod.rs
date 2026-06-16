@@ -25,17 +25,6 @@ pub enum MetaObject {
     LanguageContent(LanguageContent),
 }
 
-impl MetaObject {
-    /// Delegate to the wrapped object's STIX type name.
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::MarkingDefinition(_) => MarkingDefinition::TYPE_NAME,
-            Self::ExtensionDefinition(_) => ExtensionDefinition::TYPE_NAME,
-            Self::LanguageContent(_) => LanguageContent::TYPE_NAME,
-        }
-    }
-}
-
 impl QueryableStixObject for MetaObject {
     fn id(&self) -> &StixId {
         match self {
@@ -46,7 +35,11 @@ impl QueryableStixObject for MetaObject {
     }
 
     fn type_name(&self) -> &'static str {
-        self.type_name()
+        match self {
+            Self::MarkingDefinition(_) => MarkingDefinition::TYPE_NAME,
+            Self::ExtensionDefinition(_) => ExtensionDefinition::TYPE_NAME,
+            Self::LanguageContent(_) => LanguageContent::TYPE_NAME,
+        }
     }
 
     fn spec_version(&self) -> Option<SpecVersion> {
@@ -79,5 +72,30 @@ impl QueryableStixObject for MetaObject {
             Self::ExtensionDefinition(inner) => inner.get_field(path),
             Self::LanguageContent(inner) => inner.get_field(path),
         }
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+    use crate::core::QueryableStixObject;
+
+    #[test]
+    fn meta_object_delegates_queryable_stix_object() {
+        let raw = include_str!(
+            "../../../tests/fixtures/spec/meta/marking-definition-tlp-v1-white-stix21.json"
+        );
+        let marking: MarkingDefinition = serde_json::from_str(raw).expect("parse");
+        let meta = MetaObject::MarkingDefinition(marking.clone());
+        assert_eq!(QueryableStixObject::id(&meta), marking.id());
+        assert_eq!(
+            QueryableStixObject::type_name(&meta),
+            MarkingDefinition::TYPE_NAME
+        );
+        assert_eq!(meta.spec_version(), Some(SpecVersion::V2_1));
+        assert_eq!(
+            meta.get_field(&["name"]),
+            Some(QueryValue::Str("TLP:WHITE"))
+        );
     }
 }

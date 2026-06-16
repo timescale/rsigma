@@ -3,8 +3,8 @@
 mod relationship;
 mod sighting;
 
-pub use relationship::Relationship;
-pub use sighting::{SIGHTING_COUNT_MAX, Sighting, WhereSightedRef};
+pub use relationship::{RelSourceRef, RelTargetRef, Relationship};
+pub use sighting::{Sighting, SightingOfRef, WhereSightedRef};
 
 use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTimestamp};
 
@@ -18,16 +18,6 @@ pub enum SroObject {
     Sighting(Sighting),
 }
 
-impl SroObject {
-    /// Delegate to the wrapped object's STIX type name.
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::Relationship(_) => Relationship::TYPE_NAME,
-            Self::Sighting(_) => Sighting::TYPE_NAME,
-        }
-    }
-}
-
 impl QueryableStixObject for SroObject {
     fn id(&self) -> &StixId {
         match self {
@@ -37,7 +27,10 @@ impl QueryableStixObject for SroObject {
     }
 
     fn type_name(&self) -> &'static str {
-        self.type_name()
+        match self {
+            Self::Relationship(_) => Relationship::TYPE_NAME,
+            Self::Sighting(_) => Sighting::TYPE_NAME,
+        }
     }
 
     fn spec_version(&self) -> Option<SpecVersion> {
@@ -66,5 +59,28 @@ impl QueryableStixObject for SroObject {
             Self::Relationship(inner) => inner.get_field(path),
             Self::Sighting(inner) => inner.get_field(path),
         }
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+    use crate::core::QueryableStixObject;
+
+    #[test]
+    fn sro_object_delegates_queryable_stix_object() {
+        let raw = include_str!("../../../tests/fixtures/spec/sro/relationship.json");
+        let relationship: Relationship = serde_json::from_str(raw).expect("parse");
+        let sro = SroObject::Relationship(relationship.clone());
+        assert_eq!(QueryableStixObject::id(&sro), relationship.id());
+        assert_eq!(
+            QueryableStixObject::type_name(&sro),
+            Relationship::TYPE_NAME
+        );
+        assert_eq!(sro.spec_version(), Some(SpecVersion::V2_1));
+        assert_eq!(
+            sro.get_field(&["relationship_type"]),
+            Some(QueryValue::Str("uses"))
+        );
     }
 }
