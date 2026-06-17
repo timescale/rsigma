@@ -13,8 +13,8 @@ use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, MatchDetailLevel, Pipeline, ProcessResult};
 use rsigma_runtime::{
     AckToken, DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver,
-    FileSink, InputFormat, LogProcessor, MetricsHook, RawEvent, RuntimeEngine, Sink, StdinSource,
-    StdoutSink, spawn_source,
+    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RuntimeEngine, Sink,
+    StdinSource, StdoutSink, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -773,7 +773,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     // Build optional DLQ sink from --dlq flag
     let (dlq_tx, mut dlq_rx) = mpsc::channel::<DlqEntry>(buffer_size);
     let dlq_sink = if let Some(ref dlq_spec) = config.dlq {
-        let sink = build_sink(dlq_spec, false, &config).await;
+        let (sink, _) = build_sink(dlq_spec, false, &config).await;
         tracing::info!(dlq = dlq_spec, "Dead-letter queue enabled");
         Some(sink)
     } else {
@@ -924,10 +924,10 @@ pub async fn run_daemon(config: DaemonConfig) {
 
                     for (result, ack_token) in results.into_iter().zip(valid_tokens) {
                         if result.is_empty() {
-                        if engine_ack_tx.send(ack_token).is_err() {
-                            tracing::debug!("Ack channel closed, engine shutting down");
-                            return true;
-                        }
+                            if engine_ack_tx.send(ack_token).is_err() {
+                                tracing::debug!("Ack channel closed, engine shutting down");
+                                return true;
+                            }
                             continue;
                         }
                         engine_metrics.on_output_queue_depth_change(1);
@@ -960,9 +960,12 @@ pub async fn run_daemon(config: DaemonConfig) {
     } else {
         config.output.clone()
     };
-    let mut leaves: Vec<Sink> = Vec::new();
+    let mut leaves: Vec<(Sink, OnFull)> = Vec::new();
     for spec in &output_specs {
-        leaves.extend(build_sink(spec, pretty, &config).await.into_leaves());
+        let (sink, on_full) = build_sink(spec, pretty, &config).await;
+        for leaf in sink.into_leaves() {
+            leaves.push((leaf, on_full));
+        }
     }
     tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
 
@@ -1219,14 +1222,32 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received");
 }
 
-/// Build a single Sink from an output spec string.
+/// Parse an optional `?on_full=block|drop` suffix from an output spec,
+/// returning the spec with the suffix stripped and the resulting full-queue
+/// policy. Defaults to `Block` (at-least-once); `drop` opts into best-effort
+/// delivery for throughput-first targets.
+fn parse_on_full(spec: &str) -> (&str, OnFull) {
+    match spec.split_once("?on_full=") {
+        Some((base, "drop")) => (base, OnFull::Drop),
+        Some((base, "block")) => (base, OnFull::Block),
+        Some((base, other)) => {
+            tracing::warn!(value = other, "Unknown on_full value, using block");
+            (base, OnFull::Block)
+        }
+        None => (spec, OnFull::Block),
+    }
+}
+
+/// Build a single Sink from an output spec string, plus its full-queue policy.
 async fn build_sink(
     spec: &str,
     pretty: bool,
     #[cfg_attr(not(feature = "daemon-nats"), allow(unused))] config: &DaemonConfig,
-) -> Sink {
+) -> (Sink, OnFull) {
+    let (spec, on_full) = parse_on_full(spec);
+
     if spec == "stdout" || spec == "stdout://" {
-        return Sink::Stdout(StdoutSink::new(pretty));
+        return (Sink::Stdout(StdoutSink::new(pretty)), on_full);
     }
 
     if let Some(path) = spec.strip_prefix("file://") {
@@ -1234,7 +1255,7 @@ async fn build_sink(
         return match FileSink::open(path) {
             Ok(file_sink) => {
                 tracing::info!(path = %path.display(), "File sink opened");
-                Sink::File(file_sink)
+                (Sink::File(file_sink), on_full)
             }
             Err(e) => {
                 tracing::error!(path = %path.display(), error = %e, "Failed to open file sink");
@@ -1251,7 +1272,7 @@ async fn build_sink(
         return match rsigma_runtime::NatsSink::connect(&nats_cfg, &subject).await {
             Ok(nats_sink) => {
                 tracing::info!(url = url, subject = subject, "NATS sink started");
-                Sink::Nats(Box::new(nats_sink))
+                (Sink::Nats(Box::new(nats_sink)), on_full)
             }
             Err(e) => {
                 tracing::error!(error = %e, url = url, "Failed to connect NATS sink");
@@ -1916,15 +1937,35 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
             payload: line.to_string(),
             ack_token: AckToken::Noop,
         };
-        if event_tx.send(raw_event).await.is_err() {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": "event channel closed",
-                    "accepted": accepted,
-                })),
-            )
-                .into_response();
+        // Mirror `spawn_source`'s accounting so the input-queue-depth and
+        // back-pressure metrics are accurate for the HTTP push source too,
+        // not just the pull sources (stdin/NATS).
+        match event_tx.try_send(raw_event) {
+            Ok(()) => state.metrics.on_input_queue_depth_change(1),
+            Err(mpsc::error::TrySendError::Full(ev)) => {
+                state.metrics.on_back_pressure();
+                if event_tx.send(ev).await.is_err() {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(serde_json::json!({
+                            "error": "event channel closed",
+                            "accepted": accepted,
+                        })),
+                    )
+                        .into_response();
+                }
+                state.metrics.on_input_queue_depth_change(1);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": "event channel closed",
+                        "accepted": accepted,
+                    })),
+                )
+                    .into_response();
+            }
         }
         accepted += 1;
     }
@@ -2066,6 +2107,7 @@ async fn otlp_http_logs(
                 )
                     .into_response();
             }
+            state.metrics.on_input_queue_depth_change(1);
         }
 
         (
@@ -2137,6 +2179,7 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
                         .inc();
                     tonic::Status::unavailable("event channel closed")
                 })?;
+                self.metrics.on_input_queue_depth_change(1);
             }
 
             Ok(tonic::Response::new(

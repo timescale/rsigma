@@ -72,8 +72,6 @@ pub struct DeliveryConfig {
     pub backoff_base: Duration,
     /// Backoff ceiling.
     pub backoff_max: Duration,
-    /// Full-queue policy.
-    pub on_full: OnFull,
 }
 
 impl Default for DeliveryConfig {
@@ -85,7 +83,6 @@ impl Default for DeliveryConfig {
             retry_max: 3,
             backoff_base: Duration::from_millis(100),
             backoff_max: Duration::from_secs(5),
-            on_full: OnFull::Block,
         }
     }
 }
@@ -145,6 +142,7 @@ struct SinkWorker {
 impl SinkWorker {
     fn spawn<S: DeliverySink>(
         sink: S,
+        on_full: OnFull,
         cfg: DeliveryConfig,
         dlq_tx: Option<mpsc::Sender<DeliveryFailure>>,
         metrics: Arc<dyn MetricsHook>,
@@ -157,7 +155,7 @@ impl SinkWorker {
         SinkWorker {
             tx,
             handle,
-            on_full: cfg.on_full,
+            on_full,
             label,
             metrics,
         }
@@ -195,10 +193,12 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    /// Spawn one worker per leaf sink. `sinks` should already be flattened to
-    /// leaves (see [`crate::io::Sink::into_leaves`]).
+    /// Spawn one worker per leaf sink, each with its own full-queue policy.
+    /// `sinks` should already be flattened to leaves (see
+    /// [`crate::io::Sink::into_leaves`]); `cfg` holds the shared retry/backoff/
+    /// batch/queue tuning.
     pub fn spawn<S: DeliverySink>(
-        sinks: Vec<S>,
+        sinks: Vec<(S, OnFull)>,
         cfg: DeliveryConfig,
         dlq_tx: Option<mpsc::Sender<DeliveryFailure>>,
         ack_tx: mpsc::UnboundedSender<AckToken>,
@@ -206,7 +206,9 @@ impl Dispatcher {
     ) -> Self {
         let workers = sinks
             .into_iter()
-            .map(|sink| SinkWorker::spawn(sink, cfg, dlq_tx.clone(), metrics.clone()))
+            .map(|(sink, on_full)| {
+                SinkWorker::spawn(sink, on_full, cfg, dlq_tx.clone(), metrics.clone())
+            })
             .collect();
         Dispatcher { workers, ack_tx }
     }
@@ -364,7 +366,6 @@ mod tests {
             retry_max: 5,
             backoff_base: Duration::from_millis(1),
             backoff_max: Duration::from_millis(5),
-            on_full: OnFull::Block,
         }
     }
 
@@ -431,7 +432,13 @@ mod tests {
         let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
         let sink = MockSink::new("mock");
         let delivered = sink.delivered.clone();
-        let dispatcher = Dispatcher::spawn(vec![sink], fast_cfg(), None, ack_tx, noop_metrics());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block)],
+            fast_cfg(),
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
 
         for _ in 0..10 {
             dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
@@ -453,8 +460,13 @@ mod tests {
         let sink = MockSink::new("mock");
         sink.fail_first.store(3, Ordering::SeqCst); // < retry_max (5)
         let delivered = sink.delivered.clone();
-        let dispatcher =
-            Dispatcher::spawn(vec![sink], fast_cfg(), Some(dlq_tx), ack_tx, noop_metrics());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block)],
+            fast_cfg(),
+            Some(dlq_tx),
+            ack_tx,
+            noop_metrics(),
+        );
 
         dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
         dispatcher.shutdown().await;
@@ -473,8 +485,13 @@ mod tests {
         let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
         let mut sink = MockSink::new("mock");
         sink.always_fail = true;
-        let dispatcher =
-            Dispatcher::spawn(vec![sink], fast_cfg(), Some(dlq_tx), ack_tx, noop_metrics());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block)],
+            fast_cfg(),
+            Some(dlq_tx),
+            ack_tx,
+            noop_metrics(),
+        );
 
         dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
         dispatcher.shutdown().await;
@@ -495,8 +512,13 @@ mod tests {
         let mut slow = MockSink::new("slow");
         slow.gate = Some(gate_rx);
 
-        let dispatcher =
-            Dispatcher::spawn(vec![fast, slow], fast_cfg(), None, ack_tx, noop_metrics());
+        let dispatcher = Dispatcher::spawn(
+            vec![(fast, OnFull::Block), (slow, OnFull::Block)],
+            fast_cfg(),
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
         dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
 
         // The fast sink delivered, but the slow sink is gated, so the guard
@@ -525,10 +547,15 @@ mod tests {
         sink.gate = Some(gate_rx);
         let cfg = DeliveryConfig {
             queue_depth: 1,
-            on_full: OnFull::Drop,
             ..fast_cfg()
         };
-        let dispatcher = Dispatcher::spawn(vec![sink], cfg, None, ack_tx, noop_metrics());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Drop)],
+            cfg,
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
 
         // Dispatch far more than the queue can hold while the sink is gated;
         // dispatch must not block.
