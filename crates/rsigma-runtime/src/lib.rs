@@ -99,5 +99,6 @@ pub use input::evtx::{EvtxError, EvtxFileReader};
 #[cfg(feature = "otlp")]
 pub use io::otlp::{
     ExportLogsServiceRequest, ExportLogsServiceResponse, LogsService, LogsServiceServer,
-    OtlpProtocol, OtlpSink, evaluation_results_to_logs_request, logs_request_to_raw_events,
+    OtlpClientTls, OtlpProtocol, OtlpSink, evaluation_results_to_logs_request,
+    logs_request_to_raw_events,
 };

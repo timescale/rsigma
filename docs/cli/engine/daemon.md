@@ -46,7 +46,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp://<host>:<port>` (OTLP/gRPC), `otlphttp://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`). Repeatable for fan-out. Append `?on_full=drop` for best-effort delivery, or `?compression=gzip` for an OTLP sink. OTLP schemes require the `daemon-otlp` build. |
+| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC), `otlphttp(s)://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`); the `s` variants use TLS. Repeatable for fan-out. Query params: `?on_full=drop` (best-effort), `?compression=gzip` (OTLP), and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last two for mutual TLS) and `?tls_domain=` (SNI override). OTLP schemes require the `daemon-otlp` build. |
 | `--dlq <URL>` | unset | Dead-letter queue for events that fail parsing or sink delivery. Same schemes as `--output`. When unset, failed events are logged and discarded. |
 | `--include-event` | off | Embed the full event JSON in every detection match. |
 | `--match-detail <LEVEL>` | `off` | Match-detail verbosity: `off` (field + value only), `summary` (adds matcher kind, selection, case sensitivity, and reports keyword/absence matches), or `full` (also records the matched pattern). Also settable via `daemon.engine.match_detail`. See [Evaluating Rules](../../guide/evaluating-rules.md#match-detail). |
@@ -228,7 +228,17 @@ rsigma engine daemon -r rules/ --input http \
 # OTLP/HTTP protobuf with gzip (default port 4318)
 rsigma engine daemon -r rules/ --input http \
     --output "otlphttp://otel-collector:4318?compression=gzip"
+
+# OTLP/gRPC over TLS, verifying the collector against a private CA
+rsigma engine daemon -r rules/ --input http \
+    --output "otlps://otel-collector:4317?ca=/etc/rsigma/tls/ca.pem"
+
+# OTLP/HTTP over mutual TLS (client cert + key)
+rsigma engine daemon -r rules/ --input http \
+    --output "otlphttps://otel-collector:4318?ca=/etc/rsigma/tls/ca.pem&client_cert=/etc/rsigma/tls/client.pem&client_key=/etc/rsigma/tls/client.key"
 ```
+
+TLS uses the bundled public (webpki) roots by default; pass `?ca=` to verify against a private CA instead. Supplying both `?client_cert=` and `?client_key=` enables mutual TLS. Use `?tls_domain=` to override the verified server name when dialing by IP.
 
 ### HTTPS with mutual TLS
 

@@ -236,8 +236,10 @@ impl Merge for InputPartial {
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct OutputPartial {
     /// Detection sinks: `stdout`, `file://path`, `nats://host:port/subject`,
-    /// `otlp://host:port` (gRPC), `otlphttp://host:port` (HTTP). Optional
-    /// `?on_full=drop` and `?compression=gzip` query suffixes.
+    /// `otlp(s)://host:port` (gRPC), `otlphttp(s)://host:port` (HTTP); the `s`
+    /// variants use TLS. Optional query suffixes: `?on_full=drop`,
+    /// `?compression=gzip`, and for TLS `?ca=`, `?client_cert=`, `?client_key=`,
+    /// `?tls_domain=`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sinks: Option<Vec<String>>,
     /// Dead-letter queue for events that fail processing.

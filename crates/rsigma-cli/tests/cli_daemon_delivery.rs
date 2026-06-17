@@ -133,3 +133,46 @@ fn otlp_sink_unreachable_endpoint_routes_to_dlq() {
         "an unreachable OTLP sink should route the failed result to the DLQ",
     );
 }
+
+/// An `otlps://` (gRPC TLS) sink with a `ca=` query parameter must parse the
+/// scheme, read and validate the CA PEM, build the TLS client, and (against an
+/// unreachable collector) route the failed delivery to the DLQ. Exercises the
+/// CLI's TLS-scheme grammar and `ca=` file loading end to end.
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn otlps_tls_sink_with_ca_routes_unreachable_to_dlq() {
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+
+    let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca_key = KeyPair::generate().unwrap();
+    let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+    let ca_file = temp_file(".pem", &ca_cert.pem());
+
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dlq = temp_file(".ndjson", "");
+    let dlq_spec = format!("file://{}", dlq.path().display());
+    let out_spec = format!("otlps://127.0.0.1:1?ca={}", ca_file.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--output",
+            &out_spec,
+            "--dlq",
+            &dlq_spec,
+            "--sink-retry-max",
+            "0",
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), MATCHING_EVENT);
+    assert_eq!(status, 200);
+
+    let dlqd = poll_until(Duration::from_secs(10), || {
+        file_contains(dlq.path(), "sink delivery failure").then_some(())
+    });
+    assert!(
+        dlqd.is_some(),
+        "an unreachable otlps sink should still build TLS and route to the DLQ",
+    );
+}

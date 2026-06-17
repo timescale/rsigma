@@ -1253,6 +1253,30 @@ fn on_full_from_params(params: &[(&str, &str)]) -> OnFull {
     }
 }
 
+/// Read OTLP client TLS material referenced by `ca`, `client_cert`,
+/// `client_key`, and `tls_domain` query parameters on an `otlps`/`otlphttps`
+/// sink URL. A read failure is a fatal config error.
+#[cfg(feature = "daemon-otlp")]
+fn build_otlp_tls(params: &[(&str, &str)]) -> rsigma_runtime::OtlpClientTls {
+    let read_pem = |key: &str| -> Option<Vec<u8>> {
+        params.iter().find(|(k, _)| *k == key).map(|(_, path)| {
+            std::fs::read(path).unwrap_or_else(|e| {
+                tracing::error!(key, path, error = %e, "Failed to read OTLP TLS material");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            })
+        })
+    };
+    rsigma_runtime::OtlpClientTls {
+        ca_pem: read_pem("ca"),
+        client_cert_pem: read_pem("client_cert"),
+        client_key_pem: read_pem("client_key"),
+        domain: params
+            .iter()
+            .find(|(k, _)| *k == "tls_domain")
+            .map(|(_, v)| v.to_string()),
+    }
+}
+
 /// Build a single Sink from an output spec string, plus its full-queue policy.
 async fn build_sink(
     spec: &str,
@@ -1299,20 +1323,39 @@ async fn build_sink(
 
     #[cfg(feature = "daemon-otlp")]
     {
+        use rsigma_runtime::OtlpProtocol;
+        // `otlps`/`otlphttps` select TLS; the plaintext forms do not. Order so
+        // the longer TLS prefixes win (they are not prefixes of each other, so
+        // this is just for clarity).
         let otlp = base
-            .strip_prefix("otlphttp://")
-            .map(|endpoint| (rsigma_runtime::OtlpProtocol::Http, endpoint))
+            .strip_prefix("otlphttps://")
+            .map(|e| (OtlpProtocol::Http, e, true))
+            .or_else(|| {
+                base.strip_prefix("otlphttp://")
+                    .map(|e| (OtlpProtocol::Http, e, false))
+            })
+            .or_else(|| {
+                base.strip_prefix("otlps://")
+                    .map(|e| (OtlpProtocol::Grpc, e, true))
+            })
             .or_else(|| {
                 base.strip_prefix("otlp://")
-                    .map(|endpoint| (rsigma_runtime::OtlpProtocol::Grpc, endpoint))
+                    .map(|e| (OtlpProtocol::Grpc, e, false))
             });
-        if let Some((protocol, endpoint)) = otlp {
+        if let Some((protocol, endpoint, tls_enabled)) = otlp {
             let gzip = params
                 .iter()
                 .any(|(k, v)| *k == "compression" && *v == "gzip");
-            return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip) {
+            let tls = tls_enabled.then(|| build_otlp_tls(&params));
+            return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip, tls) {
                 Ok(sink) => {
-                    tracing::info!(endpoint, ?protocol, gzip, "OTLP sink started");
+                    tracing::info!(
+                        endpoint,
+                        ?protocol,
+                        gzip,
+                        tls = tls_enabled,
+                        "OTLP sink started"
+                    );
                     (Sink::Otlp(Box::new(sink)), on_full)
                 }
                 Err(e) => {

@@ -22,6 +22,22 @@ pub enum OtlpProtocol {
     Http,
 }
 
+/// Client TLS material for an OTLP sink. `Some(OtlpClientTls::default())`
+/// enables TLS and verifies the collector against the bundled webpki roots;
+/// fields add a custom CA, a client identity (mutual TLS), or an SNI override.
+#[derive(Debug, Clone, Default)]
+pub struct OtlpClientTls {
+    /// Custom CA bundle (PEM) to verify the collector against, instead of the
+    /// bundled public roots.
+    pub ca_pem: Option<Vec<u8>>,
+    /// Client certificate (PEM) for mutual TLS.
+    pub client_cert_pem: Option<Vec<u8>>,
+    /// Client private key (PEM) for mutual TLS.
+    pub client_key_pem: Option<Vec<u8>>,
+    /// Optional SNI / domain-name override, useful when dialing by IP.
+    pub domain: Option<String>,
+}
+
 enum Transport {
     Http {
         client: reqwest::Client,
@@ -44,19 +60,33 @@ pub struct OtlpSink {
 
 impl OtlpSink {
     /// Build an OTLP sink targeting `endpoint` (`host:port`). `gzip` enables
-    /// payload compression on the wire.
-    pub fn new(protocol: OtlpProtocol, endpoint: &str, gzip: bool) -> Result<Self, RuntimeError> {
+    /// payload compression; `tls` enables TLS (`Some`, with optional custom CA
+    /// and client identity) or plaintext (`None`).
+    pub fn new(
+        protocol: OtlpProtocol,
+        endpoint: &str,
+        gzip: bool,
+        tls: Option<OtlpClientTls>,
+    ) -> Result<Self, RuntimeError> {
+        if tls.is_some() {
+            install_crypto_provider();
+        }
+        let scheme = if tls.is_some() { "https" } else { "http" };
         let transport = match protocol {
             OtlpProtocol::Http => Transport::Http {
-                client: reqwest::Client::new(),
-                url: format!("http://{}/v1/logs", endpoint.trim_end_matches('/')),
+                client: build_http_client(tls.as_ref())?,
+                url: format!("{scheme}://{}/v1/logs", endpoint.trim_end_matches('/')),
                 gzip,
             },
             OtlpProtocol::Grpc => {
-                let channel = Channel::from_shared(format!("http://{endpoint}"))
-                    .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?
-                    .connect_lazy();
-                let mut client = LogsServiceClient::new(channel);
+                let mut endpoint = Channel::from_shared(format!("{scheme}://{endpoint}"))
+                    .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?;
+                if let Some(tls) = &tls {
+                    endpoint = endpoint
+                        .tls_config(grpc_tls_config(tls))
+                        .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?;
+                }
+                let mut client = LogsServiceClient::new(endpoint.connect_lazy());
                 if gzip {
                     client = client
                         .send_compressed(CompressionEncoding::Gzip)
@@ -137,6 +167,58 @@ impl OtlpSink {
     }
 }
 
+/// Pin the process-default rustls `CryptoProvider` to aws-lc-rs.
+///
+/// Both aws-lc-rs (via tonic) and ring (via reqwest) rustls providers are in
+/// the dependency tree, so rustls cannot auto-select a default and any TLS
+/// config build would panic. We pin aws-lc-rs to match the daemon's
+/// server-side TLS. First call wins; later calls are a no-op.
+fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
+/// Build the OTLP/HTTP `reqwest` client, applying TLS material when present.
+fn build_http_client(tls: Option<&OtlpClientTls>) -> Result<reqwest::Client, RuntimeError> {
+    let Some(tls) = tls else {
+        return Ok(reqwest::Client::new());
+    };
+    let mut builder = reqwest::Client::builder();
+    if let Some(ca) = &tls.ca_pem {
+        let cert = reqwest::Certificate::from_pem(ca)
+            .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?;
+        builder = builder.add_root_certificate(cert);
+    }
+    if let (Some(cert), Some(key)) = (&tls.client_cert_pem, &tls.client_key_pem) {
+        // reqwest's rustls identity wants a single PEM buffer of cert + key.
+        let mut pem = cert.clone();
+        pem.push(b'\n');
+        pem.extend_from_slice(key);
+        let identity = reqwest::Identity::from_pem(&pem)
+            .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?;
+        builder = builder.identity(identity);
+    }
+    builder
+        .build()
+        .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))
+}
+
+/// Build the OTLP/gRPC client TLS config: custom CA (or bundled webpki roots),
+/// optional client identity, optional SNI override.
+fn grpc_tls_config(tls: &OtlpClientTls) -> tonic::transport::ClientTlsConfig {
+    use tonic::transport::{Certificate, ClientTlsConfig, Identity};
+    let mut config = match &tls.ca_pem {
+        Some(ca) => ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)),
+        None => ClientTlsConfig::new().with_webpki_roots(),
+    };
+    if let (Some(cert), Some(key)) = (&tls.client_cert_pem, &tls.client_key_pem) {
+        config = config.identity(Identity::from_pem(cert, key));
+    }
+    if let Some(domain) = &tls.domain {
+        config = config.domain_name(domain.clone());
+    }
+    config
+}
+
 fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, RuntimeError> {
     use flate2::{Compression, write::GzEncoder};
     use std::io::Write;
@@ -187,7 +269,7 @@ mod tests {
             .await;
 
         let endpoint = server.address().to_string();
-        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false).unwrap();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false, None).unwrap();
         sink.send(&one_detection()).await.unwrap();
         // `expect(1)` is verified when the server drops.
     }
@@ -202,7 +284,7 @@ mod tests {
             .await;
 
         let endpoint = server.address().to_string();
-        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false).unwrap();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false, None).unwrap();
         let err = sink.send(&one_detection()).await.unwrap_err();
         assert!(
             err.to_string().contains("503"),
@@ -213,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn empty_batch_is_a_noop() {
         // No server: an empty batch must not attempt any network call.
-        let mut sink = OtlpSink::new(OtlpProtocol::Http, "127.0.0.1:1", false).unwrap();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, "127.0.0.1:1", false, None).unwrap();
         let empty: Vec<EvaluationResult> = Vec::new();
         sink.send(&empty).await.unwrap();
     }
@@ -230,41 +312,51 @@ mod tests {
             .await;
 
         let endpoint = server.address().to_string();
-        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, true).unwrap();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, true, None).unwrap();
         sink.send(&one_detection()).await.unwrap();
+    }
+
+    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceResponse;
+
+    use crate::io::otlp::{LogsService, LogsServiceServer};
+
+    #[derive(Clone)]
+    struct Recording {
+        received: Arc<tokio::sync::Mutex<Vec<ExportLogsServiceRequest>>>,
+    }
+
+    #[tonic::async_trait]
+    impl LogsService for Recording {
+        async fn export(
+            &self,
+            request: tonic::Request<ExportLogsServiceRequest>,
+        ) -> Result<tonic::Response<ExportLogsServiceResponse>, tonic::Status> {
+            self.received.lock().await.push(request.into_inner());
+            Ok(tonic::Response::new(ExportLogsServiceResponse::default()))
+        }
+    }
+
+    /// Reserve an ephemeral loopback port (closed before the caller binds it).
+    fn free_port() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        addr
+    }
+
+    async fn wait_reachable(addr: std::net::SocketAddr) {
+        for _ in 0..200 {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("server at {addr} never became reachable");
     }
 
     #[tokio::test]
     async fn grpc_export_reaches_the_collector() {
-        use std::time::Duration;
-
-        use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceResponse;
-
-        use crate::io::otlp::{LogsService, LogsServiceServer};
-
-        #[derive(Clone)]
-        struct Recording {
-            received: Arc<tokio::sync::Mutex<Vec<ExportLogsServiceRequest>>>,
-        }
-
-        #[tonic::async_trait]
-        impl LogsService for Recording {
-            async fn export(
-                &self,
-                request: tonic::Request<ExportLogsServiceRequest>,
-            ) -> Result<tonic::Response<ExportLogsServiceResponse>, tonic::Status> {
-                self.received.lock().await.push(request.into_inner());
-                Ok(tonic::Response::new(ExportLogsServiceResponse::default()))
-            }
-        }
-
-        // Reserve an ephemeral port, then let the tonic server bind it.
-        let addr = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            drop(listener);
-            addr
-        };
+        let addr = free_port();
         let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let service = Recording {
             received: received.clone(),
@@ -276,16 +368,9 @@ mod tests {
                 .await
                 .unwrap();
         });
+        wait_reachable(addr).await;
 
-        // Wait until the server is accepting connections before exporting.
-        for _ in 0..100 {
-            if tokio::net::TcpStream::connect(addr).await.is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-
-        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false).unwrap();
+        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, None).unwrap();
         sink.send(&one_detection()).await.unwrap();
 
         let got = received.lock().await;
@@ -293,5 +378,158 @@ mod tests {
         let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
         assert_eq!(record.severity_text, "ERROR");
         server.abort();
+    }
+
+    /// A CA, a server leaf (SAN `127.0.0.1` + `localhost`), and a client leaf,
+    /// all PEM, for the TLS roundtrip tests.
+    struct Certs {
+        ca_pem: Vec<u8>,
+        server_cert: String,
+        server_key: String,
+        client_cert: String,
+        client_key: String,
+    }
+
+    fn mint_certs() -> Certs {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
+            KeyPair, KeyUsagePurpose, SanType,
+        };
+
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "rsigma-otlp-test-ca");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_key = KeyPair::generate().unwrap();
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_pem = ca_cert.pem().into_bytes();
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let mut server = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        server
+            .subject_alt_names
+            .push(SanType::IpAddress(std::net::IpAddr::from([127, 0, 0, 1])));
+        server.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let server_key = KeyPair::generate().unwrap();
+        let server_cert = server.signed_by(&server_key, &issuer).unwrap();
+
+        let mut client = CertificateParams::new(Vec::<String>::new()).unwrap();
+        client
+            .distinguished_name
+            .push(DnType::CommonName, "rsigma-otlp-test-client");
+        client.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        let client_key = KeyPair::generate().unwrap();
+        let client_cert = client.signed_by(&client_key, &issuer).unwrap();
+
+        Certs {
+            ca_pem,
+            server_cert: server_cert.pem(),
+            server_key: server_key.serialize_pem(),
+            client_cert: client_cert.pem(),
+            client_key: client_key.serialize_pem(),
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_export_over_tls_server_auth() {
+        use tonic::transport::{Identity, ServerTlsConfig};
+
+        install_crypto_provider();
+        let certs = mint_certs();
+        let addr = free_port();
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let service = Recording {
+            received: received.clone(),
+        };
+        let identity = Identity::from_pem(&certs.server_cert, &certs.server_key);
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .tls_config(ServerTlsConfig::new().identity(identity))
+                .unwrap()
+                .add_service(LogsServiceServer::new(service))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+        wait_reachable(addr).await;
+
+        let tls = OtlpClientTls {
+            ca_pem: Some(certs.ca_pem.clone()),
+            ..Default::default()
+        };
+        let mut sink =
+            OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, Some(tls)).unwrap();
+        sink.send(&one_detection()).await.unwrap();
+
+        assert_eq!(received.lock().await.len(), 1, "TLS export should arrive");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn grpc_export_over_mutual_tls() {
+        use tonic::transport::{Certificate, Identity, ServerTlsConfig};
+
+        install_crypto_provider();
+        let certs = mint_certs();
+        let addr = free_port();
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let service = Recording {
+            received: received.clone(),
+        };
+        let identity = Identity::from_pem(&certs.server_cert, &certs.server_key);
+        let client_ca = Certificate::from_pem(&certs.ca_pem);
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .tls_config(
+                    ServerTlsConfig::new()
+                        .identity(identity)
+                        .client_ca_root(client_ca),
+                )
+                .unwrap()
+                .add_service(LogsServiceServer::new(service))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+        wait_reachable(addr).await;
+
+        let tls = OtlpClientTls {
+            ca_pem: Some(certs.ca_pem.clone()),
+            client_cert_pem: Some(certs.client_cert.clone().into_bytes()),
+            client_key_pem: Some(certs.client_key.clone().into_bytes()),
+            ..Default::default()
+        };
+        let mut sink =
+            OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, Some(tls)).unwrap();
+        sink.send(&one_detection()).await.unwrap();
+
+        assert_eq!(received.lock().await.len(), 1, "mTLS export should arrive");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_tls_client_builds_with_ca_and_identity() {
+        let certs = mint_certs();
+        let tls = OtlpClientTls {
+            ca_pem: Some(certs.ca_pem.clone()),
+            client_cert_pem: Some(certs.client_cert.clone().into_bytes()),
+            client_key_pem: Some(certs.client_key.clone().into_bytes()),
+            ..Default::default()
+        };
+        // Building the sink must parse the CA and client identity and produce
+        // an HTTPS reqwest client without error.
+        let sink = OtlpSink::new(
+            OtlpProtocol::Http,
+            "collector.example:4318",
+            false,
+            Some(tls),
+        );
+        assert!(
+            sink.is_ok(),
+            "HTTPS client with CA + mTLS identity should build: {:?}",
+            sink.err(),
+        );
     }
 }
