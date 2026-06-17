@@ -193,20 +193,20 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    /// Spawn one worker per leaf sink, each with its own full-queue policy.
-    /// `sinks` should already be flattened to leaves (see
-    /// [`crate::io::Sink::into_leaves`]); `cfg` holds the shared retry/backoff/
-    /// batch/queue tuning.
+    /// Spawn one worker per leaf sink, each with its own full-queue policy and
+    /// delivery tuning. `sinks` should already be flattened to leaves (see
+    /// [`crate::io::Sink::into_leaves`]); each carries its own
+    /// [`DeliveryConfig`] so a sink (e.g. a webhook) can override the global
+    /// retry/backoff/queue defaults.
     pub fn spawn<S: DeliverySink>(
-        sinks: Vec<(S, OnFull)>,
-        cfg: DeliveryConfig,
+        sinks: Vec<(S, OnFull, DeliveryConfig)>,
         dlq_tx: Option<mpsc::Sender<DeliveryFailure>>,
         ack_tx: mpsc::UnboundedSender<AckToken>,
         metrics: Arc<dyn MetricsHook>,
     ) -> Self {
         let workers = sinks
             .into_iter()
-            .map(|(sink, on_full)| {
+            .map(|(sink, on_full, cfg)| {
                 SinkWorker::spawn(sink, on_full, cfg, dlq_tx.clone(), metrics.clone())
             })
             .collect();
@@ -302,7 +302,11 @@ async fn deliver_one<S: DeliverySink>(
         match sink.deliver(result).await {
             Ok(()) => return,
             Err(e) => {
-                if attempt >= cfg.retry_max {
+                // A `Permanent` error will not heal on retry (e.g. a 4xx from a
+                // misrendered webhook body), so route it to the DLQ immediately
+                // rather than burning the retry budget.
+                let permanent = matches!(e, RuntimeError::Permanent(_));
+                if permanent || attempt >= cfg.retry_max {
                     metrics.on_sink_delivery_failed(label);
                     match dlq_tx {
                         Some(dlq) => {
@@ -318,7 +322,7 @@ async fn deliver_one<S: DeliverySink>(
                             tracing::warn!(
                                 sink = label,
                                 error = %e,
-                                "Sink delivery failed after retries and no DLQ is configured; dropping result",
+                                "Sink delivery failed and no DLQ is configured; dropping result",
                             );
                         }
                     }
@@ -375,7 +379,9 @@ mod tests {
         label: &'static str,
         fail_first: Arc<AtomicUsize>,
         always_fail: bool,
+        permanent: bool,
         delivered: Arc<AtomicUsize>,
+        attempts: Arc<AtomicUsize>,
         // A latching gate: deliveries block until the watch value is `true`,
         // after which every delivery (including later ones) proceeds. A plain
         // `Notify` would only wake waiters parked at the instant it fires.
@@ -388,7 +394,9 @@ mod tests {
                 label,
                 fail_first: Arc::new(AtomicUsize::new(0)),
                 always_fail: false,
+                permanent: false,
                 delivered: Arc::new(AtomicUsize::new(0)),
+                attempts: Arc::new(AtomicUsize::new(0)),
                 gate: None,
             }
         }
@@ -398,7 +406,9 @@ mod tests {
         fn deliver<'a>(&'a mut self, _result: &'a ProcessResult) -> DeliveryFuture<'a> {
             let fail_first = self.fail_first.clone();
             let delivered = self.delivered.clone();
+            let attempts = self.attempts.clone();
             let always_fail = self.always_fail;
+            let permanent = self.permanent;
             let gate = self.gate.clone();
             Box::pin(async move {
                 if let Some(mut rx) = gate {
@@ -411,8 +421,13 @@ mod tests {
                         }
                     }
                 }
+                attempts.fetch_add(1, Ordering::SeqCst);
                 if always_fail {
-                    return Err(RuntimeError::Io(std::io::Error::other("mock always fails")));
+                    return Err(if permanent {
+                        RuntimeError::Permanent("mock permanent".to_string())
+                    } else {
+                        RuntimeError::Io(std::io::Error::other("mock always fails"))
+                    });
                 }
                 if fail_first.load(Ordering::SeqCst) > 0 {
                     fail_first.fetch_sub(1, Ordering::SeqCst);
@@ -433,8 +448,7 @@ mod tests {
         let sink = MockSink::new("mock");
         let delivered = sink.delivered.clone();
         let dispatcher = Dispatcher::spawn(
-            vec![(sink, OnFull::Block)],
-            fast_cfg(),
+            vec![(sink, OnFull::Block, fast_cfg())],
             None,
             ack_tx,
             noop_metrics(),
@@ -461,8 +475,7 @@ mod tests {
         sink.fail_first.store(3, Ordering::SeqCst); // < retry_max (5)
         let delivered = sink.delivered.clone();
         let dispatcher = Dispatcher::spawn(
-            vec![(sink, OnFull::Block)],
-            fast_cfg(),
+            vec![(sink, OnFull::Block, fast_cfg())],
             Some(dlq_tx),
             ack_tx,
             noop_metrics(),
@@ -486,8 +499,7 @@ mod tests {
         let mut sink = MockSink::new("mock");
         sink.always_fail = true;
         let dispatcher = Dispatcher::spawn(
-            vec![(sink, OnFull::Block)],
-            fast_cfg(),
+            vec![(sink, OnFull::Block, fast_cfg())],
             Some(dlq_tx),
             ack_tx,
             noop_metrics(),
@@ -505,6 +517,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permanent_failure_skips_retries_and_dlqs() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let mut sink = MockSink::new("mock");
+        sink.always_fail = true;
+        sink.permanent = true;
+        let attempts = sink.attempts.clone();
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            Some(dlq_tx),
+            ack_tx,
+            noop_metrics(),
+        );
+
+        dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "a permanent failure must not be retried",
+        );
+        let failure = dlq_rx.try_recv().expect("permanent failure routed to DLQ");
+        assert!(failure.error.contains("permanent delivery failure"));
+        assert!(ack_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
     async fn ack_join_waits_for_all_sinks() {
         let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
         let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
@@ -513,8 +553,10 @@ mod tests {
         slow.gate = Some(gate_rx);
 
         let dispatcher = Dispatcher::spawn(
-            vec![(fast, OnFull::Block), (slow, OnFull::Block)],
-            fast_cfg(),
+            vec![
+                (fast, OnFull::Block, fast_cfg()),
+                (slow, OnFull::Block, fast_cfg()),
+            ],
             None,
             ack_tx,
             noop_metrics(),
@@ -550,8 +592,7 @@ mod tests {
             ..fast_cfg()
         };
         let dispatcher = Dispatcher::spawn(
-            vec![(sink, OnFull::Drop)],
-            cfg,
+            vec![(sink, OnFull::Drop, cfg)],
             None,
             ack_tx,
             noop_metrics(),

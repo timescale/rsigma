@@ -962,11 +962,11 @@ pub async fn run_daemon(config: DaemonConfig) {
     } else {
         config.output.clone()
     };
-    let mut leaves: Vec<(Sink, OnFull)> = Vec::new();
+    let mut leaves: Vec<(Sink, OnFull, DeliveryConfig)> = Vec::new();
     for spec in &output_specs {
         let (sink, on_full) = build_sink(spec, pretty, &config).await;
         for leaf in sink.into_leaves() {
-            leaves.push((leaf, on_full));
+            leaves.push((leaf, on_full, config.delivery_config));
         }
     }
     tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
@@ -997,15 +997,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let dispatch_ack_tx = ack_tx.clone();
     let empty_ack_tx = ack_tx.clone();
     drop(ack_tx);
-    let delivery_config = config.delivery_config;
     let sink_handle = tokio::spawn(async move {
-        let dispatcher = Dispatcher::spawn(
-            leaves,
-            delivery_config,
-            Some(df_tx),
-            dispatch_ack_tx,
-            delivery_metrics,
-        );
+        let dispatcher = Dispatcher::spawn(leaves, Some(df_tx), dispatch_ack_tx, delivery_metrics);
         while let Some((mut result, ack_tokens)) = sink_rx.recv().await {
             sink_metrics.on_output_queue_depth_change(-1);
 
