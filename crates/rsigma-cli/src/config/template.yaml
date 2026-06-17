@@ -61,6 +61,10 @@ daemon:
 
   output:
     # Detection sinks (repeatable): stdout | file://path | nats://host:port/subject
+    # | otlp(s)://host:port (gRPC) | otlphttp(s)://host:port (HTTP); the `s`
+    # variants use TLS. Optional query suffixes: ?on_full=drop (best-effort),
+    # ?compression=gzip (OTLP), and for TLS ?ca=, ?client_cert=, ?client_key=
+    # (PEM paths; the last two enable mutual TLS) and ?tls_domain= (SNI).
     sinks: [stdout]
     # Dead-letter queue for events that fail processing.
     # dlq: "file:///var/lib/rsigma/dlq.ndjson"

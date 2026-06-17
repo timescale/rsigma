@@ -1,7 +1,10 @@
 use opentelemetry_proto::tonic::{
     collector::logs::v1::ExportLogsServiceRequest,
-    common::v1::{AnyValue, KeyValue, any_value},
+    common::v1::{AnyValue, ArrayValue, InstrumentationScope, KeyValue, KeyValueList, any_value},
+    logs::v1::{LogRecord, ResourceLogs, ScopeLogs},
+    resource::v1::Resource,
 };
+use rsigma_eval::EvaluationResult;
 use serde_json::{Map, Value};
 
 use crate::io::{AckToken, RawEvent};
@@ -176,6 +179,129 @@ fn nanos_to_iso8601(nanos: u64) -> String {
     chrono::DateTime::from_timestamp(secs, subsec_nanos)
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
         .unwrap_or_default()
+}
+
+/// Convert a batch of [`EvaluationResult`]s into one OTLP
+/// `ExportLogsServiceRequest` for delivery to a collector.
+///
+/// Every result becomes one `LogRecord` under a single `rsigma` resource and
+/// instrumentation scope: the Sigma `level` maps to the OTLP severity, the
+/// rule title becomes the log body, and the full serialized result (rule
+/// metadata, detection match detail or correlation fields, enrichments) is
+/// attached as structured log attributes.
+pub fn evaluation_results_to_logs_request(
+    results: &[EvaluationResult],
+) -> ExportLogsServiceRequest {
+    let log_records = results.iter().map(result_to_log_record).collect();
+    ExportLogsServiceRequest {
+        resource_logs: vec![ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![string_kv("service.name", "rsigma")],
+                ..Default::default()
+            }),
+            scope_logs: vec![ScopeLogs {
+                scope: Some(InstrumentationScope {
+                    name: "rsigma".to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    ..Default::default()
+                }),
+                log_records,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    }
+}
+
+fn result_to_log_record(result: &EvaluationResult) -> LogRecord {
+    let now = now_unix_nanos();
+    let value = serde_json::to_value(result).unwrap_or(Value::Null);
+    let (severity_number, severity_text) =
+        severity_from_level(value.get("level").and_then(Value::as_str));
+    let attributes = match &value {
+        Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| KeyValue {
+                key: k.clone(),
+                value: Some(json_to_any_value(v)),
+                ..Default::default()
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    LogRecord {
+        time_unix_nano: now,
+        observed_time_unix_nano: now,
+        severity_number,
+        severity_text: severity_text.to_string(),
+        body: Some(string_any_value(&result.header.rule_title)),
+        attributes,
+        ..Default::default()
+    }
+}
+
+/// Map a Sigma level to an OTLP severity `(number, text)`. Unknown or absent
+/// levels map to `UNSPECIFIED` (0).
+fn severity_from_level(level: Option<&str>) -> (i32, &'static str) {
+    match level {
+        Some("critical") => (21, "FATAL"),
+        Some("high") => (17, "ERROR"),
+        Some("medium") => (13, "WARN"),
+        Some("low") => (9, "INFO"),
+        Some("informational") => (5, "DEBUG"),
+        _ => (0, ""),
+    }
+}
+
+fn string_kv(key: &str, value: &str) -> KeyValue {
+    KeyValue {
+        key: key.to_string(),
+        value: Some(string_any_value(value)),
+        ..Default::default()
+    }
+}
+
+fn string_any_value(s: &str) -> AnyValue {
+    AnyValue {
+        value: Some(any_value::Value::StringValue(s.to_string())),
+    }
+}
+
+/// Inverse of [`any_value_to_json`]: lower a JSON value into an OTLP `AnyValue`.
+fn json_to_any_value(value: &Value) -> AnyValue {
+    let inner = match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(any_value::Value::BoolValue(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(any_value::Value::IntValue(i))
+            } else {
+                n.as_f64().map(any_value::Value::DoubleValue)
+            }
+        }
+        Value::String(s) => Some(any_value::Value::StringValue(s.clone())),
+        Value::Array(arr) => Some(any_value::Value::ArrayValue(ArrayValue {
+            values: arr.iter().map(json_to_any_value).collect(),
+        })),
+        Value::Object(map) => Some(any_value::Value::KvlistValue(KeyValueList {
+            values: map
+                .iter()
+                .map(|(k, v)| KeyValue {
+                    key: k.clone(),
+                    value: Some(json_to_any_value(v)),
+                    ..Default::default()
+                })
+                .collect(),
+        })),
+    };
+    AnyValue { value: inner }
+}
+
+fn now_unix_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
 /// Encode bytes as lowercase hex without any prefix.
@@ -458,5 +584,114 @@ mod tests {
         assert_eq!(hex::encode(&[0x00]), "00");
         assert_eq!(hex::encode(&[0xff]), "ff");
         assert_eq!(hex::encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
+    }
+
+    #[test]
+    fn detection_result_lowers_to_otlp_log_record() {
+        use rsigma_eval::result::{DetectionBody, FieldMatch, ResultBody, RuleHeader};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Suspicious PowerShell".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                level: Some(rsigma_parser::Level::High),
+                tags: vec!["attack.t1059".to_string()],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec!["selection".to_string()],
+                matched_fields: vec![FieldMatch::new(
+                    "CommandLine",
+                    serde_json::json!("powershell -enc"),
+                )],
+                event: None,
+            }),
+        };
+
+        let request = evaluation_results_to_logs_request(std::slice::from_ref(&result));
+        let resource_logs = &request.resource_logs[0];
+        assert!(
+            resource_logs
+                .resource
+                .as_ref()
+                .unwrap()
+                .attributes
+                .iter()
+                .any(|kv| kv.key == "service.name"),
+            "resource carries service.name",
+        );
+
+        let scope_logs = &resource_logs.scope_logs[0];
+        assert_eq!(scope_logs.scope.as_ref().unwrap().name, "rsigma");
+
+        let record = &scope_logs.log_records[0];
+        assert_eq!(record.severity_number, 17, "high maps to ERROR(17)");
+        assert_eq!(record.severity_text, "ERROR");
+        match record.body.as_ref().and_then(|b| b.value.as_ref()) {
+            Some(any_value::Value::StringValue(s)) => assert_eq!(s, "Suspicious PowerShell"),
+            other => panic!("body should be the rule title string, got {other:?}"),
+        }
+        let keys: Vec<&str> = record.attributes.iter().map(|kv| kv.key.as_str()).collect();
+        assert!(keys.contains(&"rule_title"));
+        assert!(keys.contains(&"level"));
+        assert!(keys.contains(&"matched_fields"));
+        assert!(
+            !keys.contains(&"correlation_type"),
+            "a detection must not carry correlation_type",
+        );
+    }
+
+    #[test]
+    fn severity_mapping_covers_every_level() {
+        assert_eq!(severity_from_level(Some("critical")), (21, "FATAL"));
+        assert_eq!(severity_from_level(Some("high")), (17, "ERROR"));
+        assert_eq!(severity_from_level(Some("medium")), (13, "WARN"));
+        assert_eq!(severity_from_level(Some("low")), (9, "INFO"));
+        assert_eq!(severity_from_level(Some("informational")), (5, "DEBUG"));
+        assert_eq!(severity_from_level(None), (0, ""));
+        assert_eq!(severity_from_level(Some("bogus")), (0, ""));
+    }
+
+    #[test]
+    fn correlation_result_lowers_to_otlp_log_record() {
+        use rsigma_eval::result::{CorrelationBody, ResultBody, RuleHeader};
+        use rsigma_parser::CorrelationType;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "SSH brute force".to_string(),
+                rule_id: Some("corr-1".to_string()),
+                level: Some(rsigma_parser::Level::Critical),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Correlation(CorrelationBody {
+                correlation_type: CorrelationType::EventCount,
+                group_key: vec![("SourceIP".to_string(), "203.0.113.4".to_string())],
+                aggregated_value: 73.0,
+                timespan_secs: 300,
+                events: None,
+                event_refs: None,
+            }),
+        };
+
+        let request = evaluation_results_to_logs_request(std::slice::from_ref(&result));
+        let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(record.severity_number, 21, "critical maps to FATAL(21)");
+        assert_eq!(record.severity_text, "FATAL");
+        let keys: Vec<&str> = record.attributes.iter().map(|kv| kv.key.as_str()).collect();
+        assert!(keys.contains(&"correlation_type"));
+        assert!(keys.contains(&"group_key"));
+        assert!(keys.contains(&"aggregated_value"));
+        assert!(
+            !keys.contains(&"matched_fields"),
+            "a correlation must not carry matched_fields",
+        );
     }
 }

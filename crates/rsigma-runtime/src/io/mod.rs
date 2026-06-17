@@ -107,6 +107,9 @@ pub enum Sink {
     /// Publish NDJSON to a NATS JetStream subject.
     #[cfg(feature = "nats")]
     Nats(Box<NatsSink>),
+    /// Export results to an OpenTelemetry collector via OTLP.
+    #[cfg(feature = "otlp")]
+    Otlp(Box<otlp::OtlpSink>),
     /// Fan out to multiple sinks.
     FanOut(Vec<Sink>),
 }
@@ -136,6 +139,8 @@ impl Sink {
                 }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send(result).await,
+                #[cfg(feature = "otlp")]
+                Sink::Otlp(s) => s.send(result).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send(result).await {
@@ -166,6 +171,8 @@ impl Sink {
                 Sink::File(s) => tokio::task::block_in_place(|| s.send_raw(json)),
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send_raw(json).await,
+                #[cfg(feature = "otlp")]
+                Sink::Otlp(s) => s.send_raw(json).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_raw(json).await {
@@ -192,6 +199,8 @@ impl Sink {
             Sink::File(_) => "file",
             #[cfg(feature = "nats")]
             Sink::Nats(_) => "nats",
+            #[cfg(feature = "otlp")]
+            Sink::Otlp(_) => "otlp",
             Sink::FanOut(_) => "fanout",
         }
     }

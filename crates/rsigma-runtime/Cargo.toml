@@ -12,7 +12,7 @@ homepage.workspace = true
 [features]
 default = []
 nats = ["async-nats", "tokio-stream", "time", "futures"]
-otlp = ["opentelemetry-proto", "prost"]
+otlp = ["opentelemetry-proto", "prost", "tonic", "flate2", "rustls"]
 logfmt = []
 cef = []
 evtx = ["dep:evtx"]
@@ -53,10 +53,15 @@ time = { version = "0.3", optional = true }
 evtx = { version = "0.11", optional = true, default-features = false }
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }
 prost = { version = "0.14", optional = true }
+tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
+flate2 = { version = "1", optional = true }
+rustls = { version = "0.23", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
+rcgen = "0.14"
+time = "0.3"
 criterion = "0.8"
 rand = "0.10"
 testcontainers = "0.27"

@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### OTLP output sink: export detections over OTLP/HTTP and OTLP/gRPC (#223)
+
+The daemon can now emit detection and correlation results to an OpenTelemetry collector, completing OTLP transport symmetry with the existing OTLP receiver.
+
+- **Two transports.** `--output otlp://host:4317` exports over OTLP/gRPC; `--output otlphttp://host:4318` exports over OTLP/HTTP (protobuf, posted to `/v1/logs`). Append `?compression=gzip` for gzip on the wire. Both require a `daemon-otlp` build.
+- **TLS.** The `otlps://` (gRPC) and `otlphttps://` (HTTP) schemes enable TLS, verifying the collector against the bundled public roots by default. `?ca=` verifies against a private CA, `?client_cert=`/`?client_key=` enable mutual TLS, and `?tls_domain=` overrides the verified server name.
+- **Mapping.** Each result becomes one OTLP `LogRecord` under an `rsigma` resource and instrumentation scope: the Sigma `level` maps to the OTLP severity (critical to FATAL, high to ERROR, medium to WARN, low to INFO, informational to DEBUG), the rule title is the log body, and the full serialized result is attached as structured attributes.
+- **Delivery.** The OTLP sink rides the async delivery layer: batched export with bounded retry and backoff, and terminal failures routed to the DLQ.
+
 ### Async sink delivery layer: per-sink workers, retry/backoff, and isolation (#222)
 
 Detection output now flows through a per-sink delivery layer instead of a single inline sink writer. Each `--output` sink runs its own bounded queue and worker task, so a slow or flaky network sink no longer immediately head-of-line blocks the others, and transient failures are retried instead of being dropped to the dead-letter queue on the first error.
