@@ -98,3 +98,38 @@ fn sink_and_input_metrics_are_exposed() {
         "input-queue-depth gauge must be exposed",
     );
 }
+
+/// An OTLP output sink pointed at an unreachable collector should, after
+/// exhausting retries, route the failed result to the DLQ. With
+/// `--sink-retry-max 0` the first failure is terminal, keeping the test fast
+/// and deterministic. Exercises the `otlphttp://` grammar, OTLP sink
+/// construction, the delivery layer, and the DLQ bridge end to end.
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn otlp_sink_unreachable_endpoint_routes_to_dlq() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dlq = temp_file(".ndjson", "");
+    let dlq_spec = format!("file://{}", dlq.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--output",
+            "otlphttp://127.0.0.1:1",
+            "--dlq",
+            &dlq_spec,
+            "--sink-retry-max",
+            "0",
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), MATCHING_EVENT);
+    assert_eq!(status, 200);
+
+    let dlqd = poll_until(Duration::from_secs(10), || {
+        file_contains(dlq.path(), "sink delivery failure").then_some(())
+    });
+    assert!(
+        dlqd.is_some(),
+        "an unreachable OTLP sink should route the failed result to the DLQ",
+    );
+}

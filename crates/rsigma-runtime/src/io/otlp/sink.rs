@@ -144,3 +144,77 @@ fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, RuntimeError> {
     encoder.write_all(data)?;
     Ok(encoder.finish()?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use rsigma_eval::result::{
+        DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader,
+    };
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn one_detection() -> Vec<EvaluationResult> {
+        vec![EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Test Rule".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                level: Some(rsigma_parser::Level::High),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec!["selection".to_string()],
+                matched_fields: vec![FieldMatch::new("CommandLine", serde_json::json!("malware"))],
+                event: None,
+            }),
+        }]
+    }
+
+    #[tokio::test]
+    async fn http_export_posts_protobuf_to_v1_logs() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .and(header("content-type", "application/x-protobuf"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let endpoint = server.address().to_string();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false).unwrap();
+        sink.send(&one_detection()).await.unwrap();
+        // `expect(1)` is verified when the server drops.
+    }
+
+    #[tokio::test]
+    async fn http_export_surfaces_non_2xx_as_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.address().to_string();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, false).unwrap();
+        let err = sink.send(&one_detection()).await.unwrap_err();
+        assert!(
+            err.to_string().contains("503"),
+            "non-2xx must surface as a retryable error: {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_batch_is_a_noop() {
+        // No server: an empty batch must not attempt any network call.
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, "127.0.0.1:1", false).unwrap();
+        let empty: Vec<EvaluationResult> = Vec::new();
+        sink.send(&empty).await.unwrap();
+    }
+}

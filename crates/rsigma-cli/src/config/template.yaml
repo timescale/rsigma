@@ -61,6 +61,8 @@ daemon:
 
   output:
     # Detection sinks (repeatable): stdout | file://path | nats://host:port/subject
+    # | otlp://host:port (gRPC) | otlphttp://host:port (HTTP). Optional query
+    # suffixes: ?on_full=drop (best-effort) and ?compression=gzip (OTLP).
     sinks: [stdout]
     # Dead-letter queue for events that fail processing.
     # dlq: "file:///var/lib/rsigma/dlq.ndjson"

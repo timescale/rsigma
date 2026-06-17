@@ -235,7 +235,9 @@ impl Merge for InputPartial {
 /// Detection output settings.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct OutputPartial {
-    /// Detection sinks: `stdout`, `file://path`, `nats://host:port/subject`.
+    /// Detection sinks: `stdout`, `file://path`, `nats://host:port/subject`,
+    /// `otlp://host:port` (gRPC), `otlphttp://host:port` (HTTP). Optional
+    /// `?on_full=drop` and `?compression=gzip` query suffixes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sinks: Option<Vec<String>>,
     /// Dead-letter queue for events that fail processing.

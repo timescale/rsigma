@@ -1221,19 +1221,35 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received");
 }
 
-/// Parse an optional `?on_full=block|drop` suffix from an output spec,
-/// returning the spec with the suffix stripped and the resulting full-queue
-/// policy. Defaults to `Block` (at-least-once); `drop` opts into best-effort
-/// delivery for throughput-first targets.
-fn parse_on_full(spec: &str) -> (&str, OnFull) {
-    match spec.split_once("?on_full=") {
-        Some((base, "drop")) => (base, OnFull::Drop),
-        Some((base, "block")) => (base, OnFull::Block),
-        Some((base, other)) => {
-            tracing::warn!(value = other, "Unknown on_full value, using block");
-            (base, OnFull::Block)
+/// Split an output spec into its base (scheme + target) and `key=value` query
+/// parameters: `file:///p?on_full=drop`, `otlp://host:4317?compression=gzip`.
+fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
+    match spec.split_once('?') {
+        Some((base, query)) => {
+            let params = query
+                .split('&')
+                .filter_map(|kv| kv.split_once('='))
+                .collect();
+            (base, params)
         }
-        None => (spec, OnFull::Block),
+        None => (spec, Vec::new()),
+    }
+}
+
+/// Resolve the full-queue policy from query params. Defaults to `Block`
+/// (at-least-once); `on_full=drop` opts into best-effort delivery.
+fn on_full_from_params(params: &[(&str, &str)]) -> OnFull {
+    match params
+        .iter()
+        .find(|(k, _)| *k == "on_full")
+        .map(|(_, v)| *v)
+    {
+        Some("drop") => OnFull::Drop,
+        Some("block") | None => OnFull::Block,
+        Some(other) => {
+            tracing::warn!(value = other, "Unknown on_full value, using block");
+            OnFull::Block
+        }
     }
 }
 
@@ -1243,13 +1259,14 @@ async fn build_sink(
     pretty: bool,
     #[cfg_attr(not(feature = "daemon-nats"), allow(unused))] config: &DaemonConfig,
 ) -> (Sink, OnFull) {
-    let (spec, on_full) = parse_on_full(spec);
+    let (base, params) = split_query(spec);
+    let on_full = on_full_from_params(&params);
 
-    if spec == "stdout" || spec == "stdout://" {
+    if base == "stdout" || base == "stdout://" {
         return (Sink::Stdout(StdoutSink::new(pretty)), on_full);
     }
 
-    if let Some(path) = spec.strip_prefix("file://") {
+    if let Some(path) = base.strip_prefix("file://") {
         let path = std::path::Path::new(path);
         return match FileSink::open(path) {
             Ok(file_sink) => {
@@ -1264,8 +1281,8 @@ async fn build_sink(
     }
 
     #[cfg(feature = "daemon-nats")]
-    if spec.starts_with("nats://") {
-        let (url, subject) = parse_nats_url(spec);
+    if base.starts_with("nats://") {
+        let (url, subject) = parse_nats_url(base);
         let mut nats_cfg = config.nats_config.clone();
         nats_cfg.url = url.clone();
         return match rsigma_runtime::NatsSink::connect(&nats_cfg, &subject).await {
@@ -1280,9 +1297,35 @@ async fn build_sink(
         };
     }
 
+    #[cfg(feature = "daemon-otlp")]
+    {
+        let otlp = base
+            .strip_prefix("otlphttp://")
+            .map(|endpoint| (rsigma_runtime::OtlpProtocol::Http, endpoint))
+            .or_else(|| {
+                base.strip_prefix("otlp://")
+                    .map(|endpoint| (rsigma_runtime::OtlpProtocol::Grpc, endpoint))
+            });
+        if let Some((protocol, endpoint)) = otlp {
+            let gzip = params
+                .iter()
+                .any(|(k, v)| *k == "compression" && *v == "gzip");
+            return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip) {
+                Ok(sink) => {
+                    tracing::info!(endpoint, ?protocol, gzip, "OTLP sink started");
+                    (Sink::Otlp(Box::new(sink)), on_full)
+                }
+                Err(e) => {
+                    tracing::error!(endpoint, error = %e, "Failed to build OTLP sink");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            };
+        }
+    }
+
     tracing::error!(
-        output = spec,
-        "Unsupported output sink (supported: stdout, file://<path>, nats://)"
+        output = base,
+        "Unsupported output sink (supported: stdout, file://<path>, nats://, otlp://, otlphttp://)"
     );
     std::process::exit(crate::exit_code::CONFIG_ERROR);
 }

@@ -46,7 +46,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`. Repeatable for fan-out. Append `?on_full=drop` to drop results when the sink's queue is full instead of applying backpressure (best-effort delivery). |
+| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp://<host>:<port>` (OTLP/gRPC), `otlphttp://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`). Repeatable for fan-out. Append `?on_full=drop` for best-effort delivery, or `?compression=gzip` for an OTLP sink. OTLP schemes require the `daemon-otlp` build. |
 | `--dlq <URL>` | unset | Dead-letter queue for events that fail parsing or sink delivery. Same schemes as `--output`. When unset, failed events are logged and discarded. |
 | `--include-event` | off | Embed the full event JSON in every detection match. |
 | `--match-detail <LEVEL>` | `off` | Match-detail verbosity: `off` (field + value only), `summary` (adds matcher kind, selection, case sensitivity, and reports keyword/absence matches), or `full` (also records the matched pattern). Also settable via `daemon.engine.match_detail`. See [Evaluating Rules](../../guide/evaluating-rules.md#match-detail). |
@@ -214,6 +214,20 @@ rsigma engine daemon -r rules/ \
     --output stdout \
     --output "file:///var/log/rsigma/detections.ndjson" \
     --output "nats://nats.internal:4222/detections.urgent"
+```
+
+### Export detections to an OpenTelemetry collector
+
+Each result becomes one OTLP log record (Sigma level mapped to OTLP severity, rule title as the body, the full result as attributes). Requires a `daemon-otlp` build.
+
+```bash
+# OTLP/gRPC (default port 4317)
+rsigma engine daemon -r rules/ --input http \
+    --output "otlp://otel-collector:4317"
+
+# OTLP/HTTP protobuf with gzip (default port 4318)
+rsigma engine daemon -r rules/ --input http \
+    --output "otlphttp://otel-collector:4318?compression=gzip"
 ```
 
 ### HTTPS with mutual TLS

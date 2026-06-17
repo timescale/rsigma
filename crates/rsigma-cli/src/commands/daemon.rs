@@ -109,7 +109,9 @@ pub(crate) struct DaemonArgs {
 
     /// Detection output sink (can be repeated for fan-out).
     /// Supported schemes: `stdout`, `file://<path>`,
-    /// `nats://<host>:<port>/<subject>`.
+    /// `nats://<host>:<port>/<subject>`, `otlp://<host>:<port>` (OTLP/gRPC),
+    /// `otlphttp://<host>:<port>` (OTLP/HTTP). Append `?on_full=drop` for
+    /// best-effort delivery, or `?compression=gzip` for an OTLP sink.
     #[arg(long = "output", default_value = config::defaults::STDOUT_SINK)]
     pub output: Vec<String>,
 
