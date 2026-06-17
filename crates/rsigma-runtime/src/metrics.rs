@@ -83,6 +83,16 @@ pub trait MetricsHook: Send + Sync {
     fn on_sink_dropped(&self, _sink: &str) {}
     /// A sink exhausted its retries and routed the result to the DLQ.
     fn on_sink_delivery_failed(&self, _sink: &str) {}
+
+    /// Pre-register a webhook's `webhook_id` label so its request metrics
+    /// appear on `/metrics` from the first scrape, before any traffic.
+    fn register_webhook(&self, _webhook_id: &str) {}
+    /// A webhook request completed with `outcome` (`success` or
+    /// `permanent_failure`), taking `duration_secs`. Retryable failures are
+    /// covered by the shared `on_sink_retry` / `on_sink_delivery_failed`.
+    fn on_webhook_request(&self, _webhook_id: &str, _outcome: &'static str, _duration_secs: f64) {}
+    /// A webhook had to wait for its rate-limiter token bucket to refill.
+    fn on_webhook_rate_limited(&self, _webhook_id: &str) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

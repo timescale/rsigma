@@ -63,7 +63,10 @@ pub use http::{
 pub use http_cache::{CacheKey, CacheOutcome, HttpResponseCache};
 pub use lookup::LookupEnricher;
 pub use scope::Scope;
-pub use template::{TemplateEnricher, TemplateError, validate_template_namespace};
+pub use template::{
+    TemplateEnricher, TemplateError, render_template, render_template_json,
+    validate_template_namespace,
+};
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.
 ///

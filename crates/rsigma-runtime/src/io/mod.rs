@@ -10,6 +10,7 @@ mod nats_source;
 pub mod otlp;
 mod stdin;
 mod stdout;
+pub mod webhook;
 
 pub use delivery::{DeliveryConfig, DeliveryFailure, DeliverySink, Dispatcher, OnFull};
 pub use file::FileSink;

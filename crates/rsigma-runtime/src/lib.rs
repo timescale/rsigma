@@ -72,6 +72,10 @@ pub use enrichment::{
 };
 pub use error::RuntimeError;
 pub use input::{EventInputDecoded, InputFormat, parse_line};
+pub use io::webhook::{
+    BuiltWebhook, WebhookConfig, WebhookConfigError, WebhookKind, WebhookSink, WebhooksFile,
+    build_webhooks, load_webhooks_file,
+};
 pub use io::{
     AckToken, DeliveryConfig, DeliveryFailure, DeliverySink, Dispatcher, EventSource, FileSink,
     OnFull, RawEvent, Sink, StdinSource, StdoutSink, spawn_source,

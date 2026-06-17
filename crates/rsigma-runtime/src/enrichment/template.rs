@@ -185,8 +185,6 @@ pub fn render_template(text: &str, result: &EvaluationResult) -> String {
 /// string and strips the surrounding quotes, yielding content safe to drop
 /// inside a JSON string literal. `url`/`headers` keep [`render_template`]
 /// (identity escaping) because they are not JSON.
-// Consumed by the webhook sink, wired up in the next commit of this PR.
-#[allow(dead_code)]
 pub fn render_template_json(text: &str, result: &EvaluationResult) -> String {
     render_with(text, result, json_escape_value)
 }
@@ -220,7 +218,6 @@ fn render_with<F: Fn(String) -> String>(
 
 /// JSON-string-escape a substituted value: serialize it as a JSON string and
 /// drop the surrounding quotes.
-#[allow(dead_code)]
 fn json_escape_value(s: String) -> String {
     let quoted = serde_json::to_string(&s).unwrap_or_else(|_| "\"\"".to_string());
     quoted

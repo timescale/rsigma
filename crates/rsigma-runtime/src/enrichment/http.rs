@@ -81,7 +81,7 @@ impl HttpEnricherClient {
     }
     /// Access the inner client. Crate-private so external code goes
     /// through the wrapper.
-    fn inner(&self) -> &reqwest::Client {
+    pub(crate) fn inner(&self) -> &reqwest::Client {
         &self.0
     }
 }
