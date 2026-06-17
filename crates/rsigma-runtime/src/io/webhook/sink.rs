@@ -389,6 +389,28 @@ mod tests {
         assert!(sink.send(&result).await.is_ok());
     }
 
+    #[test]
+    fn slack_recipe_body_renders_to_pinned_json() {
+        // Pin the template-engine-plus-JSON-escaping contract for a realistic
+        // Slack-style body: the matched CommandLine carries embedded quotes
+        // that must be escaped so the rendered body stays valid JSON.
+        let body = r#"{"text":":rotating_light: ${detection.rule.title} (${detection.rule.level}) cmd=${detection.fields.CommandLine}"}"#;
+        let mut r = detection("Encoded PowerShell");
+        if let ResultBody::Detection(d) = &mut r.body {
+            d.matched_fields.push(rsigma_eval::result::FieldMatch::new(
+                "CommandLine",
+                serde_json::json!(r#"powershell -enc "AAA""#),
+            ));
+        }
+        let rendered = crate::enrichment::render_template_json(body, &r);
+        assert_eq!(
+            rendered,
+            r#"{"text":":rotating_light: Encoded PowerShell (high) cmd=powershell -enc \"AAA\""}"#,
+        );
+        // The escaped body must parse as JSON despite the embedded quotes.
+        let _: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+    }
+
     #[tokio::test]
     async fn token_bucket_waits_when_empty() {
         // 2 tokens per 100ms => one token refills in ~50ms.

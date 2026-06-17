@@ -90,8 +90,16 @@ impl DaemonProcess {
     /// Any panic during the handshake is caught by `ChildGuard`, which
     /// kills + waits on the daemon process so we never leak one.
     pub fn spawn(args: &[&str]) -> Self {
+        Self::spawn_with_env(args, &[])
+    }
+
+    /// Like [`DaemonProcess::spawn`] but also sets environment variables on the
+    /// daemon child. Used to exercise `${ENV_VAR}` template interpolation
+    /// (e.g. webhook header secrets) without mutating the test process env.
+    pub fn spawn_with_env(args: &[&str], env: &[(&str, &str)]) -> Self {
         let child = StdCommand::new(rsigma_bin())
             .args(args)
+            .envs(env.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -196,6 +204,27 @@ impl DaemonProcess {
         ];
         args.extend_from_slice(extra_args);
         Self::spawn(&args)
+    }
+
+    /// Like [`DaemonProcess::spawn_http_with_args`] but also sets environment
+    /// variables on the daemon child.
+    pub fn spawn_http_with_args_env(
+        rule_path: &str,
+        extra_args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Self {
+        let mut args = vec![
+            "engine",
+            "daemon",
+            "-r",
+            rule_path,
+            "--input",
+            "http",
+            "--api-addr",
+            "127.0.0.1:0",
+        ];
+        args.extend_from_slice(extra_args);
+        Self::spawn_with_env(&args, env)
     }
 
     pub fn url(&self, path: &str) -> String {
