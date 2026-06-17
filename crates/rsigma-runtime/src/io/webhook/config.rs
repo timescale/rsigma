@@ -13,7 +13,7 @@
 //!
 //! Core logic (template render, classification, rate limiting) lives in
 //! [`super::sink`]; the queue, retry/backoff, and DLQ routing are the shared
-//! [`crate::io::delivery`] layer, not re-implemented here.
+//! `crate::io::delivery` layer, not re-implemented here.
 
 use std::collections::HashMap;
 use std::path::Path;

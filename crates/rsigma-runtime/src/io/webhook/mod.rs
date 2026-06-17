@@ -7,7 +7,7 @@
 //! posts it over the shared egress-filtered HTTP client.
 //!
 //! The webhook is a leaf on the shared async delivery layer
-//! ([`crate::io::delivery`]): the dispatcher owns the bounded queue, the
+//! (`crate::io::delivery`): the dispatcher owns the bounded queue, the
 //! retry/backoff schedule, terminal-failure-to-DLQ routing, and drain on
 //! shutdown. [`WebhookSink`] owns only the webhook-specific request behavior
 //! (template render, retryable-vs-permanent classification, per-entry token

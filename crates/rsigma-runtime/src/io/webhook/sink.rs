@@ -1,6 +1,6 @@
 //! `WebhookSink`: render a templated HTTP request per result and classify the
 //! response. The queue, retry/backoff, and DLQ routing belong to the shared
-//! [`crate::io::delivery`] layer; this type owns only the webhook-specific
+//! `crate::io::delivery` layer; this type owns only the webhook-specific
 //! request behavior (render, rate limit, retryable-vs-permanent classification).
 
 use std::sync::Arc;
