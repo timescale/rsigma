@@ -217,4 +217,81 @@ mod tests {
         let empty: Vec<EvaluationResult> = Vec::new();
         sink.send(&empty).await.unwrap();
     }
+
+    #[tokio::test]
+    async fn http_export_gzip_sets_content_encoding() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .and(header("content-encoding", "gzip"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let endpoint = server.address().to_string();
+        let mut sink = OtlpSink::new(OtlpProtocol::Http, &endpoint, true).unwrap();
+        sink.send(&one_detection()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn grpc_export_reaches_the_collector() {
+        use std::time::Duration;
+
+        use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceResponse;
+
+        use crate::io::otlp::{LogsService, LogsServiceServer};
+
+        #[derive(Clone)]
+        struct Recording {
+            received: Arc<tokio::sync::Mutex<Vec<ExportLogsServiceRequest>>>,
+        }
+
+        #[tonic::async_trait]
+        impl LogsService for Recording {
+            async fn export(
+                &self,
+                request: tonic::Request<ExportLogsServiceRequest>,
+            ) -> Result<tonic::Response<ExportLogsServiceResponse>, tonic::Status> {
+                self.received.lock().await.push(request.into_inner());
+                Ok(tonic::Response::new(ExportLogsServiceResponse::default()))
+            }
+        }
+
+        // Reserve an ephemeral port, then let the tonic server bind it.
+        let addr = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            drop(listener);
+            addr
+        };
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let service = Recording {
+            received: received.clone(),
+        };
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(LogsServiceServer::new(service))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+
+        // Wait until the server is accepting connections before exporting.
+        for _ in 0..100 {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false).unwrap();
+        sink.send(&one_detection()).await.unwrap();
+
+        let got = received.lock().await;
+        assert_eq!(got.len(), 1, "collector should receive exactly one export");
+        let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(record.severity_text, "ERROR");
+        server.abort();
+    }
 }

@@ -654,4 +654,44 @@ mod tests {
         assert_eq!(severity_from_level(None), (0, ""));
         assert_eq!(severity_from_level(Some("bogus")), (0, ""));
     }
+
+    #[test]
+    fn correlation_result_lowers_to_otlp_log_record() {
+        use rsigma_eval::result::{CorrelationBody, ResultBody, RuleHeader};
+        use rsigma_parser::CorrelationType;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "SSH brute force".to_string(),
+                rule_id: Some("corr-1".to_string()),
+                level: Some(rsigma_parser::Level::Critical),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Correlation(CorrelationBody {
+                correlation_type: CorrelationType::EventCount,
+                group_key: vec![("SourceIP".to_string(), "203.0.113.4".to_string())],
+                aggregated_value: 73.0,
+                timespan_secs: 300,
+                events: None,
+                event_refs: None,
+            }),
+        };
+
+        let request = evaluation_results_to_logs_request(std::slice::from_ref(&result));
+        let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(record.severity_number, 21, "critical maps to FATAL(21)");
+        assert_eq!(record.severity_text, "FATAL");
+        let keys: Vec<&str> = record.attributes.iter().map(|kv| kv.key.as_str()).collect();
+        assert!(keys.contains(&"correlation_type"));
+        assert!(keys.contains(&"group_key"));
+        assert!(keys.contains(&"aggregated_value"));
+        assert!(
+            !keys.contains(&"matched_fields"),
+            "a correlation must not carry matched_fields",
+        );
+    }
 }
