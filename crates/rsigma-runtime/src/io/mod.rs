@@ -1,3 +1,4 @@
+mod delivery;
 mod file;
 #[cfg(feature = "nats")]
 pub mod nats_config;
@@ -10,6 +11,7 @@ pub mod otlp;
 mod stdin;
 mod stdout;
 
+pub use delivery::{DeliveryConfig, DeliveryFailure, DeliverySink, Dispatcher, OnFull};
 pub use file::FileSink;
 #[cfg(feature = "nats")]
 pub use nats_config::NatsConnectConfig;
@@ -182,14 +184,26 @@ impl Sink {
         })
     }
 
-    /// Short label for the sink variant, used in structured logs.
-    fn kind_label(&self) -> &'static str {
+    /// Short label for the sink variant, used in structured logs and per-sink
+    /// delivery metrics.
+    pub(crate) fn kind_label(&self) -> &'static str {
         match self {
             Sink::Stdout(_) => "stdout",
             Sink::File(_) => "file",
             #[cfg(feature = "nats")]
             Sink::Nats(_) => "nats",
             Sink::FanOut(_) => "fanout",
+        }
+    }
+
+    /// Flatten a (possibly nested) `FanOut` into its leaf sinks.
+    ///
+    /// The delivery layer runs one worker per leaf, so fan-out is realized by
+    /// the dispatcher rather than by a `FanOut` variant on the hot path.
+    pub fn into_leaves(self) -> Vec<Sink> {
+        match self {
+            Sink::FanOut(sinks) => sinks.into_iter().flat_map(Sink::into_leaves).collect(),
+            leaf => vec![leaf],
         }
     }
 }

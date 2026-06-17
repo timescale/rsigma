@@ -68,6 +68,21 @@ pub trait MetricsHook: Send + Sync {
     /// `HttpEnricher` instance so the cache counters are visible on
     /// `/metrics` from startup, even before any cache event fires.
     fn register_http_enricher_cache(&self, _enricher_id: &str) {}
+
+    /// Pre-register a sink's `sink` label so its delivery metrics appear on
+    /// `/metrics` from startup, before the first event flows. `sink` is the
+    /// sink's kind label (`stdout` / `file` / `nats` / ...).
+    fn register_sink(&self, _sink: &str) {}
+    /// A sink's bounded delivery queue changed by `delta` (positive = enqueue,
+    /// negative = dequeue into the worker).
+    fn on_sink_queue_depth_change(&self, _sink: &str, _delta: i64) {}
+    /// A sink retried a delivery after a retryable failure.
+    fn on_sink_retry(&self, _sink: &str) {}
+    /// A result was dropped because a lossy sink's queue was full
+    /// (`on_full=drop`).
+    fn on_sink_dropped(&self, _sink: &str) {}
+    /// A sink exhausted its retries and routed the result to the DLQ.
+    fn on_sink_delivery_failed(&self, _sink: &str) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).
