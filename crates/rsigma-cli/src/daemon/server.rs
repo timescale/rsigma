@@ -12,8 +12,9 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, MatchDetailLevel, Pipeline, ProcessResult};
 use rsigma_runtime::{
-    AckToken, EnrichmentPipeline, FieldObserver, FileSink, InputFormat, LogProcessor, MetricsHook,
-    RawEvent, RuntimeEngine, Sink, StdinSource, StdoutSink, spawn_source,
+    AckToken, DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver,
+    FileSink, InputFormat, LogProcessor, MetricsHook, RawEvent, RuntimeEngine, Sink, StdinSource,
+    StdoutSink, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -713,7 +714,7 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     // --- Streaming pipeline: source -> engine -> sink -> ack ---
     let (sink_tx, mut sink_rx) = mpsc::channel::<(ProcessResult, Vec<AckToken>)>(buffer_size);
-    let (ack_tx, mut ack_rx) = mpsc::channel::<AckToken>(buffer_size);
+    let (ack_tx, mut ack_rx) = mpsc::unbounded_channel::<AckToken>();
 
     // Select source based on --input flag
     #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
@@ -893,7 +894,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             {
                                 tracing::warn!("DLQ channel closed, parse-error event dropped");
                             }
-                            if engine_ack_tx.send(raw_event.ack_token).await.is_err() {
+                            if engine_ack_tx.send(raw_event.ack_token).is_err() {
                                 return true;
                             }
                             continue;
@@ -923,10 +924,10 @@ pub async fn run_daemon(config: DaemonConfig) {
 
                     for (result, ack_token) in results.into_iter().zip(valid_tokens) {
                         if result.is_empty() {
-                            if engine_ack_tx.send(ack_token).await.is_err() {
-                                tracing::debug!("Ack channel closed, engine shutting down");
-                                return true;
-                            }
+                        if engine_ack_tx.send(ack_token).is_err() {
+                            tracing::debug!("Ack channel closed, engine shutting down");
+                            return true;
+                        }
                             continue;
                         }
                         engine_metrics.on_output_queue_depth_change(1);
@@ -951,45 +952,64 @@ pub async fn run_daemon(config: DaemonConfig) {
         tracing::info!("Event source exhausted, engine shutting down");
     });
 
-    // Build sink(s) from --output flags
+    // Build leaf sinks from --output flags. The dispatcher runs one worker per
+    // leaf, so fan-out is realized by the dispatcher rather than a FanOut sink.
     let pretty = config.pretty;
     let output_specs = if config.output.is_empty() {
         vec!["stdout".to_string()]
     } else {
         config.output.clone()
     };
-    let mut sinks = Vec::new();
+    let mut leaves: Vec<Sink> = Vec::new();
     for spec in &output_specs {
-        sinks.push(build_sink(spec, pretty, &config).await);
+        leaves.extend(build_sink(spec, pretty, &config).await.into_leaves());
     }
-    let sink = if sinks.len() == 1 {
-        sinks.pop().unwrap()
-    } else {
-        Sink::FanOut(sinks)
-    };
-    tracing::info!(output = ?output_specs, "Sink started");
+    tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
 
-    // Sink task: reads (ProcessResult, Vec<AckToken>) from channel, runs
-    // any configured post-evaluation enrichment, writes via Sink dispatch,
-    // then forwards ack tokens to the ack task. On sink failure with DLQ
-    // enabled, routes the failed result to the DLQ.
+    // Bridge the delivery layer's terminal failures into the existing DLQ
+    // writer so failed deliveries land alongside parse errors.
+    let (df_tx, mut df_rx) = mpsc::channel::<DeliveryFailure>(buffer_size);
+    let df_handle = tokio::spawn(async move {
+        while let Some(failure) = df_rx.recv().await {
+            let _ = dlq_tx
+                .send(DlqEntry {
+                    original_event: failure.serialized,
+                    error: failure.error,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                })
+                .await;
+        }
+    });
+
+    // Sink task: drains the engine->sink channel, runs post-evaluation
+    // enrichment, then dispatches each result to the per-sink workers. The
+    // dispatcher's ack-join releases ack tokens only once every sink has
+    // committed the result (delivered or DLQ-parked), preserving at-least-once
+    // across fan-out. On shutdown it drains the worker queues.
     let sink_metrics = metrics.clone();
-    let sink_dlq_tx = dlq_tx;
     let enrichment_swap_for_sink = enrichment_swap.clone();
+    let delivery_metrics = metrics.clone() as Arc<dyn MetricsHook>;
+    let dispatch_ack_tx = ack_tx.clone();
+    let empty_ack_tx = ack_tx.clone();
+    drop(ack_tx);
+    let delivery_config = DeliveryConfig {
+        queue_depth: buffer_size,
+        ..Default::default()
+    };
     let sink_handle = tokio::spawn(async move {
-        let mut sink = sink;
+        let dispatcher = Dispatcher::spawn(
+            leaves,
+            delivery_config,
+            Some(df_tx),
+            dispatch_ack_tx,
+            delivery_metrics,
+        );
         while let Some((mut result, ack_tokens)) = sink_rx.recv().await {
             sink_metrics.on_output_queue_depth_change(-1);
 
-            // Post-evaluation enrichment: one loop over the flat
-            // `Vec<EvaluationResult>`. The pipeline filters per-result by
-            // declared `kind` against the `body` variant and may
-            // suppress entries via `on_error: drop`. If every entry is
-            // dropped, skip sink delivery but still ack the events.
-            //
-            // We `load_full` so the pipeline's lifetime extends across
-            // the await without holding an `ArcSwap` guard; the
-            // reload path swaps in a new value without blocking.
+            // Post-evaluation enrichment may suppress every entry; if so, ack
+            // the events and skip sink delivery. `load_full` keeps the pipeline
+            // alive across the await without holding an `ArcSwap` guard.
             let pipeline_snapshot = enrichment_swap_for_sink.load_full();
             if let Some(pipeline) = pipeline_snapshot.as_ref()
                 && !pipeline.is_empty()
@@ -997,33 +1017,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 pipeline.run(&mut result).await;
                 if result.is_empty() {
                     for token in ack_tokens {
-                        if ack_tx.send(token).await.is_err() {
-                            tracing::debug!("Ack channel closed");
-                            return;
-                        }
+                        let _ = empty_ack_tx.send(token);
                     }
                     continue;
                 }
             }
 
-            if let Err(e) = sink.send(&result).await {
-                tracing::warn!(error = %e, "Error writing to sink");
-                let serialized = serde_json::to_string(&result).unwrap_or_default();
-                let _ = sink_dlq_tx
-                    .send(DlqEntry {
-                        original_event: serialized,
-                        error: format!("sink delivery failure: {e}"),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    })
-                    .await;
-            }
-            for token in ack_tokens {
-                if ack_tx.send(token).await.is_err() {
-                    tracing::debug!("Ack channel closed");
-                    return;
-                }
-            }
+            dispatcher.dispatch(result, ack_tokens).await;
         }
+        dispatcher.shutdown().await;
     });
 
     // DLQ writer task: writes DLQ entries to the configured DLQ sink.
@@ -1147,6 +1149,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         let drain = async {
             let _ = sink_handle.await;
             tracing::debug!("Sink task finished");
+            let _ = df_handle.await;
+            tracing::debug!("DLQ bridge finished");
             let _ = dlq_handle.await;
             tracing::debug!("DLQ task finished");
             let _ = ack_handle.await;
@@ -1161,6 +1165,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     } else {
         let _ = sink_handle.await;
         tracing::debug!("Sink task finished");
+        let _ = df_handle.await;
+        tracing::debug!("DLQ bridge finished");
         let _ = dlq_handle.await;
         tracing::debug!("DLQ task finished");
         let _ = ack_handle.await;

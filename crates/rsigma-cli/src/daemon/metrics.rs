@@ -1,6 +1,6 @@
 use prometheus::{
-    Gauge, GaugeVec, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
-    TextEncoder,
+    Gauge, GaugeVec, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
+    Opts, Registry, TextEncoder,
 };
 use rsigma_runtime::MetricsHook;
 
@@ -24,6 +24,10 @@ pub struct Metrics {
     pub pipeline_latency: Histogram,
     pub batch_size_histogram: Histogram,
     pub dlq_events: IntCounter,
+    pub sink_queue_depth: IntGaugeVec,
+    pub sink_retries_total: IntCounterVec,
+    pub sink_dropped_total: IntCounterVec,
+    pub sink_delivery_failures_total: IntCounterVec,
     pub detection_matches_by_rule: IntCounterVec,
     pub correlation_matches_by_rule: IntCounterVec,
     pub source_resolves_total: IntCounterVec,
@@ -153,6 +157,38 @@ impl Metrics {
             "Events routed to dead-letter queue",
         ))
         .unwrap();
+        let sink_queue_depth = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_sink_queue_depth",
+                "Results buffered in each sink's delivery queue",
+            ),
+            &["sink"],
+        )
+        .unwrap();
+        let sink_retries_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_sink_retries_total",
+                "Sink delivery retries after a retryable failure",
+            ),
+            &["sink"],
+        )
+        .unwrap();
+        let sink_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_sink_dropped_total",
+                "Results dropped because a lossy sink's queue was full",
+            ),
+            &["sink"],
+        )
+        .unwrap();
+        let sink_delivery_failures_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_sink_delivery_failures_total",
+                "Sink deliveries that exhausted retries and were routed to the DLQ",
+            ),
+            &["sink"],
+        )
+        .unwrap();
         let detection_matches_by_rule = IntCounterVec::new(
             Opts::new(
                 "rsigma_detection_matches_by_rule_total",
@@ -213,6 +249,18 @@ impl Metrics {
             .register(Box::new(batch_size_histogram.clone()))
             .unwrap();
         registry.register(Box::new(dlq_events.clone())).unwrap();
+        registry
+            .register(Box::new(sink_queue_depth.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(sink_retries_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(sink_dropped_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(sink_delivery_failures_total.clone()))
+            .unwrap();
         registry
             .register(Box::new(detection_matches_by_rule.clone()))
             .unwrap();
@@ -438,6 +486,10 @@ impl Metrics {
             pipeline_latency,
             batch_size_histogram,
             dlq_events,
+            sink_queue_depth,
+            sink_retries_total,
+            sink_dropped_total,
+            sink_delivery_failures_total,
             detection_matches_by_rule,
             correlation_matches_by_rule,
             source_resolves_total,
@@ -643,6 +695,38 @@ impl MetricsHook for Metrics {
         self.enrichment_http_cache_expirations_total
             .with_label_values(&[enricher_id])
             .inc_by(0);
+    }
+
+    fn register_sink(&self, sink: &str) {
+        self.sink_queue_depth.with_label_values(&[sink]).set(0);
+        self.sink_retries_total.with_label_values(&[sink]).inc_by(0);
+        self.sink_dropped_total.with_label_values(&[sink]).inc_by(0);
+        self.sink_delivery_failures_total
+            .with_label_values(&[sink])
+            .inc_by(0);
+    }
+
+    fn on_sink_queue_depth_change(&self, sink: &str, delta: i64) {
+        let gauge = self.sink_queue_depth.with_label_values(&[sink]);
+        if delta > 0 {
+            gauge.add(delta);
+        } else {
+            gauge.sub(-delta);
+        }
+    }
+
+    fn on_sink_retry(&self, sink: &str) {
+        self.sink_retries_total.with_label_values(&[sink]).inc();
+    }
+
+    fn on_sink_dropped(&self, sink: &str) {
+        self.sink_dropped_total.with_label_values(&[sink]).inc();
+    }
+
+    fn on_sink_delivery_failed(&self, sink: &str) {
+        self.sink_delivery_failures_total
+            .with_label_values(&[sink])
+            .inc();
     }
 }
 
