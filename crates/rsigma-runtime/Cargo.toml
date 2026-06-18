@@ -50,7 +50,7 @@ tokio-stream = { version = "0.1", optional = true }
 async-nats = { version = "0.49", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
-evtx = { version = "0.11", optional = true, default-features = false }
+evtx = { version = "0.12", optional = true, default-features = false }
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }
 prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
