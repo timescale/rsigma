@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `engine tap`: record the live event stream to a replayable fixture
+### `engine tap`: record the live event stream to a replayable fixture (#238)
 
 A new `rsigma engine tap` subcommand (and the `GET /api/v1/tap` endpoint behind it) records a bounded window of a running daemon's live event stream as an NDJSON fixture, closing the "reproduce a missed detection locally" loop: capture what the daemon is actually seeing, optionally redact sensitive fields, then replay it against candidate rules with `engine eval -e @fixture.ndjson`.
 
