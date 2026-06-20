@@ -147,6 +147,9 @@ rsigma engine daemon -r rules/ -p ecs.yml --api-addr 0.0.0.0:9090
 # Accept events via HTTP POST
 rsigma engine daemon -r rules/ --input http
 
+# Check a running daemon's status (rules loaded, events processed, uptime)
+rsigma engine status
+
 # Convert rules to PostgreSQL SQL
 rsigma backend convert rules/ -t postgres
 ```

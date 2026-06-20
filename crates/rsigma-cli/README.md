@@ -486,6 +486,26 @@ The `tracing` spans installed on hot paths (batch processing, source resolution,
 
 **Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. To build without daemon dependencies: `cargo build --no-default-features`.
 
+### `engine status`: Query a running daemon
+
+Fetch a running daemon's `/api/v1/status` snapshot (rules loaded, events processed, detections and correlations fired, correlation state entries, uptime, and the dynamic-source summary when configured) and render it through the shared output layer instead of reaching for `curl`.
+
+```bash
+# Default address (daemon.api.addr from the resolved config)
+rsigma engine status
+
+# A specific daemon, width-aligned table view
+rsigma engine status --addr 10.0.0.5:9090 --output-format table
+
+# A TLS deployment
+rsigma engine status --addr https://daemon.internal:9443
+
+# Machine-readable, for a script
+rsigma engine status --output-format json | jq '.events_processed'
+```
+
+`--addr` takes a `host:port` or full URL and defaults to `daemon.api.addr`; wildcard binds map to loopback. The command uses the synchronous `ureq` client, so it builds and runs without the `daemon` feature, and exits `3` when the daemon is unreachable or returns an error. It shares the `--addr` convention with `config reload`.
+
 ### `engine eval`: Evaluate events against rules
 
 Evaluate JSON events against Sigma detection and correlation rules.

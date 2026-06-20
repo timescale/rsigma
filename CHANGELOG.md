@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `engine status`: query a running daemon from the command line
+
+A new `rsigma engine status` subcommand fetches a running daemon's `/api/v1/status` snapshot and renders it through the shared output layer, so checking a daemon no longer requires `curl`.
+
+- **Address resolution.** `--addr` takes a `host:port` or full URL and defaults to `daemon.api.addr` from the resolved config; wildcard binds (`0.0.0.0`, `[::]`) map to loopback, and `https://` URLs work for TLS deployments. It shares this convention with `config reload`.
+- **Output.** Rendered through the global `--output-format` layer: a TTY-aware default (pretty `json` on a terminal, `ndjson` when piped) plus a `METRIC | VALUE` `table` view and `csv`/`tsv`. The snapshot covers rules loaded, events processed, detections and correlations fired, correlation state entries, uptime, and the dynamic-source summary when configured.
+- **No daemon feature required.** The command uses the synchronous `ureq` client, so a build without the `daemon` feature can still inspect a remote daemon. It exits `3` when the daemon is unreachable or returns an error.
+
 ### Webhook output sink: deliver detections to Slack, Teams, Discord, PagerDuty, or any HTTP endpoint (#227)
 
 A generic, template-driven webhook sink turns a detection or correlation into a templated HTTP request. It is one configurable sink rather than a set of bespoke integrations: Slack, Microsoft Teams, Discord, and PagerDuty ship as field-parametric YAML recipes in the [webhooks guide](https://timescale.github.io/rsigma/guide/webhooks/), while the engine stays service-agnostic.
