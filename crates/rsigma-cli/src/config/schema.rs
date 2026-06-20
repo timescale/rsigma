@@ -123,6 +123,9 @@ pub(crate) struct DaemonPartial {
     /// Non-secret NATS knobs. Ignored unless built with `daemon-nats`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nats: Option<NatsPartial>,
+    /// Live event-tap limits (`GET /api/v1/tap`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tap: Option<TapPartial>,
 }
 
 impl Merge for DaemonPartial {
@@ -139,6 +142,7 @@ impl Merge for DaemonPartial {
             state: merge_opt(self.state, over.state),
             engine: merge_opt(self.engine, over.engine),
             nats: merge_opt(self.nats, over.nats),
+            tap: merge_opt(self.tap, over.tap),
         }
     }
 }
@@ -415,6 +419,40 @@ impl Merge for NatsPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             consumer_group: over.consumer_group.or(self.consumer_group),
+        }
+    }
+}
+
+/// Live event-tap limits. The only flag is `--disable-tap`; the tuning keys
+/// are config-file-only to keep the daemon flag surface minimal.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct TapPartial {
+    /// Whether the `GET /api/v1/tap` endpoint accepts sessions (default
+    /// false; the tap is opt-in because it exfiltrates raw events).
+    /// `--disable-tap` forces this off regardless of the config value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Per-session bounded channel capacity. A full channel drops events
+    /// (counted) rather than applying backpressure to the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffer_events: Option<usize>,
+    /// Maximum number of concurrent capture sessions (a new session over the
+    /// cap is rejected with `409`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_sessions: Option<usize>,
+    /// Largest capture window (humantime, e.g. `5m`); a longer `duration`
+    /// query param is rejected with `400`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_duration: Option<String>,
+}
+
+impl Merge for TapPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            buffer_events: over.buffer_events.or(self.buffer_events),
+            max_sessions: over.max_sessions.or(self.max_sessions),
+            max_duration: over.max_duration.or(self.max_duration),
         }
     }
 }

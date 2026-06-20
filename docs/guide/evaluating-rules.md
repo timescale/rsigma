@@ -39,6 +39,8 @@ The `@` prefix tells RSigma to read from a file instead of treating the argument
 - Parse errors on individual lines are written to stderr but do not abort the run.
 - A summary `Processed N events, M matches.` is written to stderr at the end.
 
+To produce such a fixture from real traffic, record a window of a running daemon's live event stream with [`rsigma engine tap`](../cli/engine/tap.md) (optionally redacting sensitive fields), then replay it here. This is the "reproduce a missed detection locally" loop: `rsigma engine tap -o fixture.ndjson` then `rsigma engine eval -r candidate-rules/ -e @fixture.ndjson`.
+
 ### EVTX (Windows Event Log) files
 
 ```bash

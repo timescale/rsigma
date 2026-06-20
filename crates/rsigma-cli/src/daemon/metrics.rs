@@ -56,6 +56,10 @@ pub struct Metrics {
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
+    pub tap_sessions_total: IntCounter,
+    pub tap_active_sessions: IntGauge,
+    pub tap_events_streamed_total: IntCounter,
+    pub tap_events_dropped_total: IntCounter,
 }
 
 impl Metrics {
@@ -494,6 +498,39 @@ impl Metrics {
             .register(Box::new(fields_observer_overflow_dropped_total.clone()))
             .unwrap();
 
+        let tap_sessions_total = IntCounter::with_opts(Opts::new(
+            "rsigma_tap_sessions_total",
+            "Total live event-tap sessions opened (GET /api/v1/tap)",
+        ))
+        .unwrap();
+        let tap_active_sessions = IntGauge::with_opts(Opts::new(
+            "rsigma_tap_active_sessions",
+            "Currently active live event-tap sessions",
+        ))
+        .unwrap();
+        let tap_events_streamed_total = IntCounter::with_opts(Opts::new(
+            "rsigma_tap_events_streamed_total",
+            "Events streamed to live event-tap clients",
+        ))
+        .unwrap();
+        let tap_events_dropped_total = IntCounter::with_opts(Opts::new(
+            "rsigma_tap_events_dropped_total",
+            "Events dropped from a live event-tap (full session buffer or unparseable redacted raw line)",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(tap_sessions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tap_active_sessions.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tap_events_streamed_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tap_events_dropped_total.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -545,6 +582,10 @@ impl Metrics {
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
+            tap_sessions_total,
+            tap_active_sessions,
+            tap_events_streamed_total,
+            tap_events_dropped_total,
         }
     }
 

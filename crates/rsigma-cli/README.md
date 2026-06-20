@@ -384,6 +384,7 @@ rsigma engine daemon \
 | `/api/v1/fields/unknown` | GET | Event fields no rule references, sorted by descending count. Requires `--observe-fields`. Paginated |
 | `/api/v1/fields/missing` | GET | Rule fields never observed in events, with sample rule titles. Requires `--observe-fields`. Paginated |
 | `/api/v1/fields/observer` | DELETE | Clear the observer's counters and return `{previous_keys, previous_events}`. Requires `--observe-fields` |
+| `/api/v1/tap` | GET | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON (`?duration=&limit=&stage=&redact=`). Disabled by default (enable with `daemon.tap.enabled: true`); returns 503 when disabled, 409 at the session cap, 400 over `daemon.tap.max_duration` |
 | `/v1/logs` | POST | OTLP log ingestion (`application/x-protobuf` or `application/json`, gzip supported). Requires `daemon-otlp` feature |
 
 **OTLP log ingestion** (requires `daemon-otlp` feature):
@@ -505,6 +506,30 @@ rsigma engine status --output-format json | jq '.events_processed'
 ```
 
 `--addr` takes a `host:port` or full URL and defaults to `daemon.api.addr`; wildcard binds map to loopback. The command uses the synchronous `ureq` client, so it builds and runs without the `daemon` feature, and exits `3` when the daemon is unreachable or returns an error. It shares the `--addr` convention with `config reload`.
+
+### `engine tap`: Record the live event stream
+
+Stream a bounded, optionally-redacted window of a running daemon's live events (`GET /api/v1/tap`) into a replayable NDJSON fixture. This closes the "reproduce a missed detection locally" loop: capture what the daemon is actually seeing, then replay it against candidate rules with `engine eval`.
+
+```bash
+# Capture 30 seconds to a fixture
+rsigma engine tap --duration 30s -o fixture.ndjson
+
+# Redact sensitive fields server-side (raw values never leave the daemon)
+rsigma engine tap --duration 1m --redact-fields user.email,src_ip -o fixture.ndjson
+
+# Stop after a fixed number of events
+rsigma engine tap --limit 1000 -o sample.ndjson
+
+# Capture the raw input line (pre-parse) instead of the decoded event
+rsigma engine tap --stage raw --duration 10s -o raw.ndjson
+
+# Reproduce a missed detection locally
+rsigma engine tap --duration 1m -o fixture.ndjson
+rsigma engine eval -r candidate-rules/ -e @fixture.ndjson
+```
+
+The capture is lossy by design and can never apply backpressure to detection: a full per-session buffer drops events (counted in a trailing summary record). Redaction is server-side and deterministic (per-session salted hashing), so equal values still match across the fixture while raw values never cross the wire. The tap exfiltrates raw events, so it is **disabled by default**: enable it with `daemon.tap.enabled: true` and expose the admin API only behind mTLS (`--disable-tap` force-overrides an enabling config to off). Like `engine status`, it uses the synchronous `ureq` client and shares the `--addr` convention.
 
 ### `engine eval`: Evaluate events against rules
 

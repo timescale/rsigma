@@ -150,6 +150,10 @@ rsigma engine daemon -r rules/ --input http
 # Check a running daemon's status (rules loaded, events processed, uptime)
 rsigma engine status
 
+# Record 30s of a running daemon's live events to a replayable fixture
+# (opt-in: start the daemon with daemon.tap.enabled: true)
+rsigma engine tap --duration 30s --redact-fields user.email,src_ip -o fixture.ndjson
+
 # Convert rules to PostgreSQL SQL
 rsigma backend convert rules/ -t postgres
 ```

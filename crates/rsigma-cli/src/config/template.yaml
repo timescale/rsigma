@@ -141,6 +141,22 @@ daemon:
     # permissive = allow every resolved address (only for tightly controlled environments).
     egress_policy: default
 
+  # Live event tap (GET /api/v1/tap). Records a bounded window of the live
+  # event stream as a replayable NDJSON fixture. Opt-in: disabled by default
+  # because it can exfiltrate raw event traffic. Enable it only behind mTLS.
+  # The tuning keys below are config-file-only; --disable-tap force-overrides
+  # `enabled` to off.
+  tap:
+    # Accept tap sessions. Disabled by default; set true to enable.
+    enabled: false
+    # Per-session bounded buffer; a full buffer drops events (counted)
+    # rather than ever applying backpressure to the engine.
+    buffer_events: 8192
+    # Maximum concurrent capture sessions (a session over the cap gets 409).
+    max_sessions: 2
+    # Largest accepted capture window (a longer ?duration gets 400).
+    max_duration: 5m
+
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.
   # nats:

@@ -173,6 +173,25 @@ The auth methods are mutually exclusive. See [NATS Streaming](../../guide/nats-s
 
 See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow, and [HTTP API](../../reference/http-api.md#field-observability) for the endpoint payloads.
 
+### Live event tap
+
+The daemon serves [`GET /api/v1/tap`](../../reference/http-api.md#live-event-tap) (the endpoint behind [`rsigma engine tap`](tap.md)), which records a bounded window of the live event stream as a replayable NDJSON fixture. It is **disabled by default** because it can exfiltrate raw event traffic; enable it with `daemon.tap.enabled: true` and expose it only behind mTLS.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--disable-tap` | off | Force the tap off even when `daemon.tap.enabled: true`; `GET /api/v1/tap` then returns `503`. Useful for a hardened host that shares an enabling config. |
+
+The other keys are config-file-only under `daemon.tap` (there is no flag for them):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.tap.enabled` | `false` | Accept tap sessions. Opt-in; `--disable-tap` force-overrides to off. |
+| `daemon.tap.buffer_events` | `8192` | Per-session bounded buffer. A full buffer drops events (counted) rather than ever applying backpressure to the engine. |
+| `daemon.tap.max_sessions` | `2` | Maximum concurrent capture sessions. A session over the cap is rejected with `409`. |
+| `daemon.tap.max_duration` | `5m` | Largest accepted capture window. A longer `?duration` is rejected with `400`. |
+
+The tap can exfiltrate raw events; expose the admin API only behind mTLS and redact sensitive fields. See [Security: live event tap](../../reference/security.md#live-event-tap).
+
 ## Examples
 
 ### Minimal daemon: stdin → stdout

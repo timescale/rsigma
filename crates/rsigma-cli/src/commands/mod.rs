@@ -16,6 +16,7 @@ mod parse;
 #[cfg(feature = "daemon")]
 mod resolve;
 mod status;
+mod tap;
 mod validate;
 
 pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
@@ -35,4 +36,5 @@ pub(crate) use parse::{ConditionArgs, ParseArgs, StdinArgs, cmd_condition, cmd_p
 #[cfg(feature = "daemon")]
 pub(crate) use resolve::{ResolveArgs, cmd_resolve};
 pub(crate) use status::{StatusArgs, cmd_status};
+pub(crate) use tap::{TapArgs, cmd_tap};
 pub(crate) use validate::{ValidateArgs, cmd_validate};

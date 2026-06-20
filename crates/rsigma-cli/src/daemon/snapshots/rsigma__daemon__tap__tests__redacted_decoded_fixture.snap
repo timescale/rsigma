@@ -1,0 +1,6 @@
+---
+source: crates/rsigma-cli/src/daemon/tap.rs
+expression: golden
+---
+{"CommandLine":"whoami","src_ip":"rsigma:redacted:cfea2addbf5c8284","user":{"email":"rsigma:redacted:509efebfb0e7ac1e"}}
+{"rsigma_tap_summary":{"captured":1,"dropped":0,"duration_ms":0,"stage":"decoded"}}

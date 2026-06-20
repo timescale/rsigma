@@ -36,6 +36,21 @@ use super::reload;
 use super::store::{SourcePosition, SqliteStateStore};
 use crate::EventFilter;
 
+/// Effective live event-tap limits, resolved from `daemon.tap.*` plus the
+/// `--disable-tap` flag.
+#[derive(Debug, Clone, Copy)]
+pub struct TapSettings {
+    /// Whether the tap accepts sessions. `false` makes `GET /api/v1/tap`
+    /// return `503`.
+    pub enabled: bool,
+    /// Per-session bounded channel capacity.
+    pub buffer_events: usize,
+    /// Maximum concurrent capture sessions.
+    pub max_sessions: usize,
+    /// Largest accepted capture window.
+    pub max_duration: std::time::Duration,
+}
+
 /// Controls whether correlation state is restored from SQLite on startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateRestoreMode {
@@ -71,6 +86,9 @@ struct AppState {
     /// `--observe-fields`; the engine task records observed field keys
     /// and the `/api/v1/fields/*` handlers (Phase 4) consume snapshots.
     field_observer: Option<Arc<FieldObserver>>,
+    /// Live event-tap state. `Some` when the tap is enabled; the
+    /// `GET /api/v1/tap` handler registers capture sessions on it.
+    tap: Option<super::tap::TapState>,
 }
 
 #[derive(Clone)]
@@ -141,6 +159,8 @@ pub struct DaemonConfig {
     /// pipeline-embedded `sources:` blocks. Collision-checked at
     /// construction time.
     pub source_registry: rsigma_runtime::sources::registry::DaemonSourceRegistry,
+    /// Effective live event-tap limits (`daemon.tap.*` + `--disable-tap`).
+    pub tap: TapSettings,
     /// Optional server-side TLS state. `Some` when the operator passed
     /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
     /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
@@ -440,6 +460,24 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    let tap = if config.tap.enabled {
+        let registry = rsigma_runtime::TapRegistry::new(
+            config.tap.buffer_events,
+            config.tap.max_sessions,
+            config.tap.max_duration,
+        );
+        processor.set_event_tap(Some(registry.clone()));
+        tracing::info!(
+            buffer_events = config.tap.buffer_events,
+            max_sessions = config.tap.max_sessions,
+            max_duration_secs = config.tap.max_duration.as_secs(),
+            "Live event tap enabled (GET /api/v1/tap)"
+        );
+        Some(super::tap::TapState::new(registry, metrics.clone()))
+    } else {
+        None
+    };
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -453,6 +491,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         otlp_event_tx,
         source_registry: Arc::new(config.source_registry.clone()),
         field_observer: field_observer.clone(),
+        tap: tap.clone(),
     };
 
     let app = Router::new()
@@ -476,7 +515,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/fields", get(fields_full))
         .route("/api/v1/fields/unknown", get(fields_unknown))
         .route("/api/v1/fields/missing", get(fields_missing))
-        .route("/api/v1/fields/observer", delete(fields_observer_reset));
+        .route("/api/v1/fields/observer", delete(fields_observer_reset))
+        .route("/api/v1/tap", get(tap_stream));
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
@@ -1998,6 +2038,50 @@ async fn fields_observer_reset(State(state): State<AppState>) -> Response {
         })),
     )
         .into_response()
+}
+
+/// Stream a bounded, optionally-redacted window of the live event stream as
+/// chunked NDJSON (`GET /api/v1/tap`). The capture ends at `duration` or
+/// `limit`, whichever comes first, and a final summary record reports the
+/// captured / dropped counts so consumers can detect gaps.
+async fn tap_stream(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<super::tap::TapQuery>,
+) -> Response {
+    let Some(tap) = state.tap.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "event tap disabled",
+                "hint": "restart the daemon without --disable-tap (and with daemon.tap.enabled not false) to enable GET /api/v1/tap",
+            })),
+        )
+            .into_response();
+    };
+
+    let params = match super::tap::parse_params(&query, tap.registry.max_duration()) {
+        Ok(params) => params,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    let Some(handle) = tap.registry.register(params.stage) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "tap session capacity reached",
+                "hint": "wait for an active tap to finish, or raise daemon.tap.max_sessions",
+            })),
+        )
+            .into_response();
+    };
+
+    super::tap::stream_response(handle, params, tap.metrics.clone())
 }
 
 /// Accept events via HTTP POST for processing.

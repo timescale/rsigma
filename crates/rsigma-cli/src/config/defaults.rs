@@ -7,7 +7,7 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial,
+    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -30,6 +30,13 @@ pub(crate) const MAX_STATE_ENTRIES: usize = 100_000;
 pub(crate) const TIMESTAMP_FALLBACK: &str = "wallclock";
 pub(crate) const STATE_SAVE_INTERVAL: u64 = 30;
 pub(crate) const OBSERVE_FIELDS_MAX_KEYS: usize = 10_000;
+/// Live event-tap defaults (`daemon.tap.*`). The tap is opt-in: it exfiltrates
+/// raw event traffic, so it ships disabled and is enabled with
+/// `daemon.tap.enabled: true` (`--disable-tap` force-overrides to off).
+pub(crate) const TAP_ENABLED: bool = false;
+pub(crate) const TAP_BUFFER_EVENTS: usize = 8_192;
+pub(crate) const TAP_MAX_SESSIONS: usize = 2;
+pub(crate) const TAP_MAX_DURATION: &str = "5m";
 pub(crate) const STDOUT_SINK: &str = "stdout";
 /// Async delivery-layer tuning shared by every sink. `queue_depth` is not a
 /// separate key; it follows `buffer_size`.
@@ -122,6 +129,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 egress_policy: Some(EGRESS_POLICY.to_string()),
             }),
             nats: None,
+            tap: Some(TapPartial {
+                enabled: Some(TAP_ENABLED),
+                buffer_events: Some(TAP_BUFFER_EVENTS),
+                max_sessions: Some(TAP_MAX_SESSIONS),
+                max_duration: Some(TAP_MAX_DURATION.to_string()),
+            }),
         }),
         eval: Some(EvalPartial {
             rules: None,

@@ -2,4 +2,5 @@ title: engine
 nav:
   - eval: eval.md
   - status: status.md
+  - tap: tap.md
   - daemon: daemon.md

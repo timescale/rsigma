@@ -5,6 +5,7 @@ mod metrics;
 mod reload;
 pub(crate) mod server;
 mod store;
+pub(crate) mod tap;
 #[cfg(feature = "daemon-tls")]
 pub(crate) mod tls;
 pub(crate) mod webhook;

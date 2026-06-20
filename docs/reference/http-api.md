@@ -23,6 +23,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/fields/unknown` | GET | none | Fields seen in events that no rule references. Requires `--observe-fields`. |
 | `/api/v1/fields/missing` | GET | none | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
 | `/api/v1/fields/observer` | DELETE | none | Reset the field observer's counters. Requires `--observe-fields`. |
+| `/api/v1/tap` | GET | none | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
 | `/v1/logs` | POST | none | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
 | OTLP/gRPC `LogsService/Export` | gRPC | none | OTLP over gRPC on the same `--api-addr`. Requires `daemon-otlp`. |
 
@@ -346,6 +347,46 @@ curl -sS -X DELETE http://127.0.0.1:9090/api/v1/fields/observer
 ```
 
 A `DELETE` does not affect rule loading or any other daemon state. Use it after a rule reload to start a clean coverage window against the updated rule set.
+
+## Live event tap
+
+### `GET /api/v1/tap`
+
+Stream a bounded window of the live event stream as chunked NDJSON, one event per line, followed by a summary record. The capture ends at `duration` or `limit`, whichever comes first, and a dropped client connection tears the session down automatically. The capture is lossy by design: a full per-session buffer drops events (counted in the summary) rather than ever applying backpressure to the engine. This is the endpoint behind [`rsigma engine tap`](../cli/engine/tap.md).
+
+Disabled by default (the tap exfiltrates raw events). Enable it with `daemon.tap.enabled: true`; otherwise, and when `--disable-tap` force-overrides an enabling config, the endpoint returns `503 Service Unavailable` with `{"error":"event tap disabled","hint":"..."}`.
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `duration` | `30s` | Capture window (humantime). Rejected with `400` above `daemon.tap.max_duration` (default `5m`). |
+| `limit` | unset | Stop after N events, before the duration if reached first. |
+| `stage` | `decoded` | `decoded` (post-parse, post-filter) or `raw` (the input line as received). |
+| `redact` | unset | Comma-separated dotted field paths, redacted server-side before the data leaves the daemon. |
+
+```bash
+curl -sS -N 'http://127.0.0.1:9090/api/v1/tap?duration=10s&redact=user.email,src_ip'
+```
+
+```text
+{"CommandLine":"whoami","src_ip":"rsigma:redacted:cfea2addbf5c8284","user":{"email":"rsigma:redacted:509efebfb0e7ac1e"}}
+{"CommandLine":"id","src_ip":"rsigma:redacted:8e1b...","user":{"email":"rsigma:redacted:1f9c..."}}
+{"rsigma_tap_summary":{"captured":2,"dropped":0,"duration_ms":10000,"stage":"decoded"}}
+```
+
+**Redaction is server-side.** Raw values for redacted fields never cross the wire. Each value is replaced with a deterministic per-session token (`rsigma:redacted:<16 hex>`), so equal values map to equal tokens within one capture (preserving correlation cardinality on replay) while a random per-session salt blocks dictionary reversal and cross-fixture linkage. Paths use the same object-key / numeric-index navigation as the [enrichment template engine](../guide/enrichers.md), except a non-numeric segment meeting an array fans out to every element (fail-closed).
+
+Error semantics:
+
+| Status | When |
+|--------|------|
+| `400 Bad Request` | Malformed params, an invalid `stage`, or a `duration` over `daemon.tap.max_duration`. |
+| `409 Conflict` | The concurrent-session cap (`daemon.tap.max_sessions`, default `2`) is reached. |
+| `503 Service Unavailable` | The tap is disabled (the default; not enabled via `daemon.tap.enabled: true`, or force-disabled with `--disable-tap`). |
+
+!!! warning "The tap exfiltrates raw events"
+    Anyone who can reach this endpoint can read live event traffic. It is off by default; enable it only behind mTLS and redact sensitive fields. See [Security](security.md#live-event-tap).
+
+Four Prometheus metrics track the tap: `rsigma_tap_sessions_total`, `rsigma_tap_active_sessions`, `rsigma_tap_events_streamed_total`, and `rsigma_tap_events_dropped_total`. See [Prometheus metrics](metrics.md).
 
 ## OTLP ingest
 

@@ -53,6 +53,7 @@ pub mod parse;
 pub mod pipeline_deprecation;
 pub mod processor;
 pub mod sources;
+pub mod tap;
 
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
@@ -83,6 +84,7 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
+pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 
 pub use rsigma_eval::{
     FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult,

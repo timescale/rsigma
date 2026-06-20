@@ -1,6 +1,6 @@
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 38 metric names across seven concerns: 33 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 42 metric names across eight concerns: 37 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
@@ -102,6 +102,17 @@ Exposed unconditionally; values stay at zero unless the daemon was started with 
 | `rsigma_fields_observed_total` | counter | — | Total events scanned by the opt-in field observer. Advances regardless of whether the event had structured fields. |
 | `rsigma_fields_observer_unique_keys` | gauge | — | Distinct field names currently tracked. Saturates at `--observe-fields-max-keys` (default `10000`). |
 | `rsigma_fields_observer_overflow_dropped_total` | counter | — | New-key insert attempts dropped because the observer was at capacity. A persistent positive rate signals that `--observe-fields-max-keys` is too low for the deployment. |
+
+## Live event tap (4 metrics)
+
+Exposed unconditionally; values stay at zero unless the tap is enabled (`daemon.tap.enabled: true`) and an operator opens a session. See [HTTP API: Live event tap](http-api.md#live-event-tap) and [`rsigma engine tap`](../cli/engine/tap.md).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_tap_sessions_total` | counter | — | Total tap sessions opened over the daemon's lifetime. |
+| `rsigma_tap_active_sessions` | gauge | — | Currently active tap sessions. Bounded by `daemon.tap.max_sessions`. |
+| `rsigma_tap_events_streamed_total` | counter | — | Events streamed to tap clients. |
+| `rsigma_tap_events_dropped_total` | counter | — | Events dropped from a tap (a full per-session buffer, or an unparseable line in a redacting raw capture). A positive rate means captured fixtures have gaps. |
 
 ## Scrape configuration
 
