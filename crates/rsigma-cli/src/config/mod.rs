@@ -50,6 +50,34 @@ pub(crate) fn load_and_merge(explicit: Option<&Path>) -> RsigmaConfigPartial {
     }
 }
 
+/// Resolve the daemon admin address for client commands (`config reload`,
+/// `engine status`, ...). Precedence: an explicit `--addr` wins, otherwise
+/// `daemon.api.addr` from the layered config, otherwise the compiled default.
+pub(crate) fn resolve_daemon_addr(addr: Option<String>, explicit: Option<&Path>) -> String {
+    addr.unwrap_or_else(|| {
+        load_and_merge(explicit)
+            .daemon
+            .and_then(|d| d.api)
+            .and_then(|a| a.addr)
+            .unwrap_or_else(|| defaults::API_ADDR.to_string())
+    })
+}
+
+/// Build an admin endpoint URL from a `host:port` or full URL, appending
+/// `path` (which must start with `/`). Wildcard bind addresses are mapped to
+/// loopback so the client can connect to a daemon that advertised `0.0.0.0`
+/// or `[::]`.
+pub(crate) fn api_url(addr: &str, path: &str) -> String {
+    if addr.starts_with("http://") || addr.starts_with("https://") {
+        format!("{}{path}", addr.trim_end_matches('/'))
+    } else {
+        let host_port = addr
+            .replace("0.0.0.0", "127.0.0.1")
+            .replace("[::]", "[::1]");
+        format!("http://{host_port}{path}")
+    }
+}
+
 /// Best-effort lookup of `global.log_format` from the config files (honoring an
 /// explicit `--config` path when present) and the `RSIGMA_*` env (no compiled
 /// default, so this is `None` unless an operator set it). Used by `main` to
@@ -322,5 +350,33 @@ mod tests {
         let (partial, unknown) = load_file(&path).unwrap();
         assert!(partial.version.is_none());
         assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn api_url_maps_wildcard_to_loopback() {
+        assert_eq!(
+            api_url("0.0.0.0:9090", "/api/v1/status"),
+            "http://127.0.0.1:9090/api/v1/status"
+        );
+        assert_eq!(
+            api_url("[::]:9090", "/api/v1/status"),
+            "http://[::1]:9090/api/v1/status"
+        );
+        assert_eq!(
+            api_url("10.0.0.1:9090", "/api/v1/reload"),
+            "http://10.0.0.1:9090/api/v1/reload"
+        );
+    }
+
+    #[test]
+    fn api_url_accepts_full_url() {
+        assert_eq!(
+            api_url("https://daemon.internal:9443/", "/api/v1/status"),
+            "https://daemon.internal:9443/api/v1/status"
+        );
+        assert_eq!(
+            api_url("http://127.0.0.1:9090", "/api/v1/reload"),
+            "http://127.0.0.1:9090/api/v1/reload"
+        );
     }
 }

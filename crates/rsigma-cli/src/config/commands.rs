@@ -14,9 +14,9 @@ use serde_json::{Value, json};
 
 use crate::exit_code;
 
-use super::defaults::{self, defaults_partial};
+use super::defaults::defaults_partial;
 use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
-use super::{discover, inactive_sections, load_and_merge, load_layered};
+use super::{discover, inactive_sections, load_layered};
 
 /// The committed, commented template emitted by `rsigma config init`.
 const TEMPLATE: &str = include_str!("template.yaml");
@@ -295,14 +295,8 @@ fn cmd_path(args: PathArgs) {
 }
 
 fn cmd_reload(args: ReloadArgs) {
-    let addr = args.addr.unwrap_or_else(|| {
-        let base = load_and_merge(args.config.as_deref());
-        base.daemon
-            .and_then(|d| d.api)
-            .and_then(|a| a.addr)
-            .unwrap_or_else(|| defaults::API_ADDR.to_string())
-    });
-    let url = reload_url(&addr);
+    let addr = super::resolve_daemon_addr(args.addr, args.config.as_deref());
+    let url = super::api_url(&addr, "/api/v1/reload");
 
     match ureq::post(&url).send_empty() {
         Ok(resp) if resp.status().is_success() => {
@@ -317,43 +311,5 @@ fn cmd_reload(args: ReloadArgs) {
             eprintln!("(is the daemon running? on unix you can also `kill -HUP <pid>`)");
             process::exit(exit_code::CONFIG_ERROR);
         }
-    }
-}
-
-/// Build the reload endpoint URL from a `host:port` or full URL. Wildcard bind
-/// addresses are mapped to loopback so the client can actually connect.
-fn reload_url(addr: &str) -> String {
-    if addr.starts_with("http://") || addr.starts_with("https://") {
-        format!("{}/api/v1/reload", addr.trim_end_matches('/'))
-    } else {
-        let host_port = addr
-            .replace("0.0.0.0", "127.0.0.1")
-            .replace("[::]", "[::1]");
-        format!("http://{host_port}/api/v1/reload")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::reload_url;
-
-    #[test]
-    fn reload_url_maps_wildcard_to_loopback() {
-        assert_eq!(
-            reload_url("0.0.0.0:9090"),
-            "http://127.0.0.1:9090/api/v1/reload"
-        );
-        assert_eq!(
-            reload_url("10.0.0.1:9090"),
-            "http://10.0.0.1:9090/api/v1/reload"
-        );
-    }
-
-    #[test]
-    fn reload_url_accepts_full_url() {
-        assert_eq!(
-            reload_url("https://daemon.internal:9443/"),
-            "https://daemon.internal:9443/api/v1/reload"
-        );
     }
 }

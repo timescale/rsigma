@@ -89,7 +89,7 @@ curl -sS http://127.0.0.1:9090/api/v1/status
 }
 ```
 
-The same counters are exposed in Prometheus form on `/metrics`. Use `/api/v1/status` for a quick one-shot snapshot; use `/metrics` for monitoring.
+The same counters are exposed in Prometheus form on `/metrics`. Use `/api/v1/status` for a quick one-shot snapshot; use `/metrics` for monitoring. For a formatted view from the command line, [`rsigma engine status`](../cli/engine/status.md) fetches this endpoint and renders it as a table (or `json`/`ndjson`/`csv`/`tsv`).
 
 ### `GET /api/v1/rules`
 
