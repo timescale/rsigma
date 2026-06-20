@@ -9,6 +9,7 @@ use rsigma_eval::{Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultE
 use crate::engine::RuntimeEngine;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
 use crate::metrics::MetricsHook;
+use crate::tap::{TapPayload, TapRegistry, TapStage};
 
 /// Closure that extracts multiple payloads from a single JSON value.
 ///
@@ -31,6 +32,12 @@ pub struct LogProcessor {
     /// recorded. When `None`, the batch path skips iteration entirely
     /// so the hot path stays untouched.
     field_observer: ArcSwap<Option<Arc<FieldObserver>>>,
+    /// Optional live event tap. When `Some`, `process_batch_with_format`
+    /// offers raw lines and/or decoded events to any active capture
+    /// sessions with a non-blocking `try_send`. When `None` (or when no
+    /// session is active), the hot path performs one `ArcSwap` load and
+    /// skips capture entirely.
+    event_tap: ArcSwap<Option<Arc<TapRegistry>>>,
 }
 
 impl LogProcessor {
@@ -40,6 +47,7 @@ impl LogProcessor {
             engine: Arc::new(ArcSwap::from_pointee(Mutex::new(engine))),
             metrics,
             field_observer: ArcSwap::new(Arc::new(None)),
+            event_tap: ArcSwap::new(Arc::new(None)),
         }
     }
 
@@ -57,6 +65,23 @@ impl LogProcessor {
     /// Return the currently-attached field observer, if any.
     pub fn field_observer(&self) -> Option<Arc<FieldObserver>> {
         self.field_observer.load_full().as_ref().clone()
+    }
+
+    /// Attach (or detach) the live event tap.
+    ///
+    /// When set, [`process_batch_with_format`](Self::process_batch_with_format)
+    /// offers raw lines and decoded events to the registry's active capture
+    /// sessions. Pass `None` to disable the tap; the hot path then performs a
+    /// single `ArcSwap` load and skips capture. Safe to call at runtime: the
+    /// swap is wait-free, and in-flight batches finish against whichever
+    /// registry they read.
+    pub fn set_event_tap(&self, tap: Option<Arc<TapRegistry>>) {
+        self.event_tap.store(Arc::new(tap));
+    }
+
+    /// Return the currently-attached event tap registry, if any.
+    pub fn event_tap(&self) -> Option<Arc<TapRegistry>> {
+        self.event_tap.load_full().as_ref().clone()
     }
 
     /// Atomically replace the engine with a new one.
@@ -188,11 +213,37 @@ impl LogProcessor {
         let engine_guard = self.engine.load();
         let mut engine = engine_guard.lock();
 
+        // Live event tap: load the active-session snapshot once for the whole
+        // batch. Cheap when disabled (one `ArcSwap` load plus an `Option`
+        // check); the guard is held through the line and event loops below.
+        let tap_guard = self.event_tap.load();
+        let tap_sessions = tap_guard
+            .as_ref()
+            .as_ref()
+            .map(|reg| reg.sessions_snapshot());
+        let tap_has_raw = tap_sessions
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|x| x.stage == TapStage::Raw));
+        let tap_has_decoded = tap_sessions
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|x| x.stage == TapStage::Decoded));
+
         // Phase 1: Parse each line into decoded events, tracking line origin.
         // For JSON with an event_filter, one line can produce multiple events.
         let mut decoded_events: Vec<(usize, EventInputDecoded)> = Vec::with_capacity(batch.len());
 
         for (line_idx, line) in batch.iter().enumerate() {
+            // Raw-stage tap runs before parsing so a non-redacting raw capture
+            // records every non-empty line, including ones that fail to parse.
+            if tap_has_raw
+                && !line.trim().is_empty()
+                && let Some(sessions) = tap_sessions.as_ref()
+            {
+                for s in sessions.iter().filter(|s| s.stage == TapStage::Raw) {
+                    s.offer(TapPayload::Raw(line.clone()));
+                }
+            }
+
             let Some(decoded) = parse_line(line, format) else {
                 if !line.trim().is_empty() {
                     self.metrics.on_parse_error();
@@ -235,6 +286,18 @@ impl LogProcessor {
             }
         }
         drop(observer_guard);
+
+        // Decoded-stage tap: offer each decoded event (post-parse,
+        // post-event-filter) to active decoded-stage sessions. The event is
+        // serialized to JSON only when at least one decoded session is active.
+        if tap_has_decoded && let Some(sessions) = tap_sessions.as_ref() {
+            for (_, decoded) in &decoded_events {
+                let value = decoded.to_json();
+                for s in sessions.iter().filter(|s| s.stage == TapStage::Decoded) {
+                    s.offer(TapPayload::Decoded(Box::new(value.clone())));
+                }
+            }
+        }
 
         // Phase 2: Batch evaluation — parallel detection + sequential correlation
         let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();
