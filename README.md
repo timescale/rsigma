@@ -328,6 +328,9 @@ rsigma backend convert rules/windows/ -t fibratus -p fibratus_windows
 # Write one rule file per rule into a directory (drop straight into a Fibratus Rules/ folder)
 rsigma backend convert rules/windows/ -t fibratus -p fibratus_windows -o ./Rules/
 
+# Any non-native target delegates to sigma-cli when it is installed (pipx install sigma-cli)
+rsigma backend convert rules/ -t splunk
+
 # List all fields referenced by a ruleset
 rsigma rule fields -r rules/
 

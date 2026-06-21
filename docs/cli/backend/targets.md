@@ -10,7 +10,9 @@ rsigma backend targets [OPTIONS]
 
 ## Description
 
-Prints every backend that [`backend convert`](convert.md) can target, plus a one-line description. Backend names are case-insensitive and accept short aliases (`pg` for PostgreSQL).
+Prints every native backend that [`backend convert`](convert.md) can target, plus a one-line description. Backend names are case-insensitive and accept short aliases (`pg` for PostgreSQL).
+
+When an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli) is discoverable, its targets are appended too (marked "via sigma-cli"), since `backend convert` delegates any non-native target to it. When sigma-cli is not installed, the command prints a short hint on how to add it. See [sigma-cli delegation](../../reference/backends/sigma-cli.md).
 
 ## Flags
 

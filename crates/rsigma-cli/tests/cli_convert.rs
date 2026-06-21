@@ -304,10 +304,13 @@ fn convert_requires_pipeline_error() {
         .stderr(predicate::str::contains("requires a pipeline"));
 }
 
+// A non-native target with no usable sigma-cli (forced via a bogus override)
+// fails with install guidance rather than a conversion error.
 #[test]
 fn convert_invalid_target() {
     let rule = temp_file(".yml", SIMPLE_DETECTION);
-    let output = rsigma()
+    rsigma()
+        .env("RSIGMA_SIGMA_CLI", "/nonexistent/rsigma-test-sigma-cli")
         .args([
             "backend",
             "convert",
@@ -315,13 +318,12 @@ fn convert_invalid_target() {
             "--target",
             "nonexistent_backend",
         ])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-    Unknown target: nonexistent_backend
-    Available targets: postgres, lynxdb, fibratus, test
-    ");
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No native rsigma backend for target 'nonexistent_backend'",
+        ))
+        .stderr(predicate::str::contains("RSIGMA_SIGMA_CLI"));
 }
 
 #[test]
@@ -467,17 +469,25 @@ fn convert_split_creates_directory_from_trailing_separator() {
 // list-targets / list-formats
 // ---------------------------------------------------------------------------
 
+// With sigma-cli forced absent, `backend targets` lists the native targets and
+// points the user at sigma-cli for the rest. (The sigma-cli-present path is
+// environment-dependent and covered by the gated delegation test.)
 #[test]
 fn list_targets() {
-    let output = rsigma().args(["backend", "targets"]).output().unwrap();
-    assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
-    Available conversion targets:
-      postgres  - PostgreSQL/TimescaleDB (aliases: postgresql, pg)
-      lynxdb    - LynxDB log analytics engine
-      fibratus  - Fibratus kernel-event detection engine
-      test      - Backend-neutral test backend
-    ");
+    rsigma()
+        .env("RSIGMA_SIGMA_CLI", "/nonexistent/rsigma-test-sigma-cli")
+        .args(["backend", "targets"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Available conversion targets:"))
+        .stdout(predicate::str::contains(
+            "postgres  - PostgreSQL/TimescaleDB",
+        ))
+        .stdout(predicate::str::contains("lynxdb"))
+        .stdout(predicate::str::contains("fibratus"))
+        .stdout(predicate::str::contains(
+            "Install sigma-cli for more targets",
+        ));
 }
 
 #[test]
@@ -502,15 +512,70 @@ fn list_formats_postgres() {
     ");
 }
 
+// A non-native format target with no usable sigma-cli fails with install
+// guidance instead of a native unknown-target error.
 #[test]
 fn list_formats_invalid_target() {
-    let output = rsigma()
+    rsigma()
+        .env("RSIGMA_SIGMA_CLI", "/nonexistent/rsigma-test-sigma-cli")
         .args(["backend", "formats", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No native rsigma backend for target 'nonexistent'",
+        ))
+        .stderr(predicate::str::contains("RSIGMA_SIGMA_CLI"));
+}
+
+// ---------------------------------------------------------------------------
+// sigma-cli delegation (runtime-gated)
+// ---------------------------------------------------------------------------
+
+/// Probe for a usable sigma-cli that has the `loki` backend installed, honoring
+/// the `RSIGMA_SIGMA_CLI` override. Returns `None` so the delegation test skips
+/// on machines without sigma-cli; CI never depends on it being present.
+fn sigma_cli_with_loki() -> Option<String> {
+    let program = std::env::var("RSIGMA_SIGMA_CLI").unwrap_or_else(|_| "sigma".to_string());
+    let out = std::process::Command::new(&program)
+        .args(["list", "targets"])
+        .output()
+        .ok()?;
+    if out.status.success() && String::from_utf8_lossy(&out.stdout).contains("loki") {
+        Some(program)
+    } else {
+        None
+    }
+}
+
+// When rsigma has no native backend for a target but sigma-cli does, the
+// conversion is delegated and its output relayed.
+#[test]
+fn delegates_to_sigma_cli_when_no_native_backend() {
+    if sigma_cli_with_loki().is_none() {
+        eprintln!("skipping: sigma-cli with the loki backend is not installed");
+        return;
+    }
+
+    let rule = temp_file(".yml", SIMPLE_DETECTION);
+    let output = rsigma()
+        .args([
+            "backend",
+            "convert",
+            rule.path().to_str().unwrap(),
+            "--target",
+            "loki",
+        ])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-    Unknown target: nonexistent
-    Available targets: postgres, lynxdb, fibratus, test
-    ");
+
+    assert!(
+        output.status.success(),
+        "delegated loki conversion failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("whoami"),
+        "expected a LogQL query matching the rule value, got: {stdout}"
+    );
 }

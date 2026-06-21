@@ -40,31 +40,55 @@ pub(crate) struct ConvertArgs {
     pub backend_options: Vec<String>,
 }
 
-fn get_backend(
+/// Canonical names of the targets rsigma converts natively, for listings and
+/// error messages. Aliases (`postgresql`, `pg`) and the internal test backends
+/// are accepted by [`try_native_backend`] but intentionally not advertised.
+const NATIVE_TARGETS: &[&str] = &["postgres", "lynxdb", "fibratus"];
+
+/// Return the native backend for `target`, or `None` when rsigma has no native
+/// backend for it, in which case `backend convert` delegates to sigma-cli.
+fn try_native_backend(
     target: &str,
     options: &std::collections::HashMap<String, String>,
-) -> Box<dyn rsigma_convert::Backend> {
+) -> Option<Box<dyn rsigma_convert::Backend>> {
     match target {
-        "postgres" | "postgresql" | "pg" => {
-            Box::new(rsigma_convert::backends::postgres::PostgresBackend::from_options(options))
-        }
-        "lynxdb" => Box::new(rsigma_convert::backends::lynxdb::LynxDbBackend::new()),
-        "fibratus" => {
-            Box::new(rsigma_convert::backends::fibratus::FibratusBackend::from_options(options))
-        }
-        "test" => Box::new(rsigma_convert::backends::test::TextQueryTestBackend::new()),
-        "test_mandatory_pipeline" => {
-            Box::new(rsigma_convert::backends::test::MandatoryPipelineTestBackend::new())
-        }
-        _ => {
-            eprintln!("Unknown target: {target}");
-            eprintln!("Available targets: postgres, lynxdb, fibratus, test");
-            process::exit(crate::exit_code::CONFIG_ERROR);
-        }
+        "postgres" | "postgresql" | "pg" => Some(Box::new(
+            rsigma_convert::backends::postgres::PostgresBackend::from_options(options),
+        )),
+        "lynxdb" => Some(Box::new(
+            rsigma_convert::backends::lynxdb::LynxDbBackend::new(),
+        )),
+        "fibratus" => Some(Box::new(
+            rsigma_convert::backends::fibratus::FibratusBackend::from_options(options),
+        )),
+        "test" => Some(Box::new(
+            rsigma_convert::backends::test::TextQueryTestBackend::new(),
+        )),
+        "test_mandatory_pipeline" => Some(Box::new(
+            rsigma_convert::backends::test::MandatoryPipelineTestBackend::new(),
+        )),
+        _ => None,
     }
 }
 
 pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
+    let options: std::collections::HashMap<String, String> = args
+        .backend_options
+        .iter()
+        .filter_map(|opt| {
+            opt.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
+        .collect();
+
+    // Native-first dispatch: convert with a native rsigma backend when one
+    // exists, otherwise delegate the whole conversion to a discovered
+    // sigma-cli (or fail with install guidance when neither is available).
+    let Some(backend) = try_native_backend(&args.target, &options) else {
+        run_delegated(&args, &ctx);
+        return;
+    };
+
     let ConvertArgs {
         rules,
         target,
@@ -73,7 +97,7 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         without_pipeline,
         skip_unsupported,
         output,
-        backend_options,
+        backend_options: _,
     } = args;
 
     let collection = crate::load_collection_multi(&rules);
@@ -86,15 +110,6 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
              events with dynamic pipelines."
         );
     }
-
-    let options: std::collections::HashMap<String, String> = backend_options
-        .iter()
-        .filter_map(|opt| {
-            opt.split_once('=')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-        })
-        .collect();
-    let backend = get_backend(&target, &options);
 
     if backend.requires_pipeline() && pipelines.is_empty() && !without_pipeline {
         eprintln!("Backend '{target}' requires a pipeline. Use -p or --without-pipeline.");
@@ -230,28 +245,181 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
     }
 }
 
+/// Convert via an external sigma-cli for a target rsigma has no native backend
+/// for. The original rule files and a near 1:1 flag mapping are passed straight
+/// through, and sigma-cli's stdout is relayed through rsigma's output handling,
+/// so the result is identical to running sigma-cli directly.
+fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
+    use super::sigma_cli::{self, SigmaCli};
+
+    let target = args.target.as_str();
+    let format = args.format.as_str();
+    let output = args.output.as_deref();
+
+    // Per-rule directory splitting reuses a native backend's finalizer, which a
+    // delegated stream has no equivalent of; fail clearly rather than write a
+    // single concatenated file into the directory.
+    if let Some(dir) = output.filter(|p| is_directory_target(p)) {
+        eprintln!(
+            "Per-rule directory output ('-o {}') is only supported by native backends; \
+             the delegated target '{target}' produces a single stream. Use a file path or stdout.",
+            dir.display()
+        );
+        process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+
+    let cli = SigmaCli::configured();
+    let argv = sigma_cli::build_convert_args(
+        target,
+        format,
+        &args.pipeline,
+        args.without_pipeline,
+        args.skip_unsupported,
+        &args.backend_options,
+        &args.rules,
+    );
+
+    let result = match cli.run(&argv) {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "{}",
+                sigma_cli::install_hint(target, cli.program(), cli.is_override(), NATIVE_TARGETS)
+            );
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        Err(e) => {
+            eprintln!(
+                "Failed to launch sigma-cli ('{}'): {e}",
+                cli.program().display()
+            );
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    };
+
+    // Relay sigma-cli diagnostics verbatim (warnings, skipped-rule notes, errors).
+    if !result.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&result.stderr));
+    }
+    if !result.status.success() {
+        process::exit(crate::exit_code::RULE_ERROR);
+    }
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let queries = stdout.trim_end_matches('\n');
+
+    // `--output-format json` wraps the delegated queries in the same envelope
+    // shape the native path emits. sigma-cli text backends emit one query per
+    // line, so each non-empty line becomes a query object.
+    if ctx.format == OutputFormat::Json && output.is_none() {
+        let query_objs: Vec<serde_json::Value> = queries
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|q| serde_json::json!({ "query": q }))
+            .collect();
+        render_json(
+            &serde_json::json!({
+                "target": target,
+                "format": format,
+                "engine": "sigma-cli",
+                "queries": query_objs,
+            }),
+            ctx.pretty_json(),
+        );
+        return;
+    }
+
+    if ctx.explicit_format
+        && !matches!(ctx.format, OutputFormat::Json | OutputFormat::Ndjson)
+        && ctx.show_progress()
+    {
+        eprintln!(
+            "warning: `--output-format {}` is not supported by `backend convert`; falling back to raw query text.",
+            ctx.format.as_str(),
+        );
+    }
+
+    write_output(queries, output);
+}
+
 pub(crate) fn cmd_list_targets() {
     println!("Available conversion targets:");
     println!("  postgres  - PostgreSQL/TimescaleDB (aliases: postgresql, pg)");
     println!("  lynxdb    - LynxDB log analytics engine");
     println!("  fibratus  - Fibratus kernel-event detection engine");
     println!("  test      - Backend-neutral test backend");
+
+    // Any other target is delegated to sigma-cli when it is installed; list its
+    // targets too so the user sees the full set available from this machine.
+    let cli = super::sigma_cli::SigmaCli::configured();
+    match cli.run(["list", "targets"]) {
+        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
+            println!(
+                "\nAdditional targets via sigma-cli ('{}'):",
+                cli.program().display()
+            );
+            print!("{}", String::from_utf8_lossy(&out.stdout));
+        }
+        _ => {
+            println!(
+                "\nInstall sigma-cli for more targets (splunk, elasticsearch, kusto, qradar, loki, ...):"
+            );
+            println!("  pipx install sigma-cli && sigma plugin install <target>");
+        }
+    }
 }
 
 pub(crate) fn cmd_list_formats(target: String) {
-    let backend = get_backend(&target, &std::collections::HashMap::new());
-    println!("Available formats for '{target}':");
-    for (name, desc) in backend.formats() {
-        println!("  {name}  - {desc}");
-    }
-    let methods = backend.correlation_methods();
-    if !methods.is_empty() {
-        println!(
-            "\nCorrelation methods for '{target}' (select with -O correlation_method=NAME, default: {}):",
-            backend.default_correlation_method()
-        );
-        for (name, desc) in methods {
+    if let Some(backend) = try_native_backend(&target, &std::collections::HashMap::new()) {
+        println!("Available formats for '{target}':");
+        for (name, desc) in backend.formats() {
             println!("  {name}  - {desc}");
+        }
+        let methods = backend.correlation_methods();
+        if !methods.is_empty() {
+            println!(
+                "\nCorrelation methods for '{target}' (select with -O correlation_method=NAME, default: {}):",
+                backend.default_correlation_method()
+            );
+            for (name, desc) in methods {
+                println!("  {name}  - {desc}");
+            }
+        }
+        return;
+    }
+
+    // Delegated target: ask sigma-cli for the formats it supports.
+    let cli = super::sigma_cli::SigmaCli::configured();
+    match cli.run(["list", "formats", target.as_str()]) {
+        Ok(out) => {
+            if !out.stdout.is_empty() {
+                print!("{}", String::from_utf8_lossy(&out.stdout));
+            }
+            if !out.stderr.is_empty() {
+                eprint!("{}", String::from_utf8_lossy(&out.stderr));
+            }
+            if !out.status.success() {
+                process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "{}",
+                super::sigma_cli::install_hint(
+                    &target,
+                    cli.program(),
+                    cli.is_override(),
+                    NATIVE_TARGETS
+                )
+            );
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        Err(e) => {
+            eprintln!(
+                "Failed to launch sigma-cli ('{}'): {e}",
+                cli.program().display()
+            );
+            process::exit(crate::exit_code::CONFIG_ERROR);
         }
     }
 }

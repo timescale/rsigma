@@ -3,3 +3,4 @@ nav:
   - PostgreSQL/TimescaleDB: postgres.md
   - LynxDB: lynxdb.md
   - Fibratus: fibratus.md
+  - sigma-cli delegation: sigma-cli.md

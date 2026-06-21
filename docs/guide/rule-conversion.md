@@ -50,6 +50,20 @@ Available formats for 'postgres':
   sliding_window  - Correlation queries using window functions for per-row sliding detection
 ```
 
+## Delegated targets (sigma-cli)
+
+The targets above are converted natively. For any other target, `rsigma backend convert` delegates to an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli) when one is installed, so the full pySigma backend ecosystem (`splunk`, `elasticsearch`, `kusto`, `qradar`, `loki`, `crowdstrike`, and more) is reachable from the same command. No Python is required unless you actually convert to a delegated target, and native backends always take precedence.
+
+Install sigma-cli and the backend you want, then convert as usual:
+
+```bash
+pipx install sigma-cli
+sigma plugin install splunk
+rsigma backend convert -t splunk rules/
+```
+
+If a target has no native backend and sigma-cli is not installed, the command exits with code `3` and tells you how to install it. Set `RSIGMA_SIGMA_CLI` to point at a specific `sigma` executable when it is not on `PATH`. See the [sigma-cli delegation reference](../reference/backends/sigma-cli.md) for the full flag mapping, discovery rules, and limitations.
+
 ## PostgreSQL and TimescaleDB
 
 The PostgreSQL backend is the most fully featured. It leverages native operators that map cleanly to Sigma modifiers:
