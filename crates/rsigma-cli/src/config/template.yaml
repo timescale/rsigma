@@ -157,6 +157,19 @@ daemon:
     # Largest accepted capture window (a longer ?duration gets 400).
     max_duration: 5m
 
+  # Live detection tail (GET /api/v1/detections/stream). Streams detection
+  # results (not raw events) as NDJSON. Opt-in: disabled by default, enabled
+  # with enabled: true. --disable-tail force-overrides `enabled` to off. The
+  # tuning keys are config-file-only.
+  tail:
+    # Accept tail sessions. Disabled by default; set true to enable.
+    enabled: false
+    # Per-session bounded buffer; a full buffer drops detections (counted)
+    # rather than ever applying backpressure to the sink task.
+    buffer_events: 8192
+    # Maximum concurrent tail sessions (a session over the cap gets 409).
+    max_sessions: 2
+
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.
   # nats:

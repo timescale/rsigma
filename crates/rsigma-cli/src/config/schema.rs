@@ -126,6 +126,9 @@ pub(crate) struct DaemonPartial {
     /// Live event-tap limits (`GET /api/v1/tap`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tap: Option<TapPartial>,
+    /// Live detection-tail limits (`GET /api/v1/detections/stream`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail: Option<TailPartial>,
 }
 
 impl Merge for DaemonPartial {
@@ -143,6 +146,7 @@ impl Merge for DaemonPartial {
             engine: merge_opt(self.engine, over.engine),
             nats: merge_opt(self.nats, over.nats),
             tap: merge_opt(self.tap, over.tap),
+            tail: merge_opt(self.tail, over.tail),
         }
     }
 }
@@ -453,6 +457,35 @@ impl Merge for TapPartial {
             buffer_events: over.buffer_events.or(self.buffer_events),
             max_sessions: over.max_sessions.or(self.max_sessions),
             max_duration: over.max_duration.or(self.max_duration),
+        }
+    }
+}
+
+/// Live detection-tail limits. The only flag is `--disable-tail`; the tuning
+/// keys are config-file-only.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct TailPartial {
+    /// Whether the `GET /api/v1/detections/stream` endpoint accepts sessions
+    /// (default false; opt-in like the event tap). `--disable-tail` forces
+    /// this off regardless of the config value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Per-session bounded channel capacity. A full channel drops detections
+    /// (counted) rather than applying backpressure to the sink task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffer_events: Option<usize>,
+    /// Maximum number of concurrent tail sessions (a new session over the cap
+    /// is rejected with `409`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_sessions: Option<usize>,
+}
+
+impl Merge for TailPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            buffer_events: over.buffer_events.or(self.buffer_events),
+            max_sessions: over.max_sessions.or(self.max_sessions),
         }
     }
 }

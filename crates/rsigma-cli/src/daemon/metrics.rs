@@ -60,6 +60,8 @@ pub struct Metrics {
     pub tap_active_sessions: IntGauge,
     pub tap_events_streamed_total: IntCounter,
     pub tap_events_dropped_total: IntCounter,
+    pub tail_active_sessions: IntGauge,
+    pub tail_detections_dropped_total: IntCounter,
 }
 
 impl Metrics {
@@ -531,6 +533,23 @@ impl Metrics {
             .register(Box::new(tap_events_dropped_total.clone()))
             .unwrap();
 
+        let tail_active_sessions = IntGauge::with_opts(Opts::new(
+            "rsigma_tail_active_sessions",
+            "Currently active live detection-tail sessions",
+        ))
+        .unwrap();
+        let tail_detections_dropped_total = IntCounter::with_opts(Opts::new(
+            "rsigma_tail_detections_dropped_total",
+            "Detections dropped from a live tail because a session buffer was full",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(tail_active_sessions.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tail_detections_dropped_total.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -586,6 +605,8 @@ impl Metrics {
             tap_active_sessions,
             tap_events_streamed_total,
             tap_events_dropped_total,
+            tail_active_sessions,
+            tail_detections_dropped_total,
         }
     }
 
