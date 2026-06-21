@@ -1,6 +1,8 @@
 # Adding a new backend
 
-The `Backend` trait in [`rsigma-convert`](../library/convert.md) is the plug-in surface for SIEM query generation. The shipped implementations are `PostgresBackend`, `LynxDbBackend`, and the two test backends; this page walks through adding your own (Splunk, Elastic, KQL, ClickHouse, …) and wiring it into the CLI.
+The `Backend` trait in [`rsigma-convert`](../library/convert.md) is the plug-in surface for SIEM query generation. The shipped implementations are `PostgresBackend`, `LynxDbBackend`, `FibratusBackend`, and the two test backends; this page walks through adding your own (Splunk, Elastic, KQL, ClickHouse, …) and wiring it into the CLI.
+
+A native backend always takes precedence over [sigma-cli delegation](../reference/backends/sigma-cli.md): adding one for a target (for example `splunk`) transparently replaces the delegated path for that target, with no change to how users invoke `rsigma backend convert -t splunk`.
 
 ## Decide on the shape
 

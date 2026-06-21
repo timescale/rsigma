@@ -287,7 +287,7 @@ For text-based query backends (the vast majority), create a `TextQueryConfig` wi
 1. Define a `TextQueryConfig` constant with your backend's tokens and expressions.
 2. Create a struct that implements `Backend`, delegating most methods to the `text_convert_*` helpers.
 3. Override specific methods for backend-specific behavior (e.g. deferred regex for Splunk, SQL-specific CIDR handling for PostgreSQL).
-4. Register your backend in the CLI's `get_backend()` registry.
+4. Register your backend in the CLI's `try_native_backend()` registry (a native backend takes precedence over sigma-cli delegation for that target).
 
 See `backends/test.rs` for a complete reference implementation, `backends/postgres.rs` for a production backend with SQL-specific overrides, and `backends/lynxdb/` for a `TextQueryConfig`-based backend with deferred expressions and custom precedence handling.
 

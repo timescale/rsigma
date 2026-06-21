@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Reuse pySigma backends through sigma-cli delegation
+
+`rsigma backend convert` now resolves targets native-first: it uses a native rsigma backend when one exists and otherwise delegates the conversion to an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli) when one is installed, so the full pySigma backend ecosystem (`splunk`, `elasticsearch`, `kusto`, `qradar`, `loki`, `crowdstrike`, and 30+ more) is reachable from the same command. It is a light subprocess wrapper with no new dependencies; no Python runtime is required unless a delegated target is actually used.
+
+- **Native-first dispatch.** `postgres`/`postgresql`/`pg`, `lynxdb`, and `fibratus` keep converting natively and always win; any other target is delegated. A future native backend transparently supersedes its delegated path.
+- **Discovery.** sigma-cli is found via the `RSIGMA_SIGMA_CLI` path override or a bare `sigma` on `PATH`. When a target has no native backend and sigma-cli is absent, the command exits `3` with install guidance (`pipx install sigma-cli`, `sigma plugin install <target>`).
+- **Flag mapping.** `-t`, `-f`, `-p`, `--without-pipeline`, `-s`, and `-O key=value` pass through to `sigma convert` verbatim; `-O correlation_method=<m>` maps to sigma-cli's `-c/--correlation-method`. The original rule files are handed to sigma-cli, which parses, pipelines, and converts them.
+- **Output.** sigma-cli stdout is relayed through the normal output handling (stdout, `-o <file>`, and the `--output-format json` envelope). A non-zero sigma-cli exit maps to `2` with its stderr relayed; a missing binary or a directory `--output` in delegated mode maps to `3`.
+- **Listing.** `backend targets` appends the installed sigma-cli targets, and `backend formats <target>` shows a delegated target's formats.
+- **Scope.** CLI `backend convert` only; the MCP `convert` tool and the `rsigma_convert` library API convert with native backends. rsigma builtin pipeline names (`ecs_windows`, `sysmon`) are not translated; pass sigma-cli pipeline names or YAML paths in delegated mode.
+
 ### Faster NATS and daemon integration tests (#240)
 
 The `nats_integration`, `cli_daemon_nats`, and `cli_daemon_dynamic` suites spent most of their wall time waiting on fixed sleeps and long-poll timeouts rather than doing real work. Replacing those with deterministic waits cuts each suite's runtime by roughly 7x (30.7s to ~2.7s, 15.1s to ~4.4s, and 4.2s to ~1.9s) with no production code changes.

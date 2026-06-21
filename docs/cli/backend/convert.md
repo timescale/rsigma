@@ -12,6 +12,8 @@ rsigma backend convert [OPTIONS] --target <TARGET> [RULES]...
 
 Reads one or more rule files (or a directory) and emits backend-native query strings, one per rule. Output goes to stdout by default; use `-o` to write to a file. Use [`backend targets`](targets.md) to list available backends and [`backend formats`](formats.md) to list the output formats supported by a specific backend.
 
+Targets with no native backend are delegated to an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli) when one is installed, unlocking the full pySigma backend ecosystem (`splunk`, `elasticsearch`, `kusto`, `qradar`, `loki`, …). See [sigma-cli delegation](../../reference/backends/sigma-cli.md) for discovery, the `RSIGMA_SIGMA_CLI` override, the flag mapping, and limitations.
+
 For narrative coverage, including the PostgreSQL and LynxDB workflows, see [Rule Conversion](../../guide/rule-conversion.md).
 
 ## Flags
@@ -20,7 +22,7 @@ For narrative coverage, including the PostgreSQL and LynxDB workflows, see [Rule
 
 | Flag | Description |
 |------|-------------|
-| `-t, --target <TARGET>` | Backend to convert to. Run [`backend targets`](targets.md) for the live list. Today: `postgres` (aliases `postgresql`, `pg`), `lynxdb`, `test`. |
+| `-t, --target <TARGET>` | Backend to convert to. Run [`backend targets`](targets.md) for the live list. Native: `postgres` (aliases `postgresql`, `pg`), `lynxdb`, `fibratus`, `test`. Any other target is delegated to sigma-cli when installed. |
 | `[RULES]...` | Path(s) to Sigma rule file(s) or a directory. |
 
 ### Output
@@ -112,8 +114,8 @@ psql -f /var/lib/rsigma/sql/views.sql
 | Code | Meaning |
 |------|---------|
 | `0` | Conversion succeeded. |
-| `2` | One or more rules failed to convert (unless `--skip-unsupported`), or rules path empty. |
-| `3` | Unknown `--target`, unknown `--format`, unwritable `--output`, or other CLI configuration error. |
+| `2` | One or more rules failed to convert (unless `--skip-unsupported`), rules path empty, or a delegated sigma-cli run exited non-zero (its stderr is relayed). |
+| `3` | Unknown `--format`, unwritable `--output`, a target with no native backend and no sigma-cli installed, a directory `--output` for a delegated target, or other CLI configuration error. |
 
 ## See also
 
