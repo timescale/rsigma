@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Faster NATS and daemon integration tests (#240)
+
+The `nats_integration`, `cli_daemon_nats`, and `cli_daemon_dynamic` suites spent most of their wall time waiting on fixed sleeps and long-poll timeouts rather than doing real work. Replacing those with deterministic waits cuts each suite's runtime by roughly 7x (30.7s to ~2.7s, 15.1s to ~4.4s, and 4.2s to ~1.9s) with no production code changes.
+
+- **Shared-consumer NATS test.** The first consumer's `messages()` pull stream prefetches the whole batch, so the second consumer in the shared group starved and its `recv()` blocked for the full ~30s pull-consumer expiry, which alone took the entire suite. Each receive is now bounded with a short timeout while still asserting that a consumer in the group receives a message.
+- **NATS daemon state tests.** The state-restore tests poll the SQLite state DB until the source position is persisted instead of sleeping a fixed 3s, the backward-replay test collects only the message it inspects (it was blocking the full timeout waiting for a second message a clean run never emits), and the no-output check uses an ordered canary detection rather than a fixed wait window.
+- **Dynamic-pipeline tests.** Event ingestion, `/api/v1/reload`, and `/api/v1/sources/resolve` are all asynchronous, so the tests now poll `/api/v1/status` for the observable counters and re-post events until the rebuilt engine takes effect, replacing the 500ms-to-3s sleeps that previously padded each step.
+
 ### `engine tail`: stream live detections to the terminal (#239)
 
 A new `rsigma engine tail` subcommand (and the `GET /api/v1/detections/stream` endpoint behind it) streams a running daemon's live detections, the detections-out counterpart to `engine tap`. Each result is the same `EvaluationResult` shape the sinks emit, captured after post-evaluation enrichment and regardless of which sinks are configured, so `engine tail` and a saved sink file are the same format.
