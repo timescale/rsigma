@@ -147,7 +147,7 @@ OTLP receiver authentication is the upstream agent's responsibility. The recomme
 
 The live event tap ([`GET /api/v1/tap`](http-api.md#live-event-tap), [`rsigma engine tap`](../cli/engine/tap.md)) streams a bounded window of the raw event traffic flowing through the engine. Anyone who can reach the admin API can already inject events and read loaded rules; the tap raises the stakes to **reading live production traffic**, so treat it as an exfiltration surface:
 
-- **It is off by default.** The tap is opt-in: enable it with `daemon.tap.enabled: true` only when you need it, and prefer leaving it disabled. `--disable-tap` force-overrides an enabling config to off (e.g. on a hardened host that shares a config), making the endpoint return `503`.
+- **It is off by default.** The tap is opt-in: enable it with `daemon.tap.enabled: true` (or the `--enable-tap` flag) only when you need it, and prefer leaving it disabled.
 - **Expose the admin API only behind mTLS.** The tap inherits the API listener's protections; pair `--tls-cert`/`--tls-key` with `--tls-client-ca` so only pinned clients can open a tap. See [TLS termination](#tls-termination-for-the-api-listener).
 - **Redact sensitive fields.** `--redact-fields` (the `redact` query param) is enforced server-side: raw values for redacted fields never leave the daemon, not even to the tapping operator. Redaction uses deterministic per-session salted hashing, so equality relationships survive for replay while the raw value and cross-fixture linkage do not.
 

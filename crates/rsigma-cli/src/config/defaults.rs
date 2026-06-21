@@ -7,7 +7,8 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial, TapPartial,
+    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial, TailPartial,
+    TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -32,11 +33,17 @@ pub(crate) const STATE_SAVE_INTERVAL: u64 = 30;
 pub(crate) const OBSERVE_FIELDS_MAX_KEYS: usize = 10_000;
 /// Live event-tap defaults (`daemon.tap.*`). The tap is opt-in: it exfiltrates
 /// raw event traffic, so it ships disabled and is enabled with
-/// `daemon.tap.enabled: true` (`--disable-tap` force-overrides to off).
+/// `daemon.tap.enabled: true` (or the `--enable-tap` flag).
 pub(crate) const TAP_ENABLED: bool = false;
 pub(crate) const TAP_BUFFER_EVENTS: usize = 8_192;
 pub(crate) const TAP_MAX_SESSIONS: usize = 2;
 pub(crate) const TAP_MAX_DURATION: &str = "5m";
+/// Live detection-tail defaults (`daemon.tail.*`). Opt-in like the tap: it
+/// ships disabled and is enabled with `daemon.tail.enabled: true` (or the
+/// `--enable-tail` flag).
+pub(crate) const TAIL_ENABLED: bool = false;
+pub(crate) const TAIL_BUFFER_EVENTS: usize = 8_192;
+pub(crate) const TAIL_MAX_SESSIONS: usize = 2;
 pub(crate) const STDOUT_SINK: &str = "stdout";
 /// Async delivery-layer tuning shared by every sink. `queue_depth` is not a
 /// separate key; it follows `buffer_size`.
@@ -134,6 +141,11 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 buffer_events: Some(TAP_BUFFER_EVENTS),
                 max_sessions: Some(TAP_MAX_SESSIONS),
                 max_duration: Some(TAP_MAX_DURATION.to_string()),
+            }),
+            tail: Some(TailPartial {
+                enabled: Some(TAIL_ENABLED),
+                buffer_events: Some(TAIL_BUFFER_EVENTS),
+                max_sessions: Some(TAIL_MAX_SESSIONS),
             }),
         }),
         eval: Some(EvalPartial {

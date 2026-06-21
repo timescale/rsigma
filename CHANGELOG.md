@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `engine tail`: stream live detections to the terminal (#239)
+
+A new `rsigma engine tail` subcommand (and the `GET /api/v1/detections/stream` endpoint behind it) streams a running daemon's live detections, the detections-out counterpart to `engine tap`. Each result is the same `EvaluationResult` shape the sinks emit, captured after post-evaluation enrichment and regardless of which sinks are configured, so `engine tail` and a saved sink file are the same format.
+
+- **Server-side filters.** `--level <severity>` (minimum severity) and `--rule <substring>` (case-insensitive title/id match) are applied at the sink, so filtered-out results never cross the wire. `--duration` and `--limit` bound the stream; with neither, it streams until interrupted.
+- **Lossy by design.** Each session owns a bounded buffer and drops detections (counted) when full, so a slow tail client can never backpressure the sink task or stall the at-least-once ack-join. A dropped client connection tears the session down automatically. A trailing summary record reports `{streamed, dropped}`.
+- **Opt-in.** Disabled by default; enable with `--enable-tail` or `daemon.tail.enabled: true`. The config-file-only `daemon.tail` keys tune `buffer_events` (8192) and `max_sessions` (2); the endpoint returns `503` when disabled, `409` at the session cap, and `400` for a bad `level`.
+- **Output.** Rendered through the global `--output-format` layer (NDJSON when piped, pretty JSON on a TTY, plus `csv`/`tsv`/`table`). The client uses the synchronous `ureq` transport, so it builds without the `daemon` feature.
+- **New metrics.** `rsigma_tail_active_sessions` and `rsigma_tail_detections_dropped_total`.
+
 ### `engine tap`: record the live event stream to a replayable fixture (#238)
 
 A new `rsigma engine tap` subcommand (and the `GET /api/v1/tap` endpoint behind it) records a bounded window of a running daemon's live event stream as an NDJSON fixture, closing the "reproduce a missed detection locally" loop: capture what the daemon is actually seeing, optionally redact sensitive fields, then replay it against candidate rules with `engine eval -e @fixture.ndjson`.
@@ -11,7 +21,7 @@ A new `rsigma engine tap` subcommand (and the `GET /api/v1/tap` endpoint behind 
 - **Two capture stages.** `--stage decoded` (the default) records what the engine evaluated (post-parse, post-event-filter), so the fixture is always valid NDJSON and replays without repeating the daemon's input flags. `--stage raw` records the input line as received, for debugging the parse/filter step.
 - **Server-side redaction.** `--redact-fields user.email,src_ip` redacts named dotted paths before the data leaves the daemon; raw values never cross the wire. Redaction is deterministic per-session salted hashing (`rsigma:redacted:<hex>`), so equal values map to equal tokens within a capture (correlation cardinality survives replay) while the per-session salt blocks dictionary reversal and cross-fixture linkage. A non-numeric path segment meeting an array fans out to every element (fail-closed).
 - **Bounded and lossy by design.** The capture can never apply backpressure to detection: each session owns a bounded buffer and drops events (counted) when full. `--duration` and `--limit` bound the window, a trailing summary record reports `{captured, dropped, duration_ms, stage}`, and a dropped client connection tears the session down automatically. The hook rides the same `ArcSwap` observer pattern as `--observe-fields`, so the idle hot-path cost is one load per batch.
-- **Config and limits.** Opt-in: disabled by default (it exfiltrates raw events), enabled with `daemon.tap.enabled: true`; `--disable-tap` force-overrides an enabling config to off, and the endpoint returns `503` when disabled. The config-file-only `daemon.tap` keys tune `buffer_events` (8192), `max_sessions` (2), and `max_duration` (5m); the endpoint returns `409` at the session cap and `400` over `max_duration`.
+- **Config and limits.** Opt-in: disabled by default (it exfiltrates raw events), enabled with `--enable-tap` or `daemon.tap.enabled: true`; the endpoint returns `503` when disabled. The config-file-only `daemon.tap` keys tune `buffer_events` (8192), `max_sessions` (2), and `max_duration` (5m); the endpoint returns `409` at the session cap and `400` over `max_duration`.
 - **New metrics.** `rsigma_tap_sessions_total`, `rsigma_tap_active_sessions`, `rsigma_tap_events_streamed_total`, and `rsigma_tap_events_dropped_total`.
 - **Security.** The tap exfiltrates raw events, so it inherits the admin surface's TLS/mTLS protections, ships with a kill switch for hardened deployments, and keeps redacted fields off the wire entirely. The client uses the synchronous `ureq` transport, so it builds without the `daemon` feature.
 

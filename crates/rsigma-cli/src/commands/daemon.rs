@@ -398,16 +398,24 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "source", value_name = "FILE_OR_DIR")]
     pub sources: Vec<PathBuf>,
 
-    /// Force the live event tap (`GET /api/v1/tap`) off.
+    /// Enable the live event tap (`GET /api/v1/tap`).
     ///
     /// The tap is disabled by default because it can exfiltrate live event
-    /// traffic; enable it with `daemon.tap.enabled: true` in the config.
-    /// This flag force-overrides that to off (e.g. on a hardened host that
-    /// shares an enabling config), so the endpoint returns `503`. The tuning
-    /// keys (`buffer_events`, `max_sessions`, `max_duration`) are
+    /// traffic. This flag turns it on for this run; it can also be enabled
+    /// with `daemon.tap.enabled: true`. Expose the admin API only behind mTLS.
+    /// The tuning keys (`buffer_events`, `max_sessions`, `max_duration`) are
     /// config-file-only under `daemon.tap`.
-    #[arg(long = "disable-tap")]
-    pub disable_tap: bool,
+    #[arg(long = "enable-tap")]
+    pub enable_tap: bool,
+
+    /// Enable the live detection tail (`GET /api/v1/detections/stream`).
+    ///
+    /// The tail is disabled by default. This flag turns it on for this run;
+    /// it can also be enabled with `daemon.tail.enabled: true`. The tuning
+    /// keys (`buffer_events`, `max_sessions`) are config-file-only under
+    /// `daemon.tail`.
+    #[arg(long = "enable-tail")]
+    pub enable_tail: bool,
 
     // ---------------------------------------------------------------
     // TLS (requires the `daemon-tls` build feature)
@@ -495,9 +503,10 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         config::print_dry_run("daemon", &base);
         return;
     }
-    // Resolve the config-file-only tap tuning keys (and the `--disable-tap`
-    // override) before `base` is moved into `apply_daemon_config`.
-    let tap = resolve_tap_settings(&base, args.disable_tap);
+    // Resolve the config-file-only tap / tail tuning keys (and the
+    // `--enable-*` flags) before `base` is moved into `apply_daemon_config`.
+    let tap = resolve_tap_settings(&base, args.enable_tap);
+    let tail = resolve_tail_settings(&base, args.enable_tail);
     apply_daemon_config(&mut args, matches, base);
 
     let DaemonArgs {
@@ -573,7 +582,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         enrichers,
         webhooks,
         sources: source_paths,
-        disable_tap: _,
+        enable_tap: _,
+        enable_tail: _,
         #[cfg(feature = "daemon-tls")]
         tls_cert,
         #[cfg(feature = "daemon-tls")]
@@ -698,23 +708,49 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         webhooks,
         source_paths,
         tap,
+        tail,
         #[cfg(feature = "daemon-tls")]
         tls_args,
     );
 }
 
+/// Resolve the effective tail settings from the merged config plus the
+/// `--enable-tail` flag. The tuning keys live only in `daemon.tail`; the tail
+/// is opt-in, enabled by the flag or `daemon.tail.enabled: true`.
+fn resolve_tail_settings(
+    base: &config::RsigmaConfigPartial,
+    enable_tail: bool,
+) -> daemon::server::TailSettings {
+    let tail = base.daemon.as_ref().and_then(|d| d.tail.as_ref());
+    let enabled = tail
+        .and_then(|t| t.enabled)
+        .unwrap_or(config::defaults::TAIL_ENABLED)
+        || enable_tail;
+    let buffer_events = tail
+        .and_then(|t| t.buffer_events)
+        .unwrap_or(config::defaults::TAIL_BUFFER_EVENTS);
+    let max_sessions = tail
+        .and_then(|t| t.max_sessions)
+        .unwrap_or(config::defaults::TAIL_MAX_SESSIONS);
+    daemon::server::TailSettings {
+        enabled,
+        buffer_events,
+        max_sessions,
+    }
+}
+
 /// Resolve the effective tap settings from the merged config plus the
-/// `--disable-tap` flag. The tuning keys live only in `daemon.tap`; the flag
-/// (or `enabled: false`) forces the tap off.
+/// `--enable-tap` flag. The tuning keys live only in `daemon.tap`; the tap is
+/// opt-in, enabled by the flag or `daemon.tap.enabled: true`.
 fn resolve_tap_settings(
     base: &config::RsigmaConfigPartial,
-    disable_tap: bool,
+    enable_tap: bool,
 ) -> daemon::server::TapSettings {
     let tap = base.daemon.as_ref().and_then(|d| d.tap.as_ref());
     let enabled = tap
         .and_then(|t| t.enabled)
         .unwrap_or(config::defaults::TAP_ENABLED)
-        && !disable_tap;
+        || enable_tap;
     let buffer_events = tap
         .and_then(|t| t.buffer_events)
         .unwrap_or(config::defaults::TAP_BUFFER_EVENTS);
@@ -1087,6 +1123,7 @@ fn run_daemon(
     webhook_paths: Vec<PathBuf>,
     source_paths: Vec<PathBuf>,
     tap: daemon::server::TapSettings,
+    tail: daemon::server::TailSettings,
     #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
@@ -1234,6 +1271,7 @@ fn run_daemon(
         webhook_paths,
         source_registry,
         tap,
+        tail,
         #[cfg(feature = "daemon-tls")]
         tls_state,
     };

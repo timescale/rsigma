@@ -21,7 +21,7 @@ The capture is **lossy by design**: it can never apply backpressure to detection
 
 Like [`engine status`](status.md) it is a read-only client over the admin API. It uses a synchronous HTTP client and does not need the `daemon` build feature, and it follows the same address convention as [`config reload`](../config/reload.md): `--addr` defaults to `daemon.api.addr`, and wildcard binds (`0.0.0.0`, `[::]`) map to loopback.
 
-The tap is **disabled by default** because it exfiltrates raw events. Enable it on the daemon with `daemon.tap.enabled: true` in the config (or `RSIGMA_DAEMON__TAP__ENABLED=true`), ideally only behind mTLS; otherwise the endpoint returns `503`.
+The tap is **disabled by default** because it exfiltrates raw events. Enable it on the daemon with the `--enable-tap` flag or `daemon.tap.enabled: true` in the config, ideally only behind mTLS; otherwise the endpoint returns `503`.
 
 ### Capture stages
 
@@ -37,7 +37,7 @@ The `--stage` flag selects where on the decode path the capture happens:
 Paths are navigated like the [enrichment template engine](../../guide/enrichers.md): object keys descend into objects, numeric segments index arrays. One safety divergence: when a non-numeric segment meets an array, redaction fans out to every element (a fixture that leaks one array element is a leak). On the `raw` stage, redaction applies only to JSON-parseable lines; a line that fails to parse is dropped from a redacting raw capture and counted.
 
 !!! warning "The tap exfiltrates raw events"
-    Anyone with admin API access can read live traffic through the tap. It is disabled by default; enable it (`daemon.tap.enabled: true`) only behind mTLS, use `--redact-fields` for sensitive fields, and keep `--disable-tap` handy as a per-host override. See [Security](../../reference/security.md#live-event-tap).
+    Anyone with admin API access can read live traffic through the tap. It is disabled by default; enable it (`daemon.tap.enabled: true` or `--enable-tap`) only behind mTLS, and use `--redact-fields` for sensitive fields. See [Security](../../reference/security.md#live-event-tap).
 
 ## Flags
 

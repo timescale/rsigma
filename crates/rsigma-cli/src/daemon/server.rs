@@ -37,7 +37,7 @@ use super::store::{SourcePosition, SqliteStateStore};
 use crate::EventFilter;
 
 /// Effective live event-tap limits, resolved from `daemon.tap.*` plus the
-/// `--disable-tap` flag.
+/// `--enable-tap` flag.
 #[derive(Debug, Clone, Copy)]
 pub struct TapSettings {
     /// Whether the tap accepts sessions. `false` makes `GET /api/v1/tap`
@@ -49,6 +49,19 @@ pub struct TapSettings {
     pub max_sessions: usize,
     /// Largest accepted capture window.
     pub max_duration: std::time::Duration,
+}
+
+/// Effective live detection-tail limits, resolved from `daemon.tail.*` plus the
+/// `--enable-tail` flag.
+#[derive(Debug, Clone, Copy)]
+pub struct TailSettings {
+    /// Whether the tail accepts sessions. `false` makes
+    /// `GET /api/v1/detections/stream` return `503`.
+    pub enabled: bool,
+    /// Per-session bounded channel capacity.
+    pub buffer_events: usize,
+    /// Maximum concurrent tail sessions.
+    pub max_sessions: usize,
 }
 
 /// Controls whether correlation state is restored from SQLite on startup.
@@ -89,6 +102,9 @@ struct AppState {
     /// Live event-tap state. `Some` when the tap is enabled; the
     /// `GET /api/v1/tap` handler registers capture sessions on it.
     tap: Option<super::tap::TapState>,
+    /// Live detection-tail state. `Some` when the tail is enabled; the
+    /// `GET /api/v1/detections/stream` handler registers sessions on it.
+    tail: Option<super::tail::TailState>,
 }
 
 #[derive(Clone)]
@@ -159,8 +175,10 @@ pub struct DaemonConfig {
     /// pipeline-embedded `sources:` blocks. Collision-checked at
     /// construction time.
     pub source_registry: rsigma_runtime::sources::registry::DaemonSourceRegistry,
-    /// Effective live event-tap limits (`daemon.tap.*` + `--disable-tap`).
+    /// Effective live event-tap limits (`daemon.tap.*` + `--enable-tap`).
     pub tap: TapSettings,
+    /// Effective live detection-tail limits (`daemon.tail.*` + `--enable-tail`).
+    pub tail: TailSettings,
     /// Optional server-side TLS state. `Some` when the operator passed
     /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
     /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
@@ -478,6 +496,25 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    let (tail, tail_registry) = if config.tail.enabled {
+        let registry =
+            super::tail::TailRegistry::new(config.tail.buffer_events, config.tail.max_sessions);
+        tracing::info!(
+            buffer_events = config.tail.buffer_events,
+            max_sessions = config.tail.max_sessions,
+            "Live detection tail enabled (GET /api/v1/detections/stream)"
+        );
+        (
+            Some(super::tail::TailState::new(
+                registry.clone(),
+                metrics.clone(),
+            )),
+            Some(registry),
+        )
+    } else {
+        (None, None)
+    };
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -492,6 +529,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         source_registry: Arc::new(config.source_registry.clone()),
         field_observer: field_observer.clone(),
         tap: tap.clone(),
+        tail: tail.clone(),
     };
 
     let app = Router::new()
@@ -516,7 +554,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/fields/unknown", get(fields_unknown))
         .route("/api/v1/fields/missing", get(fields_missing))
         .route("/api/v1/fields/observer", delete(fields_observer_reset))
-        .route("/api/v1/tap", get(tap_stream));
+        .route("/api/v1/tap", get(tap_stream))
+        .route("/api/v1/detections/stream", get(detections_stream));
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
@@ -1059,6 +1098,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let delivery_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let dispatch_ack_tx = ack_tx.clone();
     let empty_ack_tx = ack_tx.clone();
+    let tail_for_sink = tail_registry.clone();
     drop(ack_tx);
     let sink_handle = tokio::spawn(async move {
         let dispatcher = Dispatcher::spawn(leaves, Some(df_tx), dispatch_ack_tx, delivery_metrics);
@@ -1079,6 +1119,13 @@ pub async fn run_daemon(config: DaemonConfig) {
                     }
                     continue;
                 }
+            }
+
+            // Live detection tail: fan the post-enrichment result out to any
+            // active tail sessions before dispatch. Lossy and non-blocking, so
+            // it can never stall the sink task or the ack-join.
+            if let Some(tail) = &tail_for_sink {
+                tail.capture(&result);
             }
 
             dispatcher.dispatch(result, ack_tokens).await;
@@ -2053,7 +2100,7 @@ async fn tap_stream(
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
                 "error": "event tap disabled",
-                "hint": "restart the daemon without --disable-tap (and with daemon.tap.enabled not false) to enable GET /api/v1/tap",
+                "hint": "restart the daemon with --enable-tap (or daemon.tap.enabled: true) to enable GET /api/v1/tap",
             })),
         )
             .into_response();
@@ -2082,6 +2129,49 @@ async fn tap_stream(
     };
 
     super::tap::stream_response(handle, params, tap.metrics.clone())
+}
+
+/// Stream live detections as chunked NDJSON (`GET /api/v1/detections/stream`),
+/// one result per line, with optional `level` / `rule` filters. Ends at the
+/// duration or limit, whichever comes first, and a final summary record
+/// reports the streamed / dropped counts.
+async fn detections_stream(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<super::tail::TailQuery>,
+) -> Response {
+    let Some(tail) = state.tail.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "detection tail disabled",
+                "hint": "restart the daemon with --enable-tail (or daemon.tail.enabled: true) to enable GET /api/v1/detections/stream",
+            })),
+        )
+            .into_response();
+    };
+
+    let params = match super::tail::parse_params(&query) {
+        Ok(params) => params,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    match super::tail::stream_response(&tail.registry, params, tail.metrics.clone()) {
+        Some(response) => response,
+        None => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "tail session capacity reached",
+                "hint": "wait for an active tail to finish, or raise daemon.tail.max_sessions",
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// Accept events via HTTP POST for processing.

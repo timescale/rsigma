@@ -143,11 +143,11 @@ daemon:
 
   # Live event tap (GET /api/v1/tap). Records a bounded window of the live
   # event stream as a replayable NDJSON fixture. Opt-in: disabled by default
-  # because it can exfiltrate raw event traffic. Enable it only behind mTLS.
-  # The tuning keys below are config-file-only; --disable-tap force-overrides
-  # `enabled` to off.
+  # because it can exfiltrate raw event traffic. Enable it (here or with
+  # --enable-tap) only behind mTLS. The tuning keys below are config-file-only.
   tap:
-    # Accept tap sessions. Disabled by default; set true to enable.
+    # Accept tap sessions. Disabled by default; set true (or pass --enable-tap)
+    # to enable.
     enabled: false
     # Per-session bounded buffer; a full buffer drops events (counted)
     # rather than ever applying backpressure to the engine.
@@ -156,6 +156,19 @@ daemon:
     max_sessions: 2
     # Largest accepted capture window (a longer ?duration gets 400).
     max_duration: 5m
+
+  # Live detection tail (GET /api/v1/detections/stream). Streams detection
+  # results (not raw events) as NDJSON. Opt-in: disabled by default, enabled
+  # here or with --enable-tail. The tuning keys are config-file-only.
+  tail:
+    # Accept tail sessions. Disabled by default; set true (or pass
+    # --enable-tail) to enable.
+    enabled: false
+    # Per-session bounded buffer; a full buffer drops detections (counted)
+    # rather than ever applying backpressure to the sink task.
+    buffer_events: 8192
+    # Maximum concurrent tail sessions (a session over the cap gets 409).
+    max_sessions: 2
 
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.

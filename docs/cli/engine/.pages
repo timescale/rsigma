@@ -3,4 +3,5 @@ nav:
   - eval: eval.md
   - status: status.md
   - tap: tap.md
+  - tail: tail.md
   - daemon: daemon.md

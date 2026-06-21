@@ -12,8 +12,8 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs, LintArgs,
-    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StatusArgs, StdinArgs, TapArgs,
-    ValidateArgs,
+    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StatusArgs, StdinArgs, TailArgs,
+    TapArgs, ValidateArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -209,6 +209,10 @@ enum EngineCommands {
     /// Record a running daemon's live event stream to a replayable fixture
     /// (GET /api/v1/tap)
     Tap(TapArgs),
+
+    /// Stream a running daemon's live detections to the terminal
+    /// (GET /api/v1/detections/stream)
+    Tail(TailArgs),
 
     /// Run as a long-running daemon with hot-reload, health checks, and metrics
     #[cfg(feature = "daemon")]
@@ -435,6 +439,7 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::Outpu
         }
         EngineCommands::Status(args) => commands::cmd_status(args, ctx),
         EngineCommands::Tap(args) => commands::cmd_tap(args, ctx),
+        EngineCommands::Tail(args) => commands::cmd_tail(args, ctx),
         #[cfg(feature = "daemon")]
         EngineCommands::Daemon(args) => {
             let dm = matches

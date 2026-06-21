@@ -179,18 +179,34 @@ The daemon serves [`GET /api/v1/tap`](../../reference/http-api.md#live-event-tap
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--disable-tap` | off | Force the tap off even when `daemon.tap.enabled: true`; `GET /api/v1/tap` then returns `503`. Useful for a hardened host that shares an enabling config. |
+| `--enable-tap` | off | Enable the tap for this run; `GET /api/v1/tap` then accepts sessions. Equivalent to `daemon.tap.enabled: true`. |
 
 The other keys are config-file-only under `daemon.tap` (there is no flag for them):
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `daemon.tap.enabled` | `false` | Accept tap sessions. Opt-in; `--disable-tap` force-overrides to off. |
+| `daemon.tap.enabled` | `false` | Accept tap sessions. Opt-in; also enabled by `--enable-tap`. |
 | `daemon.tap.buffer_events` | `8192` | Per-session bounded buffer. A full buffer drops events (counted) rather than ever applying backpressure to the engine. |
 | `daemon.tap.max_sessions` | `2` | Maximum concurrent capture sessions. A session over the cap is rejected with `409`. |
 | `daemon.tap.max_duration` | `5m` | Largest accepted capture window. A longer `?duration` is rejected with `400`. |
 
 The tap can exfiltrate raw events; expose the admin API only behind mTLS and redact sensitive fields. See [Security: live event tap](../../reference/security.md#live-event-tap).
+
+### Live detection tail
+
+The daemon also serves [`GET /api/v1/detections/stream`](../../reference/http-api.md#live-detection-tail) (the endpoint behind [`rsigma engine tail`](tail.md)), which streams live detections as NDJSON. It is **disabled by default**; enable it with `daemon.tail.enabled: true`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--enable-tail` | off | Enable the tail for this run; `GET /api/v1/detections/stream` then accepts sessions. Equivalent to `daemon.tail.enabled: true`. |
+
+The other keys are config-file-only under `daemon.tail`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.tail.enabled` | `false` | Accept tail sessions. Opt-in; also enabled by `--enable-tail`. |
+| `daemon.tail.buffer_events` | `8192` | Per-session bounded buffer. A full buffer drops detections (counted) rather than ever applying backpressure to the sink task. |
+| `daemon.tail.max_sessions` | `2` | Maximum concurrent tail sessions. A session over the cap is rejected with `409`. |
 
 ## Examples
 

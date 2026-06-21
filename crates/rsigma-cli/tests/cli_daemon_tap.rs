@@ -17,13 +17,10 @@ use common::{DaemonProcess, http_get, http_post, poll_until, rsigma, rsigma_bin,
 use predicates::prelude::*;
 use serde_json::Value;
 
-/// The tap is opt-in (disabled by default); enable it on the daemon child via
-/// the uniform env layer so the capture tests can exercise it.
-const TAP_ON: &[(&str, &str)] = &[("RSIGMA_DAEMON__TAP__ENABLED", "true")];
-
-/// Spawn an HTTP-input daemon with the tap enabled.
+/// Spawn an HTTP-input daemon with the tap enabled via `--enable-tap` (the
+/// tap is opt-in / disabled by default).
 fn spawn_tap(rule_path: &str) -> DaemonProcess {
-    DaemonProcess::spawn_http_with_args_env(rule_path, &[], TAP_ON)
+    DaemonProcess::spawn_http_with_args(rule_path, &["--enable-tap"])
 }
 
 const RULE: &str = r#"
@@ -87,17 +84,17 @@ fn tap_disabled_by_default_returns_503() {
 }
 
 #[test]
-fn tap_disable_flag_overrides_enabling_config() {
+fn tap_enabled_via_config() {
     let rule = temp_file(".yml", RULE);
-    // Config enables the tap, but --disable-tap force-overrides it off.
+    // The config layer enables the tap (instead of the --enable-tap flag).
     let daemon = DaemonProcess::spawn_http_with_args_env(
         rule.path().to_str().unwrap(),
-        &["--disable-tap"],
-        TAP_ON,
+        &[],
+        &[("RSIGMA_DAEMON__TAP__ENABLED", "true")],
     );
 
-    let (status, _body) = http_get(&daemon.url("/api/v1/tap"));
-    assert_eq!(status, 503);
+    let (status, _body) = http_get(&daemon.url("/api/v1/tap?duration=1s"));
+    assert_eq!(status, 200);
 }
 
 #[test]
@@ -211,10 +208,9 @@ fn tap_limit_ends_stream_early() {
 #[test]
 fn tap_raw_stage_captures_unparsed_line() {
     let rule = temp_file(".yml", RULE);
-    let daemon = DaemonProcess::spawn_http_with_args_env(
+    let daemon = DaemonProcess::spawn_http_with_args(
         rule.path().to_str().unwrap(),
-        &["--input-format", "syslog"],
-        TAP_ON,
+        &["--input-format", "syslog", "--enable-tap"],
     );
 
     let syslog = "<34>Oct 11 22:14:15 mymachine su: tap raw test";

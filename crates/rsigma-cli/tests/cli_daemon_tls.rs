@@ -419,12 +419,22 @@ fn mtls_rejects_client_without_certificate() {
     )
     .expect_err("handshake without client cert should be rejected");
     let msg = err.to_string();
+    let lower = msg.to_lowercase();
+    // The server aborts the handshake because no client cert was presented.
+    // Most platforms surface a TLS-level error (certificate / handshake / tls
+    // / eof), but the abrupt teardown can also appear as a raw socket error:
+    // Windows reports WSAECONNRESET ("forcibly closed by the remote host"),
+    // and Linux can report "connection reset" or "broken pipe". All are valid
+    // rejections of the certless client.
     assert!(
-        msg.to_lowercase().contains("certificate")
-            || msg.to_lowercase().contains("handshake")
-            || msg.to_lowercase().contains("tls")
-            || msg.to_lowercase().contains("eof"),
-        "expected TLS-level rejection, got: {msg}"
+        lower.contains("certificate")
+            || lower.contains("handshake")
+            || lower.contains("tls")
+            || lower.contains("eof")
+            || lower.contains("closed")
+            || lower.contains("reset")
+            || lower.contains("broken pipe"),
+        "expected TLS-level or connection-teardown rejection, got: {msg}"
     );
 }
 
