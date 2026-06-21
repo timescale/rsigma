@@ -1,6 +1,6 @@
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 42 metric names across eight concerns: 37 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 44 metric names across nine concerns: 39 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
@@ -113,6 +113,15 @@ Exposed unconditionally; values stay at zero unless the tap is enabled (`daemon.
 | `rsigma_tap_active_sessions` | gauge | — | Currently active tap sessions. Bounded by `daemon.tap.max_sessions`. |
 | `rsigma_tap_events_streamed_total` | counter | — | Events streamed to tap clients. |
 | `rsigma_tap_events_dropped_total` | counter | — | Events dropped from a tap (a full per-session buffer, or an unparseable line in a redacting raw capture). A positive rate means captured fixtures have gaps. |
+
+## Live detection tail (2 metrics)
+
+Exposed unconditionally; values stay at zero unless the tail is enabled (`daemon.tail.enabled: true`) and an operator opens a session. See [HTTP API: Live detection tail](http-api.md#live-detection-tail) and [`rsigma engine tail`](../cli/engine/tail.md).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_tail_active_sessions` | gauge | — | Currently active tail sessions. Bounded by `daemon.tail.max_sessions`. |
+| `rsigma_tail_detections_dropped_total` | counter | — | Detections dropped from a tail because a session buffer was full. A positive rate means a tail client could not keep up. |
 
 ## Scrape configuration
 

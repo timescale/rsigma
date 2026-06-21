@@ -72,6 +72,10 @@ daemon:
     buffer_events: 8192     # per-session buffer; a full buffer drops events (counted)
     max_sessions: 2         # concurrent capture sessions (a session over the cap gets 409)
     max_duration: 5m        # largest accepted ?duration (a longer one gets 400)
+  tail:
+    enabled: false          # opt-in: enable GET /api/v1/detections/stream (--disable-tail off)
+    buffer_events: 8192     # per-session buffer; a full buffer drops detections (counted)
+    max_sessions: 2         # concurrent tail sessions (a session over the cap gets 409)
 
 eval:
   rules: ./rules
@@ -104,6 +108,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.nats` | `engine daemon` | Non-secret NATS knobs (e.g. `consumer_group`). Secrets stay env-only. Inert unless built with `daemon-nats`. |
 | `daemon.tap` | `engine daemon` | Live event-tap limits (`enabled`, `buffer_events`, `max_sessions`, `max_duration`). Disabled by default; enable with `enabled: true`. `--disable-tap` force-overrides `enabled` to off; the rest are config-file-only. See [HTTP API: Live event tap](http-api.md#live-event-tap). |
+| `daemon.tail` | `engine daemon` | Live detection-tail limits (`enabled`, `buffer_events`, `max_sessions`). Disabled by default; enable with `enabled: true`. `--disable-tail` force-overrides `enabled` to off; the rest are config-file-only. See [HTTP API: Live detection tail](http-api.md#live-detection-tail). |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
 | `backtest` | `rule backtest` | `rules`, `corpus`, `expectations`, `unexpected`, `pipelines`, and the syslog input knobs. `unexpected` has no compiled default so the expectations-file default can apply. |

@@ -154,6 +154,10 @@ rsigma engine status
 # (opt-in: start the daemon with daemon.tap.enabled: true)
 rsigma engine tap --duration 30s --redact-fields user.email,src_ip -o fixture.ndjson
 
+# Stream a running daemon's live detections to the terminal
+# (opt-in: start the daemon with daemon.tail.enabled: true)
+rsigma engine tail --level high
+
 # Convert rules to PostgreSQL SQL
 rsigma backend convert rules/ -t postgres
 ```

@@ -192,6 +192,22 @@ The other keys are config-file-only under `daemon.tap` (there is no flag for the
 
 The tap can exfiltrate raw events; expose the admin API only behind mTLS and redact sensitive fields. See [Security: live event tap](../../reference/security.md#live-event-tap).
 
+### Live detection tail
+
+The daemon also serves [`GET /api/v1/detections/stream`](../../reference/http-api.md#live-detection-tail) (the endpoint behind [`rsigma engine tail`](tail.md)), which streams live detections as NDJSON. It is **disabled by default**; enable it with `daemon.tail.enabled: true`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--disable-tail` | off | Force the tail off even when `daemon.tail.enabled: true`; `GET /api/v1/detections/stream` then returns `503`. |
+
+The other keys are config-file-only under `daemon.tail`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.tail.enabled` | `false` | Accept tail sessions. Opt-in; `--disable-tail` force-overrides to off. |
+| `daemon.tail.buffer_events` | `8192` | Per-session bounded buffer. A full buffer drops detections (counted) rather than ever applying backpressure to the sink task. |
+| `daemon.tail.max_sessions` | `2` | Maximum concurrent tail sessions. A session over the cap is rejected with `409`. |
+
 ## Examples
 
 ### Minimal daemon: stdin → stdout

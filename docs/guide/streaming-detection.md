@@ -190,7 +190,7 @@ The daemon binds an Axum HTTP server on `--api-addr` (default `0.0.0.0:9090`). I
 |------|--------|---------|
 | `/healthz` | GET | Liveness probe. Always 200 once the listener is up. |
 | `/readyz` | GET | Readiness probe. 200 once rules are loaded, 503 otherwise. |
-| `/metrics` | GET | Prometheus text format, 42 metric names under `--all-features` (37 always-present + 3 OTLP + 2 TLS gated on the matching build features). |
+| `/metrics` | GET | Prometheus text format, 44 metric names under `--all-features` (39 always-present + 3 OTLP + 2 TLS gated on the matching build features). |
 | `/api/v1/status` | GET | Counters, state-entry counts, uptime. |
 | `/api/v1/rules` | GET | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | Trigger an immediate rules reload. |
@@ -198,6 +198,7 @@ The daemon binds an Axum HTTP server on `--api-addr` (default `0.0.0.0:9090`). I
 | `/api/v1/sources` | GET | Status of dynamic pipeline sources. |
 | `/api/v1/sources/resolve` | POST | Force re-resolution of all (or some) dynamic sources. |
 | `/api/v1/tap` | GET | Stream a bounded, redactable window of the live event stream as NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. See [`engine tap`](../cli/engine/tap.md). |
+| `/api/v1/detections/stream` | GET | Stream live detections as NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. See [`engine tail`](../cli/engine/tail.md). |
 | `/v1/logs` | POST | OTLP log ingestion (`application/x-protobuf` or `application/json`). |
 
 Wire `/readyz` to your orchestrator's startup probe and `/healthz` to the liveness probe. Scrape `/metrics` at 15-30 s intervals.

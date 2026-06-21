@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `engine tail`: stream live detections to the terminal
+
+A new `rsigma engine tail` subcommand (and the `GET /api/v1/detections/stream` endpoint behind it) streams a running daemon's live detections, the detections-out counterpart to `engine tap`. Each result is the same `EvaluationResult` shape the sinks emit, captured after post-evaluation enrichment and regardless of which sinks are configured, so `engine tail` and a saved sink file are the same format.
+
+- **Server-side filters.** `--level <severity>` (minimum severity) and `--rule <substring>` (case-insensitive title/id match) are applied at the sink, so filtered-out results never cross the wire. `--duration` and `--limit` bound the stream; with neither, it streams until interrupted.
+- **Lossy by design.** Each session owns a bounded buffer and drops detections (counted) when full, so a slow tail client can never backpressure the sink task or stall the at-least-once ack-join. A dropped client connection tears the session down automatically. A trailing summary record reports `{streamed, dropped}`.
+- **Opt-in.** Disabled by default; enable with `daemon.tail.enabled: true` (`--disable-tail` force-overrides off). The config-file-only `daemon.tail` keys tune `buffer_events` (8192) and `max_sessions` (2); the endpoint returns `503` when disabled, `409` at the session cap, and `400` for a bad `level`.
+- **Output.** Rendered through the global `--output-format` layer (NDJSON when piped, pretty JSON on a TTY, plus `csv`/`tsv`/`table`). The client uses the synchronous `ureq` transport, so it builds without the `daemon` feature.
+- **New metrics.** `rsigma_tail_active_sessions` and `rsigma_tail_detections_dropped_total`.
+
 ### `engine tap`: record the live event stream to a replayable fixture (#238)
 
 A new `rsigma engine tap` subcommand (and the `GET /api/v1/tap` endpoint behind it) records a bounded window of a running daemon's live event stream as an NDJSON fixture, closing the "reproduce a missed detection locally" loop: capture what the daemon is actually seeing, optionally redact sensitive fields, then replay it against candidate rules with `engine eval -e @fixture.ndjson`.
