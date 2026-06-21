@@ -1,9 +1,12 @@
 #![cfg(feature = "nats")]
 
+use std::time::Duration;
+
 use rsigma_runtime::io::{EventSource, NatsConnectConfig, NatsSink, NatsSource, ReplayPolicy};
 use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::nats::{Nats, NatsServerCmd};
+use tokio::time::timeout;
 
 fn can_run_linux_containers() -> bool {
     let output = std::process::Command::new("docker")
@@ -192,13 +195,20 @@ async fn consumer_group_shared_workload() {
 
     let mut total = 0;
 
-    // Pull one message from each consumer, ack, and count.
-    // With a shared consumer, each message goes to exactly one consumer.
-    if let Some(raw) = c1.recv().await {
+    // Pull one message from each consumer, ack, and count. With a shared
+    // consumer, each message goes to exactly one consumer.
+    //
+    // The first stream's `messages()` pull request prefetches the whole batch,
+    // so the second consumer is starved and its `recv()` would otherwise block
+    // for the full pull-consumer expiry (~30s). Bound each receive with a short
+    // timeout so the test verifies distribution without paying the long-poll
+    // window.
+    let recv_timeout = Duration::from_secs(2);
+    if let Ok(Some(raw)) = timeout(recv_timeout, c1.recv()).await {
         raw.ack_token.ack().await;
         total += 1;
     }
-    if let Some(raw) = c2.recv().await {
+    if let Ok(Some(raw)) = timeout(recv_timeout, c2.recv()).await {
         raw.ack_token.ack().await;
         total += 1;
     }
