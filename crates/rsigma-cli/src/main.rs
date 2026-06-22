@@ -12,8 +12,8 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs, LintArgs,
-    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StatusArgs, StdinArgs, TailArgs,
-    TapArgs, ValidateArgs, VisibilityArgs,
+    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, ScorecardArgs, StatusArgs,
+    StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -238,6 +238,9 @@ enum RuleCommands {
 
     /// Map rules onto MITRE ATT&CK: Navigator layer export + coverage gaps
     Coverage(CoverageArgs),
+
+    /// Fuse backtest + coverage (+ metrics, triage) into keep/tune/retire verdicts
+    Scorecard(ScorecardArgs),
 
     /// Score telemetry visibility: DeTT&CT export + visibility Navigator layer
     Visibility(VisibilityArgs),
@@ -474,6 +477,13 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
                 .expect("rule coverage submatches present");
             run_coverage(args, cm, ctx);
         }
+        RuleCommands::Scorecard(args) => {
+            let sm = matches
+                .subcommand_matches("rule")
+                .and_then(|m| m.subcommand_matches("scorecard"))
+                .expect("rule scorecard submatches present");
+            run_scorecard(args, sm, ctx);
+        }
         RuleCommands::Visibility(args) => {
             let vm = matches
                 .subcommand_matches("rule")
@@ -529,6 +539,16 @@ fn run_backtest(mut args: BacktestArgs, matches: &ArgMatches, ctx: output::Outpu
 fn run_coverage(mut args: CoverageArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_coverage_config(&mut args, matches);
     let code = commands::cmd_coverage(args, ctx);
+    process::exit(code);
+}
+
+/// Entry point for `rule scorecard`. Applies config (CLI flag > env > file >
+/// default) before running, then exits with the report's house exit code
+/// (0 success or under --fail-on, 1 verdicts hit --fail-on, 2 input unreadable,
+/// 3 bad flags or a malformed/version-mismatched report).
+fn run_scorecard(mut args: ScorecardArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
+    commands::apply_scorecard_config(&mut args, matches);
+    let code = commands::cmd_scorecard(args, ctx);
     process::exit(code);
 }
 
@@ -934,6 +954,18 @@ mod config_default_drift {
             .map(|s| s.to_string_lossy().into_owned())
     }
 
+    fn scorecard_default(id: &str) -> Option<String> {
+        let cmd = Cli::command();
+        let rule = cmd.find_subcommand("rule")?;
+        let scorecard = rule.find_subcommand("scorecard")?;
+        scorecard
+            .get_arguments()
+            .find(|a| a.get_id() == id)?
+            .get_default_values()
+            .first()
+            .map(|s| s.to_string_lossy().into_owned())
+    }
+
     /// The `rule backtest` input-handling flags share the single-source config
     /// defaults, just like the daemon flags.
     #[test]
@@ -949,6 +981,40 @@ mod config_default_drift {
         assert_eq!(
             backtest_default("syslog_strip_bom"),
             Some(defaults::SYSLOG_STRIP_BOM.to_string())
+        );
+    }
+
+    /// The `rule scorecard` verdict-threshold flags share the single-source
+    /// config defaults, just like the daemon and backtest flags.
+    #[test]
+    fn clap_scorecard_defaults_match_config_defaults() {
+        assert_eq!(
+            scorecard_default("min_precision"),
+            Some(defaults::SCORECARD_MIN_PRECISION.to_string())
+        );
+        assert_eq!(
+            scorecard_default("tune_max_precision"),
+            Some(defaults::SCORECARD_TUNE_MAX_PRECISION.to_string())
+        );
+        assert_eq!(
+            scorecard_default("retire_max_precision"),
+            Some(defaults::SCORECARD_RETIRE_MAX_PRECISION.to_string())
+        );
+        assert_eq!(
+            scorecard_default("min_volume"),
+            Some(defaults::SCORECARD_MIN_VOLUME.to_string())
+        );
+        assert_eq!(
+            scorecard_default("stale_window"),
+            Some(defaults::SCORECARD_STALE_WINDOW_DAYS.to_string())
+        );
+        assert_eq!(
+            scorecard_default("max_fp_ratio"),
+            Some(defaults::SCORECARD_MAX_FP_RATIO.to_string())
+        );
+        assert_eq!(
+            scorecard_default("fail_on").as_deref(),
+            Some(defaults::SCORECARD_FAIL_ON)
         );
     }
 

@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "rule_id": "L1",
+      "true_positives": 2,
+      "false_positives": 8,
+      "mttd_seconds": 1800,
+      "mttr_seconds": 3600
+    },
+    { "rule_id": "k1", "fp_ratio": 0.05 }
+  ]
+}

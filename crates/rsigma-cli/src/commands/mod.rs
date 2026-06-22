@@ -12,10 +12,14 @@ mod mcp;
 mod migrate_sources;
 mod navigator;
 mod parse;
+// Shared serializable report shapes for the detection-as-code `rule` commands:
+// `backtest`/`coverage` produce them, `scorecard` consumes them.
+pub(crate) mod reports;
 // `pipeline resolve` needs the async runtime + source resolver, which only
 // ship with the `daemon` feature.
 #[cfg(feature = "daemon")]
 mod resolve;
+mod scorecard;
 // Delegation to an external sigma-cli for non-native conversion targets.
 mod sigma_cli;
 mod status;
@@ -40,6 +44,7 @@ pub(crate) use migrate_sources::{MigrateSourcesArgs, cmd_migrate_sources};
 pub(crate) use parse::{ConditionArgs, ParseArgs, StdinArgs, cmd_condition, cmd_parse, cmd_stdin};
 #[cfg(feature = "daemon")]
 pub(crate) use resolve::{ResolveArgs, cmd_resolve};
+pub(crate) use scorecard::{ScorecardArgs, apply_scorecard_config, cmd_scorecard};
 pub(crate) use status::{StatusArgs, cmd_status};
 pub(crate) use tail::{TailArgs, cmd_tail};
 pub(crate) use tap::{TapArgs, cmd_tap};

@@ -1,0 +1,245 @@
+{
+    "summary": {
+        "rules_total": 7,
+        "keep": 3,
+        "tune": 2,
+        "retire": 2,
+        "portfolio_precision_proxy": 0.6666666666666666,
+        "attack_tagged_pct": 71.42857142857143,
+        "attack_techniques": 3,
+        "thresholds": {
+            "min_precision": 0.8,
+            "tune_max_precision": 0.5,
+            "retire_max_precision": 0.1,
+            "min_volume": 1,
+            "stale_window_days": 30,
+            "max_fp_ratio": 0.5
+        }
+    },
+    "records": [
+        {
+            "rule_id": "L1",
+            "rule_title": "Live Noisy",
+            "level": "medium",
+            "precision_proxy": 1.0,
+            "recall": 1.0,
+            "fp_signal": 0,
+            "corpus_volume": 10,
+            "production_volume": 50,
+            "volume": 60,
+            "mttd_seconds": 1800.0,
+            "mttr_seconds": 3600.0,
+            "live_fp_ratio": 0.8,
+            "attack": {
+                "techniques": [
+                    "T1110"
+                ],
+                "tactics": [
+                    "credential-access"
+                ],
+                "sole_coverage": false
+            },
+            "title_collision": false,
+            "verdict": "tune",
+            "reason": "live false-positive ratio 0.80 exceeds the 0.50 ceiling",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "recall": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest",
+                    "metrics"
+                ],
+                "mttd": "triage",
+                "mttr": "triage",
+                "live_fp_ratio": "triage",
+                "attack": "coverage"
+            }
+        },
+        {
+            "rule_id": "da",
+            "rule_title": "Dup Title",
+            "level": "low",
+            "precision_proxy": 1.0,
+            "recall": 1.0,
+            "fp_signal": 0,
+            "corpus_volume": 3,
+            "production_volume": 12,
+            "volume": 15,
+            "attack": {
+                "sole_coverage": false
+            },
+            "title_collision": true,
+            "verdict": "keep",
+            "reason": "precision proxy 1.00 at or above the 0.80 keep floor and firing within the window",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "recall": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest",
+                    "metrics"
+                ]
+            }
+        },
+        {
+            "rule_id": "db",
+            "rule_title": "Dup Title",
+            "level": "low",
+            "precision_proxy": 1.0,
+            "recall": 1.0,
+            "fp_signal": 0,
+            "corpus_volume": 3,
+            "production_volume": 12,
+            "volume": 15,
+            "attack": {
+                "sole_coverage": false
+            },
+            "title_collision": true,
+            "verdict": "keep",
+            "reason": "precision proxy 1.00 at or above the 0.80 keep floor and firing within the window",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "recall": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest",
+                    "metrics"
+                ]
+            }
+        },
+        {
+            "rule_id": "dead",
+            "rule_title": "Dead Rule",
+            "level": "medium",
+            "recall": 0.0,
+            "fp_signal": 0,
+            "corpus_volume": 0,
+            "volume": 0,
+            "attack": {
+                "techniques": [
+                    "T1059"
+                ],
+                "tactics": [
+                    "execution"
+                ],
+                "sole_coverage": false
+            },
+            "title_collision": false,
+            "verdict": "retire",
+            "reason": "no fires across the backtest corpus and the metrics window (dead rule)",
+            "provenance": {
+                "recall": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest"
+                ],
+                "attack": "coverage"
+            }
+        },
+        {
+            "rule_id": "k1",
+            "rule_title": "Keep Rule",
+            "level": "high",
+            "logsource": {
+                "category": "process_creation",
+                "product": "windows"
+            },
+            "precision_proxy": 1.0,
+            "recall": 1.0,
+            "fp_signal": 0,
+            "corpus_volume": 10,
+            "production_volume": 100,
+            "volume": 110,
+            "live_fp_ratio": 0.05,
+            "attack": {
+                "techniques": [
+                    "T1059"
+                ],
+                "tactics": [
+                    "execution"
+                ],
+                "sole_coverage": false
+            },
+            "title_collision": false,
+            "verdict": "keep",
+            "reason": "precision proxy 1.00 at or above the 0.80 keep floor and firing within the window",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "recall": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest",
+                    "metrics"
+                ],
+                "live_fp_ratio": "triage",
+                "attack": "coverage"
+            }
+        },
+        {
+            "rule_id": "n1",
+            "rule_title": "Retire Noisy",
+            "level": "low",
+            "precision_proxy": 0.0,
+            "fp_signal": 5,
+            "corpus_volume": 5,
+            "volume": 5,
+            "attack": {
+                "techniques": [
+                    "T1110"
+                ],
+                "tactics": [
+                    "credential-access"
+                ],
+                "sole_coverage": false
+            },
+            "title_collision": false,
+            "verdict": "retire",
+            "reason": "precision proxy 0.00 below the 0.10 retire floor",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest"
+                ],
+                "attack": "coverage"
+            }
+        },
+        {
+            "rule_id": "s1",
+            "rule_title": "Sole Cover",
+            "level": "high",
+            "precision_proxy": 0.0,
+            "fp_signal": 4,
+            "corpus_volume": 4,
+            "volume": 4,
+            "attack": {
+                "techniques": [
+                    "T1003"
+                ],
+                "tactics": [
+                    "credential-access"
+                ],
+                "sole_coverage": true,
+                "sole_techniques": [
+                    "T1003"
+                ]
+            },
+            "title_collision": false,
+            "verdict": "tune",
+            "reason": "precision proxy 0.00 below the 0.10 retire floor; retained as the sole ATT&CK coverage (T1003), tune rather than retire",
+            "provenance": {
+                "precision_proxy": "backtest",
+                "fp_signal": "backtest",
+                "volume": [
+                    "backtest"
+                ],
+                "attack": "coverage"
+            }
+        }
+    ],
+    "inputs": {
+        "metrics": true,
+        "triage": true
+    }
+}

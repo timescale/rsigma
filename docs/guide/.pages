@@ -5,6 +5,7 @@ nav:
   - Array Matching: array-matching.md
   - Linting Rules: linting-rules.md
   - ATT&CK Coverage: attack-coverage.md
+  - Detection Scorecard: detection-scorecard.md
   - Visibility and Data Sources: visibility-and-data-sources.md
   - MCP Server: mcp-server.md
   - Processing Pipelines: processing-pipelines.md

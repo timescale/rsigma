@@ -287,6 +287,27 @@ fn coverage_config_file_layering() {
 }
 
 #[test]
+fn coverage_reads_rules_from_config() {
+    // The rules path comes from the config file; no -r on the command line.
+    let cfg = temp_file(
+        ".yaml",
+        &format!("coverage:\n  rules:\n    - {}\n", fixture("rules.yml")),
+    );
+    rsigma()
+        .args([
+            "rule",
+            "coverage",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--output-format",
+            "table",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Coverage summary"));
+}
+
+#[test]
 fn coverage_dry_run_prints_config_section() {
     rsigma()
         .args([

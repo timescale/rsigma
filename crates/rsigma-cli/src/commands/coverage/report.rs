@@ -9,34 +9,15 @@
 
 use std::collections::BTreeSet;
 
-use serde::Serialize;
-
 use super::sources::{CrossRef, Targets};
 use super::{Coverage, parent_technique};
+use crate::commands::reports::{
+    AtomicsGap, BaselineGap, CoverageReport, CoverageSummary, TargetGap, TechniqueEntry,
+};
 use crate::exit_code;
 use crate::output::{
     DelimitedWriter, OutputCtx, OutputFormat, Painter, Tabular, render_json, render_ndjson,
 };
-
-#[derive(Debug, Clone, Serialize)]
-struct Summary {
-    rules_total: usize,
-    rules_tagged: usize,
-    rules_untagged: usize,
-    techniques: usize,
-    subtechniques: usize,
-    tactics: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct TechniqueEntry {
-    id: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tactics: Vec<String>,
-    rule_count: usize,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    rules: Vec<String>,
-}
 
 const TECHNIQUE_HEADERS: &[&str] = &["TECHNIQUE", "TACTICS", "RULES"];
 
@@ -57,65 +38,17 @@ impl Tabular for TechniqueEntry {
     }
 }
 
-/// Atomic Red Team cross-reference: which techniques have atomics but no rule
-/// (a detection gap) and which rules cover techniques with no atomic (a
-/// validation gap).
-#[derive(Debug, Clone, Serialize)]
-struct AtomicsGap {
-    atomics_total: usize,
-    covered: usize,
-    atomics_without_rule: Vec<String>,
-    rules_without_atomic: Vec<String>,
-}
-
-/// SigmaHQ baseline cross-reference: which baseline techniques are uncovered
-/// locally, and which local techniques the baseline does not carry.
-#[derive(Debug, Clone, Serialize)]
-struct BaselineGap {
-    baseline_total: usize,
-    covered: usize,
-    baseline_not_covered: Vec<String>,
-    ahead_of_baseline: Vec<String>,
-}
-
-/// Target-list cross-reference: which targeted techniques are uncovered, and
-/// which are only covered through a sub-technique rule.
-#[derive(Debug, Clone, Serialize)]
-struct TargetGap {
-    targets_total: usize,
-    covered: usize,
-    uncovered: Vec<String>,
-    covered_via_subtechnique: Vec<String>,
-}
-
-/// The full coverage report document.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct CoverageReport {
-    summary: Summary,
-    techniques: Vec<TechniqueEntry>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    untagged_rules: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    atomics: Option<AtomicsGap>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    baseline: Option<BaselineGap>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    targets: Option<TargetGap>,
-    /// Whether uncovered cross-reference techniques should set the exit code.
-    /// Not part of the serialized shape.
-    #[serde(skip)]
-    fail_on_gaps: bool,
-}
-
 impl CoverageReport {
     /// Build the report from the computed coverage plus the optional
-    /// cross-reference inputs.
+    /// cross-reference inputs. The serializable shape lives in
+    /// `crate::commands::reports` so the `rule scorecard` consumer shares one
+    /// definition with this producer; the `fail_on_gaps` exit-code decision is
+    /// runtime-only and is threaded through [`CoverageReport::exit_code`].
     pub(crate) fn build(
         coverage: &Coverage,
         atomics: Option<CrossRef>,
         baseline: Option<CrossRef>,
         targets: Option<Targets>,
-        fail_on_gaps: bool,
     ) -> Self {
         let techniques: Vec<TechniqueEntry> = coverage
             .techniques
@@ -130,7 +63,7 @@ impl CoverageReport {
 
         let subtechniques = techniques.iter().filter(|t| t.id.contains('.')).count();
 
-        let summary = Summary {
+        let summary = CoverageSummary {
             rules_total: coverage.rules_total,
             rules_tagged: coverage.rules_tagged,
             rules_untagged: coverage.rules_total - coverage.rules_tagged,
@@ -146,14 +79,13 @@ impl CoverageReport {
             atomics: atomics.map(|a| build_atomics_gap(coverage, &a)),
             baseline: baseline.map(|b| build_baseline_gap(coverage, &b)),
             targets: targets.map(|t| build_target_gap(coverage, &t)),
-            fail_on_gaps,
         }
     }
 
     /// House exit code: `FINDINGS` (1) under `--fail-on-gaps` when any
     /// requested cross-reference reports uncovered techniques, else `SUCCESS`.
-    pub(crate) fn exit_code(&self) -> i32 {
-        if self.fail_on_gaps && self.has_gaps() {
+    pub(crate) fn exit_code(&self, fail_on_gaps: bool) -> i32 {
+        if fail_on_gaps && self.has_gaps() {
             exit_code::FINDINGS
         } else {
             exit_code::SUCCESS
@@ -411,7 +343,7 @@ detection: {sel: {Image|endswith: '\x.exe'}, condition: sel}
     #[test]
     fn summary_counts_tagged_and_untagged() {
         let cov = coverage_from(RULES);
-        let report = CoverageReport::build(&cov, None, None, None, false);
+        let report = CoverageReport::build(&cov, None, None, None);
         assert_eq!(report.summary.rules_total, 3);
         assert_eq!(report.summary.rules_tagged, 2);
         assert_eq!(report.summary.rules_untagged, 1);
@@ -427,13 +359,13 @@ detection: {sel: {Image|endswith: '\x.exe'}, condition: sel}
         let targets = Targets {
             ids: vec!["T1059".to_string(), "T1003".to_string()],
         };
-        let report = CoverageReport::build(&cov, None, None, Some(targets), true);
+        let report = CoverageReport::build(&cov, None, None, Some(targets));
         let t = report.targets.as_ref().unwrap();
         assert_eq!(t.covered, 1);
         assert_eq!(t.covered_via_subtechnique, vec!["T1059".to_string()]);
         assert_eq!(t.uncovered, vec!["T1003".to_string()]);
         // Uncovered target under --fail-on-gaps -> findings.
-        assert_eq!(report.exit_code(), exit_code::FINDINGS);
+        assert_eq!(report.exit_code(true), exit_code::FINDINGS);
     }
 
     #[test]
@@ -443,7 +375,7 @@ detection: {sel: {Image|endswith: '\x.exe'}, condition: sel}
         let targets = Targets {
             ids: vec!["T1059.002".to_string()],
         };
-        let report = CoverageReport::build(&cov, None, None, Some(targets), false);
+        let report = CoverageReport::build(&cov, None, None, Some(targets));
         let t = report.targets.as_ref().unwrap();
         assert_eq!(t.uncovered, vec!["T1059.002".to_string()]);
     }
@@ -453,7 +385,7 @@ detection: {sel: {Image|endswith: '\x.exe'}, condition: sel}
         let cov = coverage_from(RULES);
         // Atomics exist for T1059 (parent of a covered sub) and T1566 (no rule).
         let atomics = cross_ref(&["T1059", "T1566"]);
-        let report = CoverageReport::build(&cov, Some(atomics), None, None, false);
+        let report = CoverageReport::build(&cov, Some(atomics), None, None);
         let a = report.atomics.as_ref().unwrap();
         // T1059 is covered via the sub-technique rule; T1566 is not.
         assert_eq!(a.covered, 1);
@@ -468,7 +400,7 @@ detection: {sel: {Image|endswith: '\x.exe'}, condition: sel}
         let targets = Targets {
             ids: vec!["T1033".to_string()],
         };
-        let report = CoverageReport::build(&cov, None, None, Some(targets), true);
-        assert_eq!(report.exit_code(), exit_code::SUCCESS);
+        let report = CoverageReport::build(&cov, None, None, Some(targets));
+        assert_eq!(report.exit_code(true), exit_code::SUCCESS);
     }
 }

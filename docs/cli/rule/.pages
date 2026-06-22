@@ -6,6 +6,7 @@ nav:
   - fields: fields.md
   - backtest: backtest.md
   - coverage: coverage.md
+  - scorecard: scorecard.md
   - visibility: visibility.md
   - condition: condition.md
   - stdin: stdin.md

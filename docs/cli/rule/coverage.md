@@ -30,7 +30,7 @@ A rule tagged with a sub-technique (`attack.t1059.001`) counts toward its parent
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>` | required | Sigma rule file or directory of rules. Repeatable. |
+| `-r, --rules <PATH>` | required | Sigma rule file or directory of rules. Repeatable. May also be supplied via `coverage.rules`. |
 | `--navigator <FILE>` | unset | Write an ATT&CK Navigator layer (format 4.5) to this file. |
 | `--atomics [<PATH_OR_URL>]` | unset | Cross-reference the Atomic Red Team index. A bare `--atomics` uses the upstream `atomics/Indexes/index.yaml`; pass a local `index.yaml`, an atomic-red-team `atomics/` directory, or a URL. May also be supplied via `coverage.atomics`. |
 | `--baseline [<PATH_OR_URL>]` | unset | Cross-reference a baseline Navigator layer. A bare `--baseline` uses the SigmaHQ coverage heatmap; pass a local path or URL. May also be supplied via `coverage.baseline`. |
@@ -107,6 +107,7 @@ rsigma rule coverage -r rules/ --targets threat-model.txt --fail-on-gaps
 
 - [ATT&CK Coverage](../../guide/attack-coverage.md) for the end-to-end workflow.
 - [`rule backtest`](backtest.md) for the corpus-replay test harness; coverage and backtest are the two halves of detection-as-code CI.
+- [`rule scorecard`](scorecard.md) to feed this JSON report (with the backtest report) into per-rule keep/tune/retire verdicts.
 - [CI/CD](../../guide/ci-cd.md) for wiring coverage into a pipeline.
 - [Configuration](../../reference/configuration.md) for the `coverage` config section.
 - [Exit Codes reference](../../reference/exit-codes.md) for the canonical table.

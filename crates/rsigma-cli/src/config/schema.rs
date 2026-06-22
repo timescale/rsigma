@@ -49,6 +49,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma rule coverage` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoveragePartial>,
+    /// `rsigma rule scorecard` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scorecard: Option<ScorecardPartial>,
     /// `rsigma rule visibility` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<VisibilityPartial>,
@@ -66,6 +69,7 @@ impl Merge for RsigmaConfigPartial {
             eval: merge_opt(self.eval, over.eval),
             backtest: merge_opt(self.backtest, over.backtest),
             coverage: merge_opt(self.coverage, over.coverage),
+            scorecard: merge_opt(self.scorecard, over.scorecard),
             visibility: merge_opt(self.visibility, over.visibility),
             mcp: merge_opt(self.mcp, over.mcp),
         }
@@ -570,10 +574,12 @@ impl Merge for BacktestPartial {
     }
 }
 
-/// `rsigma rule coverage` settings. `rules` is intentionally absent: it is a
-/// required, invocation-specific CLI argument, not a project default.
+/// `rsigma rule coverage` settings.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct CoveragePartial {
+    /// Sigma rule file(s) or directory(ies) to map onto ATT&CK.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<PathBuf>>,
     /// Atomic Red Team index path/URL, or an `atomics/` directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub atomics: Option<String>,
@@ -592,10 +598,77 @@ pub(crate) struct CoveragePartial {
 impl Merge for CoveragePartial {
     fn merge(self, over: Self) -> Self {
         Self {
+            rules: over.rules.or(self.rules),
             atomics: over.atomics.or(self.atomics),
             baseline: over.baseline.or(self.baseline),
             targets: over.targets.or(self.targets),
             fail_on_gaps: over.fail_on_gaps.or(self.fail_on_gaps),
+        }
+    }
+}
+
+/// `rsigma rule scorecard` settings. The verdict thresholds carry compiled
+/// defaults; the inputs (including the two required JSON reports) and the report
+/// path are opt-in.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct ScorecardPartial {
+    /// The backtest JSON report (from `rule backtest --report`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backtest: Option<PathBuf>,
+    /// The coverage JSON report (from `rule coverage --output-format json`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<PathBuf>,
+    /// Prometheus exposition snapshot path or `/metrics` URL for production volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<String>,
+    /// Prometheus query-API range window (e.g. 7d) for last-fired and fire-rate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_window: Option<String>,
+    /// Triage disposition feed file for the live false-positive ratio and latency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage: Option<PathBuf>,
+    /// Program-artifact output path (`.md`/`.html`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<PathBuf>,
+    /// CI policy: `none`, `tune`, or `retire`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_on: Option<String>,
+    /// Keep floor: precision proxy at or above this keeps the rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_precision: Option<f64>,
+    /// Upper edge of the review band (used in the tune reason).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tune_max_precision: Option<f64>,
+    /// Retire floor: precision proxy below this retires the rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_max_precision: Option<f64>,
+    /// Minimum total volume for a keep verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_volume: Option<u64>,
+    /// Staleness window in days for the keep gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_window: Option<u64>,
+    /// Live false-positive-ratio ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fp_ratio: Option<f64>,
+}
+
+impl Merge for ScorecardPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            backtest: over.backtest.or(self.backtest),
+            coverage: over.coverage.or(self.coverage),
+            metrics: over.metrics.or(self.metrics),
+            metrics_window: over.metrics_window.or(self.metrics_window),
+            triage: over.triage.or(self.triage),
+            report: over.report.or(self.report),
+            fail_on: over.fail_on.or(self.fail_on),
+            min_precision: over.min_precision.or(self.min_precision),
+            tune_max_precision: over.tune_max_precision.or(self.tune_max_precision),
+            retire_max_precision: over.retire_max_precision.or(self.retire_max_precision),
+            min_volume: over.min_volume.or(self.min_volume),
+            stale_window: over.stale_window.or(self.stale_window),
+            max_fp_ratio: over.max_fp_ratio.or(self.max_fp_ratio),
         }
     }
 }

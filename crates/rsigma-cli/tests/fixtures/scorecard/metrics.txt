@@ -1,0 +1,8 @@
+# HELP rsigma_detection_matches_by_rule_total Detection matches per rule.
+# TYPE rsigma_detection_matches_by_rule_total counter
+rsigma_detection_matches_by_rule_total{rule_title="Keep Rule",level="high"} 100
+rsigma_detection_matches_by_rule_total{rule_title="Live Noisy",level="medium"} 50
+rsigma_detection_matches_by_rule_total{rule_title="Dup Title",level="low"} 12
+# HELP rsigma_correlation_matches_by_rule_total Correlation matches per rule.
+# TYPE rsigma_correlation_matches_by_rule_total counter
+rsigma_correlation_matches_by_rule_total{rule_title="Some Correlation",level="high",correlation_type="event_count"} 7

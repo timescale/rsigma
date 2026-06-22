@@ -1,0 +1,31 @@
+{
+  "summary": {
+    "rules_total": 7,
+    "rules_tagged": 5,
+    "rules_untagged": 2,
+    "techniques": 3,
+    "subtechniques": 0,
+    "tactics": 3
+  },
+  "techniques": [
+    {
+      "id": "T1003",
+      "tactics": ["credential-access"],
+      "rule_count": 1,
+      "rules": ["Sole Cover"]
+    },
+    {
+      "id": "T1059",
+      "tactics": ["execution"],
+      "rule_count": 2,
+      "rules": ["Dead Rule", "Keep Rule"]
+    },
+    {
+      "id": "T1110",
+      "tactics": ["credential-access"],
+      "rule_count": 2,
+      "rules": ["Live Noisy", "Retire Noisy"]
+    }
+  ],
+  "untagged_rules": ["Dup Title"]
+}

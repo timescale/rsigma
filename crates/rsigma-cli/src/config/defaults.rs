@@ -7,8 +7,8 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, StatePartial, TailPartial,
-    TapPartial,
+    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, ScorecardPartial,
+    StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -65,6 +65,17 @@ pub(crate) const MATCH_DETAIL: &str = "off";
 /// feature to avoid a dead-code warning in builds without it.
 #[cfg(feature = "daemon-tls")]
 pub(crate) const TLS_MIN_VERSION: &str = "1.3";
+/// `rule scorecard` verdict thresholds, the SOC quality-metrics defaults from
+/// the hackforlab detection-quality writeup. A drift-guard test pins the clap
+/// flag defaults to these constants.
+pub(crate) const SCORECARD_MIN_PRECISION: f64 = 0.80;
+pub(crate) const SCORECARD_TUNE_MAX_PRECISION: f64 = 0.50;
+pub(crate) const SCORECARD_RETIRE_MAX_PRECISION: f64 = 0.10;
+pub(crate) const SCORECARD_MIN_VOLUME: u64 = 1;
+pub(crate) const SCORECARD_STALE_WINDOW_DAYS: u64 = 30;
+pub(crate) const SCORECARD_MAX_FP_RATIO: f64 = 0.50;
+/// Default `--fail-on` policy: report only, never fail on verdicts.
+pub(crate) const SCORECARD_FAIL_ON: &str = "none";
 
 /// A fully-populated partial holding every compiled default.
 ///
@@ -173,6 +184,24 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         // The `coverage` section has no compiled defaults: the cross-reference
         // inputs are opt-in and `fail_on_gaps` defaults to off via clap.
         coverage: None,
+        // The `scorecard` verdict thresholds have compiled defaults (mirrored by
+        // the clap flag defaults via the drift-guard test); the inputs and the
+        // report path are opt-in and left unset.
+        scorecard: Some(ScorecardPartial {
+            backtest: None,
+            coverage: None,
+            metrics: None,
+            metrics_window: None,
+            triage: None,
+            report: None,
+            fail_on: Some(SCORECARD_FAIL_ON.to_string()),
+            min_precision: Some(SCORECARD_MIN_PRECISION),
+            tune_max_precision: Some(SCORECARD_TUNE_MAX_PRECISION),
+            retire_max_precision: Some(SCORECARD_RETIRE_MAX_PRECISION),
+            min_volume: Some(SCORECARD_MIN_VOLUME),
+            stale_window: Some(SCORECARD_STALE_WINDOW_DAYS),
+            max_fp_ratio: Some(SCORECARD_MAX_FP_RATIO),
+        }),
         // The `visibility` section has no compiled defaults: the mapping table
         // falls back to the bundled default and `fail_on_blind_spots` defaults
         // to off via clap.

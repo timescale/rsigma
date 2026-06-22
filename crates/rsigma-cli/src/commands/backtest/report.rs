@@ -1,8 +1,8 @@
 //! Backtest accumulation, expected-vs-actual diff, and report rendering.
 //!
 //! The accumulator tallies per-rule and per-corpus-file fire counts as events
-//! stream through the engine. [`Report::build`] turns those tallies plus the
-//! resolved expectations into a stable, serializable document: the expectation
+//! stream through the engine. [`BacktestReport::build`] turns those tallies plus
+//! the resolved expectations into a stable, serializable document: the expectation
 //! diff, per-rule statistics, the set of unexpected fires (the false-positive
 //! signal on a known-benign corpus), and a per-logsource rollup of those
 //! unexpected fires.
@@ -17,10 +17,13 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use rsigma_eval::EvaluationResult;
-use rsigma_parser::{LogSource, SigmaCollection};
-use serde::Serialize;
+use rsigma_parser::SigmaCollection;
 
 use super::expectations::{ResolvedExpectations, UnexpectedPolicy};
+use crate::commands::reports::{
+    BacktestReport, BacktestSummary, ExpectationResult, LogSourceRollup, LogSourceView, RuleStat,
+    UnexpectedStat,
+};
 use crate::exit_code;
 use crate::output::{
     DelimitedWriter, OutputCtx, OutputFormat, Painter, Tabular, render_json, render_ndjson,
@@ -35,51 +38,6 @@ pub(crate) fn result_key(result: &EvaluationResult) -> &str {
         .rule_id
         .as_deref()
         .unwrap_or(&result.header.rule_title)
-}
-
-/// Compact logsource projection used throughout the report.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct LogSourceView {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    category: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    product: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    service: Option<String>,
-}
-
-impl LogSourceView {
-    fn from_logsource(ls: &LogSource) -> Option<Self> {
-        if ls.category.is_none() && ls.product.is_none() && ls.service.is_none() {
-            return None;
-        }
-        Some(Self {
-            category: ls.category.clone(),
-            product: ls.product.clone(),
-            service: ls.service.clone(),
-        })
-    }
-
-    /// A stable one-line label (`product/category/service`) used for grouping
-    /// and table cells. `(none)` when no component is set (e.g. correlations).
-    fn label(view: &Option<Self>) -> String {
-        let Some(v) = view else {
-            return "(none)".to_string();
-        };
-        let parts: Vec<&str> = [
-            v.product.as_deref(),
-            v.category.as_deref(),
-            v.service.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if parts.is_empty() {
-            "(none)".to_string()
-        } else {
-            parts.join("/")
-        }
-    }
 }
 
 /// Per-rule metadata pulled from the loaded collection (the engine result does
@@ -160,48 +118,13 @@ impl Accumulator {
 }
 
 // ---------------------------------------------------------------------------
-// Serializable report document
+// Report rendering and exit-code logic
+//
+// The serializable report shapes live in `crate::commands::reports` so the
+// `rule scorecard` consumer shares one definition with this producer. The
+// `unexpected` policy is a runtime-only decision, so it is threaded through
+// the rendering/exit-code methods rather than carried on the wire struct.
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize)]
-struct Summary {
-    corpus_files: u64,
-    events_processed: u64,
-    rules_loaded: u64,
-    expectations_total: u64,
-    expectations_passed: u64,
-    expectations_failed: u64,
-    unexpected_rules: u64,
-    unexpected_fires: u64,
-    unexpected_policy: String,
-    duration_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ExpectationResult {
-    /// The original reference (id or title) from the file.
-    rule: String,
-    rule_key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scope: Option<String>,
-    bound: String,
-    actual: u64,
-    pass: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct RuleStat {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rule_id: Option<String>,
-    rule_title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    logsource: Option<LogSourceView>,
-    fires: u64,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    by_file: BTreeMap<String, u64>,
-}
 
 const RULE_HEADERS: &[&str] = &["RULE_ID", "TITLE", "LEVEL", "LOGSOURCE", "FIRES"];
 
@@ -220,39 +143,7 @@ impl Tabular for RuleStat {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct UnexpectedStat {
-    rule_key: String,
-    rule_title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    logsource: Option<LogSourceView>,
-    fires: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct LogSourceRollup {
-    logsource: String,
-    unexpected_fires: u64,
-    rules: Vec<String>,
-}
-
-/// The full backtest report document.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Report {
-    summary: Summary,
-    expectations: Vec<ExpectationResult>,
-    rules: Vec<RuleStat>,
-    unexpected: Vec<UnexpectedStat>,
-    by_logsource: Vec<LogSourceRollup>,
-    /// Effective policy, retained for exit-code and rendering decisions; not
-    /// part of the serialized shape (it appears as `summary.unexpected_policy`).
-    #[serde(skip)]
-    policy: UnexpectedPolicy,
-}
-
-impl Report {
+impl BacktestReport {
     /// Build the report from the accumulated tallies and resolved expectations.
     pub(crate) fn build(
         acc: Accumulator,
@@ -363,7 +254,7 @@ impl Report {
 
         let by_logsource = rollup_by_logsource(&unexpected);
 
-        let summary = Summary {
+        let summary = BacktestSummary {
             corpus_files: acc.corpus_files,
             events_processed: acc.events_processed,
             rules_loaded,
@@ -376,23 +267,22 @@ impl Report {
             duration_ms,
         };
 
-        Report {
+        BacktestReport {
             summary,
             expectations,
             rules,
             unexpected,
             by_logsource,
-            policy,
         }
     }
 
     /// House exit code: findings (1) on any failed expectation, or on
     /// unexpected fires under the `fail` policy; success (0) otherwise.
-    pub(crate) fn exit_code(&self) -> i32 {
+    pub(crate) fn exit_code(&self, policy: UnexpectedPolicy) -> i32 {
         if self.summary.expectations_failed > 0 {
             return exit_code::FINDINGS;
         }
-        if self.policy == UnexpectedPolicy::Fail && self.summary.unexpected_rules > 0 {
+        if policy == UnexpectedPolicy::Fail && self.summary.unexpected_rules > 0 {
             return exit_code::FINDINGS;
         }
         exit_code::SUCCESS
@@ -405,6 +295,7 @@ impl Report {
         ctx: &OutputCtx,
         report_path: Option<&Path>,
         junit_path: Option<&Path>,
+        policy: UnexpectedPolicy,
     ) {
         if let Some(path) = report_path
             && let Err(e) = write_string_file(path, &self.to_pretty_json())
@@ -421,11 +312,11 @@ impl Report {
             }
             OutputFormat::Csv => self.render_delimited(','),
             OutputFormat::Tsv => self.render_delimited('\t'),
-            OutputFormat::Table => self.render_human(ctx),
+            OutputFormat::Table => self.render_human(ctx, policy),
         }
 
         if let Some(path) = junit_path
-            && let Err(e) = write_string_file(path, &self.to_junit_xml())
+            && let Err(e) = write_string_file(path, &self.to_junit_xml(policy))
         {
             eprintln!("Failed to write JUnit report to {}: {e}", path.display());
         }
@@ -465,7 +356,7 @@ impl Report {
 
     // -- Human (table) rendering --------------------------------------------
 
-    fn render_human(&self, ctx: &OutputCtx) {
+    fn render_human(&self, ctx: &OutputCtx, policy: UnexpectedPolicy) {
         let p = Painter::new(ctx.color);
         let s = &self.summary;
 
@@ -477,7 +368,7 @@ impl Report {
             "  expectations:  {} passed, {} failed",
             s.expectations_passed, s.expectations_failed
         );
-        if self.policy != UnexpectedPolicy::Ignore {
+        if policy != UnexpectedPolicy::Ignore {
             println!(
                 "  unexpected:    {} rules, {} fires (policy: {})",
                 s.unexpected_rules, s.unexpected_fires, s.unexpected_policy
@@ -508,7 +399,7 @@ impl Report {
             crate::output::render_table(&self.rules);
         }
 
-        if self.policy != UnexpectedPolicy::Ignore && !self.unexpected.is_empty() {
+        if policy != UnexpectedPolicy::Ignore && !self.unexpected.is_empty() {
             println!("\n{}", p.bold("Unexpected fires"));
             for u in &self.unexpected {
                 println!(
@@ -535,7 +426,7 @@ impl Report {
     /// hand-rolled (no new dependency), matching the repo's `DelimitedWriter`
     /// precedent. `time` attributes are intentionally omitted so the output is
     /// deterministic.
-    fn to_junit_xml(&self) -> String {
+    fn to_junit_xml(&self, policy: UnexpectedPolicy) -> String {
         struct Case {
             name: String,
             classname: &'static str,
@@ -555,7 +446,7 @@ impl Report {
                 failure,
             });
         }
-        if self.policy == UnexpectedPolicy::Fail {
+        if policy == UnexpectedPolicy::Fail {
             for u in &self.unexpected {
                 cases.push(Case {
                     name: u.rule_title.clone(),
@@ -739,10 +630,13 @@ level: informational
             ],
             None,
         );
-        let report = Report::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
+        let report = BacktestReport::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
         assert_eq!(report.summary.expectations_passed, 1);
         assert_eq!(report.summary.expectations_failed, 1);
-        assert_eq!(report.exit_code(), exit_code::FINDINGS);
+        assert_eq!(
+            report.exit_code(UnexpectedPolicy::Warn),
+            exit_code::FINDINGS
+        );
     }
 
     #[test]
@@ -759,7 +653,7 @@ level: informational
             )],
             None,
         );
-        let report = Report::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
+        let report = BacktestReport::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
         assert_eq!(report.summary.expectations_passed, 1);
         assert_eq!(report.expectations[0].actual, 1);
     }
@@ -777,10 +671,13 @@ level: informational
             )],
             None,
         );
-        let report = Report::build(acc, &rules(), Some(&r), UnexpectedPolicy::Fail, 0);
+        let report = BacktestReport::build(acc, &rules(), Some(&r), UnexpectedPolicy::Fail, 0);
         assert_eq!(report.summary.unexpected_rules, 1);
         assert_eq!(report.summary.unexpected_fires, 1);
-        assert_eq!(report.exit_code(), exit_code::FINDINGS);
+        assert_eq!(
+            report.exit_code(UnexpectedPolicy::Fail),
+            exit_code::FINDINGS
+        );
     }
 
     #[test]
@@ -795,18 +692,18 @@ level: informational
             )],
             None,
         );
-        let report = Report::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
+        let report = BacktestReport::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
         assert_eq!(report.summary.unexpected_rules, 1);
-        assert_eq!(report.exit_code(), exit_code::SUCCESS);
+        assert_eq!(report.exit_code(UnexpectedPolicy::Warn), exit_code::SUCCESS);
     }
 
     #[test]
     fn no_expectations_means_no_unexpected_and_clean_exit() {
         let mut acc = Accumulator::new();
         acc.record("22222222-2222-2222-2222-222222222222", "a.ndjson");
-        let report = Report::build(acc, &rules(), None, UnexpectedPolicy::Fail, 0);
+        let report = BacktestReport::build(acc, &rules(), None, UnexpectedPolicy::Fail, 0);
         assert_eq!(report.summary.unexpected_rules, 0);
-        assert_eq!(report.exit_code(), exit_code::SUCCESS);
+        assert_eq!(report.exit_code(UnexpectedPolicy::Fail), exit_code::SUCCESS);
         // The fired rule still shows up in per-rule stats.
         assert_eq!(report.rules.len(), 1);
         assert_eq!(report.rules[0].fires, 1);
@@ -826,8 +723,8 @@ level: informational
             )],
             None,
         );
-        let report = Report::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
-        let xml = report.to_junit_xml();
+        let report = BacktestReport::build(acc, &rules(), Some(&r), UnexpectedPolicy::Warn, 0);
+        let xml = report.to_junit_xml(UnexpectedPolicy::Warn);
         assert!(xml.contains("failures=\"1\""));
         assert!(xml.contains("<failure"));
     }

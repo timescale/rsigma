@@ -1,0 +1,41 @@
+{
+  "summary": {
+    "corpus_files": 2,
+    "events_processed": 100,
+    "rules_loaded": 7,
+    "expectations_total": 5,
+    "expectations_passed": 4,
+    "expectations_failed": 1,
+    "unexpected_rules": 2,
+    "unexpected_fires": 9,
+    "unexpected_policy": "warn",
+    "duration_ms": 0
+  },
+  "expectations": [
+    { "rule": "k1", "rule_key": "k1", "bound": ">= 1", "actual": 10, "pass": true },
+    { "rule": "L1", "rule_key": "L1", "bound": ">= 1", "actual": 10, "pass": true },
+    { "rule": "da", "rule_key": "da", "bound": ">= 1", "actual": 3, "pass": true },
+    { "rule": "db", "rule_key": "db", "bound": ">= 1", "actual": 3, "pass": true },
+    { "rule": "dead", "rule_key": "dead", "bound": ">= 1", "actual": 0, "pass": false }
+  ],
+  "rules": [
+    {
+      "rule_id": "k1",
+      "rule_title": "Keep Rule",
+      "level": "high",
+      "logsource": { "category": "process_creation", "product": "windows" },
+      "fires": 10
+    },
+    { "rule_id": "L1", "rule_title": "Live Noisy", "level": "medium", "fires": 10 },
+    { "rule_id": "n1", "rule_title": "Retire Noisy", "level": "low", "fires": 5 },
+    { "rule_id": "s1", "rule_title": "Sole Cover", "level": "high", "fires": 4 },
+    { "rule_id": "da", "rule_title": "Dup Title", "level": "low", "fires": 3 },
+    { "rule_id": "db", "rule_title": "Dup Title", "level": "low", "fires": 3 },
+    { "rule_id": "dead", "rule_title": "Dead Rule", "level": "medium", "fires": 0 }
+  ],
+  "unexpected": [
+    { "rule_key": "n1", "rule_title": "Retire Noisy", "level": "low", "fires": 5 },
+    { "rule_key": "s1", "rule_title": "Sole Cover", "level": "high", "fires": 4 }
+  ],
+  "by_logsource": []
+}

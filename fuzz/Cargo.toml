@@ -97,3 +97,8 @@ name = "fuzz_lint_fix"
 path = "fuzz_targets/fuzz_lint_fix.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_scorecard_promtext"
+path = "fuzz_targets/fuzz_scorecard_promtext.rs"
+doc = false
+

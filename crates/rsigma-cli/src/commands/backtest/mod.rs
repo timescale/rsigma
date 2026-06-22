@@ -27,11 +27,12 @@ use rsigma_parser::SigmaCollection;
 #[cfg(feature = "evtx")]
 use super::eval_stream::stream_evtx_events;
 use super::eval_stream::{CorrelationProcessor, DetectionProcessor, EventProcessor, stream_events};
+use crate::commands::reports::BacktestReport;
 use crate::config;
 use crate::exit_code;
 use crate::output::OutputCtx;
 use expectations::{ResolvedExpectations, UnexpectedPolicy};
-use report::{Accumulator, Report, result_key};
+use report::{Accumulator, result_key};
 
 /// Arguments for `rsigma rule backtest`.
 #[derive(Args, Debug)]
@@ -225,8 +226,8 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
         }
     };
 
-    report.render(&ctx, args.report.as_deref(), args.junit.as_deref());
-    report.exit_code()
+    report.render(&ctx, args.report.as_deref(), args.junit.as_deref(), policy);
+    report.exit_code(policy)
 }
 
 /// Effective unexpected policy: CLI/config flag > expectations-file default >
@@ -255,7 +256,7 @@ fn run(
     event_filter: &crate::EventFilter,
     resolved: Option<ResolvedExpectations>,
     policy: UnexpectedPolicy,
-) -> Result<Report, String> {
+) -> Result<BacktestReport, String> {
     let corpus_files = collect_corpus_files(&args.corpus)?;
     if corpus_files.is_empty() {
         eprintln!("warning: no corpus files found under the given --corpus path(s)");
@@ -288,7 +289,7 @@ fn run(
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    Ok(Report::build(
+    Ok(BacktestReport::build(
         acc,
         &collection,
         resolved.as_ref(),

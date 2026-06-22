@@ -203,6 +203,8 @@ backtest:
   syslog_strip_bom: true
 
 coverage:
+  # Default rule file(s) or directory(ies) to map onto ATT&CK (repeatable).
+  # rules: [./rules]
   # Cross-reference against the Atomic Red Team index: a local index.yaml, an
   # atomic-red-team `atomics/` directory, or a URL.
   # atomics: https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/Indexes/index.yaml
@@ -212,6 +214,33 @@ coverage:
   # targets: ./threat-model-techniques.txt
   # Exit non-zero when a requested cross-reference reports uncovered techniques.
   # fail_on_gaps: false
+
+scorecard:
+  # `rule scorecard` fuses the backtest and coverage JSON reports into per-rule
+  # keep/tune/retire verdicts. The two reports are required; supply them on the
+  # command line (--backtest/--coverage) or here.
+  # backtest: ./backtest.json
+  # coverage: ./coverage.json
+  # Prometheus exposition snapshot or /metrics URL for production fire volume.
+  # metrics: http://localhost:9090/metrics
+  # When metrics is a Prometheus query-API base, range window for last-fired.
+  # metrics_window: 7d
+  # Triage disposition feed for the live false-positive ratio and MTTD/MTTR.
+  # triage: ./triage.json
+  # Program-artifact output path (.md or .html).
+  # report: ./scorecard.md
+  # CI policy: fail (exit 1) on verdicts at or worse than none | tune | retire.
+  fail_on: none
+  # Verdict thresholds (SOC quality-metrics defaults).
+  min_precision: 0.8
+  tune_max_precision: 0.5
+  retire_max_precision: 0.1
+  # Minimum total volume for a keep verdict.
+  min_volume: 1
+  # Staleness window in days (enforced only when last-fired is known).
+  stale_window: 30
+  # Live false-positive-ratio ceiling.
+  max_fp_ratio: 0.5
 
 visibility:
   # Logsource/field to ATT&CK data-source mapping table (local path or URL).
