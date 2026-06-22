@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `rule visibility`: DeTT&CT export and a visibility Navigator layer
+### `rule visibility`: DeTT&CT export and a visibility Navigator layer (#242)
 
 A new `rsigma rule visibility` subcommand turns the shipped field-observability signal into the two artifacts blue teams consume for data-source maturity: a [DeTT&CT](https://github.com/rabobank-cdc/DeTTECT) administration pair and a visibility ATT&CK Navigator layer. Where `rule coverage` reports the detection axis ("which techniques your rules detect"), `rule visibility` reports the data axis ("which fields and logsources you actually see"), and the two Navigator layers stack to expose data-without-detection and detection-without-data cells.
 
