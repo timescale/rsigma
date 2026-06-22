@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `rule scorecard`: fuse the rule-side reports into per-rule keep/tune/retire verdicts
+### `rule scorecard`: fuse the rule-side reports into per-rule keep/tune/retire verdicts (#243)
 
 A new `rsigma rule scorecard` subcommand fuses the toolkit's existing rule-side outputs into the per-rule keep/tune/retire verdict table a detection program reviews on a cadence. It reads JSON the toolkit already emits, so it adds no new collection or evaluation: it is an offline fusion-and-verdict layer over already-aggregated reports.
 
