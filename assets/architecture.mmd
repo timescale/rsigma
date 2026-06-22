@@ -3,7 +3,7 @@ flowchart TD
     SERDE["yaml_serde"]
     EVENTS["Log events"]
     OUTPUT["EvaluationResult\nRuleHeader: title · id · level · tags · enrichments\nResultBody: Detection (matched fields/selections) ·\nCorrelation (correlation_type · group_key · aggregated_value)"]
-    QUERIES["SQL · SPL · KQL · Lucene"]
+    QUERIES["SQL · SPL · KQL · Lucene · EDR rules\n30+ targets via sigma-cli"]
     EDITOR["Editor diagnostics + code actions"]
     AGENTS["MCP clients\nCursor · Claude Code · remote agents"]
     MCPJSON["Structured JSON\nAST · lint findings · matches · queries · fields"]
@@ -31,7 +31,7 @@ flowchart TD
         CBACK["Backend trait\npluggable query generation"]
         CBACK --> CTQC["TextQueryConfig\n~90 fields for text query backends"]
         CTQC --> CWALK["Condition walker\ndeferred exprs · conversion state"]
-        CWALK --> CENDS["backends/\nTextQueryTest · PostgreSQL/TimescaleDB\nLynxDB"]
+        CWALK --> CENDS["backends/\nnative: PostgreSQL/TimescaleDB · LynxDB · Fibratus\nTextQueryTest (test)\nelse → sigma-cli delegation (splunk · elastic · kusto · ...)"]
     end
 
     subgraph rsigma-lsp
@@ -39,7 +39,7 @@ flowchart TD
         LSERV["LSP server over stdio\ntower-lsp"]
         LSERV --> LDIAG["diagnostics\nlint + parse + compile"]
         LDIAG --> LFEAT["completions · hover\ndocument symbols"]
-        LFEAT --> LEDIT["Editors\nVSCode · Neovim · Helix · Zed"]
+        LFEAT --> LEDIT["Editors\nVS Code · Neovim · Helix · Zed"]
     end
 
     subgraph rsigma-runtime

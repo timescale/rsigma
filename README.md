@@ -464,7 +464,7 @@ From there, the AST can go in three directions depending on what you need:
 
 - **Evaluation:** `rsigma-eval` compiles rules into optimized matchers (`compiler.rs`), runs stateless detection through `Engine`, and tracks stateful correlation (`correlation.rs`: sliding windows, group-by, chaining, suppression) across events. Processing pipelines handle field mapping, transformations, conditions, and finalizers before compilation. Dynamic pipelines extend this with `${source.*}` template references that are resolved at runtime from external data sources. Events are accessed through a trait with implementations for JSON, key-value, and plain text.
 
-- **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. Concrete implementations include PostgreSQL/TimescaleDB (SQL for historical threat hunting) and LynxDB (SPL2-compatible search queries for log analytics).
+- **Conversion:** `rsigma-convert` transforms rules into backend-native query strings through a pluggable `Backend` trait. A condition walker traverses the AST and delegates to the backend for each node. `TextQueryConfig` exposes ~90 configuration fields for text-based backends. Native implementations include PostgreSQL/TimescaleDB (SQL for historical threat hunting), LynxDB (SPL2-compatible search queries for log analytics), and Fibratus (rule YAML for Windows EDR sensors). Any non-native target delegates to an installed [sigma-cli](https://github.com/SigmaHQ/sigma-cli), so the wider pySigma backend ecosystem (Splunk, Elasticsearch, Microsoft Sentinel/KQL, QRadar, and 30+ more) is reachable from the same command.
 
 - **Editor support:** `rsigma-lsp` provides an LSP server over stdio (via `tower-lsp`) with real-time diagnostics (lint + parse + compile errors), completions, hover documentation, document symbols, and code actions. Works with VSCode, Neovim, Helix, Zed, and any LSP-capable editor.
 
@@ -524,13 +524,13 @@ Feature-gated items are marked with \* in the diagram.
     │    ${source.*} expand   │   │    conversion state │   │  Editors:          │
     │                         │   │                     │   │  VSCode, Neovim,   │
     │  compiler/ ──>          │   │  backends/ ──>      │   │  Helix, Zed, ...   │
-    │    CompiledRule         │   │    TextQueryTest,   │   └────────────────────┘
+    │    CompiledRule         │   │   native:           │   └────────────────────┘
     │    + matcher optimizer  │   │    PostgreSQL/      │
     │      (Aho-Corasick,     │   │    TimescaleDB,     │
-    │       RegexSet, case-   │   │    LynxDB           │
-    │       insens. group)    │   └─────────────────────┘
-    │                         │
-    │  engine/ ──>            │
+    │       RegexSet, case-   │   │    LynxDB, Fibratus │
+    │       insens. group)    │   │   else ──> sigma-cli│
+    │                         │   │    delegation (30+) │
+    │  engine/ ──>            │   └─────────────────────┘
     │    Engine (stateless)   │
     │    + RuleIndex          │
     │      (exact-value prune)│

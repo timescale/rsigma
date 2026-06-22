@@ -19,8 +19,8 @@ flowchart TD
     YAML["YAML input"]
     SERDE["yaml_serde"]
     EVENTS["Log events"]
-    OUTPUT["MatchResult · CorrelationResult<br/>rule title · id · level · tags<br/>matched selections · field matches<br/>aggregated values · optional events"]
-    QUERIES["SQL · SPL · KQL · Lucene"]
+    OUTPUT["EvaluationResult<br/>RuleHeader: title · id · level · tags · enrichments<br/>ResultBody: Detection (matched fields/selections) ·<br/>Correlation (correlation_type · group_key · aggregated_value)"]
+    QUERIES["SQL · SPL · KQL · Lucene · EDR rules<br/>30+ targets via sigma-cli"]
     EDITOR["Editor diagnostics + code actions"]
     AGENTS["MCP clients<br/>Cursor · Claude Code · remote agents"]
     MCPJSON["Structured JSON<br/>AST · lint findings · matches · queries · fields"]
@@ -35,9 +35,9 @@ flowchart TD
     subgraph rsigma-eval
         direction TB
         ETRAIT["Event trait<br/>JsonEvent · KvEvent · PlainEvent"]
-        ETRAIT --> EPIPE["pipeline/<br/>Pipeline · conditions · transformations<br/>state · finalizers<br/>builtin: ecs_windows · sysmon<br/>dynamic: source-template expansion"]
-        EPIPE --> ECOMP["compiler/<br/>compile_rule → CompiledRule<br/>matcher optimizer (AnyOf):<br/>Aho-Corasick batching<br/>RegexSet batching<br/>CaseInsensitiveGroup"]
-        ECOMP --> EENG["engine/<br/>Engine (stateless)<br/>prefilters:<br/>RuleIndex (exact-value pruning)<br/>bloom trigram filter*<br/>cross-rule AC index**"]
+        ETRAIT --> EPIPE["pipeline/<br/>Pipeline · conditions · transformations<br/>state · finalizers<br/>builtin: ecs_windows · sysmon<br/>dynamic: ${source.*} template expansion"]
+        EPIPE --> ECOMP["compiler/<br/>compile_rule → CompiledRule<br/>matcher optimizer (AnyOf):<br/>Aho-Corasick batching (|contains)<br/>RegexSet batching (|re)<br/>CaseInsensitiveGroup"]
+        ECOMP --> EENG["engine/<br/>Engine (stateless)<br/>prefilters:<br/>RuleIndex (exact-value pruning)<br/>bloom trigram filter* (substring)<br/>cross-rule AC index** (daachorse)"]
         EENG --> ECORR["correlation/<br/>sliding windows · group-by<br/>chaining · suppression"]
         ECORR --> ECUST["rsigma.* custom attributes"]
     end
@@ -47,7 +47,7 @@ flowchart TD
         CBACK["Backend trait<br/>pluggable query generation"]
         CBACK --> CTQC["TextQueryConfig<br/>~90 fields for text query backends"]
         CTQC --> CWALK["Condition walker<br/>deferred exprs · conversion state"]
-        CWALK --> CENDS["backends/<br/>TextQueryTest · PostgreSQL · LynxDB"]
+        CWALK --> CENDS["backends/<br/>native: PostgreSQL/TimescaleDB · LynxDB · Fibratus<br/>TextQueryTest (test)<br/>else → sigma-cli delegation (splunk · elastic · kusto · ...)"]
     end
 
     subgraph rsigma-lsp
@@ -61,16 +61,17 @@ flowchart TD
     subgraph rsigma-runtime
         direction TB
         RINPUT["input/ format adapters:<br/>JSON · syslog · logfmt* · CEF* · EVTX*<br/>plain text · auto-detect<br/>raw line → EventInputDecoded"]
-        RINPUT --> RPROC["LogProcessor<br/>batch evaluation<br/>ArcSwap hot-reload<br/>MetricsHook · EventFilter"]
-        RPROC --> RENG["RuntimeEngine<br/>wraps Engine + CorrelationEngine"]
-        RENG --> RIO["io/<br/>EventSource (stdin · HTTP · NATS)<br/>OTLP* (HTTP + gRPC)<br/>Sink (stdout · file · NATS · OTLP* · webhook)<br/>async delivery: per-sink workers · retry/backoff · DLQ"]
-        RSRC["sources/ (dynamic pipelines)<br/>SourceResolver: HTTP · command · file · NATS<br/>TemplateExpander · SourceCache<br/>RefreshScheduler<br/>SIGHUP · NATS control · includes<br/>extract: jq · JSONPath · CEL"]
+        RINPUT --> RPROC["LogProcessor<br/>batch evaluation<br/>ArcSwap hot-reload (rules + pipelines)<br/>MetricsHook · EventFilter"]
+        RPROC --> RENG["RuntimeEngine<br/>wraps Engine + CorrelationEngine<br/>with rule loading"]
+        RENG --> RENRICH["enrichment/ post-eval pipeline<br/>primitives: template · lookup · http · command<br/>kind-aware: ${detection.*} · ${correlation.*}<br/>scope filter · HTTP response cache · on_error<br/>writes RuleHeader.enrichments"]
+        RENRICH --> RIO["io/<br/>EventSource (stdin · HTTP · NATS)<br/>OTLP* (HTTP + gRPC)<br/>TLS* termination (mTLS · cert hot-reload)<br/>on shared API listener<br/>Sink (stdout · file · NATS · OTLP* · webhook)<br/>async delivery: per-sink workers · retry/backoff · DLQ"]
+        RSRC["sources/ (dynamic pipelines)<br/>DaemonSourceRegistry: external (--source) +<br/>pipeline-embedded (deprecated) · collision-error<br/>SourceResolver: HTTP · command · file · NATS<br/>TemplateExpander · SourceCache (SQLite TTL)<br/>RefreshScheduler: interval · watch · push<br/>SIGHUP · NATS control · includes<br/>extract: jq · JSONPath · CEL"]
     end
 
     subgraph rsigma-mcp
         direction TB
         MCPSERVE["rsigma mcp serve<br/>stdio · Streamable HTTP (bearer auth · TLS)"]
-        MCPSERVE --> MCPH["RsigmaMcp handler<br/>11 tools: parse · lint · fix · validate<br/>evaluate · convert · fields · pipelines<br/>3 resources: lint catalogue · modifiers · MITRE"]
+        MCPSERVE --> MCPH["RsigmaMcp handler<br/>11 tools: parse_rule · parse_condition · lint_rules<br/>validate_rules · evaluate_events · convert_rules<br/>list_backends · list_fields · resolve_pipeline<br/>list_builtin_pipelines · fix_rules<br/>3 resources: lint catalogue · modifiers · MITRE tactics"]
     end
 
     YAML -->|"Raw YAML Value"| SERDE
@@ -83,13 +84,13 @@ flowchart TD
     RIO --> OUTPUT
     CENDS --> QUERIES
     LEDIT --> EDITOR
-    RSRC -.->|"source values"| EPIPE
+    RSRC -.->|"${source.*} values"| EPIPE
 
     AGENTS -->|"JSON-RPC"| MCPSERVE
-    MCPH -.-> PARSE
-    MCPH -.-> ETRAIT
-    MCPH -.-> CBACK
-    MCPH -.-> RSRC
+    MCPH -.->|"parse · lint · fix · reference"| PARSE
+    MCPH -.->|"compile · evaluate · fields"| ETRAIT
+    MCPH -.->|"convert"| CBACK
+    MCPH -.->|"sources · enrichment"| RSRC
     MCPH --> MCPJSON
 ```
 
@@ -103,8 +104,8 @@ The dependency direction goes left to right in the diagram above. Higher crates 
 |-------|------|-----------|---------------|
 | [`rsigma-parser`](https://docs.rs/rsigma-parser) | YAML → AST. The only crate that touches Sigma source. | `SigmaCollection`, `SigmaRule`, `CorrelationRule`, `FilterRule`, `Condition`, `SigmaStr`, `Modifier` | — |
 | [`rsigma-eval`](https://docs.rs/rsigma-eval) | Compile AST to a matcher tree, evaluate events. Detection and correlation engine. Processing pipeline machinery. | `Engine`, `CorrelationEngine`, `Pipeline`, `Transformation`, `CompiledRule`, `Event`, `JsonEvent`, `MatchResult`, `CorrelationResult` | `parallel`, `daachorse-index` |
-| [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `TestBackend` | — |
-| [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
+| [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. Non-native targets are delegated to sigma-cli. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `FibratusBackend`, `TestBackend` | — |
+| [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, post-evaluation enrichment, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `EnrichmentPipeline`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
 | [`rsigma-lsp`](https://docs.rs/rsigma-lsp) | Language Server Protocol for editors. Diagnostics from the linter + parser + compiler, plus completions, hovers, and symbols. | `Backend` (tower-lsp impl), `Diagnostic` mapping | — |
 | [`rsigma-mcp`](https://docs.rs/rsigma-mcp) | Model Context Protocol server. Exposes the parser, linter, fixer, evaluator, converter, field extraction, and pipeline resolution as MCP tools and resources for AI agents, returning structured JSON. | `RsigmaMcp` handler, `serve_stdio` | `http` |
 | `rstix` | STIX 2.1 + TAXII 2.1 library crate under phased implementation. | `parse_bundle` placeholder, core primitives, `model::common` and `model::meta`, leaf-type serde (`serde_impls/`), deterministic SCO-ID helpers, vocabulary tables | `serde` |
@@ -139,19 +140,21 @@ No I/O, no thread spawning, no async runtime. The same `Engine` struct backs eve
 `rsigma-cli`'s `daemon` subcommand wires `rsigma-runtime`'s `LogProcessor` around `RuntimeEngine` (which embeds `Engine` + `CorrelationEngine`). Adds:
 
 - One `EventSource` (stdin, HTTP, NATS).
-- One or more `Sink`s (stdout, file, NATS), plus an optional DLQ.
+- A post-evaluation `EnrichmentPipeline` that injects context into each result before it reaches the sinks.
+- One or more `Sink`s (stdout, file, NATS, OTLP, webhook), fanned out through a per-sink async delivery layer (bounded queue + worker, retry/backoff), plus an optional DLQ.
 - Hot-reload via `ArcSwap` (file watcher + `SIGHUP` + `POST /api/v1/reload`).
 - Optional SQLite-backed correlation state (`--state-db`).
 - Optional OTLP receiver (HTTP + gRPC) when built with `daemon-otlp`.
-- Prometheus `/metrics`, REST control endpoints, health probes.
+- Optional in-process TLS termination (mTLS, cert hot-reload) on the shared API listener when built with `daemon-tls`.
+- Prometheus `/metrics`, REST control endpoints (status, reload, plus the opt-in tap and tail streams), health probes.
 
 See [Streaming Detection](../guide/streaming-detection.md) and the [`engine daemon`](../cli/engine/daemon.md) flag table.
 
 ### 4. Backend conversion (`backend convert`)
 
-`rsigma-convert`'s `Backend` trait drives a recursive walk over the parser AST and emits backend-native queries (SQL, SPL2). The trait uses `TextQueryConfig` (around 90 fields mirroring pySigma's `TextQueryBackend` configuration) to keep backend implementations declarative.
+`rsigma-convert`'s `Backend` trait drives a recursive walk over the parser AST and emits backend-native queries (SQL, SPL2) or rule documents. The trait uses `TextQueryConfig` (around 90 fields mirroring pySigma's `TextQueryBackend` configuration) to keep backend implementations declarative.
 
-PostgreSQL/TimescaleDB and LynxDB are the two production targets today. See [`backend convert`](../cli/backend/convert.md), [PostgreSQL backend](backends/postgres.md), [LynxDB backend](backends/lynxdb.md).
+PostgreSQL/TimescaleDB, LynxDB, and Fibratus (rule YAML for Windows EDR sensors) are the native targets today. `backend convert` resolves targets native-first: any target without a native backend is delegated to an installed [sigma-cli](https://github.com/SigmaHQ/sigma-cli), so the wider pySigma backend ecosystem (Splunk, Elasticsearch, Microsoft Sentinel/KQL, QRadar, and 30+ more) is reachable from the same command. See [`backend convert`](../cli/backend/convert.md), [PostgreSQL backend](backends/postgres.md), [LynxDB backend](backends/lynxdb.md).
 
 ### Plus: LSP
 
@@ -210,20 +213,26 @@ The engine itself is stateless. Correlation state lives on the `CorrelationEngin
 The streaming runtime wraps the synchronous `Engine` in an async pipeline:
 
 ```text
-EventSource ──► bounded mpsc ──► LogProcessor ──► bounded mpsc ──► Sinks
-   (stdin,                           (batch                          (stdout,
-    HTTP,                             evaluation,                     file,
-    NATS,                             ArcSwap                         NATS,
-    OTLP)                             hot-reload)                     DLQ)
+EventSource ──► mpsc ──► LogProcessor ──► EnrichmentPipeline ──► async sink layer ──► Sinks
+   (stdin,                 (batch            (asset · GeoIP ·       (per-sink queue       (stdout,
+    HTTP,                   evaluation,       reputation ·           + worker,             file,
+    NATS,                   ArcSwap           runbook · ...)         retry/backoff)        NATS,
+    OTLP)                   hot-reload)                                                     OTLP,
+                                                                                           webhook,
+                                                                                           DLQ)
 ```
 
 The bounded mpsc channels apply back-pressure: when the engine cannot keep up, the source blocks instead of dropping events. `rsigma_back_pressure_events_total` counts how often that happens. See [Observability](../guide/observability.md#prometheus-metrics).
 
 `ArcSwap` hot-reload swaps an `Arc<Engine>` atomically; in-flight evaluations see the old engine and complete normally; new events get the new one. The reload path is triggered by a `notify`-based file watcher on the rules and pipeline files, by `SIGHUP`, or by `POST /api/v1/reload`.
 
+### Post-evaluation enrichment (`rsigma-runtime::enrichment`)
+
+Between the engine and the sinks, the `EnrichmentPipeline` injects context (asset info, IP reputation, identity, GeoIP, KEV flags, runbook URLs, ...) into each result's `RuleHeader.enrichments` map. Four primitives (`template`, `lookup`, `http`, `command`) compose into recipes. Kind-aware template namespaces (`${detection.*}` for detection-kind enrichers, `${correlation.*}` for correlation-kind) are validated at config-load time. An optional HTTP response cache, scope filtering by rule glob, tag set, and severity, and `on_error` policies (`skip`, `null`, `drop`) round it out. See [Enrichment](../guide/enrichers.md).
+
 ### Dynamic source resolution (`rsigma-runtime::sources`)
 
-On every rule-load (including reloads), every pipeline that declares a `sources:` block runs through the `SourceResolver` machinery:
+On every rule-load (including reloads), the `DaemonSourceRegistry` collects source declarations (from external `--source` files, plus the deprecated pipeline-embedded `sources:` blocks, with collision-error semantics) and runs each through the `SourceResolver` machinery:
 
 1. Per source, dispatch on type: HTTP (`reqwest`), command (tokio `Command`), file (read + optional `notify` watch), NATS (subject subscribe, requires `nats` feature).
 2. Parse the response according to `format:` (`json`, `yaml`, `lines`, `csv`).
