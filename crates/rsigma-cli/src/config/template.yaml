@@ -213,6 +213,15 @@ coverage:
   # Exit non-zero when a requested cross-reference reports uncovered techniques.
   # fail_on_gaps: false
 
+visibility:
+  # Logsource/field to ATT&CK data-source mapping table (local path or URL).
+  # Unset uses the bundled default table; a bare `--mapping` flag uses the
+  # curated default URL.
+  # mapping: ./mapping.json
+  # Exit non-zero when a rule-expected data source has no observed telemetry
+  # (every mapped field sits in the broken-coverage `missing` set).
+  # fail_on_blind_spots: false
+
 # `rsigma mcp serve` settings. The auth token is NOT configurable here by
 # design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
 mcp:

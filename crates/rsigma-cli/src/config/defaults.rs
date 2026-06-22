@@ -173,6 +173,10 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         // The `coverage` section has no compiled defaults: the cross-reference
         // inputs are opt-in and `fail_on_gaps` defaults to off via clap.
         coverage: None,
+        // The `visibility` section has no compiled defaults: the mapping table
+        // falls back to the bundled default and `fail_on_blind_spots` defaults
+        // to off via clap.
+        visibility: None,
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.
         mcp: None,

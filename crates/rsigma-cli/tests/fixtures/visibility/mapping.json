@@ -1,0 +1,19 @@
+{
+  "version": "test",
+  "provenance": "Miniature fixture mapping table for rsigma rule visibility integration tests.",
+  "logsources": [
+    {"category": "process_creation", "data_source": "Process", "data_component": "Process Creation", "products": ["Windows"]},
+    {"category": "registry_set", "data_source": "Windows Registry", "data_component": "Windows Registry Key Modification", "products": ["Windows"]}
+  ],
+  "fields": [
+    {"field": "Image", "data_component": "Process Creation"},
+    {"field": "CommandLine", "data_component": "Process Creation"},
+    {"field": "TargetObject", "data_component": "Windows Registry Key Modification"},
+    {"field": "DestinationIp", "data_component": "Network Connection Creation"}
+  ],
+  "data_components": [
+    {"name": "Process Creation", "data_source": "Process", "techniques": ["T1059"]},
+    {"name": "Windows Registry Key Modification", "data_source": "Windows Registry", "techniques": ["T1112"]},
+    {"name": "Network Connection Creation", "data_source": "Network Traffic", "techniques": ["T1071"]}
+  ]
+}

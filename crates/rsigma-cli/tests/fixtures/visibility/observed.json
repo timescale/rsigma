@@ -1,0 +1,19 @@
+{
+  "summary": {
+    "events_observed": 500,
+    "unique_keys_observed": 3,
+    "rule_fields_loaded": 3,
+    "overflow_dropped": 0,
+    "max_keys": 10000,
+    "uptime_seconds": 12.5,
+    "intersection_count": 2,
+    "unknown_count": 1,
+    "missing_count": 1
+  },
+  "unknown": [
+    {"field": "DestinationIp", "count": 30}
+  ],
+  "missing": [
+    {"field": "TargetObject", "rule_count": 1, "sources": ["detection"], "rule_titles": ["Registry Run Key Persistence"], "truncated": false}
+  ]
+}

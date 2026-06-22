@@ -106,5 +106,6 @@ CLI flags always win over the config file. `rules` is intentionally not a config
 ## See also
 
 - [`rule coverage`](../cli/rule/coverage.md) for the full flag reference.
+- [Visibility and Data Sources](visibility-and-data-sources.md) for the complementary visibility axis: which telemetry your rules depend on, scored against ATT&CK data sources.
 - [`rule backtest`](../cli/rule/backtest.md) for the corpus-replay test harness.
 - [Linting Rules](linting-rules.md) for tag-format validation that keeps `attack.*` tags well-formed.

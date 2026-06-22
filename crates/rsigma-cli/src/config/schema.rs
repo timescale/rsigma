@@ -49,6 +49,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma rule coverage` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoveragePartial>,
+    /// `rsigma rule visibility` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<VisibilityPartial>,
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
@@ -63,6 +66,7 @@ impl Merge for RsigmaConfigPartial {
             eval: merge_opt(self.eval, over.eval),
             backtest: merge_opt(self.backtest, over.backtest),
             coverage: merge_opt(self.coverage, over.coverage),
+            visibility: merge_opt(self.visibility, over.visibility),
             mcp: merge_opt(self.mcp, over.mcp),
         }
     }
@@ -592,6 +596,29 @@ impl Merge for CoveragePartial {
             baseline: over.baseline.or(self.baseline),
             targets: over.targets.or(self.targets),
             fail_on_gaps: over.fail_on_gaps.or(self.fail_on_gaps),
+        }
+    }
+}
+
+/// `rsigma rule visibility` settings. `rules` and `observed` are intentionally
+/// absent: they are invocation-specific CLI arguments, not project defaults.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct VisibilityPartial {
+    /// Logsource/field to ATT&CK data-source mapping table path or URL. Unset
+    /// uses the bundled default table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<String>,
+    /// Exit non-zero when a rule-expected data source has no observed
+    /// telemetry (every mapped field sits in the broken-coverage `missing` set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_on_blind_spots: Option<bool>,
+}
+
+impl Merge for VisibilityPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            mapping: over.mapping.or(self.mapping),
+            fail_on_blind_spots: over.fail_on_blind_spots.or(self.fail_on_blind_spots),
         }
     }
 }

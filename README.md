@@ -34,6 +34,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * **Post-evaluation enrichment:** Inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via four primitives (`template`, `lookup`, `http`, `command`) with kind-aware template namespaces, response cache, scope filtering, and hot-reload
 * **Corpus backtesting:** Replay an event corpus against a ruleset with `rule backtest`, diffing per-rule fire counts against declared expectations (positive/negative fixtures, bounded noise budgets), flagging uncovered fires as potential false positives, and emitting a JSON or JUnit XML report for CI
 * **ATT&CK coverage:** Map a ruleset onto MITRE ATT&CK with `rule coverage`, exporting an ATT&CK Navigator layer (format 4.5, scored by rule count) and reporting coverage gaps against the Atomic Red Team library, the SigmaHQ baseline heatmap, and a target technique list, with `--fail-on-gaps` for CI
+* **Telemetry visibility:** Score data-source maturity with `rule visibility`, joining the field-observability signal with the rule logsource inventory through a bundled ATT&CK mapping table to emit a [DeTT&CT](https://github.com/rabobank-cdc/DeTTECT) data-source/technique administration pair and a visibility Navigator layer (format 4.5, scored on DeTT&CT's 0-4 scale), surfacing blind spots (rules for data you do not receive) with `--fail-on-blind-spots` for CI
 * **Rule conversion:** Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB SPL2, Fibratus rule YAML for EDR sensors)
 * **Eval prefilters:** Use optional prefilters for large rule sets, including a bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
 * **Field observability:** Opt-in `--observe-fields` mode on both `engine daemon` (live, exposed over `GET /api/v1/fields*` with Prometheus counters) and `engine eval` (one-shot JSON report at end-of-run, ideal for CI gap analysis) surfaces which event fields no rule references (gap signal) and which rule fields have never appeared in an event (broken-coverage signal); same JSON shape across runtimes
@@ -342,6 +343,9 @@ rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectation
 
 # Map coverage onto MITRE ATT&CK: export a Navigator layer and gate on a target list
 rsigma rule coverage -r rules/ --navigator coverage.json --targets threat-model.txt --fail-on-gaps
+
+# Score telemetry visibility: DeTT&CT export + visibility Navigator layer, gate on blind spots
+rsigma rule visibility -r rules/ --observed fields.json --navigator visibility.json --fail-on-blind-spots
 
 # List available backends and formats
 rsigma backend targets

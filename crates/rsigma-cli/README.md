@@ -110,7 +110,7 @@ rsigma config path
 rsigma config reload
 ```
 
-`engine daemon`, `engine eval`, `rule backtest`, and `rule coverage` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+`engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, and `rule visibility` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
 Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
@@ -884,6 +884,35 @@ rsigma rule coverage -r rules/ --targets threat-model.txt --fail-on-gaps
 ```
 
 Exit codes: `0` success, `1` uncovered techniques under `--fail-on-gaps`, `2` unreadable rules, `3` an unfetchable cross-reference input. The full flag table and report shape are in the [`rule coverage` reference](https://timescale.github.io/rsigma/cli/rule/coverage/).
+
+### `rule visibility`: Score telemetry visibility against ATT&CK data sources
+
+Joins the field-observability signal with the rule logsource inventory through a bundled, overridable ATT&CK mapping table to score data-source visibility on DeTT&CT's 0-4 scale, emitting a [DeTT&CT](https://github.com/rabobank-cdc/DeTTECT) administration pair and a visibility Navigator layer. Where `rule coverage` reports the detection axis, `rule visibility` reports the data axis: which fields and logsources you actually see, and which rules depend on data you do not receive.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--rules` / `-r` | repeatable | required | Sigma rule file or directory of rules |
+| `--observed` | path | none | `engine eval --observe-fields` JSON, a saved `GET /api/v1/fields` snapshot, or `-` for stdin (omit for the rule-expected baseline) |
+| `--addr` | host:port/URL | none | Fetch the observed snapshot from a live daemon (`GET /api/v1/fields`) |
+| `--mapping` | path/URL | bundled | Override the logsource/field to ATT&CK data-source table (bare flag = curated default URL) (or `visibility.mapping`) |
+| `--dettect-data-sources` | path | none | Write the DeTT&CT data-source administration YAML |
+| `--dettect-techniques` | path | none | Write the DeTT&CT technique-administration YAML |
+| `--navigator` | path | none | Write the visibility Navigator layer (format 4.5) |
+| `--fail-on-blind-spots` | flag | off | Exit `1` when a rule-expected data source has no observed telemetry (or `visibility.fail_on_blind_spots`) |
+
+```bash
+# Score visibility from an eval observe-fields report
+rsigma rule visibility -r rules/ --observed fields.json
+
+# Emit the DeTT&CT files and a visibility Navigator layer
+rsigma rule visibility -r rules/ --observed fields.json \
+    --dettect-data-sources data-sources.yaml --navigator visibility.json
+
+# Gate CI on blind spots (rules for data you do not receive)
+rsigma rule visibility -r rules/ --observed fields.json --fail-on-blind-spots
+```
+
+Exit codes: `0` success, `1` blind spots under `--fail-on-blind-spots`, `2` unreadable rules, `3` an unfetchable mapping table or malformed observed report. The full flag table and report shape are in the [`rule visibility` reference](https://timescale.github.io/rsigma/cli/rule/visibility/).
 
 ### `pipeline resolve`: Test dynamic source resolution
 

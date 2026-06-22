@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `rule visibility`: DeTT&CT export and a visibility Navigator layer
+
+A new `rsigma rule visibility` subcommand turns the shipped field-observability signal into the two artifacts blue teams consume for data-source maturity: a [DeTT&CT](https://github.com/rabobank-cdc/DeTTECT) administration pair and a visibility ATT&CK Navigator layer. Where `rule coverage` reports the detection axis ("which techniques your rules detect"), `rule visibility` reports the data axis ("which fields and logsources you actually see"), and the two Navigator layers stack to expose data-without-detection and detection-without-data cells.
+
+- **Inputs and the join.** Joins the rule logsource inventory and rule field set (from `--rules`) with the observed field signal (`--observed <file|->`: the `engine eval --observe-fields` JSON, a saved `GET /api/v1/fields` snapshot, or stdin; or `--addr` for a live daemon) through a bundled, overridable mapping table (`--mapping[=<path|url>]`). With no observed signal the command reports the rule-expected baseline.
+- **Mapping table.** A curated `logsource/field -> ATT&CK data source/data component/technique` table ships in-repo so the default invocation needs no network; `--mapping` reads a local JSON table or fetches a URL through the same 7-day cache the lint schema download uses. Rule logsources the table does not recognize are surfaced as a hygiene list.
+- **Scoring.** Visibility rides DeTT&CT's 0-to-4 scale, derived from the fraction of a data source's mapped rule fields that were observed. A data source whose mapped fields are all unobserved is a blind spot; an observed source no rule consumes is untapped. Scores are conservative seeds marked for analyst review, with `data_quality` dimensions carrying the seed value rather than fabricated precision.
+- **Outputs.** Writes a DeTT&CT data-source administration YAML (`--dettect-data-sources`), a technique-administration YAML (`--dettect-techniques`, visibility axis only), and a format 4.5 visibility Navigator layer (`--navigator`, scored 0-4). The report renders through the global `--output-format` layer (table/json/ndjson/csv/tsv).
+- **CI signal.** `--fail-on-blind-spots` exits `1` when a rule-expected data source has no observed telemetry. A `visibility` config section (`mapping`, `fail_on_blind_spots`) follows the layered-config conventions.
+
 ### Reuse pySigma backends through sigma-cli delegation (#241)
 
 `rsigma backend convert` now resolves targets native-first: it uses a native rsigma backend when one exists and otherwise delegates the conversion to an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli) when one is installed, so the full pySigma backend ecosystem (`splunk`, `elasticsearch`, `kusto`, `qradar`, `loki`, `crowdstrike`, and 30+ more) is reachable from the same command. It is a light subprocess wrapper with no new dependencies; no Python runtime is required unless a delegated target is actually used.

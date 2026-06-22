@@ -241,6 +241,7 @@ The first line of `/metrics` should be a `# HELP rsigma_back_pressure_events_tot
 - [Streaming Detection](streaming-detection.md) for the daemon's HTTP API surface that complements the metrics endpoint.
 - [Performance Tuning](performance-tuning.md) for which metric to watch when sizing `--buffer-size`, `--batch-size`, or correlation `max_state_entries`.
 - [NATS Streaming](nats-streaming.md) for the NATS-specific log targets (`async_nats::connector`).
+- [Visibility and Data Sources](visibility-and-data-sources.md) for turning the `--observe-fields` signal into DeTT&CT and Navigator visibility artifacts.
 - [Prometheus metrics reference](../reference/metrics.md) for the full 38-metric catalog.
 - [HTTP API reference](../reference/http-api.md) for every endpoint exposed alongside `/metrics`.
 - [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives) for the exact `RUST_LOG` directive grammar.

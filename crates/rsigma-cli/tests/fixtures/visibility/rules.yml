@@ -1,0 +1,26 @@
+title: Encoded PowerShell
+id: 00000000-0000-0000-0000-0000000000a1
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  sel:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains: '-enc'
+  condition: sel
+tags:
+  - attack.execution
+  - attack.t1059.001
+---
+title: Registry Run Key Persistence
+id: 00000000-0000-0000-0000-0000000000a2
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  sel:
+    TargetObject|contains: '\CurrentVersion\Run'
+  condition: sel
+tags:
+  - attack.persistence
+  - attack.t1547.001

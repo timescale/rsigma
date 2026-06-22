@@ -13,7 +13,7 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs, LintArgs,
     LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, StatusArgs, StdinArgs, TailArgs,
-    TapArgs, ValidateArgs,
+    TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -238,6 +238,9 @@ enum RuleCommands {
 
     /// Map rules onto MITRE ATT&CK: Navigator layer export + coverage gaps
     Coverage(CoverageArgs),
+
+    /// Score telemetry visibility: DeTT&CT export + visibility Navigator layer
+    Visibility(VisibilityArgs),
 
     /// Parse a condition expression and print the AST
     Condition(ConditionArgs),
@@ -471,6 +474,13 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
                 .expect("rule coverage submatches present");
             run_coverage(args, cm, ctx);
         }
+        RuleCommands::Visibility(args) => {
+            let vm = matches
+                .subcommand_matches("rule")
+                .and_then(|m| m.subcommand_matches("visibility"))
+                .expect("rule visibility submatches present");
+            run_visibility(args, vm, ctx);
+        }
         RuleCommands::Condition(args) => commands::cmd_condition(args, ctx),
         RuleCommands::Stdin(args) => commands::cmd_stdin(args, ctx),
         RuleCommands::MigrateSources(args) => commands::cmd_migrate_sources(args),
@@ -519,6 +529,16 @@ fn run_backtest(mut args: BacktestArgs, matches: &ArgMatches, ctx: output::Outpu
 fn run_coverage(mut args: CoverageArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_coverage_config(&mut args, matches);
     let code = commands::cmd_coverage(args, ctx);
+    process::exit(code);
+}
+
+/// Entry point for `rule visibility`. Applies config (CLI flag > env > file >
+/// default) before running, then exits with the report's house exit code
+/// (0 success, 1 blind spots under --fail-on-blind-spots, 2 rule error, 3
+/// config error).
+fn run_visibility(mut args: VisibilityArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
+    commands::apply_visibility_config(&mut args, matches);
+    let code = commands::cmd_visibility(args, ctx);
     process::exit(code);
 }
 

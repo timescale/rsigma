@@ -10,6 +10,7 @@ mod lint;
 #[cfg(feature = "mcp")]
 mod mcp;
 mod migrate_sources;
+mod navigator;
 mod parse;
 // `pipeline resolve` needs the async runtime + source resolver, which only
 // ship with the `daemon` feature.
@@ -21,6 +22,7 @@ mod status;
 mod tail;
 mod tap;
 mod validate;
+mod visibility;
 
 pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
 pub(crate) use convert::{
@@ -42,3 +44,4 @@ pub(crate) use status::{StatusArgs, cmd_status};
 pub(crate) use tail::{TailArgs, cmd_tail};
 pub(crate) use tap::{TapArgs, cmd_tap};
 pub(crate) use validate::{ValidateArgs, cmd_validate};
+pub(crate) use visibility::{VisibilityArgs, apply_visibility_config, cmd_visibility};
