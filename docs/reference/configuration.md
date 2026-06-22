@@ -1,6 +1,6 @@
 # Configuration
 
-`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, and `rsigma rule visibility` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
+`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, and `rsigma rule visibility` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
 
 The same machinery is exposed through the [`rsigma config` group](../cli/config/init.md) for scaffolding, validation, introspection, and reload.
 
@@ -91,10 +91,24 @@ backtest:
   input_format: auto
 
 coverage:
+  # rules: [./rules]
   # atomics: https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/Indexes/index.yaml
   # baseline: https://raw.githubusercontent.com/SigmaHQ/sigma/master/other/sigma_attack_nav_coverage.json
   # targets: ./threat-model-techniques.txt
   fail_on_gaps: false
+
+scorecard:
+  # backtest: ./backtest.json
+  # coverage: ./coverage.json
+  # metrics: http://localhost:9090/metrics
+  # triage: ./triage.json
+  fail_on: none
+  min_precision: 0.8
+  tune_max_precision: 0.5
+  retire_max_precision: 0.1
+  min_volume: 1
+  stale_window: 30
+  max_fp_ratio: 0.5
 
 visibility:
   # mapping: ./mapping.json
@@ -116,7 +130,8 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
 | `backtest` | `rule backtest` | `rules`, `corpus`, `expectations`, `unexpected`, `pipelines`, and the syslog input knobs. `unexpected` has no compiled default so the expectations-file default can apply. |
-| `coverage` | `rule coverage` | `atomics`, `baseline`, `targets`, `fail_on_gaps`. `rules` is intentionally absent (it is a required, invocation-specific CLI argument). |
+| `coverage` | `rule coverage` | `rules`, `atomics`, `baseline`, `targets`, `fail_on_gaps`. |
+| `scorecard` | `rule scorecard` | The two required reports (`backtest`, `coverage`), the verdict thresholds (`min_precision`, `tune_max_precision`, `retire_max_precision`, `min_volume`, `stale_window`, `max_fp_ratio`), the optional inputs (`metrics`, `metrics_window`, `triage`), `fail_on`, and `report`. |
 | `visibility` | `rule visibility` | `mapping` (logsource/field to ATT&CK data-source table path or URL; unset uses the bundled default) and `fail_on_blind_spots`. `rules` and `observed` are intentionally absent (they are invocation-specific CLI arguments). |
 | `mcp` | `mcp serve` | `mcp.http_addr` (the `--http` bind address; unset means stdio), `mcp.lint_config`, and `mcp.rules_dir`. The auth token is secret and stays flag/env-only. Inert unless built with the `mcp` feature. |
 
@@ -148,7 +163,7 @@ The uniform scheme is detected by the `__` separator, so it never collides with 
 
 ## `--dry-run` and `config show`
 
-[`config show`](../cli/config/show.md) folds `default + file + env` and reports the winning layer for each leaf. To preview what a real command will use, including its flag layer, the daemon, eval, backtest, coverage, and visibility commands support `--dry-run`:
+[`config show`](../cli/config/show.md) folds `default + file + env` and reports the winning layer for each leaf. To preview what a real command will use, including its flag layer, the daemon, eval, backtest, coverage, scorecard, and visibility commands support `--dry-run`:
 
 ```bash
 rsigma engine daemon --dry-run

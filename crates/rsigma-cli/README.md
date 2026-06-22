@@ -63,7 +63,7 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 
 ## Subcommands
 
-Commands are grouped into four noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / backtest / condition / stdin), `backend` (convert / targets / formats), and `pipeline` (resolve).
+Commands are grouped into four noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / backtest / coverage / scorecard / visibility / condition / stdin), `backend` (convert / targets / formats), and `pipeline` (resolve).
 
 ### Migrating from the old flat commands
 
@@ -110,7 +110,7 @@ rsigma config path
 rsigma config reload
 ```
 
-`engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, and `rule visibility` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+`engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, and `rule visibility` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
 Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
@@ -865,7 +865,7 @@ Reads the `attack.*` tags off every detection and correlation rule, exports an A
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--rules` / `-r` | repeatable | required | Sigma rule file or directory of rules |
+| `--rules` / `-r` | repeatable | required | Sigma rule file or directory of rules (or `coverage.rules`) |
 | `--navigator` | path | none | Write an ATT&CK Navigator layer (format 4.5) to this file |
 | `--atomics` | path/URL | none | Atomic Red Team index (bare flag = upstream `index.yaml`), a local `index.yaml`, or an `atomics/` directory (or `coverage.atomics`) |
 | `--baseline` | path/URL | none | Baseline Navigator layer (bare flag = SigmaHQ heatmap) (or `coverage.baseline`) |
@@ -884,6 +884,35 @@ rsigma rule coverage -r rules/ --targets threat-model.txt --fail-on-gaps
 ```
 
 Exit codes: `0` success, `1` uncovered techniques under `--fail-on-gaps`, `2` unreadable rules, `3` an unfetchable cross-reference input. The full flag table and report shape are in the [`rule coverage` reference](https://timescale.github.io/rsigma/cli/rule/coverage/).
+
+### `rule scorecard`: Fuse the rule-side reports into keep/tune/retire verdicts
+
+Reads the JSON the toolkit already emits and turns it into a decision: it joins the `rule backtest` report (precision proxy, recall, corpus false-positive signal), the `rule coverage` report (ATT&CK mapping and sole-coverage analysis), an optional Prometheus production-volume snapshot, and an optional triage feed into a per-rule keep/tune/retire verdict table. It runs no evaluation and re-reads no corpus.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--backtest` | path | required | The `rule backtest --report` JSON document (or `scorecard.backtest`) |
+| `--coverage` | path | required | The `rule coverage --output-format json` document (or `scorecard.coverage`) |
+| `--metrics` | path/URL | none | Prometheus exposition snapshot or `/metrics` URL (or `scorecard.metrics`) |
+| `--metrics-window` | duration | none | Range-query window when `--metrics` is a query-API base (or `scorecard.metrics_window`) |
+| `--triage` | path | none | Triage disposition feed for the live false-positive ratio and MTTD/MTTR (or `scorecard.triage`) |
+| `--fail-on` | none/tune/retire | `none` | Exit `1` on verdicts at or worse than the policy (or `scorecard.fail_on`) |
+| `--report` | path | none | Write a markdown/HTML artifact (extension dispatch; `--report-format` overrides) |
+| `--min-precision`, `--tune-max-precision`, `--retire-max-precision`, `--min-volume`, `--stale-window`, `--max-fp-ratio` | number | SOC defaults | Verdict thresholds (or the matching `scorecard.*` keys) |
+
+```bash
+# Corpus-derived scorecard from the two required reports
+rsigma rule scorecard --backtest backtest.json --coverage coverage.json
+
+# Enrich with production volume + analyst dispositions, write the review artifact
+rsigma rule scorecard --backtest backtest.json --coverage coverage.json \
+    --metrics http://localhost:9090/metrics --triage triage.json --report scorecard.md
+
+# Gate CI on retire-grade rules
+rsigma rule scorecard --backtest backtest.json --coverage coverage.json --fail-on retire
+```
+
+A retire candidate that is the sole coverage for an ATT&CK technique is downgraded to tune, so the program never silently drops coverage. Exit codes: `0` success or under `--fail-on`, `1` verdicts hit `--fail-on`, `2` an input is missing or unfetchable, `3` a bad flag or a malformed/version-mismatched report. The full reference is in the [`rule scorecard` reference](https://timescale.github.io/rsigma/cli/rule/scorecard/).
 
 ### `rule visibility`: Score telemetry visibility against ATT&CK data sources
 

@@ -34,6 +34,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 * **Post-evaluation enrichment:** Inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via four primitives (`template`, `lookup`, `http`, `command`) with kind-aware template namespaces, response cache, scope filtering, and hot-reload
 * **Corpus backtesting:** Replay an event corpus against a ruleset with `rule backtest`, diffing per-rule fire counts against declared expectations (positive/negative fixtures, bounded noise budgets), flagging uncovered fires as potential false positives, and emitting a JSON or JUnit XML report for CI
 * **ATT&CK coverage:** Map a ruleset onto MITRE ATT&CK with `rule coverage`, exporting an ATT&CK Navigator layer (format 4.5, scored by rule count) and reporting coverage gaps against the Atomic Red Team library, the SigmaHQ baseline heatmap, and a target technique list, with `--fail-on-gaps` for CI
+* **Detection scorecard:** Fuse the backtest report, the coverage report, an optional Prometheus production-volume snapshot, and an optional triage feed with `rule scorecard` into per-rule keep/tune/retire verdicts (precision proxy, volume, ATT&CK context, reason), rendered through the output-format layer or as a markdown/HTML artifact, with a sole-coverage guard and `--fail-on` for CI
 * **Telemetry visibility:** Score data-source maturity with `rule visibility`, joining the field-observability signal with the rule logsource inventory through a bundled ATT&CK mapping table to emit a [DeTT&CT](https://github.com/rabobank-cdc/DeTTECT) data-source/technique administration pair and a visibility Navigator layer (format 4.5, scored on DeTT&CT's 0-4 scale), surfacing blind spots (rules for data you do not receive) with `--fail-on-blind-spots` for CI
 * **Rule conversion:** Convert rules into backend-native query strings via a pluggable backend trait (PostgreSQL/TimescaleDB SQL, LynxDB SPL2, Fibratus rule YAML for EDR sensors)
 * **Eval prefilters:** Use optional prefilters for large rule sets, including a bloom filter for substring matchers (`--bloom-prefilter`) and cross-rule Aho-Corasick index for whole-rule pruning (`--cross-rule-ac`, requires `daachorse-index` feature)
@@ -343,6 +344,9 @@ rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectation
 
 # Map coverage onto MITRE ATT&CK: export a Navigator layer and gate on a target list
 rsigma rule coverage -r rules/ --navigator coverage.json --targets threat-model.txt --fail-on-gaps
+
+# Fuse the backtest + coverage reports into per-rule keep/tune/retire verdicts, gate on retires
+rsigma rule scorecard --backtest backtest.json --coverage coverage.json --fail-on retire --report scorecard.md
 
 # Score telemetry visibility: DeTT&CT export + visibility Navigator layer, gate on blind spots
 rsigma rule visibility -r rules/ --observed fields.json --navigator visibility.json --fail-on-blind-spots

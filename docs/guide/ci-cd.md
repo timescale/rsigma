@@ -66,6 +66,18 @@ rsigma rule coverage -r rules/ --targets ci/threat-model.txt --fail-on-gaps
 
 It can also surface techniques that have an Atomic Red Team test but no rule (`--atomics`) or that the SigmaHQ baseline covers but you do not (`--baseline`). See [ATT&CK Coverage](attack-coverage.md) and the [`rule coverage`](../cli/rule/coverage.md) reference.
 
+## `rule scorecard` for the metrics gate
+
+`rule backtest` and `rule coverage` each emit a JSON report; `rule scorecard` fuses them (optionally enriched with a Prometheus production-volume snapshot and a triage feed) into per-rule keep/tune/retire verdicts and a gate. It is the metrics surface atop the triad: run it last, feeding the two reports the earlier steps wrote, and fail the build when the portfolio accrues retire-grade rules.
+
+```bash
+rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectations.yml --report backtest.json
+rsigma rule coverage -r rules/ --output-format json > coverage.json
+rsigma rule scorecard --backtest backtest.json --coverage coverage.json --fail-on retire --report scorecard.md
+```
+
+A retire candidate that is the sole rule covering an ATT&CK technique is downgraded to tune, so the gate never asks you to drop coverage. See [Detection Scorecard](detection-scorecard.md) and the [`rule scorecard`](../cli/rule/scorecard.md) reference.
+
 ## `--fail-on-detection` for `engine eval`
 
 `engine eval --fail-on-detection` is the zero-setup fallback when you do not want an expectations file: a single fixture and a single rule, where exit `1` means "something fired."
@@ -360,5 +372,6 @@ $RSIGMA_BIN rule backtest -r "$RULES_DIR" -p "$PIPELINE" \
 - [Rule Conversion](rule-conversion.md) for the `backend convert` workflow that feeds `views.sql` into Grafana or alerting.
 - [Processing Pipelines](processing-pipelines.md) for dynamic-source validation via `--resolve-sources`.
 - [Exit Codes reference](../reference/exit-codes.md) for the canonical table and source-code link.
-- [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`rule coverage`](../cli/rule/coverage.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
+- [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`rule coverage`](../cli/rule/coverage.md), [`rule scorecard`](../cli/rule/scorecard.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
 - [ATT&CK Coverage](attack-coverage.md) for the coverage workflow.
+- [Detection Scorecard](detection-scorecard.md) for the keep/tune/retire verdict workflow.
