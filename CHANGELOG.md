@@ -13,6 +13,7 @@ RSigma v0.17.0 is the "detection-engineering toolkit" release: the rule-side rep
 * `rstix`: Phase 2 adds STIX meta objects (#213) and relationship/sighting objects (#220), thanks to @SecurityEnthusiast; the crate is not releasable on its own yet.
 * Fibratus conversion fixes: emit the required `version` field so converted rules load (#219), and map `file_access`/`file_event`/`create_remote_thread` to their idiomatic macros (#217), thanks to @rabbitstack.
 * Faster NATS and daemon integration tests: deterministic waits replace fixed sleeps and long-poll timeouts, cutting each suite's runtime by roughly 7x with no production code changes (#240).
+* Security: bump the transitive `quinn-proto` (via `reqwest`) to 0.11.15 to clear RUSTSEC-2026-0185, a high-severity remote memory exhaustion advisory.
 
 ### `rule scorecard`: fuse the rule-side reports into per-rule keep/tune/retire verdicts (#243)
 
@@ -170,6 +171,10 @@ Phase 2 adds STIX meta objects (not releasable on its own until `StixObject` dis
 - **Deserialize:** each meta type validates JSON `"type"` against `TYPE_NAME` in a single serde pass (`ModelError::UnexpectedObjectType`); no intermediate `serde_json::Value` parse.
 - **Tests:** `roundtrip_strict` for complete types (meta objects, `ExternalReference`, `GranularMarking`, `ExtensionMap`); subset `roundtrip` for `SdoSroCommonProps` / `ScoCommonProps` fixtures that carry unmodeled SDO keys. Fixtures under `tests/fixtures/spec/meta/` include minimal TLP markings, a rich marking-def with common properties, and cross-type reject coverage. Unit pins for all nine TLP ids.
 - **Docs:** STIX object model version vs TLP marking encoding in `crates/rstix/README.md` and `docs/library/rstix.md`.
+
+### Security: transitive `quinn-proto` bump for RUSTSEC-2026-0185
+
+`cargo audit` flagged [RUSTSEC-2026-0185](https://rustsec.org/advisories/RUSTSEC-2026-0185), a high-severity (7.5) remote memory exhaustion in `quinn-proto` from unbounded out-of-order stream reassembly, published 2026-06-22. It reaches the tree transitively through `reqwest -> quinn -> quinn-proto`. A targeted `cargo update -p quinn-proto --precise 0.11.15` moves the workspace and fuzz lockfiles from 0.11.14 to the fixed 0.11.15 with no other dependency changes.
 
 [v0.16.0...v0.17.0](https://github.com/timescale/rsigma/compare/v0.16.0...v0.17.0)
 
