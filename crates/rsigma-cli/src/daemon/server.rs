@@ -13,8 +13,9 @@ use axum::{Json, Router};
 use rsigma_eval::{CorrelationConfig, MatchDetailLevel, Pipeline, ProcessResult};
 use rsigma_runtime::{
     AckToken, DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver,
-    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RuntimeEngine, Sink,
-    StdinSource, StdoutSink, spawn_source,
+    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RuntimeEngine,
+    SchemaClassifier, SchemaObserver, Sink, StdinSource, StdoutSink, load_schema_signatures,
+    spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -99,6 +100,10 @@ struct AppState {
     /// `--observe-fields`; the engine task records observed field keys
     /// and the `/api/v1/fields/*` handlers (Phase 4) consume snapshots.
     field_observer: Option<Arc<FieldObserver>>,
+    /// Opt-in schema observer. `Some` when the daemon was started with
+    /// `--observe-schemas`; the engine task classifies each event and the
+    /// `GET /api/v1/schemas` handler serves snapshots.
+    schema_observer: Option<Arc<SchemaObserver>>,
     /// Live event-tap state. `Some` when the tap is enabled; the
     /// `GET /api/v1/tap` handler registers capture sessions on it.
     tap: Option<super::tap::TapState>,
@@ -156,6 +161,14 @@ pub struct DaemonConfig {
     /// `rsigma_fields_observer_overflow_dropped_total`); existing keys
     /// keep incrementing.
     pub observe_fields_max_keys: usize,
+    /// Enable the opt-in schema observer that classifies every event so the
+    /// `GET /api/v1/schemas` endpoint and the
+    /// `rsigma_events_by_schema_total` / `rsigma_events_unknown_schema_total`
+    /// counters can surface the schema mix and unknown rate. Off by default.
+    pub observe_schemas: bool,
+    /// Optional path to a YAML file of user-defined schema signatures, merged
+    /// over the built-ins when the schema observer is enabled.
+    pub schema_config: Option<PathBuf>,
     /// Enable the cross-rule Aho-Corasick pre-filter. Off by default;
     /// benefit is workload-dependent (large rule sets with shared
     /// substring patterns). Available behind the `daachorse-index`
@@ -478,6 +491,25 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
+    let schema_observer = if config.observe_schemas {
+        let classifier = match &config.schema_config {
+            Some(path) => match load_schema_signatures(path) {
+                Ok(sigs) => SchemaClassifier::with_user_signatures(sigs),
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to load schema signatures; using built-ins only");
+                    SchemaClassifier::builtin()
+                }
+            },
+            None => SchemaClassifier::builtin(),
+        };
+        let observer = Arc::new(SchemaObserver::new(classifier));
+        processor.set_schema_observer(Some(observer.clone()));
+        tracing::info!("Schema observer enabled (GET /api/v1/schemas)");
+        Some(observer)
+    } else {
+        None
+    };
+
     let tap = if config.tap.enabled {
         let registry = rsigma_runtime::TapRegistry::new(
             config.tap.buffer_events,
@@ -528,6 +560,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         otlp_event_tx,
         source_registry: Arc::new(config.source_registry.clone()),
         field_observer: field_observer.clone(),
+        schema_observer: schema_observer.clone(),
         tap: tap.clone(),
         tail: tail.clone(),
     };
@@ -554,6 +587,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/fields/unknown", get(fields_unknown))
         .route("/api/v1/fields/missing", get(fields_missing))
         .route("/api/v1/fields/observer", delete(fields_observer_reset))
+        .route("/api/v1/schemas", get(schemas_full))
         .route("/api/v1/tap", get(tap_stream))
         .route("/api/v1/detections/stream", get(detections_stream));
 
@@ -1665,6 +1699,11 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
         state.metrics.update_field_observer_metrics(&snapshot);
     }
 
+    if let Some(observer) = state.schema_observer.as_ref() {
+        let snapshot = observer.snapshot();
+        state.metrics.update_schema_observer_metrics(&snapshot);
+    }
+
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -1901,6 +1940,41 @@ fn observation_disabled_response() -> Response {
         })),
     )
         .into_response()
+}
+
+/// `GET /api/v1/schemas`: the live per-schema breakdown and unknown rate from
+/// the opt-in schema observer. Returns 503 when `--observe-schemas` is off.
+async fn schemas_full(State(state): State<AppState>) -> Response {
+    let Some(observer) = state.schema_observer.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "schema observation disabled",
+                "hint": "restart the daemon with --observe-schemas to enable /api/v1/schemas",
+            })),
+        )
+            .into_response();
+    };
+    let snapshot = observer.snapshot();
+    state.metrics.update_schema_observer_metrics(&snapshot);
+
+    let by_schema: Vec<serde_json::Value> = snapshot
+        .by_schema
+        .iter()
+        .map(|e| serde_json::json!({ "schema": e.schema, "count": e.count }))
+        .collect();
+
+    let body = serde_json::json!({
+        "summary": {
+            "events_observed": snapshot.events_observed,
+            "classified": snapshot.classified,
+            "unknown": snapshot.unknown,
+            "uptime_seconds": snapshot.uptime_seconds,
+        },
+        "by_schema": by_schema,
+    });
+
+    (StatusCode::OK, Json(body)).into_response()
 }
 
 fn missing_field_payload(field: &str, origin: &rsigma_eval::FieldOrigin) -> serde_json::Value {

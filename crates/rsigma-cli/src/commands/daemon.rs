@@ -337,6 +337,21 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "observe-fields-max-keys", default_value_t = config::defaults::OBSERVE_FIELDS_MAX_KEYS)]
     pub observe_fields_max_keys: usize,
 
+    /// Enable the opt-in schema observer.
+    ///
+    /// Off by default. When set, the engine task classifies every event by
+    /// schema (ECS, Sysmon, Windows Event Log, CEF, OCSF, ...) and surfaces
+    /// the per-schema breakdown and unknown rate via `GET /api/v1/schemas`
+    /// plus the `rsigma_events_by_schema_total` and
+    /// `rsigma_events_unknown_schema_total` metrics.
+    #[arg(long = "observe-schemas")]
+    pub observe_schemas: bool,
+
+    /// Path to a YAML file of user-defined schema signatures, merged over the
+    /// built-ins. Has no effect unless `--observe-schemas` is set.
+    #[arg(long = "schema-config", value_name = "PATH")]
+    pub schema_config: Option<PathBuf>,
+
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
     ///
     /// Off by default. When enabled, the engine builds a single
@@ -577,6 +592,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         bloom_max_bytes,
         observe_fields,
         observe_fields_max_keys,
+        observe_schemas,
+        schema_config,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -702,6 +719,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         bloom_max_bytes,
         observe_fields,
         observe_fields_max_keys,
+        observe_schemas,
+        schema_config,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -1118,6 +1137,8 @@ fn run_daemon(
     bloom_max_bytes: Option<usize>,
     observe_fields: bool,
     observe_fields_max_keys: usize,
+    observe_schemas: bool,
+    schema_config: Option<PathBuf>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
@@ -1265,6 +1286,8 @@ fn run_daemon(
         bloom_max_bytes,
         observe_fields,
         observe_fields_max_keys,
+        observe_schemas,
+        schema_config,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,

@@ -4,7 +4,9 @@ use parking_lot::Mutex;
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
-use rsigma_eval::{Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet};
+use rsigma_eval::{
+    Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet, SchemaObserver,
+};
 
 use crate::engine::RuntimeEngine;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
@@ -32,6 +34,11 @@ pub struct LogProcessor {
     /// recorded. When `None`, the batch path skips iteration entirely
     /// so the hot path stays untouched.
     field_observer: ArcSwap<Option<Arc<FieldObserver>>>,
+    /// Optional opt-in schema observer. When `Some`, every parsed event
+    /// flowing through `process_batch_with_format` is classified and tallied
+    /// per schema. When `None`, the batch path skips classification entirely
+    /// so the hot path stays untouched.
+    schema_observer: ArcSwap<Option<Arc<SchemaObserver>>>,
     /// Optional live event tap. When `Some`, `process_batch_with_format`
     /// offers raw lines and/or decoded events to any active capture
     /// sessions with a non-blocking `try_send`. When `None` (or when no
@@ -47,6 +54,7 @@ impl LogProcessor {
             engine: Arc::new(ArcSwap::from_pointee(Mutex::new(engine))),
             metrics,
             field_observer: ArcSwap::new(Arc::new(None)),
+            schema_observer: ArcSwap::new(Arc::new(None)),
             event_tap: ArcSwap::new(Arc::new(None)),
         }
     }
@@ -65,6 +73,22 @@ impl LogProcessor {
     /// Return the currently-attached field observer, if any.
     pub fn field_observer(&self) -> Option<Arc<FieldObserver>> {
         self.field_observer.load_full().as_ref().clone()
+    }
+
+    /// Attach (or detach) the opt-in schema observer.
+    ///
+    /// When set, [`process_batch_with_format`](Self::process_batch_with_format)
+    /// classifies each parsed event before evaluation. Pass `None` to disable
+    /// classification; the hot path then performs zero extra work. Safe to
+    /// call at runtime: the swap is wait-free, and in-flight batches finish
+    /// against whichever observer they read.
+    pub fn set_schema_observer(&self, observer: Option<Arc<SchemaObserver>>) {
+        self.schema_observer.store(Arc::new(observer));
+    }
+
+    /// Return the currently-attached schema observer, if any.
+    pub fn schema_observer(&self) -> Option<Arc<SchemaObserver>> {
+        self.schema_observer.load_full().as_ref().clone()
     }
 
     /// Attach (or detach) the live event tap.
@@ -286,6 +310,16 @@ impl LogProcessor {
             }
         }
         drop(observer_guard);
+
+        // Optional opt-in schema observation, with the same cheap-when-disabled
+        // discipline as the field observer above.
+        let schema_guard = self.schema_observer.load();
+        if let Some(observer) = schema_guard.as_ref() {
+            for (_, decoded) in &decoded_events {
+                observer.observe(decoded);
+            }
+        }
+        drop(schema_guard);
 
         // Decoded-stage tap: offer each decoded event (post-parse,
         // post-event-filter) to active decoded-stage sessions. The event is

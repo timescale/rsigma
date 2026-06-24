@@ -56,6 +56,8 @@ pub struct Metrics {
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
+    pub events_by_schema: IntCounterVec,
+    pub events_unknown_schema: IntCounter,
     pub tap_sessions_total: IntCounter,
     pub tap_active_sessions: IntGauge,
     pub tap_events_streamed_total: IntCounter,
@@ -500,6 +502,26 @@ impl Metrics {
             .register(Box::new(fields_observer_overflow_dropped_total.clone()))
             .unwrap();
 
+        let events_by_schema = IntCounterVec::new(
+            Opts::new(
+                "rsigma_events_by_schema_total",
+                "Events classified per schema by the opt-in schema observer (--observe-schemas)",
+            ),
+            &["schema"],
+        )
+        .unwrap();
+        let events_unknown_schema = IntCounter::with_opts(Opts::new(
+            "rsigma_events_unknown_schema_total",
+            "Events that matched no schema signature (--observe-schemas)",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(events_by_schema.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(events_unknown_schema.clone()))
+            .unwrap();
+
         let tap_sessions_total = IntCounter::with_opts(Opts::new(
             "rsigma_tap_sessions_total",
             "Total live event-tap sessions opened (GET /api/v1/tap)",
@@ -601,6 +623,8 @@ impl Metrics {
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
+            events_by_schema,
+            events_unknown_schema,
             tap_sessions_total,
             tap_active_sessions,
             tap_events_streamed_total,
@@ -637,6 +661,28 @@ impl Metrics {
         if overflow_now > overflow_prev {
             self.fields_observer_overflow_dropped_total
                 .inc_by(overflow_now - overflow_prev);
+        }
+    }
+
+    /// Refresh the schema-observer Prometheus counters from a snapshot.
+    /// Counters must be monotonic; the schema observer is not API-resettable,
+    /// so the per-schema counts and the lifetime unknown total are monotonic
+    /// sources bridged via `inc_by(delta)`.
+    pub fn update_schema_observer_metrics(&self, snapshot: &rsigma_runtime::SchemaObservation) {
+        for entry in &snapshot.by_schema {
+            let counter = self
+                .events_by_schema
+                .with_label_values(&[entry.schema.as_str()]);
+            let prev = counter.get();
+            if entry.count > prev {
+                counter.inc_by(entry.count - prev);
+            }
+        }
+        let unknown_now = snapshot.lifetime_unknown;
+        let unknown_prev = self.events_unknown_schema.get();
+        if unknown_now > unknown_prev {
+            self.events_unknown_schema
+                .inc_by(unknown_now - unknown_prev);
         }
     }
 
