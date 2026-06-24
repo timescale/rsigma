@@ -408,6 +408,7 @@ impl LogProcessor {
         let bloom_prefilter = old.bloom_prefilter();
         let bloom_max_bytes = old.bloom_max_bytes();
         let match_detail = old.match_detail();
+        let routing = old.routing();
         #[cfg(feature = "daachorse-index")]
         let cross_rule_ac = old.cross_rule_ac();
         drop(old);
@@ -426,6 +427,9 @@ impl LogProcessor {
         if let Some(resolver) = resolver {
             new_engine.set_source_resolver(resolver);
         }
+        // Carry the schema-routing spec so hot-reload rebuilds the router
+        // instead of silently dropping back to a single engine.
+        new_engine.set_routing(routing);
         let stats = new_engine.load_rules()?;
 
         if let Some(state) = old_state

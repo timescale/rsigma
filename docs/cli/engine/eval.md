@@ -102,6 +102,18 @@ rsigma engine eval -r rules/ -e @events.ndjson --observe-fields
 
 See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow shared with the daemon path.
 
+### Schema routing
+
+Recognize each event's schema and evaluate it against the pipeline-set bound to that schema (instead of applying one pipeline set to every event). See the [Schema Routing](../../guide/schema-routing.md) guide.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--schema-routing` | off | Classify each event and route it to its schema's bound pipeline-set; detections feed one shared correlation store. |
+| `--schema-config <PATH>` | unset | YAML with the `schemas:` signatures and `routing:` bindings (`bindings`, `default_pipelines`, `on_unknown`). |
+| `--on-unknown <POLICY>` | `warn` | Policy for events that match no schema: `warn`, `drop`, `passthrough`, or `error`. Overrides the config value. |
+
+These flags may also be supplied via the `eval.schema` block in a [config file](../../reference/configuration.md) (`routing`, `config`, `on_unknown`); a flag always wins over the file.
+
 ### CI gating
 
 | Flag | Description |

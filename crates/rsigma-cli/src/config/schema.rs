@@ -137,6 +137,9 @@ pub(crate) struct DaemonPartial {
     /// Live detection-tail limits (`GET /api/v1/detections/stream`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tail: Option<TailPartial>,
+    /// Schema classification and routing settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<SchemaPartial>,
 }
 
 impl Merge for DaemonPartial {
@@ -155,6 +158,7 @@ impl Merge for DaemonPartial {
             nats: merge_opt(self.nats, over.nats),
             tap: merge_opt(self.tap, over.tap),
             tail: merge_opt(self.tail, over.tail),
+            schema: merge_opt(self.schema, over.schema),
         }
     }
 }
@@ -515,6 +519,9 @@ pub(crate) struct EvalPartial {
     pub syslog_strip_bom: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on_detection: Option<bool>,
+    /// Schema classification and routing settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<SchemaPartial>,
 }
 
 impl Merge for EvalPartial {
@@ -526,6 +533,37 @@ impl Merge for EvalPartial {
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
             fail_on_detection: over.fail_on_detection.or(self.fail_on_detection),
+            schema: merge_opt(self.schema, over.schema),
+        }
+    }
+}
+
+/// Schema classification and routing settings (shared by `daemon` and `eval`).
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct SchemaPartial {
+    /// Enable the schema observer (daemon `--observe-schemas`). Ignored by eval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observe: Option<bool>,
+    /// Enable schema routing (`--schema-routing`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<bool>,
+    /// Path to the schema config file with signatures and routing bindings
+    /// (`--schema-config`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<PathBuf>,
+    /// Unknown-schema policy: `warn`, `drop`, `passthrough`, or `error`
+    /// (`--on-unknown`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_unknown: Option<String>,
+}
+
+impl Merge for SchemaPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            observe: over.observe.or(self.observe),
+            routing: over.routing.or(self.routing),
+            config: over.config.or(self.config),
+            on_unknown: over.on_unknown.or(self.on_unknown),
         }
     }
 }

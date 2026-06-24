@@ -417,13 +417,28 @@ impl CorrelationEngine {
     /// - `Skip`: return detections only, skip correlation state updates
     pub fn process_event(&mut self, event: &impl Event) -> ProcessResult {
         let all_detections = self.engine.evaluate(event);
+        self.correlate_detections(event, all_detections)
+    }
 
+    /// Run the correlation layer over externally-produced detections.
+    ///
+    /// Like [`process_event`](Self::process_event) but the detections are
+    /// supplied by the caller instead of computed by this engine's inner
+    /// detection engine. This lets a multi-engine router run detection in a
+    /// per-schema engine and still feed every detection into one shared
+    /// correlation store. Timestamp extraction and the `timestamp_fallback`
+    /// policy match `process_event`.
+    pub fn correlate_detections(
+        &mut self,
+        event: &impl Event,
+        all_detections: Vec<EvaluationResult>,
+    ) -> ProcessResult {
         let ts = match self.extract_event_timestamp(event) {
             Some(ts) => ts,
             None => match self.config.timestamp_fallback {
                 TimestampFallback::WallClock => Utc::now().timestamp(),
                 TimestampFallback::Skip => {
-                    // Still run detection (stateless), but skip correlation
+                    // Still surface detections, but skip correlation state.
                     return self.filter_detections(all_detections);
                 }
             },

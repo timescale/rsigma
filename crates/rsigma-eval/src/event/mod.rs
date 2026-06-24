@@ -10,12 +10,14 @@
 mod json;
 mod kv;
 mod map;
+mod mapped;
 mod plain;
 
 pub use json::JsonEvent;
 pub(crate) use json::resolve_array_index;
 pub use kv::KvEvent;
 pub use map::MapEvent;
+pub use mapped::MappedEvent;
 pub use plain::PlainEvent;
 
 use std::borrow::Cow;

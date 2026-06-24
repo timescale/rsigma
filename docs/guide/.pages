@@ -9,6 +9,7 @@ nav:
   - Visibility and Data Sources: visibility-and-data-sources.md
   - MCP Server: mcp-server.md
   - Processing Pipelines: processing-pipelines.md
+  - Schema Routing: schema-routing.md
   - Enrichers: enrichers.md
   - Webhooks: webhooks.md
   - Input Formats: input-formats.md

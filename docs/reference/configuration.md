@@ -76,12 +76,21 @@ daemon:
     enabled: false          # opt-in: enable GET /api/v1/detections/stream (or --enable-tail)
     buffer_events: 8192     # per-session buffer; a full buffer drops detections (counted)
     max_sessions: 2         # concurrent tail sessions (a session over the cap gets 409)
+  schema:
+    observe: false          # opt-in: count events per recognized schema (or --observe-schemas)
+    routing: false          # opt-in: route each event to its schema's pipeline-set (or --schema-routing)
+    # config: /etc/rsigma/schema.yml   # user schema signatures + routing bindings (--schema-config)
+    on_unknown: warn        # warn | drop | passthrough | error, for events matching no schema
 
 eval:
   rules: ./rules
   pipelines: [sysmon]
   input_format: auto
   fail_on_detection: false
+  schema:
+    routing: false          # opt-in: route each event to its schema's pipeline-set (or --schema-routing)
+    # config: ./schema.yml
+    on_unknown: warn
 
 backtest:
   rules: ./rules
@@ -128,7 +137,9 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.tap` | `engine daemon` | Live event-tap limits (`enabled`, `buffer_events`, `max_sessions`, `max_duration`). Disabled by default; enable with `enabled: true` or `--enable-tap`. The rest are config-file-only. See [HTTP API: Live event tap](http-api.md#live-event-tap). |
 | `daemon.tail` | `engine daemon` | Live detection-tail limits (`enabled`, `buffer_events`, `max_sessions`). Disabled by default; enable with `enabled: true` or `--enable-tail`. The rest are config-file-only. See [HTTP API: Live detection tail](http-api.md#live-detection-tail). |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
+| `daemon.schema` | `engine daemon` | Schema classification and routing (`observe`, `routing`, `config`, `on_unknown`). All opt-in. See [Schema Routing](../guide/schema-routing.md). |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
+| `eval.schema` | `engine eval` | Schema routing for one-shot eval (`routing`, `config`, `on_unknown`). `observe` has no effect here. |
 | `backtest` | `rule backtest` | `rules`, `corpus`, `expectations`, `unexpected`, `pipelines`, and the syslog input knobs. `unexpected` has no compiled default so the expectations-file default can apply. |
 | `coverage` | `rule coverage` | `rules`, `atomics`, `baseline`, `targets`, `fail_on_gaps`. |
 | `scorecard` | `rule scorecard` | The two required reports (`backtest`, `coverage`), the verdict thresholds (`min_precision`, `tune_max_precision`, `retire_max_precision`, `min_volume`, `stale_window`, `max_fp_ratio`), the optional inputs (`metrics`, `metrics_window`, `triage`), `fail_on`, and `report`. |

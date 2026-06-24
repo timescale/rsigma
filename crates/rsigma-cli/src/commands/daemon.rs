@@ -348,9 +348,24 @@ pub(crate) struct DaemonArgs {
     pub observe_schemas: bool,
 
     /// Path to a YAML file of user-defined schema signatures, merged over the
-    /// built-ins. Has no effect unless `--observe-schemas` is set.
+    /// built-ins, and (with `--schema-routing`) the `routing:` bindings. Used
+    /// by `--observe-schemas` and `--schema-routing`.
     #[arg(long = "schema-config", value_name = "PATH")]
     pub schema_config: Option<PathBuf>,
+
+    /// Classify each event and route it to the pipeline-set bound to its
+    /// schema (instead of applying one pipeline set to every event). Bindings
+    /// come from the `routing:` section of `--schema-config`. Detections feed a
+    /// single shared correlation store, so the same entity correlates across
+    /// schemas.
+    #[arg(long = "schema-routing")]
+    pub schema_routing: bool,
+
+    /// Override the `on_unknown` policy for events that match no schema:
+    /// `warn`, `drop`, `passthrough`, or `error`. Defaults to the config value
+    /// (or `warn`). Used with `--schema-routing`.
+    #[arg(long = "on-unknown", value_name = "POLICY")]
+    pub on_unknown: Option<String>,
 
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
     ///
@@ -594,6 +609,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -721,6 +738,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -1076,6 +1095,29 @@ fn apply_daemon_config(
         }
     }
 
+    if let Some(schema) = daemon.schema {
+        if !explicit("observe_schemas")
+            && let Some(v) = schema.observe
+        {
+            args.observe_schemas = v;
+        }
+        if !explicit("schema_routing")
+            && let Some(v) = schema.routing
+        {
+            args.schema_routing = v;
+        }
+        if !explicit("schema_config")
+            && let Some(v) = schema.config
+        {
+            args.schema_config = Some(v);
+        }
+        if !explicit("on_unknown")
+            && let Some(v) = schema.on_unknown
+        {
+            args.on_unknown = Some(v);
+        }
+    }
+
     #[cfg(feature = "daemon-nats")]
     if let Some(nats) = daemon.nats
         && !explicit("consumer_group")
@@ -1139,6 +1181,8 @@ fn run_daemon(
     observe_fields_max_keys: usize,
     observe_schemas: bool,
     schema_config: Option<PathBuf>,
+    schema_routing: bool,
+    on_unknown: Option<String>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
@@ -1288,6 +1332,8 @@ fn run_daemon(
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,
@@ -1508,5 +1554,31 @@ mod tests {
         let base = partial("daemon:\n  input:\n    syslog_strip_bom: false\n");
         apply_daemon_config(&mut args, &matches, base);
         assert!(args.syslog_strip_bom);
+    }
+
+    #[test]
+    fn schema_block_from_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r"]);
+        let base = partial(
+            "daemon:\n  schema:\n    observe: true\n    routing: true\n    config: /file/schema.yml\n    on_unknown: drop\n",
+        );
+        apply_daemon_config(&mut args, &matches, base);
+        assert!(args.observe_schemas);
+        assert!(args.schema_routing);
+        assert_eq!(
+            args.schema_config.as_deref(),
+            Some(Path::new("/file/schema.yml"))
+        );
+        assert_eq!(args.on_unknown.as_deref(), Some("drop"));
+    }
+
+    #[test]
+    fn schema_flag_beats_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r", "--on-unknown", "error"]);
+        let base = partial("daemon:\n  schema:\n    routing: true\n    on_unknown: drop\n");
+        apply_daemon_config(&mut args, &matches, base);
+        // Routing comes from the file; the explicit flag wins for on_unknown.
+        assert!(args.schema_routing);
+        assert_eq!(args.on_unknown.as_deref(), Some("error"));
     }
 }
