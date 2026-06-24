@@ -126,6 +126,25 @@ async fn extract_invalid_cel_returns_error() {
     assert!(result.is_err());
 }
 
+#[test]
+fn extract_jq_halt_does_not_exit_process() {
+    use rsigma_runtime::sources::extract::apply_extract;
+
+    let data = serde_json::json!([1, 2, 3]);
+
+    // `halt` and `halt_error` are implemented in jaq-std with
+    // `std::process::exit`. They must surface as ordinary errors so a single
+    // bad expression cannot terminate a long-running process. If this filter
+    // were still wired up, the test binary would exit here instead of failing.
+    for expr in ["halt", "halt_error", ".[] | halt(0)", "halt_error(2)"] {
+        let result = apply_extract(&data, &ExtractExpr::Jq(expr.to_string()));
+        assert!(
+            result.is_err(),
+            "expected jq `{expr}` to error instead of exiting the process",
+        );
+    }
+}
+
 #[tokio::test]
 async fn file_source_lines() {
     let dir = tempfile::tempdir().unwrap();

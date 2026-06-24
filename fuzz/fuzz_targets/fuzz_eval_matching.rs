@@ -4,7 +4,7 @@ use rsigma_eval::{CompiledRule, JsonEvent, compile_rule, evaluate_rule};
 use std::sync::LazyLock;
 
 static RULES: LazyLock<Vec<CompiledRule>> = LazyLock::new(|| {
-    let yaml = include_str!("../corpus/fuzz_eval_matching/rules.yml");
+    let yaml = include_str!("../seeds/fuzz_eval_matching/rules.yml");
     let collection = rsigma_parser::parse_sigma_yaml(yaml).unwrap();
     collection
         .rules

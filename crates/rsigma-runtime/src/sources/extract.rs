@@ -30,6 +30,13 @@ pub fn apply_extract(
 /// `length`, …) so the supported filter surface matches real jq for
 /// the operator-facing expressions documented in the dynamic-pipelines
 /// and enrichment references.
+///
+/// The `halt` native filter and the `halt`/`halt_error` definitions are
+/// excluded. In `jaq-std`, `halt` is implemented with `std::process::exit`, so
+/// an expression containing `halt` or `halt_error` would terminate the whole
+/// process (for example a long-running daemon) instead of failing the single
+/// extraction. With them removed, those filters are undefined and surface as an
+/// ordinary compile error.
 fn apply_jq(data: &serde_json::Value, expr: &str) -> Result<serde_json::Value, SourceError> {
     use jaq_core::load::{Arena, File, Loader};
     use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
@@ -42,10 +49,12 @@ fn apply_jq(data: &serde_json::Value, expr: &str) -> Result<serde_json::Value, S
 
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
-        .chain(jaq_json::defs());
+        .chain(jaq_json::defs())
+        .filter(|def| def.name != "halt" && def.name != "halt_error");
     let funs = jaq_core::funs()
         .chain(jaq_std::funs())
-        .chain(jaq_json::funs());
+        .chain(jaq_json::funs())
+        .filter(|(name, _, _)| *name != "halt");
 
     let arena = Arena::default();
     let modules = Loader::new(defs)

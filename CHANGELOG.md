@@ -21,6 +21,10 @@ Content-based schema classification that recognizes the structure of each event 
 * Daemon schema observability: `--observe-schemas` classifies every event and exposes the per-schema breakdown and unknown rate over `GET /api/v1/schemas` and the `rsigma_events_by_schema_total{schema}` and `rsigma_events_unknown_schema_total` metrics. An optional `--schema-config` merges user signatures over the built-ins.
 * Declarative signatures (field present/absent, any-of, equals, regex) live in `rsigma-eval`; built-ins cover ECS, OCSF, rendered Windows Event Log, Sysmon, CEF, and a low-specificity `generic_json` fallback. An event matching no signature is reported as `unknown`, the signal for an unsupported schema.
 
+### Fixed
+
+* jq extract expressions can no longer terminate the process. The `halt` and `halt_error` filters are implemented in `jaq-std` with `std::process::exit`, so a single source or enrichment expression could take the whole engine down; both are now removed from the supported filter surface and surface as an ordinary expression error instead.
+
 ## [0.17.0] - 2026-06-23
 
 **TL;DR**
