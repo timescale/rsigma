@@ -1,4 +1,5 @@
 mod backtest;
+mod classify;
 mod convert;
 mod coverage;
 #[cfg(feature = "daemon")]
@@ -29,6 +30,7 @@ mod validate;
 mod visibility;
 
 pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
+pub(crate) use classify::{ClassifyArgs, cmd_classify};
 pub(crate) use convert::{
     ConvertArgs, ListFormatsArgs, cmd_convert, cmd_list_formats, cmd_list_targets,
 };
