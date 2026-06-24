@@ -7,8 +7,8 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, ScorecardPartial,
-    StatePartial, TailPartial, TapPartial,
+    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, SchemaPartial,
+    ScorecardPartial, StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -44,6 +44,12 @@ pub(crate) const TAP_MAX_DURATION: &str = "5m";
 pub(crate) const TAIL_ENABLED: bool = false;
 pub(crate) const TAIL_BUFFER_EVENTS: usize = 8_192;
 pub(crate) const TAIL_MAX_SESSIONS: usize = 2;
+/// Schema classification and routing defaults (`daemon.schema.*`,
+/// `eval.schema.*`). Both observation and routing are opt-in. The unknown-schema
+/// policy defaults to `warn` (log and evaluate against every set).
+pub(crate) const SCHEMA_OBSERVE: bool = false;
+pub(crate) const SCHEMA_ROUTING: bool = false;
+pub(crate) const SCHEMA_ON_UNKNOWN: &str = "warn";
 pub(crate) const STDOUT_SINK: &str = "stdout";
 /// Async delivery-layer tuning shared by every sink. `queue_depth` is not a
 /// separate key; it follows `buffer_size`.
@@ -158,6 +164,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 buffer_events: Some(TAIL_BUFFER_EVENTS),
                 max_sessions: Some(TAIL_MAX_SESSIONS),
             }),
+            schema: Some(SchemaPartial {
+                observe: Some(SCHEMA_OBSERVE),
+                routing: Some(SCHEMA_ROUTING),
+                config: None,
+                on_unknown: Some(SCHEMA_ON_UNKNOWN.to_string()),
+            }),
         }),
         eval: Some(EvalPartial {
             rules: None,
@@ -166,6 +178,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
             fail_on_detection: Some(false),
+            schema: Some(SchemaPartial {
+                observe: None,
+                routing: Some(SCHEMA_ROUTING),
+                config: None,
+                on_unknown: Some(SCHEMA_ON_UNKNOWN.to_string()),
+            }),
         }),
         backtest: Some(BacktestPartial {
             // rules, corpus, and expectations are required at runtime and have

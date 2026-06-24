@@ -1095,6 +1095,29 @@ fn apply_daemon_config(
         }
     }
 
+    if let Some(schema) = daemon.schema {
+        if !explicit("observe_schemas")
+            && let Some(v) = schema.observe
+        {
+            args.observe_schemas = v;
+        }
+        if !explicit("schema_routing")
+            && let Some(v) = schema.routing
+        {
+            args.schema_routing = v;
+        }
+        if !explicit("schema_config")
+            && let Some(v) = schema.config
+        {
+            args.schema_config = Some(v);
+        }
+        if !explicit("on_unknown")
+            && let Some(v) = schema.on_unknown
+        {
+            args.on_unknown = Some(v);
+        }
+    }
+
     #[cfg(feature = "daemon-nats")]
     if let Some(nats) = daemon.nats
         && !explicit("consumer_group")
@@ -1531,5 +1554,31 @@ mod tests {
         let base = partial("daemon:\n  input:\n    syslog_strip_bom: false\n");
         apply_daemon_config(&mut args, &matches, base);
         assert!(args.syslog_strip_bom);
+    }
+
+    #[test]
+    fn schema_block_from_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r"]);
+        let base = partial(
+            "daemon:\n  schema:\n    observe: true\n    routing: true\n    config: /file/schema.yml\n    on_unknown: drop\n",
+        );
+        apply_daemon_config(&mut args, &matches, base);
+        assert!(args.observe_schemas);
+        assert!(args.schema_routing);
+        assert_eq!(
+            args.schema_config.as_deref(),
+            Some(Path::new("/file/schema.yml"))
+        );
+        assert_eq!(args.on_unknown.as_deref(), Some("drop"));
+    }
+
+    #[test]
+    fn schema_flag_beats_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r", "--on-unknown", "error"]);
+        let base = partial("daemon:\n  schema:\n    routing: true\n    on_unknown: drop\n");
+        apply_daemon_config(&mut args, &matches, base);
+        // Routing comes from the file; the explicit flag wins for on_unknown.
+        assert!(args.schema_routing);
+        assert_eq!(args.on_unknown.as_deref(), Some("error"));
     }
 }

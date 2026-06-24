@@ -322,6 +322,23 @@ fn overlay_eval_config(
         {
             args.fail_on_detection = v;
         }
+        if let Some(schema) = eval.schema {
+            if !explicit("schema_routing")
+                && let Some(v) = schema.routing
+            {
+                args.schema_routing = v;
+            }
+            if !explicit("schema_config")
+                && let Some(v) = schema.config
+            {
+                args.schema_config = Some(v);
+            }
+            if !explicit("on_unknown")
+                && let Some(v) = schema.on_unknown
+            {
+                args.on_unknown = Some(v);
+            }
+        }
     }
 }
 
@@ -1393,5 +1410,30 @@ mod tests {
         let base = partial("eval:\n  syslog_strip_bom: false\n");
         overlay_eval_config(&mut args, &matches, base);
         assert!(args.syslog_strip_bom);
+    }
+
+    #[test]
+    fn schema_routing_from_config_file() {
+        let (mut args, matches) = parse(&["eval", "--rules", "/r"]);
+        let base = partial(
+            "eval:\n  schema:\n    routing: true\n    config: /file/schema.yml\n    on_unknown: drop\n",
+        );
+        overlay_eval_config(&mut args, &matches, base);
+        assert!(args.schema_routing);
+        assert_eq!(
+            args.schema_config.as_deref(),
+            Some(Path::new("/file/schema.yml"))
+        );
+        assert_eq!(args.on_unknown.as_deref(), Some("drop"));
+    }
+
+    #[test]
+    fn schema_routing_flag_beats_config_file() {
+        let (mut args, matches) = parse(&["eval", "--rules", "/r", "--on-unknown", "error"]);
+        let base = partial("eval:\n  schema:\n    routing: true\n    on_unknown: drop\n");
+        overlay_eval_config(&mut args, &matches, base);
+        // Routing comes from the file; the explicit flag wins for on_unknown.
+        assert!(args.schema_routing);
+        assert_eq!(args.on_unknown.as_deref(), Some("error"));
     }
 }

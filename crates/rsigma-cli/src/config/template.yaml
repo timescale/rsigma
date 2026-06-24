@@ -170,6 +170,20 @@ daemon:
     # Maximum concurrent tail sessions (a session over the cap gets 409).
     max_sessions: 2
 
+  # Schema classification and routing. Opt-in. `observe` counts events per
+  # recognized schema (and unknowns) for the /api/v1/schemas endpoint and the
+  # rsigma_events_by_schema_total metric. `routing` recognizes each event's
+  # schema and dispatches it to the pipeline-set bound to that schema in the
+  # `routing:` section of `config`, with one shared correlation store across
+  # schemas. `config` adds user schema signatures and routing bindings on top
+  # of the built-ins. `on_unknown` is the policy for events that match no
+  # schema: warn (default), drop, passthrough, or error.
+  schema:
+    observe: false
+    routing: false
+    # config: ./schema.yml
+    on_unknown: warn
+
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.
   # nats:
@@ -184,6 +198,12 @@ eval:
   # Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Set false to keep it.
   syslog_strip_bom: true
   fail_on_detection: false
+  # Schema routing for `engine eval` (see daemon.schema for details). `observe`
+  # has no effect here; eval has no schema observer.
+  schema:
+    routing: false
+    # config: ./schema.yml
+    on_unknown: warn
 
 backtest:
   # Default rules path for `rsigma rule backtest`.
