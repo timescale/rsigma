@@ -135,7 +135,8 @@ pub use result::{
     ProcessResultExt, ResultBody, RuleHeader,
 };
 pub use schema::{
-    FieldValueConfig, SchemaClassifier, SchemaError, SchemaMatch, SchemaPredicate,
-    SchemaPredicateConfig, SchemaSignature, SchemaSignatureConfig, SchemaSignaturesFile,
-    builtin_schema_names, load_schema_signatures, parse_schema_signatures,
+    FieldValueConfig, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaMatch,
+    SchemaObservation, SchemaObserver, SchemaPredicate, SchemaPredicateConfig, SchemaSignature,
+    SchemaSignatureConfig, SchemaSignaturesFile, builtin_schema_names, load_schema_signatures,
+    parse_schema_signatures,
 };

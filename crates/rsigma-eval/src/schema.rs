@@ -23,8 +23,12 @@
 //! right field-mapping pipeline. It does not collect, transport, or normalize
 //! events.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -428,6 +432,147 @@ pub fn load_schema_signatures(path: &Path) -> Result<Vec<SchemaSignature>, Schem
     parse_schema_signatures(&content)
 }
 
+// =============================================================================
+// SchemaObserver: opt-in per-schema counting for reporting
+// =============================================================================
+
+/// One per-schema counter as exposed via [`SchemaObserver::snapshot`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaCountEntry {
+    /// Recognized schema name.
+    pub schema: String,
+    /// Number of events classified as this schema since the last reset.
+    pub count: u64,
+}
+
+/// Immutable snapshot of a [`SchemaObserver`] at one moment.
+#[derive(Debug, Clone, Default)]
+pub struct SchemaObservation {
+    /// Per-schema counts, sorted by descending count then ascending name.
+    pub by_schema: Vec<SchemaCountEntry>,
+    /// Events classified into a known schema since the last reset.
+    pub classified: u64,
+    /// Events that matched no signature since the last reset.
+    pub unknown: u64,
+    /// Total events observed since the last reset (`classified + unknown`).
+    pub events_observed: u64,
+    /// Lifetime total of classified events, ignoring resets. Monotonic, so it
+    /// can drive Prometheus counters across observer resets.
+    pub lifetime_classified: u64,
+    /// Lifetime total of unknown events, ignoring resets. Monotonic.
+    pub lifetime_unknown: u64,
+    /// Seconds since the observer was created (or last reset).
+    pub uptime_seconds: f64,
+}
+
+/// Opt-in counter that classifies each observed event and tallies per-schema
+/// (and unknown) totals. Mirrors the design of [`FieldObserver`](crate::FieldObserver):
+/// shared behind an `Arc`, cheap repeated snapshots, monotonic lifetime
+/// counters for a Prometheus bridge. The schema set is small and bounded, so
+/// there is no key cap.
+pub struct SchemaObserver {
+    classifier: SchemaClassifier,
+    counts: Mutex<HashMap<String, u64>>,
+    unknown: AtomicU64,
+    events_observed: AtomicU64,
+    lifetime_classified: AtomicU64,
+    lifetime_unknown: AtomicU64,
+    start: Mutex<Instant>,
+}
+
+impl SchemaObserver {
+    /// Create an observer backed by the given classifier.
+    pub fn new(classifier: SchemaClassifier) -> Self {
+        Self {
+            classifier,
+            counts: Mutex::new(HashMap::new()),
+            unknown: AtomicU64::new(0),
+            events_observed: AtomicU64::new(0),
+            lifetime_classified: AtomicU64::new(0),
+            lifetime_unknown: AtomicU64::new(0),
+            start: Mutex::new(Instant::now()),
+        }
+    }
+
+    /// Create an observer using the built-in classifier.
+    pub fn builtin() -> Self {
+        Self::new(SchemaClassifier::builtin())
+    }
+
+    /// Classify an event and update the counters. Takes `&self` so the
+    /// observer can be shared behind an `Arc`.
+    pub fn observe<E: Event + ?Sized>(&self, event: &E) {
+        self.events_observed.fetch_add(1, Ordering::Relaxed);
+        match self.classifier.classify(event) {
+            Some(m) => {
+                self.lifetime_classified.fetch_add(1, Ordering::Relaxed);
+                let mut counts = self.counts.lock().expect("schema observer mutex poisoned");
+                *counts.entry(m.name).or_insert(0) += 1;
+            }
+            None => {
+                self.unknown.fetch_add(1, Ordering::Relaxed);
+                self.lifetime_unknown.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Snapshot the current counts, sorted by descending count then name.
+    pub fn snapshot(&self) -> SchemaObservation {
+        let counts = self.counts.lock().expect("schema observer mutex poisoned");
+        let mut by_schema: Vec<SchemaCountEntry> = counts
+            .iter()
+            .map(|(schema, count)| SchemaCountEntry {
+                schema: schema.clone(),
+                count: *count,
+            })
+            .collect();
+        let classified: u64 = counts.values().sum();
+        drop(counts);
+        by_schema.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.schema.cmp(&b.schema)));
+        let unknown = self.unknown.load(Ordering::Relaxed);
+        SchemaObservation {
+            by_schema,
+            classified,
+            unknown,
+            events_observed: self.events_observed.load(Ordering::Relaxed),
+            lifetime_classified: self.lifetime_classified.load(Ordering::Relaxed),
+            lifetime_unknown: self.lifetime_unknown.load(Ordering::Relaxed),
+            uptime_seconds: self
+                .start
+                .lock()
+                .expect("schema observer start mutex poisoned")
+                .elapsed()
+                .as_secs_f64(),
+        }
+    }
+
+    /// Reset the since-last-reset counters (lifetime totals are preserved).
+    /// Returns the previous `(classified, unknown)` pair.
+    pub fn reset(&self) -> (u64, u64) {
+        let mut counts = self.counts.lock().expect("schema observer mutex poisoned");
+        let previous_classified: u64 = counts.values().sum();
+        counts.clear();
+        drop(counts);
+        let previous_unknown = self.unknown.swap(0, Ordering::Relaxed);
+        self.events_observed.store(0, Ordering::Relaxed);
+        *self
+            .start
+            .lock()
+            .expect("schema observer start mutex poisoned") = Instant::now();
+        (previous_classified, previous_unknown)
+    }
+
+    /// Lifetime classified total, ignoring resets. Monotonic.
+    pub fn lifetime_classified(&self) -> u64 {
+        self.lifetime_classified.load(Ordering::Relaxed)
+    }
+
+    /// Lifetime unknown total, ignoring resets. Monotonic.
+    pub fn lifetime_unknown(&self) -> u64 {
+        self.lifetime_unknown.load(Ordering::Relaxed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,5 +734,44 @@ schemas:
                 .as_deref(),
             Some("cef_raw")
         );
+    }
+
+    #[test]
+    fn observer_counts_per_schema_and_unknown() {
+        let observer = SchemaObserver::builtin();
+        observer.observe(&JsonEvent::borrow(&json!({"ecs.version": "8.0.0"})));
+        observer.observe(&JsonEvent::borrow(&json!({"ecs.version": "8.1.0"})));
+        observer.observe(&JsonEvent::borrow(
+            &json!({"class_uid": 1001, "metadata": {"version": "1.1.0"}}),
+        ));
+        observer.observe(&JsonEvent::borrow(&json!({})));
+
+        let snap = observer.snapshot();
+        assert_eq!(snap.events_observed, 4);
+        assert_eq!(snap.classified, 3);
+        assert_eq!(snap.unknown, 1);
+        // Sorted by descending count, so ecs (2) comes first.
+        assert_eq!(snap.by_schema[0].schema, "ecs");
+        assert_eq!(snap.by_schema[0].count, 2);
+        let ocsf = snap.by_schema.iter().find(|e| e.schema == "ocsf").unwrap();
+        assert_eq!(ocsf.count, 1);
+    }
+
+    #[test]
+    fn observer_reset_preserves_lifetime_counters() {
+        let observer = SchemaObserver::builtin();
+        observer.observe(&JsonEvent::borrow(&json!({"ecs.version": "8.0.0"})));
+        observer.observe(&JsonEvent::borrow(&json!({})));
+        let (classified, unknown) = observer.reset();
+        assert_eq!(classified, 1);
+        assert_eq!(unknown, 1);
+
+        let snap = observer.snapshot();
+        assert_eq!(snap.classified, 0);
+        assert_eq!(snap.unknown, 0);
+        assert_eq!(snap.events_observed, 0);
+        // Lifetime totals survive the reset for the Prometheus bridge.
+        assert_eq!(snap.lifetime_classified, 1);
+        assert_eq!(snap.lifetime_unknown, 1);
     }
 }
