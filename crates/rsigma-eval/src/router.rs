@@ -25,7 +25,9 @@ use std::collections::HashMap;
 
 use rsigma_parser::SigmaCollection;
 
-use crate::correlation_engine::{CorrelationConfig, CorrelationEngine, ProcessResult};
+use crate::correlation_engine::{
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, ProcessResult,
+};
 use crate::engine::Engine;
 use crate::error::Result;
 use crate::event::{Event, MappedEvent};
@@ -145,6 +147,41 @@ impl SchemaRouter {
     /// Whether this router has a correlation store.
     pub fn has_correlations(&self) -> bool {
         self.correlation.is_some()
+    }
+
+    /// Number of detection rules (same across every per-schema engine).
+    pub fn detection_rule_count(&self) -> usize {
+        self.engines.first().map(|e| e.rule_count()).unwrap_or(0)
+    }
+
+    /// Number of correlation rules in the shared store (0 when none).
+    pub fn correlation_rule_count(&self) -> usize {
+        self.correlation
+            .as_ref()
+            .map(|c| c.correlation_rule_count())
+            .unwrap_or(0)
+    }
+
+    /// Number of live correlation window-state entries (0 when none).
+    pub fn state_count(&self) -> usize {
+        self.correlation
+            .as_ref()
+            .map(|c| c.state_count())
+            .unwrap_or(0)
+    }
+
+    /// Export the shared correlation state, if any, for hot-reload carry-over.
+    pub fn export_state(&self) -> Option<CorrelationSnapshot> {
+        self.correlation.as_ref().map(|c| c.export_state())
+    }
+
+    /// Import previously exported correlation state into the shared store.
+    /// No-op (returns `true`) when there is no correlation store.
+    pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {
+        match &mut self.correlation {
+            Some(c) => c.import_state(snapshot),
+            None => true,
+        }
     }
 
     /// Classify and route one event.

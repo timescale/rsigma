@@ -348,9 +348,24 @@ pub(crate) struct DaemonArgs {
     pub observe_schemas: bool,
 
     /// Path to a YAML file of user-defined schema signatures, merged over the
-    /// built-ins. Has no effect unless `--observe-schemas` is set.
+    /// built-ins, and (with `--schema-routing`) the `routing:` bindings. Used
+    /// by `--observe-schemas` and `--schema-routing`.
     #[arg(long = "schema-config", value_name = "PATH")]
     pub schema_config: Option<PathBuf>,
+
+    /// Classify each event and route it to the pipeline-set bound to its
+    /// schema (instead of applying one pipeline set to every event). Bindings
+    /// come from the `routing:` section of `--schema-config`. Detections feed a
+    /// single shared correlation store, so the same entity correlates across
+    /// schemas.
+    #[arg(long = "schema-routing")]
+    pub schema_routing: bool,
+
+    /// Override the `on_unknown` policy for events that match no schema:
+    /// `warn`, `drop`, `passthrough`, or `error`. Defaults to the config value
+    /// (or `warn`). Used with `--schema-routing`.
+    #[arg(long = "on-unknown", value_name = "POLICY")]
+    pub on_unknown: Option<String>,
 
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
     ///
@@ -594,6 +609,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -721,6 +738,8 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -1139,6 +1158,8 @@ fn run_daemon(
     observe_fields_max_keys: usize,
     observe_schemas: bool,
     schema_config: Option<PathBuf>,
+    schema_routing: bool,
+    on_unknown: Option<String>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
@@ -1288,6 +1309,8 @@ fn run_daemon(
         observe_fields_max_keys,
         observe_schemas,
         schema_config,
+        schema_routing,
+        on_unknown,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,

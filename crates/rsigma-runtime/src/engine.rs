@@ -5,7 +5,7 @@ use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, MatchDetailLevel, Pipeline,
-    ProcessResult, RuleFieldSet, parse_pipeline_file,
+    ProcessResult, RoutingPlan, RuleFieldSet, SchemaClassifier, SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -41,11 +41,27 @@ pub struct RuntimeEngine {
     /// `/api/v1/fields/*` endpoints) can snapshot a stable view without
     /// blocking the hot path during a reload.
     rule_field_set: Arc<ArcSwap<RuleFieldSet>>,
+    /// Optional schema-routing spec. When set, `load_rules` builds a
+    /// [`SchemaRouter`] (one detection engine per pipeline-set plus a shared
+    /// correlation store) instead of a single engine, and rebuilds it on
+    /// hot-reload from the same spec.
+    routing: Option<RoutingSpec>,
+}
+
+/// Everything needed to (re)build a [`SchemaRouter`] on rule load. Pipeline
+/// sets are pre-resolved by the caller (builtin names + files), index-aligned
+/// with `plan.pipeline_sets()`.
+#[derive(Clone)]
+pub struct RoutingSpec {
+    pub classifier: SchemaClassifier,
+    pub plan: RoutingPlan,
+    pub pipeline_sets: Vec<Vec<Pipeline>>,
 }
 
 enum EngineVariant {
     DetectionOnly(Box<Engine>),
     WithCorrelations(Box<CorrelationEngine>),
+    Routed(Box<SchemaRouter>),
 }
 
 /// Summary statistics about the loaded engine state.
@@ -78,7 +94,26 @@ impl RuntimeEngine {
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac: false,
             rule_field_set: Arc::new(ArcSwap::from_pointee(RuleFieldSet::default())),
+            routing: None,
         }
+    }
+
+    /// Enable schema routing. The next `load_rules()` builds a
+    /// [`SchemaRouter`] from this spec instead of a single engine. Pass `None`
+    /// to disable. Set before `load_rules()`; hot-reload carries it forward.
+    pub fn set_routing(&mut self, spec: Option<RoutingSpec>) {
+        self.routing = spec;
+    }
+
+    /// Whether schema routing is configured.
+    pub fn has_routing(&self) -> bool {
+        self.routing.is_some()
+    }
+
+    /// Return the routing spec, if any. Used by hot-reload to carry the
+    /// configuration across a `RuntimeEngine` swap.
+    pub fn routing(&self) -> Option<RoutingSpec> {
+        self.routing.clone()
     }
 
     /// Return an immutable snapshot of the post-pipeline rule field set.
@@ -283,6 +318,38 @@ impl RuntimeEngine {
         let collection = load_collection(&self.rules_path)?;
         let has_correlations = !collection.correlations.is_empty();
 
+        if let Some(spec) = self.routing.clone() {
+            let mut router = SchemaRouter::build(
+                &collection,
+                spec.classifier,
+                spec.plan,
+                spec.pipeline_sets,
+                self.corr_config.clone(),
+                self.include_event,
+                self.match_detail,
+            )
+            .map_err(|e| format!("Error building schema router: {e}"))?;
+
+            if let Some(snapshot) = previous_state {
+                router.import_state(snapshot);
+            }
+
+            let stats = EngineStats {
+                detection_rules: router.detection_rule_count(),
+                correlation_rules: router.correlation_rule_count(),
+                state_entries: router.state_count(),
+            };
+            self.engine = EngineVariant::Routed(Box::new(router));
+            self.refresh_rule_field_set(&collection);
+            tracing::debug!(
+                detection_rules = stats.detection_rules,
+                correlation_rules = stats.correlation_rules,
+                duration_ms = load_start.elapsed().as_millis() as u64,
+                "Rule load complete (schema routing)",
+            );
+            return Ok(stats);
+        }
+
         if has_correlations {
             let mut engine = CorrelationEngine::new(self.corr_config.clone());
             engine.set_include_event(self.include_event);
@@ -367,6 +434,9 @@ impl RuntimeEngine {
         match &mut self.engine {
             EngineVariant::DetectionOnly(engine) => engine.evaluate_batch(events),
             EngineVariant::WithCorrelations(engine) => engine.process_batch(events),
+            EngineVariant::Routed(router) => {
+                events.iter().map(|e| router.route(*e).results).collect()
+            }
         }
     }
 
@@ -382,6 +452,11 @@ impl RuntimeEngine {
                 detection_rules: engine.detection_rule_count(),
                 correlation_rules: engine.correlation_rule_count(),
                 state_entries: engine.state_count(),
+            },
+            EngineVariant::Routed(router) => EngineStats {
+                detection_rules: router.detection_rule_count(),
+                correlation_rules: router.correlation_rule_count(),
+                state_entries: router.state_count(),
             },
         }
     }
@@ -412,6 +487,7 @@ impl RuntimeEngine {
         match &self.engine {
             EngineVariant::DetectionOnly(_) => None,
             EngineVariant::WithCorrelations(engine) => Some(engine.export_state()),
+            EngineVariant::Routed(router) => router.export_state(),
         }
     }
 
@@ -419,10 +495,10 @@ impl RuntimeEngine {
     /// Returns `true` if the import succeeded, `false` if the snapshot version
     /// is incompatible. No-op (returns `true`) if the engine is detection-only.
     pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) -> bool {
-        if let EngineVariant::WithCorrelations(engine) = &mut self.engine {
-            engine.import_state(snapshot.clone())
-        } else {
-            true
+        match &mut self.engine {
+            EngineVariant::WithCorrelations(engine) => engine.import_state(snapshot.clone()),
+            EngineVariant::Routed(router) => router.import_state(snapshot.clone()),
+            EngineVariant::DetectionOnly(_) => true,
         }
     }
 }

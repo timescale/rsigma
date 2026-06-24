@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
@@ -10,10 +10,13 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use rsigma_eval::{CorrelationConfig, MatchDetailLevel, Pipeline, ProcessResult};
+use rsigma_eval::{
+    CorrelationConfig, MatchDetailLevel, OnUnknown, Pipeline, ProcessResult, RoutingPlan,
+    load_schema_config,
+};
 use rsigma_runtime::{
     AckToken, DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver,
-    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RuntimeEngine,
+    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RoutingSpec, RuntimeEngine,
     SchemaClassifier, SchemaObserver, Sink, StdinSource, StdoutSink, load_schema_signatures,
     spawn_source,
 };
@@ -166,9 +169,15 @@ pub struct DaemonConfig {
     /// `rsigma_events_by_schema_total` / `rsigma_events_unknown_schema_total`
     /// counters can surface the schema mix and unknown rate. Off by default.
     pub observe_schemas: bool,
-    /// Optional path to a YAML file of user-defined schema signatures, merged
-    /// over the built-ins when the schema observer is enabled.
+    /// Optional path to a YAML file of user-defined schema signatures (and,
+    /// with `schema_routing`, the routing bindings), merged over the built-ins.
     pub schema_config: Option<PathBuf>,
+    /// Enable schema routing: classify each event and route it to the
+    /// pipeline-set bound to its schema, feeding a single shared correlation
+    /// store. Bindings come from the `routing:` section of `schema_config`.
+    pub schema_routing: bool,
+    /// Override for the `on_unknown` policy (`warn`/`drop`/`passthrough`/`error`).
+    pub on_unknown: Option<String>,
     /// Enable the cross-rule Aho-Corasick pre-filter. Off by default;
     /// benefit is workload-dependent (large rule sets with shared
     /// substring patterns). Available behind the `daachorse-index`
@@ -236,6 +245,14 @@ pub async fn run_daemon(config: DaemonConfig) {
     }
     #[cfg(feature = "daachorse-index")]
     engine.set_cross_rule_ac(config.cross_rule_ac);
+
+    if config.schema_routing {
+        engine.set_routing(Some(build_routing_spec(
+            config.schema_config.as_deref(),
+            config.on_unknown.as_deref(),
+        )));
+        tracing::info!("Schema routing enabled");
+    }
 
     // Set up dynamic source resolver if the registry has sources or any
     // pipeline references external sources.
@@ -1928,6 +1945,72 @@ impl FieldsQuery {
     }
     fn offset(&self) -> usize {
         self.offset.unwrap_or(0)
+    }
+}
+
+/// Parse the `--on-unknown` policy string, exiting on an invalid value.
+fn parse_on_unknown_policy(s: &str) -> OnUnknown {
+    match s.to_ascii_lowercase().as_str() {
+        "warn" => OnUnknown::Warn,
+        "drop" => OnUnknown::Drop,
+        "passthrough" => OnUnknown::Passthrough,
+        "error" => OnUnknown::Error,
+        other => {
+            eprintln!(
+                "Invalid --on-unknown policy '{other}' (expected warn, drop, passthrough, or error)"
+            );
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Build a [`RoutingSpec`] from the schema config (signatures + routing
+/// bindings) for the daemon's `RuntimeEngine` to (re)build its router from.
+fn build_routing_spec(
+    schema_config: Option<&Path>,
+    on_unknown_override: Option<&str>,
+) -> RoutingSpec {
+    let (signatures, routing) = match schema_config {
+        Some(path) => match load_schema_config(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error loading schema config: {e}");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        },
+        None => (Vec::new(), None),
+    };
+
+    let classifier = if signatures.is_empty() {
+        SchemaClassifier::builtin()
+    } else {
+        SchemaClassifier::with_user_signatures(signatures)
+    };
+
+    let mut routing = routing.unwrap_or_default();
+    if let Some(policy) = on_unknown_override {
+        routing.on_unknown = parse_on_unknown_policy(policy);
+    }
+    if routing.bindings.is_empty() {
+        tracing::warn!(
+            "schema routing is on but no routing bindings are configured; every event routes to the default pipeline-set"
+        );
+    }
+
+    let plan = RoutingPlan::from_config(&routing);
+    let pipeline_sets: Vec<Vec<Pipeline>> = plan
+        .pipeline_sets()
+        .iter()
+        .map(|names| {
+            let paths: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+            crate::load_pipelines(&paths)
+        })
+        .collect();
+
+    RoutingSpec {
+        classifier,
+        plan,
+        pipeline_sets,
     }
 }
 

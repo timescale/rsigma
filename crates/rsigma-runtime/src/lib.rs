@@ -59,7 +59,7 @@ pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
     set_default_egress_policy,
 };
-pub use engine::{EngineStats, RuntimeEngine};
+pub use engine::{EngineStats, RoutingSpec, RuntimeEngine};
 pub use enrichment::config::{
     EnricherConfig, EnrichersConfigError, EnrichersFile, build_enrichers, build_enrichers_full,
     load_enrichers_file,
