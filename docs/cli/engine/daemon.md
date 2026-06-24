@@ -175,6 +175,8 @@ The auth methods are mutually exclusive. See [NATS Streaming](../../guide/nats-s
 | `--schema-routing` | off | Classify each event and route it to its schema's bound pipeline-set (instead of applying one pipeline set to every event); detections feed one shared correlation store, so the same entity correlates across schemas. Bindings come from the `routing:` section of `--schema-config`. |
 | `--on-unknown <POLICY>` | `warn` | Policy for events that match no schema: `warn`, `drop`, `passthrough`, or `error`. Overrides the config value. Used with `--schema-routing`. |
 
+These schema flags may also be supplied via the `daemon.schema` block in a [config file](../../reference/configuration.md) (`observe`, `routing`, `config`, `on_unknown`); a flag always wins over the file.
+
 See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow, and [HTTP API](../../reference/http-api.md#field-observability) for the endpoint payloads.
 
 ### Live event tap

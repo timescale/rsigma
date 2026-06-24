@@ -112,6 +112,8 @@ Recognize each event's schema and evaluate it against the pipeline-set bound to 
 | `--schema-config <PATH>` | unset | YAML with the `schemas:` signatures and `routing:` bindings (`bindings`, `default_pipelines`, `on_unknown`). |
 | `--on-unknown <POLICY>` | `warn` | Policy for events that match no schema: `warn`, `drop`, `passthrough`, or `error`. Overrides the config value. |
 
+These flags may also be supplied via the `eval.schema` block in a [config file](../../reference/configuration.md) (`routing`, `config`, `on_unknown`); a flag always wins over the file.
+
 ### CI gating
 
 | Flag | Description |

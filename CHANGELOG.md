@@ -8,9 +8,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 `--schema-routing` on `engine eval` and `engine daemon` classifies each event and routes it to the pipeline-set bound to its schema, instead of applying one pipeline set to every event. Bindings come from the `routing:` section of `--schema-config` (`bindings`, `default_pipelines`, `on_unknown`); `--on-unknown` overrides the unknown-handling policy (`warn`, `drop`, `passthrough`, `error`).
 
-* Multi-engine dispatch: one detection engine is built per distinct pipeline-set; each event is classified, then evaluated against the engine for its schema's bound pipelines, with a default-set fallback for known-but-unbound and unknown schemas.
+* Multi-engine dispatch: one detection engine is built per distinct pipeline-set; each event is classified, then evaluated against the engine for its schema's bound pipelines, with a default-set fallback for known-but-unbound and unknown schemas. Batch detection across events runs in parallel (under the `parallel` feature); correlation stays sequential.
 * Unified cross-schema correlation: detections from every per-schema engine feed one shared correlation store, and group-by extraction is schema-aware, so the same entity (a user, host, or IP) correlates across schemas even when each schema names the field differently (for example ECS `user.name` versus `User`).
-* Hot-reload rebuilds the per-schema engines and carries the shared correlation state across the swap.
+* Hot-reload rebuilds the per-schema engines and carries the shared correlation state across the swap. Dynamic (`${source.*}`) pipelines bound to a schema are resolved at load time and on hot-reload, with the same fail-closed policy as non-routing pipelines.
+* Config-file support: the schema flags map to a `schema` block under both `daemon` (`observe`, `routing`, `config`, `on_unknown`) and `eval` (`routing`, `config`, `on_unknown`) in the layered config, a flag always winning over the file.
 
 ### Schema-aware log source recognition (#245)
 

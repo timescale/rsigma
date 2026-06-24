@@ -42,7 +42,7 @@ routing:
       pipelines: [my_vendor_map.yml]
 ```
 
-Pipelines are builtin names (`ecs_windows`, `sysmon`) or YAML file paths, the same as `-p`. Identical pipeline-sets are deduplicated, so two schemas bound to the same pipelines share one engine.
+Pipelines are builtin names (`ecs_windows`, `sysmon`) or YAML file paths, the same as `-p`. Identical pipeline-sets are deduplicated, so two schemas bound to the same pipelines share one engine. Under the daemon, dynamic pipelines (those with `${source.*}` placeholders) bound to a schema are resolved at load time and on hot-reload, the same as the non-routing `-p` pipelines.
 
 ## Usage
 
@@ -55,6 +55,25 @@ rsigma engine daemon -r rules/ --input http --schema-routing --schema-config sch
 ```
 
 `--on-unknown <policy>` overrides the config's `on_unknown` for the run.
+
+### Enabling from a config file
+
+The flags map to a `schema:` block in the [config file](../reference/configuration.md), under both `daemon` and `eval`. A flag always wins over the file:
+
+```yaml
+daemon:
+  schema:
+    observe: true            # daemon only; counts events per schema
+    routing: true
+    config: /etc/rsigma/schema.yml
+    on_unknown: warn
+
+eval:
+  schema:
+    routing: true
+    config: ./schema.yml
+    on_unknown: drop
+```
 
 ## Cross-schema correlation
 
