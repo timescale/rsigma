@@ -393,11 +393,14 @@ fn default_user_specificity() -> u32 {
     50
 }
 
-/// Top-level YAML document holding a `schemas:` list.
+/// Top-level YAML document holding a `schemas:` list and an optional
+/// `routing:` section.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SchemaSignaturesFile {
     #[serde(default)]
     pub schemas: Vec<SchemaSignatureConfig>,
+    #[serde(default)]
+    pub routing: Option<RoutingConfig>,
 }
 
 impl SchemaSignatureConfig {
@@ -430,6 +433,166 @@ pub fn load_schema_signatures(path: &Path) -> Result<Vec<SchemaSignature>, Schem
         source: e,
     })?;
     parse_schema_signatures(&content)
+}
+
+/// Parse both the user signatures and the optional routing section from a YAML
+/// string.
+pub fn parse_schema_config(
+    yaml: &str,
+) -> Result<(Vec<SchemaSignature>, Option<RoutingConfig>), SchemaError> {
+    let file: SchemaSignaturesFile =
+        yaml_serde::from_str(yaml).map_err(|e| SchemaError::Parse(e.to_string()))?;
+    let signatures = file
+        .schemas
+        .into_iter()
+        .map(|s| s.build())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((signatures, file.routing))
+}
+
+/// Load both the user signatures and the optional routing section from a YAML
+/// file path.
+pub fn load_schema_config(
+    path: &Path,
+) -> Result<(Vec<SchemaSignature>, Option<RoutingConfig>), SchemaError> {
+    let content = fs::read_to_string(path).map_err(|e| SchemaError::Io {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    parse_schema_config(&content)
+}
+
+// =============================================================================
+// Routing: schema -> pipeline-set bindings and the dispatch plan
+// =============================================================================
+
+/// What to do with an event whose schema matched no signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnUnknown {
+    /// Evaluate against the default pipeline-set and log a warning.
+    #[default]
+    Warn,
+    /// Drop the event without evaluating.
+    Drop,
+    /// Evaluate against the default pipeline-set without logging.
+    Passthrough,
+    /// Drop the event and flag it as an error (non-zero exit / error counter).
+    Error,
+}
+
+/// A `schema -> pipelines` binding: events recognized as `schema` are
+/// evaluated against the engine built from `pipelines`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SchemaBinding {
+    pub schema: String,
+    /// Pipeline names or file paths, resolved by the caller.
+    #[serde(default)]
+    pub pipelines: Vec<String>,
+}
+
+/// The `routing:` section of a schema config file.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RoutingConfig {
+    #[serde(default)]
+    pub on_unknown: OnUnknown,
+    #[serde(default)]
+    pub bindings: Vec<SchemaBinding>,
+    /// Pipelines applied to known-but-unbound schemas and to the
+    /// unknown-fallback path. Empty means "rules with no pipeline".
+    #[serde(default)]
+    pub default_pipelines: Vec<String>,
+}
+
+/// The decision for one event, produced by [`RoutingPlan::decide`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteDecision {
+    /// Evaluate against the pipeline-set at this index. `unknown` is true when
+    /// the event matched no signature and fell through to the default set.
+    Evaluate { set: usize, unknown: bool },
+    /// Drop the event without evaluating (`on_unknown: drop`).
+    Drop,
+    /// Drop and flag as an error (`on_unknown: error`).
+    Error,
+}
+
+/// A resolved routing plan: the deduplicated pipeline-sets to build one engine
+/// each, plus the schema-to-set mapping and the unknown-handling policy.
+///
+/// Pure data: it decides *which* pipeline-set an event routes to, leaving the
+/// engine construction and dispatch to the caller. The default set (index 0)
+/// is always present, so there is always a fallback target.
+#[derive(Debug, Clone)]
+pub struct RoutingPlan {
+    /// Deduplicated pipeline-sets. Index 0 is always the default set.
+    pipeline_sets: Vec<Vec<String>>,
+    /// Recognized schema name -> pipeline-set index.
+    schema_to_set: HashMap<String, usize>,
+    on_unknown: OnUnknown,
+}
+
+impl RoutingPlan {
+    /// Build a plan from a routing config, deduplicating identical
+    /// pipeline-sets so the caller compiles each distinct set once.
+    pub fn from_config(config: &RoutingConfig) -> Self {
+        // Index 0 is always the default set.
+        let mut pipeline_sets: Vec<Vec<String>> = vec![config.default_pipelines.clone()];
+        let mut schema_to_set: HashMap<String, usize> = HashMap::new();
+
+        for binding in &config.bindings {
+            let idx = pipeline_sets
+                .iter()
+                .position(|s| s == &binding.pipelines)
+                .unwrap_or_else(|| {
+                    pipeline_sets.push(binding.pipelines.clone());
+                    pipeline_sets.len() - 1
+                });
+            schema_to_set.insert(binding.schema.clone(), idx);
+        }
+
+        RoutingPlan {
+            pipeline_sets,
+            schema_to_set,
+            on_unknown: config.on_unknown,
+        }
+    }
+
+    /// The deduplicated pipeline-sets, in index order (set 0 is the default).
+    /// The caller builds one engine per entry.
+    pub fn pipeline_sets(&self) -> &[Vec<String>] {
+        &self.pipeline_sets
+    }
+
+    /// The configured unknown-handling policy.
+    pub fn on_unknown(&self) -> OnUnknown {
+        self.on_unknown
+    }
+
+    /// Decide how to route an event given its classified schema (or `None`
+    /// when nothing matched).
+    pub fn decide(&self, schema: Option<&str>) -> RouteDecision {
+        match schema {
+            // Recognized and bound: its own set.
+            Some(s) if self.schema_to_set.contains_key(s) => RouteDecision::Evaluate {
+                set: self.schema_to_set[s],
+                unknown: false,
+            },
+            // Recognized but unbound: the default set, not flagged unknown.
+            Some(_) => RouteDecision::Evaluate {
+                set: 0,
+                unknown: false,
+            },
+            // Unrecognized: per the unknown policy.
+            None => match self.on_unknown {
+                OnUnknown::Warn | OnUnknown::Passthrough => RouteDecision::Evaluate {
+                    set: 0,
+                    unknown: true,
+                },
+                OnUnknown::Drop => RouteDecision::Drop,
+                OnUnknown::Error => RouteDecision::Error,
+            },
+        }
+    }
 }
 
 // =============================================================================
@@ -755,6 +918,127 @@ schemas:
         assert_eq!(snap.by_schema[0].count, 2);
         let ocsf = snap.by_schema.iter().find(|e| e.schema == "ocsf").unwrap();
         assert_eq!(ocsf.count, 1);
+    }
+
+    #[test]
+    fn routing_plan_dedups_pipeline_sets() {
+        let config = RoutingConfig {
+            on_unknown: OnUnknown::Warn,
+            default_pipelines: vec![],
+            bindings: vec![
+                SchemaBinding {
+                    schema: "ecs".to_string(),
+                    pipelines: vec!["ecs_windows".to_string()],
+                },
+                SchemaBinding {
+                    schema: "winlogbeat".to_string(),
+                    pipelines: vec!["ecs_windows".to_string()],
+                },
+                SchemaBinding {
+                    schema: "sysmon".to_string(),
+                    pipelines: vec!["sysmon".to_string()],
+                },
+            ],
+        };
+        let plan = RoutingPlan::from_config(&config);
+        // Default set (0) + ecs_windows set + sysmon set = 3 distinct sets.
+        assert_eq!(plan.pipeline_sets().len(), 3);
+        // ecs and winlogbeat share the same deduped set.
+        let ecs = plan.decide(Some("ecs"));
+        let win = plan.decide(Some("winlogbeat"));
+        assert_eq!(ecs, win);
+        assert!(matches!(
+            ecs,
+            RouteDecision::Evaluate { unknown: false, .. }
+        ));
+        // sysmon is a different set.
+        assert_ne!(plan.decide(Some("sysmon")), ecs);
+    }
+
+    #[test]
+    fn routing_decides_bound_unbound_and_unknown() {
+        let config = RoutingConfig {
+            on_unknown: OnUnknown::Warn,
+            default_pipelines: vec![],
+            bindings: vec![SchemaBinding {
+                schema: "ecs".to_string(),
+                pipelines: vec!["ecs_windows".to_string()],
+            }],
+        };
+        let plan = RoutingPlan::from_config(&config);
+        // Bound schema -> its own set, not flagged unknown.
+        assert!(matches!(
+            plan.decide(Some("ecs")),
+            RouteDecision::Evaluate { unknown: false, .. }
+        ));
+        // Recognized but unbound -> default set (0), not flagged unknown.
+        assert_eq!(
+            plan.decide(Some("cef")),
+            RouteDecision::Evaluate {
+                set: 0,
+                unknown: false
+            }
+        );
+        // Unknown -> default set, flagged unknown (Warn).
+        assert_eq!(
+            plan.decide(None),
+            RouteDecision::Evaluate {
+                set: 0,
+                unknown: true
+            }
+        );
+    }
+
+    #[test]
+    fn routing_on_unknown_policies() {
+        let base = |policy| RoutingConfig {
+            on_unknown: policy,
+            default_pipelines: vec![],
+            bindings: vec![],
+        };
+        assert_eq!(
+            RoutingPlan::from_config(&base(OnUnknown::Drop)).decide(None),
+            RouteDecision::Drop
+        );
+        assert_eq!(
+            RoutingPlan::from_config(&base(OnUnknown::Error)).decide(None),
+            RouteDecision::Error
+        );
+        assert_eq!(
+            RoutingPlan::from_config(&base(OnUnknown::Passthrough)).decide(None),
+            RouteDecision::Evaluate {
+                set: 0,
+                unknown: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_routing_section_from_yaml() {
+        let yaml = r#"
+schemas:
+  - name: my_vendor
+    match:
+      - field_present: vendor.id
+routing:
+  on_unknown: drop
+  default_pipelines: [base]
+  bindings:
+    - schema: ecs
+      pipelines: [ecs_windows]
+    - schema: my_vendor
+      pipelines: [vendor_map, base]
+"#;
+        let (sigs, routing) = parse_schema_config(yaml).expect("parse");
+        assert_eq!(sigs.len(), 1);
+        let routing = routing.expect("routing present");
+        assert_eq!(routing.on_unknown, OnUnknown::Drop);
+        assert_eq!(routing.default_pipelines, vec!["base".to_string()]);
+        assert_eq!(routing.bindings.len(), 2);
+        let plan = RoutingPlan::from_config(&routing);
+        // default [base], ecs [ecs_windows], my_vendor [vendor_map, base] = 3.
+        assert_eq!(plan.pipeline_sets().len(), 3);
+        assert_eq!(plan.decide(None), RouteDecision::Drop);
     }
 
     #[test]
