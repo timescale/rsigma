@@ -73,7 +73,11 @@ jobs:
           workspaces: fuzz -> target
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        # Build cargo-fuzz with the nightly toolchain explicitly. The repo's
+        # rust-toolchain.toml pins ambient `cargo` to the MSRV, which is too
+        # old to compile recent cargo-fuzz dependencies, so select nightly with
+        # `+nightly` to match the toolchain used for the fuzz run below.
+        run: cargo +nightly install cargo-fuzz --locked
 
       - name: Restore corpus cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
