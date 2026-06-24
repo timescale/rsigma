@@ -14,7 +14,10 @@
 
 use std::io::BufRead;
 
-use rsigma_eval::{CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent};
+use rsigma_eval::{
+    CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, RouteOutcome,
+    SchemaRouter,
+};
 
 use crate::EventFilter;
 
@@ -49,6 +52,48 @@ pub(crate) struct DetectionProcessor<'a> {
 impl EventProcessor for DetectionProcessor<'_> {
     fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult)) {
         for m in &self.engine.evaluate(event) {
+            on_result(m);
+        }
+    }
+}
+
+/// [`EventProcessor`] backed by a [`SchemaRouter`]: classifies each event and
+/// dispatches it to the per-schema engine plus shared correlation. Tracks the
+/// unknown / dropped / errored outcome counts for the end-of-run summary.
+pub(crate) struct RoutingProcessor<'a> {
+    router: &'a mut SchemaRouter,
+    pub unknown: u64,
+    pub dropped: u64,
+    pub errored: u64,
+}
+
+impl<'a> RoutingProcessor<'a> {
+    pub fn new(router: &'a mut SchemaRouter) -> Self {
+        Self {
+            router,
+            unknown: 0,
+            dropped: 0,
+            errored: 0,
+        }
+    }
+}
+
+impl EventProcessor for RoutingProcessor<'_> {
+    fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult)) {
+        let routed = self.router.route(event);
+        match routed.outcome {
+            RouteOutcome::Evaluated => {}
+            RouteOutcome::EvaluatedUnknown => self.unknown += 1,
+            RouteOutcome::Dropped => {
+                self.dropped += 1;
+                return;
+            }
+            RouteOutcome::Errored => {
+                self.errored += 1;
+                return;
+            }
+        }
+        for m in &routed.results {
             on_result(m);
         }
     }

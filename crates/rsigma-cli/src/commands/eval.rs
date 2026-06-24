@@ -7,14 +7,17 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
-    CorrelationEngine, Engine, EvaluationResult, FieldObserver, JsonEvent, MatchDetailLevel,
-    Pipeline, ResultBody, RuleFieldSet,
+    CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, FieldObserver, JsonEvent,
+    MatchDetailLevel, OnUnknown, Pipeline, ResultBody, RouteOutcome, RoutingPlan, RuleFieldSet,
+    SchemaClassifier, SchemaRouter, load_schema_config,
 };
 use rsigma_parser::SigmaCollection;
 
 #[cfg(feature = "evtx")]
 use super::eval_stream::stream_evtx_events;
-use super::eval_stream::{CorrelationProcessor, DetectionProcessor, stream_events};
+use super::eval_stream::{
+    CorrelationProcessor, DetectionProcessor, RoutingProcessor, stream_events,
+};
 use crate::EventFilter;
 use crate::config;
 use crate::exit_code;
@@ -204,6 +207,23 @@ pub(crate) struct EvalArgs {
         requires = "observe_fields"
     )]
     pub observe_fields_report: Option<PathBuf>,
+
+    /// Recognize each event's schema and route it to the pipeline-set bound to
+    /// that schema (instead of applying one pipeline set to every event).
+    /// Bindings come from the `routing:` section of `--schema-config`.
+    #[arg(long = "schema-routing")]
+    pub schema_routing: bool,
+
+    /// Path to a YAML file of schema signatures and routing bindings (the
+    /// `schemas:` and `routing:` sections). Used with `--schema-routing`.
+    #[arg(long = "schema-config", value_name = "PATH")]
+    pub schema_config: Option<PathBuf>,
+
+    /// Override the `on_unknown` policy for events that match no schema:
+    /// `warn`, `drop`, `passthrough`, or `error`. Defaults to the config value
+    /// (or `warn`). Used with `--schema-routing`.
+    #[arg(long = "on-unknown", value_name = "POLICY")]
+    pub on_unknown: Option<String>,
 }
 
 /// Resolved event source from the `--event` flag.
@@ -337,6 +357,9 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         observe_fields,
         observe_fields_max_keys,
         observe_fields_report,
+        schema_routing,
+        schema_config,
+        on_unknown,
     } = args;
 
     let rules_path = rules_opt.unwrap_or_else(|| {
@@ -400,6 +423,32 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     // turns pretty-printing on even when stdout is not a TTY.
     let mut renderer = MatchRenderer::new(ctx, pretty);
 
+    if schema_routing {
+        let mut router = build_schema_router(
+            &collection,
+            schema_config.as_deref(),
+            on_unknown.as_deref(),
+            corr_config,
+            include_event,
+            match_detail,
+        );
+        let had_matches = cmd_eval_routed(
+            event_source,
+            &mut renderer,
+            &mut router,
+            &event_filter,
+            &input_format,
+            &syslog_tz,
+            syslog_strip_bom,
+            observe_ref,
+        );
+        renderer.flush();
+        if let Some(octx) = observe_ref {
+            render_field_report(octx);
+        }
+        return had_matches;
+    }
+
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
@@ -448,6 +497,214 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     }
 
     had_matches
+}
+
+/// Parse the `--on-unknown` policy string.
+fn parse_on_unknown(s: &str) -> OnUnknown {
+    match s.to_ascii_lowercase().as_str() {
+        "warn" => OnUnknown::Warn,
+        "drop" => OnUnknown::Drop,
+        "passthrough" => OnUnknown::Passthrough,
+        "error" => OnUnknown::Error,
+        other => {
+            eprintln!(
+                "Invalid --on-unknown policy '{other}' (expected warn, drop, passthrough, or error)"
+            );
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Build a [`SchemaRouter`] from the schema config (signatures + routing
+/// bindings) and the resolved pipeline-sets.
+fn build_schema_router(
+    collection: &SigmaCollection,
+    schema_config: Option<&Path>,
+    on_unknown_override: Option<&str>,
+    corr_config: CorrelationConfig,
+    include_event: bool,
+    match_detail: MatchDetailLevel,
+) -> SchemaRouter {
+    let (signatures, routing) = match schema_config {
+        Some(path) => match load_schema_config(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error loading schema config: {e}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+        },
+        None => (Vec::new(), None),
+    };
+
+    let classifier = if signatures.is_empty() {
+        SchemaClassifier::builtin()
+    } else {
+        SchemaClassifier::with_user_signatures(signatures)
+    };
+
+    let mut routing = routing.unwrap_or_default();
+    if let Some(policy) = on_unknown_override {
+        routing.on_unknown = parse_on_unknown(policy);
+    }
+    if routing.bindings.is_empty() {
+        eprintln!(
+            "  note: --schema-routing is on but no routing bindings are configured; \
+             every event routes to the default pipeline-set. Add a routing section to --schema-config."
+        );
+    }
+
+    let plan = RoutingPlan::from_config(&routing);
+    let pipeline_sets: Vec<Vec<Pipeline>> = plan
+        .pipeline_sets()
+        .iter()
+        .map(|names| {
+            let paths: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+            crate::load_pipelines(&paths)
+        })
+        .collect();
+
+    match SchemaRouter::build(
+        collection,
+        classifier,
+        plan,
+        pipeline_sets,
+        corr_config,
+        include_event,
+        match_detail,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error building schema router: {e}");
+            process::exit(exit_code::RULE_ERROR);
+        }
+    }
+}
+
+/// Routed evaluation: classify each event and dispatch to the per-schema
+/// engine, feeding detections into the shared correlation store. Returns
+/// `true` if any match fired.
+#[allow(clippy::too_many_arguments)]
+fn cmd_eval_routed(
+    event_source: EventSource,
+    renderer: &mut MatchRenderer,
+    router: &mut SchemaRouter,
+    event_filter: &EventFilter,
+    input_format_str: &str,
+    syslog_tz_str: &str,
+    syslog_strip_bom: bool,
+    observe: Option<&ObserveContext>,
+) -> bool {
+    let mut det_count = 0u64;
+    let mut corr_count = 0u64;
+    let mut unknown = 0u64;
+    let mut dropped = 0u64;
+    let events: u64;
+
+    match event_source {
+        EventSource::SingleJson(json_str) => {
+            events = 1;
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Invalid JSON event: {e}");
+                    process::exit(crate::exit_code::RULE_ERROR);
+                }
+            };
+            for payload in crate::apply_event_filter(&value, event_filter) {
+                let event = JsonEvent::borrow(&payload);
+                if let Some(octx) = observe {
+                    octx.observer.observe(&event);
+                }
+                let routed = router.route(&event);
+                match routed.outcome {
+                    RouteOutcome::EvaluatedUnknown => unknown += 1,
+                    RouteOutcome::Dropped | RouteOutcome::Errored => dropped += 1,
+                    RouteOutcome::Evaluated => {}
+                }
+                for m in &routed.results {
+                    if m.is_correlation() {
+                        corr_count += 1;
+                    } else {
+                        det_count += 1;
+                    }
+                    renderer.emit(m);
+                }
+            }
+        }
+        EventSource::NdjsonFile(path) => {
+            let file = File::open(&path).unwrap_or_else(|e| {
+                eprintln!("Error opening event file '{}': {e}", path.display());
+                process::exit(crate::exit_code::RULE_ERROR);
+            });
+            let observer = observe.map(|c| c.observer.as_ref());
+            let mut processor = RoutingProcessor::new(router);
+            events = stream_events(
+                BufReader::new(file),
+                event_filter,
+                input_format_str,
+                syslog_tz_str,
+                syslog_strip_bom,
+                observer,
+                &mut processor,
+                &mut |m| {
+                    if m.is_correlation() {
+                        corr_count += 1;
+                    } else {
+                        det_count += 1;
+                    }
+                    renderer.emit(m);
+                },
+            );
+            unknown = processor.unknown;
+            dropped = processor.dropped + processor.errored;
+        }
+        #[cfg(feature = "evtx")]
+        EventSource::EvtxFile(path) => {
+            let observer = observe.map(|c| c.observer.as_ref());
+            let mut processor = RoutingProcessor::new(router);
+            events = stream_evtx_events(&path, event_filter, observer, &mut processor, &mut |m| {
+                if m.is_correlation() {
+                    corr_count += 1;
+                } else {
+                    det_count += 1;
+                }
+                renderer.emit(m);
+            });
+            unknown = processor.unknown;
+            dropped = processor.dropped + processor.errored;
+        }
+        EventSource::Stdin => {
+            let stdin = io::stdin();
+            let observer = observe.map(|c| c.observer.as_ref());
+            let mut processor = RoutingProcessor::new(router);
+            events = stream_events(
+                stdin.lock(),
+                event_filter,
+                input_format_str,
+                syslog_tz_str,
+                syslog_strip_bom,
+                observer,
+                &mut processor,
+                &mut |m| {
+                    if m.is_correlation() {
+                        corr_count += 1;
+                    } else {
+                        det_count += 1;
+                    }
+                    renderer.emit(m);
+                },
+            );
+            unknown = processor.unknown;
+            dropped = processor.dropped + processor.errored;
+        }
+    }
+
+    if renderer.ctx().show_stats() {
+        eprintln!(
+            "Processed {events} events, {det_count} detection matches, {corr_count} correlation matches, {unknown} unknown schema, {dropped} dropped."
+        );
+    }
+    det_count > 0 || corr_count > 0
 }
 
 /// Evaluation with correlations (stateful). Returns `true` if any match fired.
