@@ -10,6 +10,7 @@ nav:
   - MCP Server: mcp-server.md
   - Processing Pipelines: processing-pipelines.md
   - Schema Routing: schema-routing.md
+  - Logsource-Aware Evaluation: logsource-routing.md
   - Enrichers: enrichers.md
   - Webhooks: webhooks.md
   - Input Formats: input-formats.md

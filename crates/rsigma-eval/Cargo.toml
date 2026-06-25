@@ -41,6 +41,10 @@ name = "eval"
 harness = false
 
 [[bench]]
+name = "logsource"
+harness = false
+
+[[bench]]
 name = "correlation"
 harness = false
 

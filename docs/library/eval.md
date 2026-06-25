@@ -37,6 +37,7 @@ serde_json = "1"   # only if you use the JsonEvent shim
 | `CorrelationConfig` | Limits on correlation state (`max_state_entries`, `max_event_buffer`). Default `100_000` and `10_000`. |
 | `Pipeline` | Parsed processing pipeline. Applied to rules at `add_collection` time, in priority order. |
 | `pipeline::parse_pipeline(&str) -> Result<Pipeline>` | Parse a pipeline YAML string. |
+| `LogSourceExtractor` | Derives an event's `LogSource` from configurable fields plus optional static defaults, for conflict-based logsource pruning. Pass to `Engine::set_logsource_extractor`. |
 | `Event` trait + `JsonEvent`, `KvEvent`, `MapEvent`, `PlainEvent` | The event shapes the engine consumes. |
 | `EvaluationResult` | One detection match or correlation firing. Composes a `RuleHeader` (rule metadata, custom attributes, optional enrichments) and a `ResultBody::Detection(DetectionBody)` / `ResultBody::Correlation(CorrelationBody)` payload. Serializes to one flat JSON object per result. |
 | `RuleHeader`, `DetectionBody`, `CorrelationBody` | The three composable structs behind `EvaluationResult`. `RuleHeader` carries the fields shared between kinds (`rule_title`, `rule_id`, `level`, `tags`, `custom_attributes`, and an optional `enrichments` map); the body variants carry the kind-specific fields. |
@@ -141,6 +142,7 @@ Pipeline transformations can write `rsigma.*` attributes that the engine consume
 | `Engine::set_bloom_prefilter(bool)` | Toggle the per-field bloom trigram filter over positive substring needles. Pays off only when most events do not match any pattern. |
 | `Engine::set_bloom_max_bytes(usize)` | Per-engine bloom budget. Default 1 MiB. |
 | `Engine::set_cross_rule_ac(bool)` | Toggle the cross-rule Aho-Corasick pre-filter. Requires the `daachorse-index` feature. Pays off only on very large pure-substring rule sets. |
+| `Engine::set_logsource_extractor(Option<LogSourceExtractor>)` | Opt into conflict-based logsource pruning: skip rules whose `product`/`service`/`category` conflicts with the event's. Off by default, fail-open. Pays off on large mixed-product rule sets. |
 | `Engine::evaluate_batch(&[events])` (with `parallel`) | Batch evaluation. With the `parallel` feature, rayon parallelizes across events internally. |
 
 `Engine::add_rule` and `add_compiled_rule` are amortized O(1) per call (v0.12.0+), so a control-plane that ingests rules one at a time no longer pays an O(N) cost on every push. The bulk loaders (`add_rules`, `extend_compiled_rules`, `add_collection`) rebuild indexes exactly once per batch. If you enable `set_cross_rule_ac(true)`, prefer the bulk loaders since the daachorse automaton has no incremental update.

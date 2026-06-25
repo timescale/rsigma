@@ -177,6 +177,14 @@ The auth methods are mutually exclusive. See [NATS Streaming](../../guide/nats-s
 
 These schema flags may also be supplied via the `daemon.schema` block in a [config file](../../reference/configuration.md) (`observe`, `routing`, `config`, `on_unknown`); a flag always wins over the file.
 
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--logsource-routing` | off | Enable conflict-based logsource pruning: skip rules whose `product`/`service`/`category` conflicts with the event's declared logsource. Fail-open. See [Logsource-Aware Evaluation](../../guide/logsource-routing.md). |
+| `--logsource-field-map <MAP>` | `product=product,service=service,category=category` | Event field names each dimension is read from, as `product=...,service=...,category=...`. |
+| `--event-logsource <LOGSOURCE>` | unset | Static event logsource applied when the field is absent, as `product=windows,...`, for a single-source pipeline. |
+
+These logsource flags may also be supplied via the `daemon.logsource_routing` block in a [config file](../../reference/configuration.md) (`enabled`, `field_map`, `event_logsource`); a flag always wins over the file.
+
 See [Observability: detection coverage](../../guide/observability.md#detection-coverage-with-observe-fields) for the operator workflow, and [HTTP API](../../reference/http-api.md#field-observability) for the endpoint payloads.
 
 ### Live event tap

@@ -178,6 +178,14 @@ pub struct DaemonConfig {
     pub schema_routing: bool,
     /// Override for the `on_unknown` policy (`warn`/`drop`/`passthrough`/`error`).
     pub on_unknown: Option<String>,
+    /// Enable conflict-based logsource pruning on the detection engine(s).
+    pub logsource_routing: bool,
+    /// Event field-name map for logsource extraction, as
+    /// `product=...,service=...,category=...`. `None` uses the literal names.
+    pub logsource_field_map: Option<String>,
+    /// Static event logsource applied when the field is absent, as
+    /// `product=windows,...`, for a single-source pipeline.
+    pub event_logsource: Option<String>,
     /// Enable the cross-rule Aho-Corasick pre-filter. Off by default;
     /// benefit is workload-dependent (large rule sets with shared
     /// substring patterns). Available behind the `daachorse-index`
@@ -252,6 +260,26 @@ pub async fn run_daemon(config: DaemonConfig) {
             config.on_unknown.as_deref(),
         )));
         tracing::info!("Schema routing enabled");
+    }
+
+    if config.logsource_routing {
+        // The daemon ingests streams (no per-input EVTX detection), so the
+        // format-derived default never applies here; it is an eval-only path.
+        match crate::logsource_opts::build_logsource_extractor(
+            true,
+            config.logsource_field_map.as_deref(),
+            config.event_logsource.as_deref(),
+            false,
+        ) {
+            Ok(extractor) => {
+                engine.set_logsource_extractor(extractor);
+                tracing::info!("Logsource routing enabled");
+            }
+            Err(e) => {
+                eprintln!("Error in logsource routing options: {e}");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
     }
 
     // Set up dynamic source resolver if the registry has sources or any
@@ -1720,6 +1748,11 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
         let snapshot = observer.snapshot();
         state.metrics.update_schema_observer_metrics(&snapshot);
     }
+
+    state.metrics.update_logsource_metrics(
+        state.processor.logsource_pruned_total(),
+        state.processor.logsource_absent_total(),
+    );
 
     (
         [(

@@ -4,8 +4,9 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
 use rsigma_eval::{
-    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, MatchDetailLevel, Pipeline,
-    ProcessResult, RoutingPlan, RuleFieldSet, SchemaClassifier, SchemaRouter, parse_pipeline_file,
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, LogSourceExtractor,
+    MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet, SchemaClassifier,
+    SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -46,6 +47,9 @@ pub struct RuntimeEngine {
     /// correlation store) instead of a single engine, and rebuilds it on
     /// hot-reload from the same spec.
     routing: Option<RoutingSpec>,
+    /// Opt-in conflict-based logsource extractor. Forwarded to the inner
+    /// detection engine(s) on every rule reload and carried across hot-reload.
+    logsource_extractor: Option<LogSourceExtractor>,
 }
 
 /// Everything needed to (re)build a [`SchemaRouter`] on rule load. Pipeline
@@ -95,6 +99,7 @@ impl RuntimeEngine {
             cross_rule_ac: false,
             rule_field_set: Arc::new(ArcSwap::from_pointee(RuleFieldSet::default())),
             routing: None,
+            logsource_extractor: None,
         }
     }
 
@@ -114,6 +119,39 @@ impl RuntimeEngine {
     /// configuration across a `RuntimeEngine` swap.
     pub fn routing(&self) -> Option<RoutingSpec> {
         self.routing.clone()
+    }
+
+    /// Set the opt-in logsource extractor. The next `load_rules()` forwards it
+    /// to the inner detection engine(s); hot-reload carries it forward. Pass
+    /// `None` to disable. Set before `load_rules()`.
+    pub fn set_logsource_extractor(&mut self, extractor: Option<LogSourceExtractor>) {
+        self.logsource_extractor = extractor;
+    }
+
+    /// Return the logsource extractor, if any. Used by hot-reload to carry the
+    /// configuration across a `RuntimeEngine` swap.
+    pub fn logsource_extractor(&self) -> Option<LogSourceExtractor> {
+        self.logsource_extractor.clone()
+    }
+
+    /// Total rule candidates pruned by logsource across the active engine
+    /// variant since the last load. Zero when no extractor is configured.
+    pub fn logsource_pruned_total(&self) -> u64 {
+        match &self.engine {
+            EngineVariant::DetectionOnly(engine) => engine.logsource_pruned_total(),
+            EngineVariant::WithCorrelations(engine) => engine.logsource_pruned_total(),
+            EngineVariant::Routed(router) => router.logsource_pruned_total(),
+        }
+    }
+
+    /// Total evaluate calls with no extractable event logsource (fail-open)
+    /// across the active engine variant.
+    pub fn logsource_absent_total(&self) -> u64 {
+        match &self.engine {
+            EngineVariant::DetectionOnly(engine) => engine.logsource_absent_total(),
+            EngineVariant::WithCorrelations(engine) => engine.logsource_absent_total(),
+            EngineVariant::Routed(router) => router.logsource_absent_total(),
+        }
     }
 
     /// Return an immutable snapshot of the post-pipeline rule field set.
@@ -361,6 +399,7 @@ impl RuntimeEngine {
                 self.corr_config.clone(),
                 self.include_event,
                 self.match_detail,
+                self.logsource_extractor.clone(),
             )
             .map_err(|e| format!("Error building schema router: {e}"))?;
 
@@ -394,6 +433,7 @@ impl RuntimeEngine {
             engine.set_bloom_prefilter(self.bloom_prefilter);
             #[cfg(feature = "daachorse-index")]
             engine.set_cross_rule_ac(self.cross_rule_ac);
+            engine.set_logsource_extractor(self.logsource_extractor.clone());
             for p in &self.pipelines {
                 engine.add_pipeline(p.clone());
             }
@@ -429,6 +469,7 @@ impl RuntimeEngine {
             engine.set_bloom_prefilter(self.bloom_prefilter);
             #[cfg(feature = "daachorse-index")]
             engine.set_cross_rule_ac(self.cross_rule_ac);
+            engine.set_logsource_extractor(self.logsource_extractor.clone());
             for p in &self.pipelines {
                 engine.add_pipeline(p.clone());
             }

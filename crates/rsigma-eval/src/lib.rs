@@ -98,6 +98,7 @@ pub mod error;
 pub mod event;
 pub mod field_observer;
 pub mod fields;
+pub mod logsource;
 pub mod matcher;
 pub mod pipeline;
 pub mod result;
@@ -122,6 +123,7 @@ pub use error::{EvalError, Result};
 pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, MappedEvent, PlainEvent};
 pub use field_observer::{FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver};
 pub use fields::{FieldOrigin, FieldSource, RuleFieldSet};
+pub use logsource::LogSourceExtractor;
 pub use matcher::{CompiledMatcher, MatchDescriptor};
 pub use pipeline::{
     Pipeline, TransformationItem, apply_pipelines, apply_pipelines_with_state,

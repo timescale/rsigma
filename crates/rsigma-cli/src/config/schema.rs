@@ -140,6 +140,9 @@ pub(crate) struct DaemonPartial {
     /// Schema classification and routing settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<SchemaPartial>,
+    /// Logsource-aware evaluation (conflict-based pruning) settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logsource_routing: Option<LogsourcePartial>,
 }
 
 impl Merge for DaemonPartial {
@@ -159,6 +162,7 @@ impl Merge for DaemonPartial {
             tap: merge_opt(self.tap, over.tap),
             tail: merge_opt(self.tail, over.tail),
             schema: merge_opt(self.schema, over.schema),
+            logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
         }
     }
 }
@@ -522,6 +526,9 @@ pub(crate) struct EvalPartial {
     /// Schema classification and routing settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<SchemaPartial>,
+    /// Logsource-aware evaluation (conflict-based pruning) settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logsource_routing: Option<LogsourcePartial>,
 }
 
 impl Merge for EvalPartial {
@@ -534,6 +541,7 @@ impl Merge for EvalPartial {
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
             fail_on_detection: over.fail_on_detection.or(self.fail_on_detection),
             schema: merge_opt(self.schema, over.schema),
+            logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
         }
     }
 }
@@ -564,6 +572,58 @@ impl Merge for SchemaPartial {
             routing: over.routing.or(self.routing),
             config: over.config.or(self.config),
             on_unknown: over.on_unknown.or(self.on_unknown),
+        }
+    }
+}
+
+/// Logsource-aware evaluation settings (shared by `daemon` and `eval`).
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct LogsourcePartial {
+    /// Enable conflict-based logsource pruning (`--logsource-routing`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Event field names each logsource dimension is read from
+    /// (`--logsource-field-map`). Defaults to `product`/`service`/`category`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_map: Option<LogsourceDimensionsPartial>,
+    /// Static event logsource applied when the field is absent
+    /// (`--event-logsource`), for a single-source pipeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_logsource: Option<LogsourceDimensionsPartial>,
+    /// Reserved for a future strict subset-routing mode. Currently ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+
+impl Merge for LogsourcePartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            field_map: merge_opt(self.field_map, over.field_map),
+            event_logsource: merge_opt(self.event_logsource, over.event_logsource),
+            strict: over.strict.or(self.strict),
+        }
+    }
+}
+
+/// A `{ product, service, category }` triple, used for both the logsource
+/// field-name map and the static event-logsource override.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct LogsourceDimensionsPartial {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+impl Merge for LogsourceDimensionsPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            product: over.product.or(self.product),
+            service: over.service.or(self.service),
+            category: over.category.or(self.category),
         }
     }
 }

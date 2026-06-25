@@ -49,6 +49,34 @@ pub(super) fn rewrite_condition_identifiers(expr: &ConditionExpr, counter: usize
     }
 }
 
+/// Conflict-based compatibility check for hot-path logsource pruning.
+///
+/// Returns `false` only when a dimension (`product`, `service`, or
+/// `category`) is set on BOTH the rule and the event and the two values
+/// differ (case-insensitive). A dimension unset on either side is a wildcard,
+/// so the rule is kept. `definition` and `custom` are ignored.
+///
+/// This is deliberately distinct from the subset [`logsource_matches`] (and
+/// the filter-side [`filter_logsource_contains`]): subset semantics require
+/// every dimension the rule names to be present and equal in the event, which
+/// would drop a `product: windows, category: process_creation` rule for an
+/// event tagged only `product: windows` (no category) and silently lose the
+/// detection. Conflict-based semantics keep that rule (the event never
+/// asserted a conflicting category) and skip only rules whose stated
+/// dimension genuinely disagrees with the event.
+pub(super) fn logsource_compatible(rule_ls: &LogSource, event_ls: &LogSource) -> bool {
+    fn conflicts(rule_field: &Option<String>, event_field: &Option<String>) -> bool {
+        match (rule_field, event_field) {
+            (Some(r), Some(e)) => !r.eq_ignore_ascii_case(e),
+            _ => false,
+        }
+    }
+
+    !(conflicts(&rule_ls.product, &event_ls.product)
+        || conflicts(&rule_ls.service, &event_ls.service)
+        || conflicts(&rule_ls.category, &event_ls.category))
+}
+
 /// Asymmetric check: every field specified in `rule_ls` must be present and
 /// match in `event_ls`. Used for routing events to rules by logsource.
 pub(super) fn logsource_matches(rule_ls: &LogSource, event_ls: &LogSource) -> bool {

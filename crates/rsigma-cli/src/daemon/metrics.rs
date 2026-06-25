@@ -58,6 +58,8 @@ pub struct Metrics {
     pub fields_observer_overflow_dropped_total: IntCounter,
     pub events_by_schema: IntCounterVec,
     pub events_unknown_schema: IntCounter,
+    pub rules_pruned_by_logsource: IntCounter,
+    pub events_without_logsource: IntCounter,
     pub tap_sessions_total: IntCounter,
     pub tap_active_sessions: IntGauge,
     pub tap_events_streamed_total: IntCounter,
@@ -522,6 +524,23 @@ impl Metrics {
             .register(Box::new(events_unknown_schema.clone()))
             .unwrap();
 
+        let rules_pruned_by_logsource = IntCounter::with_opts(Opts::new(
+            "rsigma_rules_pruned_by_logsource_total",
+            "Always-evaluated rules skipped by conflict-based logsource pruning (--logsource-routing)",
+        ))
+        .unwrap();
+        let events_without_logsource = IntCounter::with_opts(Opts::new(
+            "rsigma_events_without_logsource_total",
+            "Events with no extractable logsource, evaluated against every rule (fail-open)",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(rules_pruned_by_logsource.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(events_without_logsource.clone()))
+            .unwrap();
+
         let tap_sessions_total = IntCounter::with_opts(Opts::new(
             "rsigma_tap_sessions_total",
             "Total live event-tap sessions opened (GET /api/v1/tap)",
@@ -625,6 +644,8 @@ impl Metrics {
             fields_observer_overflow_dropped_total,
             events_by_schema,
             events_unknown_schema,
+            rules_pruned_by_logsource,
+            events_without_logsource,
             tap_sessions_total,
             tap_active_sessions,
             tap_events_streamed_total,
@@ -683,6 +704,21 @@ impl Metrics {
         if unknown_now > unknown_prev {
             self.events_unknown_schema
                 .inc_by(unknown_now - unknown_prev);
+        }
+    }
+
+    /// Refresh the logsource-pruning Prometheus counters from the engine's
+    /// monotonic totals. Both are monotonic sources bridged via `inc_by(delta)`.
+    pub fn update_logsource_metrics(&self, pruned_total: u64, absent_total: u64) {
+        let pruned_prev = self.rules_pruned_by_logsource.get();
+        if pruned_total > pruned_prev {
+            self.rules_pruned_by_logsource
+                .inc_by(pruned_total - pruned_prev);
+        }
+        let absent_prev = self.events_without_logsource.get();
+        if absent_total > absent_prev {
+            self.events_without_logsource
+                .inc_by(absent_total - absent_prev);
         }
     }
 

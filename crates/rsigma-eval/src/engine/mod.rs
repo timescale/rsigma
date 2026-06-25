@@ -11,6 +11,8 @@ mod filters;
 #[cfg(test)]
 mod tests;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use rsigma_parser::{
     ConditionExpr, FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule,
 };
@@ -18,13 +20,17 @@ use rsigma_parser::{
 use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule_with_bloom};
 use crate::error::{EvalError, Result};
 use crate::event::Event;
+use crate::logsource::LogSourceExtractor;
 use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::{EvaluationResult, MatchDetailLevel};
 use crate::rule_index::RuleIndex;
 
 use bloom_index::{BloomCache, FieldBloomIndex};
 
-use filters::{filter_logsource_contains, logsource_matches, rewrite_condition_identifiers};
+use filters::{
+    filter_logsource_contains, logsource_compatible, logsource_matches,
+    rewrite_condition_identifiers,
+};
 
 /// The main rule evaluation engine.
 ///
@@ -92,6 +98,19 @@ pub struct Engine {
     /// per-field filters. `None` means use the crate default
     /// (`bloom_index::DEFAULT_MAX_TOTAL_BYTES`, 1 MB).
     bloom_max_bytes: Option<usize>,
+    /// Opt-in event-logsource extractor for conflict-based rule pruning.
+    /// `None` (default) leaves the hot path unchanged; when `Some`, the
+    /// engine extracts each event's logsource once and skips rules whose
+    /// logsource conflicts (see [`Engine::set_logsource_extractor`]).
+    logsource_extractor: Option<LogSourceExtractor>,
+    /// Monotonic count of always-evaluated rules skipped because their
+    /// product conflicts with the event's. Incremented only when an extractor
+    /// is set; surfaced via [`Engine::logsource_pruned_total`].
+    logsource_pruned: AtomicU64,
+    /// Monotonic count of `evaluate` calls where the extractor produced no
+    /// logsource at all (fail-open: every rule was evaluated). Surfaced via
+    /// [`Engine::logsource_absent_total`].
+    logsource_absent: AtomicU64,
     /// Cross-rule Aho-Corasick index for substring patterns, gated on the
     /// `daachorse-index` feature. Built only when [`cross_rule_ac_enabled`]
     /// is `true`; [`cross_rule_ac_prunable`] is the conservative per-rule
@@ -128,6 +147,9 @@ impl Engine {
             bloom_index: FieldBloomIndex::empty(),
             bloom_prefilter: false,
             bloom_max_bytes: None,
+            logsource_extractor: None,
+            logsource_pruned: AtomicU64::new(0),
+            logsource_absent: AtomicU64::new(0),
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac_index: cross_rule_ac::CrossRuleAcIndex::empty(),
             #[cfg(feature = "daachorse-index")]
@@ -149,6 +171,9 @@ impl Engine {
             bloom_index: FieldBloomIndex::empty(),
             bloom_prefilter: false,
             bloom_max_bytes: None,
+            logsource_extractor: None,
+            logsource_pruned: AtomicU64::new(0),
+            logsource_absent: AtomicU64::new(0),
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac_index: cross_rule_ac::CrossRuleAcIndex::empty(),
             #[cfg(feature = "daachorse-index")]
@@ -200,6 +225,42 @@ impl Engine {
     /// explicitly. `None` means the crate default (1 MB) is in use.
     pub fn bloom_max_bytes(&self) -> Option<usize> {
         self.bloom_max_bytes
+    }
+
+    /// Enable or disable opt-in, conflict-based logsource pruning.
+    ///
+    /// When set to `Some`, `evaluate` extracts each event's logsource once via
+    /// the [`LogSourceExtractor`] and skips any candidate rule whose logsource
+    /// conflicts with the event's (a dimension set on both sides that
+    /// disagrees). A dimension unset on either side is a wildcard, so an event
+    /// tagged only `product: windows` skips `product: linux` rules while still
+    /// evaluating Windows-category and logsource-less rules.
+    ///
+    /// Disabled by default (`None`), leaving the hot path unchanged. Pruning
+    /// fails open: an event with no extractable logsource evaluates every
+    /// rule. The extractor is read on every `evaluate` call, so it can be
+    /// swapped at runtime (e.g. carried across a hot-reload).
+    pub fn set_logsource_extractor(&mut self, extractor: Option<LogSourceExtractor>) {
+        self.logsource_extractor = extractor;
+    }
+
+    /// Returns the configured logsource extractor, if any. `None` means
+    /// logsource pruning is disabled.
+    pub fn logsource_extractor(&self) -> Option<&LogSourceExtractor> {
+        self.logsource_extractor.as_ref()
+    }
+
+    /// Total always-evaluated rules skipped by logsource product pruning since
+    /// engine creation. Zero unless an extractor is set.
+    pub fn logsource_pruned_total(&self) -> u64 {
+        self.logsource_pruned.load(Ordering::Relaxed)
+    }
+
+    /// Total `evaluate` calls where the extractor produced no logsource and
+    /// pruning failed open (every rule evaluated). Zero unless an extractor
+    /// is set.
+    pub fn logsource_absent_total(&self) -> u64 {
+        self.logsource_absent.load(Ordering::Relaxed)
     }
 
     /// Enable or disable the cross-rule Aho-Corasick pre-filter.
@@ -572,19 +633,61 @@ impl Engine {
         None
     }
 
+    /// Pick the candidate rule set for `event`. When a logsource extractor
+    /// produced an event logsource, the product-partitioned index drops
+    /// always-evaluated rules of a conflicting product; otherwise the full
+    /// candidate set is returned (zero behaviour change when pruning is off).
+    fn logsource_candidates<E: Event>(
+        &self,
+        event: &E,
+        event_logsource: Option<&LogSource>,
+    ) -> Vec<usize> {
+        match event_logsource {
+            Some(ls) => {
+                // Observability: count the fail-open case (no logsource at all)
+                // and the always-evaluated rules pruned by product conflict.
+                if ls.product.is_none() && ls.service.is_none() && ls.category.is_none() {
+                    self.logsource_absent.fetch_add(1, Ordering::Relaxed);
+                }
+                let pruned = self
+                    .rule_index
+                    .conflicting_unindexable_count(ls.product.as_deref());
+                if pruned > 0 {
+                    self.logsource_pruned
+                        .fetch_add(pruned as u64, Ordering::Relaxed);
+                }
+                self.rule_index
+                    .candidates_with_logsource(event, ls.product.as_deref())
+            }
+            None => self.rule_index.candidates(event),
+        }
+    }
+
     fn evaluate_no_bloom_path<E: Event>(&self, event: &E) -> Vec<EvaluationResult> {
         // Pass the zero-sized `NoBloom` lookup so this monomorphizes to the
         // same straight-line code as the pre-bloom engine while still
         // threading the configured match-detail level.
         let keep = self.cross_rule_ac_keep_mask(event);
+        // Extract the event logsource once when pruning is enabled; `None`
+        // (the default) leaves the loop's behaviour unchanged.
+        let event_logsource = self
+            .logsource_extractor
+            .as_ref()
+            .map(|ex| ex.extract(event));
+        let candidates = self.logsource_candidates(event, event_logsource.as_ref());
         let mut results = Vec::new();
-        for idx in self.rule_index.candidates(event) {
+        for idx in candidates {
             if let Some(ref mask) = keep
                 && !mask[idx]
             {
                 continue;
             }
             let rule = &self.rules[idx];
+            if let Some(ref event_ls) = event_logsource
+                && !logsource_compatible(&rule.logsource, event_ls)
+            {
+                continue;
+            }
             if let Some(mut m) =
                 evaluate_rule_with_bloom(rule, event, &bloom_index::NoBloom, self.match_detail)
             {
@@ -603,14 +706,26 @@ impl Engine {
     fn evaluate_with_bloom_path<E: Event>(&self, event: &E) -> Vec<EvaluationResult> {
         let bloom = BloomCache::new(&self.bloom_index, event);
         let keep = self.cross_rule_ac_keep_mask(event);
+        // Extract the event logsource once when pruning is enabled; `None`
+        // (the default) leaves the loop's behaviour unchanged.
+        let event_logsource = self
+            .logsource_extractor
+            .as_ref()
+            .map(|ex| ex.extract(event));
+        let candidates = self.logsource_candidates(event, event_logsource.as_ref());
         let mut results = Vec::new();
-        for idx in self.rule_index.candidates(event) {
+        for idx in candidates {
             if let Some(ref mask) = keep
                 && !mask[idx]
             {
                 continue;
             }
             let rule = &self.rules[idx];
+            if let Some(ref event_ls) = event_logsource
+                && !logsource_compatible(&rule.logsource, event_ls)
+            {
+                continue;
+            }
             if let Some(mut m) = evaluate_rule_with_bloom(rule, event, &bloom, self.match_detail) {
                 if self.include_event
                     && let Some(d) = m.as_detection_mut()

@@ -112,6 +112,15 @@ Exposed unconditionally; values stay at zero unless the daemon was started with 
 | `rsigma_events_by_schema_total` | counter | `schema` | Events classified into each recognized schema (`ecs`, `sysmon`, `windows_eventlog`, `cef`, `ocsf`, `generic_json`, or a user-defined name). |
 | `rsigma_events_unknown_schema_total` | counter | — | Events that matched no schema signature. A rising rate signals a source whose schema RSigma does not recognize; add a signature with `--schema-config`. |
 
+## Logsource-aware evaluation (2 metrics)
+
+Exposed unconditionally; values stay at zero unless the daemon was started with `--logsource-routing`. Both refresh on every `/metrics` scrape. See [Logsource-Aware Evaluation](../guide/logsource-routing.md).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_rules_pruned_by_logsource_total` | counter | — | Always-evaluated rules skipped because their product conflicts with the event's logsource. The scaling signal: it rises with the conflicting fraction of a mixed-product ruleset. |
+| `rsigma_events_without_logsource_total` | counter | — | Events with no extractable logsource, evaluated against every rule (fail-open). A high rate means events are not carrying a logsource tag and no static override or field map is set. |
+
 ## Live event tap (4 metrics)
 
 Exposed unconditionally; values stay at zero unless the tap is enabled (`daemon.tap.enabled: true`) and an operator opens a session. See [HTTP API: Live event tap](http-api.md#live-event-tap) and [`rsigma engine tap`](../cli/engine/tap.md).

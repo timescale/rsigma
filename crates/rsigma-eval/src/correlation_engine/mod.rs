@@ -118,6 +118,26 @@ impl CorrelationEngine {
         self.engine.set_bloom_prefilter(enabled);
     }
 
+    /// Forward to [`crate::Engine::set_logsource_extractor`] on the inner
+    /// detection engine. Correlation inherits logsource pruning, since
+    /// `process_event` evaluates through this engine.
+    pub fn set_logsource_extractor(
+        &mut self,
+        extractor: Option<crate::logsource::LogSourceExtractor>,
+    ) {
+        self.engine.set_logsource_extractor(extractor);
+    }
+
+    /// Total rule candidates pruned by logsource on the inner engine.
+    pub fn logsource_pruned_total(&self) -> u64 {
+        self.engine.logsource_pruned_total()
+    }
+
+    /// Total evaluate calls with no extractable event logsource (fail-open).
+    pub fn logsource_absent_total(&self) -> u64 {
+        self.engine.logsource_absent_total()
+    }
+
     /// Forward to [`crate::Engine::set_bloom_max_bytes`] on the inner
     /// detection engine.
     pub fn set_bloom_max_bytes(&mut self, max_bytes: usize) {

@@ -243,6 +243,9 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--bloom-prefilter` | flag | `false` | Enable bloom-filter pre-filtering of positive substring matchers (workload-dependent; see `crates/rsigma-eval/README.md`) |
 | `--bloom-max-bytes` | integer | **1048576** | Memory budget for the bloom index (no effect without `--bloom-prefilter`) |
 | `--cross-rule-ac` | flag | `false` | Enable cross-rule Aho-Corasick pre-filter (requires `--features daachorse-index`; see `crates/rsigma-eval/README.md`) |
+| `--logsource-routing` | flag | `false` | Enable conflict-based logsource pruning: skip rules whose `product`/`service`/`category` conflicts with the event's logsource (fail-open; see `docs/guide/logsource-routing.md`) |
+| `--logsource-field-map` | string | unset | Event field names per dimension, as `product=...,service=...,category=...` (default `product`/`service`/`category`) |
+| `--event-logsource` | string | unset | Static event logsource when the field is absent, as `product=windows,...` (an `-e @file.evtx` input implies `product: windows`) |
 | `--observe-fields` | flag | `false` | Record the field keys of every event evaluated by the engine so `/api/v1/fields*` can report gap and broken-coverage signals. Off by default; when off the engine task does not iterate event fields at all |
 | `--observe-fields-max-keys` | integer | **10000** | Hard ceiling on distinct field names tracked by the observer. Overflow drops are counted via `rsigma_fields_observer_overflow_dropped_total`. No effect without `--observe-fields` |
 | `--buffer-size` | integer | **10000** | Bounded channel capacity for source-to-engine and engine-to-sink queues |
@@ -581,6 +584,9 @@ Evaluate JSON events against Sigma detection and correlation rules.
 | `--bloom-prefilter` | flag | `false` | Enable bloom-filter pre-filtering of positive substring matchers (see `crates/rsigma-eval/README.md` for the trade-off) |
 | `--bloom-max-bytes` | integer | **1048576** | Memory budget for the bloom index (no effect without `--bloom-prefilter`) |
 | `--cross-rule-ac` | flag | `false` | Enable cross-rule Aho-Corasick pre-filter (requires `--features daachorse-index`; see `crates/rsigma-eval/README.md`) |
+| `--logsource-routing` | flag | `false` | Enable conflict-based logsource pruning: skip rules whose `product`/`service`/`category` conflicts with the event's logsource (fail-open; see `docs/guide/logsource-routing.md`) |
+| `--logsource-field-map` | string | unset | Event field names per dimension, as `product=...,service=...,category=...` (default `product`/`service`/`category`) |
+| `--event-logsource` | string | unset | Static event logsource when the field is absent, as `product=windows,...` (an `-e @file.evtx` input implies `product: windows`) |
 | `--observe-fields` | flag | `false` | Record the field keys of every evaluated event and emit a coverage report at end-of-run (gap signal + broken-coverage signal). Same JSON shape as the daemon's `GET /api/v1/fields` endpoint |
 | `--observe-fields-max-keys` | integer | **10000** | Hard ceiling on distinct field names tracked. Overflow is counted via `overflow_dropped` in the report. No effect without `--observe-fields` |
 | `--observe-fields-report` | path | none | Path to write the report. Defaults to stderr when omitted so detections on stdout stay machine-consumable. No effect without `--observe-fields` |

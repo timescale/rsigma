@@ -409,6 +409,7 @@ impl LogProcessor {
         let bloom_max_bytes = old.bloom_max_bytes();
         let match_detail = old.match_detail();
         let routing = old.routing();
+        let logsource_extractor = old.logsource_extractor();
         #[cfg(feature = "daachorse-index")]
         let cross_rule_ac = old.cross_rule_ac();
         drop(old);
@@ -430,6 +431,8 @@ impl LogProcessor {
         // Carry the schema-routing spec so hot-reload rebuilds the router
         // instead of silently dropping back to a single engine.
         new_engine.set_routing(routing);
+        // Carry the logsource extractor so pruning survives hot-reload.
+        new_engine.set_logsource_extractor(logsource_extractor);
         let stats = new_engine.load_rules()?;
 
         if let Some(state) = old_state
@@ -475,6 +478,20 @@ impl LogProcessor {
         let snapshot = self.engine.load();
         let engine = snapshot.lock();
         engine.stats()
+    }
+
+    /// Total rule candidates pruned by logsource on the current engine.
+    pub fn logsource_pruned_total(&self) -> u64 {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        engine.logsource_pruned_total()
+    }
+
+    /// Total evaluate calls with no extractable event logsource (fail-open).
+    pub fn logsource_absent_total(&self) -> u64 {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        engine.logsource_absent_total()
     }
 
     /// Return an immutable snapshot of the current rule field set

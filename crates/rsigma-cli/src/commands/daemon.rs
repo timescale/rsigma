@@ -367,6 +367,25 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "on-unknown", value_name = "POLICY")]
     pub on_unknown: Option<String>,
 
+    /// Enable conflict-based logsource pruning: skip rules whose
+    /// product/service/category cannot apply to the event's logsource. Opt-in
+    /// and fail-open; an event with no logsource is evaluated against every
+    /// rule.
+    #[arg(long = "logsource-routing")]
+    pub logsource_routing: bool,
+
+    /// Event field names each logsource dimension is read from, as
+    /// `product=...,service=...,category=...` (defaults to the literal field
+    /// names). Used with `--logsource-routing`.
+    #[arg(long = "logsource-field-map", value_name = "MAP")]
+    pub logsource_field_map: Option<String>,
+
+    /// Static event logsource applied when the field is absent, as
+    /// `product=windows,service=...,category=...`, for a single-source
+    /// pipeline. Used with `--logsource-routing`.
+    #[arg(long = "event-logsource", value_name = "LOGSOURCE")]
+    pub event_logsource: Option<String>,
+
     /// Enable the cross-rule Aho-Corasick pre-filter (daachorse-index).
     ///
     /// Off by default. When enabled, the engine builds a single
@@ -611,6 +630,9 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         schema_config,
         schema_routing,
         on_unknown,
+        logsource_routing,
+        logsource_field_map,
+        event_logsource,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -740,6 +762,9 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         schema_config,
         schema_routing,
         on_unknown,
+        logsource_routing,
+        logsource_field_map,
+        event_logsource,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
@@ -1117,6 +1142,33 @@ fn apply_daemon_config(
             args.on_unknown = Some(v);
         }
     }
+    if let Some(ls) = daemon.logsource_routing {
+        if !explicit("logsource_routing")
+            && let Some(v) = ls.enabled
+        {
+            args.logsource_routing = v;
+        }
+        if !explicit("logsource_field_map")
+            && let Some(fm) = ls.field_map
+            && let Some(s) = crate::logsource_opts::dims_to_kv(
+                fm.product.as_deref(),
+                fm.service.as_deref(),
+                fm.category.as_deref(),
+            )
+        {
+            args.logsource_field_map = Some(s);
+        }
+        if !explicit("event_logsource")
+            && let Some(el) = ls.event_logsource
+            && let Some(s) = crate::logsource_opts::dims_to_kv(
+                el.product.as_deref(),
+                el.service.as_deref(),
+                el.category.as_deref(),
+            )
+        {
+            args.event_logsource = Some(s);
+        }
+    }
 
     #[cfg(feature = "daemon-nats")]
     if let Some(nats) = daemon.nats
@@ -1183,6 +1235,9 @@ fn run_daemon(
     schema_config: Option<PathBuf>,
     schema_routing: bool,
     on_unknown: Option<String>,
+    logsource_routing: bool,
+    logsource_field_map: Option<String>,
+    event_logsource: Option<String>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
@@ -1334,6 +1389,9 @@ fn run_daemon(
         schema_config,
         schema_routing,
         on_unknown,
+        logsource_routing,
+        logsource_field_map,
+        event_logsource,
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,
@@ -1580,5 +1638,35 @@ mod tests {
         // Routing comes from the file; the explicit flag wins for on_unknown.
         assert!(args.schema_routing);
         assert_eq!(args.on_unknown.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn logsource_block_from_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r"]);
+        let base = partial(
+            "daemon:\n  logsource_routing:\n    enabled: true\n    field_map:\n      product: os\n    event_logsource:\n      product: windows\n",
+        );
+        apply_daemon_config(&mut args, &matches, base);
+        assert!(args.logsource_routing);
+        assert_eq!(args.logsource_field_map.as_deref(), Some("product=os"));
+        assert_eq!(args.event_logsource.as_deref(), Some("product=windows"));
+    }
+
+    #[test]
+    fn logsource_flag_beats_config_file() {
+        let (mut args, matches) = parse(&[
+            "daemon",
+            "--rules",
+            "/r",
+            "--event-logsource",
+            "product=linux",
+        ]);
+        let base = partial(
+            "daemon:\n  logsource_routing:\n    enabled: true\n    event_logsource:\n      product: windows\n",
+        );
+        apply_daemon_config(&mut args, &matches, base);
+        // Enabled comes from the file; the explicit flag wins for event-logsource.
+        assert!(args.logsource_routing);
+        assert_eq!(args.event_logsource.as_deref(), Some("product=linux"));
     }
 }

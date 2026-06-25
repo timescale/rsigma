@@ -81,6 +81,13 @@ daemon:
     routing: false          # opt-in: route each event to its schema's pipeline-set (or --schema-routing)
     # config: /etc/rsigma/schema.yml   # user schema signatures + routing bindings (--schema-config)
     on_unknown: warn        # warn | drop | passthrough | error, for events matching no schema
+  logsource_routing:
+    enabled: false          # opt-in: conflict-based logsource pruning (or --logsource-routing)
+    # field_map:            # event field names per dimension (default product/service/category)
+    #   product: product
+    # event_logsource:      # static logsource when the field is absent (--event-logsource)
+    #   product: windows
+    strict: false           # reserved for a future strict subset-routing mode
 
 eval:
   rules: ./rules
@@ -91,6 +98,13 @@ eval:
     routing: false          # opt-in: route each event to its schema's pipeline-set (or --schema-routing)
     # config: ./schema.yml
     on_unknown: warn
+  logsource_routing:
+    enabled: false          # opt-in: conflict-based logsource pruning (or --logsource-routing)
+    # field_map:
+    #   product: product
+    # event_logsource:
+    #   product: windows
+    strict: false
 
 backtest:
   rules: ./rules
@@ -138,8 +152,10 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.tail` | `engine daemon` | Live detection-tail limits (`enabled`, `buffer_events`, `max_sessions`). Disabled by default; enable with `enabled: true` or `--enable-tail`. The rest are config-file-only. See [HTTP API: Live detection tail](http-api.md#live-detection-tail). |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
 | `daemon.schema` | `engine daemon` | Schema classification and routing (`observe`, `routing`, `config`, `on_unknown`). All opt-in. See [Schema Routing](../guide/schema-routing.md). |
+| `daemon.logsource_routing` | `engine daemon` | Conflict-based logsource pruning (`enabled`, `field_map`, `event_logsource`, reserved `strict`). Opt-in. See [Logsource-Aware Evaluation](../guide/logsource-routing.md). |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
 | `eval.schema` | `engine eval` | Schema routing for one-shot eval (`routing`, `config`, `on_unknown`). `observe` has no effect here. |
+| `eval.logsource_routing` | `engine eval` | Conflict-based logsource pruning for one-shot eval (`enabled`, `field_map`, `event_logsource`, reserved `strict`). |
 | `backtest` | `rule backtest` | `rules`, `corpus`, `expectations`, `unexpected`, `pipelines`, and the syslog input knobs. `unexpected` has no compiled default so the expectations-file default can apply. |
 | `coverage` | `rule coverage` | `rules`, `atomics`, `baseline`, `targets`, `fail_on_gaps`. |
 | `scorecard` | `rule scorecard` | The two required reports (`backtest`, `coverage`), the verdict thresholds (`min_precision`, `tune_max_precision`, `retire_max_precision`, `min_volume`, `stale_window`, `max_fp_ratio`), the optional inputs (`metrics`, `metrics_window`, `triage`), `fail_on`, and `report`. |

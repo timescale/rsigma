@@ -31,6 +31,7 @@ use crate::correlation_engine::{
 use crate::engine::Engine;
 use crate::error::Result;
 use crate::event::{Event, MappedEvent};
+use crate::logsource::LogSourceExtractor;
 use crate::pipeline::Pipeline;
 use crate::pipeline::transformations::Transformation;
 use crate::result::EvaluationResult;
@@ -124,6 +125,7 @@ pub struct SchemaRouter {
 impl SchemaRouter {
     /// Build a router. `pipeline_sets` must be index-aligned with
     /// `plan.pipeline_sets()` (one resolved pipeline list per set).
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         collection: &SigmaCollection,
         classifier: SchemaClassifier,
@@ -132,6 +134,7 @@ impl SchemaRouter {
         corr_config: CorrelationConfig,
         include_event: bool,
         match_detail: MatchDetailLevel,
+        logsource_extractor: Option<LogSourceExtractor>,
     ) -> Result<Self> {
         let mut engines = Vec::with_capacity(pipeline_sets.len());
         let mut field_maps = Vec::with_capacity(pipeline_sets.len());
@@ -139,6 +142,7 @@ impl SchemaRouter {
             let mut engine = Engine::new();
             engine.set_include_event(include_event);
             engine.set_match_detail(match_detail);
+            engine.set_logsource_extractor(logsource_extractor.clone());
             for p in set {
                 engine.add_pipeline(p.clone());
             }
@@ -182,6 +186,24 @@ impl SchemaRouter {
     /// Number of detection rules (same across every per-schema engine).
     pub fn detection_rule_count(&self) -> usize {
         self.engines.first().map(|e| e.rule_count()).unwrap_or(0)
+    }
+
+    /// Total rule candidates pruned by logsource across every per-schema
+    /// engine (each event routes to exactly one engine).
+    pub fn logsource_pruned_total(&self) -> u64 {
+        self.engines
+            .iter()
+            .map(Engine::logsource_pruned_total)
+            .sum()
+    }
+
+    /// Total evaluate calls with no extractable event logsource (fail-open)
+    /// across every per-schema engine.
+    pub fn logsource_absent_total(&self) -> u64 {
+        self.engines
+            .iter()
+            .map(Engine::logsource_absent_total)
+            .sum()
     }
 
     /// Number of correlation rules in the shared store (0 when none).
@@ -363,6 +385,7 @@ transformations:
             CorrelationConfig::default(),
             false,
             MatchDetailLevel::Off,
+            None,
         )
         .unwrap();
 
@@ -430,6 +453,7 @@ level: high
             config,
             false,
             MatchDetailLevel::Off,
+            None,
         )
         .unwrap();
 
@@ -475,6 +499,7 @@ level: high
             CorrelationConfig::default(),
             false,
             MatchDetailLevel::Off,
+            None,
         )
         .unwrap();
 

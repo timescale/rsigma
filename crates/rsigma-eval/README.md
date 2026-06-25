@@ -105,7 +105,7 @@ Opt-in counter that records every observed field name and surfaces gap and broke
 ## Detection Engine
 
 - **Compiled matchers**: optimized matching for all 30 modifier combinations — exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash expansion (5 replacement characters), field references, placeholder expansion, timestamp part extraction
-- **Logsource routing**: optional pre-filtering by `category`/`product`/`service` to reduce the number of rules evaluated per event
+- **Logsource-aware evaluation**: opt-in `LogSourceExtractor` plus conflict-based pruning (`set_logsource_extractor`) skips rules whose `product`/`service`/`category` conflicts with the event's logsource, backed by a product-partitioned rule index; off by default and fail-open
 - **Condition tree evaluation**: short-circuit boolean logic, selector patterns with quantifiers (`1 of selection_*`, `all of them`)
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions on referenced rules
 

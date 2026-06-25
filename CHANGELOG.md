@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Logsource-aware evaluation (#249)
+
+Opt-in, conflict-based logsource pruning in the evaluation engine (`rsigma-eval`). `Engine::set_logsource_extractor` installs a `LogSourceExtractor` that derives each event's logsource from configurable fields (defaulting to `product`/`service`/`category`) plus optional static defaults, and the engine then skips any candidate rule whose logsource conflicts with the event's before matching. Disabled by default with the hot path unchanged, and fail-open: an event with no extractable logsource is evaluated against every rule.
+
+* Conflict-based, not subset: a rule is skipped only when a dimension (`product`, `service`, or `category`) is set on both the rule and the event and the values differ, so an event tagged only `product: windows` skips `product: linux` rules while still evaluating Windows-category and logsource-less rules. This is distinct from the existing subset `logsource_matches`, which is unchanged.
+* Backed by a product-partitioned rule index, so always-evaluated rules of a conflicting product are never iterated rather than filtered after matching; `service` and `category` remain a residual filter. Evaluation of a product-tagged event against a ruleset split across products drops roughly in proportion to the conflicting fraction.
+* `--logsource-routing` on `engine eval` and `engine daemon` enables pruning; `--logsource-field-map product=...,service=...,category=...` remaps the event field names each dimension is read from; `--event-logsource product=windows,...` sets a static logsource for a single-source pipeline. The same keys live under a `logsource_routing` block in the `daemon` and `eval` config sections, with the usual CLI > env > file precedence. Schema routing and logsource pruning compose: each routed per-schema engine prunes its own candidates.
+* EVTX-only format default: `engine eval -e @file.evtx` supplies `product: windows` when no explicit or static product is configured. Ambiguous wire formats (JSON, syslog, logfmt, CEF, OTLP) never infer a product, so a conflict-based misprune cannot silently drop rules.
+* Two Prometheus counters on the daemon: `rsigma_rules_pruned_by_logsource_total` and `rsigma_events_without_logsource_total` (fail-open visibility).
+* Correlation inherits the pruning, since `CorrelationEngine` evaluates through the same engine; hot-reload carries the extractor across engine swaps.
+
 ### Schema-aware routing (#246)
 
 `--schema-routing` on `engine eval` and `engine daemon` classifies each event and routes it to the pipeline-set bound to its schema, instead of applying one pipeline set to every event. Bindings come from the `routing:` section of `--schema-config` (`bindings`, `default_pipelines`, `on_unknown`); `--on-unknown` overrides the unknown-handling policy (`warn`, `drop`, `passthrough`, `error`).

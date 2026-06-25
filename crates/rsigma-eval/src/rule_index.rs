@@ -25,6 +25,14 @@ pub(crate) struct RuleIndex {
     /// Rule indices that must always be evaluated (no exact-match fields,
     /// or at least one detection branch has no exact-match coverage).
     unindexable: Vec<usize>,
+    /// The `unindexable` set partitioned by the rule's lowercased logsource
+    /// `product` (`None` for product-less rules), preserving each bucket's
+    /// ascending rule-index order. Used by [`candidates_with_logsource`] to
+    /// skip always-evaluated rules whose product conflicts with the event,
+    /// the rules that a value-index lookup can never narrow away.
+    ///
+    /// [`candidates_with_logsource`]: RuleIndex::candidates_with_logsource
+    unindexable_by_product: HashMap<Option<String>, Vec<usize>>,
     /// Total number of rules (for candidate dedup bitvec sizing).
     rule_count: usize,
 }
@@ -35,6 +43,7 @@ impl RuleIndex {
         RuleIndex {
             field_index: HashMap::new(),
             unindexable: Vec::new(),
+            unindexable_by_product: HashMap::new(),
             rule_count: 0,
         }
     }
@@ -79,6 +88,13 @@ impl RuleIndex {
 
         if all_pairs.is_empty() || !every_detection_has_pairs {
             self.unindexable.push(rule_idx);
+            // Mirror into the product-partitioned view for logsource pruning.
+            // Strictly increasing `rule_idx` keeps each bucket ascending.
+            let product_key = rule.logsource.product.as_deref().map(str::to_lowercase);
+            self.unindexable_by_product
+                .entry(product_key)
+                .or_default()
+                .push(rule_idx);
         } else {
             for (field, value) in all_pairs {
                 self.field_index
@@ -134,6 +150,93 @@ impl RuleIndex {
         }
 
         result
+    }
+
+    /// Like [`candidates`], but prunes always-evaluated rules whose logsource
+    /// `product` conflicts with `event_product`.
+    ///
+    /// Value-index hits are returned regardless of product; the caller applies
+    /// the residual `logsource_compatible` filter, which drops value hits of a
+    /// conflicting product and also enforces `service`/`category`. Only the
+    /// `unindexable` set is partitioned here: an event with product `P` adds
+    /// the product-less (`None`) bucket and the `P` bucket, never a `Q != P`
+    /// bucket, so conflicting always-evaluated rules are never iterated.
+    ///
+    /// Falls back to [`candidates`] when `event_product` is `None` (sound:
+    /// every rule is a candidate).
+    ///
+    /// [`candidates`]: RuleIndex::candidates
+    pub(crate) fn candidates_with_logsource(
+        &self,
+        event: &impl Event,
+        event_product: Option<&str>,
+    ) -> Vec<usize> {
+        let product = match event_product {
+            Some(p) => p.to_lowercase(),
+            None => return self.candidates(event),
+        };
+
+        let mut seen = vec![false; self.rule_count];
+        let mut result = Vec::new();
+
+        // Value-index hits, identical to `candidates` (product-agnostic).
+        let mut keys: Vec<String> = Vec::new();
+        for (field_name, value_map) in &self.field_index {
+            if let Some(event_value) = event.get_field(field_name) {
+                keys.clear();
+                collect_lowercase_keys(&event_value, &mut keys);
+                for key in &keys {
+                    if let Some(rule_indices) = value_map.get(key) {
+                        for &idx in rule_indices {
+                            if !seen[idx] {
+                                seen[idx] = true;
+                                result.push(idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Always-evaluated rules whose product cannot conflict: the
+        // product-less bucket and the matching-product bucket.
+        for bucket in [
+            self.unindexable_by_product.get(&None),
+            self.unindexable_by_product.get(&Some(product)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for &idx in bucket {
+                if !seen[idx] {
+                    seen[idx] = true;
+                    result.push(idx);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Number of always-evaluated rules pruned for an event with
+    /// `event_product`: the rules in conflicting-product buckets that
+    /// [`candidates_with_logsource`] never iterates. `O(1)` (bucket-length
+    /// arithmetic); returns `0` when `event_product` is `None`.
+    ///
+    /// [`candidates_with_logsource`]: RuleIndex::candidates_with_logsource
+    pub(crate) fn conflicting_unindexable_count(&self, event_product: Option<&str>) -> usize {
+        let product = match event_product {
+            Some(p) => p.to_lowercase(),
+            None => return 0,
+        };
+        let none_len = self.unindexable_by_product.get(&None).map_or(0, Vec::len);
+        let match_len = self
+            .unindexable_by_product
+            .get(&Some(product))
+            .map_or(0, Vec::len);
+        // Every unindexable rule lives in exactly one product bucket, so the
+        // conflicting count is the total minus the two kept buckets.
+        self.unindexable.len() - none_len - match_len
     }
 
     /// Number of rules tracked by the index.
@@ -692,5 +795,207 @@ detection:
         assert_eq!(index.rule_count(), 2);
         let ev = json!({"EventType": "b"});
         assert_eq!(index.candidates(&JsonEvent::borrow(&ev)), vec![1]);
+    }
+
+    #[test]
+    fn test_unindexable_partitioned_by_product() {
+        let (_, index) = build_index(
+            r#"
+title: Win
+logsource:
+    product: Windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Lin
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Generic
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+"#,
+        );
+
+        assert_eq!(index.unindexable_count(), 3);
+        // Product keys are lowercased, so the mixed-case "Windows" maps to
+        // the "windows" bucket.
+        assert_eq!(
+            index
+                .unindexable_by_product
+                .get(&Some("windows".to_string()))
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            index
+                .unindexable_by_product
+                .get(&Some("linux".to_string()))
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            index.unindexable_by_product.get(&None).map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_candidates_with_logsource_prunes_and_falls_back() {
+        let (_, index) = build_index(
+            r#"
+title: Win
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Lin
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Generic
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+"#,
+        );
+        // Rule order: 0 = Win, 1 = Lin, 2 = Generic. All unindexable, so the
+        // value index is empty and only the product buckets select candidates.
+        let ev = json!({"CommandLine": "whoami"});
+        let event = JsonEvent::borrow(&ev);
+
+        // product windows: the None bucket plus the windows bucket.
+        let mut c = index.candidates_with_logsource(&event, Some("windows"));
+        c.sort_unstable();
+        assert_eq!(c, vec![0, 2]);
+
+        // product absent from every bucket: only the product-less None bucket.
+        let mut c = index.candidates_with_logsource(&event, Some("macos"));
+        c.sort_unstable();
+        assert_eq!(c, vec![2]);
+
+        // no event product: fall back to the full candidate set.
+        let mut c = index.candidates_with_logsource(&event, None);
+        c.sort_unstable();
+        assert_eq!(c, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_candidates_with_logsource_equivalent_to_postfilter() {
+        use rsigma_parser::LogSource;
+
+        let yaml = r#"
+title: Win Exact
+logsource:
+    product: windows
+detection:
+    selection:
+        EventID: '1'
+    condition: selection
+---
+title: Lin Exact
+logsource:
+    product: linux
+detection:
+    selection:
+        EventID: '1'
+    condition: selection
+---
+title: Win Contains
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Lin Contains
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Generic Contains
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+"#;
+        let (engine, index) = build_index(yaml);
+        let rules = engine.rules();
+
+        // Local mirror of the engine's conflict-based predicate.
+        fn compatible(rule: &LogSource, event: &LogSource) -> bool {
+            fn conflicts(r: &Option<String>, e: &Option<String>) -> bool {
+                matches!((r, e), (Some(r), Some(e)) if !r.eq_ignore_ascii_case(e))
+            }
+            !(conflicts(&rule.product, &event.product)
+                || conflicts(&rule.service, &event.service)
+                || conflicts(&rule.category, &event.category))
+        }
+
+        let cases: [(serde_json::Value, Option<&str>, Option<&str>); 5] = [
+            (
+                json!({"EventID": "1", "CommandLine": "whoami"}),
+                Some("windows"),
+                None,
+            ),
+            (
+                json!({"EventID": "1", "CommandLine": "whoami"}),
+                Some("linux"),
+                None,
+            ),
+            (json!({"CommandLine": "whoami"}), Some("macos"), None),
+            (
+                json!({"EventID": "1", "CommandLine": "whoami"}),
+                Some("windows"),
+                Some("process_creation"),
+            ),
+            (json!({"CommandLine": "whoami"}), None, None),
+        ];
+
+        for (ev, product, category) in cases {
+            let event = JsonEvent::borrow(&ev);
+            let event_ls = LogSource {
+                product: product.map(String::from),
+                category: category.map(String::from),
+                ..Default::default()
+            };
+
+            // The Phase 1 reference: every candidate, kept if compatible.
+            let mut reference: Vec<usize> = index
+                .candidates(&event)
+                .into_iter()
+                .filter(|&idx| compatible(&rules[idx].logsource, &event_ls))
+                .collect();
+            // The Phase 2 index path, with the same residual filter applied.
+            let mut got: Vec<usize> = index
+                .candidates_with_logsource(&event, product)
+                .into_iter()
+                .filter(|&idx| compatible(&rules[idx].logsource, &event_ls))
+                .collect();
+            reference.sort_unstable();
+            got.sort_unstable();
+            assert_eq!(reference, got, "diverge for {ev} product={product:?}");
+        }
     }
 }

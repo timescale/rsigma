@@ -150,6 +150,278 @@ level: medium
     );
 }
 
+/// Build a `LogSource` from optional product/service/category for the
+/// conflict-predicate and extractor tests.
+fn ls(product: Option<&str>, service: Option<&str>, category: Option<&str>) -> LogSource {
+    LogSource {
+        product: product.map(String::from),
+        service: service.map(String::from),
+        category: category.map(String::from),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_logsource_compatible_matrix() {
+    // Both set and equal: keep.
+    assert!(logsource_compatible(
+        &ls(Some("windows"), None, None),
+        &ls(Some("windows"), None, None)
+    ));
+    // Both set and differ: skip.
+    assert!(!logsource_compatible(
+        &ls(Some("linux"), None, None),
+        &ls(Some("windows"), None, None)
+    ));
+    // Rule set, event unset on category: keep (event never asserted it).
+    assert!(logsource_compatible(
+        &ls(Some("windows"), None, Some("process_creation")),
+        &ls(Some("windows"), None, None)
+    ));
+    // Rule unset, event set: keep.
+    assert!(logsource_compatible(
+        &ls(None, None, None),
+        &ls(Some("windows"), None, None)
+    ));
+    // Both unset: keep.
+    assert!(logsource_compatible(
+        &ls(None, None, None),
+        &ls(None, None, None)
+    ));
+    // Case-insensitive equality: keep.
+    assert!(logsource_compatible(
+        &ls(Some("Windows"), None, None),
+        &ls(Some("windows"), None, None)
+    ));
+    // Service conflict: skip.
+    assert!(!logsource_compatible(
+        &ls(None, Some("sysmon"), None),
+        &ls(None, Some("security"), None)
+    ));
+    // Category conflict: skip.
+    assert!(!logsource_compatible(
+        &ls(None, None, Some("process_creation")),
+        &ls(None, None, Some("network_connection"))
+    ));
+}
+
+#[test]
+fn test_logsource_extractor_reads_fields() {
+    let extractor = crate::logsource::LogSourceExtractor::new();
+    let ev = json!({
+        "product": "windows",
+        "service": "sysmon",
+        "category": "process_creation",
+        "CommandLine": "whoami"
+    });
+    let event = JsonEvent::borrow(&ev);
+    let extracted = extractor.extract(&event);
+    assert_eq!(extracted.product.as_deref(), Some("windows"));
+    assert_eq!(extracted.service.as_deref(), Some("sysmon"));
+    assert_eq!(extracted.category.as_deref(), Some("process_creation"));
+}
+
+#[test]
+fn test_logsource_extractor_static_default() {
+    let extractor =
+        crate::logsource::LogSourceExtractor::new().with_defaults(ls(Some("windows"), None, None));
+    let ev = json!({"CommandLine": "whoami"});
+    let event = JsonEvent::borrow(&ev);
+    let extracted = extractor.extract(&event);
+    assert_eq!(extracted.product.as_deref(), Some("windows"));
+    assert_eq!(extracted.category, None);
+}
+
+#[test]
+fn test_logsource_extractor_field_overrides_default() {
+    let extractor = crate::logsource::LogSourceExtractor::new().with_defaults(ls(
+        Some("linux"),
+        None,
+        Some("process_creation"),
+    ));
+    let ev = json!({"product": "windows"});
+    let event = JsonEvent::borrow(&ev);
+    let extracted = extractor.extract(&event);
+    // Explicit field wins for product; default fills the absent category.
+    assert_eq!(extracted.product.as_deref(), Some("windows"));
+    assert_eq!(extracted.category.as_deref(), Some("process_creation"));
+    assert_eq!(extracted.service, None);
+}
+
+#[test]
+fn test_logsource_extractor_fail_open() {
+    let extractor = crate::logsource::LogSourceExtractor::new();
+    // Missing fields and a blank product value all stay unset.
+    let ev = json!({"CommandLine": "whoami", "product": "   "});
+    let event = JsonEvent::borrow(&ev);
+    let extracted = extractor.extract(&event);
+    assert_eq!(extracted.product, None);
+    assert_eq!(extracted.service, None);
+    assert_eq!(extracted.category, None);
+}
+
+#[test]
+fn test_logsource_extractor_custom_field_names() {
+    let extractor =
+        crate::logsource::LogSourceExtractor::new().with_field_names("os", "svc", "cat");
+    let ev = json!({"os": "windows", "svc": "sysmon", "cat": "process_creation"});
+    let event = JsonEvent::borrow(&ev);
+    let extracted = extractor.extract(&event);
+    assert_eq!(extracted.product.as_deref(), Some("windows"));
+    assert_eq!(extracted.service.as_deref(), Some("sysmon"));
+    assert_eq!(extracted.category.as_deref(), Some("process_creation"));
+}
+
+#[test]
+fn test_logsource_pruning_skips_conflicting_product() {
+    let yaml = r#"
+title: Linux Rule
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+title: Windows Process Rule
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+title: Generic Rule
+logsource:
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+    let mut engine = make_engine_with_rule(yaml);
+
+    let ev = json!({"CommandLine": "whoami", "product": "windows"});
+    let event = JsonEvent::borrow(&ev);
+
+    // Without pruning, all three rules match on content.
+    assert_eq!(engine.evaluate(&event).len(), 3);
+
+    // With pruning, the conflicting linux rule is dropped; the windows rule
+    // (event has no category, so no conflict) and the product-less generic
+    // rule still fire.
+    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+    let titles: Vec<String> = engine
+        .evaluate(&event)
+        .into_iter()
+        .map(|m| m.header.rule_title.clone())
+        .collect();
+    assert_eq!(titles.len(), 2, "got: {titles:?}");
+    assert!(titles.contains(&"Windows Process Rule".to_string()));
+    assert!(titles.contains(&"Generic Rule".to_string()));
+    assert!(!titles.contains(&"Linux Rule".to_string()));
+
+    // The bloom path prunes identically.
+    engine.set_bloom_prefilter(true);
+    assert_eq!(engine.evaluate(&event).len(), 2);
+}
+
+#[test]
+fn test_logsource_pruning_fails_open_without_event_logsource() {
+    let yaml = r#"
+title: Linux Rule
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+title: Windows Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+    let mut engine = make_engine_with_rule(yaml);
+    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+
+    // Event carries no logsource fields: pruning fails open, both fire.
+    let ev = json!({"CommandLine": "whoami"});
+    let event = JsonEvent::borrow(&ev);
+    assert_eq!(engine.evaluate(&event).len(), 2);
+}
+
+#[test]
+fn test_logsource_pruning_applies_to_evaluate_batch() {
+    let yaml = r#"
+title: Linux Rule
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+---
+title: Windows Rule
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+    let mut engine = make_engine_with_rule(yaml);
+    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+
+    let ev1 = json!({"CommandLine": "whoami", "product": "windows"});
+    let ev2 = json!({"CommandLine": "whoami", "product": "windows"});
+    let e1 = JsonEvent::borrow(&ev1);
+    let e2 = JsonEvent::borrow(&ev2);
+    let results = engine.evaluate_batch(&[&e1, &e2]);
+    assert_eq!(results.len(), 2);
+    for per_event in &results {
+        assert_eq!(per_event.len(), 1);
+        assert_eq!(per_event[0].header.rule_title, "Windows Rule");
+    }
+}
+
+#[test]
+fn test_logsource_pruning_inherited_by_correlation_engine() {
+    let yaml = r#"
+title: Linux Only
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+level: medium
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = crate::CorrelationEngine::new(crate::CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+
+    // The linux rule conflicts with a windows event, so correlation's inner
+    // detection evaluation prunes it: no detection fires.
+    let ev = json!({"CommandLine": "whoami", "product": "windows"});
+    let event = JsonEvent::borrow(&ev);
+    let result = engine.process_event(&event);
+    assert_eq!(result.iter().filter(|r| r.is_detection()).count(), 0);
+    assert_eq!(engine.logsource_pruned_total(), 1);
+}
+
 #[test]
 fn test_selector_1_of() {
     let engine = make_engine_with_rule(

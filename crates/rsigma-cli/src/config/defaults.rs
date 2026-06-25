@@ -7,8 +7,8 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, OutputPartial, RsigmaConfigPartial, SchemaPartial,
-    ScorecardPartial, StatePartial, TailPartial, TapPartial,
+    GlobalPartial, InputPartial, LogsourcePartial, OutputPartial, RsigmaConfigPartial,
+    SchemaPartial, ScorecardPartial, StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -50,6 +50,11 @@ pub(crate) const TAIL_MAX_SESSIONS: usize = 2;
 pub(crate) const SCHEMA_OBSERVE: bool = false;
 pub(crate) const SCHEMA_ROUTING: bool = false;
 pub(crate) const SCHEMA_ON_UNKNOWN: &str = "warn";
+/// Logsource-aware evaluation defaults (`daemon.logsource_routing.*`,
+/// `eval.logsource_routing.*`). Opt-in; off by default, as is the reserved
+/// strict subset-routing mode.
+pub(crate) const LOGSOURCE_ROUTING: bool = false;
+pub(crate) const LOGSOURCE_STRICT: bool = false;
 pub(crate) const STDOUT_SINK: &str = "stdout";
 /// Async delivery-layer tuning shared by every sink. `queue_depth` is not a
 /// separate key; it follows `buffer_size`.
@@ -170,6 +175,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 config: None,
                 on_unknown: Some(SCHEMA_ON_UNKNOWN.to_string()),
             }),
+            logsource_routing: Some(LogsourcePartial {
+                enabled: Some(LOGSOURCE_ROUTING),
+                field_map: None,
+                event_logsource: None,
+                strict: Some(LOGSOURCE_STRICT),
+            }),
         }),
         eval: Some(EvalPartial {
             rules: None,
@@ -183,6 +194,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 routing: Some(SCHEMA_ROUTING),
                 config: None,
                 on_unknown: Some(SCHEMA_ON_UNKNOWN.to_string()),
+            }),
+            logsource_routing: Some(LogsourcePartial {
+                enabled: Some(LOGSOURCE_ROUTING),
+                field_map: None,
+                event_logsource: None,
+                strict: Some(LOGSOURCE_STRICT),
             }),
         }),
         backtest: Some(BacktestPartial {

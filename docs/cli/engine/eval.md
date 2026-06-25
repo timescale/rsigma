@@ -114,6 +114,18 @@ Recognize each event's schema and evaluate it against the pipeline-set bound to 
 
 These flags may also be supplied via the `eval.schema` block in a [config file](../../reference/configuration.md) (`routing`, `config`, `on_unknown`); a flag always wins over the file.
 
+### Logsource-aware evaluation
+
+Skip rules whose `product`/`service`/`category` conflicts with the event's declared logsource. Conflict-based and fail-open. See the [Logsource-Aware Evaluation](../../guide/logsource-routing.md) guide.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--logsource-routing` | off | Enable conflict-based logsource pruning. |
+| `--logsource-field-map <MAP>` | `product=product,service=service,category=category` | Event field names each dimension is read from, as `product=...,service=...,category=...`. |
+| `--event-logsource <LOGSOURCE>` | unset | Static event logsource applied when the field is absent, as `product=windows,...`. An `-e @file.evtx` input implies `product: windows` when unset. |
+
+These flags may also be supplied via the `eval.logsource_routing` block in a [config file](../../reference/configuration.md) (`enabled`, `field_map`, `event_logsource`); a flag always wins over the file.
+
 ### CI gating
 
 | Flag | Description |

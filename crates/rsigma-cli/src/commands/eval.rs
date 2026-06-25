@@ -8,8 +8,8 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, FieldObserver, JsonEvent,
-    MatchDetailLevel, OnUnknown, Pipeline, ResultBody, RouteOutcome, RoutingPlan, RuleFieldSet,
-    SchemaClassifier, SchemaRouter, load_schema_config,
+    LogSourceExtractor, MatchDetailLevel, OnUnknown, Pipeline, ResultBody, RouteOutcome,
+    RoutingPlan, RuleFieldSet, SchemaClassifier, SchemaRouter, load_schema_config,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -224,6 +224,25 @@ pub(crate) struct EvalArgs {
     /// (or `warn`). Used with `--schema-routing`.
     #[arg(long = "on-unknown", value_name = "POLICY")]
     pub on_unknown: Option<String>,
+
+    /// Enable conflict-based logsource pruning: skip rules whose
+    /// product/service/category cannot apply to the event's logsource. Opt-in
+    /// and fail-open; an event with no logsource is evaluated against every
+    /// rule.
+    #[arg(long = "logsource-routing")]
+    pub logsource_routing: bool,
+
+    /// Event field names each logsource dimension is read from, as
+    /// `product=...,service=...,category=...` (defaults to the literal field
+    /// names). Used with `--logsource-routing`.
+    #[arg(long = "logsource-field-map", value_name = "MAP")]
+    pub logsource_field_map: Option<String>,
+
+    /// Static event logsource applied when the field is absent, as
+    /// `product=windows,service=...,category=...`, for a single-source
+    /// pipeline. Used with `--logsource-routing`.
+    #[arg(long = "event-logsource", value_name = "LOGSOURCE")]
+    pub event_logsource: Option<String>,
 }
 
 /// Resolved event source from the `--event` flag.
@@ -339,6 +358,33 @@ fn overlay_eval_config(
                 args.on_unknown = Some(v);
             }
         }
+        if let Some(ls) = eval.logsource_routing {
+            if !explicit("logsource_routing")
+                && let Some(v) = ls.enabled
+            {
+                args.logsource_routing = v;
+            }
+            if !explicit("logsource_field_map")
+                && let Some(fm) = ls.field_map
+                && let Some(s) = crate::logsource_opts::dims_to_kv(
+                    fm.product.as_deref(),
+                    fm.service.as_deref(),
+                    fm.category.as_deref(),
+                )
+            {
+                args.logsource_field_map = Some(s);
+            }
+            if !explicit("event_logsource")
+                && let Some(el) = ls.event_logsource
+                && let Some(s) = crate::logsource_opts::dims_to_kv(
+                    el.product.as_deref(),
+                    el.service.as_deref(),
+                    el.category.as_deref(),
+                )
+            {
+                args.event_logsource = Some(s);
+            }
+        }
     }
 }
 
@@ -377,6 +423,9 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         schema_routing,
         schema_config,
         on_unknown,
+        logsource_routing,
+        logsource_field_map,
+        event_logsource,
     } = args;
 
     let rules_path = rules_opt.unwrap_or_else(|| {
@@ -405,6 +454,31 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let event_filter = crate::build_event_filter(jq, jsonpath);
 
     let event_source = resolve_event_source(event_json);
+
+    // EVTX-only format-derived default: a `.evtx` input implies `product:
+    // windows` when no explicit or static product is configured.
+    let evtx_input = {
+        #[cfg(feature = "evtx")]
+        {
+            matches!(event_source, EventSource::EvtxFile(_))
+        }
+        #[cfg(not(feature = "evtx"))]
+        {
+            false
+        }
+    };
+    let logsource_extractor = match crate::logsource_opts::build_logsource_extractor(
+        logsource_routing,
+        logsource_field_map.as_deref(),
+        event_logsource.as_deref(),
+        evtx_input,
+    ) {
+        Ok(extractor) => extractor,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
 
     let corr_config = crate::build_correlation_config(
         suppress,
@@ -448,6 +522,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             corr_config,
             include_event,
             match_detail,
+            logsource_extractor,
         );
         let had_matches = cmd_eval_routed(
             event_source,
@@ -484,6 +559,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             bloom_max_bytes,
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac,
+            logsource_extractor,
             observe_ref,
         )
     } else {
@@ -503,6 +579,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             bloom_max_bytes,
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac,
+            logsource_extractor,
             observe_ref,
         )
     };
@@ -541,6 +618,7 @@ fn build_schema_router(
     corr_config: CorrelationConfig,
     include_event: bool,
     match_detail: MatchDetailLevel,
+    logsource_extractor: Option<LogSourceExtractor>,
 ) -> SchemaRouter {
     let (signatures, routing) = match schema_config {
         Some(path) => match load_schema_config(path) {
@@ -588,6 +666,7 @@ fn build_schema_router(
         corr_config,
         include_event,
         match_detail,
+        logsource_extractor,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -742,6 +821,7 @@ fn cmd_eval_with_correlations(
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
+    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
@@ -753,6 +833,7 @@ fn cmd_eval_with_correlations(
     engine.set_bloom_prefilter(bloom_prefilter);
     #[cfg(feature = "daachorse-index")]
     engine.set_cross_rule_ac(cross_rule_ac);
+    engine.set_logsource_extractor(logsource_extractor);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -924,6 +1005,7 @@ fn cmd_eval_detection_only(
     bloom_prefilter: bool,
     bloom_max_bytes: Option<usize>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
+    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = Engine::new();
@@ -935,6 +1017,7 @@ fn cmd_eval_detection_only(
     engine.set_bloom_prefilter(bloom_prefilter);
     #[cfg(feature = "daachorse-index")]
     engine.set_cross_rule_ac(cross_rule_ac);
+    engine.set_logsource_extractor(logsource_extractor);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }

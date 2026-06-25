@@ -184,6 +184,24 @@ daemon:
     # config: ./schema.yml
     on_unknown: warn
 
+  # Logsource-aware evaluation. Opt-in, conflict-based pruning: skip a rule
+  # only when its product/service/category is set on both the rule and the
+  # event and they differ, so a `product: windows` event skips `product: linux`
+  # rules without dropping Windows-category or logsource-less rules. `field_map`
+  # remaps the event field names each dimension is read from (defaults
+  # product/service/category). `event_logsource` is a static logsource applied
+  # when the field is absent, for a single-source pipeline. Fail-open: an event
+  # with no extractable logsource is evaluated against every rule.
+  logsource_routing:
+    enabled: false
+    # field_map:
+    #   product: product
+    #   service: service
+    #   category: category
+    # event_logsource:
+    #   product: windows
+    strict: false
+
   # NATS secrets (creds/token/password/nkey) are NOT configurable here by
   # design; supply them via environment variables. Ignored unless daemon-nats.
   # nats:
@@ -204,6 +222,14 @@ eval:
     routing: false
     # config: ./schema.yml
     on_unknown: warn
+  # Logsource-aware evaluation for `engine eval` (see daemon.logsource_routing).
+  logsource_routing:
+    enabled: false
+    # field_map:
+    #   product: product
+    # event_logsource:
+    #   product: windows
+    strict: false
 
 backtest:
   # Default rules path for `rsigma rule backtest`.
