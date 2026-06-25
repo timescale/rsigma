@@ -164,6 +164,78 @@ fn rejects_unknown_field_map_key() {
         .stderr(predicate::str::contains("unknown logsource key 'platform'"));
 }
 
+/// EVTX is a Windows-only format, so `-e @file.evtx` implies `product: windows`
+/// when no explicit or static product is configured.
+#[cfg(feature = "evtx")]
+const EVTX_RULES: &str = r#"
+title: EVTX Windows Logon
+id: r-evtx-windows
+logsource:
+    product: windows
+detection:
+    selection:
+        Event.System.EventID: 4624
+    condition: selection
+level: medium
+---
+title: EVTX Linux Logon
+id: r-evtx-linux
+logsource:
+    product: linux
+detection:
+    selection:
+        Event.System.EventID: 4624
+    condition: selection
+level: medium
+"#;
+
+#[cfg(feature = "evtx")]
+#[test]
+fn evtx_input_defaults_product_to_windows() {
+    let rule = temp_file(".yml", EVTX_RULES);
+    let evtx = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rsigma-runtime/tests/fixtures/security.evtx"
+    );
+    let evtx_arg = format!("@{evtx}");
+
+    // Control: without routing both rules match the 4624 events on content.
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "-e",
+            &evtx_arg,
+            "--output-format",
+            "ndjson",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("r-evtx-linux"))
+        .stdout(predicate::str::contains("r-evtx-windows"));
+
+    // With routing the EVTX default tags events product: windows, so the linux
+    // rule is pruned while the windows rule still fires.
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--logsource-routing",
+            "-e",
+            &evtx_arg,
+            "--output-format",
+            "ndjson",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("r-evtx-windows"))
+        .stdout(predicate::str::contains("r-evtx-linux").not());
+}
+
 #[test]
 fn config_file_enables_routing() {
     let rule = temp_file(".yml", RULES);
