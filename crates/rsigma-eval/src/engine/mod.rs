@@ -606,6 +606,23 @@ impl Engine {
         None
     }
 
+    /// Pick the candidate rule set for `event`. When a logsource extractor
+    /// produced an event logsource, the product-partitioned index drops
+    /// always-evaluated rules of a conflicting product; otherwise the full
+    /// candidate set is returned (zero behaviour change when pruning is off).
+    fn logsource_candidates<E: Event>(
+        &self,
+        event: &E,
+        event_logsource: Option<&LogSource>,
+    ) -> Vec<usize> {
+        match event_logsource {
+            Some(ls) => self
+                .rule_index
+                .candidates_with_logsource(event, ls.product.as_deref()),
+            None => self.rule_index.candidates(event),
+        }
+    }
+
     fn evaluate_no_bloom_path<E: Event>(&self, event: &E) -> Vec<EvaluationResult> {
         // Pass the zero-sized `NoBloom` lookup so this monomorphizes to the
         // same straight-line code as the pre-bloom engine while still
@@ -617,8 +634,9 @@ impl Engine {
             .logsource_extractor
             .as_ref()
             .map(|ex| ex.extract(event));
+        let candidates = self.logsource_candidates(event, event_logsource.as_ref());
         let mut results = Vec::new();
-        for idx in self.rule_index.candidates(event) {
+        for idx in candidates {
             if let Some(ref mask) = keep
                 && !mask[idx]
             {
@@ -654,8 +672,9 @@ impl Engine {
             .logsource_extractor
             .as_ref()
             .map(|ex| ex.extract(event));
+        let candidates = self.logsource_candidates(event, event_logsource.as_ref());
         let mut results = Vec::new();
-        for idx in self.rule_index.candidates(event) {
+        for idx in candidates {
             if let Some(ref mask) = keep
                 && !mask[idx]
             {
