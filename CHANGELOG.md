@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Logsource-aware evaluation
+### Logsource-aware evaluation (#249)
 
 Opt-in, conflict-based logsource pruning in the evaluation engine (`rsigma-eval`). `Engine::set_logsource_extractor` installs a `LogSourceExtractor` that derives each event's logsource from configurable fields (defaulting to `product`/`service`/`category`) plus optional static defaults, and the engine then skips any candidate rule whose logsource conflicts with the event's before matching. Disabled by default with the hot path unchanged, and fail-open: an event with no extractable logsource is evaluated against every rule.
 
