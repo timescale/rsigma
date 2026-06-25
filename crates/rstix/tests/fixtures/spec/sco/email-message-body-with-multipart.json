@@ -1,0 +1,7 @@
+{
+  "type": "email-message",
+  "spec_version": "2.1",
+  "id": "email-message--bad-multipart",
+  "is_multipart": true,
+  "body": "should not be here"
+}

@@ -1,0 +1,10 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--39643577-13b7-5f21-9584-df7e7c33f357",
+  "hashes": {
+    "SHA-256": "ceafbfd424be2ca4a5f0402cae090dda2fb0526cf521b60b60077c0f622b285a"
+  },
+  "parent_directory_ref": "directory--0a58d0c1-59e6-5afd-8252-dcd3f13e5622",
+  "name": "qwerty.dll"
+}

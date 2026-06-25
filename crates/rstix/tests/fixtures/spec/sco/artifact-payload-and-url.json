@@ -1,0 +1,7 @@
+{
+  "type": "artifact",
+  "spec_version": "2.1",
+  "id": "artifact--a785c567-cc53-52a1-abeb-026bb7ddf8ba",
+  "payload_bin": "abc",
+  "url": "https://example.com/a"
+}

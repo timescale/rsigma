@@ -1,0 +1,7 @@
+{
+  "type": "domain-name",
+  "spec_version": "2.1",
+  "id": "domain-name--bedb4899-d24b-5401-bc86-8f6b4cc18ec7",
+  "value": "example.com",
+  "resolves_to_refs": ["url--47c3cf9a-5027-5bf0-997a-017c7edc7c55"]
+}

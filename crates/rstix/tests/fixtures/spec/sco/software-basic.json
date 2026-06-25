@@ -1,0 +1,9 @@
+{
+  "type": "software",
+  "spec_version": "2.1",
+  "id": "software--710b0b41-d4d0-5d6c-a400-fc9254554ffc",
+  "name": "Word",
+  "cpe": "cpe:2.3:a:microsoft:word:2000:*:*:*:*:*:*:*",
+  "version": "2002",
+  "vendor": "Microsoft"
+}

@@ -1,0 +1,20 @@
+{
+  "type": "user-account",
+  "spec_version": "2.1",
+  "id": "user-account--f94d689e-707d-58c3-b803-c720bb6ed096",
+  "user_id": "1001",
+  "account_login": "jdoe",
+  "account_type": "unix",
+  "display_name": "John Doe",
+  "is_service_account": false,
+  "is_privileged": false,
+  "can_escalate_privs": true,
+  "extensions": {
+    "unix-account-ext": {
+      "gid": 1001,
+      "groups": ["wheel"],
+      "home_dir": "/home/jdoe",
+      "shell": "/bin/bash"
+    }
+  }
+}

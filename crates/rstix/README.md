@@ -6,7 +6,7 @@
 Phase 1 (Core Foundation) is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
 
-Phase 2 (Data Model + Serialization) is **in progress**. The `model::common`, `model::meta`, and `model::sro` modules are in place; typed SCO/SDO objects, `StixObject` dispatch, and `Bundle` parsing follow in later work.
+Phase 2 (Data Model + Serialization) is **in progress**. The `model::common`, `model::meta`, `model::sro`, and `model::sco` modules are in place; typed SDO objects, `StixObject` dispatch, and `Bundle` parsing follow in later work.
 
 This library is part of [rsigma].
 
@@ -34,7 +34,7 @@ This library is part of [rsigma].
 ### Module surface
 
 - `core` (always): `StixId`, typed IDs (42 wrappers), `StixObjectKind` + SDO/SCO/SRO/Meta discriminants, `StixTimestamp`, `TaxiiTimestamp`, `Confidence` and built-in scales, `SpecVersion`, `LanguageTag`, `QueryableStixObject`, `QueryValue`.
-- `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, and related types; `model::meta` — `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`, and TLP UUID constants; `model::sro` — `Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`, `RelSourceRef`, `RelTargetRef`, `SightingOfRef`, and `Sighting::COUNT_MAX`.
+- `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, and related types; `model::meta` — `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`, and TLP UUID constants; `model::sro` — `Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`, `RelSourceRef`, `RelTargetRef`, `SightingOfRef`, and `Sighting::COUNT_MAX`; `model::sco` — all 18 STIX cyber-observable types, `ScoObject`, typed ref unions (`ref_types`), and 12 predefined SCO extensions under `model::sco::extensions`.
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
 - `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId`, timestamps, and `Confidence`; typed-ID serde is generated in the `define_typed_id!` macro.
@@ -45,9 +45,9 @@ This library is part of [rsigma].
 
 ## Current Phase Status
 
-- **Phase:** 2 in progress (`model::common`, `model::meta`, and `model::sro` landed)
-- **Implemented:** `model::common`, leaf-type serde, `model::meta` (marking-definition, extension-definition, language-content), and `model::sro` (relationship, sighting) with fixture-backed tests.
-- **Deferred:** SCO/SDO typed objects, `StixObject` dispatch, `Bundle` parsing, validation pipeline, graph/marking/store/TAXII runtime behaviors.
+- **Phase:** 2 in progress (`model::common`, `model::meta`, `model::sro`, and `model::sco` landed)
+- **Implemented:** `model::common`, leaf-type serde, `model::meta` (marking-definition, extension-definition, language-content), `model::sro` (relationship, sighting), and `model::sco` (18 cyber-observable types + 12 extensions) with fixture-backed tests.
+- **Deferred:** SDO typed objects, `StixObject` dispatch, `Bundle` parsing, validation pipeline, graph/marking/store/TAXII runtime behaviors.
 
 ## Usage
 
@@ -169,6 +169,11 @@ Phase 2 validates STIX invariants at deserialize time (and via `new` / `validate
 | `Sighting` time window | `last_seen >= first_seen` when both set. | STIX §5.2.1 ordering rule. |
 | `Sighting.where_sighted_refs` | Each entry must be `identity` or `location` (`WhereSightedRef`). | STIX §5.2.1 reference targets. |
 | `Relationship` / `Sighting` ref targets | `source_ref`, `target_ref`, `sighting_of_ref` accept any valid `StixId` at deserialize. | SDO/SCO-only / SDO-only validation deferred until `StixObject` dispatch. |
+| SCO `type` field | Each SCO struct rejects wrong/missing `"type"` at deserialize (`UnexpectedObjectType`). | Same single-pass validation as SRO/meta objects. |
+| SCO invariants (artifact, file, email-message, network-traffic, process, user-account, …) | Enforced in `validate()` called from custom `Deserialize`; see `ModelError` variants. | Spec MUST rules (payload XOR url, hashes or name, multipart body rules, protocols + endpoint refs, at-least-one-property types). |
+| SCO typed ref unions | `DomainNameResolvesToRef`, `DirectoryContainsRef`, `NetworkTrafficEndpointRef`, `EmailMimeBodyRawRef` reject wrong target types at deserialize. | STIX §6 union ref targets. |
+| SCO extensions | Parent types (`File`, `NetworkTraffic`, `Process`, `UserAccount`) call `validate_in_map` for known extension keys during `validate()`. | Predefined extension invariants (e.g. `archive-ext` requires `contains_refs`). |
+| `ScoObject` / `QueryValue` | `#[non_exhaustive]`; `created()` / `modified()` always `None` for SCO arms. | STIX §3.2 — SCOs have no created/modified. |
 | `ExtensionMap` | Public `insert()` mirrors `BTreeMap` semantics. | Programmatic extension assembly without reaching into the inner map. |
 | Round-trip helpers (`tests/support/roundtrip.rs`) | `roundtrip_strict`: re-serialized JSON must equal the fixture (complete types — meta objects, SRO objects, `ExternalReference`, `GranularMarking`, `ExtensionMap`). `roundtrip`: subset compare — every emitted field must match the fixture, extra fixture keys allowed, dropped fields not caught on object fixtures; use for `SdoSroCommonProps` / `ScoCommonProps` fixtures that carry unmodeled SDO keys until concrete SDO types land. | Strict mode catches dropped fields today; subset mode matches the Phase 2 common-prop testing contract from PR #201. |
 
