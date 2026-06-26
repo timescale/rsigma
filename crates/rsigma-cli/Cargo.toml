@@ -67,7 +67,7 @@ axum = { version = "0.8", features = ["json"], optional = true }
 async-trait = { version = "0.1", optional = true }
 prometheus = { version = "0.14", default-features = false, optional = true }
 notify = { version = "8.2", optional = true }
-rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 tower-http = { version = "0.6", features = ["trace"], optional = true }
 # Live event-tap server-side redaction (deterministic salted hashing).
 sha2 = { version = "0.11", optional = true }
@@ -99,7 +99,7 @@ bytes = "1"
 futures = "0.3"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["nats"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "logs", "with-serde"] }
 prost = "0.14"

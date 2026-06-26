@@ -43,7 +43,7 @@ jaq-std = "3.0"
 jsonpath-rust = "1"
 cel = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 notify = "8.2"
 
 # optional
