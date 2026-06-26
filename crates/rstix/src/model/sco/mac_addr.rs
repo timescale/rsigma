@@ -4,22 +4,49 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX MAC address cyber-observable.
+///
+/// Per STIX §6.10, the required `value` holds the media access control address,
+/// typically as colon- or hyphen-separated hexadecimal octets.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::MacAddr;
+///
+/// let json = r#"{
+///   "type": "mac-addr",
+///   "spec_version": "2.1",
+///   "id": "mac-addr--757b1725-9903-54f5-a855-1240691d7659",
+///   "value": "d2:fb:49:24:37:18"
+/// }"#;
+/// let mac: MacAddr = serde_json::from_str(json)?;
+/// assert_eq!(mac.value, "d2:fb:49:24:37:18");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MacAddr {
+    /// STIX object type (`mac-addr`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_mac_addr_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// MAC address string (for example `d2:fb:49:24:37:18`).
     pub value: String,
 }
 
 impl MacAddr {
+    /// STIX type name for MAC addresses.
     pub const TYPE_NAME: &'static str = "mac-addr";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::MacAddrValueEmpty);

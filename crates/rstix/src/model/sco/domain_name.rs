@@ -5,17 +5,46 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 use crate::model::sco::ref_types::DomainNameResolvesToRef;
 
+/// A STIX domain name cyber-observable.
+///
+/// Per STIX §6.4, the required `value` holds the domain name string. Optional
+/// `resolves_to_refs` links to IPv4, IPv6, or domain-name objects the name
+/// resolved to.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::DomainName;
+///
+/// let json = r#"{
+///   "type": "domain-name",
+///   "spec_version": "2.1",
+///   "id": "domain-name--bedb4899-d24b-5401-bc86-8f6b4cc18ec7",
+///   "value": "example.com",
+///   "resolves_to_refs": ["ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4"]
+/// }"#;
+/// let domain: DomainName = serde_json::from_str(json)?;
+/// assert_eq!(domain.value, "example.com");
+/// assert_eq!(domain.resolves_to_refs.len(), 1);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DomainName {
+    /// STIX object type (`domain-name`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_domain_name_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Domain name (for example `example.com`).
     pub value: String,
+    /// IPv4, IPv6, or domain-name objects this name resolved to.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -24,8 +53,10 @@ pub struct DomainName {
 }
 
 impl DomainName {
+    /// STIX type name for domain names.
     pub const TYPE_NAME: &'static str = "domain-name";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::DomainNameValueEmpty);

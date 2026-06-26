@@ -6,22 +6,52 @@ use crate::core::{
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX email address cyber-observable.
+///
+/// Per STIX §6.5, the required `value` holds the mailbox address. Optional
+/// `display_name` and `belongs_to_ref` link the address to a human-readable
+/// label and owning user account.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::EmailAddr;
+///
+/// let json = r#"{
+///   "type": "email-addr",
+///   "spec_version": "2.1",
+///   "id": "email-addr--7165e2a9-671f-585d-b1e1-ca59c671d934",
+///   "value": "john.doe@example.com",
+///   "display_name": "John Doe"
+/// }"#;
+/// let email: EmailAddr = serde_json::from_str(json)?;
+/// assert_eq!(email.value, "john.doe@example.com");
+/// assert_eq!(email.display_name.as_deref(), Some("John Doe"));
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EmailAddr {
+    /// STIX object type (`email-addr`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_email_addr_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Email address value (for example `user@example.com`).
     pub value: String,
+    /// Display name for the mailbox.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub display_name: Option<String>,
+    /// User account that owns this email address.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -30,8 +60,10 @@ pub struct EmailAddr {
 }
 
 impl EmailAddr {
+    /// STIX type name for email addresses.
     pub const TYPE_NAME: &'static str = "email-addr";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::EmailAddrValueEmpty);

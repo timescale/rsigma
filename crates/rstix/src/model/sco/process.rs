@@ -10,66 +10,97 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 use crate::model::sco::extensions::{WindowsProcessExt, WindowsServiceExt};
 
+/// A running instance of a program (STIX §6.13).
+///
+/// At least one type-specific property or a recognized process extension
+/// (`windows-process-ext`, `windows-service-ext`) must be present per STIX §6.13.2.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Process;
+///
+/// let json = include_str!("../../../tests/fixtures/spec/sco/process-basic.json");
+/// let process: Process = serde_json::from_str(json)?;
+/// assert_eq!(process.pid, Some(1221));
+/// assert!(process.image_ref.is_some());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Process {
+    /// STIX object type (`process`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_process_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Whether the process is hidden from task-management utilities (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_hidden: Option<bool>,
+    /// Process identifier (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub pid: Option<u32>,
+    /// Time the process was created (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub created_time: Option<StixTimestamp>,
+    /// Current working directory (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub cwd: Option<String>,
+    /// Full command line used to launch the process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub command_line: Option<String>,
+    /// Environment variables set when the process was launched (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub environment_variables: BTreeMap<String, String>,
+    /// Network connections opened by the process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub opened_connection_refs: Vec<NetworkTrafficId>,
+    /// User account that created the process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub creator_user_ref: Option<UserAccountId>,
+    /// Executable file that backs the process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub image_ref: Option<FileId>,
+    /// Parent process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub parent_ref: Option<ProcessId>,
+    /// Child processes spawned by this process (STIX §6.13.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -78,8 +109,10 @@ pub struct Process {
 }
 
 impl Process {
+    /// STIX type name for processes.
     pub const TYPE_NAME: &'static str = "process";
 
+    /// Check process invariants (at least one property or extension; extension validation).
     pub fn validate(&self) -> Result<(), ModelError> {
         if !self.has_specific_property() {
             return Err(ModelError::ProcessNoProperties);

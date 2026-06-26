@@ -5,16 +5,19 @@ use crate::model::common::ExtensionMap;
 
 use std::collections::BTreeMap;
 
-/// NTFS alternate data stream entry.
+/// NTFS alternate data stream entry (STIX §6.7.3).
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AlternateDataStream {
+    /// Stream name (required, non-empty).
     pub name: String,
+    /// Hashes of the stream content, keyed by algorithm name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub hashes: BTreeMap<String, String>,
+    /// Stream size in octets.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -26,11 +29,13 @@ pub struct AlternateDataStream {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NtfsExt {
+    /// NTFS security identifier (SID) string.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub sid: Option<String>,
+    /// Alternate data streams attached to the file.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")

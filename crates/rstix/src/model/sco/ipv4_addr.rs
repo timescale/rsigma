@@ -5,22 +5,50 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX IPv4 address cyber-observable.
+///
+/// Per STIX §6.8, the required `value` holds a dotted-quad address or CIDR
+/// block. Optional `resolves_to_refs` and `belongs_to_refs` link to related
+/// MAC addresses and autonomous systems.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Ipv4Addr;
+///
+/// let json = r#"{
+///   "type": "ipv4-addr",
+///   "spec_version": "2.1",
+///   "id": "ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4",
+///   "value": "198.51.100.3"
+/// }"#;
+/// let addr: Ipv4Addr = serde_json::from_str(json)?;
+/// assert_eq!(addr.value, "198.51.100.3");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ipv4Addr {
+    /// STIX object type (`ipv4-addr`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_ipv4_addr_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// IPv4 address or CIDR block (for example `198.51.100.3` or `10.0.0.0/8`).
     pub value: String,
+    /// MAC addresses this IP address resolved to.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub resolves_to_refs: Vec<MacAddrId>,
+    /// Autonomous systems this address belongs to.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -29,8 +57,10 @@ pub struct Ipv4Addr {
 }
 
 impl Ipv4Addr {
+    /// STIX type name for IPv4 addresses.
     pub const TYPE_NAME: &'static str = "ipv4-addr";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::Ipv4AddrValueEmpty);

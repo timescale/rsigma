@@ -4,37 +4,71 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX software cyber-observable representing an installed or observed product.
+///
+/// Per STIX §6.14, the required `name` identifies the software. Optional fields
+/// carry CPE, SWID, language, vendor, and version metadata.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Software;
+///
+/// let json = r#"{
+///   "type": "software",
+///   "spec_version": "2.1",
+///   "id": "software--710b0b41-d4d0-5d6c-a400-fc9254554ffc",
+///   "name": "Word",
+///   "cpe": "cpe:2.3:a:microsoft:word:2000:*:*:*:*:*:*:*",
+///   "version": "2002",
+///   "vendor": "Microsoft"
+/// }"#;
+/// let software: Software = serde_json::from_str(json)?;
+/// assert_eq!(software.name, "Word");
+/// assert_eq!(software.vendor.as_deref(), Some("Microsoft"));
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Software {
+    /// STIX object type (`software`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_software_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Software product name.
     pub name: String,
+    /// Common Platform Enumeration (CPE) URI.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub cpe: Option<String>,
+    /// Software Identification (SWID) tag identifier.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub swid: Option<String>,
+    /// Language codes supported by the software.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub languages: Vec<String>,
+    /// Vendor or manufacturer name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub vendor: Option<String>,
+    /// Version string.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -43,8 +77,10 @@ pub struct Software {
 }
 
 impl Software {
+    /// STIX type name for software objects.
     pub const TYPE_NAME: &'static str = "software";
 
+    /// Rejects empty `name`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.name.is_empty() {
             return Err(ModelError::SoftwareNameEmpty);

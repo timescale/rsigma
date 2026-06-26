@@ -9,36 +9,43 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WindowsProcessExt {
+    /// Whether address space layout randomization (ASLR) is enabled.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub aslr_enabled: Option<bool>,
+    /// Whether data execution prevention (DEP) is enabled.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dep_enabled: Option<bool>,
+    /// Process priority class.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub priority: Option<String>,
+    /// Security identifier (SID) of the process owner.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub owner_sid: Option<String>,
+    /// Window title of the process's main window.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub windows_title: Option<String>,
+    /// `STARTUPINFO` structure fields keyed by name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub startup_info: BTreeMap<String, serde_json::Value>,
+    /// Process integrity level (for example `low`, `medium`, `high`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

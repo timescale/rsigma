@@ -4,22 +4,49 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX mutex cyber-observable representing a named synchronization primitive.
+///
+/// Per STIX §6.11, the required `name` identifies the mutex as observed on the
+/// system (for example a malware mutex string).
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Mutex;
+///
+/// let json = r#"{
+///   "type": "mutex",
+///   "spec_version": "2.1",
+///   "id": "mutex--f93fe911-e545-5239-b9b0-597840d0c871",
+///   "name": "__CLEANSWEEP__"
+/// }"#;
+/// let mutex: Mutex = serde_json::from_str(json)?;
+/// assert_eq!(mutex.name, "__CLEANSWEEP__");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Mutex {
+    /// STIX object type (`mutex`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_mutex_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Mutex name as observed on the system.
     pub name: String,
 }
 
 impl Mutex {
+    /// STIX type name for mutexes.
     pub const TYPE_NAME: &'static str = "mutex";
 
+    /// Rejects empty `name`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.name.is_empty() {
             return Err(ModelError::MutexNameEmpty);

@@ -11,92 +11,130 @@ use crate::model::common::ScoCommonProps;
 use crate::model::sco::extensions::{HttpRequestExt, IcmpExt, SocketExt, TcpExt};
 use crate::model::sco::ref_types::NetworkTrafficEndpointRef;
 
+/// Network traffic between one or more endpoints (STIX §6.12).
+///
+/// [`protocols`](Self::protocols) is required and at least one of
+/// [`src_ref`](Self::src_ref) or [`dst_ref`](Self::dst_ref) must be set.
+/// An active connection cannot have an `end` time, and `end` must not precede `start`.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::NetworkTraffic;
+///
+/// let json = include_str!("../../../tests/fixtures/spec/sco/network-traffic-tcp.json");
+/// let traffic: NetworkTraffic = serde_json::from_str(json)?;
+/// assert_eq!(traffic.protocols, vec!["tcp"]);
+/// assert!(traffic.src_ref.is_some() && traffic.dst_ref.is_some());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NetworkTraffic {
+    /// STIX object type (`network-traffic`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_network_traffic_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Start time of the traffic (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub start: Option<StixTimestamp>,
+    /// End time of the traffic (STIX §6.12.2; incompatible with `is_active = true`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub end: Option<StixTimestamp>,
+    /// Whether the traffic is still ongoing (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_active: Option<bool>,
+    /// Source endpoint (STIX §6.12.2; at least one of `src_ref` or `dst_ref` required).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_ref: Option<NetworkTrafficEndpointRef>,
+    /// Destination endpoint (STIX §6.12.2; at least one of `src_ref` or `dst_ref` required).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dst_ref: Option<NetworkTrafficEndpointRef>,
+    /// Source port number (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_port: Option<u16>,
+    /// Destination port number (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dst_port: Option<u16>,
+    /// Ordered list of OSI layers and protocols observed (STIX §6.12.2; required).
     pub protocols: Vec<String>,
+    /// Number of bytes sent from source to destination (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_byte_count: Option<u64>,
+    /// Number of bytes sent from destination to source (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dst_byte_count: Option<u64>,
+    /// Number of packets sent from source to destination (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_packets: Option<u64>,
+    /// Number of packets sent from destination to source (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dst_packets: Option<u64>,
+    /// IPFIX dictionary of additional flow attributes (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub ipfix: BTreeMap<String, serde_json::Value>,
+    /// Artifact containing payload sent from source (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_payload_ref: Option<ArtifactId>,
+    /// Artifact containing payload sent from destination (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub dst_payload_ref: Option<ArtifactId>,
+    /// Network traffic objects encapsulated by this flow (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub encapsulates_refs: Vec<NetworkTrafficId>,
+    /// Network traffic object that encapsulates this flow (STIX §6.12.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -105,8 +143,10 @@ pub struct NetworkTraffic {
 }
 
 impl NetworkTraffic {
+    /// STIX type name for network traffic.
     pub const TYPE_NAME: &'static str = "network-traffic";
 
+    /// Check network-traffic invariants (protocols, endpoints, timing, extensions).
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.protocols.is_empty() {
             return Err(ModelError::NetworkTrafficProtocolsRequired);

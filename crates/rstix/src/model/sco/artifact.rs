@@ -6,42 +6,67 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
-/// STIX `artifact` cyber-observable object.
+/// Binary or textual payload captured as a cyber-observable (STIX §6.1).
+///
+/// Exactly one of [`payload_bin`](Self::payload_bin) or [`url`](Self::url) must be
+/// present. When [`url`](Self::url) is used, [`hashes`](Self::hashes) is required.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Artifact;
+///
+/// let json = include_str!("../../../tests/fixtures/spec/sco/artifact-image.json");
+/// let artifact: Artifact = serde_json::from_str(json)?;
+/// assert_eq!(artifact.mime_type.as_deref(), Some("image/jpeg"));
+/// assert!(artifact.payload_bin.is_some());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Artifact {
+    /// STIX object type (`artifact`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_artifact_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// MIME type of the artifact content (STIX §6.1.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub mime_type: Option<String>,
+    /// Base64-encoded payload bytes (STIX §6.1.2; mutually exclusive with `url`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub payload_bin: Option<String>,
+    /// Remote location of the payload (STIX §6.1.2; mutually exclusive with `payload_bin`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub url: Option<String>,
+    /// Cryptographic hashes of the payload (STIX §6.1.2; required when `url` is set).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub hashes: BTreeMap<String, String>,
+    /// Algorithm used to encrypt the payload (STIX §6.1.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub encryption_algorithm: Option<String>,
+    /// Key used to decrypt the payload (STIX §6.1.2; requires `encryption_algorithm`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -50,8 +75,10 @@ pub struct Artifact {
 }
 
 impl Artifact {
+    /// STIX type name for artifacts.
     pub const TYPE_NAME: &'static str = "artifact";
 
+    /// Check artifact invariants (payload/url exclusivity, hash and encryption rules).
     pub fn validate(&self) -> Result<(), ModelError> {
         let has_payload = self.payload_bin.is_some();
         let has_url = self.url.is_some();
