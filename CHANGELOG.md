@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Documentation: rsigma-action in the CI/CD guide
+
+The [CI/CD guide](https://timescale.github.io/rsigma/guide/ci-cd/) and the README now document [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action), the one-step GitHub Actions gate that wraps `rule lint`, `rule validate`, a merge-base fields-drift diff, `rule backtest`, and `rule coverage` into a single pull-request check with diff annotations, a sticky summary comment, and SLSA-attestation-verified cached binary installs. The manual multi-job workflow stays as the no-third-party-action and other-CI fallback.
+
 ### Alert pipeline (#255)
 
 A new optional post-engine stage in the daemon sink path, between enrichment and the sinks, configured with `--alert-pipeline <path>` (or the `daemon.alert_pipeline` config key) and hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous pipeline active. It deduplicates results by a configurable fingerprint, modeled on Alertmanager: the first fire passes through and opens an active alert, subsequent fires fold into it, the alert re-emits on `repeat_interval` carrying the accumulated fire count, and it emits a final `resolved` record after `resolve_timeout` and is evicted.

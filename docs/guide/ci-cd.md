@@ -150,6 +150,42 @@ See [Linting Rules](linting-rules.md) and [Processing Pipelines](processing-pipe
 
 ## GitHub Actions
 
+The fastest path on GitHub is the [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action) composite action, which runs the whole gate in one step. The manual multi-job workflow further down is the equivalent without a third-party action, and the pattern to copy for the other CI systems on this page.
+
+### Use the rsigma-action
+
+```yaml
+name: detections
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # the sticky summary comment
+
+jobs:
+  detection-as-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # required for the merge-base fields-drift diff
+      - uses: timescale/rsigma-action@v1
+        with:
+          version: v{{ rsigma.version }}
+          rules: rules/
+          corpus: ci/corpus/
+          expectations: ci/expectations.yml
+          coverage: "true"
+          coverage-targets: ci/threat-model.txt
+```
+
+The action installs a checksum- and SLSA-attestation-verified rsigma release (cached per version and target, no insecure fallback), then runs `rule lint` (PR diff annotations generated from the stable `--output-format json` envelope, not text-scraping problem matchers), `rule validate --resolve-sources`, a merge-base fields-drift diff, `rule backtest`, and `rule coverage`, and keeps a single sticky summary comment up to date. It needs `pull-requests: write` for the comment and `fetch-depth: 0` on checkout for the fields-drift diff. Pin a concrete `version:` so a silent rsigma upgrade cannot change CI behaviour between runs; the minimum supported version is the release where `rule backtest` and `rule coverage` shipped. See the [action repository](https://github.com/timescale/rsigma-action) for the full input and output reference; hardened consumers can pin the action by commit SHA instead of the `@v1` major tag.
+
+### Manual workflow
+
 A four-job workflow that mirrors a typical detection-engineering loop: lint, validate, backtest, then convert and publish.
 
 ```yaml
@@ -375,3 +411,4 @@ $RSIGMA_BIN rule backtest -r "$RULES_DIR" -p "$PIPELINE" \
 - [CLI reference: `rule backtest`](../cli/rule/backtest.md), [`rule coverage`](../cli/rule/coverage.md), [`rule scorecard`](../cli/rule/scorecard.md), [`engine eval`](../cli/engine/eval.md), [`rule lint`](../cli/rule/lint.md), [`rule validate`](../cli/rule/validate.md), [`backend convert`](../cli/backend/convert.md).
 - [ATT&CK Coverage](attack-coverage.md) for the coverage workflow.
 - [Detection Scorecard](detection-scorecard.md) for the keep/tune/retire verdict workflow.
+- [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action) for the one-step GitHub Actions gate.
