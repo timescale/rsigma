@@ -75,18 +75,7 @@ impl WindowsServiceExt {
     /// Parse and validate this extension from an [`ExtensionMap`], if present.
     pub fn validate_in_map(map: &ExtensionMap) -> Result<(), ModelError> {
         if let Some(entry) = map.get(Self::KEY) {
-            let mut obj = serde_json::Map::new();
-            if let Some(t) = &entry.extension_type {
-                obj.insert(
-                    "extension_type".into(),
-                    serde_json::Value::String(t.as_str().into()),
-                );
-            }
-            for (k, v) in &entry.properties {
-                obj.insert(k.clone(), v.clone());
-            }
-            let ext: Self = serde_json::from_value(serde_json::Value::Object(obj))
-                .map_err(|_| ModelError::ExtensionDeserializeFailed)?;
+            let ext: Self = super::util::deserialize_from_entry(Self::KEY, entry)?;
             ext.validate()?;
         }
         Ok(())
@@ -107,5 +96,15 @@ mod tests {
         let value = serde_json::to_value(&parsed).expect("serialize");
         let reparsed: WindowsServiceExt = serde_json::from_value(value).expect("reparse");
         assert_eq!(parsed, reparsed);
+    }
+    #[test]
+    fn validate_rejects_invalid_fixture() {
+        let json =
+            include_str!("../../../../tests/fixtures/spec/sco/extensions/no-properties.json");
+        let parsed: WindowsServiceExt = serde_json::from_str(json).expect("parse");
+        assert_eq!(
+            parsed.validate(),
+            Err(ModelError::WindowsServiceExtNoProperties)
+        );
     }
 }

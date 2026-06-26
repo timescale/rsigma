@@ -113,7 +113,7 @@ impl UserAccount {
             || self.credential_last_changed.is_some()
             || self.account_first_login.is_some()
             || self.account_last_login.is_some()
-            || !self.common.extensions.is_empty()
+            || self.common.extensions.get(UnixAccountExt::KEY).is_some()
     }
 }
 
@@ -244,5 +244,42 @@ mod tests {
         let err =
             serde_json::from_value::<UserAccount>(serde_json::Value::Object(obj)).unwrap_err();
         assert!(err.to_string().contains("missing field `type`"));
+    }
+
+    #[test]
+    fn rejects_non_user_account_extension_without_type_specific_properties() {
+        let json = r#"{
+          "type": "user-account",
+          "spec_version": "2.1",
+          "id": "user-account--f94d689e-707d-58c3-b803-c720bb6ed096",
+          "extensions": {
+            "tcp-ext": {}
+          }
+        }"#;
+        let err = serde_json::from_str::<UserAccount>(json).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("user-account requires at least one specific property"));
+    }
+
+    #[test]
+    fn accepts_unix_account_extension_without_type_specific_properties() {
+        let json = r#"{
+          "type": "user-account",
+          "spec_version": "2.1",
+          "id": "user-account--f94d689e-707d-58c3-b803-c720bb6ed096",
+          "extensions": {
+            "unix-account-ext": {
+              "gid": 1001,
+              "groups": ["wheel"],
+              "home_dir": "/home/jdoe",
+              "shell": "/bin/bash"
+            }
+          }
+        }"#;
+        let parsed: UserAccount = serde_json::from_str(json).expect("parse");
+        parsed
+            .validate()
+            .expect("unix-account-ext satisfies STIX §6.16.2");
     }
 }

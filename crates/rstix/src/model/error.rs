@@ -45,8 +45,13 @@ pub enum ModelError {
     #[error("where_sighted_refs must reference identity or location objects")]
     SightingWhereSightedRefInvalid,
     /// An embedded SCO extension object failed to deserialize.
-    #[error("SCO extension failed to deserialize")]
-    ExtensionDeserializeFailed,
+    #[error("SCO extension `{key}` failed to deserialize: {detail}")]
+    ExtensionDeserializeFailed {
+        /// Extension dictionary key (for example `archive-ext`).
+        key: &'static str,
+        /// Underlying serde error message.
+        detail: String,
+    },
     /// `domain-name` `resolves_to_refs` entry is not ipv4-addr, ipv6-addr, or domain-name.
     #[error("domain-name resolves_to_refs must reference ipv4-addr, ipv6-addr, or domain-name")]
     DomainNameResolvesToRefInvalid,

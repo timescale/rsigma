@@ -384,6 +384,7 @@ fn sco_file_round_trips_and_rejects_missing_name_and_hash() {
     support::roundtrip_strict::<File>("sco/file-with-parent.json");
     support::roundtrip_strict::<File>("sco/file-with-archive-ext.json");
     support::assert_fixture_rejects::<File>("sco/file-no-name-or-hash.json");
+    support::assert_fixture_rejects::<File>("sco/file-with-invalid-archive-ext.json");
 }
 
 #[test]
@@ -414,12 +415,16 @@ fn sco_network_traffic_round_trips_and_rejects_invalid_fixtures() {
     support::roundtrip_strict::<NetworkTraffic>("sco/network-traffic-tcp.json");
     support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-no-protocols.json");
     support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-end-with-active.json");
+    support::assert_fixture_rejects::<NetworkTraffic>(
+        "sco/network-traffic-with-invalid-tcp-ext.json",
+    );
 }
 
 #[test]
 fn sco_process_round_trips_and_rejects_no_properties() {
     support::roundtrip_strict::<Process>("sco/process-basic.json");
     support::assert_fixture_rejects::<Process>("sco/process-no-properties.json");
+    support::assert_fixture_rejects::<Process>("sco/process-with-invalid-windows-process-ext.json");
 }
 
 #[test]
@@ -436,6 +441,7 @@ fn sco_url_round_trips() {
 fn sco_user_account_round_trips_and_rejects_no_properties() {
     support::roundtrip_strict::<UserAccount>("sco/user-account-unix.json");
     support::assert_fixture_rejects::<UserAccount>("sco/user-account-no-properties.json");
+    support::assert_fixture_rejects::<UserAccount>("sco/user-account-with-invalid-unix-ext.json");
 }
 
 #[test]

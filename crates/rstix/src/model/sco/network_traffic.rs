@@ -122,10 +122,6 @@ impl NetworkTraffic {
         {
             return Err(ModelError::NetworkTrafficEndBeforeStart);
         }
-        for port in [self.src_port, self.dst_port].into_iter().flatten() {
-            // u16 is always 0-65535
-            let _ = port;
-        }
         HttpRequestExt::validate_in_map(&self.common.extensions)?;
         IcmpExt::validate_in_map(&self.common.extensions)?;
         SocketExt::validate_in_map(&self.common.extensions)?;

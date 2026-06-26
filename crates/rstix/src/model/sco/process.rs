@@ -101,7 +101,8 @@ impl Process {
             || self.image_ref.is_some()
             || self.parent_ref.is_some()
             || !self.child_refs.is_empty()
-            || !self.common.extensions.is_empty()
+            || self.common.extensions.get(WindowsProcessExt::KEY).is_some()
+            || self.common.extensions.get(WindowsServiceExt::KEY).is_some()
     }
 }
 
@@ -244,5 +245,42 @@ mod tests {
             obj.get_field(&["image_ref"]),
             Some(QueryValue::Id(_))
         ));
+    }
+
+    #[test]
+    fn rejects_non_process_extension_without_type_specific_properties() {
+        let json = r#"{
+          "type": "process",
+          "spec_version": "2.1",
+          "id": "process--8fac80fe-a220-4ba9-8ffe-4f43ce8edff8",
+          "extensions": {
+            "archive-ext": {
+              "contains_refs": ["file--70221dbf-52fd-5377-9619-c0ce6b3ffc8c"]
+            }
+          }
+        }"#;
+        let err = serde_json::from_str::<Process>(json).unwrap_err();
+        assert!(err.to_string().contains("process requires at least one specific property"));
+    }
+
+    #[test]
+    fn accepts_process_extension_without_type_specific_properties() {
+        let json = r#"{
+          "type": "process",
+          "spec_version": "2.1",
+          "id": "process--8fac80fe-a220-4ba9-8ffe-4f43ce8edff8",
+          "extensions": {
+            "windows-process-ext": {
+              "aslr_enabled": true,
+              "dep_enabled": true,
+              "priority": "HIGH_PRIORITY_CLASS",
+              "owner_sid": "S-1-5-21-186985262-1144665072-74031268-1309"
+            }
+          }
+        }"#;
+        let parsed: Process = serde_json::from_str(json).expect("parse");
+        parsed
+            .validate()
+            .expect("windows-process-ext satisfies STIX §6.13");
     }
 }

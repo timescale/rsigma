@@ -90,10 +90,6 @@ impl File {
         if self.hashes.is_empty() && self.name.as_ref().is_none_or(String::is_empty) {
             return Err(ModelError::FileHashesOrNameRequired);
         }
-        if let Some(size) = self.size {
-            // size is u64 so always non-negative; no check needed
-            let _ = size;
-        }
         ArchiveExt::validate_in_map(&self.common.extensions)?;
         NtfsExt::validate_in_map(&self.common.extensions)?;
         PdfExt::validate_in_map(&self.common.extensions)?;

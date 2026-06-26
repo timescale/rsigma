@@ -1,6 +1,9 @@
 //! Typed STIX SCO predefined extensions.
+//!
+//! Per-field rustdoc is tracked in [issue #250](https://github.com/timescale/rsigma/issues/250).
 
 #![allow(missing_docs)]
+
 mod archive;
 mod http_request;
 mod icmp;
@@ -10,6 +13,7 @@ mod raster_image;
 mod socket;
 mod tcp;
 mod unix_account;
+mod util;
 mod windows_pe;
 mod windows_process;
 mod windows_service;
