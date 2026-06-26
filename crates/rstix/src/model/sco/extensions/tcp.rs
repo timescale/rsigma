@@ -7,11 +7,13 @@ use crate::model::common::ExtensionMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TcpExt {
+    /// Source-side TCP flags as a lowercase hexadecimal string.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub src_flags_hex: Option<String>,
+    /// Destination-side TCP flags as a lowercase hexadecimal string.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

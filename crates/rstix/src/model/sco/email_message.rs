@@ -10,24 +10,31 @@ use crate::model::common::ScoCommonProps;
 use crate::model::sco::ref_types::EmailMimeBodyRawRef;
 
 /// MIME part of a multipart email body (STIX §6.6.2).
+///
+/// Exactly one of [`body`](Self::body) or [`body_raw_ref`](Self::body_raw_ref) must
+/// be present.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EmailMimePart {
+    /// Body content of the MIME part (STIX §6.6.2; mutually exclusive with `body_raw_ref`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body: Option<String>,
+    /// Reference to an artifact holding the raw body bytes (STIX §6.6.2; mutually exclusive with `body`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body_raw_ref: Option<EmailMimeBodyRawRef>,
+    /// MIME content type of the part (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub content_type: Option<String>,
+    /// Content disposition of the part (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -36,6 +43,7 @@ pub struct EmailMimePart {
 }
 
 impl EmailMimePart {
+    /// Check MIME-part invariants (body/raw-ref exclusivity).
     pub fn validate(&self) -> Result<(), ModelError> {
         let has_body = self.body.is_some();
         let has_raw = self.body_raw_ref.is_some();
@@ -75,83 +83,103 @@ impl<'de> serde::Deserialize<'de> for EmailMimePart {
     }
 }
 
-/// STIX `email-message` cyber-observable object.
+/// An email message (STIX §6.6).
+///
+/// When [`is_multipart`](Self::is_multipart) is true, [`body_multipart`](Self::body_multipart)
+/// must be set and [`body`](Self::body) must be absent; single-part messages use `body` only.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EmailMessage {
+    /// STIX object type (`email-message`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_email_message_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Whether the message body consists of multiple MIME parts (STIX §6.6.2).
     pub is_multipart: bool,
+    /// Date the email was sent (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub date: Option<StixTimestamp>,
+    /// MIME content type of the message (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub content_type: Option<String>,
+    /// Author of the message content (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub from_ref: Option<EmailAddrId>,
+    /// Entity that sent the message (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub sender_ref: Option<EmailAddrId>,
+    /// Primary recipients (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub to_refs: Vec<EmailAddrId>,
+    /// Carbon-copy recipients (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub cc_refs: Vec<EmailAddrId>,
+    /// Blind carbon-copy recipients (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub bcc_refs: Vec<EmailAddrId>,
+    /// Message identifier from the email header (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub message_id: Option<String>,
+    /// Subject line (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject: Option<String>,
+    /// `Received` header lines in order (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub received_lines: Vec<String>,
+    /// Additional email header fields not otherwise captured (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub additional_header_fields: BTreeMap<String, Vec<String>>,
+    /// Body of a single-part message (STIX §6.6.2; absent when `is_multipart` is true).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body: Option<String>,
+    /// MIME parts of a multipart message (STIX §6.6.2; required when `is_multipart` is true).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body_multipart: Option<Vec<EmailMimePart>>,
+    /// Reference to an artifact holding the raw RFC 5322 message (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -160,8 +188,10 @@ pub struct EmailMessage {
 }
 
 impl EmailMessage {
+    /// STIX type name for email messages.
     pub const TYPE_NAME: &'static str = "email-message";
 
+    /// Check email-message invariants (multipart/body rules; nested MIME-part validation).
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.is_multipart {
             if self.body.is_some() {

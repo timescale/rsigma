@@ -9,26 +9,31 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PdfExt {
+    /// PDF version string (for example `1.7`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub version: Option<String>,
+    /// Whether the PDF is linearized (optimized for web viewing).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_optimized: Option<bool>,
+    /// Entries from the PDF Info dictionary.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub document_info_dict: BTreeMap<String, String>,
+    /// First 16-byte PDF document ID.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub pdfid0: Option<String>,
+    /// Second 16-byte PDF document ID.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

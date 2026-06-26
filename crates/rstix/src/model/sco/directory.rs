@@ -5,37 +5,67 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 use crate::model::sco::ref_types::DirectoryContainsRef;
 
+/// A STIX directory cyber-observable representing a filesystem directory.
+///
+/// Per STIX §6.3, the required `path` holds the directory location. Optional
+/// timestamps and `contains_refs` describe contents and metadata.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Directory;
+///
+/// let json = r#"{
+///   "type": "directory",
+///   "spec_version": "2.1",
+///   "id": "directory--0a58d0c1-59e6-5afd-8252-dcd3f13e5622",
+///   "path": "C:\\Windows\\System32"
+/// }"#;
+/// let dir: Directory = serde_json::from_str(json)?;
+/// assert_eq!(dir.path, "C:\\Windows\\System32");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Directory {
+    /// STIX object type (`directory`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_directory_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Filesystem path of the directory.
     pub path: String,
+    /// Alternate encoding of `path`.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub path_enc: Option<String>,
+    /// Creation timestamp.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub ctime: Option<StixTimestamp>,
+    /// Modification timestamp.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub mtime: Option<StixTimestamp>,
+    /// Last-access timestamp.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub atime: Option<StixTimestamp>,
+    /// File or directory objects contained in this directory.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -44,8 +74,10 @@ pub struct Directory {
 }
 
 impl Directory {
+    /// STIX type name for directories.
     pub const TYPE_NAME: &'static str = "directory";
 
+    /// Rejects empty `path`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.path.is_empty() {
             return Err(ModelError::DirectoryPathEmpty);

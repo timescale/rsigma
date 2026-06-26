@@ -9,32 +9,39 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SocketExt {
+    /// Socket address family (required, non-empty; for example `AF_INET`).
     pub address_family: String,
+    /// Whether the socket is in blocking mode.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_blocking: Option<bool>,
+    /// Whether the socket is listening for connections.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_listening: Option<bool>,
+    /// Socket options keyed by option name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub options: BTreeMap<String, u64>,
+    /// Socket type (for example `SOCK_STREAM`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub socket_type: Option<String>,
+    /// Socket file descriptor on Unix-like systems.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub socket_descriptor: Option<u64>,
+    /// Socket handle on Windows.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

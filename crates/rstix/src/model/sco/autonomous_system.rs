@@ -4,9 +4,35 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX autonomous system (BGP ASN) cyber-observable.
+///
+/// Per STIX §6.2, the required `number` identifies the autonomous system.
+/// Optional `name` and `rir` provide human-readable context and registry attribution.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::AutonomousSystem;
+///
+/// let json = r#"{
+///   "type": "autonomous-system",
+///   "spec_version": "2.1",
+///   "id": "autonomous-system--3aa27478-50b5-5ab8-9da9-cdc12b657fff",
+///   "number": 15139,
+///   "name": "Slime Industries",
+///   "rir": "ARIN"
+/// }"#;
+/// let asn: AutonomousSystem = serde_json::from_str(json)?;
+/// assert_eq!(asn.number, 15139);
+/// assert_eq!(asn.name.as_deref(), Some("Slime Industries"));
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AutonomousSystem {
+    /// STIX object type (`autonomous-system`).
     #[cfg_attr(
         feature = "serde",
         serde(
@@ -15,14 +41,18 @@ pub struct AutonomousSystem {
         )
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Autonomous system number (ASN).
     pub number: u32,
+    /// Organization name associated with the AS.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name: Option<String>,
+    /// Regional Internet registry (for example `ARIN`, `RIPE`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -31,7 +61,10 @@ pub struct AutonomousSystem {
 }
 
 impl AutonomousSystem {
+    /// STIX type name for autonomous systems.
     pub const TYPE_NAME: &'static str = "autonomous-system";
+
+    /// No type-specific invariants are currently enforced.
     pub fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }

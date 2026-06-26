@@ -11,71 +11,89 @@ use crate::model::sco::extensions::{
     ArchiveExt, NtfsExt, PdfExt, RasterImageExt, WindowsPeBinaryExt,
 };
 
+/// Properties of a file on a file system (STIX §6.7).
+///
+/// At least one of [`hashes`](Self::hashes) or a non-empty [`name`](Self::name) is
+/// required per STIX §6.7.2.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct File {
+    /// STIX object type (`file`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_file_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Dictionary of cryptographic hashes (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub hashes: BTreeMap<String, String>,
+    /// Size of the file in bytes (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub size: Option<u64>,
+    /// Name of the file (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name: Option<String>,
+    /// Character encoding of the file name (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name_enc: Option<String>,
+    /// First bytes of the file in hexadecimal (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub magic_number_hex: Option<String>,
+    /// MIME type of the file content (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub mime_type: Option<String>,
+    /// File creation time (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub ctime: Option<StixTimestamp>,
+    /// File modification time (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub mtime: Option<StixTimestamp>,
+    /// File last-access time (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub atime: Option<StixTimestamp>,
+    /// Reference to the directory containing this file (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub parent_directory_ref: Option<DirectoryId>,
+    /// References to files or directories contained in this file (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub contains_refs: Vec<StixId>,
+    /// Reference to an artifact holding the raw file content (STIX §6.7.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -84,8 +102,10 @@ pub struct File {
 }
 
 impl File {
+    /// STIX type name for files.
     pub const TYPE_NAME: &'static str = "file";
 
+    /// Check file invariants (hashes or name required; extension validation).
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.hashes.is_empty() && self.name.as_ref().is_none_or(String::is_empty) {
             return Err(ModelError::FileHashesOrNameRequired);

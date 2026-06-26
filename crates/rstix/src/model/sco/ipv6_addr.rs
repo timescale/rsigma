@@ -5,22 +5,50 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX IPv6 address cyber-observable.
+///
+/// Per STIX §6.9, the required `value` holds an IPv6 address or CIDR block.
+/// Optional `resolves_to_refs` and `belongs_to_refs` link to related MAC
+/// addresses and autonomous systems.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Ipv6Addr;
+///
+/// let json = r#"{
+///   "type": "ipv6-addr",
+///   "spec_version": "2.1",
+///   "id": "ipv6-addr--85a85a8c-ee99-5722-946d-3c3a3270fc6f",
+///   "value": "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+/// }"#;
+/// let addr: Ipv6Addr = serde_json::from_str(json)?;
+/// assert_eq!(addr.value, "2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ipv6Addr {
+    /// STIX object type (`ipv6-addr`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_ipv6_addr_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// IPv6 address or CIDR block.
     pub value: String,
+    /// MAC addresses this IP address resolved to.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub resolves_to_refs: Vec<MacAddrId>,
+    /// Autonomous systems this address belongs to.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -29,8 +57,10 @@ pub struct Ipv6Addr {
 }
 
 impl Ipv6Addr {
+    /// STIX type name for IPv6 addresses.
     pub const TYPE_NAME: &'static str = "ipv6-addr";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::Ipv6AddrValueEmpty);

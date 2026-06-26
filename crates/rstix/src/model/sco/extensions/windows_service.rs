@@ -9,41 +9,49 @@ use crate::core::FileId;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WindowsServiceExt {
+    /// Internal service name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub service_name: Option<String>,
+    /// Human-readable service descriptions.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub descriptions: Vec<String>,
+    /// Display name shown in service management tools.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub display_name: Option<String>,
+    /// Service group name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub group_name: Option<String>,
+    /// Service start type (for example `auto`, `manual`, `disabled`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub start_type: Option<String>,
+    /// References to [`File`](crate::model::sco::File) objects for service DLLs.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub service_dll_refs: Vec<FileId>,
+    /// Service type (for example `share_process`, `own_process`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub service_type: Option<String>,
+    /// Current service status (for example `running`, `stopped`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

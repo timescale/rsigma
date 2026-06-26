@@ -39,6 +39,12 @@ The alert pipeline persists its state across restarts when `--state-db` is set.
 * A versioned `AlertPipelineSnapshot` (active dedup alerts, open incidents, dynamic silences, and the inhibition active-source index) is saved to the existing SQLite store in its own `rsigma_alert_pipeline_state` table, on the periodic and shutdown hooks beside the correlation snapshot, and restored on boot.
 * Restore is window-aware: dedup alerts past `resolve_timeout`, incidents past their `resolve_timeout`, silences past `ends_at`, and inhibition sources past their rule's `duration` are pruned. Deterministic `group_by` incident ids survive the restart; a version mismatch starts fresh with a warning. `--clear-state` skips the restore and `--keep-state` forces it, matching the correlation-state flags.
 
+### rstix: SCO per-field rustdoc (#254)
+
+* Per-field documentation on all 18 SCO types, 12 predefined extensions, and nested public structs (`EmailMimePart`, `WindowsRegistryValue`, `X509V3Extensions`, PE header/section types, etc.).
+* Removed `#![allow(missing_docs)]` from `model::sco` and `model::sco::extensions`; strict `cargo doc` now enforced for the SCO surface.
+* Runnable `# Examples` on representative types using spec fixtures.
+
 ### rstix: STIX cyber-observable (SCO) model (#248)
 
 All 18 STIX 2.1 cyber-observable types land in `model::sco` with strict fixture-backed round-trips:

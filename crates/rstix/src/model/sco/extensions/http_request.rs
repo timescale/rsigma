@@ -11,23 +11,29 @@ use crate::core::ArtifactId;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HttpRequestExt {
+    /// HTTP method (required, non-empty).
     pub request_method: String,
+    /// Request target (URI path or full request line value; required, non-empty).
     pub request_value: String,
+    /// HTTP protocol version (for example `http/1.1`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub request_version: Option<String>,
+    /// Request headers, keyed by name with one or more values per header.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub request_header: BTreeMap<String, Vec<String>>,
+    /// Message body length in octets.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub message_body_length: Option<u64>,
+    /// Reference to an [`Artifact`](crate::model::sco::Artifact) holding the raw body.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")

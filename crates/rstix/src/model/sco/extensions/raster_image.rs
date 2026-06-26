@@ -9,21 +9,25 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RasterImageExt {
+    /// Image height in pixels.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub image_height: Option<u64>,
+    /// Image width in pixels.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub image_width: Option<u64>,
+    /// Color depth in bits per pixel.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub bits_per_pixel: Option<u64>,
+    /// EXIF metadata tags keyed by tag name.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
