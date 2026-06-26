@@ -1,0 +1,11 @@
+{
+  "pe_type": "exe",
+  "machine_hex": "014c",
+  "number_of_sections": 4,
+  "sections": [
+    {
+      "name": "CODE",
+      "entropy": 0.061089
+    }
+  ]
+}

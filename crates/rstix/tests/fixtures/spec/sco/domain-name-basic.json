@@ -1,0 +1,7 @@
+{
+  "type": "domain-name",
+  "spec_version": "2.1",
+  "id": "domain-name--bedb4899-d24b-5401-bc86-8f6b4cc18ec7",
+  "value": "example.com",
+  "resolves_to_refs": ["ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4"]
+}

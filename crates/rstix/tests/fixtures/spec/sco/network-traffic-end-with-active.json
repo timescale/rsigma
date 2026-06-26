@@ -1,0 +1,9 @@
+{
+  "type": "network-traffic",
+  "spec_version": "2.1",
+  "id": "network-traffic--bad-end",
+  "protocols": ["tcp"],
+  "dst_ref": "ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4",
+  "is_active": true,
+  "end": "2016-01-20T12:00:00.000Z"
+}

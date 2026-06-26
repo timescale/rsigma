@@ -1,0 +1,8 @@
+{
+  "type": "x509-certificate",
+  "spec_version": "2.1",
+  "id": "x509-certificate--6b5a90a2-b254-57c2-a6ea-d8f78bbf4d4b",
+  "hashes": {
+    "SHA-256": "6a329aa5987f4e003678184a8c503cca106fb1777731674fc89b880ed8e7b93a"
+  }
+}

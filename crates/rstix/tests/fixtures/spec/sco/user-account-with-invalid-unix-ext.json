@@ -1,0 +1,9 @@
+{
+  "type": "user-account",
+  "spec_version": "2.1",
+  "id": "user-account--f94d689e-707d-58c3-b803-c720bb6ed096",
+  "user_id": "1001",
+  "extensions": {
+    "unix-account-ext": {}
+  }
+}

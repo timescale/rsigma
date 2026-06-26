@@ -1,0 +1,7 @@
+{
+  "service_name": "sirvizio",
+  "display_name": "Sirvizio",
+  "start_type": "SERVICE_AUTO_START",
+  "service_type": "SERVICE_WIN32_OWN_PROCESS",
+  "service_status": "SERVICE_RUNNING"
+}

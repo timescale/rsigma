@@ -1,0 +1,10 @@
+{
+  "type": "email-message",
+  "spec_version": "2.1",
+  "id": "email-message--92fa1bfd-2c62-5a30-8b7c-5b91ea73cf29",
+  "from_ref": "email-addr--6deb37bd-12b7-54ae-805f-5f7146f3d171",
+  "to_refs": ["email-addr--2aeeb98c-9db4-525e-874d-221fdfe9f76e"],
+  "is_multipart": false,
+  "date": "1997-11-21T15:55:06.000Z",
+  "subject": "Saying Hello"
+}

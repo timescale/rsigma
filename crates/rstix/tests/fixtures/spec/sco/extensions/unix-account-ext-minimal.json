@@ -1,0 +1,8 @@
+{
+  "gid": 1001,
+  "groups": [
+    "wheel"
+  ],
+  "home_dir": "/home/jdoe",
+  "shell": "/bin/bash"
+}

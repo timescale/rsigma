@@ -7,12 +7,17 @@
 
 mod support;
 
-use rstix::core::{Confidence, SpecVersion};
+use rstix::core::{Confidence, QueryableStixObject, SpecVersion};
 use rstix::model::common::{
     ExtensionMap, ExternalReference, GranularMarking, ScoCommonProps, SdoSroCommonProps,
 };
 use rstix::model::meta::{
     ExtensionDefinition, LanguageContent, MarkingDefinition, TLP1_WHITE_ID, TLP2_CLEAR_ID,
+};
+use rstix::model::sco::{
+    Artifact, AutonomousSystem, Directory, DomainName, EmailAddr, EmailMessage, File, Ipv4Addr,
+    Ipv6Addr, MacAddr, Mutex, NetworkTraffic, Process, ScoObject, Software, Url, UserAccount,
+    WindowsRegistryKey, X509Certificate,
 };
 use rstix::model::sro::{Relationship, Sighting};
 
@@ -335,4 +340,134 @@ fn sighting_rejects_invalid_fixtures() {
 fn sro_types_reject_wrong_type_field() {
     support::assert_fixture_rejects::<Relationship>("sro/sighting-minimal.json");
     support::assert_fixture_rejects::<Sighting>("sro/relationship.json");
+}
+
+#[test]
+fn sco_artifact_round_trips_and_rejects_payload_xor_url() {
+    support::roundtrip_strict::<Artifact>("sco/artifact-image.json");
+    support::assert_fixture_rejects::<Artifact>("sco/artifact-payload-and-url.json");
+}
+
+#[test]
+fn sco_autonomous_system_round_trips() {
+    support::roundtrip_strict::<AutonomousSystem>("sco/autonomous-system-basic.json");
+}
+
+#[test]
+fn sco_directory_round_trips_and_rejects_wrong_contains_ref() {
+    support::roundtrip_strict::<Directory>("sco/directory-basic.json");
+    support::assert_fixture_rejects::<Directory>("sco/directory-contains-wrong-type.json");
+}
+
+#[test]
+fn sco_domain_name_round_trips_and_rejects_wrong_resolves_ref() {
+    support::roundtrip_strict::<DomainName>("sco/domain-name-basic.json");
+    support::assert_fixture_rejects::<DomainName>("sco/domain-name-resolves-wrong-type.json");
+}
+
+#[test]
+fn sco_email_addr_round_trips_and_rejects_empty_value() {
+    support::roundtrip_strict::<EmailAddr>("sco/email-addr-basic.json");
+    support::assert_fixture_rejects::<EmailAddr>("sco/email-addr-empty-value.json");
+}
+
+#[test]
+fn sco_email_message_round_trips_and_rejects_multipart_violation() {
+    support::roundtrip_strict::<EmailMessage>("sco/email-message-simple.json");
+    support::roundtrip_strict::<EmailMessage>("sco/email-message-multipart.json");
+    support::assert_fixture_rejects::<EmailMessage>("sco/email-message-body-with-multipart.json");
+}
+
+#[test]
+fn sco_file_round_trips_and_rejects_missing_name_and_hash() {
+    support::roundtrip_strict::<File>("sco/file-basic.json");
+    support::roundtrip_strict::<File>("sco/file-with-parent.json");
+    support::roundtrip_strict::<File>("sco/file-with-archive-ext.json");
+    support::assert_fixture_rejects::<File>("sco/file-no-name-or-hash.json");
+    support::assert_fixture_rejects::<File>("sco/file-with-invalid-archive-ext.json");
+}
+
+#[test]
+fn sco_ipv4_addr_round_trips_and_rejects_wrong_resolves_ref() {
+    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-single.json");
+    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-cidr.json");
+    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-with-belongs.json");
+    support::assert_fixture_rejects::<Ipv4Addr>("sco/ipv4-addr-resolves-wrong-type.json");
+}
+
+#[test]
+fn sco_ipv6_addr_round_trips() {
+    support::roundtrip_strict::<Ipv6Addr>("sco/ipv6-addr-single.json");
+}
+
+#[test]
+fn sco_mac_addr_round_trips() {
+    support::roundtrip_strict::<MacAddr>("sco/mac-addr.json");
+}
+
+#[test]
+fn sco_mutex_round_trips() {
+    support::roundtrip_strict::<Mutex>("sco/mutex.json");
+}
+
+#[test]
+fn sco_network_traffic_round_trips_and_rejects_invalid_fixtures() {
+    support::roundtrip_strict::<NetworkTraffic>("sco/network-traffic-tcp.json");
+    support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-no-protocols.json");
+    support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-end-with-active.json");
+    support::assert_fixture_rejects::<NetworkTraffic>(
+        "sco/network-traffic-with-invalid-tcp-ext.json",
+    );
+}
+
+#[test]
+fn sco_process_round_trips_and_rejects_no_properties() {
+    support::roundtrip_strict::<Process>("sco/process-basic.json");
+    support::assert_fixture_rejects::<Process>("sco/process-no-properties.json");
+    support::assert_fixture_rejects::<Process>("sco/process-with-invalid-windows-process-ext.json");
+}
+
+#[test]
+fn sco_software_round_trips() {
+    support::roundtrip_strict::<Software>("sco/software-basic.json");
+}
+
+#[test]
+fn sco_url_round_trips() {
+    support::roundtrip_strict::<Url>("sco/url.json");
+}
+
+#[test]
+fn sco_user_account_round_trips_and_rejects_no_properties() {
+    support::roundtrip_strict::<UserAccount>("sco/user-account-unix.json");
+    support::assert_fixture_rejects::<UserAccount>("sco/user-account-no-properties.json");
+    support::assert_fixture_rejects::<UserAccount>("sco/user-account-with-invalid-unix-ext.json");
+}
+
+#[test]
+fn sco_windows_registry_key_round_trips() {
+    support::roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-basic.json");
+    support::roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-with-creator.json");
+}
+
+#[test]
+fn sco_x509_certificate_round_trips() {
+    support::roundtrip_strict::<X509Certificate>("sco/x509-certificate-basic.json");
+}
+
+#[test]
+fn sco_types_reject_wrong_type_field() {
+    support::assert_fixture_rejects::<Url>("sco/mutex.json");
+    support::assert_fixture_rejects::<Mutex>("sco/url.json");
+    support::assert_fixture_rejects::<File>("sco/artifact-image.json");
+}
+
+#[test]
+fn sco_object_enum_delegates_queryable_stix_object() {
+    let parsed = support::roundtrip_strict::<Url>("sco/url.json");
+    let sco = ScoObject::Url(parsed.clone());
+    assert_eq!(sco.id(), parsed.id());
+    assert_eq!(sco.type_name(), Url::TYPE_NAME);
+    assert!(sco.created().is_none());
+    assert!(sco.modified().is_none());
 }

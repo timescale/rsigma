@@ -1,0 +1,9 @@
+{
+  "type": "process",
+  "spec_version": "2.1",
+  "id": "process--8fac80fe-a220-4ba9-8ffe-4f43ce8edff8",
+  "pid": 1221,
+  "created_time": "2016-01-20T14:11:25.55Z",
+  "command_line": "./gedit-bin --new-window",
+  "image_ref": "file--3eb55c0e-fe96-588b-a7ab-10f55f7ec596"
+}

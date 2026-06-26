@@ -1,0 +1,9 @@
+{
+  "type": "process",
+  "spec_version": "2.1",
+  "id": "process--8fac80fe-a220-4ba9-8ffe-4f43ce8edff8",
+  "pid": 1221,
+  "extensions": {
+    "windows-process-ext": {}
+  }
+}

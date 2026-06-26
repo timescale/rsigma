@@ -1,0 +1,5 @@
+{
+  "is_listening": true,
+  "address_family": "AF_INET",
+  "socket_type": "SOCK_STREAM"
+}

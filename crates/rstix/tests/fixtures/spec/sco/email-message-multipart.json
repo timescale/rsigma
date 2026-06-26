@@ -1,0 +1,18 @@
+{
+  "type": "email-message",
+  "spec_version": "2.1",
+  "id": "email-message--d7d69ead-3347-5772-815a-7766dc29c72c",
+  "is_multipart": true,
+  "content_type": "multipart/mixed",
+  "subject": "Check out this picture of a cat!",
+  "body_multipart": [
+    {
+      "content_type": "text/plain; charset=utf-8",
+      "body": "Cats are funny!"
+    },
+    {
+      "content_type": "image/png",
+      "body_raw_ref": "artifact--0682152c-646a-513b-bc07-e516494ed178"
+    }
+  ]
+}

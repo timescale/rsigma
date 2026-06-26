@@ -20,6 +20,7 @@ pub trait QueryableStixObject: Send + Sync + 'static {
 
 /// Borrowed query value abstraction used by pattern/runtime.
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum QueryValue<'a> {
     /// String value.
     Str(&'a str),

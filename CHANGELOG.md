@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: STIX cyber-observable (SCO) model (#248)
+
+All 18 STIX 2.1 cyber-observable types land in `model::sco` with strict fixture-backed round-trips:
+
+* **Types:** `artifact`, `autonomous-system`, `directory`, `domain-name`, `email-addr`, `email-message`, `file`, `ipv4-addr`, `ipv6-addr`, `mac-addr`, `mutex`, `network-traffic`, `process`, `software`, `url`, `user-account`, `windows-registry-key`, `x509-certificate`.
+* **Dispatch:** `ScoObject` (`#[non_exhaustive]`) delegates `QueryableStixObject`; `created()` / `modified()` always `None` for SCO arms.
+* **Typed ref unions:** `DomainNameResolvesToRef`, `DirectoryContainsRef`, `NetworkTrafficEndpointRef`, `EmailMimeBodyRawRef` with cross-type negative fixtures.
+* **Extensions:** 12 predefined SCO extensions under `model::sco::extensions` (`archive-ext`, `ntfs-ext`, `pdf-ext`, `raster-image-ext`, `windows-pebinary-ext`, `http-request-ext`, `icmp-ext`, `socket-ext`, `tcp-ext`, `unix-account-ext`, `windows-process-ext`, `windows-service-ext`) validated from parent `validate()`.
+* **Invariants:** `ModelError` variants for enforced SCO rules; integration tests in `tests/spec.rs` use `roundtrip_strict`.
+
+
 ### Logsource-aware evaluation (#249)
 
 Opt-in, conflict-based logsource pruning in the evaluation engine (`rsigma-eval`). `Engine::set_logsource_extractor` installs a `LogSourceExtractor` that derives each event's logsource from configurable fields (defaulting to `product`/`service`/`category`) plus optional static defaults, and the engine then skips any candidate rule whose logsource conflicts with the event's before matching. Disabled by default with the hot path unchanged, and fail-open: an event with no extractable logsource is evaluated against every rule.

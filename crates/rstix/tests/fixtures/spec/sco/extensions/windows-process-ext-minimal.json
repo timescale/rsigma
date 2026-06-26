@@ -1,0 +1,6 @@
+{
+  "aslr_enabled": true,
+  "dep_enabled": true,
+  "priority": "HIGH_PRIORITY_CLASS",
+  "owner_sid": "S-1-5-21-186985262-1144665072-74031268-1309"
+}
