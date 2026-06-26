@@ -74,9 +74,9 @@ Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Ever
 
 The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
 
-## Alert pipeline (11 metrics)
+## Alert pipeline (13 metrics)
 
-Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_dedup_results_total`, `rsigma_incidents_emitted_total`, and `rsigma_incident_overmerge_total`, plus the `rsigma_dedup_store_entries`, `rsigma_incidents_open`, and `rsigma_silences_active` gauges, are pre-registered at startup, so they render with their `# HELP` / `# TYPE` lines and zeroed series on the first scrape, even before `--alert-pipeline` is passed or any event fires. See the [Alert Pipeline](../guide/alert-pipeline.md) guide.
+Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_dedup_results_total`, `rsigma_incidents_emitted_total`, and `rsigma_incident_overmerge_total`, plus the `rsigma_dedup_store_entries`, `rsigma_incidents_open`, `rsigma_silences_active`, and `rsigma_inhibit_sources_active` gauges, are pre-registered at startup, so they render with their `# HELP` / `# TYPE` lines and zeroed series on the first scrape, even before `--alert-pipeline` is passed or any event fires. The `rsigma_inhibited_total{rule}` series appears once a rule first inhibits. See the [Alert Pipeline](../guide/alert-pipeline.md) guide.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -90,6 +90,8 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_incident_overmerge_total` | counter | `guard` (`stop_value`, `cardinality_ceiling`) | Entity-graph guard hits that suppressed a join. |
 | `rsigma_silenced_total` | counter | — | Results muted by an active silence. |
 | `rsigma_silences_active` | gauge | — | Currently-active silences. |
+| `rsigma_inhibited_total` | counter | `rule` | Results muted by an inhibition rule, by rule name. |
+| `rsigma_inhibit_sources_active` | gauge | — | Currently-active inhibition sources. |
 | `rsigma_alert_pipeline_duration_seconds` | histogram | — | Alert-pipeline stage duration in seconds. |
 
 ## OTLP (3 metrics)

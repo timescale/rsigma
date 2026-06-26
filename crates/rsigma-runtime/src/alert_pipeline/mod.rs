@@ -17,6 +17,7 @@
 mod config;
 mod dedup;
 mod grouping;
+mod inhibit;
 mod matcher;
 mod selector;
 mod silence;
@@ -43,6 +44,7 @@ use crate::{MetricsHook, Scope};
 
 use dedup::DedupConfig;
 use grouping::{GroupConfig, OvermergeGuard};
+use inhibit::InhibitConfig;
 use silence::Silence as StaticSilence;
 
 /// Output of [`AlertPipeline::tick`]: dedup summary records (re-emit /
@@ -67,6 +69,7 @@ pub struct AlertPipeline {
     dedup: Option<DedupConfig>,
     group: Option<GroupConfig>,
     static_silences: Vec<StaticSilence>,
+    inhibit: Option<InhibitConfig>,
 }
 
 impl AlertPipeline {
@@ -77,6 +80,7 @@ impl AlertPipeline {
         dedup: Option<DedupConfig>,
         group: Option<GroupConfig>,
         static_silences: Vec<StaticSilence>,
+        inhibit: Option<InhibitConfig>,
     ) -> Self {
         AlertPipeline {
             scope,
@@ -84,6 +88,7 @@ impl AlertPipeline {
             dedup,
             group,
             static_silences,
+            inhibit,
         }
     }
 
@@ -119,6 +124,17 @@ impl AlertPipeline {
         for mut result in results {
             if !self.scope.matches(&result) {
                 kept.push(result);
+                continue;
+            }
+
+            // Inhibition: an inhibited target is dropped before it can become a
+            // source. `evaluate` also records non-inhibited results (including
+            // ones about to be silenced) as active sources, so a silenced
+            // source still inhibits its targets.
+            if let Some(icfg) = self.inhibit.as_ref()
+                && let Some(rule) = state.inhibit.evaluate(icfg, &result, now)
+            {
+                metrics.on_alert_pipeline_inhibited(&rule);
                 continue;
             }
 
@@ -209,6 +225,12 @@ impl AlertPipeline {
         // Garbage-collect expired silences and refresh the active gauge.
         state.silences.gc(now);
         metrics.set_silences_active(state.silences.active_count(now) as i64);
+
+        // Garbage-collect stale inhibition sources and refresh the gauge.
+        if let Some(icfg) = self.inhibit.as_ref() {
+            state.inhibit.gc(icfg, now);
+            metrics.set_inhibit_sources_active(state.inhibit.active_count(icfg, now) as i64);
+        }
 
         if !out.results.is_empty() || !out.incidents.is_empty() {
             metrics.observe_alert_pipeline_duration(start.elapsed().as_secs_f64());
@@ -372,6 +394,20 @@ mod tests {
         // on event.raw (one incident opened).
         assert!(kept[0].as_detection().unwrap().event.is_none());
         assert_eq!(st.incidents.len(), 1);
+    }
+
+    #[test]
+    fn inhibition_mutes_target_while_source_active() {
+        let p = pipeline(
+            "inhibit_rules:\n  - name: crit\n    source_match:\n      - selector: level\n        op: \"=\"\n        value: critical\n    target_match:\n      - selector: level\n        op: \"=\"\n        value: high\n    equal: [match.SourceIp]\n    duration: 5m\n",
+        );
+        let mut st = AlertPipelineState::default();
+        // Critical source on 10.0.0.1 passes and registers as a source.
+        assert_eq!(run(&p, "10.0.0.1", Level::Critical, &mut st, 0).len(), 1);
+        // High target on the same IP is inhibited (dropped).
+        assert!(run(&p, "10.0.0.1", Level::High, &mut st, 1).is_empty());
+        // High target on a different IP passes.
+        assert_eq!(run(&p, "10.0.0.2", Level::High, &mut st, 2).len(), 1);
     }
 
     #[test]

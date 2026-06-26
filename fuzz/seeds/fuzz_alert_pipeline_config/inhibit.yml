@@ -1,0 +1,26 @@
+inhibit_rules:
+  - name: critical-inhibits-high
+    source_match:
+      - selector: level
+        op: "="
+        value: critical
+    target_match:
+      - selector: level
+        op: "="
+        value: high
+      - selector: rule
+        op: "=~"
+        value: ".*"
+    equal:
+      - match.SourceIp
+      - match.User
+    duration: 5m
+  - source_match:
+      - selector: match.host
+        op: "!="
+        value: ""
+    target_match:
+      - selector: level
+        op: "!~"
+        value: critical
+    equal: []

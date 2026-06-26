@@ -7,6 +7,7 @@
 
 use super::dedup::DedupStore;
 use super::grouping::IncidentStore;
+use super::inhibit::InhibitStore;
 use super::silence::SilenceStore;
 
 /// All mutable alert-pipeline state, owned by the sink task and shared behind
@@ -19,4 +20,6 @@ pub struct AlertPipelineState {
     pub incidents: IncidentStore,
     /// Operator silences (static + API).
     pub silences: SilenceStore,
+    /// Inhibition active-source index.
+    pub inhibit: InhibitStore,
 }

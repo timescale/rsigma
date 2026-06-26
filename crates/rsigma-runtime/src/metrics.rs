@@ -120,6 +120,10 @@ pub trait MetricsHook: Send + Sync {
     fn on_alert_pipeline_silenced(&self) {}
     /// Report the current number of active silences.
     fn set_silences_active(&self, _count: i64) {}
+    /// A result was muted by an inhibition rule. `rule` is the rule name.
+    fn on_alert_pipeline_inhibited(&self, _rule: &str) {}
+    /// Report the current number of active inhibition sources.
+    fn set_inhibit_sources_active(&self, _count: i64) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

@@ -17,6 +17,8 @@ use crate::Scope;
 use super::AlertPipeline;
 use super::dedup::DedupConfig;
 use super::grouping::{Caps, GroupConfig, GroupMode, IncludeMode};
+use super::inhibit::{InhibitConfig, InhibitRule};
+use super::matcher::{MatcherError, MatcherSet, MatcherSpec};
 use super::selector::{Selector, SelectorParseError};
 use super::silence::{Silence, SilenceError, SilenceOrigin, SilenceSpec};
 
@@ -32,6 +34,9 @@ const DEFAULT_GROUP_WAIT: Duration = Duration::from_secs(30);
 
 /// Default minimum delay before emitting an updated incident.
 const DEFAULT_GROUP_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Default window a source alert stays active for inhibition.
+const DEFAULT_INHIBIT_DURATION: Duration = Duration::from_secs(300);
 
 /// Top-level alert-pipeline config file.
 ///
@@ -66,6 +71,29 @@ pub struct AlertPipelineFile {
     /// silences created over the API are independent of this list.
     #[serde(default)]
     pub silences: Vec<SilenceSpec>,
+    /// Inhibition rules. An active source mutes matching targets.
+    #[serde(default)]
+    pub inhibit_rules: Vec<InhibitRuleFile>,
+}
+
+/// `inhibit_rules:` entry.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InhibitRuleFile {
+    /// Stable name (used as the metric label); defaults to `inhibit_rule_<i>`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Matchers a source alert must satisfy.
+    #[serde(default)]
+    pub source_match: Vec<MatcherSpec>,
+    /// Matchers a target alert must satisfy.
+    #[serde(default)]
+    pub target_match: Vec<MatcherSpec>,
+    /// Selectors whose values must match between source and target.
+    #[serde(default)]
+    pub equal: Vec<String>,
+    /// How long a source remains active after last seen (humantime).
+    #[serde(default, with = "humantime_opt")]
+    pub duration: Option<Duration>,
 }
 
 /// `scope:` block, mirroring the enrichers config.
@@ -184,6 +212,12 @@ pub enum AlertPipelineConfigError {
     EmptyEntities,
     /// A static silence failed to build.
     Silence(SilenceError),
+    /// An inhibit-rule matcher failed to compile.
+    InhibitMatcher(MatcherError),
+    /// An inhibit-rule `equal` selector failed to parse.
+    InhibitSelector(SelectorParseError),
+    /// An inhibit rule has an empty `source_match` or `target_match`.
+    EmptyInhibitMatch,
 }
 
 impl std::fmt::Display for AlertPipelineConfigError {
@@ -213,6 +247,12 @@ impl std::fmt::Display for AlertPipelineConfigError {
                 "group.mode is entity_graph but group.entities is empty; list at least one selector"
             ),
             AlertPipelineConfigError::Silence(e) => write!(f, "silences: {e}"),
+            AlertPipelineConfigError::InhibitMatcher(e) => write!(f, "inhibit_rules: {e}"),
+            AlertPipelineConfigError::InhibitSelector(e) => write!(f, "inhibit_rules.equal: {e}"),
+            AlertPipelineConfigError::EmptyInhibitMatch => write!(
+                f,
+                "an inhibit rule requires a non-empty source_match and target_match"
+            ),
         }
     }
 }
@@ -281,13 +321,46 @@ pub fn build_alert_pipeline(
         );
     }
 
+    let inhibit = if file.inhibit_rules.is_empty() {
+        None
+    } else {
+        Some(build_inhibit(file.inhibit_rules)?)
+    };
+
     Ok(AlertPipeline::new(
         scope,
         file.strip_event,
         dedup,
         group,
         static_silences,
+        inhibit,
     ))
+}
+
+/// Validate the `inhibit_rules:` list into an [`InhibitConfig`].
+fn build_inhibit(rules: Vec<InhibitRuleFile>) -> Result<InhibitConfig, AlertPipelineConfigError> {
+    let mut out = Vec::with_capacity(rules.len());
+    for (i, rule) in rules.into_iter().enumerate() {
+        if rule.source_match.is_empty() || rule.target_match.is_empty() {
+            return Err(AlertPipelineConfigError::EmptyInhibitMatch);
+        }
+        let source_match = MatcherSet::compile(&rule.source_match)
+            .map_err(AlertPipelineConfigError::InhibitMatcher)?;
+        let target_match = MatcherSet::compile(&rule.target_match)
+            .map_err(AlertPipelineConfigError::InhibitMatcher)?;
+        let mut equal = Vec::with_capacity(rule.equal.len());
+        for raw in &rule.equal {
+            equal.push(Selector::parse(raw).map_err(AlertPipelineConfigError::InhibitSelector)?);
+        }
+        out.push(InhibitRule {
+            name: rule.name.unwrap_or_else(|| format!("inhibit_rule_{i}")),
+            source_match,
+            target_match,
+            equal,
+            duration: rule.duration.unwrap_or(DEFAULT_INHIBIT_DURATION),
+        });
+    }
+    Ok(InhibitConfig { rules: out })
 }
 
 /// Validate a `group:` block into a [`GroupConfig`].
@@ -415,6 +488,36 @@ silences:
         let yaml = r#"
 silences:
   - comment: bad
+"#;
+        let file: AlertPipelineFile = yaml_serde::from_str(yaml).unwrap();
+        assert!(build_alert_pipeline(file).is_err());
+    }
+
+    #[test]
+    fn inhibit_rule_parses() {
+        let yaml = r#"
+inhibit_rules:
+  - name: crit-inhibits-high
+    source_match:
+      - selector: level
+        op: "="
+        value: critical
+    target_match:
+      - selector: level
+        op: "="
+        value: high
+    equal: [match.SourceIp]
+    duration: 5m
+"#;
+        let file: AlertPipelineFile = yaml_serde::from_str(yaml).unwrap();
+        build_alert_pipeline(file).unwrap();
+    }
+
+    #[test]
+    fn inhibit_rule_without_matchers_is_rejected() {
+        let yaml = r#"
+inhibit_rules:
+  - equal: [match.SourceIp]
 "#;
         let file: AlertPipelineFile = yaml_serde::from_str(yaml).unwrap();
         assert!(build_alert_pipeline(file).is_err());

@@ -4,7 +4,7 @@ The alert pipeline is an optional post-engine stage in the daemon's output path,
 
 It is configured with a separate YAML file via `--alert-pipeline <path>` (or the `daemon.alert_pipeline` config key) and is hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous pipeline active.
 
-This page covers silencing, deduplication, and incident grouping. The stages run in that order: a silenced result is muted before it can dedup or open an incident.
+This page covers silencing, inhibition, deduplication, and incident grouping. The stages run in that order (the mute stages first): a muted result never dedups or opens an incident.
 
 ## Silencing
 
@@ -43,6 +43,35 @@ silences:
 - `DELETE /api/v1/silences/{id}` removes a silence.
 
 Expired silences are garbage-collected on the background tick. Metrics: `rsigma_silenced_total` (results muted) and `rsigma_silences_active` (currently-active silences).
+
+## Inhibition
+
+Inhibition mutes a *target* result while a matching *source* result is active, modeled on Alertmanager `inhibit_rules`. Each rule is `{ source_match, target_match, equal, duration }`: while a result matching `source_match` has been seen within `duration`, any result matching `target_match` that shares the same `equal` selector values is muted. The classic use is letting a `critical` alert suppress the lower-severity `high` alerts for the same entity.
+
+```yaml
+inhibit_rules:
+  - name: critical-inhibits-high
+    source_match:
+      - selector: level
+        op: "="
+        value: critical
+    target_match:
+      - selector: level
+        op: "="
+        value: high
+    equal:
+      - match.SourceIp
+    duration: 5m
+```
+
+`source_match` and `target_match` use the [matcher engine](#matchers); both are required. `equal` is a list of selectors whose values must match between source and target (an empty `equal` means any active source of the rule inhibits any target). `duration` (humantime, default `5m`) is how long a source stays active after it was last seen.
+
+Two behaviors follow Alertmanager:
+
+- A **self-inhibition guard**: a result matching both `source_match` and `target_match` does not inhibit itself.
+- Inhibition is **non-transitive**: a *silenced* source still inhibits its targets (the source index is updated before silencing), but an *inhibited* target does not become a source.
+
+Metrics: `rsigma_inhibited_total{rule}` (results muted, by rule name) and `rsigma_inhibit_sources_active` (currently-active sources).
 
 ## Deduplication
 

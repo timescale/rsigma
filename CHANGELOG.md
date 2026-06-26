@@ -27,6 +27,12 @@ A silencing stage mutes results matching operator-defined matchers before dedup,
 * New endpoints: `GET`/`POST /api/v1/silences` and `DELETE /api/v1/silences/{id}`. A muted result is acked and dropped before dedup, so it neither emits nor opens an incident.
 * Two metrics: `rsigma_silenced_total` and `rsigma_silences_active`.
 
+An inhibition stage mutes a target result while a matching source is active, modeled on Alertmanager `inhibit_rules`.
+
+* Config-driven `inhibit_rules`, each `{ source_match, target_match, equal, duration }` reusing the matcher engine. While a result matching `source_match` has been seen within `duration`, any result matching `target_match` sharing the same `equal` selector values is muted.
+* Carries Alertmanager's self-inhibition guard (a result matching both sides does not inhibit itself) and is non-transitive: a silenced source still inhibits its targets (the active-source index is updated from every non-inhibited result before silencing), but an inhibited target does not become a source.
+* Two metrics: `rsigma_inhibited_total{rule}` and `rsigma_inhibit_sources_active`.
+
 ### rstix: STIX cyber-observable (SCO) model (#248)
 
 All 18 STIX 2.1 cyber-observable types land in `model::sco` with strict fixture-backed round-trips:

@@ -77,6 +77,8 @@ pub struct Metrics {
     pub incident_overmerge_total: IntCounterVec,
     pub silenced_total: IntCounter,
     pub silences_active: IntGauge,
+    pub inhibited_total: IntCounterVec,
+    pub inhibit_sources_active: IntGauge,
 }
 
 impl Metrics {
@@ -724,6 +726,27 @@ impl Metrics {
             .register(Box::new(silences_active.clone()))
             .unwrap();
 
+        let inhibited_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_inhibited_total",
+                "Results muted by an inhibition rule, by rule name",
+            ),
+            &["rule"],
+        )
+        .unwrap();
+        let inhibit_sources_active = IntGauge::with_opts(Opts::new(
+            "rsigma_inhibit_sources_active",
+            "Currently-active inhibition sources",
+        ))
+        .unwrap();
+        inhibit_sources_active.set(0);
+        registry
+            .register(Box::new(inhibited_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(inhibit_sources_active.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -796,6 +819,8 @@ impl Metrics {
             incident_overmerge_total,
             silenced_total,
             silences_active,
+            inhibited_total,
+            inhibit_sources_active,
         }
     }
 
@@ -936,6 +961,14 @@ impl MetricsHook for Metrics {
 
     fn set_silences_active(&self, count: i64) {
         self.silences_active.set(count);
+    }
+
+    fn on_alert_pipeline_inhibited(&self, rule: &str) {
+        self.inhibited_total.with_label_values(&[rule]).inc();
+    }
+
+    fn set_inhibit_sources_active(&self, count: i64) {
+        self.inhibit_sources_active.set(count);
     }
 
     fn observe_processing_latency(&self, seconds: f64) {
