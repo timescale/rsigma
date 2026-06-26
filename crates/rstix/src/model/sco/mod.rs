@@ -1,10 +1,4 @@
 //! STIX Cyber-observable Objects (18 types).
-//!
-//! Field-level rustdoc for individual SCO properties is tracked in
-//! [issue #250](https://github.com/timescale/rsigma/issues/250); see crate
-//! README invariant table for enforced rules.
-
-#![allow(missing_docs)]
 
 pub mod extensions;
 pub mod ref_types;

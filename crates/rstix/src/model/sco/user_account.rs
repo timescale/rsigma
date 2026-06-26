@@ -5,81 +5,101 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 use crate::model::sco::extensions::UnixAccountExt;
 
+/// A user account on a system (STIX §6.16).
+///
+/// At least one type-specific property or a `unix-account-ext` extension must be
+/// present per STIX §6.16.2.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UserAccount {
+    /// STIX object type (`user-account`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_user_account_type")
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Platform-specific unique identifier for the account (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub user_id: Option<String>,
+    /// Cleartext or hashed credential (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub credential: Option<String>,
+    /// Login name associated with the account (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub account_login: Option<String>,
+    /// Type of account (STIX §6.16.2; open vocabulary `account-type-ov`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub account_type: Option<String>,
+    /// Human-readable display name (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub display_name: Option<String>,
+    /// Whether the account is a service or system account (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_service_account: Option<bool>,
+    /// Whether the account has elevated privileges (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_privileged: Option<bool>,
+    /// Whether the account can escalate privileges (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub can_escalate_privs: Option<bool>,
+    /// Whether the account is disabled (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_disabled: Option<bool>,
+    /// When the account was created (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub account_created: Option<StixTimestamp>,
+    /// When the account expires (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub account_expires: Option<StixTimestamp>,
+    /// When the credential was last changed (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub credential_last_changed: Option<StixTimestamp>,
+    /// When the account was first used to log in (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub account_first_login: Option<StixTimestamp>,
+    /// When the account was last used to log in (STIX §6.16.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -88,8 +108,10 @@ pub struct UserAccount {
 }
 
 impl UserAccount {
+    /// STIX type name for user accounts.
     pub const TYPE_NAME: &'static str = "user-account";
 
+    /// Check user-account invariants (at least one property or extension; extension validation).
     pub fn validate(&self) -> Result<(), ModelError> {
         if !self.has_specific_property() {
             return Err(ModelError::UserAccountNoProperties);

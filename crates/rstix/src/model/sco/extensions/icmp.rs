@@ -7,7 +7,9 @@ use crate::model::common::ExtensionMap;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IcmpExt {
+    /// ICMP type as a lowercase hexadecimal string (required, non-empty).
     pub icmp_type_hex: String,
+    /// ICMP code as a lowercase hexadecimal string (required, non-empty).
     pub icmp_code_hex: String,
 }
 

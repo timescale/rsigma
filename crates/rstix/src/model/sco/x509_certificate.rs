@@ -8,84 +8,102 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
 /// X.509 v3 extensions block (STIX §6.18.2).
+///
+/// When present on an [`X509Certificate`], at least one extension property must be set.
 #[derive(Clone, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct X509V3Extensions {
+    /// Basic constraints extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub basic_constraints: Option<String>,
+    /// Name constraints extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name_constraints: Option<String>,
+    /// Policy constraints extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub policy_constraints: Option<String>,
+    /// Key usage extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub key_usage: Option<String>,
+    /// Extended key usage extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub extended_key_usage: Option<String>,
+    /// Subject key identifier extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_key_identifier: Option<String>,
+    /// Authority key identifier extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub authority_key_identifier: Option<String>,
+    /// Subject alternative name extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_alternative_name: Option<String>,
+    /// Issuer alternative name extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub issuer_alternative_name: Option<String>,
+    /// Subject directory attributes extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_directory_attributes: Option<String>,
+    /// CRL distribution points extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub crl_distribution_points: Option<String>,
+    /// Inhibit anyPolicy extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub inhibit_any_policy: Option<String>,
+    /// Private key usage period start (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub private_key_usage_period_not_before: Option<StixTimestamp>,
+    /// Private key usage period end (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub private_key_usage_period_not_after: Option<StixTimestamp>,
+    /// Certificate policies extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub certificate_policies: Option<String>,
+    /// Policy mappings extension (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -114,9 +132,15 @@ impl X509V3Extensions {
     }
 }
 
+/// An X.509 public-key certificate (STIX §6.18).
+///
+/// At least one type-specific property must be present per STIX §6.18.2. When
+/// [`x509_v3_extensions`](Self::x509_v3_extensions) is set, it must contain at least one
+/// extension field.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct X509Certificate {
+    /// STIX object type (`x509-certificate`).
     #[cfg_attr(
         feature = "serde",
         serde(
@@ -125,68 +149,82 @@ pub struct X509Certificate {
         )
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Whether the certificate is self-signed (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub is_self_signed: Option<bool>,
+    /// Cryptographic hashes of the DER-encoded certificate (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "BTreeMap::is_empty")
     )]
     pub hashes: BTreeMap<String, String>,
+    /// Certificate version (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub version: Option<String>,
+    /// Serial number assigned by the issuer (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub serial_number: Option<String>,
+    /// Signature algorithm used to sign the certificate (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub signature_algorithm: Option<String>,
+    /// Distinguished name of the certificate issuer (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub issuer: Option<String>,
+    /// Start of certificate validity period (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub validity_not_before: Option<StixTimestamp>,
+    /// End of certificate validity period (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub validity_not_after: Option<StixTimestamp>,
+    /// Distinguished name of the certificate subject (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject: Option<String>,
+    /// Algorithm used for the subject public key (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_public_key_algorithm: Option<String>,
+    /// Modulus of the RSA subject public key (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_public_key_modulus: Option<String>,
+    /// Exponent of the RSA subject public key (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject_public_key_exponent: Option<u64>,
+    /// X.509 v3 extensions present on the certificate (STIX §6.18.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -195,8 +233,10 @@ pub struct X509Certificate {
 }
 
 impl X509Certificate {
+    /// STIX type name for X.509 certificates.
     pub const TYPE_NAME: &'static str = "x509-certificate";
 
+    /// Check certificate invariants (at least one property; non-empty extensions block).
     pub fn validate(&self) -> Result<(), ModelError> {
         if !self.has_specific_property() {
             return Err(ModelError::X509CertificateNoProperties);

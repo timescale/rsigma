@@ -4,22 +4,49 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
+/// A STIX URL cyber-observable representing a uniform resource locator.
+///
+/// Per STIX §6.15, the required `value` holds the URL string. Address format
+/// validation is deferred; only non-empty `value` is enforced at the boundary.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use rstix::model::sco::Url;
+///
+/// let json = r#"{
+///   "type": "url",
+///   "spec_version": "2.1",
+///   "id": "url--47c3cf9a-5027-5bf0-997a-017c7edc7c55",
+///   "value": "https://example.com/research/index.html"
+/// }"#;
+/// let url: Url = serde_json::from_str(json)?;
+/// assert_eq!(url.value, "https://example.com/research/index.html");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Url {
+    /// STIX object type (`url`).
     #[cfg_attr(
         feature = "serde",
         serde(rename = "type", deserialize_with = "deserialize_url_type")
     )]
     object_type: String,
+    /// SCO common properties.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// URL string (for example `https://example.com/path`).
     pub value: String,
 }
 
 impl Url {
+    /// STIX type name for URLs.
     pub const TYPE_NAME: &'static str = "url";
 
+    /// Rejects empty `value`.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.value.is_empty() {
             return Err(ModelError::UrlValueEmpty);

@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: SCO per-field rustdoc (#250)
+
+* Per-field documentation on all 18 SCO types, 12 predefined extensions, and nested public structs (`EmailMimePart`, `WindowsRegistryValue`, `X509V3Extensions`, PE header/section types, etc.).
+* Removed `#![allow(missing_docs)]` from `model::sco` and `model::sco::extensions`; strict `cargo doc` now enforced for the SCO surface.
+* Runnable `# Examples` on representative types using spec fixtures.
+
 ### rstix: STIX cyber-observable (SCO) model (#248)
 
 All 18 STIX 2.1 cyber-observable types land in `model::sco` with strict fixture-backed round-trips:

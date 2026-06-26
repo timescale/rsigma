@@ -8,19 +8,25 @@ use crate::model::ModelError;
 use crate::model::common::ScoCommonProps;
 
 /// Windows registry value entry (STIX §6.17.2).
+///
+/// When present in a [`WindowsRegistryKey::values`] list, at least one of
+/// [`name`](Self::name), [`data`](Self::data), or [`data_type`](Self::data_type) must be set.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WindowsRegistryValue {
+    /// Name of the registry value (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name: Option<String>,
+    /// Data stored in the registry value (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub data: Option<String>,
+    /// Data type of the registry value (STIX §6.17.2; open vocabulary `windows-registry-datatype-ov`).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -34,9 +40,15 @@ impl WindowsRegistryValue {
     }
 }
 
+/// A Windows registry key (STIX §6.17).
+///
+/// At least one of [`key`](Self::key), [`values`](Self::values),
+/// [`modified_time`](Self::modified_time), [`creator_user_ref`](Self::creator_user_ref), or
+/// [`number_of_subkeys`](Self::number_of_subkeys) must be present per STIX §6.17.2.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct WindowsRegistryKey {
+    /// STIX object type (`windows-registry-key`).
     #[cfg_attr(
         feature = "serde",
         serde(
@@ -45,28 +57,34 @@ pub struct WindowsRegistryKey {
         )
     )]
     object_type: String,
+    /// SCO common properties (STIX §3.2).
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub common: ScoCommonProps,
+    /// Full path to the registry key (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub key: Option<String>,
+    /// Values stored under the key (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub values: Vec<WindowsRegistryValue>,
+    /// Last time the key was modified (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub modified_time: Option<StixTimestamp>,
+    /// User account that created the key (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub creator_user_ref: Option<UserAccountId>,
+    /// Number of subkeys under this key (STIX §6.17.2).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -75,8 +93,10 @@ pub struct WindowsRegistryKey {
 }
 
 impl WindowsRegistryKey {
+    /// STIX type name for Windows registry keys.
     pub const TYPE_NAME: &'static str = "windows-registry-key";
 
+    /// Check registry-key invariants (at least one property; non-empty value entries).
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.key.is_none()
             && self.values.is_empty()
