@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Alert pipeline: deduplication
+
+A new optional post-engine stage in the daemon sink path, between enrichment and the sinks, configured with `--alert-pipeline <path>` (or the `daemon.alert_pipeline` config key) and hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous pipeline active. It deduplicates results by a configurable fingerprint, modeled on Alertmanager: the first fire passes through and opens an active alert, subsequent fires fold into it, the alert re-emits on `repeat_interval` carrying the accumulated fire count, and it emits a final `resolved` record after `resolve_timeout` and is evicted.
+
+* Fingerprints are built from a shared field-selector namespace over `EvaluationResult`: `rule`, `level`, `event.<path>`, `match.<field>`, `enrichment.<path>`, and `correlation.group_key.<field>`. A malformed selector rejects the daemon at startup with an error naming the offending selector.
+* `scope` (rules / tags / levels) restricts which results the layer acts on; out-of-scope results pass through untouched. `strip_event` retains the event for selector resolution then drops raw event payloads before delivery. `repeat_interval: 0` gives pure suppression with a single resolved summary on expiry.
+* Re-emit and resolved records ride the existing NDJSON wire shape, disambiguated by a `dedup_state` key in `enrichments` (alongside `dedup_fingerprint`, `dedup_fire_count`, `dedup_first_seen`, `dedup_last_seen`, and `dedup_fields`).
+* Five Prometheus metrics: `rsigma_dedup_results_total{action}`, `rsigma_dedup_store_entries`, `rsigma_dedup_evictions_total`, `rsigma_dedup_summaries_emitted_total`, and `rsigma_alert_pipeline_duration_seconds`.
+* The `Scope` filter moved to a shared crate-level `rsigma_runtime::scope` module; the `enrichment` module re-exports it, so `rsigma_runtime::Scope` and `rsigma_runtime::enrichment::Scope` are unchanged.
+
 ### rstix: STIX cyber-observable (SCO) model (#248)
 
 All 18 STIX 2.1 cyber-observable types land in `model::sco` with strict fixture-backed round-trips:

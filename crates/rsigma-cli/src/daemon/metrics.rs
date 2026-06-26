@@ -66,6 +66,11 @@ pub struct Metrics {
     pub tap_events_dropped_total: IntCounter,
     pub tail_active_sessions: IntGauge,
     pub tail_detections_dropped_total: IntCounter,
+    pub dedup_results_total: IntCounterVec,
+    pub dedup_store_entries: IntGauge,
+    pub dedup_evictions_total: IntCounter,
+    pub dedup_summaries_emitted_total: IntCounter,
+    pub alert_pipeline_duration_seconds: Histogram,
 }
 
 impl Metrics {
@@ -591,6 +596,62 @@ impl Metrics {
             .register(Box::new(tail_detections_dropped_total.clone()))
             .unwrap();
 
+        let dedup_results_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_dedup_results_total",
+                "Alert-pipeline dedup outcomes by action (emitted, folded, repeat, resolved)",
+            ),
+            &["action"],
+        )
+        .unwrap();
+        let dedup_store_entries = IntGauge::with_opts(Opts::new(
+            "rsigma_dedup_store_entries",
+            "Active dedup alerts currently tracked by the alert pipeline",
+        ))
+        .unwrap();
+        let dedup_evictions_total = IntCounter::with_opts(Opts::new(
+            "rsigma_dedup_evictions_total",
+            "Active dedup alerts evicted after resolving",
+        ))
+        .unwrap();
+        let dedup_summaries_emitted_total = IntCounter::with_opts(Opts::new(
+            "rsigma_dedup_summaries_emitted_total",
+            "Dedup summary records emitted (repeat re-emits plus resolved records)",
+        ))
+        .unwrap();
+        let alert_pipeline_duration_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "rsigma_alert_pipeline_duration_seconds",
+                "Alert-pipeline stage duration in seconds",
+            )
+            .buckets(vec![
+                0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1,
+            ]),
+        )
+        .unwrap();
+        // Pre-materialise the fixed `action` label set and zero the gauge so
+        // the `# HELP` / `# TYPE` lines and zero series appear on the first
+        // scrape, before any event flows.
+        for action in ["emitted", "folded", "repeat", "resolved"] {
+            dedup_results_total.with_label_values(&[action]).inc_by(0);
+        }
+        dedup_store_entries.set(0);
+        registry
+            .register(Box::new(dedup_results_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(dedup_store_entries.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(dedup_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(dedup_summaries_emitted_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(alert_pipeline_duration_seconds.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -652,6 +713,11 @@ impl Metrics {
             tap_events_dropped_total,
             tail_active_sessions,
             tail_detections_dropped_total,
+            dedup_results_total,
+            dedup_store_entries,
+            dedup_evictions_total,
+            dedup_summaries_emitted_total,
+            alert_pipeline_duration_seconds,
         }
     }
 
@@ -747,6 +813,26 @@ impl MetricsHook for Metrics {
 
     fn on_correlation_matches(&self, count: u64) {
         self.correlation_matches.inc_by(count);
+    }
+
+    fn on_alert_pipeline_result(&self, action: &str) {
+        self.dedup_results_total.with_label_values(&[action]).inc();
+    }
+
+    fn set_alert_pipeline_store_entries(&self, count: i64) {
+        self.dedup_store_entries.set(count);
+    }
+
+    fn on_alert_pipeline_eviction(&self) {
+        self.dedup_evictions_total.inc();
+    }
+
+    fn on_alert_pipeline_summary_emitted(&self) {
+        self.dedup_summaries_emitted_total.inc();
+    }
+
+    fn observe_alert_pipeline_duration(&self, seconds: f64) {
+        self.alert_pipeline_duration_seconds.observe(seconds);
     }
 
     fn observe_processing_latency(&self, seconds: f64) {

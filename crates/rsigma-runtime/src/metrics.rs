@@ -93,6 +93,19 @@ pub trait MetricsHook: Send + Sync {
     fn on_webhook_request(&self, _webhook_id: &str, _outcome: &'static str, _duration_secs: f64) {}
     /// A webhook had to wait for its rate-limiter token bucket to refill.
     fn on_webhook_rate_limited(&self, _webhook_id: &str) {}
+
+    /// An alert-pipeline dedup outcome. `action` is one of `emitted` /
+    /// `folded` / `repeat` / `resolved`.
+    fn on_alert_pipeline_result(&self, _action: &str) {}
+    /// Report the current number of active dedup alerts in the store.
+    fn set_alert_pipeline_store_entries(&self, _count: i64) {}
+    /// An active alert was evicted (resolved out of the store).
+    fn on_alert_pipeline_eviction(&self) {}
+    /// A dedup summary record (a `repeat` re-emit or a `resolved` record) was
+    /// emitted.
+    fn on_alert_pipeline_summary_emitted(&self) {}
+    /// Observe the alert-pipeline stage duration in seconds.
+    fn observe_alert_pipeline_duration(&self, _seconds: f64) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

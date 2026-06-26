@@ -58,6 +58,11 @@ path = "fuzz_targets/fuzz_pipeline_sources_yaml.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_alert_pipeline_config"
+path = "fuzz_targets/fuzz_alert_pipeline_config.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_extract_jq"
 path = "fuzz_targets/fuzz_extract_jq.rs"
 doc = false

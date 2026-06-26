@@ -12,6 +12,7 @@ nav:
   - Schema Routing: schema-routing.md
   - Logsource-Aware Evaluation: logsource-routing.md
   - Enrichers: enrichers.md
+  - Alert Pipeline: alert-pipeline.md
   - Webhooks: webhooks.md
   - Input Formats: input-formats.md
   - NATS Streaming: nats-streaming.md

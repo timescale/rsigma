@@ -1,0 +1,13 @@
+strip_event: false
+scope:
+  levels: [high, critical]
+  tags: [attack.*]
+dedup:
+  fingerprint:
+    - rule
+    - match.SourceIp
+    - event.host.name
+    - enrichment.geo.country
+    - correlation.group_key.SourceIp
+  repeat_interval: 1h
+  resolve_timeout: 30m

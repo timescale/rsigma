@@ -44,6 +44,7 @@ daemon:
   rules: /etc/rsigma/rules
   pipelines: [ecs_windows]
   sources: [/etc/rsigma/sources]
+  # alert_pipeline: /etc/rsigma/alert-pipeline.yml   # dedup (see the Alert Pipeline guide)
   api:
     addr: "0.0.0.0:9090"
   input:

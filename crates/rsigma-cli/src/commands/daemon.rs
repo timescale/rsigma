@@ -419,6 +419,20 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "enrichers", value_name = "PATH")]
     pub enrichers: Option<PathBuf>,
 
+    /// Path to a YAML file declaring the alert pipeline (dedup, grouping,
+    /// silencing, inhibition).
+    ///
+    /// When set, every `EvaluationResult` flows through the alert pipeline
+    /// after enrichment and before the sinks. It deduplicates results by a
+    /// configurable fingerprint, collapsing repeats into one active alert
+    /// that re-emits on `repeat_interval` and resolves after
+    /// `resolve_timeout`. Hot-reloaded on `SIGHUP`, file-watcher changes,
+    /// and `POST /api/v1/reload`; a failed reload keeps the previous
+    /// pipeline active. Selector and scope errors reject the daemon at
+    /// startup with a clear message pointing at the offending field.
+    #[arg(long = "alert-pipeline", value_name = "PATH")]
+    pub alert_pipeline: Option<PathBuf>,
+
     /// Webhook config file(s) or directory of webhook config files.
     ///
     /// Repeatable. Declares template-driven HTTP output sinks: each
@@ -636,6 +650,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
+        alert_pipeline,
         webhooks,
         sources: source_paths,
         enable_tap: _,
@@ -768,6 +783,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers,
+        alert_pipeline,
         webhooks,
         source_paths,
         tap,
@@ -876,6 +892,11 @@ fn apply_daemon_config(
         && let Some(v) = daemon.enrichers
     {
         args.enrichers = Some(v);
+    }
+    if !explicit("alert_pipeline")
+        && let Some(v) = daemon.alert_pipeline
+    {
+        args.alert_pipeline = Some(v);
     }
 
     if let Some(api) = daemon.api {
@@ -1240,6 +1261,7 @@ fn run_daemon(
     event_logsource: Option<String>,
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
+    alert_pipeline_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
     source_paths: Vec<PathBuf>,
     tap: daemon::server::TapSettings,
@@ -1395,6 +1417,7 @@ fn run_daemon(
         #[cfg(feature = "daachorse-index")]
         cross_rule_ac,
         enrichers_path,
+        alert_pipeline_path,
         webhook_paths,
         source_registry,
         tap,

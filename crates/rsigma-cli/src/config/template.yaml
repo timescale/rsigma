@@ -29,6 +29,8 @@ daemon:
   sources: []
   # Post-evaluation enricher config file.
   # enrichers: /etc/rsigma/enrichers.yml
+  # Alert-pipeline config file (dedup, grouping, silencing, inhibition).
+  # alert_pipeline: /etc/rsigma/alert-pipeline.yml
 
   api:
     # Bind address for health, metrics, and the HTTP/OTLP API.

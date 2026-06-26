@@ -46,6 +46,8 @@ jobs:
             max_len: 4096
           - target: fuzz_pipeline_sources_yaml
             max_len: 8192
+          - target: fuzz_alert_pipeline_config
+            max_len: 4096
           - target: fuzz_extract_jq
             max_len: 4096
           - target: fuzz_extract_jsonpath

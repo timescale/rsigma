@@ -15,9 +15,10 @@ use rsigma_eval::{
     load_schema_config,
 };
 use rsigma_runtime::{
-    AckToken, DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver,
-    FileSink, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RoutingSpec, RuntimeEngine,
-    SchemaClassifier, SchemaObserver, Sink, StdinSource, StdoutSink, load_schema_signatures,
+    AckToken, AlertPipeline, DedupStore, DeliveryConfig, DeliveryFailure, Dispatcher,
+    EnrichmentPipeline, FieldObserver, FileSink, InputFormat, LogProcessor, MetricsHook, OnFull,
+    RawEvent, RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Sink, StdinSource,
+    StdoutSink, build_alert_pipeline, load_alert_pipeline_file, load_schema_signatures,
     spawn_source,
 };
 use serde::Serialize;
@@ -197,6 +198,10 @@ pub struct DaemonConfig {
     /// / `POST /api/v1/reload`); failures during reload are logged and
     /// the previous pipeline stays active.
     pub enrichers_path: Option<PathBuf>,
+    /// Optional path to the alert-pipeline config (from `--alert-pipeline`).
+    /// Read at daemon startup and again on hot-reload; failures during
+    /// reload are logged and the previous pipeline stays active.
+    pub alert_pipeline_path: Option<PathBuf>,
     /// Webhook config file/dir paths (from `--webhook`). Loaded and validated
     /// once at daemon startup, then built into lossy (`on_full=drop`) delivery
     /// leaves. Hot reload is not supported in v1.
@@ -226,6 +231,12 @@ pub async fn run_daemon(config: DaemonConfig) {
     // the sink task closure can capture it directly.
     let enrichment_metrics = metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>;
     let enrichment_swap: Arc<ArcSwap<Option<Arc<EnrichmentPipeline>>>> =
+        Arc::new(ArcSwap::new(Arc::new(None)));
+
+    // The alert pipeline (dedup and, in later stages, grouping / silencing /
+    // inhibition) runs in the sink task after enrichment. Hoisted here so the
+    // sink task and the reload task can both capture the `ArcSwap`.
+    let alert_pipeline_swap: Arc<ArcSwap<Option<Arc<AlertPipeline>>>> =
         Arc::new(ArcSwap::new(Arc::new(None)));
 
     // Open SQLite state store if configured
@@ -490,6 +501,21 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     }
 
+    // Build the alert pipeline. Failures exit cleanly because no I/O has
+    // started yet.
+    if let Some(path) = config.alert_pipeline_path.as_ref() {
+        match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
+            Ok(pipeline) => {
+                tracing::info!(path = %path.display(), "Alert pipeline loaded");
+                alert_pipeline_swap.store(Arc::new(Some(Arc::new(pipeline))));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build alert pipeline");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+    }
+
     // Bounded channel acts as backpressure for reload requests. Capacity 4
     // allows the file watcher, SIGHUP handler, and HTTP endpoint to queue
     // reloads without blocking, while the consumer debounces with a 500ms
@@ -734,6 +760,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_enrichers_path = config.enrichers_path.clone();
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
+    let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
+    let reload_alert_pipeline_path = config.alert_pipeline_path.clone();
     #[cfg(feature = "daemon-tls")]
     let reload_tls_state = tls_state.clone();
     #[cfg(feature = "daemon-tls")]
@@ -802,6 +830,28 @@ pub async fn run_daemon(config: DaemonConfig) {
                             error = %e,
                             path = %path.display(),
                             "Failed to reload enrichers config; keeping previous pipeline"
+                        );
+                        reload_metrics.reloads_failed.inc();
+                    }
+                }
+            }
+
+            // Reload the alert pipeline. Failures keep the previous pipeline
+            // in place so a typo cannot take down dedup in production. The
+            // in-flight active-alert store is owned by the sink task and
+            // survives a config swap; stale alerts age out via the new
+            // pipeline's resolve_timeout.
+            if let Some(path) = reload_alert_pipeline_path.as_deref() {
+                match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
+                    Ok(new_pipeline) => {
+                        reload_alert_pipeline_swap.store(Arc::new(Some(Arc::new(new_pipeline))));
+                        tracing::info!(path = %path.display(), "Alert pipeline reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            path = %path.display(),
+                            "Failed to reload alert pipeline; keeping previous pipeline"
                         );
                         reload_metrics.reloads_failed.inc();
                     }
@@ -1174,6 +1224,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     // across fan-out. On shutdown it drains the worker queues.
     let sink_metrics = metrics.clone();
     let enrichment_swap_for_sink = enrichment_swap.clone();
+    let alert_pipeline_swap_for_sink = alert_pipeline_swap.clone();
+    let alert_pipeline_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let delivery_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let dispatch_ack_tx = ack_tx.clone();
     let empty_ack_tx = ack_tx.clone();
@@ -1181,33 +1233,91 @@ pub async fn run_daemon(config: DaemonConfig) {
     drop(ack_tx);
     let sink_handle = tokio::spawn(async move {
         let dispatcher = Dispatcher::spawn(leaves, Some(df_tx), dispatch_ack_tx, delivery_metrics);
-        while let Some((mut result, ack_tokens)) = sink_rx.recv().await {
-            sink_metrics.on_output_queue_depth_change(-1);
+        // Active-alert store for the alert pipeline's dedup stage. Owned
+        // single-threaded by this task; survives config hot-swaps.
+        let mut alert_store = DedupStore::default();
+        // 1s tick drives the alert pipeline's repeat re-emits and resolved
+        // records. A no-op when no alert pipeline is configured.
+        let mut alert_tick = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        alert_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                maybe = sink_rx.recv() => {
+                    let Some((mut result, ack_tokens)) = maybe else { break };
+                    sink_metrics.on_output_queue_depth_change(-1);
 
-            // Post-evaluation enrichment may suppress every entry; if so, ack
-            // the events and skip sink delivery. `load_full` keeps the pipeline
-            // alive across the await without holding an `ArcSwap` guard.
-            let pipeline_snapshot = enrichment_swap_for_sink.load_full();
-            if let Some(pipeline) = pipeline_snapshot.as_ref()
-                && !pipeline.is_empty()
-            {
-                pipeline.run(&mut result).await;
-                if result.is_empty() {
-                    for token in ack_tokens {
-                        let _ = empty_ack_tx.send(token);
+                    // Post-evaluation enrichment may suppress every entry; if
+                    // so, ack the events and skip sink delivery. `load_full`
+                    // keeps the pipeline alive across the await without holding
+                    // an `ArcSwap` guard.
+                    let pipeline_snapshot = enrichment_swap_for_sink.load_full();
+                    if let Some(pipeline) = pipeline_snapshot.as_ref()
+                        && !pipeline.is_empty()
+                    {
+                        pipeline.run(&mut result).await;
+                        if result.is_empty() {
+                            for token in ack_tokens {
+                                let _ = empty_ack_tx.send(token);
+                            }
+                            continue;
+                        }
                     }
-                    continue;
+
+                    // Alert pipeline: dedup folds duplicates into the active
+                    // store. If the whole batch folds away, ack and skip
+                    // dispatch, mirroring the enrichment empty-result path.
+                    let alert_snapshot = alert_pipeline_swap_for_sink.load_full();
+                    if let Some(alert_pipeline) = alert_snapshot.as_ref()
+                        && !alert_pipeline.is_noop()
+                    {
+                        let now = chrono::Utc::now().timestamp();
+                        result = alert_pipeline.process(
+                            result,
+                            &mut alert_store,
+                            now,
+                            alert_pipeline_metrics.as_ref(),
+                        );
+                        if result.is_empty() {
+                            for token in ack_tokens {
+                                let _ = empty_ack_tx.send(token);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Live detection tail: fan the post-enrichment result out to
+                    // any active tail sessions before dispatch. Lossy and
+                    // non-blocking, so it can never stall the sink task or the
+                    // ack-join.
+                    if let Some(tail) = &tail_for_sink {
+                        tail.capture(&result);
+                    }
+
+                    dispatcher.dispatch(result, ack_tokens).await;
+                }
+                _ = alert_tick.tick() => {
+                    // Emit any due repeat re-emits and resolved records. These
+                    // are synthetic (no input event), so they dispatch with no
+                    // ack tokens.
+                    let alert_snapshot = alert_pipeline_swap_for_sink.load_full();
+                    if let Some(alert_pipeline) = alert_snapshot.as_ref()
+                        && !alert_pipeline.is_noop()
+                    {
+                        let now = chrono::Utc::now().timestamp();
+                        let records = alert_pipeline.tick(
+                            &mut alert_store,
+                            now,
+                            alert_pipeline_metrics.as_ref(),
+                        );
+                        if !records.is_empty() {
+                            if let Some(tail) = &tail_for_sink {
+                                tail.capture(&records);
+                            }
+                            dispatcher.dispatch(records, Vec::new()).await;
+                        }
+                    }
                 }
             }
-
-            // Live detection tail: fan the post-enrichment result out to any
-            // active tail sessions before dispatch. Lossy and non-blocking, so
-            // it can never stall the sink task or the ack-join.
-            if let Some(tail) = &tail_for_sink {
-                tail.capture(&result);
-            }
-
-            dispatcher.dispatch(result, ack_tokens).await;
         }
         dispatcher.shutdown().await;
     });

@@ -42,6 +42,7 @@
 //! }
 //! ```
 
+pub mod alert_pipeline;
 pub mod egress;
 pub mod engine;
 pub mod enrichment;
@@ -56,6 +57,11 @@ pub mod scope;
 pub mod sources;
 pub mod tap;
 
+pub use alert_pipeline::{
+    AlertPipeline, AlertPipelineConfigError, AlertPipelineFile, DedupStore, Selector,
+    SelectorParseError, build_alert_pipeline, load_alert_pipeline_file,
+    parse_alert_pipeline_config,
+};
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
     set_default_egress_policy,

@@ -116,6 +116,9 @@ pub(crate) struct DaemonPartial {
     /// Post-evaluation enricher config file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enrichers: Option<PathBuf>,
+    /// Alert-pipeline config file (dedup, grouping, silencing, inhibition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_pipeline: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<ApiPartial>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,6 +155,7 @@ impl Merge for DaemonPartial {
             pipelines: over.pipelines.or(self.pipelines),
             sources: over.sources.or(self.sources),
             enrichers: over.enrichers.or(self.enrichers),
+            alert_pipeline: over.alert_pipeline.or(self.alert_pipeline),
             api: merge_opt(self.api, over.api),
             input: merge_opt(self.input, over.input),
             output: merge_opt(self.output, over.output),
