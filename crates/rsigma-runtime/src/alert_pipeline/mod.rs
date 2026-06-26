@@ -25,9 +25,9 @@ mod snapshot;
 mod state;
 
 pub use config::{
-    AlertPipelineConfigError, AlertPipelineFile, CapsFile, DedupFile, GroupFile, GroupModeLabel,
-    IncludeLabel, ScopeConfig, build_alert_pipeline, load_alert_pipeline_file,
-    parse_alert_pipeline_config,
+    AlertPipelineConfigError, AlertPipelineFile, CapsFile, DEFAULT_MAX_DYNAMIC_SILENCES, DedupFile,
+    GroupFile, GroupModeLabel, IncludeLabel, ScopeConfig, build_alert_pipeline,
+    load_alert_pipeline_file, parse_alert_pipeline_config,
 };
 pub use dedup::DedupStore;
 pub use grouping::{GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode};
@@ -73,6 +73,7 @@ pub struct AlertPipeline {
     group: Option<GroupConfig>,
     static_silences: Vec<StaticSilence>,
     inhibit: Option<InhibitConfig>,
+    max_silences: usize,
 }
 
 impl AlertPipeline {
@@ -84,6 +85,7 @@ impl AlertPipeline {
         group: Option<GroupConfig>,
         static_silences: Vec<StaticSilence>,
         inhibit: Option<InhibitConfig>,
+        max_silences: usize,
     ) -> Self {
         AlertPipeline {
             scope,
@@ -92,12 +94,19 @@ impl AlertPipeline {
             group,
             static_silences,
             inhibit,
+            max_silences,
         }
     }
 
     /// The static silences declared in the config, for (re-)seeding the store.
     pub fn static_silences(&self) -> &[StaticSilence] {
         &self.static_silences
+    }
+
+    /// Ceiling on concurrently-tracked dynamic (API) silences. The silence API
+    /// rejects creation past this many.
+    pub fn max_dynamic_silences(&self) -> usize {
+        self.max_silences
     }
 
     /// The configured incident include mode, if grouping is enabled.
@@ -148,7 +157,10 @@ impl AlertPipeline {
                 continue;
             }
 
-            // Dedup: fold duplicates into the active alert.
+            // Dedup: fold duplicates into the active alert. When the store is at
+            // its cap, a first-fire for a new fingerprint passes through
+            // un-deduped rather than opening another alert, bounding memory; the
+            // store-entries gauge plateauing at the cap signals saturation.
             if let Some(cfg) = self.dedup.as_ref() {
                 let fingerprint = dedup::fingerprint(&cfg.fingerprint, &result);
                 if state.dedup.contains(&fingerprint) {
@@ -156,9 +168,11 @@ impl AlertPipeline {
                     metrics.on_alert_pipeline_result("folded");
                     continue;
                 }
-                let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
-                let sample = dedup::sample_of(&result);
-                state.dedup.insert(fingerprint, now, sample, fields);
+                if state.dedup.len() < cfg.max_active_alerts {
+                    let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
+                    let sample = dedup::sample_of(&result);
+                    state.dedup.insert(fingerprint, now, sample, fields);
+                }
                 metrics.on_alert_pipeline_result("emitted");
             }
 
@@ -290,7 +304,9 @@ fn annotate_incident(result: &mut EvaluationResult, id: String) {
         .enrichments
         .get_or_insert_with(serde_json::Map::new);
     if map.contains_key("incident_id") {
-        tracing::warn!("alert pipeline: overwriting a user-set `incident_id` enrichment key");
+        // Debug, not warn: an upstream enricher setting `incident_id` on every
+        // result would otherwise emit one log line per result.
+        tracing::debug!("alert pipeline: overwriting a user-set `incident_id` enrichment key");
     }
     map.insert("incident_id".to_string(), Value::String(id));
 }

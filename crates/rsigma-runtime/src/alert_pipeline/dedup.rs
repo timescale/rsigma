@@ -32,6 +32,11 @@ pub struct DedupConfig {
     pub repeat_interval: Duration,
     /// Idle timeout after which an active alert resolves and is evicted.
     pub resolve_timeout: Duration,
+    /// Ceiling on concurrently-active alerts. Once reached, a first-fire for a
+    /// new fingerprint passes through un-deduped rather than opening another
+    /// alert, so a high-cardinality fingerprint cannot grow the store without
+    /// bound between resolve windows.
+    pub max_active_alerts: usize,
 }
 
 /// One fingerprint's active-alert state.
@@ -309,6 +314,7 @@ mod tests {
             fingerprint: vec![Selector::parse("match.SourceIp").unwrap()],
             repeat_interval: Duration::from_secs(repeat),
             resolve_timeout: Duration::from_secs(resolve),
+            max_active_alerts: 100_000,
         }
     }
 

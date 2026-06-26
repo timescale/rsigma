@@ -38,11 +38,11 @@ silences:
 
 ### The silence API
 
-- `POST /api/v1/silences` creates a silence from a JSON body (`matchers`, optional `starts_at`/`ends_at` RFC 3339, `created_by`, `comment`) and returns the assigned `id`.
+- `POST /api/v1/silences` creates a silence from a JSON body (`matchers`, optional `starts_at`/`ends_at` RFC 3339, `created_by`, `comment`) and returns the assigned `id`. It returns `429 Too Many Requests` once the dynamic-silence cap (`max_silences`, default 1000) is reached; delete silences or raise the cap.
 - `GET /api/v1/silences` lists every silence with its derived `state` (`pending` / `active` / `expired`) and `origin`.
 - `DELETE /api/v1/silences/{id}` removes a silence.
 
-Expired silences are garbage-collected on the background tick. Metrics: `rsigma_silenced_total` (results muted) and `rsigma_silences_active` (currently-active silences).
+Expired silences are garbage-collected on the background tick. The dynamic (API) silence count is bounded by `max_silences` so an unbounded number of silences cannot accumulate; static silences from the config do not count against it. Metrics: `rsigma_silenced_total` (results muted) and `rsigma_silences_active` (currently-active silences).
 
 ## Inhibition
 
@@ -107,6 +107,8 @@ dedup:
 | `dedup.fingerprint` | required | Selectors hashed (with the rule identity) into the fingerprint. At least one is required when `dedup` is set. |
 | `dedup.repeat_interval` | `0` | Re-emit cadence for a still-active alert (humantime, e.g. `1h`). `0` means pure suppression. |
 | `dedup.resolve_timeout` | `1h` | Idle timeout after which an active alert resolves and is evicted (humantime). |
+| `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. The `rsigma_dedup_store_entries` gauge plateauing at this value signals saturation. |
+| `max_silences` | `1000` | Ceiling on concurrently-tracked dynamic (API) silences. `POST /api/v1/silences` returns `429` past this. Static silences from the config do not count against it. |
 
 ### Field selectors
 

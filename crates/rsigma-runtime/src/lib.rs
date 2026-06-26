@@ -59,11 +59,11 @@ pub mod tap;
 
 pub use alert_pipeline::{
     AlertPipeline, AlertPipelineConfigError, AlertPipelineFile, AlertPipelineSnapshot,
-    AlertPipelineState, DedupStore, GroupMode, IncidentRef, IncidentResult, IncidentStore,
-    IncludeMode, MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec, SNAPSHOT_VERSION,
-    Selector, SelectorParseError, Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState,
-    SilenceStore, SilenceView, TickOutput, build_alert_pipeline, load_alert_pipeline_file,
-    parse_alert_pipeline_config,
+    AlertPipelineState, DEFAULT_MAX_DYNAMIC_SILENCES, DedupStore, GroupMode, IncidentRef,
+    IncidentResult, IncidentStore, IncludeMode, MatchOp, Matcher, MatcherError, MatcherSet,
+    MatcherSpec, SNAPSHOT_VERSION, Selector, SelectorParseError, Silence, SilenceError,
+    SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
+    build_alert_pipeline, load_alert_pipeline_file, parse_alert_pipeline_config,
 };
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,

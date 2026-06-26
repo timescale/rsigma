@@ -2056,18 +2056,37 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                 .into_response();
         }
     };
+    let max_silences = state
+        .alert_pipeline_swap
+        .load_full()
+        .as_ref()
+        .as_ref()
+        .map(|p| p.max_dynamic_silences())
+        .unwrap_or(rsigma_runtime::DEFAULT_MAX_DYNAMIC_SILENCES);
     match Silence::build(spec, SilenceOrigin::Api) {
         Ok(silence) => {
             let id = silence.id().to_string();
-            {
+            let added = {
                 let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-                st.silences.add(silence);
+                st.silences.try_add(silence, max_silences)
+            };
+            if added {
+                (
+                    StatusCode::CREATED,
+                    Json(serde_json::json!({ "status": "created", "id": id })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "dynamic silence limit reached ({max_silences}); delete silences or raise max_silences"
+                        )
+                    })),
+                )
+                    .into_response()
             }
-            (
-                StatusCode::CREATED,
-                Json(serde_json::json!({ "status": "created", "id": id })),
-            )
-                .into_response()
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,

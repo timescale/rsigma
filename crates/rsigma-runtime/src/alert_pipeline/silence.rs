@@ -232,9 +232,30 @@ impl SilenceStore {
         self.silences.is_empty()
     }
 
-    /// Add a silence (used by the API for `api`-origin silences).
+    /// Add a silence (used by restore and tests). Prefer [`try_add`] on the API
+    /// path so the dynamic-silence cap is enforced.
+    ///
+    /// [`try_add`]: SilenceStore::try_add
     pub fn add(&mut self, silence: Silence) {
         self.silences.push(silence);
+    }
+
+    /// Count of dynamic (API-origin) silences currently tracked.
+    pub fn dynamic_count(&self) -> usize {
+        self.silences
+            .iter()
+            .filter(|s| s.origin == SilenceOrigin::Api)
+            .count()
+    }
+
+    /// Add an API-origin silence unless the dynamic-silence cap is reached.
+    /// Returns `false` (and does not add) when at or over `max_dynamic`.
+    pub fn try_add(&mut self, silence: Silence, max_dynamic: usize) -> bool {
+        if self.dynamic_count() >= max_dynamic {
+            return false;
+        }
+        self.silences.push(silence);
+        true
     }
 
     /// Remove a silence by id. Returns whether one was removed.
@@ -449,5 +470,26 @@ mod tests {
     fn empty_matchers_rejected() {
         let err = Silence::build(SilenceSpec::default(), SilenceOrigin::Api).unwrap_err();
         assert!(matches!(err, SilenceError::EmptyMatchers));
+    }
+
+    #[test]
+    fn try_add_enforces_dynamic_cap() {
+        let mut store = SilenceStore::default();
+        // A static silence does not count against the dynamic cap.
+        store.add(Silence::build(spec("10.0.0.0"), SilenceOrigin::Static).unwrap());
+        assert!(store.try_add(
+            Silence::build(spec("10.0.0.1"), SilenceOrigin::Api).unwrap(),
+            2
+        ));
+        assert!(store.try_add(
+            Silence::build(spec("10.0.0.2"), SilenceOrigin::Api).unwrap(),
+            2
+        ));
+        // Third dynamic silence is rejected at the cap of 2.
+        assert!(!store.try_add(
+            Silence::build(spec("10.0.0.3"), SilenceOrigin::Api).unwrap(),
+            2
+        ));
+        assert_eq!(store.dynamic_count(), 2);
     }
 }

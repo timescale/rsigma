@@ -10,6 +10,7 @@ A new optional post-engine stage in the daemon sink path, between enrichment and
 
 * Fingerprints are built from a shared field-selector namespace over `EvaluationResult`: `rule`, `level`, `event.<path>`, `match.<field>`, `enrichment.<path>`, and `correlation.group_key.<field>`. A malformed selector rejects the daemon at startup with an error naming the offending selector.
 * `scope` (rules / tags / levels) restricts which results the layer acts on; out-of-scope results pass through untouched. `strip_event` retains the event for selector resolution then drops raw event payloads before delivery. `repeat_interval: 0` gives pure suppression with a single resolved summary on expiry.
+* The active-alert store is bounded by `dedup.max_active_alerts` (default 100000): once full, a first-fire for a new fingerprint passes through un-deduped rather than growing the store, so a high-cardinality fingerprint cannot exhaust memory.
 * Re-emit and resolved records ride the existing NDJSON wire shape, disambiguated by a `dedup_state` key in `enrichments` (alongside `dedup_fingerprint`, `dedup_fire_count`, `dedup_first_seen`, `dedup_last_seen`, and `dedup_fields`).
 * The `Scope` filter moved to a shared crate-level `rsigma_runtime::scope` module; the `enrichment` module re-exports it, so `rsigma_runtime::Scope` and `rsigma_runtime::enrichment::Scope` are unchanged.
 
@@ -24,7 +25,7 @@ A silencing stage mutes results matching operator-defined matchers before dedup,
 
 * A matcher is `selector <op> value` over the field-selector namespace, with the `=`, `!=`, `=~`, `!~` operators (regex anchored); a matcher set is ANDed. The matcher engine is shared with the forthcoming inhibition stage.
 * Silences carry a time window (optional RFC 3339 `starts_at`/`ends_at`), a derived `pending`/`active`/`expired` state, and an origin: `static` silences declared under `silences:` in the config (re-seeded on hot-reload) and `api` silences created at runtime over `POST /api/v1/silences`. Expired silences are garbage-collected.
-* New endpoints: `GET`/`POST /api/v1/silences` and `DELETE /api/v1/silences/{id}`. A muted result is acked and dropped before dedup, so it neither emits nor opens an incident.
+* New endpoints: `GET`/`POST /api/v1/silences` and `DELETE /api/v1/silences/{id}`. A muted result is acked and dropped before dedup, so it neither emits nor opens an incident. Dynamic (API) silences are bounded by `max_silences` (default 1000); creation past the cap returns `429`.
 * Two metrics: `rsigma_silenced_total` and `rsigma_silences_active`.
 
 An inhibition stage mutes a target result while a matching source is active, modeled on Alertmanager `inhibit_rules`.

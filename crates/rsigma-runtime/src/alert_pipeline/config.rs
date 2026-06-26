@@ -38,6 +38,15 @@ const DEFAULT_GROUP_INTERVAL: Duration = Duration::from_secs(300);
 /// Default window a source alert stays active for inhibition.
 const DEFAULT_INHIBIT_DURATION: Duration = Duration::from_secs(300);
 
+/// Default ceiling on concurrently-active dedup alerts. Once full, further
+/// first-fires pass through un-deduped instead of growing the store, bounding
+/// memory under a high-cardinality fingerprint.
+const DEFAULT_MAX_ACTIVE_ALERTS: usize = 100_000;
+
+/// Default ceiling on dynamic (API-created) silences, bounding the admin
+/// surface against unbounded silence creation.
+pub const DEFAULT_MAX_DYNAMIC_SILENCES: usize = 1_000;
+
 /// Top-level alert-pipeline config file.
 ///
 /// ```yaml
@@ -71,6 +80,10 @@ pub struct AlertPipelineFile {
     /// silences created over the API are independent of this list.
     #[serde(default)]
     pub silences: Vec<SilenceSpec>,
+    /// Ceiling on concurrently-tracked dynamic (API) silences. Creation past
+    /// this many is rejected with `429`. Defaults to 1000.
+    #[serde(default)]
+    pub max_silences: Option<usize>,
     /// Inhibition rules. An active source mutes matching targets.
     #[serde(default)]
     pub inhibit_rules: Vec<InhibitRuleFile>,
@@ -123,6 +136,11 @@ pub struct DedupFile {
     /// Idle timeout after which an active alert resolves (humantime).
     #[serde(default, with = "humantime_opt")]
     pub resolve_timeout: Option<Duration>,
+    /// Ceiling on concurrently-active alerts. Past this, first-fires pass
+    /// through un-deduped (bounds memory under high-cardinality fingerprints).
+    /// Defaults to 100000.
+    #[serde(default)]
+    pub max_active_alerts: Option<usize>,
 }
 
 /// Grouping mode label.
@@ -303,6 +321,7 @@ pub fn build_alert_pipeline(
                 fingerprint,
                 repeat_interval: d.repeat_interval.unwrap_or(DEFAULT_REPEAT_INTERVAL),
                 resolve_timeout: d.resolve_timeout.unwrap_or(DEFAULT_RESOLVE_TIMEOUT),
+                max_active_alerts: d.max_active_alerts.unwrap_or(DEFAULT_MAX_ACTIVE_ALERTS),
             })
         }
         None => None,
@@ -327,6 +346,8 @@ pub fn build_alert_pipeline(
         Some(build_inhibit(file.inhibit_rules)?)
     };
 
+    let max_silences = file.max_silences.unwrap_or(DEFAULT_MAX_DYNAMIC_SILENCES);
+
     Ok(AlertPipeline::new(
         scope,
         file.strip_event,
@@ -334,6 +355,7 @@ pub fn build_alert_pipeline(
         group,
         static_silences,
         inhibit,
+        max_silences,
     ))
 }
 
