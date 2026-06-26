@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Documentation: rsigma-action in the CI/CD guide
+### Documentation: rsigma-action in the CI/CD guide (#260)
 
 The [CI/CD guide](https://timescale.github.io/rsigma/guide/ci-cd/) and the README now document [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action), the one-step GitHub Actions gate that wraps `rule lint`, `rule validate`, a merge-base fields-drift diff, `rule backtest`, and `rule coverage` into a single pull-request check with diff annotations, a sticky summary comment, and SLSA-attestation-verified cached binary installs. The manual multi-job workflow stays as the no-third-party-action and other-CI fallback.
 
