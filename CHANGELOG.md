@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Alert pipeline
+### Alert pipeline (#255)
 
 A new optional post-engine stage in the daemon sink path, between enrichment and the sinks, configured with `--alert-pipeline <path>` (or the `daemon.alert_pipeline` config key) and hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous pipeline active. It deduplicates results by a configurable fingerprint, modeled on Alertmanager: the first fire passes through and opens an active alert, subsequent fires fold into it, the alert re-emits on `repeat_interval` carrying the accumulated fire count, and it emits a final `resolved` record after `resolve_timeout` and is evicted.
 
