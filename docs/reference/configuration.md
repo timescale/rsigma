@@ -45,6 +45,7 @@ daemon:
   pipelines: [ecs_windows]
   sources: [/etc/rsigma/sources]
   # alert_pipeline: /etc/rsigma/alert-pipeline.yml   # dedup (see the Alert Pipeline guide)
+  # risk: /etc/rsigma/risk.yml                       # risk-based alerting (see the Risk-Based Alerting guide)
   api:
     addr: "0.0.0.0:9090"
   input:

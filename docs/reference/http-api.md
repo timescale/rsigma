@@ -13,6 +13,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/metrics` | GET | none | Prometheus text format. See [Prometheus metrics](metrics.md). |
 | `/api/v1/status` | GET | none | Counters, state-entry counts, uptime, and (when configured) dynamic-source summary. |
 | `/api/v1/incidents` | GET | none | Open incidents from the alert-pipeline grouping stage. |
+| `/api/v1/risk` | GET | none | Open entities tracked by the risk accumulator, with their window score, tactic count, source count, and window bounds. |
 | `/api/v1/silences` | GET, POST | none | List silences, or create one (returns its id). |
 | `/api/v1/silences/{id}` | DELETE | none | Remove a silence by id. |
 | `/api/v1/dispositions` | GET, POST | none | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. |
@@ -127,6 +128,35 @@ curl -sS http://127.0.0.1:9090/api/v1/incidents
 ```
 
 The `include` mode configured on the `group` block decides whether each incident carries lightweight `refs` or full `results`. See the [Alert Pipeline](../guide/alert-pipeline.md) guide.
+
+### `GET /api/v1/risk`
+
+Open entities tracked by the risk accumulator (present when `--risk` configures an `incident` block). Each entry reports the entity, its accumulated window score, the distinct ATT&CK tactic count, the distinct contributing-source count, the retained contribution count, the window bounds, and the last-fired timestamp (when the entity has fired). Empty when no risk accumulator is configured.
+
+```bash
+curl -sS http://127.0.0.1:9090/api/v1/risk
+```
+
+```json
+{
+  "count": 1,
+  "entities": [
+    {
+      "entity_type": "user",
+      "entity_value": "alice",
+      "score": 120,
+      "tactic_count": 2,
+      "source_count": 2,
+      "result_count": 2,
+      "window_start": 1719412800,
+      "window_end": 1719412860,
+      "last_fired": 1719412860
+    }
+  ]
+}
+```
+
+See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
 
 ### `GET /api/v1/silences`
 
