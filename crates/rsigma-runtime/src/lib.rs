@@ -103,8 +103,9 @@ pub use metrics::{MetricsHook, NoopMetrics};
 pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
 pub use risk::{
-    RiskConfigError, RiskFile, RiskLayer, RiskObject, RiskOutput, build_risk_layer, load_risk_file,
-    parse_risk_config,
+    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskFile,
+    RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState, build_risk_layer,
+    load_risk_file, parse_risk_config,
 };
 pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};

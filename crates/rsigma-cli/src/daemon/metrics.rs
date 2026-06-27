@@ -87,6 +87,11 @@ pub struct Metrics {
     pub risk_annotation_score: Histogram,
     pub risk_objects_total: IntCounter,
     pub risk_layer_duration_seconds: Histogram,
+    pub risk_entities_open: IntGauge,
+    pub risk_state_entries: IntGauge,
+    pub risk_evictions_total: IntCounter,
+    pub risk_incidents_emitted_total: IntCounterVec,
+    pub risk_incident_results_total: IntCounter,
 }
 
 impl Metrics {
@@ -853,13 +858,48 @@ impl Metrics {
             ]),
         )
         .unwrap();
-        // Pre-materialise the fixed `action` label set so the `# HELP` / `# TYPE`
-        // lines and zero series render on the first scrape, before any event.
+        let risk_entities_open = IntGauge::with_opts(Opts::new(
+            "rsigma_risk_entities_open",
+            "Entities currently tracked by the risk accumulator",
+        ))
+        .unwrap();
+        let risk_state_entries = IntGauge::with_opts(Opts::new(
+            "rsigma_risk_state_entries",
+            "Risk contributions currently retained across all entities",
+        ))
+        .unwrap();
+        let risk_evictions_total = IntCounter::with_opts(Opts::new(
+            "rsigma_risk_evictions_total",
+            "Entities dropped from the risk accumulator (store full or aged out)",
+        ))
+        .unwrap();
+        let risk_incidents_emitted_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_risk_incidents_emitted_total",
+                "Risk incidents emitted by trigger (score, tactic_count)",
+            ),
+            &["trigger"],
+        )
+        .unwrap();
+        let risk_incident_results_total = IntCounter::with_opts(Opts::new(
+            "rsigma_risk_incident_results_total",
+            "Total risk incident records emitted",
+        ))
+        .unwrap();
+        // Pre-materialise the fixed label sets and zero the gauges so the
+        // `# HELP` / `# TYPE` lines and zero series render on the first scrape.
         for action in ["scored", "no_entity", "skipped"] {
             risk_annotations_total
                 .with_label_values(&[action])
                 .inc_by(0);
         }
+        for trigger in ["score", "tactic_count"] {
+            risk_incidents_emitted_total
+                .with_label_values(&[trigger])
+                .inc_by(0);
+        }
+        risk_entities_open.set(0);
+        risk_state_entries.set(0);
         registry
             .register(Box::new(risk_annotations_total.clone()))
             .unwrap();
@@ -871,6 +911,21 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(risk_layer_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_entities_open.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_state_entries.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_incidents_emitted_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_incident_results_total.clone()))
             .unwrap();
 
         Metrics {
@@ -955,6 +1010,11 @@ impl Metrics {
             risk_annotation_score,
             risk_objects_total,
             risk_layer_duration_seconds,
+            risk_entities_open,
+            risk_state_entries,
+            risk_evictions_total,
+            risk_incidents_emitted_total,
+            risk_incident_results_total,
         }
     }
 
@@ -1121,6 +1181,25 @@ impl MetricsHook for Metrics {
 
     fn observe_risk_layer_duration(&self, seconds: f64) {
         self.risk_layer_duration_seconds.observe(seconds);
+    }
+
+    fn on_risk_incident_emitted(&self, trigger: &str) {
+        self.risk_incidents_emitted_total
+            .with_label_values(&[trigger])
+            .inc();
+        self.risk_incident_results_total.inc();
+    }
+
+    fn set_risk_entities_open(&self, count: i64) {
+        self.risk_entities_open.set(count);
+    }
+
+    fn set_risk_state_entries(&self, count: i64) {
+        self.risk_state_entries.set(count);
+    }
+
+    fn on_risk_eviction(&self) {
+        self.risk_evictions_total.inc();
     }
 
     fn observe_processing_latency(&self, seconds: f64) {

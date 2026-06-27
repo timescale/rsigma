@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -17,6 +18,8 @@ use crate::Scope;
 use crate::selector::{Selector, SelectorParseError};
 
 use super::RiskLayer;
+use super::accumulator::{IncidentConfig, RiskCaps};
+use super::incident::IncludeMode;
 use super::object::ObjectSelector;
 use super::score::{Reducer, ScoreConfig};
 
@@ -63,6 +66,57 @@ pub struct RiskFile {
     /// Optional NATS subject override for emitted risk events.
     #[serde(default)]
     pub nats_subject: Option<String>,
+    /// Per-entity risk-incident accumulator. Omitted means annotation only.
+    #[serde(default)]
+    pub incident: Option<IncidentFile>,
+}
+
+/// `incident:` block.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct IncidentFile {
+    /// Accumulation window (humantime, e.g. `24h`). Defaults to 24h.
+    #[serde(default, with = "humantime_opt")]
+    pub window: Option<Duration>,
+    /// Score threshold (window risk sum). At least one threshold is required.
+    #[serde(default)]
+    pub score_threshold: Option<i64>,
+    /// Distinct-tactic threshold. At least one threshold is required.
+    #[serde(default)]
+    pub tactic_count_threshold: Option<u64>,
+    /// Per-entity cooldown after a fire (humantime). Defaults to 1h.
+    #[serde(default, with = "humantime_opt")]
+    pub cooldown: Option<Duration>,
+    /// How much contributing detail to embed in an incident.
+    #[serde(default)]
+    pub include: IncludeLabel,
+    /// Optional NATS subject override for emitted incidents.
+    #[serde(default)]
+    pub nats_subject: Option<String>,
+    /// Growth bounds.
+    #[serde(default)]
+    pub caps: Option<RiskCapsFile>,
+}
+
+/// `incident.include` label.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IncludeLabel {
+    /// Lightweight references only (default).
+    #[default]
+    Refs,
+    /// Full (event-stripped) contributing results.
+    Results,
+}
+
+/// `incident.caps:` block.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RiskCapsFile {
+    #[serde(default)]
+    pub max_open_entities: Option<usize>,
+    #[serde(default)]
+    pub max_sources_per_entity: Option<usize>,
+    #[serde(default)]
+    pub max_results_per_incident: Option<usize>,
 }
 
 /// `scope:` block, mirroring the alert-pipeline config.
@@ -136,6 +190,9 @@ pub enum RiskConfigError {
     EmptyObjectType,
     /// No `objects` were configured; the layer would have no entities to score.
     NoObjects,
+    /// An `incident` block set neither `score_threshold` nor
+    /// `tactic_count_threshold`.
+    NoThreshold,
 }
 
 impl std::fmt::Display for RiskConfigError {
@@ -153,6 +210,11 @@ impl std::fmt::Display for RiskConfigError {
             RiskConfigError::NoObjects => write!(
                 f,
                 "objects is empty; list at least one risk-object selector"
+            ),
+            RiskConfigError::NoThreshold => write!(
+                f,
+                "incident is configured but neither score_threshold nor \
+                 tactic_count_threshold is set; set at least one"
             ),
         }
     }
@@ -211,6 +273,11 @@ pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
         });
     }
 
+    let incident = match file.incident {
+        Some(i) => Some(build_incident_config(i)?),
+        None => None,
+    };
+
     Ok(RiskLayer::new(
         scope,
         file.strip_event,
@@ -218,7 +285,66 @@ pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
         objects,
         file.emit_risk_events,
         file.nats_subject,
+        incident,
     ))
+}
+
+/// Default accumulation window when `incident.window` is omitted.
+const DEFAULT_WINDOW: Duration = Duration::from_secs(24 * 3600);
+/// Default per-entity cooldown when `incident.cooldown` is omitted.
+const DEFAULT_COOLDOWN: Duration = Duration::from_secs(3600);
+
+/// Validate an `incident:` block into an [`IncidentConfig`].
+fn build_incident_config(file: IncidentFile) -> Result<IncidentConfig, RiskConfigError> {
+    if file.score_threshold.is_none() && file.tactic_count_threshold.is_none() {
+        return Err(RiskConfigError::NoThreshold);
+    }
+    let include = match file.include {
+        IncludeLabel::Refs => IncludeMode::Refs,
+        IncludeLabel::Results => IncludeMode::Results,
+    };
+    let caps_file = file.caps.unwrap_or_default();
+    let defaults = RiskCaps::default();
+    let caps = RiskCaps {
+        max_open_entities: caps_file
+            .max_open_entities
+            .unwrap_or(defaults.max_open_entities),
+        max_sources_per_entity: caps_file
+            .max_sources_per_entity
+            .unwrap_or(defaults.max_sources_per_entity),
+        max_results_per_incident: caps_file
+            .max_results_per_incident
+            .unwrap_or(defaults.max_results_per_incident),
+    };
+    Ok(IncidentConfig {
+        window: file.window.unwrap_or(DEFAULT_WINDOW),
+        score_threshold: file.score_threshold,
+        tactic_count_threshold: file.tactic_count_threshold,
+        cooldown: file.cooldown.unwrap_or(DEFAULT_COOLDOWN),
+        include,
+        nats_subject: file.nats_subject,
+        caps,
+    })
+}
+
+/// humantime serde adapter for `Option<Duration>`, accepting `null` / missing.
+mod humantime_opt {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw: Option<String> = Option::deserialize(d)?;
+        match raw {
+            Some(s) => humantime::parse_duration(&s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]

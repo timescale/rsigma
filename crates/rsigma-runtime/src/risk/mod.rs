@@ -17,14 +17,19 @@
 //! ([`RiskLayer`]) is built from a YAML file and swapped atomically on
 //! hot-reload.
 
+mod accumulator;
 mod config;
+mod incident;
 mod object;
 mod score;
+mod tactics;
 
+pub use accumulator::{IncidentConfig, RiskCaps, RiskState};
 pub use config::{
-    ObjectFile, ReducerLabel, RiskConfigError, RiskFile, ScopeConfig, ScoreFile, build_risk_layer,
-    load_risk_file, parse_risk_config,
+    IncidentFile, IncludeLabel, ObjectFile, ReducerLabel, RiskCapsFile, RiskConfigError, RiskFile,
+    ScopeConfig, ScoreFile, build_risk_layer, load_risk_file, parse_risk_config,
 };
+pub use incident::{IncludeMode, RiskEntityView, RiskIncidentResult, RiskRef};
 pub use object::RiskObject;
 pub use score::DEFAULT_SCORE_ATTRIBUTE;
 
@@ -33,6 +38,7 @@ use serde_json::Value;
 
 use crate::{MetricsHook, Scope};
 
+use accumulator::Contribution;
 use object::ObjectSelector;
 use score::ScoreConfig;
 
@@ -51,6 +57,9 @@ pub struct RiskOutput {
     /// as additive NDJSON (optionally to a dedicated subject). Empty unless
     /// `emit_risk_events` is set.
     pub risk_events: Vec<Value>,
+    /// High-fidelity risk incidents emitted when an entity crossed a threshold,
+    /// dispatched via the incident path (optionally to a dedicated subject).
+    pub incidents: Vec<RiskIncidentResult>,
 }
 
 /// A validated, runnable risk layer.
@@ -66,10 +75,12 @@ pub struct RiskLayer {
     objects: Vec<ObjectSelector>,
     emit_risk_events: bool,
     nats_subject: Option<String>,
+    incident: Option<IncidentConfig>,
 }
 
 impl RiskLayer {
     /// Construct from validated parts. Prefer [`build_risk_layer`].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         scope: Scope,
         strip_event: bool,
@@ -77,6 +88,7 @@ impl RiskLayer {
         objects: Vec<ObjectSelector>,
         emit_risk_events: bool,
         nats_subject: Option<String>,
+        incident: Option<IncidentConfig>,
     ) -> Self {
         RiskLayer {
             scope,
@@ -85,6 +97,7 @@ impl RiskLayer {
             objects,
             emit_risk_events,
             nats_subject,
+            incident,
         }
     }
 
@@ -93,12 +106,26 @@ impl RiskLayer {
         self.nats_subject.as_deref()
     }
 
+    /// The validated incident config, if the accumulator is enabled.
+    pub fn incident_config(&self) -> Option<&IncidentConfig> {
+        self.incident.as_ref()
+    }
+
+    /// The optional NATS subject override for emitted risk incidents.
+    pub fn incident_nats_subject(&self) -> Option<&str> {
+        self.incident
+            .as_ref()
+            .and_then(|c| c.nats_subject.as_deref())
+    }
+
     /// Annotate each in-scope detection with its risk score and risk objects,
+    /// accumulate per-entity risk (emitting incidents on threshold crossings),
     /// and (opt-in) emit a compact risk event per `(detection, risk object)`
     /// pair. Out-of-scope results pass through untouched.
     pub fn process(
         &self,
         results: ProcessResult,
+        state: &mut RiskState,
         now: i64,
         metrics: &dyn MetricsHook,
     ) -> RiskOutput {
@@ -106,6 +133,7 @@ impl RiskLayer {
         let mut out = RiskOutput {
             kept: Vec::with_capacity(results.len()),
             risk_events: Vec::new(),
+            incidents: Vec::new(),
         };
 
         for mut result in results {
@@ -134,14 +162,86 @@ impl RiskLayer {
                 }
             }
 
+            if let Some(cfg) = self.incident.as_ref()
+                && !objects.is_empty()
+            {
+                self.accumulate(cfg, &result, score, &objects, state, now, metrics, &mut out);
+            }
+
             if self.strip_event {
                 strip_event_payloads(&mut result);
             }
             out.kept.push(result);
         }
 
+        if self.incident.is_some() {
+            metrics.set_risk_entities_open(state.len() as i64);
+            metrics.set_risk_state_entries(state.total_entries() as i64);
+        }
         metrics.observe_risk_layer_duration(start.elapsed().as_secs_f64());
         out
+    }
+
+    /// Feed one annotated detection's risk objects into the accumulator.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate(
+        &self,
+        cfg: &IncidentConfig,
+        result: &EvaluationResult,
+        score: i64,
+        objects: &[RiskObject],
+        state: &mut RiskState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+        out: &mut RiskOutput,
+    ) {
+        let tactics = tactics::extract(&result.header.tags);
+        let rule = result
+            .header
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| result.header.rule_title.clone());
+        let level = result.header.level.map(|l| l.as_str().to_string());
+        let stored_result = if matches!(cfg.include, IncludeMode::Results) {
+            let mut stripped = result.clone();
+            strip_event_payloads(&mut stripped);
+            serde_json::to_value(&stripped).ok()
+        } else {
+            None
+        };
+
+        for object in objects {
+            let contribution = Contribution {
+                ts: now,
+                score,
+                tactics: tactics.clone(),
+                rule: rule.clone(),
+                level: level.clone(),
+                result: stored_result.clone(),
+            };
+            let outcome = state.record(cfg, &object.object_type, &object.value, contribution, now);
+            if outcome.evicted {
+                metrics.on_risk_eviction();
+            }
+            if let Some(incident) = outcome.incident {
+                metrics.on_risk_incident_emitted(incident.trigger);
+                out.incidents.push(incident);
+            }
+        }
+    }
+
+    /// Advance time: prune entities whose windows have aged out and refresh the
+    /// open-entity and state-entry gauges. A no-op when the accumulator is off.
+    pub fn tick(&self, state: &mut RiskState, now: i64, metrics: &dyn MetricsHook) {
+        let Some(cfg) = self.incident.as_ref() else {
+            return;
+        };
+        let evicted = state.tick(cfg, now);
+        for _ in 0..evicted {
+            metrics.on_risk_eviction();
+        }
+        metrics.set_risk_entities_open(state.len() as i64);
+        metrics.set_risk_state_entries(state.total_entries() as i64);
     }
 }
 
@@ -248,6 +348,7 @@ mod tests {
         );
         let out = p.process(
             vec![detection("10.0.0.1", Level::High, vec![])],
+            &mut RiskState::default(),
             0,
             &NoopMetrics,
         );
@@ -267,6 +368,7 @@ mod tests {
         );
         let out = p.process(
             vec![detection("10.0.0.1", Level::High, vec![])],
+            &mut RiskState::default(),
             0,
             &NoopMetrics,
         );
@@ -281,6 +383,7 @@ mod tests {
         );
         let out = p.process(
             vec![detection("10.0.0.1", Level::High, vec![])],
+            &mut RiskState::default(),
             0,
             &NoopMetrics,
         );
@@ -296,6 +399,7 @@ mod tests {
         );
         let out = p.process(
             vec![detection("10.0.0.1", Level::High, vec![])],
+            &mut RiskState::default(),
             1234,
             &NoopMetrics,
         );
@@ -312,6 +416,7 @@ mod tests {
         let p = layer("strip_event: true\nobjects:\n  - type: host\n    selector: event.raw\n");
         let out = p.process(
             vec![detection("10.0.0.1", Level::High, vec![])],
+            &mut RiskState::default(),
             0,
             &NoopMetrics,
         );
