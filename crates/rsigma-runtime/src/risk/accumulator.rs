@@ -14,10 +14,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::incident::{IncludeMode, RiskEntityView, RiskIncidentResult, RiskRef};
+use super::snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 /// Default ceiling on concurrently-tracked entities. Once full, contributions
 /// for a new entity are not accumulated (bounding memory), reported as an
@@ -76,7 +78,7 @@ impl IncidentConfig {
 }
 
 /// One contribution from a firing detection to an entity's risk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contribution {
     /// Contribution timestamp (unix seconds).
     pub ts: i64,
@@ -87,8 +89,10 @@ pub struct Contribution {
     /// Rule identity (rule id, falling back to the title).
     pub rule: String,
     /// Severity, lowercased.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub level: Option<String>,
     /// The event-stripped serialized result, retained only for `include: results`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub result: Option<Value>,
 }
 
@@ -284,6 +288,54 @@ impl RiskState {
             !entity.is_empty()
         });
         before - self.entities.len()
+    }
+
+    /// Capture the accumulator into a versioned persistence snapshot.
+    pub fn snapshot(&self) -> RiskStateSnapshot {
+        let entities = self
+            .entities
+            .iter()
+            .map(|((entity_type, entity_value), window)| EntitySnapshot {
+                entity_type: entity_type.clone(),
+                entity_value: entity_value.clone(),
+                last_fired: window.last_fired,
+                last_seen: window.last_seen,
+                contributions: window.contributions.iter().cloned().collect(),
+            })
+            .collect();
+        RiskStateSnapshot {
+            version: SNAPSHOT_VERSION,
+            entities,
+        }
+    }
+
+    /// Restore a snapshot, dropping contributions already past the window at
+    /// `now` and skipping entities left empty. Returns `false` on a version
+    /// mismatch (the caller starts fresh).
+    pub fn restore(&mut self, snap: RiskStateSnapshot, window_secs: i64, now: i64) -> bool {
+        if snap.version != SNAPSHOT_VERSION {
+            return false;
+        }
+        let cutoff = now - window_secs;
+        for entity in snap.entities {
+            let contributions: VecDeque<Contribution> = entity
+                .contributions
+                .into_iter()
+                .filter(|c| c.ts > cutoff)
+                .collect();
+            if contributions.is_empty() {
+                continue;
+            }
+            self.entities.insert(
+                (entity.entity_type, entity.entity_value),
+                EntityWindow {
+                    contributions,
+                    last_fired: entity.last_fired,
+                    last_seen: entity.last_seen,
+                },
+            );
+        }
+        true
     }
 
     /// A read-only view of every open entity at `now`, for the admin API.
@@ -492,5 +544,52 @@ mod tests {
         let removed = st.tick(&c, 4000);
         assert_eq!(removed, 1);
         assert!(st.is_empty());
+    }
+
+    #[test]
+    fn snapshot_round_trips_and_prunes() {
+        let mut st = RiskState::default();
+        let c = cfg(Some(100), None);
+        st.record(
+            &c,
+            "user",
+            "erin",
+            contrib(100, 50, &["execution"], "r1"),
+            100,
+        );
+
+        // Round-trip through JSON.
+        let json = serde_json::to_string(&st.snapshot()).unwrap();
+        let snap: RiskStateSnapshot = serde_json::from_str(&json).unwrap();
+
+        // Restore within the window: the entity comes back and keeps accruing.
+        let mut fresh = RiskState::default();
+        assert!(fresh.restore(snap, c.window.as_secs() as i64, 200));
+        assert_eq!(fresh.len(), 1);
+        let again = fresh.record(
+            &c,
+            "user",
+            "erin",
+            contrib(200, 50, &["execution"], "r1"),
+            200,
+        );
+        assert_eq!(again.incident.unwrap().score, 100, "restored 50 + new 50");
+
+        // Restore far past the window: the stale contribution is pruned away.
+        let snap2: RiskStateSnapshot =
+            serde_json::from_str(&serde_json::to_string(&st.snapshot()).unwrap()).unwrap();
+        let mut aged = RiskState::default();
+        assert!(aged.restore(snap2, c.window.as_secs() as i64, 100 + 3600 + 5));
+        assert!(aged.is_empty(), "stale entity pruned on restore");
+    }
+
+    #[test]
+    fn restore_rejects_version_mismatch() {
+        let mut st = RiskState::default();
+        let snap = RiskStateSnapshot {
+            version: SNAPSHOT_VERSION + 1,
+            entities: vec![],
+        };
+        assert!(!st.restore(snap, 3600, 0));
     }
 }

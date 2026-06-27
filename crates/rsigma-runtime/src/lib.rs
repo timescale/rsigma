@@ -104,8 +104,8 @@ pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
 pub use risk::{
     IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskFile,
-    RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState, build_risk_layer,
-    load_risk_file, parse_risk_config,
+    RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState, RiskStateSnapshot,
+    SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file, parse_risk_config,
 };
 pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};

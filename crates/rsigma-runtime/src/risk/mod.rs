@@ -22,6 +22,7 @@ mod config;
 mod incident;
 mod object;
 mod score;
+mod snapshot;
 mod tactics;
 
 pub use accumulator::{IncidentConfig, RiskCaps, RiskState};
@@ -32,6 +33,7 @@ pub use config::{
 pub use incident::{IncludeMode, RiskEntityView, RiskIncidentResult, RiskRef};
 pub use object::RiskObject;
 pub use score::DEFAULT_SCORE_ATTRIBUTE;
+pub use snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
 use serde_json::Value;
@@ -242,6 +244,21 @@ impl RiskLayer {
         }
         metrics.set_risk_entities_open(state.len() as i64);
         metrics.set_risk_state_entries(state.total_entries() as i64);
+    }
+
+    /// Capture the accumulator into a versioned persistence snapshot.
+    pub fn snapshot(&self, state: &RiskState) -> RiskStateSnapshot {
+        state.snapshot()
+    }
+
+    /// Restore a snapshot into `state`, pruning entries past the window at
+    /// `now`. Returns `false` on a version mismatch, or when no accumulator is
+    /// configured to restore into (the caller starts fresh).
+    pub fn restore(&self, state: &mut RiskState, snap: RiskStateSnapshot, now: i64) -> bool {
+        let Some(cfg) = self.incident.as_ref() else {
+            return false;
+        };
+        state.restore(snap, cfg.window.as_secs() as i64, now)
     }
 }
 

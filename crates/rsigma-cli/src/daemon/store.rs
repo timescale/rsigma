@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rsigma_eval::CorrelationSnapshot;
-use rsigma_runtime::{AlertPipelineSnapshot, DispositionSnapshot};
+use rsigma_runtime::{AlertPipelineSnapshot, DispositionSnapshot, RiskStateSnapshot};
 
 /// Position of the last acked event from the source stream.
 ///
@@ -47,6 +47,11 @@ impl SqliteStateStore {
                 updated_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS rsigma_disposition_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                snapshot TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rsigma_risk_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 snapshot TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -270,6 +275,52 @@ impl SqliteStateStore {
         .await
         .map_err(|e| format!("spawn_blocking: {e}"))?
     }
+
+    /// Save the risk-accumulator snapshot, replacing any existing one.
+    pub async fn save_risk(&self, snapshot: &RiskStateSnapshot) -> Result<(), String> {
+        let json =
+            serde_json::to_string(snapshot).map_err(|e| format!("serialize risk snapshot: {e}"))?;
+        let conn = self.conn.clone();
+        let updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            c.execute(
+                "INSERT INTO rsigma_risk_state (id, snapshot, updated_at)
+                 VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET snapshot = ?1, updated_at = ?2",
+                rusqlite::params![&json, updated_at],
+            )
+            .map_err(|e| format!("save risk snapshot: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
+
+    /// Load the most recent risk-accumulator snapshot, if any.
+    pub async fn load_risk(&self) -> Result<Option<RiskStateSnapshot>, String> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            let mut stmt = c
+                .prepare("SELECT snapshot FROM rsigma_risk_state WHERE id = 1")
+                .map_err(|e| format!("prepare load risk: {e}"))?;
+            let mut rows = stmt.query([]).map_err(|e| format!("query: {e}"))?;
+            if let Some(row) = rows.next().map_err(|e| format!("next: {e}"))? {
+                let json: String = row.get(0).map_err(|e| format!("get snapshot: {e}"))?;
+                let snapshot: RiskStateSnapshot = serde_json::from_str(&json)
+                    .map_err(|e| format!("deserialize risk snapshot: {e}"))?;
+                Ok(Some(snapshot))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
 }
 
 #[cfg(test)]
@@ -445,5 +496,24 @@ mod tests {
         );
         assert_eq!(loaded.rules.len(), 1);
         assert_eq!(loaded.rules[0].rule_id, "r1");
+    }
+
+    #[tokio::test]
+    async fn risk_snapshot_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        assert!(store.load_risk().await.unwrap().is_none());
+
+        let layer = rsigma_runtime::parse_risk_config(
+            "score:\n  default_score: 60\nobjects:\n  - type: user\n    selector: enrichment.user\nincident:\n  score_threshold: 100\n  window: 1h\n",
+        )
+        .unwrap();
+        let snap = layer.snapshot(&rsigma_runtime::RiskState::default());
+        store.save_risk(&snap).await.unwrap();
+
+        let loaded = store.load_risk().await.unwrap().unwrap();
+        assert_eq!(loaded.version, rsigma_runtime::RISK_SNAPSHOT_VERSION);
     }
 }

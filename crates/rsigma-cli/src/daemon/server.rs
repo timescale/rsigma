@@ -611,6 +611,30 @@ pub async fn run_daemon(config: DaemonConfig) {
         match load_risk_file(path).and_then(build_risk_layer) {
             Ok(layer) => {
                 tracing::info!(path = %path.display(), "Risk layer loaded");
+                // Restore persisted risk state (unless --clear-state), pruning
+                // entries past their window at boot.
+                if restore_state && let Some(ref store) = state_store {
+                    match store.load_risk().await {
+                        Ok(Some(snap)) => {
+                            let now = chrono::Utc::now().timestamp();
+                            let restored = risk_state
+                                .write()
+                                .map(|mut state| layer.restore(&mut state, snap, now))
+                                .unwrap_or(false);
+                            if restored {
+                                tracing::info!("Risk state restored from database");
+                            } else {
+                                tracing::warn!(
+                                    "Incompatible risk snapshot version, starting fresh"
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to load risk state");
+                        }
+                    }
+                }
                 risk_swap.store(Arc::new(Some(Arc::new(layer))));
             }
             Err(e) => {
@@ -1113,6 +1137,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         let save_hw_ts = high_water_ts.clone();
         let save_alert_swap = alert_pipeline_swap.clone();
         let save_alert_state = alert_state.clone();
+        let save_risk_swap = risk_swap.clone();
+        let save_risk_state = risk_state.clone();
         let save_dispositions = disposition_state_for_save.clone();
         tokio::spawn(async move {
             let mut interval =
@@ -1149,6 +1175,16 @@ pub async fn run_daemon(config: DaemonConfig) {
                     };
                     if let Err(e) = save_store.save_alert_pipeline(&snap).await {
                         tracing::warn!(error = %e, "Failed to save alert-pipeline snapshot");
+                    }
+                }
+                // Persist the risk-accumulator state when configured.
+                if let Some(risk_layer) = save_risk_swap.load_full().as_ref() {
+                    let snap = {
+                        let st = save_risk_state.read().unwrap_or_else(|e| e.into_inner());
+                        risk_layer.snapshot(&st)
+                    };
+                    if let Err(e) = save_store.save_risk(&snap).await {
+                        tracing::warn!(error = %e, "Failed to save risk snapshot");
                     }
                 }
                 // Persist the disposition store when the triage loop is enabled.
@@ -1830,6 +1866,20 @@ pub async fn run_daemon(config: DaemonConfig) {
             Err(e) => {
                 tracing::error!(error = %e, "Failed to save alert-pipeline state on shutdown")
             }
+        }
+    }
+
+    // Save the risk-accumulator state on shutdown when configured.
+    if let Some(ref store) = state_store
+        && let Some(risk_layer) = risk_swap.load_full().as_ref()
+    {
+        let snap = {
+            let st = risk_state.read().unwrap_or_else(|e| e.into_inner());
+            risk_layer.snapshot(&st)
+        };
+        match store.save_risk(&snap).await {
+            Ok(()) => tracing::info!("Risk state saved to database on shutdown"),
+            Err(e) => tracing::error!(error = %e, "Failed to save risk state on shutdown"),
         }
     }
 
