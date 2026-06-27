@@ -31,6 +31,8 @@ daemon:
   # enrichers: /etc/rsigma/enrichers.yml
   # Alert-pipeline config file (dedup, grouping, silencing, inhibition).
   # alert_pipeline: /etc/rsigma/alert-pipeline.yml
+  # Risk-based alerting config file (annotation + per-entity risk incidents).
+  # risk: /etc/rsigma/risk.yml
 
   api:
     # Bind address for health, metrics, and the HTTP/OTLP API.

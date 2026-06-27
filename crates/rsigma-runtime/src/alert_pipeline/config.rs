@@ -19,8 +19,8 @@ use super::dedup::DedupConfig;
 use super::grouping::{Caps, GroupConfig, GroupMode, IncludeMode};
 use super::inhibit::{InhibitConfig, InhibitRule};
 use super::matcher::{MatcherError, MatcherSet, MatcherSpec};
-use super::selector::{Selector, SelectorParseError};
 use super::silence::{Silence, SilenceError, SilenceOrigin, SilenceSpec};
+use crate::selector::{Selector, SelectorParseError};
 
 /// Default re-emit cadence: `0` means pure suppression (no re-emits, only a
 /// resolved summary on expiry).

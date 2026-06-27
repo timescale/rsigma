@@ -433,6 +433,21 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "alert-pipeline", value_name = "PATH")]
     pub alert_pipeline: Option<PathBuf>,
 
+    /// Risk-based alerting config file.
+    ///
+    /// When set, every in-scope `EvaluationResult` flows through the risk
+    /// layer after enrichment and before the alert pipeline. It annotates
+    /// each firing with a risk score and one or more risk objects
+    /// (entities), accumulates risk per entity over a sliding window, and
+    /// emits a high-fidelity risk incident when an entity crosses a score
+    /// or ATT&CK-tactic-count threshold. Hot-reloaded on `SIGHUP`,
+    /// file-watcher changes, and `POST /api/v1/reload`; a failed reload
+    /// keeps the previous config active. Selector, scope, and score errors
+    /// reject the daemon at startup with a message pointing at the
+    /// offending field.
+    #[arg(long = "risk", value_name = "PATH")]
+    pub risk: Option<PathBuf>,
+
     /// Webhook config file(s) or directory of webhook config files.
     ///
     /// Repeatable. Declares template-driven HTTP output sinks: each
@@ -674,6 +689,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         cross_rule_ac,
         enrichers,
         alert_pipeline,
+        risk,
         webhooks,
         sources: source_paths,
         enable_tap: _,
@@ -809,6 +825,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         cross_rule_ac,
         enrichers,
         alert_pipeline,
+        risk,
         webhooks,
         source_paths,
         tap,
@@ -971,6 +988,11 @@ fn apply_daemon_config(
         && let Some(v) = daemon.alert_pipeline
     {
         args.alert_pipeline = Some(v);
+    }
+    if !explicit("risk")
+        && let Some(v) = daemon.risk
+    {
+        args.risk = Some(v);
     }
 
     if let Some(api) = daemon.api {
@@ -1336,6 +1358,7 @@ fn run_daemon(
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     enrichers_path: Option<PathBuf>,
     alert_pipeline_path: Option<PathBuf>,
+    risk_path: Option<PathBuf>,
     webhook_paths: Vec<PathBuf>,
     source_paths: Vec<PathBuf>,
     tap: daemon::server::TapSettings,
@@ -1493,6 +1516,7 @@ fn run_daemon(
         cross_rule_ac,
         enrichers_path,
         alert_pipeline_path,
+        risk_path,
         webhook_paths,
         source_registry,
         tap,

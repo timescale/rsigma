@@ -96,6 +96,22 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_inhibit_sources_active` | gauge | — | Currently-active inhibition sources. |
 | `rsigma_alert_pipeline_duration_seconds` | histogram | — | Alert-pipeline stage duration in seconds. |
 
+## Risk-based alerting (9 metrics)
+
+Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_risk_annotations_total` and `rsigma_risk_incidents_emitted_total`, plus the `rsigma_risk_entities_open` and `rsigma_risk_state_entries` gauges, are pre-registered at startup, so they render with their `# HELP` / `# TYPE` lines and zeroed series on the first scrape, even before `--risk` is passed or any event fires. See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_risk_annotations_total` | counter | `action` (`scored`, `no_entity`, `skipped`) | Risk-annotation outcomes: scored with entities, scored with no entity, or skipped (out of scope). |
+| `rsigma_risk_annotation_score` | histogram | — | Distribution of the per-detection resolved risk score. |
+| `rsigma_risk_objects_total` | counter | — | Risk objects extracted from firing detections. |
+| `rsigma_risk_entities_open` | gauge | — | Entities currently tracked by the risk accumulator. |
+| `rsigma_risk_state_entries` | gauge | — | Risk contributions currently retained across all entities. |
+| `rsigma_risk_evictions_total` | counter | — | Entities dropped from the accumulator (store full or aged out). |
+| `rsigma_risk_incidents_emitted_total` | counter | `trigger` (`score`, `tactic_count`) | Risk incidents emitted by trigger. |
+| `rsigma_risk_incident_results_total` | counter | — | Total risk incident records emitted. |
+| `rsigma_risk_layer_duration_seconds` | histogram | — | Risk-layer stage duration in seconds. |
+
 ## OTLP (3 metrics)
 
 Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is active. The labelled counters surface after the first request of that kind.

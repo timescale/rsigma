@@ -1,7 +1,9 @@
-//! Field-selector namespace for the alert pipeline.
+//! Field-selector namespace shared by the post-engine sink layers.
 //!
 //! A [`Selector`] resolves a single value out of an [`EvaluationResult`] across
-//! six namespaces:
+//! six namespaces. It is consumed by the alert pipeline (fingerprints, group-by,
+//! matchers) and the risk layer (risk-object extraction), so both reason about
+//! the result the same way:
 //!
 //! - `rule` — the rule id, falling back to the rule title.
 //! - `level` — the severity, lowercased (`high`, `critical`, ...).

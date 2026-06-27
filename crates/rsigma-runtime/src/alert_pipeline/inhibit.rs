@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::matcher::MatcherSet;
-use super::selector::Selector;
+use crate::selector::Selector;
 
 /// Persisted form of one active inhibition source.
 #[derive(Debug, Clone, Serialize, Deserialize)]

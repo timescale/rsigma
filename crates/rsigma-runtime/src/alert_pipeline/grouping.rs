@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::dedup::fnv1a64;
-use super::selector::Selector;
 use super::strip_event_payloads;
+use crate::selector::Selector;
 
 /// Whether the layer groups by key equality or by entity union-find.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

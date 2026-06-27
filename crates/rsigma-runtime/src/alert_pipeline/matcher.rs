@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use rsigma_eval::EvaluationResult;
 
-use super::selector::{Selector, SelectorParseError};
+use crate::selector::{Selector, SelectorParseError};
 
 /// Matcher operator label, as written in config and over the API.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]

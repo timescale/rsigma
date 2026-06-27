@@ -17,9 +17,10 @@ use rsigma_eval::{
 use rsigma_runtime::{
     AckToken, AlertPipeline, AlertPipelineState, DeliveryConfig, DeliveryFailure, Dispatcher,
     EnrichmentPipeline, FieldObserver, FileSink, IncidentEnvelope, IncludeMode, InputFormat,
-    LogProcessor, MetricsHook, OnFull, RawEvent, RoutingSpec, RuntimeEngine, SchemaClassifier,
-    SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, StdinSource, StdoutSink,
-    build_alert_pipeline, load_alert_pipeline_file, load_schema_signatures, spawn_source,
+    LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState, RoutingSpec, RuntimeEngine,
+    SchemaClassifier, SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, StdinSource,
+    StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
+    load_schema_signatures, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -134,6 +135,12 @@ struct AppState {
     /// sink task. Read by `/api/v1/incidents` and read/written by
     /// `/api/v1/silences`.
     alert_state: Arc<std::sync::RwLock<AlertPipelineState>>,
+    /// The risk-layer config swap, read by `GET /api/v1/risk` to resolve the
+    /// accumulation window for the open-entity view.
+    risk_swap: Arc<ArcSwap<Option<Arc<RiskLayer>>>>,
+    /// Mutable per-entity risk-accumulator state, shared with the sink task.
+    /// Read by `GET /api/v1/risk`.
+    risk_state: Arc<std::sync::RwLock<RiskState>>,
     /// Triage feedback loop. `Some` when `--enable-dispositions` (or
     /// `daemon.dispositions.enabled`) is set; the `/api/v1/dispositions`
     /// handlers ingest verdicts and serve the per-rule ratio view.
@@ -226,6 +233,10 @@ pub struct DaemonConfig {
     /// Read at daemon startup and again on hot-reload; failures during
     /// reload are logged and the previous pipeline stays active.
     pub alert_pipeline_path: Option<PathBuf>,
+    /// Optional path to the risk-based alerting config (from `--risk`). Read at
+    /// daemon startup and again on hot-reload; failures during reload are
+    /// logged and the previous config stays active.
+    pub risk_path: Option<PathBuf>,
     /// Webhook config file/dir paths (from `--webhook`). Loaded and validated
     /// once at daemon startup, then built into lossy (`on_full=drop`) delivery
     /// leaves. Hot reload is not supported in v1.
@@ -271,6 +282,18 @@ pub async fn run_daemon(config: DaemonConfig) {
     // `/api/v1/silences` handlers can read and mutate it.
     let alert_state: Arc<std::sync::RwLock<AlertPipelineState>> =
         Arc::new(std::sync::RwLock::new(AlertPipelineState::default()));
+
+    // The risk layer (annotation and, in the incident layer, the per-entity
+    // accumulator) runs in the sink task after enrichment and before the alert
+    // pipeline. Hoisted here so the sink task and the reload task can both
+    // capture the `ArcSwap`.
+    let risk_swap: Arc<ArcSwap<Option<Arc<RiskLayer>>>> = Arc::new(ArcSwap::new(Arc::new(None)));
+
+    // Mutable per-entity risk-accumulator state. Owned by the sink task but
+    // shared behind an `RwLock` so the `GET /api/v1/risk` handler can read the
+    // open entities.
+    let risk_state: Arc<std::sync::RwLock<RiskState>> =
+        Arc::new(std::sync::RwLock::new(RiskState::default()));
 
     // Open SQLite state store if configured
     let state_store = config.state_db.as_ref().map(|path| {
@@ -583,6 +606,44 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     }
 
+    // Build the risk layer. Failures exit cleanly because no I/O has started yet.
+    if let Some(path) = config.risk_path.as_ref() {
+        match load_risk_file(path).and_then(build_risk_layer) {
+            Ok(layer) => {
+                tracing::info!(path = %path.display(), "Risk layer loaded");
+                // Restore persisted risk state (unless --clear-state), pruning
+                // entries past their window at boot.
+                if restore_state && let Some(ref store) = state_store {
+                    match store.load_risk().await {
+                        Ok(Some(snap)) => {
+                            let now = chrono::Utc::now().timestamp();
+                            let restored = risk_state
+                                .write()
+                                .map(|mut state| layer.restore(&mut state, snap, now))
+                                .unwrap_or(false);
+                            if restored {
+                                tracing::info!("Risk state restored from database");
+                            } else {
+                                tracing::warn!(
+                                    "Incompatible risk snapshot version, starting fresh"
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to load risk state");
+                        }
+                    }
+                }
+                risk_swap.store(Arc::new(Some(Arc::new(layer))));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build risk layer");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+    }
+
     // Bounded channel acts as backpressure for reload requests. Capacity 4
     // allows the file watcher, SIGHUP handler, and HTTP endpoint to queue
     // reloads without blocking, while the consumer debounces with a 500ms
@@ -771,6 +832,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         tail: tail.clone(),
         alert_pipeline_swap: alert_pipeline_swap.clone(),
         alert_state: alert_state.clone(),
+        risk_swap: risk_swap.clone(),
+        risk_state: risk_state.clone(),
         disposition_state,
     };
 
@@ -781,6 +844,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/rules", get(list_rules))
         .route("/api/v1/status", get(status))
         .route("/api/v1/incidents", get(list_incidents))
+        .route("/api/v1/risk", get(list_risk_entities))
         .route("/api/v1/silences", get(list_silences).post(create_silence))
         .route("/api/v1/silences/{id}", delete(delete_silence))
         .route(
@@ -908,6 +972,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
     let reload_alert_pipeline_path = config.alert_pipeline_path.clone();
     let reload_alert_state = alert_state.clone();
+    let reload_risk_swap = risk_swap.clone();
+    let reload_risk_state = risk_state.clone();
+    let reload_risk_path = config.risk_path.clone();
     #[cfg(feature = "daemon-tls")]
     let reload_tls_state = tls_state.clone();
     #[cfg(feature = "daemon-tls")]
@@ -1011,6 +1078,36 @@ pub async fn run_daemon(config: DaemonConfig) {
                 }
             }
 
+            // Reload the risk layer. Failures keep the previous config in place
+            // so a typo cannot take down risk scoring in production. In-flight
+            // per-entity accumulators are owned by the sink task and survive a
+            // config swap; stale entries age out via the new window.
+            if let Some(path) = reload_risk_path.as_deref() {
+                match load_risk_file(path).and_then(build_risk_layer) {
+                    Ok(new_layer) => {
+                        // If the reloaded config drops the accumulator, clear
+                        // in-flight entities: with no `incident` block the tick
+                        // no longer prunes them, so they would otherwise linger
+                        // forever and keep being snapshotted.
+                        if new_layer.incident_config().is_none()
+                            && let Ok(mut st) = reload_risk_state.write()
+                        {
+                            *st = RiskState::default();
+                        }
+                        reload_risk_swap.store(Arc::new(Some(Arc::new(new_layer))));
+                        tracing::info!(path = %path.display(), "Risk layer reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            path = %path.display(),
+                            "Failed to reload risk layer; keeping previous config"
+                        );
+                        reload_metrics.reloads_failed.inc();
+                    }
+                }
+            }
+
             // Reload TLS certificate / key from disk when daemon-tls is
             // built in and configured. Failures keep the previous
             // certificate active so a typo in the cert path cannot
@@ -1050,6 +1147,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         let save_hw_ts = high_water_ts.clone();
         let save_alert_swap = alert_pipeline_swap.clone();
         let save_alert_state = alert_state.clone();
+        let save_risk_swap = risk_swap.clone();
+        let save_risk_state = risk_state.clone();
         let save_dispositions = disposition_state_for_save.clone();
         tokio::spawn(async move {
             let mut interval =
@@ -1086,6 +1185,16 @@ pub async fn run_daemon(config: DaemonConfig) {
                     };
                     if let Err(e) = save_store.save_alert_pipeline(&snap).await {
                         tracing::warn!(error = %e, "Failed to save alert-pipeline snapshot");
+                    }
+                }
+                // Persist the risk-accumulator state when configured.
+                if let Some(risk_layer) = save_risk_swap.load_full().as_ref() {
+                    let snap = {
+                        let st = save_risk_state.read().unwrap_or_else(|e| e.into_inner());
+                        risk_layer.snapshot(&st)
+                    };
+                    if let Err(e) = save_store.save_risk(&snap).await {
+                        tracing::warn!(error = %e, "Failed to save risk snapshot");
                     }
                 }
                 // Persist the disposition store when the triage loop is enabled.
@@ -1400,6 +1509,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     let alert_pipeline_swap_for_sink = alert_pipeline_swap.clone();
     let alert_state_for_sink = alert_state.clone();
     let alert_pipeline_metrics = metrics.clone() as Arc<dyn MetricsHook>;
+    let risk_swap_for_sink = risk_swap.clone();
+    let risk_state_for_sink = risk_state.clone();
+    let risk_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let delivery_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let dispatch_ack_tx = ack_tx.clone();
     let empty_ack_tx = ack_tx.clone();
@@ -1432,6 +1544,61 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 let _ = empty_ack_tx.send(token);
                             }
                             continue;
+                        }
+                    }
+
+                    // Risk layer: annotate each in-scope firing with a risk
+                    // score and risk objects, then (opt-in) emit a compact risk
+                    // event per (detection, risk object) pair. Runs before the
+                    // alert pipeline so risk accrues on every firing, before
+                    // dedup, silencing, or inhibition can fold or drop it.
+                    let risk_snapshot = risk_swap_for_sink.load_full();
+                    if let Some(risk_layer) = risk_snapshot.as_ref() {
+                        let now = chrono::Utc::now().timestamp();
+                        let out = {
+                            let mut st = risk_state_for_sink
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner());
+                            risk_layer.process(result, &mut st, now, risk_metrics.as_ref())
+                        };
+                        result = out.kept;
+                        if !out.risk_events.is_empty() {
+                            let subject =
+                                risk_layer.risk_event_nats_subject().map(|s| s.to_string());
+                            for event in out.risk_events {
+                                match serde_json::to_string(&event) {
+                                    Ok(json) => {
+                                        dispatcher
+                                            .dispatch_incident(IncidentEnvelope {
+                                                json,
+                                                nats_subject: subject.clone(),
+                                            })
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "Failed to serialize risk event");
+                                    }
+                                }
+                            }
+                        }
+                        if !out.incidents.is_empty() {
+                            let subject =
+                                risk_layer.incident_nats_subject().map(|s| s.to_string());
+                            for incident in out.incidents {
+                                match serde_json::to_string(&incident) {
+                                    Ok(json) => {
+                                        dispatcher
+                                            .dispatch_incident(IncidentEnvelope {
+                                                json,
+                                                nats_subject: subject.clone(),
+                                            })
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "Failed to serialize risk incident");
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -1512,6 +1679,18 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 }
                             }
                         }
+                    }
+
+                    // Age out risk entities whose windows have fully elapsed and
+                    // refresh the risk gauges. A no-op when no accumulator is
+                    // configured.
+                    let risk_snapshot = risk_swap_for_sink.load_full();
+                    if let Some(risk_layer) = risk_snapshot.as_ref() {
+                        let now = chrono::Utc::now().timestamp();
+                        let mut st = risk_state_for_sink
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner());
+                        risk_layer.tick(&mut st, now, risk_metrics.as_ref());
                     }
                 }
             }
@@ -1697,6 +1876,20 @@ pub async fn run_daemon(config: DaemonConfig) {
             Err(e) => {
                 tracing::error!(error = %e, "Failed to save alert-pipeline state on shutdown")
             }
+        }
+    }
+
+    // Save the risk-accumulator state on shutdown when configured.
+    if let Some(ref store) = state_store
+        && let Some(risk_layer) = risk_swap.load_full().as_ref()
+    {
+        let snap = {
+            let st = risk_state.read().unwrap_or_else(|e| e.into_inner());
+            risk_layer.snapshot(&st)
+        };
+        match store.save_risk(&snap).await {
+            Ok(()) => tracing::info!("Risk state saved to database on shutdown"),
+            Err(e) => tracing::error!(error = %e, "Failed to save risk state on shutdown"),
         }
     }
 
@@ -2143,6 +2336,23 @@ async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
     };
     let count = incidents.len();
     Json(serde_json::json!({ "incidents": incidents, "count": count }))
+}
+
+/// `GET /api/v1/risk` — open entities tracked by the risk accumulator, with
+/// their current window score, distinct tactic count, source count, and window
+/// bounds. Empty when no risk accumulator is configured.
+async fn list_risk_entities(State(state): State<AppState>) -> impl IntoResponse {
+    let snapshot = state.risk_swap.load_full();
+    let entities = match snapshot.as_ref().as_ref().and_then(|l| l.incident_config()) {
+        Some(cfg) => {
+            let now = chrono::Utc::now().timestamp();
+            let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
+            st.views(cfg, now)
+        }
+        None => Vec::new(),
+    };
+    let count = entities.len();
+    Json(serde_json::json!({ "entities": entities, "count": count }))
 }
 
 /// Build the `503` body returned by the disposition endpoints when the triage

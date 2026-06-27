@@ -16,6 +16,7 @@ nav:
   - Logsource-Aware Evaluation: logsource-routing.md
   - Enrichers: enrichers.md
   - Alert Pipeline: alert-pipeline.md
+  - Risk-Based Alerting: risk-based-alerting.md
   - Webhooks: webhooks.md
   - Input Formats: input-formats.md
   - NATS Streaming: nats-streaming.md

@@ -127,6 +127,9 @@ pub(crate) struct DaemonPartial {
     /// Alert-pipeline config file (dedup, grouping, silencing, inhibition).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alert_pipeline: Option<PathBuf>,
+    /// Risk-based alerting config file (annotation + per-entity risk incidents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<ApiPartial>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -167,6 +170,7 @@ impl Merge for DaemonPartial {
             sources: over.sources.or(self.sources),
             enrichers: over.enrichers.or(self.enrichers),
             alert_pipeline: over.alert_pipeline.or(self.alert_pipeline),
+            risk: over.risk.or(self.risk),
             api: merge_opt(self.api, over.api),
             input: merge_opt(self.input, over.input),
             output: merge_opt(self.output, over.output),

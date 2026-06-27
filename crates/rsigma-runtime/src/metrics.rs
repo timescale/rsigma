@@ -124,6 +124,25 @@ pub trait MetricsHook: Send + Sync {
     fn on_alert_pipeline_inhibited(&self, _rule: &str) {}
     /// Report the current number of active inhibition sources.
     fn set_inhibit_sources_active(&self, _count: i64) {}
+
+    /// A risk-annotation outcome. `action` is one of `scored` / `no_entity` /
+    /// `skipped` (out of scope).
+    fn on_risk_annotation(&self, _action: &str) {}
+    /// Observe the per-detection resolved risk score.
+    fn observe_risk_annotation_score(&self, _score: f64) {}
+    /// `count` risk objects were extracted from one detection.
+    fn on_risk_objects(&self, _count: u64) {}
+    /// Observe the risk-layer stage duration in seconds.
+    fn observe_risk_layer_duration(&self, _seconds: f64) {}
+    /// A risk incident was emitted. `trigger` is `score` or `tactic_count`.
+    fn on_risk_incident_emitted(&self, _trigger: &str) {}
+    /// Report the current number of tracked entities.
+    fn set_risk_entities_open(&self, _count: i64) {}
+    /// Report the current number of retained contributions across all entities.
+    fn set_risk_state_entries(&self, _count: i64) {}
+    /// A new entity could not be tracked (store full) or an aged-out entity was
+    /// pruned.
+    fn on_risk_eviction(&self) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).

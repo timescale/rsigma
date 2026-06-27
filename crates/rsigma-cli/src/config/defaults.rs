@@ -126,6 +126,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             sources: Some(Vec::new()),
             enrichers: None,
             alert_pipeline: None,
+            risk: None,
             api: Some(ApiPartial {
                 addr: Some(API_ADDR.to_string()),
                 tls: None,
