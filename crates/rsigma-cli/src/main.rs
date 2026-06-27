@@ -12,9 +12,9 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs,
-    LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, ScorecardArgs,
-    StatusArgs, StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
+    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DocArgs, EvalArgs,
+    FieldsArgs, LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs,
+    ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -236,6 +236,9 @@ enum RuleCommands {
 
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
+
+    /// Report or scaffold the ADS detection-strategy document for rules
+    Doc(DocArgs),
 
     /// Replay an event corpus and diff per-rule fires against expectations
     Backtest(BacktestArgs),
@@ -468,6 +471,7 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
         RuleCommands::Validate(args) => commands::cmd_validate(args),
         RuleCommands::Lint(args) => run_lint(args, ctx),
         RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
+        RuleCommands::Doc(args) => process::exit(commands::cmd_doc(args, ctx)),
         RuleCommands::Backtest(args) => {
             let bm = matches
                 .subcommand_matches("rule")
