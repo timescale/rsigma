@@ -163,6 +163,17 @@ Exposed unconditionally; values stay at zero unless the tail is enabled (`daemon
 | `rsigma_tail_active_sessions` | gauge | — | Currently active tail sessions. Bounded by `daemon.tail.max_sessions`. |
 | `rsigma_tail_detections_dropped_total` | counter | — | Detections dropped from a tail because a session buffer was full. A positive rate means a tail client could not keep up. |
 
+## Triage feedback loop (4 metrics)
+
+Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: true` or `--enable-dispositions`). The ingest counters pre-register their fixed label sets so they render with zeroed series on the first scrape; `rsigma_rule_false_positive_ratio` is absent for a rule until it reaches `daemon.dispositions.min_sample`. See the [Triage Feedback Loop](../guide/triage-feedback.md) guide and [HTTP API: Dispositions](http-api.md#dispositions).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. |
+| `rsigma_dispositions_total` | counter | `rule_title`, `verdict` | Analyst dispositions counted, by rule and verdict (`true_positive`, `false_positive`, `benign_true_positive`). |
+| `rsigma_disposition_ingest_total` | counter | `source`, `result` | Ingest outcomes by source (`api`, `file`, `http`, `nats`) and result (`accepted`, `duplicate`, `rejected`). |
+| `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). |
+
 ## Scrape configuration
 
 Minimum Prometheus scrape config:

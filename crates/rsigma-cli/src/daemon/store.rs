@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rsigma_eval::CorrelationSnapshot;
-use rsigma_runtime::AlertPipelineSnapshot;
+use rsigma_runtime::{AlertPipelineSnapshot, DispositionSnapshot};
 
 /// Position of the last acked event from the source stream.
 ///
@@ -42,6 +42,11 @@ impl SqliteStateStore {
                 updated_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS rsigma_alert_pipeline_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                snapshot TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rsigma_disposition_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 snapshot TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -219,6 +224,52 @@ impl SqliteStateStore {
         .await
         .map_err(|e| format!("spawn_blocking: {e}"))?
     }
+
+    /// Save the disposition snapshot, replacing any existing one.
+    pub async fn save_dispositions(&self, snapshot: &DispositionSnapshot) -> Result<(), String> {
+        let json = serde_json::to_string(snapshot)
+            .map_err(|e| format!("serialize disposition snapshot: {e}"))?;
+        let conn = self.conn.clone();
+        let updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            c.execute(
+                "INSERT INTO rsigma_disposition_state (id, snapshot, updated_at)
+                 VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET snapshot = ?1, updated_at = ?2",
+                rusqlite::params![&json, updated_at],
+            )
+            .map_err(|e| format!("save disposition snapshot: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
+
+    /// Load the most recent disposition snapshot, if any.
+    pub async fn load_dispositions(&self) -> Result<Option<DispositionSnapshot>, String> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            let mut stmt = c
+                .prepare("SELECT snapshot FROM rsigma_disposition_state WHERE id = 1")
+                .map_err(|e| format!("prepare load dispositions: {e}"))?;
+            let mut rows = stmt.query([]).map_err(|e| format!("query: {e}"))?;
+            if let Some(row) = rows.next().map_err(|e| format!("next: {e}"))? {
+                let json: String = row.get(0).map_err(|e| format!("get snapshot: {e}"))?;
+                let snapshot: DispositionSnapshot = serde_json::from_str(&json)
+                    .map_err(|e| format!("deserialize disposition snapshot: {e}"))?;
+                Ok(Some(snapshot))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
 }
 
 #[cfg(test)]
@@ -368,5 +419,31 @@ mod tests {
 
         let loaded = store.load_alert_pipeline().await.unwrap().unwrap();
         assert_eq!(loaded.version, rsigma_runtime::SNAPSHOT_VERSION);
+    }
+
+    #[tokio::test]
+    async fn disposition_snapshot_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        assert!(store.load_dispositions().await.unwrap().is_none());
+
+        let mut disp_store =
+            rsigma_runtime::DispositionStore::new(rsigma_runtime::DispositionConfig::default());
+        let raw: rsigma_runtime::RawDisposition =
+            serde_json::from_str(r#"{"rule_id":"r1","verdict":"false_positive"}"#).unwrap();
+        let d = rsigma_runtime::Disposition::from_raw(raw, 1000).unwrap();
+        disp_store.apply(&d, 1000);
+        let snap = disp_store.snapshot();
+        store.save_dispositions(&snap).await.unwrap();
+
+        let loaded = store.load_dispositions().await.unwrap().unwrap();
+        assert_eq!(
+            loaded.version,
+            rsigma_runtime::dispositions::SNAPSHOT_VERSION
+        );
+        assert_eq!(loaded.rules.len(), 1);
+        assert_eq!(loaded.rules[0].rule_id, "r1");
     }
 }

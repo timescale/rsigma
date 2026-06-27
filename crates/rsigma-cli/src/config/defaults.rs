@@ -6,9 +6,10 @@
 //! default is written, and a drift-guard test pins clap to these values.
 
 use super::schema::{
-    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, DocPartial, EnginePartial,
-    EvalPartial, GlobalPartial, HygienePartial, InputPartial, LogsourcePartial, OutputPartial,
-    RsigmaConfigPartial, SchemaPartial, ScorecardPartial, StatePartial, TailPartial, TapPartial,
+    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, DispositionsPartial,
+    DocPartial, EnginePartial, EvalPartial, GlobalPartial, HygienePartial, InputPartial,
+    LogsourcePartial, OutputPartial, RsigmaConfigPartial, SchemaPartial, ScorecardPartial,
+    StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -44,6 +45,16 @@ pub(crate) const TAP_MAX_DURATION: &str = "5m";
 pub(crate) const TAIL_ENABLED: bool = false;
 pub(crate) const TAIL_BUFFER_EVENTS: usize = 8_192;
 pub(crate) const TAIL_MAX_SESSIONS: usize = 2;
+/// Triage feedback loop defaults (`daemon.dispositions.*`). Opt-in: the
+/// disposition endpoints and the per-rule false-positive ratio ship disabled
+/// and are enabled with `daemon.dispositions.enabled: true` (or the
+/// `--enable-dispositions` flag). The window matches the SOC-metrics reporting
+/// cadence; the numerator counts false positives only; the minimum sample keeps
+/// a single false positive from publishing a misleading 100%.
+pub(crate) const DISPOSITIONS_ENABLED: bool = false;
+pub(crate) const DISPOSITIONS_WINDOW: &str = "30d";
+pub(crate) const DISPOSITIONS_NUMERATOR: &str = "fp_only";
+pub(crate) const DISPOSITIONS_MIN_SAMPLE: u64 = 5;
 /// Schema classification and routing defaults (`daemon.schema.*`,
 /// `eval.schema.*`). Both observation and routing are opt-in. The unknown-schema
 /// policy defaults to `warn` (log and evaluate against every set).
@@ -178,6 +189,13 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 enabled: Some(TAIL_ENABLED),
                 buffer_events: Some(TAIL_BUFFER_EVENTS),
                 max_sessions: Some(TAIL_MAX_SESSIONS),
+            }),
+            dispositions: Some(DispositionsPartial {
+                enabled: Some(DISPOSITIONS_ENABLED),
+                source: None,
+                window: Some(DISPOSITIONS_WINDOW.to_string()),
+                numerator: Some(DISPOSITIONS_NUMERATOR.to_string()),
+                min_sample: Some(DISPOSITIONS_MIN_SAMPLE),
             }),
             schema: Some(SchemaPartial {
                 observe: Some(SCHEMA_OBSERVE),

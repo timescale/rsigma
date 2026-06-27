@@ -223,6 +223,27 @@ The other keys are config-file-only under `daemon.tail`:
 | `daemon.tail.buffer_events` | `8192` | Per-session bounded buffer. A full buffer drops detections (counted) rather than ever applying backpressure to the sink task. |
 | `daemon.tail.max_sessions` | `2` | Maximum concurrent tail sessions. A session over the cap is rejected with `409`. |
 
+## Triage feedback loop
+
+The daemon serves [`POST`/`GET /api/v1/dispositions`](../../reference/http-api.md#dispositions), which ingest analyst verdicts and expose a per-rule false-positive ratio. It is **disabled by default**; enable it with `--enable-dispositions`, `daemon.dispositions.enabled: true`, or a configured pull source.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--enable-dispositions` | off | Enable the loop for this run; the disposition endpoints then accept requests. Equivalent to `daemon.dispositions.enabled: true`. |
+| `--disposition-source <PATH>` | none | Pull dispositions from a dynamic-source file (file, HTTP, or NATS), the same format as `--source`, whose payload is the disposition records (NDJSON or a JSON array). Refreshed per the source's policy; redelivery is idempotent. Implies the loop is enabled. Overrides `daemon.dispositions.source`. |
+
+The tuning keys are config-file-only under `daemon.dispositions`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.dispositions.enabled` | `false` | Accept disposition requests and compute the ratio. Opt-in; also enabled by `--enable-dispositions` or a configured `source`. |
+| `daemon.dispositions.source` | none | Pull-source file (overridden by `--disposition-source`). |
+| `daemon.dispositions.window` | `30d` | Rolling window over which dispositions are counted. |
+| `daemon.dispositions.numerator` | `fp_only` | Whether benign true positives count toward the ratio numerator: `fp_only` or `fp_and_btp`. |
+| `daemon.dispositions.min_sample` | `5` | Minimum dispositions a rule needs before its ratio is published. |
+
+See the [Triage Feedback Loop](../../guide/triage-feedback.md) guide.
+
 ## Examples
 
 ### Minimal daemon: stdin → stdout

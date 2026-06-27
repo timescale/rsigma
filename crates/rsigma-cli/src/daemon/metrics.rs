@@ -79,6 +79,10 @@ pub struct Metrics {
     pub silences_active: IntGauge,
     pub inhibited_total: IntCounterVec,
     pub inhibit_sources_active: IntGauge,
+    pub rule_false_positive_ratio: GaugeVec,
+    pub dispositions_total: IntCounterVec,
+    pub disposition_ingest_total: IntCounterVec,
+    pub disposition_ingest_errors_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -747,6 +751,69 @@ impl Metrics {
             .register(Box::new(inhibit_sources_active.clone()))
             .unwrap();
 
+        // Triage feedback loop (#70). The gauge and the per-rule disposition
+        // counter label on `rule_title` to line up with
+        // `rsigma_detection_matches_by_rule_total`; the ratio gauge is absent
+        // for a rule until it reaches the configured minimum sample.
+        let rule_false_positive_ratio = GaugeVec::new(
+            Opts::new(
+                "rsigma_rule_false_positive_ratio",
+                "Per-rule false-positive ratio from analyst dispositions over the rolling window",
+            ),
+            &["rule_title"],
+        )
+        .unwrap();
+        let dispositions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_dispositions_total",
+                "Analyst dispositions counted, by rule and verdict",
+            ),
+            &["rule_title", "verdict"],
+        )
+        .unwrap();
+        let disposition_ingest_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_disposition_ingest_total",
+                "Disposition ingest outcomes by source and result",
+            ),
+            &["source", "result"],
+        )
+        .unwrap();
+        let disposition_ingest_errors_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_disposition_ingest_errors_total",
+                "Disposition ingest errors by reason",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        // Pre-materialise the fixed ingest label sets so the `# HELP` / `# TYPE`
+        // lines and zero series render on the first scrape, before any ingest.
+        for source in ["api", "file", "http", "nats"] {
+            for result in ["accepted", "rejected", "duplicate"] {
+                disposition_ingest_total
+                    .with_label_values(&[source, result])
+                    .inc_by(0);
+            }
+        }
+        for reason in ["parse", "validation"] {
+            disposition_ingest_errors_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+        registry
+            .register(Box::new(rule_false_positive_ratio.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(dispositions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(disposition_ingest_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(disposition_ingest_errors_total.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -821,6 +888,10 @@ impl Metrics {
             silences_active,
             inhibited_total,
             inhibit_sources_active,
+            rule_false_positive_ratio,
+            dispositions_total,
+            disposition_ingest_total,
+            disposition_ingest_errors_total,
         }
     }
 

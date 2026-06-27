@@ -69,6 +69,19 @@ pub struct TailSettings {
     pub max_sessions: usize,
 }
 
+/// Effective triage-feedback settings, resolved from `daemon.dispositions.*`
+/// plus the `--enable-dispositions` flag.
+#[derive(Debug, Clone)]
+pub struct DispositionSettings {
+    /// Whether the disposition endpoints and the per-rule ratio are active.
+    pub enabled: bool,
+    /// Optional pull source spec (a `--source`-style file). `None` is
+    /// endpoint-only ingest.
+    pub source: Option<PathBuf>,
+    /// The rolling-store configuration (window, numerator, min sample).
+    pub config: rsigma_runtime::DispositionConfig,
+}
+
 /// Controls whether correlation state is restored from SQLite on startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateRestoreMode {
@@ -121,6 +134,10 @@ struct AppState {
     /// sink task. Read by `/api/v1/incidents` and read/written by
     /// `/api/v1/silences`.
     alert_state: Arc<std::sync::RwLock<AlertPipelineState>>,
+    /// Triage feedback loop. `Some` when `--enable-dispositions` (or
+    /// `daemon.dispositions.enabled`) is set; the `/api/v1/dispositions`
+    /// handlers ingest verdicts and serve the per-rule ratio view.
+    disposition_state: Option<super::dispositions::DispositionState>,
 }
 
 #[derive(Clone)]
@@ -221,6 +238,9 @@ pub struct DaemonConfig {
     pub tap: TapSettings,
     /// Effective live detection-tail limits (`daemon.tail.*` + `--enable-tail`).
     pub tail: TailSettings,
+    /// Effective triage-feedback settings (`daemon.dispositions.*` +
+    /// `--enable-dispositions`).
+    pub dispositions: DispositionSettings,
     /// Optional server-side TLS state. `Some` when the operator passed
     /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
     /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
@@ -665,6 +685,74 @@ pub async fn run_daemon(config: DaemonConfig) {
         (None, None)
     };
 
+    // Triage feedback loop: build the shared disposition store when enabled.
+    // Shares the alert-pipeline state so `scope: incident` verdicts resolve to
+    // their contributing rules through the live incident map.
+    let disposition_state = if config.dispositions.enabled {
+        tracing::info!("Triage feedback loop enabled (POST/GET /api/v1/dispositions)");
+        let state = super::dispositions::DispositionState::new(
+            config.dispositions.config.clone(),
+            metrics.clone(),
+            alert_state.clone(),
+        );
+        // Roll the window forward for idle rules on a timer.
+        state.spawn_pruner();
+        // Restore persisted disposition state (unless --clear-state), pruning
+        // buckets past the window at boot.
+        if restore_state && let Some(ref store) = state_store {
+            match store.load_dispositions().await {
+                Ok(Some(snap)) => {
+                    let now = chrono::Utc::now().timestamp();
+                    if state.restore(snap, now) {
+                        tracing::info!("Disposition state restored from database");
+                    } else {
+                        tracing::warn!("Incompatible disposition snapshot version, starting fresh");
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "Failed to load disposition state"),
+            }
+        }
+        // Optional pull source: load the declared dynamic source(s) and ingest
+        // each refreshed payload as dispositions over the Phase 0 seam.
+        if let Some(src_path) = config.dispositions.source.as_ref() {
+            match rsigma_runtime::sources::registry::load_external_sources(std::slice::from_ref(
+                src_path,
+            )) {
+                Ok(loaded) => {
+                    let sources: Vec<_> = loaded.into_iter().map(|(s, _)| s).collect();
+                    if sources.is_empty() {
+                        tracing::warn!(
+                            path = %src_path.display(),
+                            "Disposition source declared no sources"
+                        );
+                    } else {
+                        tracing::info!(
+                            path = %src_path.display(),
+                            count = sources.len(),
+                            "Disposition pull source loaded"
+                        );
+                        state.spawn_source(sources);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        path = %src_path.display(),
+                        "Failed to load disposition source"
+                    );
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        Some(state)
+    } else {
+        None
+    };
+    // A handle for the periodic and shutdown state savers (the field itself is
+    // moved into `AppState` below).
+    let disposition_state_for_save = disposition_state.clone();
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -683,6 +771,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         tail: tail.clone(),
         alert_pipeline_swap: alert_pipeline_swap.clone(),
         alert_state: alert_state.clone(),
+        disposition_state,
     };
 
     let app = Router::new()
@@ -694,6 +783,10 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/incidents", get(list_incidents))
         .route("/api/v1/silences", get(list_silences).post(create_silence))
         .route("/api/v1/silences/{id}", delete(delete_silence))
+        .route(
+            "/api/v1/dispositions",
+            get(list_dispositions).post(ingest_dispositions),
+        )
         .route("/api/v1/reload", post(trigger_reload))
         .route("/api/v1/events", post(ingest_events))
         .route("/api/v1/sources", get(list_sources))
@@ -957,6 +1050,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         let save_hw_ts = high_water_ts.clone();
         let save_alert_swap = alert_pipeline_swap.clone();
         let save_alert_state = alert_state.clone();
+        let save_dispositions = disposition_state_for_save.clone();
         tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(tokio::time::Duration::from_secs(save_interval_secs));
@@ -993,6 +1087,13 @@ pub async fn run_daemon(config: DaemonConfig) {
                     if let Err(e) = save_store.save_alert_pipeline(&snap).await {
                         tracing::warn!(error = %e, "Failed to save alert-pipeline snapshot");
                     }
+                }
+                // Persist the disposition store when the triage loop is enabled.
+                if let Some(dispositions) = save_dispositions.as_ref()
+                    && let Some(snap) = dispositions.snapshot()
+                    && let Err(e) = save_store.save_dispositions(&snap).await
+                {
+                    tracing::warn!(error = %e, "Failed to save disposition snapshot");
                 }
             }
         });
@@ -1598,6 +1699,17 @@ pub async fn run_daemon(config: DaemonConfig) {
             }
         }
     }
+
+    // Save the disposition state on shutdown when the triage loop is enabled.
+    if let Some(ref store) = state_store
+        && let Some(dispositions) = disposition_state_for_save.as_ref()
+        && let Some(snap) = dispositions.snapshot()
+    {
+        match store.save_dispositions(&snap).await {
+            Ok(()) => tracing::info!("Disposition state saved to database on shutdown"),
+            Err(e) => tracing::error!(error = %e, "Failed to save disposition state on shutdown"),
+        }
+    }
 }
 
 /// Wait for either SIGINT (Ctrl+C) or SIGTERM, then log and return.
@@ -2031,6 +2143,43 @@ async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
     };
     let count = incidents.len();
     Json(serde_json::json!({ "incidents": incidents, "count": count }))
+}
+
+/// Build the `503` body returned by the disposition endpoints when the triage
+/// feedback loop is disabled.
+fn dispositions_disabled() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "dispositions disabled",
+            "hint": "restart the daemon with --enable-dispositions (or daemon.dispositions.enabled: true)"
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/dispositions` — ingest one or more analyst dispositions (a
+/// single object, a JSON array, or NDJSON). Returns the ingest summary.
+async fn ingest_dispositions(State(state): State<AppState>, body: String) -> Response {
+    let Some(dispositions) = state.disposition_state.as_ref() else {
+        return dispositions_disabled();
+    };
+    match dispositions.ingest(&body, "api") {
+        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/dispositions` — the per-rule false-positive ratio view.
+async fn list_dispositions(State(state): State<AppState>) -> Response {
+    match state.disposition_state.as_ref() {
+        Some(dispositions) => Json(dispositions.view()).into_response(),
+        None => dispositions_disabled(),
+    }
 }
 
 /// `GET /api/v1/silences` — operator silences and their state.

@@ -15,6 +15,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/incidents` | GET | none | Open incidents from the alert-pipeline grouping stage. |
 | `/api/v1/silences` | GET, POST | none | List silences, or create one (returns its id). |
 | `/api/v1/silences/{id}` | DELETE | none | Remove a silence by id. |
+| `/api/v1/dispositions` | GET, POST | none | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. |
 | `/api/v1/rules` | GET | none | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | none | Trigger an immediate rules + pipelines reload. |
 | `/api/v1/events` | POST | none | NDJSON event ingest. Only enabled with `--input http`. |
@@ -170,6 +171,44 @@ Remove a silence by id. Returns `200` when removed, `404` when no such silence e
 
 ```bash
 curl -sS -X DELETE http://127.0.0.1:9090/api/v1/silences/0b6c...
+```
+
+## Dispositions
+
+The triage feedback loop. Disabled by default; both routes return `503` unless the daemon was started with `daemon.dispositions.enabled: true`, `--enable-dispositions`, or a configured `daemon.dispositions.source`. See the [Triage Feedback Loop](../guide/triage-feedback.md) guide.
+
+### `POST /api/v1/dispositions`
+
+Ingest one or more analyst dispositions. The body is a single JSON object, a JSON array of objects, or NDJSON. Each object carries `rule_id` (required for `detection` scope, with a title fallback), `verdict` (`true_positive` / `false_positive` / `benign_true_positive`), an optional `scope` (`detection` default, or `incident` with an `incident_id`), optional `fingerprint` / `incident_id` alert identities, an optional RFC 3339 `timestamp`, and optional `analyst` / `note`. Returns `200` with an ingest summary; a whole-body parse failure returns `400`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:9090/api/v1/dispositions \
+  -d '{"rule_id":"proc-injection","verdict":"false_positive","analyst":"alice"}'
+```
+
+```json
+{ "accepted": 1, "duplicate": 0, "rejected": 0 }
+```
+
+Redelivery is idempotent: records deduplicate on `(fingerprint or incident_id, verdict)`, falling back to `(rule_id, timestamp, analyst)`. An `incident`-scoped record with no `rule_id` resolves to the incident's contributing rules through the live incident map; an unknown incident is reported in the summary's `errors` and counted as `rejected`.
+
+### `GET /api/v1/dispositions`
+
+The per-rule false-positive ratio view: the active `window_seconds`, `numerator`, and `min_sample`, plus a `rules` array (each with `rule_id`, the verdict counts, `total`, and `fp_ratio`, which is `null` until the rule reaches `min_sample`). This document deserializes directly as the `rule scorecard --triage` input.
+
+```bash
+curl -sS http://127.0.0.1:9090/api/v1/dispositions
+```
+
+```json
+{
+  "window_seconds": 2592000,
+  "numerator": "fp_only",
+  "min_sample": 5,
+  "rules": [
+    { "rule_id": "proc-injection", "true_positives": 8, "false_positives": 1, "benign_true_positives": 0, "total": 9, "fp_ratio": 0.111 }
+  ]
+}
 ```
 
 ### `GET /api/v1/rules`

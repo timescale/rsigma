@@ -197,4 +197,38 @@ mod tests {
         };
         assert_eq!(none.effective_fp_ratio(), None);
     }
+
+    // The triage feedback loop owns this schema; pin that the feed it emits
+    // deserializes as the scorecard's `--triage` input and yields the same
+    // per-rule false-positive ratio.
+    #[test]
+    fn runtime_triage_feed_parses_as_scorecard_input() {
+        use rsigma_runtime::{Disposition, DispositionConfig, DispositionStore, RawDisposition};
+
+        let mut store = DispositionStore::new(DispositionConfig {
+            min_sample: 1,
+            ..Default::default()
+        });
+        for verdict in ["false_positive", "true_positive"] {
+            let raw: RawDisposition = serde_json::from_str(&format!(
+                r#"{{"rule_id":"r1","verdict":"{verdict}","fingerprint":"{verdict}"}}"#
+            ))
+            .unwrap();
+            let d = Disposition::from_raw(raw, 1000).unwrap();
+            store.apply(&d, 1000);
+        }
+
+        let feed_json = rsigma_runtime::triage_feed(&store);
+        let feed: TriageFeed = serde_json::from_value(feed_json).unwrap();
+        let index: TriageIndex = feed
+            .rules
+            .into_iter()
+            .map(|e| (e.rule_id.clone(), e))
+            .collect();
+
+        let entry = index.get("r1").expect("r1 in the triage feed");
+        assert_eq!(entry.false_positives, Some(1));
+        assert_eq!(entry.true_positives, Some(1));
+        assert_eq!(entry.effective_fp_ratio(), Some(0.5));
+    }
 }

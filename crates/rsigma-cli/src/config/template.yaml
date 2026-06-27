@@ -172,6 +172,25 @@ daemon:
     # Maximum concurrent tail sessions (a session over the cap gets 409).
     max_sessions: 2
 
+  # Triage feedback loop (POST/GET /api/v1/dispositions). Ingests analyst
+  # verdicts (true_positive, false_positive, benign_true_positive) and computes
+  # a per-rule false-positive ratio (rsigma_rule_false_positive_ratio). Opt-in:
+  # disabled by default, enabled here or with --enable-dispositions.
+  dispositions:
+    # Accept disposition requests and compute the ratio. Disabled by default.
+    enabled: false
+    # Optional pull source for dispositions (a file, HTTP, or NATS sources file
+    # whose payload is NDJSON or a JSON array). Unset means endpoint-only ingest.
+    # source: /etc/rsigma/dispositions-source.yml
+    # Rolling window over which dispositions are counted.
+    window: 30d
+    # Whether benign true positives count toward the ratio numerator:
+    # fp_only (default) or fp_and_btp.
+    numerator: fp_only
+    # Minimum dispositions a rule needs in the window before its ratio is
+    # published, so a single false positive cannot publish a misleading 100%.
+    min_sample: 5
+
   # Schema classification and routing. Opt-in. `observe` counts events per
   # recognized schema (and unknowns) for the /api/v1/schemas endpoint and the
   # rsigma_events_by_schema_total metric. `routing` recognizes each event's

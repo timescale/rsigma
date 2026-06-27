@@ -43,6 +43,7 @@
 //! ```
 
 pub mod alert_pipeline;
+pub mod dispositions;
 pub mod egress;
 pub mod engine;
 pub mod enrichment;
@@ -64,6 +65,11 @@ pub use alert_pipeline::{
     MatcherSpec, SNAPSHOT_VERSION, Selector, SelectorParseError, Silence, SilenceError,
     SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
     build_alert_pipeline, load_alert_pipeline_file, parse_alert_pipeline_config,
+};
+pub use dispositions::{
+    Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,
+    DispositionStore, IngestOutcome, Numerator, RawDisposition, RuleSummary, Verdict,
+    parse_dispositions, triage_feed,
 };
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
@@ -101,7 +107,7 @@ pub use rsigma_eval::{
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
     SchemaObserver, load_schema_signatures,
 };
-pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger};
+pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
     DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,
     SourceResolver, TemplateExpander,

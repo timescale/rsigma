@@ -148,6 +148,9 @@ pub(crate) struct DaemonPartial {
     /// Live detection-tail limits (`GET /api/v1/detections/stream`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tail: Option<TailPartial>,
+    /// Triage feedback loop (analyst dispositions + per-rule false-positive ratio).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispositions: Option<DispositionsPartial>,
     /// Schema classification and routing settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<SchemaPartial>,
@@ -173,6 +176,7 @@ impl Merge for DaemonPartial {
             nats: merge_opt(self.nats, over.nats),
             tap: merge_opt(self.tap, over.tap),
             tail: merge_opt(self.tail, over.tail),
+            dispositions: merge_opt(self.dispositions, over.dispositions),
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
         }
@@ -514,6 +518,44 @@ impl Merge for TailPartial {
             enabled: over.enabled.or(self.enabled),
             buffer_events: over.buffer_events.or(self.buffer_events),
             max_sessions: over.max_sessions.or(self.max_sessions),
+        }
+    }
+}
+
+/// Triage feedback loop settings (`daemon.dispositions.*`). Opt-in: the
+/// disposition endpoints and the per-rule false-positive ratio are off until
+/// enabled by this key or the `--enable-dispositions` flag.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct DispositionsPartial {
+    /// Whether `POST`/`GET /api/v1/dispositions` accept requests and the
+    /// per-rule false-positive ratio is computed. Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Optional pull source for dispositions (a file, HTTP, or NATS `--source`
+    /// style spec). When unset, dispositions arrive only over the endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PathBuf>,
+    /// Rolling window over which dispositions are counted (humantime, e.g. `30d`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>,
+    /// Whether benign true positives count toward the ratio numerator:
+    /// `fp_only` (default) or `fp_and_btp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numerator: Option<String>,
+    /// Minimum dispositions a rule needs in the window before its ratio is
+    /// published (so a single false positive cannot publish a misleading 100%).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_sample: Option<u64>,
+}
+
+impl Merge for DispositionsPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            source: over.source.or(self.source),
+            window: over.window.or(self.window),
+            numerator: over.numerator.or(self.numerator),
+            min_sample: over.min_sample.or(self.min_sample),
         }
     }
 }

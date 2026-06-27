@@ -7,6 +7,7 @@ nav:
   - Detection Strategy: detection-strategy.md
   - ATT&CK Coverage: attack-coverage.md
   - Detection Scorecard: detection-scorecard.md
+  - Triage Feedback Loop: triage-feedback.md
   - Rule Hygiene: rule-hygiene.md
   - Visibility and Data Sources: visibility-and-data-sources.md
   - MCP Server: mcp-server.md
