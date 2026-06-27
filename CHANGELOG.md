@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Rule hygiene and retirement report
+### Rule hygiene and retirement report (#262)
 
 A new `rsigma rule hygiene` subcommand assembles the signals rsigma already produces into one report of retirement and clean-up candidates, the detection-lifecycle phase the toolkit did not yet touch. It runs no evaluation: the static signals read off the parsed rules, the data-driven signals join optional snapshots. The feature is additive and ships with no new dependencies.
 
