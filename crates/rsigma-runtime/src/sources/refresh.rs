@@ -74,6 +74,30 @@ impl RefreshScheduler {
         self.result_rx.clone()
     }
 
+    /// Start the scheduler for a detached, non-pipeline consumer.
+    ///
+    /// Returns a [`SourceSubscription`] bundling the spawned coordination task,
+    /// a [`watch`] receiver of decoded source payloads, and a trigger sender for
+    /// on-demand re-resolution. This is the seam used by consumers that want a
+    /// source's decoded payload directly (rather than bound into a pipeline
+    /// `${source.*}` namespace): it reuses the same per-source file, HTTP, and
+    /// NATS fetch and refresh machinery as the pipeline binder via [`Self::run`],
+    /// so that logic is never duplicated.
+    pub fn subscribe(
+        self,
+        sources: Vec<DynamicSource>,
+        resolver: Arc<dyn SourceResolver>,
+    ) -> SourceSubscription {
+        let results = self.result_receiver();
+        let trigger = self.trigger_sender();
+        let handle = self.run(sources, resolver);
+        SourceSubscription {
+            handle,
+            results,
+            trigger,
+        }
+    }
+
     /// Start the scheduler background loop.
     ///
     /// Takes ownership of the trigger receiver and spawns per-source interval tasks.
@@ -242,6 +266,21 @@ impl Default for RefreshScheduler {
     }
 }
 
+/// A detached source subscription returned by [`RefreshScheduler::subscribe`].
+///
+/// Bundles the spawned coordination task, a receiver of decoded source payloads
+/// (the latest [`RefreshResult`] per refresh), and a trigger sender for
+/// on-demand re-resolution and hot-reload. Dropping `handle` does not stop the
+/// loop; hold it (or detach it) for the lifetime of the consumer.
+pub struct SourceSubscription {
+    /// The scheduler coordination task.
+    pub handle: tokio::task::JoinHandle<()>,
+    /// Latest decoded source payloads, updated on every refresh.
+    pub results: watch::Receiver<Option<RefreshResult>>,
+    /// Trigger channel for on-demand re-resolution (`All` / `Single`).
+    pub trigger: mpsc::Sender<RefreshTrigger>,
+}
+
 /// Subscribe to a NATS subject and forward parsed messages as triggers.
 #[cfg(feature = "nats")]
 async fn nats_push_loop(
@@ -407,5 +446,57 @@ async fn file_watch_loop(
         {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::DefaultSourceResolver;
+    use rsigma_eval::pipeline::sources::{DataFormat, ErrorPolicy, SourceType};
+
+    fn file_source(id: &str, path: std::path::PathBuf) -> DynamicSource {
+        DynamicSource {
+            id: id.to_string(),
+            source_type: SourceType::File {
+                path,
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::OnDemand,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }
+    }
+
+    // A detached consumer subscribes to a single file source and receives its
+    // decoded payload on the watch channel after an on-demand trigger, reusing
+    // the same fetch machinery as the pipeline binder.
+    #[tokio::test]
+    async fn subscribe_delivers_decoded_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dispositions.json");
+        std::fs::write(
+            &path,
+            r#"{"rules": [{"rule_id": "r1", "verdict": "false_positive"}]}"#,
+        )
+        .unwrap();
+
+        let scheduler = RefreshScheduler::new();
+        let sub = scheduler.subscribe(
+            vec![file_source("d", path)],
+            Arc::new(DefaultSourceResolver::new()),
+        );
+        let mut results = sub.results;
+
+        sub.trigger.send(RefreshTrigger::All).await.unwrap();
+        results.changed().await.unwrap();
+
+        let payload = results.borrow().clone().expect("a refresh result");
+        let data = payload.resolved.get("d").expect("source d resolved");
+        assert_eq!(data["rules"][0]["rule_id"], "r1");
+        assert_eq!(data["rules"][0]["verdict"], "false_positive");
     }
 }

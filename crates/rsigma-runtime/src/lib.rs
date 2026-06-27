@@ -101,7 +101,7 @@ pub use rsigma_eval::{
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
     SchemaObserver, load_schema_signatures,
 };
-pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger};
+pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
     DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,
     SourceResolver, TemplateExpander,
