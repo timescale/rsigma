@@ -52,6 +52,7 @@
 //! println!("{expr}");
 //! ```
 
+pub mod ads;
 pub mod ast;
 pub mod condition;
 pub mod error;
@@ -64,6 +65,10 @@ pub mod value;
 pub mod version;
 
 // Re-export the most commonly used types and functions at crate root
+pub use ads::{
+    AdsCarrier, AdsContent, AdsDocument, AdsScaffoldEntry, AdsSection, AdsSectionInfo,
+    AdsSectionStatus, ads_catalogue,
+};
 pub use ast::{
     ArrayQuantifier, ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule,
     CorrelationType, Detection, DetectionItem, Detections, FieldAlias, FieldSpec, FilterRule,
