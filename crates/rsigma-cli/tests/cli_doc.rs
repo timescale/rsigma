@@ -28,6 +28,24 @@ fn normalize_eol(s: &str) -> String {
     s.replace("\r\n", "\n")
 }
 
+/// Replace the volatile `"source":"<path>"` value in a JSON report with a fixed
+/// marker. The path is the checkout/temp location, which varies by runner and
+/// OS, and serde_json escapes a Windows path's backslashes (`\` -> `\\`), so a
+/// raw path-string replace would miss it. A file path never contains an
+/// unescaped `"`, so the next quote terminates the value.
+fn mask_source(json: &str) -> String {
+    const KEY: &str = "\"source\":\"";
+    let Some(start) = json.find(KEY) else {
+        return json.to_string();
+    };
+    let value_start = start + KEY.len();
+    let Some(rel_end) = json[value_start..].find('"') else {
+        return json.to_string();
+    };
+    let end = value_start + rel_end;
+    format!("{}FIXTURE{}", &json[..value_start], &json[end..])
+}
+
 #[test]
 fn doc_json_report_matches_golden() {
     let documented = fixture("documented.yml");
@@ -38,9 +56,7 @@ fn doc_json_report_matches_golden() {
         .get_output()
         .stdout
         .clone();
-    let actual = String::from_utf8(out)
-        .unwrap()
-        .replace(&documented, "FIXTURE");
+    let actual = mask_source(&String::from_utf8(out).unwrap());
     assert_eq!(
         normalize_eol(&actual).trim_end(),
         normalize_eol(REPORT_GOLDEN).trim_end(),
