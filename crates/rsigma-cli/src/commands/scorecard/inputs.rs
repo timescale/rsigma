@@ -18,8 +18,8 @@ use crate::commands::reports::{BacktestReport, CoverageReport};
 // The Prometheus reader and metrics loader are shared with `rule hygiene` via
 // `crate::metrics_source`. Re-exported under their historical `inputs::` names
 // so the rest of the scorecard (fuse/report) is untouched by the lift.
-pub(crate) use crate::metrics_source::{MetricsData, unix_to_rfc3339};
 use crate::metrics_source::MetricsError;
+pub(crate) use crate::metrics_source::{MetricsData, unix_to_rfc3339};
 
 /// A failure loading or parsing an input, carrying the house exit-code intent:
 /// an input that is missing or unfetchable is `Unreadable` (exit 2); an input

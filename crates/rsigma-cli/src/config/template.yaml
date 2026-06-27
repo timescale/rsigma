@@ -306,6 +306,29 @@ doc:
   # Exit non-zero when any rule falls below the configured ADS bar.
   fail_on_missing: false
 
+hygiene:
+  # `rule hygiene` flags retirement candidates: silence, noise, untagged, no
+  # owner, incomplete ADS, broken field coverage, and deprecated/stale status.
+  # Default rule file(s) or directory(ies) to report on (repeatable).
+  # rules: [./rules]
+  # Prometheus exposition snapshot or /metrics URL for per-rule fire volume
+  # (drives the silence and noisy signals).
+  # metrics: http://localhost:9090/metrics
+  # When metrics is a Prometheus query-API base, range window for last-fired.
+  # metrics_window: 7d
+  # A field-observability JSON snapshot (rsigma engine eval --observe-fields, or
+  # the daemon's /api/v1/fields) for the broken-coverage signal.
+  # fields: ./fields.json
+  # Age past which a never-fired rule is a retirement candidate (e.g. 365d).
+  silent_threshold: 365d
+  # Modified-date age past which a rule is flagged stale (e.g. 365d).
+  stale_threshold: 365d
+  # Absolute per-window fire ceiling that overrides the robust outlier test.
+  # noisy_threshold: 100000
+  # CI policy (repeatable): silent | noisy | untagged | no-owner | incomplete-ads
+  # | broken-fields | deprecated | any. Exit 1 when a selected condition matches.
+  # fail_on: [silent]
+
 # `rsigma mcp serve` settings. The auth token is NOT configurable here by
 # design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
 mcp:

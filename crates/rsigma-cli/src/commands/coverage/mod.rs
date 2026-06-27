@@ -31,8 +31,8 @@ use crate::output::OutputCtx;
 // `rule coverage` and `rule hygiene` cannot drift on what "untagged" means.
 // Re-exported here so this module's submodules keep referring to them as
 // `super::normalize_technique` / `super::parent_technique`.
-pub(crate) use crate::rule_meta::{normalize_technique, parent_technique};
 use crate::rule_meta::classify_tags;
+pub(crate) use crate::rule_meta::{normalize_technique, parent_technique};
 use sources::{DEFAULT_ATOMICS_URL, DEFAULT_BASELINE_URL};
 
 /// Arguments for `rsigma rule coverage`.

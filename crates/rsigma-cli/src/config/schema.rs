@@ -58,6 +58,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma rule doc` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doc: Option<DocPartial>,
+    /// `rsigma rule hygiene` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hygiene: Option<HygienePartial>,
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
@@ -75,6 +78,7 @@ impl Merge for RsigmaConfigPartial {
             scorecard: merge_opt(self.scorecard, over.scorecard),
             visibility: merge_opt(self.visibility, over.visibility),
             doc: merge_opt(self.doc, over.doc),
+            hygiene: merge_opt(self.hygiene, over.hygiene),
             mcp: merge_opt(self.mcp, over.mcp),
         }
     }
@@ -817,6 +821,52 @@ impl Merge for DocPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             fail_on_missing: over.fail_on_missing.or(self.fail_on_missing),
+        }
+    }
+}
+
+/// `rsigma rule hygiene` settings. The silence and staleness thresholds carry
+/// compiled defaults; the inputs and the `--fail-on` policy are opt-in.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct HygienePartial {
+    /// Sigma rule file(s) or directory(ies) to report on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<PathBuf>>,
+    /// Prometheus exposition snapshot path or `/metrics` URL for fire volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<String>,
+    /// Prometheus query-API range window (e.g. 7d) for a true last-fired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_window: Option<String>,
+    /// A #55 field-observability JSON snapshot for the broken-coverage signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<PathBuf>,
+    /// Age past which a never-fired rule is a retirement candidate (e.g. 365d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent_threshold: Option<String>,
+    /// Modified-date age past which a rule is flagged stale (e.g. 365d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_threshold: Option<String>,
+    /// Absolute per-window fire ceiling that overrides the robust outlier test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noisy_threshold: Option<u64>,
+    /// CI policy: which findings fail (silent, noisy, untagged, no-owner,
+    /// incomplete-ads, broken-fields, deprecated, any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_on: Option<Vec<String>>,
+}
+
+impl Merge for HygienePartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            rules: over.rules.or(self.rules),
+            metrics: over.metrics.or(self.metrics),
+            metrics_window: over.metrics_window.or(self.metrics_window),
+            fields: over.fields.or(self.fields),
+            silent_threshold: over.silent_threshold.or(self.silent_threshold),
+            stale_threshold: over.stale_threshold.or(self.stale_threshold),
+            noisy_threshold: over.noisy_threshold.or(self.noisy_threshold),
+            fail_on: over.fail_on.or(self.fail_on),
         }
     }
 }

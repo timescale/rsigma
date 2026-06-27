@@ -64,6 +64,81 @@ fn tactic_slug(short: &str) -> Option<&'static str> {
     TACTICS.iter().copied().find(|slug| *slug == normalized)
 }
 
+/// Whether a rule carries any `attack.*` ATT&CK tag. This is the exact signal
+/// `rule coverage` uses to populate its `untagged_rules` list, so the hygiene
+/// untagged signal cannot drift from it.
+pub(crate) fn has_attack_tag(tags: &[String]) -> bool {
+    classify_tags(tags).2
+}
+
+/// Lowercase wire name of a rule maturity status (matches the parser's serde
+/// representation).
+pub(crate) fn status_str(status: rsigma_parser::Status) -> &'static str {
+    use rsigma_parser::Status;
+    match status {
+        Status::Stable => "stable",
+        Status::Test => "test",
+        Status::Experimental => "experimental",
+        Status::Deprecated => "deprecated",
+        Status::Unsupported => "unsupported",
+    }
+}
+
+/// Whether a status marks a rule as already retired: `deprecated` or
+/// `unsupported`. These are the strongest stale-status retirement candidates.
+pub(crate) fn is_retired_status(status: rsigma_parser::Status) -> bool {
+    use rsigma_parser::Status;
+    matches!(status, Status::Deprecated | Status::Unsupported)
+}
+
+/// Resolve a rule's owner: a `custom_attributes` `owner` string when present
+/// and non-blank, otherwise the standard Sigma `author` field. The #66 ADS
+/// sections do not define an owner, so this is the owner source hygiene reads.
+pub(crate) fn resolve_owner(
+    author: Option<&str>,
+    custom: &std::collections::HashMap<String, yaml_serde::Value>,
+) -> Option<String> {
+    if let Some(v) = custom.get("owner").and_then(|v| v.as_str()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    author
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Parse a Sigma `date`/`modified` value (`YYYY-MM-DD`, or the legacy
+/// `YYYY/MM/DD`) into days since the Unix epoch. Returns `None` for any value
+/// that is not a well-formed civil date, so a malformed date never falsely
+/// flags or clears the staleness signal.
+pub(crate) fn parse_rule_date(raw: &str) -> Option<i64> {
+    let normalized = raw.trim().replace('/', "-");
+    let mut parts = normalized.split('-');
+    let y: i64 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    let d: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some(days_from_civil(y, m, d))
+}
+
+/// Howard Hinnant's `days_from_civil`: the inverse of `civil_from_days`, giving
+/// days since the Unix epoch for a proleptic Gregorian (year, month, day).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let m = m as i64;
+    let d = d as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 /// Extract `(techniques, tactic_slugs, has_attack_tag)` from a rule's tags.
 pub(crate) fn classify_tags(tags: &[String]) -> (Vec<String>, Vec<String>, bool) {
     let mut techniques = Vec::new();
@@ -146,5 +221,48 @@ mod tests {
         assert!(techs.is_empty());
         assert!(tactics.is_empty());
         assert!(!has_attack);
+        assert!(!has_attack_tag(&["cve.2023.1".to_string()]));
+        assert!(has_attack_tag(&["attack.t1059".to_string()]));
+    }
+
+    #[test]
+    fn parse_rule_date_handles_both_separators() {
+        // 2021-01-01 is 18628 days since the Unix epoch.
+        assert_eq!(parse_rule_date("2021-01-01"), Some(18_628));
+        assert_eq!(parse_rule_date("2021/01/01"), Some(18_628));
+        assert_eq!(parse_rule_date("1970-01-01"), Some(0));
+        assert_eq!(parse_rule_date(" 2021-01-01 "), Some(18_628));
+        assert_eq!(parse_rule_date("not-a-date"), None);
+        assert_eq!(parse_rule_date("2021-13-01"), None);
+        assert_eq!(parse_rule_date("2021-01"), None);
+    }
+
+    #[test]
+    fn resolve_owner_prefers_custom_then_author() {
+        use std::collections::HashMap;
+        let mut custom: HashMap<String, yaml_serde::Value> = HashMap::new();
+        assert_eq!(
+            resolve_owner(Some("Alice"), &custom).as_deref(),
+            Some("Alice")
+        );
+        assert_eq!(resolve_owner(Some("  "), &custom), None);
+        assert_eq!(resolve_owner(None, &custom), None);
+        custom.insert(
+            "owner".to_string(),
+            yaml_serde::Value::String("Blue Team".to_string()),
+        );
+        assert_eq!(
+            resolve_owner(Some("Alice"), &custom).as_deref(),
+            Some("Blue Team")
+        );
+    }
+
+    #[test]
+    fn retired_status_is_deprecated_or_unsupported() {
+        use rsigma_parser::Status;
+        assert!(is_retired_status(Status::Deprecated));
+        assert!(is_retired_status(Status::Unsupported));
+        assert!(!is_retired_status(Status::Stable));
+        assert_eq!(status_str(Status::Test), "test");
     }
 }

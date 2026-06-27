@@ -7,8 +7,8 @@
 
 use super::schema::{
     ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, DocPartial, EnginePartial,
-    EvalPartial, GlobalPartial, InputPartial, LogsourcePartial, OutputPartial, RsigmaConfigPartial,
-    SchemaPartial, ScorecardPartial, StatePartial, TailPartial, TapPartial,
+    EvalPartial, GlobalPartial, HygienePartial, InputPartial, LogsourcePartial, OutputPartial,
+    RsigmaConfigPartial, SchemaPartial, ScorecardPartial, StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -90,6 +90,12 @@ pub(crate) const SCORECARD_FAIL_ON: &str = "none";
 /// Default `rule doc --fail-on-missing`: report only, never fail. A drift-guard
 /// test pins the clap flag default to this constant.
 pub(crate) const DOC_FAIL_ON_MISSING: bool = false;
+/// `rule hygiene` duration thresholds. A drift-guard test pins the clap flag
+/// defaults to these constants. One year is the retirement-cadence default the
+/// 2026 detection-engineering maturity guidance uses for both silence and
+/// modified-date staleness.
+pub(crate) const HYGIENE_SILENT_THRESHOLD: &str = "365d";
+pub(crate) const HYGIENE_STALE_THRESHOLD: &str = "365d";
 
 /// A fully-populated partial holding every compiled default.
 ///
@@ -249,6 +255,19 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         // default via the drift-guard test); the ADS bar lives in .rsigma-lint.yml.
         doc: Some(DocPartial {
             fail_on_missing: Some(DOC_FAIL_ON_MISSING),
+        }),
+        // `rule hygiene` carries the two duration thresholds as compiled
+        // defaults (mirrored by the clap flag defaults via the drift-guard
+        // test); the inputs and the `--fail-on` policy are opt-in.
+        hygiene: Some(HygienePartial {
+            rules: None,
+            metrics: None,
+            metrics_window: None,
+            fields: None,
+            silent_threshold: Some(HYGIENE_SILENT_THRESHOLD.to_string()),
+            stale_threshold: Some(HYGIENE_STALE_THRESHOLD.to_string()),
+            noisy_threshold: None,
+            fail_on: None,
         }),
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.
