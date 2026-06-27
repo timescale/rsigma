@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Triage feedback loop: analyst dispositions and a per-rule false-positive ratio
+### Triage feedback loop: analyst dispositions and a per-rule false-positive ratio (#263)
 
 A new opt-in daemon capability that captures analyst verdicts on the alerts a ruleset produces and turns them into a live per-rule false-positive ratio, the canonical SOC detection-quality metric. It is a measurement loop, not a case manager: it ingests a verdict and emits a ratio. Enabled with `--enable-dispositions` or `daemon.dispositions.enabled: true`; off by default, so existing deployments are unchanged.
 
