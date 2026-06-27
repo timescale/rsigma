@@ -112,3 +112,8 @@ name = "fuzz_disposition_record"
 path = "fuzz_targets/fuzz_disposition_record.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_risk_config"
+path = "fuzz_targets/fuzz_risk_config.rs"
+doc = false
+

@@ -92,3 +92,63 @@ pub struct RiskEntityView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_fired: Option<i64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_incident_wire_shape_is_stable() {
+        let incident = RiskIncidentResult {
+            risk_incident_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            entity_type: "user".to_string(),
+            entity_value: "alice".to_string(),
+            trigger: "score",
+            score: 120,
+            score_threshold: Some(100),
+            tactic_count: 2,
+            tactic_count_threshold: None,
+            tactics: vec!["execution".to_string(), "persistence".to_string()],
+            sources: vec!["rule-1".to_string(), "rule-2".to_string()],
+            source_count: 2,
+            window_start: 1000,
+            window_end: 1010,
+            result_count: 2,
+            refs: Some(vec![RiskRef {
+                rule: "rule-1".to_string(),
+                level: Some("high".to_string()),
+                score: 60,
+                timestamp: 1000,
+            }]),
+            results: None,
+        };
+        let json = serde_json::to_string(&incident).unwrap();
+        let expected = concat!(
+            r#"{"risk_incident_id":"11111111-1111-4111-8111-111111111111","#,
+            r#""entity_type":"user","entity_value":"alice","trigger":"score","#,
+            r#""score":120,"score_threshold":100,"tactic_count":2,"#,
+            r#""tactics":["execution","persistence"],"sources":["rule-1","rule-2"],"#,
+            r#""source_count":2,"window_start":1000,"window_end":1010,"result_count":2,"#,
+            r#""refs":[{"rule":"rule-1","level":"high","score":60,"timestamp":1000}]}"#,
+        );
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn risk_entity_view_omits_unset_last_fired() {
+        let view = RiskEntityView {
+            entity_type: "host".to_string(),
+            entity_value: "dc01".to_string(),
+            score: 40,
+            tactic_count: 1,
+            source_count: 1,
+            result_count: 1,
+            window_start: 5,
+            window_end: 5,
+            last_fired: None,
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(!json.contains("last_fired"));
+        assert!(json.contains(r#""entity_value":"dc01""#));
+    }
+}

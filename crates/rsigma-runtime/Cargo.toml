@@ -80,3 +80,7 @@ harness = false
 [[bench]]
 name = "alert_pipeline"
 harness = false
+
+[[bench]]
+name = "risk"
+harness = false
