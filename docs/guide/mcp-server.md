@@ -60,6 +60,7 @@ Every tool accepts **either** inline content (`yaml`, `condition`, `events`) **o
 | `resolve_pipeline` | `pipeline` (builtin name or path), `resolve_sources` | Pipeline name, priority, transformation count, dynamic sources. |
 | `list_builtin_pipelines` | (none) | The builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | `yaml` or file `path`, `lint_rules`, `write` | Applies safe auto-fixes; returns the fixed YAML and applied/failed/skipped-unsafe counts. `write: true` (path only) persists to disk. |
+| `author_ads` | `yaml` or file/dir `path` | Per rule: the current ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 
 ## Resources
 
@@ -67,7 +68,8 @@ The server exposes read-only MCP resources so an agent can ground itself on the 
 
 | URI | Contents |
 |-----|----------|
-| `rsigma://lint/catalogue` | The full lint catalogue (75 rules) as JSON: id, default severity, fix disposition, one-line description. |
+| `rsigma://lint/catalogue` | The full lint catalogue ({{ rsigma.lint.total }} rules) as JSON: id, default severity, fix disposition, one-line description. |
+| `rsigma://ads/schema` | The ADS section catalogue as JSON: section id, carrier field, default-required, description. |
 | `rsigma://reference/modifiers` | Sigma field modifiers with descriptions. |
 | `rsigma://reference/mitre-tactics` | MITRE ATT&CK tactics with descriptions. |
 

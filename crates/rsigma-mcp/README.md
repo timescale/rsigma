@@ -40,12 +40,13 @@ async fn main() -> anyhow::Result<()> {
 | `resolve_pipeline` | Inspect a builtin or file pipeline; optionally resolve dynamic sources. |
 | `list_builtin_pipelines` | List the builtin pipelines. |
 | `fix_rules` | Apply safe auto-fixes to Sigma YAML; `write: true` (path only) persists to disk. |
+| `author_ads` | Report each rule's ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 
 Every tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path`, and returns structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
 
 ## Resources
 
-Three read-only resources expose reference data: `rsigma://lint/catalogue` (the 75-rule lint catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
+Four read-only resources expose reference data: `rsigma://lint/catalogue` (the 86-rule lint catalogue), `rsigma://ads/schema` (the ADS section catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
 
 ## Design
 

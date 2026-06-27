@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### ADS detection-strategy metadata and lint
+
+Optional [Palantir Alerting and Detection Strategy (ADS)](https://github.com/palantir/alerting-detection-strategy-framework) metadata on Sigma rules, with enforcement in the linter and a new authoring command. The whole feature is additive metadata plus reads over it: no engine, eval, or hot-path changes, and no new dependencies.
+
+* **Schema.** The nine ADS sections map onto a rule's existing fields where they fit (goal from `description`, categorization from `attack.*` `tags`, false positives from `falsepositives`, priority from `level`) and carry the rest under a new `rsigma.ads.*` custom-attribute namespace (`strategy`, `technical_context`, `blind_spots`, `validation`, `priority` rationale, `response`). Values are pure documentation the engine never interprets. A per-rule `rsigma.ads.exempt: true` opts a rule out of enforcement. A single source-of-truth catalogue lives in `rsigma-parser` (`ads::ads_catalogue()`), modeled on the lint catalogue.
+* **Lint.** Eleven new lint rules in the built-in linter, opt-in via an `ads:` block in the layered `.rsigma-lint.yml` (`enforce_status`, `required`, `severity`): one `ads_missing_*` per section, `ads_empty_section` for a present-but-blank section, and `ads_unknown_section` for a typo under `rsigma.ads.*` (with a safe `--fix` rename). The checks fire only on detection rules whose `status` is in the configured enforce set (default `[stable]`) and reuse the existing catalogue, severity model, suppression, and `tag_namespaces` setting. The lint catalogue grows to 86 rules.
+* **Command.** A new `rsigma rule doc` subcommand reports each rule's present and missing ADS sections through the global `--output-format` layer or as a canonical `--format markdown` document, with `--missing-only` for the CI view and `--scaffold`/`--in-place` to prefill the `rsigma.ads.*` sections. `--fail-on-missing` makes it a standalone CI gate under the house exit-code scheme; a `doc` config section carries the gate default.
+* **MCP.** A new `author_ads` tool returns a rule's current and missing ADS sections plus a scaffold for an agent to complete, and a `rsigma://ads/schema` resource exposes the section catalogue alongside `rsigma://lint/catalogue`.
+
 ### Documentation: rsigma-action in the CI/CD guide (#260)
 
 The [CI/CD guide](https://timescale.github.io/rsigma/guide/ci-cd/) and the README now document [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action), the one-step GitHub Actions gate that wraps `rule lint`, `rule validate`, a merge-base fields-drift diff, `rule backtest`, and `rule coverage` into a single pull-request check with diff annotations, a sticky summary comment, and SLSA-attestation-verified cached binary installs. The manual multi-job workflow stays as the no-third-party-action and other-CI fallback.

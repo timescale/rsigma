@@ -630,11 +630,11 @@ Feature-gated items are marked with \* in the diagram.
     │  transports: stdio · Streamable HTTP         │
     │                (bearer auth · TLS)           │
     │                                              │
-    │  11 tools: parse · lint · fix · validate     │
+    │  12 tools: parse · lint · fix · validate     │
     │    · evaluate · convert · fields             │
-    │    · pipelines                               │
-    │  3 resources: lint catalogue · modifiers     │
-    │    · MITRE tactics                           │
+    │    · pipelines · author_ads                  │
+    │  4 resources: lint catalogue · modifiers     │
+    │    · MITRE tactics · ADS schema              │
     │                                              │
     │  wraps rsigma-parser · rsigma-eval           │
     │    · rsigma-convert · rsigma-runtime         │

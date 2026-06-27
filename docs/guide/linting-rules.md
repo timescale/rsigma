@@ -130,6 +130,8 @@ tag_namespaces:
 
 `severity_overrides` lets you keep a rule active but change how loud it is. Setting `title_too_long: info` keeps the check but stops it from failing `--fail-level warning` builds.
 
+The same `.rsigma-lint.yml` carries the opt-in `ads:` block that turns on the [detection-strategy checks](detection-strategy.md) (`enforce_status`, `required`, `severity`); without it, the `ads_missing_*` rules never fire. See [Lint Rules: ADS detection-strategy metadata](../reference/lint-rules.md#ads-detection-strategy-metadata-11).
+
 The `--config` flag overrides discovery and points at an explicit file:
 
 ```bash
