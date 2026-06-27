@@ -199,7 +199,7 @@ impl DispositionState {
     }
 
     /// Spawn the background pull-source consumer: run the given dynamic sources
-    /// through a [`RefreshScheduler`] (reusing the shared file, HTTP, and NATS
+    /// through a `RefreshScheduler` (reusing the shared file, HTTP, and NATS
     /// fetch and refresh machinery) and ingest each refreshed payload as
     /// dispositions, labeling ingest metrics by transport. Idempotency makes a
     /// re-read or redelivery safe (the same records never double count).
