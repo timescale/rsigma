@@ -19,6 +19,9 @@ use serde_json::json;
 
 use super::metrics::Metrics;
 
+/// How often the background pruner rolls the window forward for idle rules.
+const PRUNE_INTERVAL_SECS: u64 = 60;
+
 /// Shared triage-feedback state. Cloneable; all clones share one store.
 #[derive(Clone)]
 pub struct DispositionState {
@@ -260,6 +263,49 @@ impl DispositionState {
         });
     }
 
+    /// Spawn the background pruner that rolls the rolling window forward on a
+    /// timer, so a rule that stops receiving dispositions still ages its old
+    /// buckets out (per-apply retention only fires when a rule is touched).
+    pub fn spawn_pruner(&self) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(PRUNE_INTERVAL_SECS));
+            interval.tick().await; // skip the immediate first tick
+            loop {
+                interval.tick().await;
+                this.prune(chrono::Utc::now().timestamp());
+            }
+        });
+    }
+
+    /// Drop buckets and rules past the window at `now`, removing the ratio gauge
+    /// for any rule that aged out entirely, then refresh the survivors' gauges.
+    pub fn prune(&self, now: i64) {
+        let rules_before: std::collections::HashSet<String> = self
+            .store
+            .read()
+            .ok()
+            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
+            .unwrap_or_default();
+        if let Ok(mut store) = self.store.write() {
+            store.prune(now);
+        }
+        let rules_after: std::collections::HashSet<String> = self
+            .store
+            .read()
+            .ok()
+            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
+            .unwrap_or_default();
+        for rule_id in rules_before.difference(&rules_after) {
+            let _ = self
+                .metrics
+                .rule_false_positive_ratio
+                .remove_label_values(&[rule_id.as_str()]);
+        }
+        self.refresh_all_gauges();
+    }
+
     /// Recompute every rule's ratio gauge (after a bulk source ingest or a
     /// state restore).
     pub fn refresh_all_gauges(&self) {
@@ -475,6 +521,24 @@ mod tests {
                 .get(),
             0.5
         );
+    }
+
+    #[test]
+    fn prune_ages_out_idle_rules() {
+        let state = state(1);
+        state
+            .ingest(
+                r#"{"rule_id":"r1","verdict":"false_positive","fingerprint":"x"}"#,
+                "api",
+            )
+            .unwrap();
+        assert_eq!(state.view()["rules"].as_array().unwrap().len(), 1);
+
+        // Prune as if far in the future: the rule's only bucket is now well
+        // outside the window, so the idle rule ages out without new input.
+        let future = chrono::Utc::now().timestamp() + 40 * 24 * 60 * 60;
+        state.prune(future);
+        assert!(state.view()["rules"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

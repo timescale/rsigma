@@ -187,15 +187,21 @@ impl Disposition {
     }
 
     /// The idempotency key for redelivery dedup: `(fingerprint or incident_id,
-    /// verdict)` when an alert identity is present, otherwise `(rule_id,
-    /// timestamp, analyst)`.
+    /// verdict, rule_id)` when an alert identity is present, otherwise
+    /// `(rule_id, timestamp, analyst)`.
+    ///
+    /// The `rule_id` is always part of the key. It is redundant for a
+    /// fingerprint (which already identifies a single rule's alert) but
+    /// essential for an `incident_id`, which fans out to every contributing
+    /// rule: without it, the per-rule records an incident expands into would
+    /// collapse to one and only the first rule would be counted.
     pub fn dedup_key(&self) -> String {
+        let rule = self.rule_id.as_deref().unwrap_or("");
         if let Some(id) = self.fingerprint.as_deref().or(self.incident_id.as_deref()) {
-            format!("id\u{1}{id}\u{1}{}", self.verdict.as_str())
+            format!("id\u{1}{id}\u{1}{}\u{1}{rule}", self.verdict.as_str())
         } else {
             format!(
-                "rt\u{1}{}\u{1}{}\u{1}{}",
-                self.rule_id.as_deref().unwrap_or(""),
+                "rt\u{1}{rule}\u{1}{}\u{1}{}",
                 self.timestamp,
                 self.analyst.as_deref().unwrap_or(""),
             )

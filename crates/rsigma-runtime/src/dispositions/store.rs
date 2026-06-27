@@ -192,7 +192,12 @@ impl DispositionStore {
         if self.seen.contains(&key) {
             return IngestOutcome::Duplicate;
         }
-        self.remember(key, now);
+        // Order the seen entry by the disposition's own timestamp so the
+        // idempotency key lives exactly as long as its bucket can contribute to
+        // the window: once a record ages out of the window its bucket is pruned
+        // on apply, so a later redelivery lands in an already-pruned bucket and
+        // cannot double count.
+        self.remember(key, disposition.timestamp, now);
 
         let idx = self.bucket_index(disposition.timestamp);
         let cutoff = self.bucket_index(now - self.config.window_secs());
@@ -203,9 +208,9 @@ impl DispositionStore {
         IngestOutcome::Accepted
     }
 
-    fn remember(&mut self, key: String, now: i64) {
+    fn remember(&mut self, key: String, ts: i64, now: i64) {
         self.seen.insert(key.clone());
-        self.seen_order.push_back((now, key));
+        self.seen_order.push_back((ts, key));
         self.prune_seen(now);
     }
 
@@ -419,6 +424,39 @@ mod tests {
         assert_eq!(store.apply(&d, 101), IngestOutcome::Duplicate);
         // Only counted once.
         assert_eq!(store.summaries()[0].total, 1);
+    }
+
+    fn incident_disp(rule: &str, incident: &str, ts: i64) -> Disposition {
+        let raw: RawDisposition = serde_json::from_str(&format!(
+            r#"{{"rule_id":"{rule}","scope":"incident","incident_id":"{incident}","verdict":"false_positive"}}"#
+        ))
+        .unwrap();
+        let mut d = Disposition::from_raw(raw, ts).unwrap();
+        d.timestamp = ts;
+        d
+    }
+
+    #[test]
+    fn incident_expansion_counts_every_contributing_rule() {
+        // The per-rule records an incident expands into share the incident id
+        // and verdict but differ by rule_id, so all of them must count rather
+        // than collapsing to the first.
+        let mut store = DispositionStore::new(cfg(1));
+        for rule in ["r1", "r2", "r3"] {
+            assert_eq!(
+                store.apply(&incident_disp(rule, "inc1", 100), 100),
+                IngestOutcome::Accepted
+            );
+        }
+        assert_eq!(store.summaries().len(), 3);
+
+        // Re-expanding the same incident (a redelivery) dedups every rule.
+        for rule in ["r1", "r2", "r3"] {
+            assert_eq!(
+                store.apply(&incident_disp(rule, "inc1", 100), 100),
+                IngestOutcome::Duplicate
+            );
+        }
     }
 
     #[test]

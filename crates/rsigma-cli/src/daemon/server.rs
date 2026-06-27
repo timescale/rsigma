@@ -695,6 +695,8 @@ pub async fn run_daemon(config: DaemonConfig) {
             metrics.clone(),
             alert_state.clone(),
         );
+        // Roll the window forward for idle rules on a timer.
+        state.spawn_pruner();
         // Restore persisted disposition state (unless --clear-state), pruning
         // buckets past the window at boot.
         if restore_state && let Some(ref store) = state_store {
