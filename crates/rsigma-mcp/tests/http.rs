@@ -43,7 +43,7 @@ async fn http_tools_list_round_trip() {
     let client = ().serve(transport).await.expect("client connect");
 
     let tools = client.list_all_tools().await.expect("list tools");
-    assert_eq!(tools.len(), 11, "expected 11 tools over HTTP");
+    assert_eq!(tools.len(), 12, "expected 12 tools over HTTP");
 
     client.cancel().await.ok();
 }

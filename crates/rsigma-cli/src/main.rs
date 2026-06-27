@@ -12,9 +12,9 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, EvalArgs, FieldsArgs,
-    LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, ScorecardArgs,
-    StatusArgs, StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
+    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DocArgs, EvalArgs,
+    FieldsArgs, LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs,
+    ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -236,6 +236,9 @@ enum RuleCommands {
 
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
+
+    /// Report or scaffold the ADS detection-strategy document for rules
+    Doc(DocArgs),
 
     /// Replay an event corpus and diff per-rule fires against expectations
     Backtest(BacktestArgs),
@@ -468,6 +471,13 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
         RuleCommands::Validate(args) => commands::cmd_validate(args),
         RuleCommands::Lint(args) => run_lint(args, ctx),
         RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
+        RuleCommands::Doc(args) => {
+            let dm = matches
+                .subcommand_matches("rule")
+                .and_then(|m| m.subcommand_matches("doc"))
+                .expect("rule doc submatches present");
+            run_doc(args, dm, ctx);
+        }
         RuleCommands::Backtest(args) => {
             let bm = matches
                 .subcommand_matches("rule")
@@ -554,6 +564,16 @@ fn run_coverage(mut args: CoverageArgs, matches: &ArgMatches, ctx: output::Outpu
 fn run_scorecard(mut args: ScorecardArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_scorecard_config(&mut args, matches);
     let code = commands::cmd_scorecard(args, ctx);
+    process::exit(code);
+}
+
+/// Entry point for `rule doc`. Applies the `doc` config section (CLI flag >
+/// env > file > default) before running, then exits with the house exit code
+/// (0 success or plain render, 1 when --fail-on-missing finds rules below the
+/// ADS bar, 2 unreadable rule, 3 bad flags).
+fn run_doc(mut args: DocArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
+    commands::apply_doc_config(&mut args, matches);
+    let code = commands::cmd_doc(args, ctx);
     process::exit(code);
 }
 

@@ -55,6 +55,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma rule visibility` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<VisibilityPartial>,
+    /// `rsigma rule doc` settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<DocPartial>,
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
@@ -71,6 +74,7 @@ impl Merge for RsigmaConfigPartial {
             coverage: merge_opt(self.coverage, over.coverage),
             scorecard: merge_opt(self.scorecard, over.scorecard),
             visibility: merge_opt(self.visibility, over.visibility),
+            doc: merge_opt(self.doc, over.doc),
             mcp: merge_opt(self.mcp, over.mcp),
         }
     }
@@ -794,6 +798,25 @@ impl Merge for VisibilityPartial {
         Self {
             mapping: over.mapping.or(self.mapping),
             fail_on_blind_spots: over.fail_on_blind_spots.or(self.fail_on_blind_spots),
+        }
+    }
+}
+
+/// `rsigma rule doc` settings. The ADS bar itself (enforced statuses and
+/// required sections) lives in `.rsigma-lint.yml`, not here; this section only
+/// carries the command's own defaults.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct DocPartial {
+    /// Exit non-zero when any rule falls below the configured ADS bar (maps to
+    /// `--fail-on-missing`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_on_missing: Option<bool>,
+}
+
+impl Merge for DocPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            fail_on_missing: over.fail_on_missing.or(self.fail_on_missing),
         }
     }
 }

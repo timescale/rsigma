@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes a 74-rule linter derived from the Sigma v2.1.0 spec.
+`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes an 85-rule linter derived from the Sigma v2.1.0 spec.
 
 This library is part of [rsigma].
 
@@ -262,9 +262,9 @@ filter:
 
 The string must be at least 2 characters (e.g. `1h`). The last character is the unit; the prefix must be a positive integer.
 
-## Linter (70 rules)
+## Linter (85 rules)
 
-70 built-in lint rules (plus the reserved `empty_filter_rules`, declared but not emitted) derived from the Sigma v2.1.0 specification. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
+85 built-in lint rules (plus the reserved `empty_filter_rules`, declared but not emitted) derived from the Sigma v2.1.0 specification, including the opt-in ADS detection-strategy checks. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 The linter operates on raw YAML values to catch issues the parser silently ignores.
 

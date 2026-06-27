@@ -29,11 +29,12 @@ use rmcp::{
     tool_handler,
 };
 use rsigma_parser::reference::{MITRE_TACTICS, MODIFIERS};
-use rsigma_parser::{LintConfig, catalogue};
+use rsigma_parser::{LintConfig, ads_catalogue, catalogue};
 use serde_json::{Value, json};
 
 use shared::to_value;
 
+mod author_ads;
 mod convert_rules;
 mod evaluate_events;
 mod fix_rules;
@@ -86,7 +87,7 @@ impl RsigmaMcp {
     ///
     /// Each submodule contributes a `*_router()` built by `#[tool_router]`;
     /// [`ToolRouter`] implements `Add`, so summing them yields a router holding
-    /// all 11 tools.
+    /// all 12 tools.
     fn tool_router() -> ToolRouter<Self> {
         Self::parse_rule_router()
             + Self::parse_condition_router()
@@ -99,6 +100,7 @@ impl RsigmaMcp {
             + Self::resolve_pipeline_router()
             + Self::list_builtin_pipelines_router()
             + Self::fix_rules_router()
+            + Self::author_ads_router()
     }
 }
 
@@ -124,9 +126,10 @@ impl ServerHandler for RsigmaMcp {
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
         info.instructions = Some(
             "Sigma detection-rule toolchain: parse, parse_condition, lint, validate, evaluate, \
-             convert, fix, list fields, and resolve pipelines. Every tool accepts inline content \
-             (e.g. `yaml`) or a file `path`. Resources expose the lint catalogue and modifier / \
-             MITRE reference data."
+             convert, fix, list fields, resolve pipelines, and author ADS detection-strategy \
+             metadata. Every tool accepts inline content (e.g. `yaml`) or a file `path`. Resources \
+             expose the lint catalogue, the ADS section catalogue, and modifier / MITRE reference \
+             data."
                 .to_string(),
         );
         info
@@ -139,6 +142,7 @@ impl ServerHandler for RsigmaMcp {
     ) -> Result<ListResourcesResult, McpError> {
         let resources = vec![
             RawResource::new(RESOURCE_LINT_CATALOGUE, "Lint rule catalogue").no_annotation(),
+            RawResource::new(RESOURCE_ADS_SCHEMA, "ADS section catalogue").no_annotation(),
             RawResource::new(RESOURCE_MODIFIERS, "Sigma field modifiers").no_annotation(),
             RawResource::new(RESOURCE_MITRE_TACTICS, "MITRE ATT&CK tactics").no_annotation(),
         ];
@@ -156,6 +160,7 @@ impl ServerHandler for RsigmaMcp {
     ) -> Result<ReadResourceResult, McpError> {
         let value = match request.uri.as_str() {
             RESOURCE_LINT_CATALOGUE => to_value(&catalogue()),
+            RESOURCE_ADS_SCHEMA => to_value(&ads_catalogue()),
             RESOURCE_MODIFIERS => reference_pairs_json(MODIFIERS),
             RESOURCE_MITRE_TACTICS => reference_pairs_json(MITRE_TACTICS),
             other => {
@@ -174,6 +179,7 @@ impl ServerHandler for RsigmaMcp {
 }
 
 const RESOURCE_LINT_CATALOGUE: &str = "rsigma://lint/catalogue";
+const RESOURCE_ADS_SCHEMA: &str = "rsigma://ads/schema";
 const RESOURCE_MODIFIERS: &str = "rsigma://reference/modifiers";
 const RESOURCE_MITRE_TACTICS: &str = "rsigma://reference/mitre-tactics";
 
@@ -266,6 +272,18 @@ mod tests {
                 .any(|m| m["name"] == "contains")
         );
         let cat = to_value(&catalogue());
-        assert_eq!(cat.as_array().unwrap().len(), 75);
+        assert_eq!(cat.as_array().unwrap().len(), 86);
+    }
+
+    #[test]
+    fn ads_schema_resource_round_trips() {
+        // The data behind the rsigma://ads/schema resource: nine ADS sections,
+        // each with an id and a carrier field.
+        let schema = to_value(&ads_catalogue());
+        let entries = schema.as_array().unwrap();
+        assert_eq!(entries.len(), 9);
+        assert!(entries.iter().any(|e| e["id"] == "validation"));
+        let goal = entries.iter().find(|e| e["id"] == "goal").unwrap();
+        assert_eq!(goal["carrier"]["field"], "description");
     }
 }

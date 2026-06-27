@@ -114,6 +114,18 @@ rsigma rule lint rules/ --fail-level info      # exit 1 on info, warning, or err
 
 For shared repositories, `--fail-level warning` strikes the right balance: spec violations break the build, missing-author or missing-description findings don't. For SigmaHQ-style strict contributions, `--fail-level info` is reasonable.
 
+## `rule doc --fail-on-missing` for the ADS gate
+
+To require every `status: stable` rule to carry a full [detection-strategy document](detection-strategy.md), add an `ads:` block to `.rsigma-lint.yml` and run `rule doc` as its own gate:
+
+```bash
+rsigma rule doc rules/ --fail-on-missing
+```
+
+It exits `1` when any enforced rule is missing a required ADS section, and `0` otherwise. The same sections also surface through `rule lint` (as `ads_missing_*` findings) if you prefer a single lint step; `rule doc` is the standalone view, and `--missing-only` narrows the report to just the rules below the bar.
+
+The two gates agree on absent sections. They differ only on a section whose key is present but blank: `rule doc --fail-on-missing` treats it as undocumented and fails, while `rule lint` reports the lower-severity `ads_empty_section` (`info`) and so passes at the default `--fail-level error`. Run `rule lint --fail-level info` if you want the lint step to fail on blank sections too.
+
 ## `rule validate` in CI
 
 `rule validate` is the cheapest gate: it just parses and compiles every rule, no events involved. Wire it as the first step of any detection-as-code pipeline:

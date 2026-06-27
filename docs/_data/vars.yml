@@ -10,10 +10,10 @@ rsigma:
   # sync with the enum in crates/rsigma-parser/src/lint and the per-severity
   # breakdown table in docs/reference/lint-rules.md.
   lint:
-    rules: 74 # built-in checks emitted in production
-    autofix: 13 # built-in checks with a safe --fix
+    rules: 85 # built-in checks emitted in production
+    autofix: 14 # built-in checks with a safe --fix
     reserved: 1 # enum values declared but not emitted (empty_filter_rules)
-    total: 75 # rules + reserved
+    total: 86 # rules + reserved
   crates:
     - { name: rsigma-parser, role: "Parse Sigma YAML into a strongly-typed AST" }
     - { name: rsigma-eval, role: "Compile and evaluate rules against JSON events" }

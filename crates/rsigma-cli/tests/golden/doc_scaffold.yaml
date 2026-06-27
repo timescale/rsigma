@@ -1,0 +1,11 @@
+custom_attributes:
+    rsigma.ads.strategy: "TODO: a one-paragraph abstract of what this detection does and the approach it takes."
+    rsigma.ads.technical_context: "TODO: the data source, fields, and environment knowledge needed to understand this detection."
+    rsigma.ads.blind_spots:
+      - "TODO: a way an attacker could evade this detection."
+      - "TODO: an assumption this detection relies on."
+    rsigma.ads.validation: "TODO: the steps to generate a true-positive event that triggers this detection."
+    rsigma.ads.priority: "TODO: why this detection's level is set as it is, and what it implies for response urgency."
+    rsigma.ads.response:
+      - "TODO: the first triage step when this detection fires."
+      - "TODO: the escalation or containment action."

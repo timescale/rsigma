@@ -43,6 +43,43 @@ custom_attributes:
     rsigma.suppress: 30m
 ```
 
+## ADS detection-strategy attributes (`rsigma.ads.*`)
+
+The `rsigma.ads.*` namespace carries the [Palantir Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) sections that a Sigma rule has no standard home for. These values are pure documentation: the engine never interprets them, so they carry zero runtime cost. Four of the nine ADS sections reuse standard fields (`description` for the goal, `attack.*` `tags` for the categorization, `falsepositives`, and `level` for the priority); the rest live here.
+
+| Attribute | ADS section | Value shape |
+|-----------|-------------|-------------|
+| `rsigma.ads.strategy` | Strategy abstract | scalar (prose) |
+| `rsigma.ads.technical_context` | Technical context | scalar (prose) |
+| `rsigma.ads.blind_spots` | Blind spots and assumptions | sequence |
+| `rsigma.ads.validation` | Validation (true-positive recipe) | scalar (prose) |
+| `rsigma.ads.priority` | Priority rationale (alongside `level`) | scalar (prose) |
+| `rsigma.ads.response` | Response plan | sequence |
+| `rsigma.ads.exempt` | Opt out of ADS enforcement for this rule | `true` / `false` |
+
+### Example: a fully documented detection
+
+```yaml
+title: Whoami execution
+description: Detects whoami execution, a common discovery step.
+status: stable
+tags:
+    - attack.execution
+falsepositives:
+    - Administrators enumerating their own privileges
+custom_attributes:
+    rsigma.ads.strategy: Watch process creation for the whoami binary.
+    rsigma.ads.technical_context: Requires process_creation telemetry with CommandLine.
+    rsigma.ads.blind_spots:
+        - Renamed whoami binaries evade the image match.
+    rsigma.ads.validation: Run whoami in a lab and confirm the rule fires.
+    rsigma.ads.priority: Medium because discovery sits mid-kill-chain.
+    rsigma.ads.response:
+        - Confirm the user and host.
+```
+
+Report or scaffold these sections with [`rsigma rule doc`](../cli/rule/doc.md), enforce them in CI with the `ads:` block documented in the [lint-rule reference](lint-rules.md#ads-detection-strategy-metadata-11), and read the full workflow in the [Detection Strategy guide](../guide/detection-strategy.md).
+
 ## `postgres.*` attributes
 
 Used by `backend convert -t postgres`. The precedence is, from highest to lowest:

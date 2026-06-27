@@ -20,15 +20,15 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 | Severity | Rules |
 |----------|------:|
 | `error` | 38 |
-| `warning` | 33 |
-| `info` | 3 |
+| `warning` | 41 |
+| `info` | 6 |
 | `hint` | 0 |
 | Reserved (no production emission yet) | {{ rsigma.lint.reserved }} |
 | **Total** | **{{ rsigma.lint.total }}** ({{ rsigma.lint.autofix }} of which have safe auto-fixes via `--fix`) |
 
 The `hint` severity is defined but not yet used by any of the shipped rules. Future rules may use it.
 
-### The 13 safe-fix rules
+### The {{ rsigma.lint.autofix }} safe-fix rules
 
 | Rule | Severity | What the fix does |
 |------|----------|-------------------|
@@ -45,6 +45,7 @@ The `hint` severity is defined but not yet used by any of the shipped rules. Fut
 | `filter_has_level` | `warning` | Remove the inapplicable `level:` from the filter rule. |
 | `filter_has_status` | `warning` | Remove the inapplicable `status:` from the filter rule. |
 | `unknown_key` | `info` | Replace a typo'd key with the closest known key (when the edit distance is small). |
+| `ads_unknown_section` | `info` | Rename an unrecognised `rsigma.ads.*` key to the closest known ADS section (when the edit distance is small). |
 
 ## Infrastructure rules (4)
 
@@ -169,6 +170,42 @@ The first two apply to any document type, based on the top-level `sigma-version`
 | `array_matching_without_version` | `warning` | — | The document uses array-matching selector syntax (`field[any]`, `args[0]`, ...) but resolves below the major that enables it (absent or `sigma-version: 2`), so the brackets are read as literal field-name characters. Add `sigma-version: 3` to read them as array selectors, or escape the brackets (`\[` / `\]`) to keep them literal. |
 | `sigma_version_mismatch` | `warning` | — | A correlation or filter and a rule it references declare different `sigma-version` majors. Cross-referencing rules must share a specification major, since the referencing rule's semantics depend on a consistent reading of the referenced ones. |
 | `unknown_rule_reference` | `warning` | — | A correlation's `rules:` or a filter's `rules:` entry references a rule (by `id` or `name`) that does not exist among the linted rules. Only emitted when linting a directory, where the rule index is complete. |
+
+## ADS detection-strategy metadata (11)
+
+Optional [Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) checks. They are opt-in: nothing fires until an `ads:` block is present in the layered `.rsigma-lint.yml`. When enabled, they fire only on detection rules whose `status` is in the configured `enforce_status` set (default `[stable]`) and skip any rule carrying `rsigma.ads.exempt: true`. Four ADS sections reuse standard fields (`description`, `attack.*` `tags`, `falsepositives`, `level`); the rest live under a `rsigma.ads.*` custom-attribute namespace. See [Detection Strategy](../guide/detection-strategy.md) and [Custom Attributes](custom-attributes.md#ads-detection-strategy-attributes-rsigmaads).
+
+| Rule | Severity | Fix | Description |
+|------|----------|-----|-------------|
+| `ads_missing_goal` | `warning` | — | An enforced rule has no goal (`description`). |
+| `ads_missing_categorization` | `warning` | — | An enforced rule has no ATT&CK categorization (no `attack.*` tag, nor a tag in a configured `tag_namespaces` namespace). |
+| `ads_missing_strategy` | `warning` | — | No `rsigma.ads.strategy` abstract. |
+| `ads_missing_technical_context` | `warning` | — | No `rsigma.ads.technical_context`. |
+| `ads_missing_blind_spots` | `warning` | — | No `rsigma.ads.blind_spots` list. |
+| `ads_missing_false_positives` | `warning` | — | An enforced rule has no false-positive notes (`falsepositives`). |
+| `ads_missing_validation` | `warning` | — | No `rsigma.ads.validation` recipe. |
+| `ads_missing_priority` | `info` | — | No `rsigma.ads.priority` rationale (the `level` field still covers severity). |
+| `ads_missing_response` | `warning` | — | No `rsigma.ads.response` plan. |
+| `ads_empty_section` | `info` | — | A present `rsigma.ads.*` section is blank or too short. |
+| `ads_unknown_section` | `info` | yes | An unrecognised `rsigma.ads.*` key (likely a typo). The fix renames it to the closest known section. |
+
+Configure the bar with an `ads:` block in `.rsigma-lint.yml`:
+
+```yaml
+ads:
+  enforce_status: [stable]   # statuses that require ADS sections
+  required:                  # mandatory sections (defaults to all nine)
+    - goal
+    - categorization
+    - strategy
+    - technical_context
+    - blind_spots
+    - false_positives
+    - validation
+    - priority
+    - response
+  severity: warning          # one severity for every ADS finding (optional)
+```
 
 ## Selected findings, with worked examples
 
@@ -374,6 +411,7 @@ Every lint rule's emission lives in a single file under [`crates/rsigma-parser/s
 | `detection.rs` | Detection-block rules (condition references, logsource, tags, references, modifiers). |
 | `correlation.rs` | Correlation-block rules. |
 | `filter.rs` | Filter-block rules. |
+| `ads.rs` | ADS detection-strategy presence checks (`ads_missing_*`, `ads_empty_section`, `ads_unknown_section`). |
 | `shared.rs` | Cross-kind helpers (unknown_key, non_lowercase_key). |
 | `mod.rs` | Infrastructure (`yaml_parse_error`, `not_a_mapping`, `file_read_error`, `missing_title`, `missing_description`, `missing_author`, `title_too_long`, `missing_condition`). |
 

@@ -113,7 +113,7 @@ rsigma config path
 rsigma config reload
 ```
 
-`engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, and `rule visibility` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
+`engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, `rule visibility`, and `rule doc` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
 Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
 
@@ -154,7 +154,7 @@ rsigma rule validate rules/ -p pipe.yml --source sources.yml --resolve-sources  
 
 ### `rule lint`: Lint rules against the Sigma specification
 
-Run 70 built-in lint rules with optional JSON schema validation.
+Run 85 built-in lint rules with optional JSON schema validation.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -839,6 +839,20 @@ rsigma rule fields -r rules/ --json | jq '.fields[] | select(.sources[] == "dete
 **Table output** writes field data to stdout and a summary line to stderr, so you can pipe the table or redirect it without mixing in summary text.
 
 **JSON output** includes a `summary` object (rule/correlation/filter counts, unique fields, pipelines applied), a `fields` array, and when pipelines are applied, a `pipeline_mappings` array showing each field name transformation.
+
+### `rule doc`: Report or scaffold the ADS detection-strategy document
+
+Assembles each rule's [Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) document from the reused fields (`description`, `attack.*` tags, `falsepositives`, `level`) plus the `rsigma.ads.*` custom attributes, and reports present and missing required sections.
+
+```bash
+rsigma rule doc rules/                              # ADS status table for a ruleset
+rsigma rule doc rules/windows/whoami.yml --format markdown   # canonical ADS document
+rsigma rule doc rules/ --missing-only               # only rules below the ADS bar
+rsigma rule doc rules/ --fail-on-missing            # CI gate: exit 1 if any rule is below the bar
+rsigma rule doc --scaffold rules/windows/whoami.yml --in-place  # fill the missing rsigma.ads.* sections
+```
+
+The ADS bar (enforced statuses and required sections) is read from the `ads:` block in a discovered or `--lint-config` `.rsigma-lint.yml`, defaulting to enforce `stable` and require every section. Exit codes: `0` met or plain render, `1` under `--fail-on-missing` when a rule is below the bar, `2` unreadable rule, `3` bad flag. See the [`rule doc` reference](https://timescale.github.io/rsigma/cli/rule/doc/) and the [Detection Strategy guide](https://timescale.github.io/rsigma/guide/detection-strategy/).
 
 ### `rule backtest`: Replay a corpus and diff per-rule fires against expectations
 

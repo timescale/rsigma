@@ -52,6 +52,7 @@
 //! println!("{expr}");
 //! ```
 
+pub mod ads;
 pub mod ast;
 pub mod condition;
 pub mod error;
@@ -64,6 +65,10 @@ pub mod value;
 pub mod version;
 
 // Re-export the most commonly used types and functions at crate root
+pub use ads::{
+    AdsCarrier, AdsContent, AdsDocument, AdsScaffoldEntry, AdsSection, AdsSectionInfo,
+    AdsSectionStatus, ads_catalogue,
+};
 pub use ast::{
     ArrayQuantifier, ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule,
     CorrelationType, Detection, DetectionItem, Detections, FieldAlias, FieldSpec, FilterRule,
@@ -75,8 +80,8 @@ pub use error::{Result, SigmaParserError, SourceLocation};
 pub use lint::catalogue::{LintRuleInfo, catalogue};
 pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};
 pub use lint::{
-    FileLintResult, Fix, FixDisposition, FixPatch, InlineSuppressions, LintConfig, LintRule,
-    LintWarning, Severity, Span, apply_suppressions, lint_yaml_directory,
+    AdsConfig, FileLintResult, Fix, FixDisposition, FixPatch, InlineSuppressions, LintConfig,
+    LintRule, LintWarning, Severity, Span, apply_suppressions, lint_yaml_directory,
     lint_yaml_directory_with_config, lint_yaml_file, lint_yaml_file_with_config, lint_yaml_str,
     lint_yaml_str_with_config, lint_yaml_value, parse_inline_suppressions,
 };

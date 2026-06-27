@@ -4,6 +4,7 @@ mod convert;
 mod coverage;
 #[cfg(feature = "daemon")]
 mod daemon;
+mod doc;
 mod eval;
 mod eval_stream;
 mod fields;
@@ -37,6 +38,7 @@ pub(crate) use convert::{
 pub(crate) use coverage::{CoverageArgs, apply_coverage_config, cmd_coverage};
 #[cfg(feature = "daemon")]
 pub(crate) use daemon::{DaemonArgs, cmd_daemon, parse_input_format};
+pub(crate) use doc::{DocArgs, apply_doc_config, cmd_doc};
 pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};
 pub(crate) use fields::{FieldsArgs, cmd_fields};
 pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};

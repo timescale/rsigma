@@ -6,8 +6,8 @@
 //! default is written, and a drift-guard test pins clap to these values.
 
 use super::schema::{
-    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, EnginePartial, EvalPartial,
-    GlobalPartial, InputPartial, LogsourcePartial, OutputPartial, RsigmaConfigPartial,
+    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, DocPartial, EnginePartial,
+    EvalPartial, GlobalPartial, InputPartial, LogsourcePartial, OutputPartial, RsigmaConfigPartial,
     SchemaPartial, ScorecardPartial, StatePartial, TailPartial, TapPartial,
 };
 
@@ -87,6 +87,9 @@ pub(crate) const SCORECARD_STALE_WINDOW_DAYS: u64 = 30;
 pub(crate) const SCORECARD_MAX_FP_RATIO: f64 = 0.50;
 /// Default `--fail-on` policy: report only, never fail on verdicts.
 pub(crate) const SCORECARD_FAIL_ON: &str = "none";
+/// Default `rule doc --fail-on-missing`: report only, never fail. A drift-guard
+/// test pins the clap flag default to this constant.
+pub(crate) const DOC_FAIL_ON_MISSING: bool = false;
 
 /// A fully-populated partial holding every compiled default.
 ///
@@ -242,6 +245,11 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         // falls back to the bundled default and `fail_on_blind_spots` defaults
         // to off via clap.
         visibility: None,
+        // `rule doc` carries one compiled default (mirrored by the clap flag
+        // default via the drift-guard test); the ADS bar lives in .rsigma-lint.yml.
+        doc: Some(DocPartial {
+            fail_on_missing: Some(DOC_FAIL_ON_MISSING),
+        }),
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.
         mcp: None,

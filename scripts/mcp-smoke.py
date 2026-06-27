@@ -2,7 +2,7 @@
 """Smoke-test a built ``rsigma mcp serve`` binary end to end.
 
 Drives the MCP server over stdio (default) or Streamable HTTP (``--http``),
-runs the full surface (all 11 tools and 3 resources), and prints a pass/fail
+runs the full surface (all 12 tools and 4 resources), and prints a pass/fail
 summary. This is a quick post-build sanity check against a real binary; CI
 correctness is covered by the crate's Rust tests (``crates/rsigma-mcp/tests``
 and the per-tool unit tests).
@@ -80,10 +80,12 @@ TOOL_CALLS = [
     ("resolve_pipeline", {"pipeline": "sysmon"}),
     ("list_builtin_pipelines", {}),
     ("fix_rules", {"yaml": LINT_RULE}),
+    ("author_ads", {"yaml": VALID_RULE}),
 ]
 
 RESOURCES = [
     "rsigma://lint/catalogue",
+    "rsigma://ads/schema",
     "rsigma://reference/modifiers",
     "rsigma://reference/mitre-tactics",
 ]

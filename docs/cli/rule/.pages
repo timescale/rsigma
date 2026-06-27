@@ -4,6 +4,7 @@ nav:
   - validate: validate.md
   - lint: lint.md
   - fields: fields.md
+  - doc: doc.md
   - backtest: backtest.md
   - coverage: coverage.md
   - scorecard: scorecard.md

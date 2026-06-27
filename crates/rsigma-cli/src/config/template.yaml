@@ -299,6 +299,13 @@ visibility:
   # (every mapped field sits in the broken-coverage `missing` set).
   # fail_on_blind_spots: false
 
+doc:
+  # `rule doc` reports or scaffolds the ADS detection-strategy document. The ADS
+  # bar (enforced statuses and required sections) lives in .rsigma-lint.yml under
+  # an `ads:` block, not here.
+  # Exit non-zero when any rule falls below the configured ADS bar.
+  fail_on_missing: false
+
 # `rsigma mcp serve` settings. The auth token is NOT configurable here by
 # design; supply it via --auth-token or RSIGMA_MCP_AUTH_TOKEN.
 mcp:

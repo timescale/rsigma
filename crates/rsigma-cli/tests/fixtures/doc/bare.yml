@@ -1,0 +1,11 @@
+title: Bare Stable Rule
+id: 11111111-2222-3333-4444-555555555555
+status: stable
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+level: medium

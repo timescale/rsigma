@@ -31,6 +31,8 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use yaml_serde::Value;
 
+use crate::ads::AdsSection;
+
 // =============================================================================
 // Public types
 // =============================================================================
@@ -148,6 +150,19 @@ pub enum LintRule {
     SigmaVersionMismatch,
     UnknownRuleReference,
     UnknownKey,
+
+    // ── ADS detection-strategy metadata ──────────────────────────────────
+    AdsMissingGoal,
+    AdsMissingCategorization,
+    AdsMissingStrategy,
+    AdsMissingTechnicalContext,
+    AdsMissingBlindSpots,
+    AdsMissingFalsePositives,
+    AdsMissingValidation,
+    AdsMissingPriority,
+    AdsMissingResponse,
+    AdsEmptySection,
+    AdsUnknownSection,
 }
 
 impl fmt::Display for LintRule {
@@ -228,6 +243,17 @@ impl fmt::Display for LintRule {
             LintRule::SigmaVersionMismatch => "sigma_version_mismatch",
             LintRule::UnknownRuleReference => "unknown_rule_reference",
             LintRule::UnknownKey => "unknown_key",
+            LintRule::AdsMissingGoal => "ads_missing_goal",
+            LintRule::AdsMissingCategorization => "ads_missing_categorization",
+            LintRule::AdsMissingStrategy => "ads_missing_strategy",
+            LintRule::AdsMissingTechnicalContext => "ads_missing_technical_context",
+            LintRule::AdsMissingBlindSpots => "ads_missing_blind_spots",
+            LintRule::AdsMissingFalsePositives => "ads_missing_false_positives",
+            LintRule::AdsMissingValidation => "ads_missing_validation",
+            LintRule::AdsMissingPriority => "ads_missing_priority",
+            LintRule::AdsMissingResponse => "ads_missing_response",
+            LintRule::AdsEmptySection => "ads_empty_section",
+            LintRule::AdsUnknownSection => "ads_unknown_section",
         };
         write!(f, "{s}")
     }
@@ -342,6 +368,7 @@ static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
         "category",
         "condition",
         "correlation",
+        "custom_attributes",
         "date",
         "description",
         "detection",
@@ -677,7 +704,11 @@ fn lint_cross_references(docs: &[Value], index: &RuleIndex, warnings: &mut Vec<L
 // Public API
 // =============================================================================
 
-fn lint_yaml_value_ext(value: &Value, extra_ns: &[String]) -> Vec<LintWarning> {
+fn lint_yaml_value_ext(
+    value: &Value,
+    extra_ns: &[String],
+    ads: Option<&AdsConfig>,
+) -> Vec<LintWarning> {
     let Some(m) = value.as_mapping() else {
         return vec![err(
             LintRule::NotAMapping,
@@ -704,16 +735,24 @@ fn lint_yaml_value_ext(value: &Value, extra_ns: &[String]) -> Vec<LintWarning> {
     rules::version::lint_sigma_version(m, doc_type, &mut warnings);
     rules::shared::lint_unknown_keys(m, doc_type, &mut warnings);
 
+    // ADS enforcement applies to detection rules only and only when an `ads:`
+    // block is configured.
+    if let Some(ads_cfg) = ads
+        && doc_type == DocType::Detection
+    {
+        rules::ads::lint_ads(m, ads_cfg, extra_ns, &mut warnings);
+    }
+
     warnings
 }
 
 /// Lint a single YAML document value.
 pub fn lint_yaml_value(value: &Value) -> Vec<LintWarning> {
-    lint_yaml_value_ext(value, &[])
+    lint_yaml_value_ext(value, &[], None)
 }
 
-fn lint_yaml_str_ext(text: &str, extra_ns: &[String]) -> Vec<LintWarning> {
-    lint_yaml_str_indexed(text, extra_ns, None)
+fn lint_yaml_str_ext(text: &str, extra_ns: &[String], ads: Option<&AdsConfig>) -> Vec<LintWarning> {
+    lint_yaml_str_indexed(text, extra_ns, ads, None)
 }
 
 /// Lint one YAML text. When `external_index` is `Some` (directory linting) it is
@@ -723,6 +762,7 @@ fn lint_yaml_str_ext(text: &str, extra_ns: &[String]) -> Vec<LintWarning> {
 fn lint_yaml_str_indexed(
     text: &str,
     extra_ns: &[String],
+    ads: Option<&AdsConfig>,
     external_index: Option<&RuleIndex>,
 ) -> Vec<LintWarning> {
     let mut all_warnings = Vec::new();
@@ -750,7 +790,7 @@ fn lint_yaml_str_indexed(
             }
         };
 
-        for mut w in lint_yaml_value_ext(&value, extra_ns) {
+        for mut w in lint_yaml_value_ext(&value, extra_ns, ads) {
             w.span = resolve_path_to_span(text, &w.path);
             all_warnings.push(w);
         }
@@ -783,7 +823,7 @@ fn lint_yaml_str_indexed(
 
 /// Lint a raw YAML string, returning warnings with resolved source spans.
 pub fn lint_yaml_str(text: &str) -> Vec<LintWarning> {
-    lint_yaml_str_ext(text, &[])
+    lint_yaml_str_ext(text, &[], None)
 }
 
 fn resolve_path_to_span(text: &str, path: &str) -> Option<Span> {
@@ -984,10 +1024,15 @@ fn lint_directory_impl(
             Ok(text) => {
                 let warnings = match config {
                     Some(cfg) => {
-                        let w = lint_yaml_str_indexed(&text, &cfg.tag_namespaces, Some(&index));
+                        let w = lint_yaml_str_indexed(
+                            &text,
+                            &cfg.tag_namespaces,
+                            cfg.ads.as_ref(),
+                            Some(&index),
+                        );
                         apply_suppressions(w, cfg, &parse_inline_suppressions(&text))
                     }
-                    None => lint_yaml_str_indexed(&text, &[], Some(&index)),
+                    None => lint_yaml_str_indexed(&text, &[], None, Some(&index)),
                 };
                 results.push(FileLintResult { path, warnings });
             }
@@ -1017,6 +1062,57 @@ pub struct LintConfig {
     pub exclude_patterns: Vec<String>,
     /// Extra tag namespaces recognised in addition to the built-in set.
     pub tag_namespaces: Vec<String>,
+    /// ADS enforcement configuration. `None` (the default) leaves the ADS
+    /// presence checks off; an `ads:` block in the config enables them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ads: Option<AdsConfig>,
+}
+
+/// ADS (Alerting and Detection Strategy) enforcement configuration.
+///
+/// Present (`Some`) only when an `ads:` block appears in the layered lint
+/// config; the ADS presence checks are off otherwise. When enabled, the checks
+/// fire on detection rules whose `status` is in [`enforce_status`](Self::enforce_status)
+/// and flag each missing [`required`](Self::required) section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdsConfig {
+    /// Rule statuses that require ADS sections (lowercased).
+    pub enforce_status: Vec<String>,
+    /// The ADS section ids that are mandatory.
+    pub required: Vec<String>,
+    /// A single severity applied to every ADS finding, overriding the
+    /// per-section default. `None` keeps the catalogue defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<Severity>,
+}
+
+impl Default for AdsConfig {
+    fn default() -> Self {
+        AdsConfig {
+            enforce_status: vec!["stable".to_string()],
+            required: AdsSection::all()
+                .iter()
+                .map(|s| s.id().to_string())
+                .collect(),
+            severity: None,
+        }
+    }
+}
+
+impl AdsConfig {
+    /// Whether a rule with the given `status` string is in scope for ADS
+    /// enforcement.
+    pub fn enforces_status(&self, status: Option<&str>) -> bool {
+        match status {
+            Some(s) => self.enforce_status.iter().any(|e| e == s),
+            None => false,
+        }
+    }
+
+    /// Whether the section id is required.
+    pub fn requires(&self, section_id: &str) -> bool {
+        self.required.iter().any(|r| r == section_id)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1029,6 +1125,88 @@ struct RawLintConfig {
     exclude: Vec<String>,
     #[serde(default)]
     tag_namespaces: Vec<String>,
+    #[serde(default)]
+    ads: Option<RawAdsConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAdsConfig {
+    #[serde(default)]
+    enforce_status: Option<Vec<String>>,
+    #[serde(default)]
+    required: Option<Vec<String>>,
+    #[serde(default)]
+    severity: Option<String>,
+}
+
+/// Parse a lint severity wire string.
+fn parse_severity(s: &str) -> Option<Severity> {
+    match s {
+        "error" => Some(Severity::Error),
+        "warning" => Some(Severity::Warning),
+        "info" => Some(Severity::Info),
+        "hint" => Some(Severity::Hint),
+        _ => None,
+    }
+}
+
+/// Build a validated [`AdsConfig`] from its raw, deserialized form, layering
+/// any provided fields over the defaults.
+fn ads_config_from_raw(raw: RawAdsConfig) -> crate::error::Result<AdsConfig> {
+    let mut config = AdsConfig::default();
+
+    if let Some(statuses) = raw.enforce_status {
+        const VALID_STATUSES: &[&str] = &[
+            "stable",
+            "test",
+            "experimental",
+            "deprecated",
+            "unsupported",
+        ];
+        let mut normalised = Vec::with_capacity(statuses.len());
+        for s in statuses {
+            let lower = s.to_lowercase();
+            if !VALID_STATUSES.contains(&lower.as_str()) {
+                return Err(crate::error::SigmaParserError::InvalidRule(format!(
+                    "invalid ads.enforce_status '{s}'; expected one of: {}",
+                    VALID_STATUSES.join(", ")
+                )));
+            }
+            normalised.push(lower);
+        }
+        dedup_preserving_order(&mut normalised);
+        config.enforce_status = normalised;
+    }
+
+    if let Some(required) = raw.required {
+        let mut ids = Vec::with_capacity(required.len());
+        for id in required {
+            let lower = id.to_lowercase();
+            if AdsSection::from_id(&lower).is_none() {
+                return Err(crate::error::SigmaParserError::InvalidRule(format!(
+                    "invalid ads.required section '{id}'; expected one of: {}",
+                    AdsSection::all()
+                        .iter()
+                        .map(|s| s.id())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            ids.push(lower);
+        }
+        dedup_preserving_order(&mut ids);
+        config.required = ids;
+    }
+
+    if let Some(sev) = raw.severity {
+        config.severity = Some(parse_severity(&sev).ok_or_else(|| {
+            crate::error::SigmaParserError::InvalidRule(format!(
+                "invalid ads.severity '{sev}'; expected error, warning, info, or hint"
+            ))
+        })?);
+    }
+
+    Ok(config)
 }
 
 /// Remove duplicate entries from a list while keeping the first occurrence of
@@ -1047,17 +1225,11 @@ impl LintConfig {
         let disabled_rules: HashSet<String> = raw.disabled_rules.into_iter().collect();
         let mut severity_overrides = HashMap::new();
         for (rule, sev_str) in &raw.severity_overrides {
-            let sev = match sev_str.as_str() {
-                "error" => Severity::Error,
-                "warning" => Severity::Warning,
-                "info" => Severity::Info,
-                "hint" => Severity::Hint,
-                other => {
-                    return Err(crate::error::SigmaParserError::InvalidRule(format!(
-                        "invalid severity '{other}' for rule '{rule}' in lint config"
-                    )));
-                }
-            };
+            let sev = parse_severity(sev_str).ok_or_else(|| {
+                crate::error::SigmaParserError::InvalidRule(format!(
+                    "invalid severity '{sev_str}' for rule '{rule}' in lint config"
+                ))
+            })?;
             severity_overrides.insert(rule.clone(), sev);
         }
 
@@ -1071,11 +1243,14 @@ impl LintConfig {
             .collect();
         dedup_preserving_order(&mut tag_namespaces);
 
+        let ads = raw.ads.map(ads_config_from_raw).transpose()?;
+
         Ok(LintConfig {
             disabled_rules,
             severity_overrides,
             exclude_patterns,
             tag_namespaces,
+            ads,
         })
     }
 
@@ -1112,6 +1287,11 @@ impl LintConfig {
         self.tag_namespaces
             .extend(other.tag_namespaces.iter().cloned());
         dedup_preserving_order(&mut self.tag_namespaces);
+        // A nearer-layer `ads:` block replaces the inherited one wholesale, so
+        // a project can set its own ADS bar without merging stale section lists.
+        if other.ads.is_some() {
+            self.ads = other.ads.clone();
+        }
     }
 
     pub fn is_disabled(&self, rule: &LintRule) -> bool {
@@ -1261,7 +1441,7 @@ pub fn apply_suppressions(
 }
 
 pub fn lint_yaml_str_with_config(text: &str, config: &LintConfig) -> Vec<LintWarning> {
-    let warnings = lint_yaml_str_ext(text, &config.tag_namespaces);
+    let warnings = lint_yaml_str_ext(text, &config.tag_namespaces, config.ads.as_ref());
     let inline = parse_inline_suppressions(text);
     apply_suppressions(warnings, config, &inline)
 }
@@ -1763,6 +1943,7 @@ detection:
                 .collect(),
             exclude_patterns: vec!["test/**".to_string()],
             tag_namespaces: vec!["myns".to_string()],
+            ads: None,
         };
 
         base.merge(&other);

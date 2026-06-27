@@ -1,0 +1,28 @@
+title: Whoami Execution
+id: 8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a
+status: stable
+description: Detects whoami execution, a common discovery step.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+level: medium
+tags:
+    - attack.execution
+    - attack.t1059
+falsepositives:
+    - Administrators enumerating their own privileges
+custom_attributes:
+    rsigma.ads.strategy: Watch process creation for the whoami binary.
+    rsigma.ads.technical_context: Requires process_creation telemetry with CommandLine.
+    rsigma.ads.blind_spots:
+        - Renamed whoami binaries evade the image match.
+        - Assumes CommandLine logging is enabled.
+    rsigma.ads.validation: Run whoami in a lab and confirm the rule fires.
+    rsigma.ads.priority: Medium because discovery sits mid-kill-chain.
+    rsigma.ads.response:
+        - Confirm the user and host.
+        - Correlate with other discovery activity.

@@ -71,13 +71,14 @@ async fn tools_list_exposes_all_core_tools() {
         "resolve_pipeline",
         "list_builtin_pipelines",
         "fix_rules",
+        "author_ads",
     ] {
         assert!(
             names.contains(&expected.to_string()),
             "missing tool {expected}"
         );
     }
-    assert_eq!(tools.len(), 11, "expected exactly 11 tools, got {names:?}");
+    assert_eq!(tools.len(), 12, "expected exactly 12 tools, got {names:?}");
 
     // parse_rule advertises an input schema with the `yaml` property.
     let parse_rule = tools.iter().find(|t| t.name == "parse_rule").unwrap();
@@ -132,6 +133,7 @@ async fn resources_list_and_read_round_trip() {
     let resources = client.list_all_resources().await.expect("list resources");
     let uris: Vec<String> = resources.iter().map(|r| r.uri.clone()).collect();
     assert!(uris.contains(&"rsigma://lint/catalogue".to_string()));
+    assert!(uris.contains(&"rsigma://ads/schema".to_string()));
     assert!(uris.contains(&"rsigma://reference/modifiers".to_string()));
     assert!(uris.contains(&"rsigma://reference/mitre-tactics".to_string()));
 
@@ -148,7 +150,22 @@ async fn resources_list_and_read_round_trip() {
         })
         .expect("text resource");
     let catalogue: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(catalogue.as_array().unwrap().len(), 75);
+    assert_eq!(catalogue.as_array().unwrap().len(), 86);
+
+    let ads = client
+        .read_resource(ReadResourceRequestParams::new("rsigma://ads/schema"))
+        .await
+        .expect("read ads schema");
+    let ads_text = ads
+        .contents
+        .iter()
+        .find_map(|c| match c {
+            rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("text resource");
+    let schema: serde_json::Value = serde_json::from_str(&ads_text).unwrap();
+    assert_eq!(schema.as_array().unwrap().len(), 9);
 
     client.cancel().await.ok();
     server.cancel().await.ok();
