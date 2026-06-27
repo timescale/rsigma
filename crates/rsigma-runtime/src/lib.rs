@@ -54,6 +54,7 @@ pub mod metrics;
 pub mod parse;
 pub mod pipeline_deprecation;
 pub mod processor;
+pub mod risk;
 pub mod scope;
 pub mod selector;
 pub mod sources;
@@ -67,7 +68,6 @@ pub use alert_pipeline::{
     SilenceStore, SilenceView, TickOutput, build_alert_pipeline, load_alert_pipeline_file,
     parse_alert_pipeline_config,
 };
-pub use selector::{Selector, SelectorParseError};
 pub use dispositions::{
     Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,
     DispositionStore, IngestOutcome, Numerator, RawDisposition, RuleSummary, Verdict,
@@ -102,6 +102,11 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
+pub use risk::{
+    RiskConfigError, RiskFile, RiskLayer, RiskObject, RiskOutput, build_risk_layer, load_risk_file,
+    parse_risk_config,
+};
+pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 
 pub use rsigma_eval::{

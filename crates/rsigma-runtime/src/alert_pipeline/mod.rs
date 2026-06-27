@@ -23,6 +23,7 @@ mod silence;
 mod snapshot;
 mod state;
 
+pub use crate::selector::{Selector, SelectorParseError};
 pub use config::{
     AlertPipelineConfigError, AlertPipelineFile, CapsFile, DEFAULT_MAX_DYNAMIC_SILENCES, DedupFile,
     GroupFile, GroupModeLabel, IncludeLabel, ScopeConfig, build_alert_pipeline,
@@ -31,7 +32,6 @@ pub use config::{
 pub use dedup::DedupStore;
 pub use grouping::{GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode};
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
-pub use crate::selector::{Selector, SelectorParseError};
 pub use silence::{
     Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView,
 };
