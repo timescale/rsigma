@@ -6,6 +6,7 @@ pub(crate) mod exit_code;
 mod fix;
 pub(crate) mod logsource_opts;
 pub(crate) mod output;
+pub(crate) mod rule_meta;
 
 use std::path::PathBuf;
 use std::process;
