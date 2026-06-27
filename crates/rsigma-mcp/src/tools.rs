@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 
 use shared::to_value;
 
+mod author_ads;
 mod convert_rules;
 mod evaluate_events;
 mod fix_rules;
@@ -86,7 +87,7 @@ impl RsigmaMcp {
     ///
     /// Each submodule contributes a `*_router()` built by `#[tool_router]`;
     /// [`ToolRouter`] implements `Add`, so summing them yields a router holding
-    /// all 11 tools.
+    /// all 12 tools.
     fn tool_router() -> ToolRouter<Self> {
         Self::parse_rule_router()
             + Self::parse_condition_router()
@@ -99,6 +100,7 @@ impl RsigmaMcp {
             + Self::resolve_pipeline_router()
             + Self::list_builtin_pipelines_router()
             + Self::fix_rules_router()
+            + Self::author_ads_router()
     }
 }
 
@@ -124,9 +126,10 @@ impl ServerHandler for RsigmaMcp {
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
         info.instructions = Some(
             "Sigma detection-rule toolchain: parse, parse_condition, lint, validate, evaluate, \
-             convert, fix, list fields, and resolve pipelines. Every tool accepts inline content \
-             (e.g. `yaml`) or a file `path`. Resources expose the lint catalogue, the ADS section \
-             catalogue, and modifier / MITRE reference data."
+             convert, fix, list fields, resolve pipelines, and author ADS detection-strategy \
+             metadata. Every tool accepts inline content (e.g. `yaml`) or a file `path`. Resources \
+             expose the lint catalogue, the ADS section catalogue, and modifier / MITRE reference \
+             data."
                 .to_string(),
         );
         info
