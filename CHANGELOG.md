@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Risk-based alerting: per-entity risk scoring and a risk-incident layer
+### Risk-based alerting: per-entity risk scoring and a risk-incident layer (#264)
 
 A new optional post-engine daemon capability that shifts the unit of alerting from the individual detection to the entity it touches, modeled on Splunk RBA and Entity Risk Scoring. It runs in the sink path after enrichment and before the alert pipeline, so the evaluation hot path is untouched, and it is off until `--risk <path>` (or `daemon.risk`) is set.
 
