@@ -76,8 +76,7 @@ pub struct DispositionSettings {
     /// Whether the disposition endpoints and the per-rule ratio are active.
     pub enabled: bool,
     /// Optional pull source spec (a `--source`-style file). `None` is
-    /// endpoint-only ingest. Consumed by the pull source (Phase 2).
-    #[allow(dead_code)]
+    /// endpoint-only ingest.
     pub source: Option<PathBuf>,
     /// The rolling-store configuration (window, numerator, min sample).
     pub config: rsigma_runtime::DispositionConfig,
@@ -691,11 +690,44 @@ pub async fn run_daemon(config: DaemonConfig) {
     // their contributing rules through the live incident map.
     let disposition_state = if config.dispositions.enabled {
         tracing::info!("Triage feedback loop enabled (POST/GET /api/v1/dispositions)");
-        Some(super::dispositions::DispositionState::new(
+        let state = super::dispositions::DispositionState::new(
             config.dispositions.config.clone(),
             metrics.clone(),
             alert_state.clone(),
-        ))
+        );
+        // Optional pull source: load the declared dynamic source(s) and ingest
+        // each refreshed payload as dispositions over the Phase 0 seam.
+        if let Some(src_path) = config.dispositions.source.as_ref() {
+            match rsigma_runtime::sources::registry::load_external_sources(std::slice::from_ref(
+                src_path,
+            )) {
+                Ok(loaded) => {
+                    let sources: Vec<_> = loaded.into_iter().map(|(s, _)| s).collect();
+                    if sources.is_empty() {
+                        tracing::warn!(
+                            path = %src_path.display(),
+                            "Disposition source declared no sources"
+                        );
+                    } else {
+                        tracing::info!(
+                            path = %src_path.display(),
+                            count = sources.len(),
+                            "Disposition pull source loaded"
+                        );
+                        state.spawn_source(sources);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        path = %src_path.display(),
+                        "Failed to load disposition source"
+                    );
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        Some(state)
     } else {
         None
     };

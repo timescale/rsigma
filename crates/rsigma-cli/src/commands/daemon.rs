@@ -489,6 +489,15 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "enable-dispositions")]
     pub enable_dispositions: bool,
 
+    /// Pull dispositions from a dynamic-source file (file, HTTP, or NATS).
+    ///
+    /// Points at a sources YAML file (the same format as `--source`) whose
+    /// payload is the disposition records (NDJSON or a JSON array). Refreshed
+    /// per the source's policy; redelivery is idempotent. Implies the loop is
+    /// enabled. Overrides `daemon.dispositions.source`.
+    #[arg(long = "disposition-source", value_name = "PATH")]
+    pub disposition_source: Option<PathBuf>,
+
     // ---------------------------------------------------------------
     // TLS (requires the `daemon-tls` build feature)
     // ---------------------------------------------------------------
@@ -579,7 +588,11 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
     // `--enable-*` flags) before `base` is moved into `apply_daemon_config`.
     let tap = resolve_tap_settings(&base, args.enable_tap);
     let tail = resolve_tail_settings(&base, args.enable_tail);
-    let dispositions = resolve_disposition_settings(&base, args.enable_dispositions);
+    let dispositions = resolve_disposition_settings(
+        &base,
+        args.enable_dispositions,
+        args.disposition_source.clone(),
+    );
     apply_daemon_config(&mut args, matches, base);
 
     let DaemonArgs {
@@ -666,6 +679,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         enable_tap: _,
         enable_tail: _,
         enable_dispositions: _,
+        disposition_source: _,
         #[cfg(feature = "daemon-tls")]
         tls_cert,
         #[cfg(feature = "daemon-tls")]
@@ -864,18 +878,23 @@ fn resolve_tap_settings(
 }
 
 /// Resolve the effective triage-feedback settings from the merged config plus
-/// the `--enable-dispositions` flag. The tuning keys live only in
-/// `daemon.dispositions`; the loop is opt-in, enabled by the flag or
-/// `daemon.dispositions.enabled: true`.
+/// the `--enable-dispositions` flag and the `--disposition-source` override.
+/// The loop is opt-in, enabled by the flag, `daemon.dispositions.enabled: true`,
+/// or the presence of a pull source.
 fn resolve_disposition_settings(
     base: &config::RsigmaConfigPartial,
     enable_dispositions: bool,
+    source_override: Option<PathBuf>,
 ) -> daemon::server::DispositionSettings {
     let d = base.daemon.as_ref().and_then(|d| d.dispositions.as_ref());
+    // A flag wins over the config-file source; a configured source implies the
+    // loop is enabled.
+    let source = source_override.or_else(|| d.and_then(|d| d.source.clone()));
     let enabled = d
         .and_then(|d| d.enabled)
         .unwrap_or(config::defaults::DISPOSITIONS_ENABLED)
-        || enable_dispositions;
+        || enable_dispositions
+        || source.is_some();
     let window_str = d
         .and_then(|d| d.window.clone())
         .unwrap_or_else(|| config::defaults::DISPOSITIONS_WINDOW.to_string());
@@ -893,7 +912,6 @@ fn resolve_disposition_settings(
     let min_sample = d
         .and_then(|d| d.min_sample)
         .unwrap_or(config::defaults::DISPOSITIONS_MIN_SAMPLE);
-    let source = d.and_then(|d| d.source.clone());
 
     daemon::server::DispositionSettings {
         enabled,

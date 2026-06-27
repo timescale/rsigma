@@ -182,10 +182,73 @@ impl DispositionState {
         }
     }
 
+    /// Spawn the background pull-source consumer: run the given dynamic sources
+    /// through a [`RefreshScheduler`] (reusing the shared file, HTTP, and NATS
+    /// fetch and refresh machinery) and ingest each refreshed payload as
+    /// dispositions, labeling ingest metrics by transport. Idempotency makes a
+    /// re-read or redelivery safe (the same records never double count).
+    pub fn spawn_source(&self, sources: Vec<rsigma_eval::pipeline::sources::DynamicSource>) {
+        use rsigma_eval::pipeline::sources::SourceType;
+        use rsigma_runtime::{DefaultSourceResolver, RefreshScheduler, RefreshTrigger};
+
+        if sources.is_empty() {
+            return;
+        }
+        let labels: std::collections::HashMap<String, &'static str> = sources
+            .iter()
+            .map(|s| {
+                let label = match s.source_type {
+                    SourceType::File { .. } => "file",
+                    SourceType::Http { .. } => "http",
+                    SourceType::Nats { .. } => "nats",
+                    SourceType::Command { .. } => "command",
+                };
+                (s.id.clone(), label)
+            })
+            .collect();
+
+        let scheduler = RefreshScheduler::new();
+        let sub = scheduler.subscribe(sources, Arc::new(DefaultSourceResolver::new()));
+        let handle = sub.handle;
+        let trigger = sub.trigger.clone();
+        let mut results = sub.results;
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            // Hold the scheduler coordination task for our lifetime; it is never
+            // awaited (the refresh loop runs in its own spawned tasks).
+            let _scheduler_task = handle;
+            // Resolve once on startup, then react to each scheduled refresh.
+            let _ = trigger.send(RefreshTrigger::All).await;
+            while results.changed().await.is_ok() {
+                let Some(result) = results.borrow_and_update().clone() else {
+                    continue;
+                };
+                for (id, value) in result.resolved {
+                    let label = labels.get(&id).copied().unwrap_or("file");
+                    let text = serde_json::to_string(&value).unwrap_or_default();
+                    match this.ingest(&text, label) {
+                        Ok(summary) => tracing::debug!(
+                            source_id = %id,
+                            accepted = summary.accepted,
+                            duplicate = summary.duplicate,
+                            rejected = summary.rejected,
+                            "Ingested dispositions from source"
+                        ),
+                        Err(e) => tracing::warn!(
+                            source_id = %id,
+                            error = %e,
+                            "Failed to ingest dispositions from source"
+                        ),
+                    }
+                }
+                this.refresh_all_gauges();
+            }
+        });
+    }
+
     /// Recompute every rule's ratio gauge (after a bulk source ingest or a
     /// state restore).
-    // Called by the pull source (Phase 2) and on boot restore (Phase 3).
-    #[allow(dead_code)]
     pub fn refresh_all_gauges(&self) {
         if let Ok(store) = self.store.read() {
             for summary in store.summaries() {
@@ -382,5 +445,56 @@ mod tests {
                 .get(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn pull_source_ingests_from_a_file() {
+        use rsigma_eval::pipeline::sources::{
+            DataFormat, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dispositions.json");
+        std::fs::write(
+            &path,
+            r#"[{"rule_id":"r1","verdict":"false_positive","fingerprint":"x"}]"#,
+        )
+        .unwrap();
+
+        let source = DynamicSource {
+            id: "disp".to_string(),
+            source_type: SourceType::File {
+                path,
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::OnDemand,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        };
+
+        let state = state(1);
+        state.spawn_source(vec![source]);
+
+        for _ in 0..100 {
+            let view = state.view();
+            if view["rules"].as_array().is_some_and(|a| !a.is_empty()) {
+                assert_eq!(view["rules"][0]["rule_id"], "r1");
+                assert_eq!(view["rules"][0]["false_positives"], 1);
+                assert_eq!(
+                    state
+                        .metrics
+                        .disposition_ingest_total
+                        .with_label_values(&["file", "accepted"])
+                        .get(),
+                    1
+                );
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("disposition source ingestion did not appear in the view");
     }
 }
