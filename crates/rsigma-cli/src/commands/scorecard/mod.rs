@@ -10,7 +10,6 @@
 
 mod fuse;
 mod inputs;
-mod promtext;
 mod report;
 mod verdict;
 

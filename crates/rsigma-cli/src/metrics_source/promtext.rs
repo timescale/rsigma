@@ -1,17 +1,17 @@
 //! Hand-rolled Prometheus text-exposition parser, scoped to the two per-rule
-//! counter families the scorecard joins on.
+//! counter families the rule commands join on.
 //!
 //! This module is deliberately std-only (no serde, no HTTP, no crate imports)
-//! so it is the scorecard's single untrusted-input surface and can be compiled
-//! standalone by the `fuzz_scorecard_promtext` cargo-fuzz target via a `#[path]`
-//! include. It must never panic on any byte input; every malformed or unrelated
-//! line is skipped. It matches the repo's `DelimitedWriter`/JUnit-writer
-//! precedent of a small hand-rolled format reader/writer rather than a new
-//! dependency.
+//! so it is the shared metrics reader's single untrusted-input surface and can
+//! be compiled standalone by the `fuzz_scorecard_promtext` cargo-fuzz target
+//! via a `#[path]` include. It must never panic on any byte input; every
+//! malformed or unrelated line is skipped. It matches the repo's
+//! `DelimitedWriter`/JUnit-writer precedent of a small hand-rolled format
+//! reader/writer rather than a new dependency.
 
 use std::collections::BTreeMap;
 
-/// The two per-rule counter families the scorecard joins on, from #27/#36.
+/// The two per-rule counter families the rule commands join on, from #27/#36.
 pub(crate) const DETECTION_METRIC: &str = "rsigma_detection_matches_by_rule_total";
 pub(crate) const CORRELATION_METRIC: &str = "rsigma_correlation_matches_by_rule_total";
 

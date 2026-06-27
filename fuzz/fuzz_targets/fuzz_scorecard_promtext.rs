@@ -10,7 +10,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-#[path = "../../crates/rsigma-cli/src/commands/scorecard/promtext.rs"]
+#[path = "../../crates/rsigma-cli/src/metrics_source/promtext.rs"]
 mod promtext;
 
 fuzz_target!(|data: &[u8]| {
