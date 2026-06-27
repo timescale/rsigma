@@ -83,6 +83,10 @@ pub struct Metrics {
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
     pub disposition_ingest_errors_total: IntCounterVec,
+    pub risk_annotations_total: IntCounterVec,
+    pub risk_annotation_score: Histogram,
+    pub risk_objects_total: IntCounter,
+    pub risk_layer_duration_seconds: Histogram,
 }
 
 impl Metrics {
@@ -814,6 +818,61 @@ impl Metrics {
             .register(Box::new(disposition_ingest_errors_total.clone()))
             .unwrap();
 
+        // Risk-based alerting (#65). Annotation outcomes, the per-detection
+        // score distribution, the risk-object count, and the stage duration.
+        let risk_annotations_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_risk_annotations_total",
+                "Risk-annotation outcomes by action (scored, no_entity, skipped)",
+            ),
+            &["action"],
+        )
+        .unwrap();
+        let risk_annotation_score = Histogram::with_opts(
+            HistogramOpts::new(
+                "rsigma_risk_annotation_score",
+                "Per-detection resolved risk score",
+            )
+            .buckets(vec![
+                0.0, 1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0,
+            ]),
+        )
+        .unwrap();
+        let risk_objects_total = IntCounter::with_opts(Opts::new(
+            "rsigma_risk_objects_total",
+            "Risk objects extracted from firing detections",
+        ))
+        .unwrap();
+        let risk_layer_duration_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "rsigma_risk_layer_duration_seconds",
+                "Risk-layer stage duration in seconds",
+            )
+            .buckets(vec![
+                0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1,
+            ]),
+        )
+        .unwrap();
+        // Pre-materialise the fixed `action` label set so the `# HELP` / `# TYPE`
+        // lines and zero series render on the first scrape, before any event.
+        for action in ["scored", "no_entity", "skipped"] {
+            risk_annotations_total
+                .with_label_values(&[action])
+                .inc_by(0);
+        }
+        registry
+            .register(Box::new(risk_annotations_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_annotation_score.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_objects_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(risk_layer_duration_seconds.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             events_processed,
@@ -892,6 +951,10 @@ impl Metrics {
             dispositions_total,
             disposition_ingest_total,
             disposition_ingest_errors_total,
+            risk_annotations_total,
+            risk_annotation_score,
+            risk_objects_total,
+            risk_layer_duration_seconds,
         }
     }
 
@@ -1040,6 +1103,24 @@ impl MetricsHook for Metrics {
 
     fn set_inhibit_sources_active(&self, count: i64) {
         self.inhibit_sources_active.set(count);
+    }
+
+    fn on_risk_annotation(&self, action: &str) {
+        self.risk_annotations_total
+            .with_label_values(&[action])
+            .inc();
+    }
+
+    fn observe_risk_annotation_score(&self, score: f64) {
+        self.risk_annotation_score.observe(score);
+    }
+
+    fn on_risk_objects(&self, count: u64) {
+        self.risk_objects_total.inc_by(count);
+    }
+
+    fn observe_risk_layer_duration(&self, seconds: f64) {
+        self.risk_layer_duration_seconds.observe(seconds);
     }
 
     fn observe_processing_latency(&self, seconds: f64) {

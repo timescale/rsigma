@@ -17,9 +17,10 @@ use rsigma_eval::{
 use rsigma_runtime::{
     AckToken, AlertPipeline, AlertPipelineState, DeliveryConfig, DeliveryFailure, Dispatcher,
     EnrichmentPipeline, FieldObserver, FileSink, IncidentEnvelope, IncludeMode, InputFormat,
-    LogProcessor, MetricsHook, OnFull, RawEvent, RoutingSpec, RuntimeEngine, SchemaClassifier,
-    SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, StdinSource, StdoutSink,
-    build_alert_pipeline, load_alert_pipeline_file, load_schema_signatures, spawn_source,
+    LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RoutingSpec, RuntimeEngine,
+    SchemaClassifier, SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, StdinSource,
+    StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
+    load_schema_signatures, spawn_source,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -226,6 +227,10 @@ pub struct DaemonConfig {
     /// Read at daemon startup and again on hot-reload; failures during
     /// reload are logged and the previous pipeline stays active.
     pub alert_pipeline_path: Option<PathBuf>,
+    /// Optional path to the risk-based alerting config (from `--risk`). Read at
+    /// daemon startup and again on hot-reload; failures during reload are
+    /// logged and the previous config stays active.
+    pub risk_path: Option<PathBuf>,
     /// Webhook config file/dir paths (from `--webhook`). Loaded and validated
     /// once at daemon startup, then built into lossy (`on_full=drop`) delivery
     /// leaves. Hot reload is not supported in v1.
@@ -271,6 +276,12 @@ pub async fn run_daemon(config: DaemonConfig) {
     // `/api/v1/silences` handlers can read and mutate it.
     let alert_state: Arc<std::sync::RwLock<AlertPipelineState>> =
         Arc::new(std::sync::RwLock::new(AlertPipelineState::default()));
+
+    // The risk layer (annotation and, in the incident layer, the per-entity
+    // accumulator) runs in the sink task after enrichment and before the alert
+    // pipeline. Hoisted here so the sink task and the reload task can both
+    // capture the `ArcSwap`.
+    let risk_swap: Arc<ArcSwap<Option<Arc<RiskLayer>>>> = Arc::new(ArcSwap::new(Arc::new(None)));
 
     // Open SQLite state store if configured
     let state_store = config.state_db.as_ref().map(|path| {
@@ -578,6 +589,20 @@ pub async fn run_daemon(config: DaemonConfig) {
             }
             Err(e) => {
                 tracing::error!(error = %e, "Failed to build alert pipeline");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        }
+    }
+
+    // Build the risk layer. Failures exit cleanly because no I/O has started yet.
+    if let Some(path) = config.risk_path.as_ref() {
+        match load_risk_file(path).and_then(build_risk_layer) {
+            Ok(layer) => {
+                tracing::info!(path = %path.display(), "Risk layer loaded");
+                risk_swap.store(Arc::new(Some(Arc::new(layer))));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build risk layer");
                 std::process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
@@ -908,6 +933,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
     let reload_alert_pipeline_path = config.alert_pipeline_path.clone();
     let reload_alert_state = alert_state.clone();
+    let reload_risk_swap = risk_swap.clone();
+    let reload_risk_path = config.risk_path.clone();
     #[cfg(feature = "daemon-tls")]
     let reload_tls_state = tls_state.clone();
     #[cfg(feature = "daemon-tls")]
@@ -1005,6 +1032,27 @@ pub async fn run_daemon(config: DaemonConfig) {
                             error = %e,
                             path = %path.display(),
                             "Failed to reload alert pipeline; keeping previous pipeline"
+                        );
+                        reload_metrics.reloads_failed.inc();
+                    }
+                }
+            }
+
+            // Reload the risk layer. Failures keep the previous config in place
+            // so a typo cannot take down risk scoring in production. In-flight
+            // per-entity accumulators are owned by the sink task and survive a
+            // config swap; stale entries age out via the new window.
+            if let Some(path) = reload_risk_path.as_deref() {
+                match load_risk_file(path).and_then(build_risk_layer) {
+                    Ok(new_layer) => {
+                        reload_risk_swap.store(Arc::new(Some(Arc::new(new_layer))));
+                        tracing::info!(path = %path.display(), "Risk layer reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            path = %path.display(),
+                            "Failed to reload risk layer; keeping previous config"
                         );
                         reload_metrics.reloads_failed.inc();
                     }
@@ -1400,6 +1448,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     let alert_pipeline_swap_for_sink = alert_pipeline_swap.clone();
     let alert_state_for_sink = alert_state.clone();
     let alert_pipeline_metrics = metrics.clone() as Arc<dyn MetricsHook>;
+    let risk_swap_for_sink = risk_swap.clone();
+    let risk_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let delivery_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let dispatch_ack_tx = ack_tx.clone();
     let empty_ack_tx = ack_tx.clone();
@@ -1432,6 +1482,37 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 let _ = empty_ack_tx.send(token);
                             }
                             continue;
+                        }
+                    }
+
+                    // Risk layer: annotate each in-scope firing with a risk
+                    // score and risk objects, then (opt-in) emit a compact risk
+                    // event per (detection, risk object) pair. Runs before the
+                    // alert pipeline so risk accrues on every firing, before
+                    // dedup, silencing, or inhibition can fold or drop it.
+                    let risk_snapshot = risk_swap_for_sink.load_full();
+                    if let Some(risk_layer) = risk_snapshot.as_ref() {
+                        let now = chrono::Utc::now().timestamp();
+                        let out = risk_layer.process(result, now, risk_metrics.as_ref());
+                        result = out.kept;
+                        if !out.risk_events.is_empty() {
+                            let subject =
+                                risk_layer.risk_event_nats_subject().map(|s| s.to_string());
+                            for event in out.risk_events {
+                                match serde_json::to_string(&event) {
+                                    Ok(json) => {
+                                        dispatcher
+                                            .dispatch_incident(IncidentEnvelope {
+                                                json,
+                                                nats_subject: subject.clone(),
+                                            })
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "Failed to serialize risk event");
+                                    }
+                                }
+                            }
                         }
                     }
 
