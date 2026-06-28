@@ -16,12 +16,13 @@
 //! durable sinks (NATS, file); anything undeliverable lands in the DLQ.
 
 mod config;
+mod signing;
 mod sink;
 
 pub use config::{
-    BuiltWebhook, DEFAULT_WEBHOOK_ATTEMPTS, DEFAULT_WEBHOOK_BACKOFF, DEFAULT_WEBHOOK_MAX_BACKOFF,
-    DEFAULT_WEBHOOK_QUEUE_SIZE, DEFAULT_WEBHOOK_TIMEOUT, RateLimitConfig, RetryConfig, ScopeConfig,
-    WebhookConfig, WebhookConfigError, WebhookKind, WebhooksFile, build_webhooks,
-    load_webhooks_file,
+    BuiltWebhook, CustomSigningConfig, DEFAULT_WEBHOOK_ATTEMPTS, DEFAULT_WEBHOOK_BACKOFF,
+    DEFAULT_WEBHOOK_MAX_BACKOFF, DEFAULT_WEBHOOK_QUEUE_SIZE, DEFAULT_WEBHOOK_TIMEOUT,
+    RateLimitConfig, RetryConfig, ScopeConfig, SigningConfig, WebhookConfig, WebhookConfigError,
+    WebhookKind, WebhooksFile, build_webhooks, load_webhooks_file,
 };
 pub use sink::WebhookSink;

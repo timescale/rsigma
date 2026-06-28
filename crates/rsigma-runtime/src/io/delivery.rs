@@ -10,12 +10,13 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 use rsigma_eval::ProcessResult;
 
@@ -31,10 +32,22 @@ type DeliveryFuture<'a> = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> 
 /// can be unit-tested against a mock without a test-only enum variant.
 pub trait DeliverySink: Send + 'static {
     /// Deliver a single result, returning an error the worker may retry.
-    fn deliver<'a>(&'a mut self, result: &'a ProcessResult) -> DeliveryFuture<'a>;
+    ///
+    /// `ctx` is minted once per queued item and handed back unchanged on every
+    /// retry, so a sink that derives request identity from it (e.g. a signed
+    /// webhook) reproduces the same id, timestamp, and signature on a re-send.
+    fn deliver<'a>(
+        &'a mut self,
+        result: &'a ProcessResult,
+        ctx: &'a DeliveryContext,
+    ) -> DeliveryFuture<'a>;
     /// Deliver a single incident line. Defaults to a no-op so mock sinks and
     /// any sink that does not carry incidents need no implementation.
-    fn deliver_incident<'a>(&'a mut self, _incident: &'a IncidentEnvelope) -> DeliveryFuture<'a> {
+    fn deliver_incident<'a>(
+        &'a mut self,
+        _incident: &'a IncidentEnvelope,
+        _ctx: &'a DeliveryContext,
+    ) -> DeliveryFuture<'a> {
         Box::pin(async { Ok(()) })
     }
     /// Short, stable label used for structured logs and per-sink metrics.
@@ -42,10 +55,18 @@ pub trait DeliverySink: Send + 'static {
 }
 
 impl DeliverySink for Sink {
-    fn deliver<'a>(&'a mut self, result: &'a ProcessResult) -> DeliveryFuture<'a> {
+    fn deliver<'a>(
+        &'a mut self,
+        result: &'a ProcessResult,
+        _ctx: &'a DeliveryContext,
+    ) -> DeliveryFuture<'a> {
         self.send(result)
     }
-    fn deliver_incident<'a>(&'a mut self, incident: &'a IncidentEnvelope) -> DeliveryFuture<'a> {
+    fn deliver_incident<'a>(
+        &'a mut self,
+        incident: &'a IncidentEnvelope,
+        _ctx: &'a DeliveryContext,
+    ) -> DeliveryFuture<'a> {
         self.send_incident(incident)
     }
     fn label(&self) -> &'static str {
@@ -92,6 +113,63 @@ impl Default for DeliveryConfig {
             backoff_base: Duration::from_millis(100),
             backoff_max: Duration::from_secs(5),
         }
+    }
+}
+
+/// Per-delivery identity, created once per queued item and reused on every
+/// retry attempt.
+///
+/// The worker creates one of these before the retry loop and hands the same
+/// reference to the sink on each attempt. A sink that derives request identity
+/// from it (today, a signed webhook) therefore reproduces a byte-identical id,
+/// timestamp, and signature when a delivery is retried, which is what lets a
+/// receiver dedupe redeliveries and enforce a replay window.
+///
+/// The id and timestamp are computed lazily on first access: most deliveries go
+/// to sinks that never read them (stdout, file, NATS, OTLP), so the worker pays
+/// no per-item RNG call or allocation unless a sink actually signs. The first
+/// access (the first signing attempt) fixes the value, and every retry reuses
+/// the same one.
+pub struct DeliveryContext {
+    inner: OnceLock<ContextData>,
+}
+
+struct ContextData {
+    id_base: String,
+    first_attempt: SystemTime,
+}
+
+impl DeliveryContext {
+    /// Create a context with nothing computed yet. Cheap; no RNG, no syscall.
+    pub fn new() -> Self {
+        DeliveryContext {
+            inner: OnceLock::new(),
+        }
+    }
+
+    fn data(&self) -> &ContextData {
+        self.inner.get_or_init(|| ContextData {
+            id_base: format!("msg_{}", Uuid::new_v4().simple()),
+            first_attempt: SystemTime::now(),
+        })
+    }
+
+    /// Stable base id for this delivery (`msg_<uuid>`). A sink may append a
+    /// per-result suffix to address individual results within one batch.
+    pub fn id_base(&self) -> &str {
+        &self.data().id_base
+    }
+
+    /// Wall-clock time of the first access (the first delivery attempt that
+    /// reads the context); used as the signed timestamp.
+    pub fn first_attempt(&self) -> SystemTime {
+        self.data().first_attempt
+    }
+}
+
+impl Default for DeliveryContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -334,11 +412,14 @@ async fn deliver_one<S: DeliverySink>(
     metrics: &Arc<dyn MetricsHook>,
     label: &'static str,
 ) {
+    // Minted once and reused on every retry so a signed sink reproduces the
+    // same id/timestamp/signature on a re-send.
+    let ctx = DeliveryContext::new();
     let mut attempt: u32 = 0;
     loop {
         let outcome = match target {
-            DeliverTarget::Result(r) => sink.deliver(r).await,
-            DeliverTarget::Incident(e) => sink.deliver_incident(e).await,
+            DeliverTarget::Result(r) => sink.deliver(r, &ctx).await,
+            DeliverTarget::Incident(e) => sink.deliver_incident(e, &ctx).await,
         };
         match outcome {
             Ok(()) => return,
@@ -428,6 +509,9 @@ mod tests {
         permanent: bool,
         delivered: Arc<AtomicUsize>,
         attempts: Arc<AtomicUsize>,
+        // Records the delivery-context id seen on each attempt, to prove the
+        // worker reuses one context across retries.
+        ctx_ids: Arc<std::sync::Mutex<Vec<String>>>,
         // A latching gate: deliveries block until the watch value is `true`,
         // after which every delivery (including later ones) proceeds. A plain
         // `Notify` would only wake waiters parked at the instant it fires.
@@ -443,20 +527,28 @@ mod tests {
                 permanent: false,
                 delivered: Arc::new(AtomicUsize::new(0)),
                 attempts: Arc::new(AtomicUsize::new(0)),
+                ctx_ids: Arc::new(std::sync::Mutex::new(Vec::new())),
                 gate: None,
             }
         }
     }
 
     impl DeliverySink for MockSink {
-        fn deliver<'a>(&'a mut self, _result: &'a ProcessResult) -> DeliveryFuture<'a> {
+        fn deliver<'a>(
+            &'a mut self,
+            _result: &'a ProcessResult,
+            ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
             let fail_first = self.fail_first.clone();
             let delivered = self.delivered.clone();
             let attempts = self.attempts.clone();
             let always_fail = self.always_fail;
             let permanent = self.permanent;
             let gate = self.gate.clone();
+            let ctx_ids = self.ctx_ids.clone();
+            let ctx_id = ctx.id_base().to_string();
             Box::pin(async move {
+                ctx_ids.lock().unwrap().push(ctx_id);
                 if let Some(mut rx) = gate {
                     loop {
                         if *rx.borrow() {
@@ -511,6 +603,34 @@ mod tests {
             acks += 1;
         }
         assert_eq!(acks, 10, "every dispatched event must be acked");
+    }
+
+    #[tokio::test]
+    async fn retry_reuses_the_same_delivery_context() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = MockSink::new("mock");
+        sink.fail_first.store(2, Ordering::SeqCst); // two failures, then success
+        let ctx_ids = sink.ctx_ids.clone();
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        dispatcher.dispatch(result(), vec![AckToken::Noop]).await;
+        dispatcher.shutdown().await;
+
+        let ids = ctx_ids.lock().unwrap().clone();
+        assert_eq!(
+            ids.len(),
+            3,
+            "two failures then success means three attempts"
+        );
+        assert!(
+            ids.iter().all(|id| *id == ids[0]),
+            "the delivery context id must be stable across retries: {ids:?}",
+        );
     }
 
     #[tokio::test]

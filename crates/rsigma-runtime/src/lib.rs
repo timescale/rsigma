@@ -96,8 +96,9 @@ pub use io::webhook::{
     build_webhooks, load_webhooks_file,
 };
 pub use io::{
-    AckToken, DeliveryConfig, DeliveryFailure, DeliverySink, Dispatcher, EventSource, FileSink,
-    IncidentEnvelope, OnFull, RawEvent, Sink, StdinSource, StdoutSink, spawn_source,
+    AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
+    EventSource, FileSink, IncidentEnvelope, OnFull, RawEvent, Sink, StdinSource, StdoutSink,
+    spawn_source,
 };
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use pipeline_deprecation::warn_pipeline_inline_sources;

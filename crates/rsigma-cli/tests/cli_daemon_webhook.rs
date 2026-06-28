@@ -40,6 +40,17 @@ webhooks:
     body: '{"text":"${detection.rule.title}"}'
 "#;
 
+/// Webhook that HMAC-signs deliveries using a secret from the environment.
+const WEBHOOK_SIGNED_CFG: &str = r#"
+webhooks:
+  - id: slack
+    kind: detection
+    url: __URL__/hook
+    body: '{"text":"${detection.rule.title}"}'
+    signing:
+      secret_env: RSIGMA_TEST_WEBHOOK_SECRET
+"#;
+
 /// Webhook scoped to a level the test rule (high) does not carry.
 const WEBHOOK_SCOPED_CFG: &str = r#"
 webhooks:
@@ -282,6 +293,53 @@ fn webhook_env_header_is_interpolated() {
             .and_then(|v| v.to_str().ok()),
         Some("Bearer secret-xyz"),
         "the env-var header secret should be interpolated at render time",
+    );
+}
+
+#[test]
+fn webhook_signs_requests_when_configured() {
+    let rt = rt();
+    let server = mock_server(&rt, 200);
+    let webhook = temp_file(
+        ".yml",
+        &WEBHOOK_SIGNED_CFG.replace("__URL__", &server.uri()),
+    );
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let daemon = DaemonProcess::spawn_http_with_args_env(
+        rule.path().to_str().unwrap(),
+        &["--webhook", webhook.path().to_str().unwrap()],
+        &[("RSIGMA_TEST_WEBHOOK_SECRET", "test-secret")],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), MATCHING_EVENT);
+    assert_eq!(status, 200);
+
+    let req = poll_until(Duration::from_secs(5), || {
+        rt.block_on(server.received_requests())
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+    })
+    .expect("webhook never made a request");
+
+    // The default scheme is Standard Webhooks: a signed id, timestamp, and a
+    // versioned signature are present.
+    assert!(
+        req.headers.get("webhook-id").is_some(),
+        "missing webhook-id header",
+    );
+    assert!(
+        req.headers.get("webhook-timestamp").is_some(),
+        "missing webhook-timestamp header",
+    );
+    let sig = req
+        .headers
+        .get("webhook-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        sig.starts_with("v1,"),
+        "expected a v1 signature, got {sig:?}",
     );
 }
 

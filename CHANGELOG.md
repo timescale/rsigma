@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Webhook HMAC request signing (#266)
+
+The webhook sink can now HMAC-sign every outbound request so a receiving endpoint can verify the delivery's authenticity and integrity, and reject replays. Signing is opt-in per webhook through a `signing:` block and is computed over the exact rendered body bytes. It is most useful for the custom and internal relay endpoints an operator controls; the public chat and paging services do not verify a sender HMAC, so it complements the existing per-webhook TLS and bearer-token options rather than replacing them.
+
+* The default `standard` scheme follows the cross-industry Standard Webhooks convention, emitting `webhook-id`, `webhook-timestamp`, and `webhook-signature: v1,<base64 HMAC-SHA256 of "{id}.{timestamp}.{body}">`. A `github` scheme emits `X-Hub-Signature-256: sha256=<hex>` over the body, and a `custom` scheme exposes the header name, algorithm (`sha256`/`sha512`), encoding (`hex`/`base64`), value format, and signed-payload template for receivers like Stripe.
+* The HMAC key is read from the environment (`signing.secret_env`), resolved once at startup so a missing key fails the daemon at boot, and is never stored in the webhook YAML. `secret_encoding: base64` decodes a svix-issued `whsec_` secret, and `rotate_secret_env` emits a second signature for the duration of a key rollover (the `standard` and `custom` schemes).
+* The id, timestamp, and signature are minted once per delivery and reused on every retry, so a receiver dedupes redeliveries on `webhook-id` and enforces a replay window on `webhook-timestamp`. This rides on a new per-delivery `DeliveryContext` threaded through the shared sink delivery layer (a `DeliverySink::deliver` signature change).
+
 ### Risk-based alerting: per-entity risk scoring and a risk-incident layer (#264)
 
 A new optional post-engine daemon capability that shifts the unit of alerting from the individual detection to the entity it touches, modeled on Splunk RBA and Entity Risk Scoring. It runs in the sink path after enrichment and before the alert pipeline, so the evaluation hot path is untouched, and it is off until `--risk <path>` (or `daemon.risk`) is set.

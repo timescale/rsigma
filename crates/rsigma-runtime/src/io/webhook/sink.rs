@@ -11,9 +11,11 @@ use rsigma_eval::{EvaluationResult, ProcessResult};
 
 use crate::enrichment::{HttpEnricherClient, render_template, render_template_json};
 use crate::error::RuntimeError;
+use crate::io::DeliveryContext;
 use crate::metrics::MetricsHook;
 
 use super::config::WebhookKind;
+use super::signing::WebhookSigner;
 
 /// Cap on the response bytes drained (and discarded) per request. Webhook
 /// responses are never parsed; draining a bounded prefix lets reqwest reuse
@@ -97,6 +99,9 @@ pub struct WebhookSink {
     limiter: Option<TokenBucket>,
     client: HttpEnricherClient,
     metrics: Arc<dyn MetricsHook>,
+    /// Optional HMAC request signer. When set, every delivery carries
+    /// signature headers over the rendered body bytes.
+    signer: Option<WebhookSigner>,
 }
 
 impl WebhookSink {
@@ -113,6 +118,7 @@ impl WebhookSink {
         limiter: Option<TokenBucket>,
         client: HttpEnricherClient,
         metrics: Arc<dyn MetricsHook>,
+        signer: Option<WebhookSigner>,
     ) -> Self {
         let label: &'static str = Box::leak(id.clone().into_boxed_str());
         WebhookSink {
@@ -128,6 +134,7 @@ impl WebhookSink {
             limiter,
             client,
             metrics,
+            signer,
         }
     }
 
@@ -150,17 +157,26 @@ impl WebhookSink {
     /// with that error so the shared worker can apply retry/backoff (for a
     /// retryable error) or route to the DLQ (for a [`RuntimeError::Permanent`]
     /// or after the retry budget is spent).
-    pub async fn send(&mut self, result: &ProcessResult) -> Result<(), RuntimeError> {
-        for eval in result.iter() {
+    pub async fn send(
+        &mut self,
+        result: &ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Result<(), RuntimeError> {
+        for (idx, eval) in result.iter().enumerate() {
             if !self.kind.matches(&eval.body) || !self.scope.matches(eval) {
                 continue;
             }
-            self.deliver_one(eval).await?;
+            self.deliver_one(eval, ctx, idx).await?;
         }
         Ok(())
     }
 
-    async fn deliver_one(&mut self, eval: &EvaluationResult) -> Result<(), RuntimeError> {
+    async fn deliver_one(
+        &mut self,
+        eval: &EvaluationResult,
+        ctx: &DeliveryContext,
+        idx: usize,
+    ) -> Result<(), RuntimeError> {
         let waited = match &mut self.limiter {
             Some(limiter) => limiter.acquire().await,
             None => false,
@@ -170,7 +186,11 @@ impl WebhookSink {
         }
 
         let url = render_template(&self.url, eval);
-        let mut header_map = HeaderMap::with_capacity(self.headers.len());
+        // Reserve for the user headers plus up to three signing headers
+        // (webhook-id/timestamp/signature is the widest scheme) so a signed
+        // request does not reallocate the map.
+        let signing_headroom = if self.signer.is_some() { 3 } else { 0 };
+        let mut header_map = HeaderMap::with_capacity(self.headers.len() + signing_headroom);
         for (name, value_template) in &self.headers {
             let rendered = render_template(value_template, eval);
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
@@ -188,6 +208,32 @@ impl WebhookSink {
             header_map.insert(header_name, header_value);
         }
         let body = self.body.as_ref().map(|b| render_template_json(b, eval));
+
+        // Sign the exact body bytes that go on the wire. The id and timestamp
+        // come from the per-delivery context, so a retry reproduces the same
+        // signature. The id is unique per result within the delivery.
+        if let Some(signer) = &self.signer {
+            let request_id = format!("{}-{idx}", ctx.id_base());
+            for (name, value) in signer.sign(
+                body.as_deref().unwrap_or(""),
+                ctx.first_attempt(),
+                &request_id,
+            ) {
+                let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
+                    RuntimeError::Permanent(format!(
+                        "webhook {}: invalid signing header name '{name}': {e}",
+                        self.id
+                    ))
+                })?;
+                let header_value = HeaderValue::from_str(&value).map_err(|e| {
+                    RuntimeError::Permanent(format!(
+                        "webhook {}: invalid signing header value for '{name}': {e}",
+                        self.id
+                    ))
+                })?;
+                header_map.insert(header_name, header_value);
+            }
+        }
 
         let mut req = self
             .client
@@ -277,11 +323,18 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use hmac::{Hmac, KeyInit, Mac};
     use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
     use rsigma_parser::Level;
+    use sha2::Sha256;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use zeroize::Zeroizing;
+
+    use super::super::signing::SigningScheme;
     use crate::metrics::NoopMetrics;
 
     fn detection(title: &str) -> EvaluationResult {
@@ -315,6 +368,28 @@ mod tests {
             None,
             crate::enrichment::build_default_http_client().unwrap(),
             Arc::new(NoopMetrics),
+            None,
+        )
+    }
+
+    fn ctx() -> DeliveryContext {
+        DeliveryContext::new()
+    }
+
+    fn signed_sink_to(url: String, signer: WebhookSigner) -> WebhookSink {
+        WebhookSink::new(
+            "test".to_string(),
+            WebhookKind::Detection,
+            reqwest::Method::POST,
+            url,
+            vec![("Content-Type".to_string(), "application/json".to_string())],
+            Some(r#"{"text":"${detection.rule.title}"}"#.to_string()),
+            Duration::from_secs(5),
+            crate::enrichment::Scope::default(),
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            Some(signer),
         )
     }
 
@@ -328,7 +403,7 @@ mod tests {
             .await;
         let mut sink = sink_to(format!("{}/hook", server.uri()));
         let result: ProcessResult = vec![detection("hi")];
-        assert!(sink.send(&result).await.is_ok());
+        assert!(sink.send(&result, &ctx()).await.is_ok());
     }
 
     #[tokio::test]
@@ -340,7 +415,7 @@ mod tests {
             .await;
         let mut sink = sink_to(format!("{}/hook", server.uri()));
         let result: ProcessResult = vec![detection("hi")];
-        match sink.send(&result).await {
+        match sink.send(&result, &ctx()).await {
             Err(RuntimeError::Io(_)) => {}
             other => panic!("expected retryable Io error, got {other:?}"),
         }
@@ -355,7 +430,7 @@ mod tests {
             .await;
         let mut sink = sink_to(format!("{}/hook", server.uri()));
         let result: ProcessResult = vec![detection("hi")];
-        match sink.send(&result).await {
+        match sink.send(&result, &ctx()).await {
             Err(RuntimeError::Permanent(_)) => {}
             other => panic!("expected permanent error, got {other:?}"),
         }
@@ -386,7 +461,7 @@ mod tests {
             }),
         };
         let result: ProcessResult = vec![correlation];
-        assert!(sink.send(&result).await.is_ok());
+        assert!(sink.send(&result, &ctx()).await.is_ok());
     }
 
     #[test]
@@ -409,6 +484,85 @@ mod tests {
         );
         // The escaped body must parse as JSON despite the embedded quotes.
         let _: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+    }
+
+    #[tokio::test]
+    async fn signed_request_carries_a_verifiable_signature() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let secret = b"shared-secret".to_vec();
+        let signer = WebhookSigner::new(
+            SigningScheme::Standard,
+            vec![Zeroizing::new(secret.clone())],
+        );
+        let mut sink = signed_sink_to(format!("{}/hook", server.uri()), signer);
+        sink.send(&vec![detection("hi")], &ctx()).await.unwrap();
+
+        let reqs = server.received_requests().await.unwrap();
+        let req = &reqs[0];
+        let header = |name: &str| {
+            req.headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let id = header("webhook-id");
+        let ts = header("webhook-timestamp");
+        let sig = header("webhook-signature");
+        assert!(id.starts_with("msg_"), "id should be msg_<uuid>: {id}");
+
+        // Recompute the HMAC over the exact bytes the receiver would: the
+        // signed content is "{id}.{timestamp}.{body}" and body is the wire body.
+        let body = std::str::from_utf8(&req.body).unwrap();
+        let signed = format!("{id}.{ts}.{body}");
+        let mut mac = Hmac::<Sha256>::new_from_slice(&secret).unwrap();
+        mac.update(signed.as_bytes());
+        let expected = format!("v1,{}", BASE64.encode(mac.finalize().into_bytes()));
+        assert_eq!(sig, expected, "signature must verify over the wire body");
+    }
+
+    #[tokio::test]
+    async fn retries_with_the_same_context_reproduce_the_signature() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let signer =
+            WebhookSigner::new(SigningScheme::Standard, vec![Zeroizing::new(b"k".to_vec())]);
+        let mut sink = signed_sink_to(format!("{}/hook", server.uri()), signer);
+        let result: ProcessResult = vec![detection("hi")];
+
+        // The delivery worker reuses one context across retries; emulate that by
+        // sending twice with the same context.
+        let context = ctx();
+        sink.send(&result, &context).await.unwrap();
+        sink.send(&result, &context).await.unwrap();
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 2);
+        let pick = |i: usize, name: &str| {
+            reqs[i]
+                .headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        };
+        for name in ["webhook-id", "webhook-timestamp", "webhook-signature"] {
+            assert_eq!(
+                pick(0, name),
+                pick(1, name),
+                "{name} must be identical across retries"
+            );
+        }
     }
 
     #[tokio::test]

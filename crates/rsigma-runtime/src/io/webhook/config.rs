@@ -20,8 +20,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use rsigma_eval::ResultBody;
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 use crate::enrichment::{
     EnricherKind, HttpEnricherClient, Scope, TemplateError, build_default_http_client,
@@ -30,6 +33,7 @@ use crate::enrichment::{
 use crate::io::DeliveryConfig;
 use crate::metrics::MetricsHook;
 
+use super::signing::{Algorithm, CustomScheme, Encoding, SigningScheme, WebhookSigner};
 use super::sink::{TokenBucket, WebhookSink};
 
 /// Default per-request timeout when `timeout:` is omitted.
@@ -104,6 +108,10 @@ pub struct WebhookConfig {
     /// common case for public services like Slack).
     #[serde(default)]
     pub tls: Option<WebhookTlsConfig>,
+    /// Optional HMAC request signing. Adds signature headers a receiving
+    /// endpoint can verify; see [`SigningConfig`].
+    #[serde(default)]
+    pub signing: Option<SigningConfig>,
 }
 
 /// `tls:` block. PEM file paths read at startup.
@@ -121,6 +129,61 @@ pub struct WebhookTlsConfig {
     /// `client_cert`.
     #[serde(default)]
     pub client_key: Option<String>,
+}
+
+/// `signing:` block. HMAC-signs each request so a receiver can verify it.
+///
+/// The secret never lives in the YAML: `secret_env` names an environment
+/// variable, resolved once at startup so a missing key fails fast.
+///
+/// ```yaml
+/// signing:
+///   secret_env: RSIGMA_WEBHOOK_SECRET
+///   scheme: standard            # standard (default) | github | custom
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct SigningConfig {
+    /// Environment variable holding the HMAC key. Required.
+    pub secret_env: String,
+    /// How the env value is decoded into key bytes: `utf8` (default) treats it
+    /// as raw bytes; `base64` decodes it (stripping an optional `whsec_`
+    /// prefix) so a Standard Webhooks secret can be pasted verbatim.
+    #[serde(default)]
+    pub secret_encoding: Option<String>,
+    /// Signing convention: `standard` (default), `github`, or `custom`.
+    #[serde(default)]
+    pub scheme: Option<String>,
+    /// Optional second key (from another env var) emitted as a second
+    /// signature during a key rollover. Not supported by `github`.
+    #[serde(default)]
+    pub rotate_secret_env: Option<String>,
+    /// Knobs honored only when `scheme: custom`.
+    #[serde(default)]
+    pub custom: Option<CustomSigningConfig>,
+}
+
+/// `signing.custom:` block. Honored only when `scheme: custom`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomSigningConfig {
+    /// HMAC hash: `sha256` (default) or `sha512`.
+    #[serde(default)]
+    pub algorithm: Option<String>,
+    /// Signature encoding: `hex` (default) or `base64`.
+    #[serde(default)]
+    pub encoding: Option<String>,
+    /// Header name carrying the signature value.
+    pub signature_header: String,
+    /// Header value template; must contain `{signature}`. Also supports
+    /// `{timestamp}` and `{id}`.
+    pub value_format: String,
+    /// What gets HMAC'd. Supports `{body}`, `{timestamp}`, and `{id}`.
+    pub signed_payload: String,
+    /// Optional separate header carrying the unix-seconds timestamp.
+    #[serde(default)]
+    pub timestamp_header: Option<String>,
+    /// Optional separate header carrying the per-delivery id.
+    #[serde(default)]
+    pub id_header: Option<String>,
 }
 
 /// `retry:` block. Each field overrides a delivery-layer default.
@@ -248,6 +311,11 @@ pub enum WebhookConfigError {
     Scope { webhook_id: String, message: String },
     /// `tls` material was invalid or unreadable.
     Tls { webhook_id: String, message: String },
+    /// A signing `secret_env` was unset or empty in the environment.
+    MissingSecretEnv { webhook_id: String, var: String },
+    /// A `signing` block was otherwise invalid (scheme, encoding, tokens,
+    /// header collision).
+    InvalidSigning { webhook_id: String, message: String },
     /// The shared HTTP client could not be built.
     Client { message: String },
 }
@@ -302,6 +370,14 @@ impl std::fmt::Display for WebhookConfigError {
                 message,
             } => write!(f, "webhook '{webhook_id}': {message}"),
             WebhookConfigError::Tls {
+                webhook_id,
+                message,
+            } => write!(f, "webhook '{webhook_id}': {message}"),
+            WebhookConfigError::MissingSecretEnv { webhook_id, var } => write!(
+                f,
+                "webhook '{webhook_id}': signing secret environment variable '{var}' is unset or empty"
+            ),
+            WebhookConfigError::InvalidSigning {
                 webhook_id,
                 message,
             } => write!(f, "webhook '{webhook_id}': {message}"),
@@ -445,9 +521,15 @@ fn build_one(
         None => default_client,
     };
 
+    let signer = match &cfg.signing {
+        Some(s) => Some(build_signer(&cfg.id, s, &cfg.headers)?),
+        None => None,
+    };
+
     metrics.register_webhook(&cfg.id);
     let sink = WebhookSink::new(
         cfg.id, kind, method, cfg.url, headers, cfg.body, timeout, scope, limiter, client, metrics,
+        signer,
     );
     Ok(BuiltWebhook { sink, delivery })
 }
@@ -546,6 +628,203 @@ fn check_template(
             field,
         },
     })
+}
+
+/// Validate a `signing:` block and build its [`WebhookSigner`].
+///
+/// Resolves the secret(s) from the environment, parses the scheme and its
+/// knobs, and rejects a signing header that would collide with a user header.
+fn build_signer(
+    id: &str,
+    cfg: &SigningConfig,
+    headers: &HashMap<String, String>,
+) -> Result<WebhookSigner, WebhookConfigError> {
+    let err = |message: String| WebhookConfigError::InvalidSigning {
+        webhook_id: id.to_string(),
+        message,
+    };
+
+    // Structural validation first, so a malformed block is reported even when
+    // the secret happens to be missing from the environment.
+    let scheme_name = cfg.scheme.as_deref().unwrap_or("standard");
+    if cfg.rotate_secret_env.is_some() && scheme_name == "github" {
+        return Err(err(
+            "rotate_secret_env is not supported for the github scheme (it carries a single signature value)"
+                .to_string(),
+        ));
+    }
+
+    let scheme = match scheme_name {
+        "standard" => SigningScheme::Standard,
+        "github" => SigningScheme::Github,
+        "custom" => {
+            let custom = cfg
+                .custom
+                .as_ref()
+                .ok_or_else(|| err("scheme 'custom' requires a 'custom:' block".to_string()))?;
+            SigningScheme::Custom(build_custom_scheme(id, custom)?)
+        }
+        other => {
+            return Err(err(format!(
+                "unknown signing scheme '{other}' (valid: standard, github, custom)"
+            )));
+        }
+    };
+
+    for sig_name in scheme.header_names() {
+        if headers.keys().any(|h| h.eq_ignore_ascii_case(&sig_name)) {
+            return Err(err(format!(
+                "signing header '{sig_name}' collides with a configured header"
+            )));
+        }
+    }
+
+    // Resolve secret material last.
+    let encoding = cfg.secret_encoding.as_deref();
+    let mut keys = vec![read_secret(id, &cfg.secret_env, encoding)?];
+    if let Some(rot_env) = &cfg.rotate_secret_env {
+        keys.push(read_secret(id, rot_env, encoding)?);
+    }
+
+    Ok(WebhookSigner::new(scheme, keys))
+}
+
+/// Read and decode a signing secret from the environment.
+///
+/// The returned key is wrapped in [`Zeroizing`] so the secret bytes are wiped
+/// from memory when they are dropped, including on the error path where a later
+/// key fails to resolve.
+fn read_secret(
+    id: &str,
+    var: &str,
+    encoding: Option<&str>,
+) -> Result<Zeroizing<Vec<u8>>, WebhookConfigError> {
+    let raw = Zeroizing::new(
+        std::env::var(var)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| WebhookConfigError::MissingSecretEnv {
+                webhook_id: id.to_string(),
+                var: var.to_string(),
+            })?,
+    );
+    let key = match encoding.unwrap_or("utf8") {
+        "utf8" => Zeroizing::new(raw.as_bytes().to_vec()),
+        "base64" => {
+            let trimmed = raw.strip_prefix("whsec_").unwrap_or(raw.as_str());
+            Zeroizing::new(BASE64.decode(trimmed.as_bytes()).map_err(|e| {
+                WebhookConfigError::InvalidSigning {
+                    webhook_id: id.to_string(),
+                    message: format!("secret in '{var}' is not valid base64: {e}"),
+                }
+            })?)
+        }
+        other => {
+            return Err(WebhookConfigError::InvalidSigning {
+                webhook_id: id.to_string(),
+                message: format!("unknown secret_encoding '{other}' (valid: utf8, base64)"),
+            });
+        }
+    };
+    // A zero-length HMAC key is accepted by the primitive but is effectively no
+    // key at all; reject it so a misconfigured `base64` secret (e.g. a bare
+    // `whsec_` prefix) cannot silently weaken signing.
+    if key.is_empty() {
+        return Err(WebhookConfigError::InvalidSigning {
+            webhook_id: id.to_string(),
+            message: format!("signing secret in '{var}' decoded to an empty key"),
+        });
+    }
+    Ok(key)
+}
+
+/// Validate and resolve a `signing.custom:` block.
+fn build_custom_scheme(
+    id: &str,
+    cfg: &CustomSigningConfig,
+) -> Result<CustomScheme, WebhookConfigError> {
+    let err = |message: String| WebhookConfigError::InvalidSigning {
+        webhook_id: id.to_string(),
+        message,
+    };
+
+    let algorithm = match cfg.algorithm.as_deref().unwrap_or("sha256") {
+        "sha256" => Algorithm::Sha256,
+        "sha512" => Algorithm::Sha512,
+        other => {
+            return Err(err(format!(
+                "unknown custom.algorithm '{other}' (valid: sha256, sha512)"
+            )));
+        }
+    };
+    let encoding = match cfg.encoding.as_deref().unwrap_or("hex") {
+        "hex" => Encoding::Hex,
+        "base64" => Encoding::Base64,
+        other => {
+            return Err(err(format!(
+                "unknown custom.encoding '{other}' (valid: hex, base64)"
+            )));
+        }
+    };
+    if cfg.signature_header.trim().is_empty() {
+        return Err(err("custom.signature_header must not be empty".to_string()));
+    }
+    validate_signing_tokens(
+        id,
+        &cfg.value_format,
+        &["signature", "timestamp", "id"],
+        "custom.value_format",
+    )?;
+    if !cfg.value_format.contains("{signature}") {
+        return Err(err(
+            "custom.value_format must contain the {signature} token".to_string(),
+        ));
+    }
+    validate_signing_tokens(
+        id,
+        &cfg.signed_payload,
+        &["body", "timestamp", "id"],
+        "custom.signed_payload",
+    )?;
+
+    Ok(CustomScheme {
+        algorithm,
+        encoding,
+        signature_header: cfg.signature_header.clone(),
+        value_format: cfg.value_format.clone(),
+        signed_payload: cfg.signed_payload.clone(),
+        timestamp_header: cfg.timestamp_header.clone(),
+        id_header: cfg.id_header.clone(),
+    })
+}
+
+/// Reject any `{token}` in `template` outside `allowed`.
+fn validate_signing_tokens(
+    id: &str,
+    template: &str,
+    allowed: &[&str],
+    field: &str,
+) -> Result<(), WebhookConfigError> {
+    let err = |message: String| WebhookConfigError::InvalidSigning {
+        webhook_id: id.to_string(),
+        message,
+    };
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let close = after
+            .find('}')
+            .ok_or_else(|| err(format!("{field} has an unclosed '{{'")))?;
+        let token = &after[..close];
+        if !allowed.contains(&token) {
+            return Err(err(format!(
+                "{field} has unknown token '{{{token}}}' (allowed: {})",
+                allowed.join(", ")
+            )));
+        }
+        rest = &after[close + 1..];
+    }
+    Ok(())
 }
 
 /// humantime serde adapter for `Option<Duration>`.
@@ -818,6 +1097,158 @@ webhooks:
         assert!(
             err.to_string()
                 .contains("rate_limit.requests must be at least 1")
+        );
+    }
+
+    // Signing validation. These cases are reached without the secret present in
+    // the environment because structural checks run before secret resolution;
+    // the one case that needs an unset secret uses a name that is never set.
+
+    #[test]
+    fn signing_missing_secret_env_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_DEFINITELY_UNSET_SIGNING_SECRET
+"#,
+        );
+        assert!(
+            err.to_string()
+                .contains("environment variable 'RSIGMA_DEFINITELY_UNSET_SIGNING_SECRET' is unset"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn signing_unknown_scheme_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_UNUSED
+      scheme: hocus-pocus
+"#,
+        );
+        assert!(
+            err.to_string()
+                .contains("unknown signing scheme 'hocus-pocus'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn signing_github_with_rotation_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_UNUSED
+      scheme: github
+      rotate_secret_env: RSIGMA_UNUSED_OLD
+"#,
+        );
+        assert!(
+            err.to_string()
+                .contains("rotate_secret_env is not supported for the github scheme"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn signing_custom_unknown_payload_token_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_UNUSED
+      scheme: custom
+      custom:
+        signature_header: X-Sig
+        value_format: "v1={signature}"
+        signed_payload: "{timestamp}.{nope}"
+"#,
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("custom.signed_payload"), "{msg}");
+        assert!(msg.contains("{nope}"), "{msg}");
+    }
+
+    #[test]
+    fn signing_custom_value_format_requires_signature_token() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_UNUSED
+      scheme: custom
+      custom:
+        signature_header: X-Sig
+        value_format: "t={timestamp}"
+        signed_payload: "{body}"
+"#,
+        );
+        assert!(
+            err.to_string()
+                .contains("custom.value_format must contain the {signature} token"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn signing_empty_base64_secret_is_rejected() {
+        // A bare `whsec_` prefix decodes to an empty key; reject it rather than
+        // sign with effectively no key.
+        // SAFETY: single-threaded test; the var is unique to this case.
+        unsafe { std::env::set_var("RSIGMA_TEST_EMPTY_B64_SECRET", "whsec_") };
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_TEST_EMPTY_B64_SECRET
+      secret_encoding: base64
+"#,
+        );
+        unsafe { std::env::remove_var("RSIGMA_TEST_EMPTY_B64_SECRET") };
+        assert!(err.to_string().contains("decoded to an empty key"), "{err}");
+    }
+
+    #[test]
+    fn signing_header_collision_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    headers:
+      Webhook-Signature: spoofed
+    signing:
+      secret_env: RSIGMA_UNUSED
+"#,
+        );
+        assert!(
+            err.to_string()
+                .contains("signing header 'webhook-signature' collides"),
+            "{err}"
         );
     }
 }
