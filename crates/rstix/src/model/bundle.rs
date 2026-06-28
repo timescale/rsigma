@@ -454,11 +454,11 @@ impl serde::Serialize for Bundle {
             let mut serialized_objects = Vec::with_capacity(self.objects.len());
             for object in &self.objects {
                 let mut value = serde_json::to_value(object).map_err(serde::ser::Error::custom)?;
-                if let Some(extra) = self.extra_properties(object.id()) {
-                    if let Some(obj) = value.as_object_mut() {
-                        for (key, prop) in extra {
-                            obj.insert(key.clone(), prop.clone());
-                        }
+                if let Some(extra) = self.extra_properties(object.id())
+                    && let Some(obj) = value.as_object_mut()
+                {
+                    for (key, prop) in extra {
+                        obj.insert(key.clone(), prop.clone());
                     }
                 }
                 serialized_objects.push(value);
