@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### STIX domain objects, bundle parse, and reference validation (`rstix`)
+### STIX domain objects, bundle parse, and reference validation (`rstix`) (#265)
 
 The **Data Model + Serialization** phase adds the full STIX 2.1 domain-object layer and bundle ingestion to `rstix`:
 
