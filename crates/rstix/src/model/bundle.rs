@@ -58,6 +58,11 @@ impl Bundle {
 
     /// Parse a bundle with explicit options.
     pub fn parse_with_options(json: &str, opts: &ParseOptions) -> Result<Self, crate::ParseError> {
+        if json.len() > opts.max_bundle_bytes {
+            return Err(crate::ParseError::BundleByteLimitExceeded {
+                max: opts.max_bundle_bytes,
+            });
+        }
         let root: serde_json::Value =
             serde_json::from_str(json).map_err(crate::ParseError::Json)?;
         Self::parse_root_value(root, opts)
@@ -160,7 +165,6 @@ impl Bundle {
         let mut extra_properties = HashMap::with_capacity(object_values.len());
 
         for value in object_values {
-            validate_value_limits(&value, opts)?;
             let raw = value.clone();
             let object_id = raw
                 .get("id")

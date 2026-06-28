@@ -441,15 +441,17 @@ pub(crate) fn peel_custom_properties(
 }
 
 #[cfg(feature = "serde")]
-fn peel_toplevel_property_extensions(obj: &mut serde_json::Map<String, serde_json::Value>) {
+fn peel_toplevel_property_extensions(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
     use crate::model::common::ExtensionType;
 
     let Some(extensions) = obj.remove("extensions") else {
-        return;
+        return BTreeMap::new();
     };
     let Some(mut ext_map) = extensions.as_object().cloned() else {
         obj.insert("extensions".into(), extensions);
-        return;
+        return BTreeMap::new();
     };
 
     let keys: Vec<String> = ext_map.keys().cloned().collect();
@@ -477,12 +479,39 @@ fn peel_toplevel_property_extensions(obj: &mut serde_json::Map<String, serde_jso
             }
         }
     }
-    for (prop, value) in peeled {
-        obj.insert(prop, value);
+    for (prop, value) in &peeled {
+        obj.insert(prop.clone(), value.clone());
     }
     if !ext_map.is_empty() {
         obj.insert("extensions".into(), serde_json::Value::Object(ext_map));
     }
+    peeled
+}
+
+#[cfg(feature = "serde")]
+fn capture_unmodeled_properties(
+    wire: &serde_json::Map<String, serde_json::Value>,
+    object: &StixObject,
+    extra: &mut BTreeMap<String, serde_json::Value>,
+) -> Result<(), crate::ParseError> {
+    if matches!(object, StixObject::Custom(_)) {
+        return Ok(());
+    }
+
+    let serialized = serde_json::to_value(object).map_err(crate::ParseError::Json)?;
+    let Some(serialized_map) = serialized.as_object() else {
+        return Ok(());
+    };
+
+    for (key, value) in wire {
+        if key == "type" || extra.contains_key(key) {
+            continue;
+        }
+        if !serialized_map.contains_key(key) {
+            extra.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "serde")]
@@ -497,9 +526,10 @@ pub(crate) fn deserialize_stix_object_from_value(
         )))
     })?;
 
-    let extra = peel_custom_properties(&mut map);
-    peel_toplevel_property_extensions(&mut map);
+    let mut extra = peel_custom_properties(&mut map);
+    extra.extend(peel_toplevel_property_extensions(&mut map));
     let typed_value = serde_json::Value::Object(map);
+    let wire_for_extra = typed_value.as_object().cloned();
 
     let type_name = typed_value
         .get("type")
@@ -567,6 +597,10 @@ pub(crate) fn deserialize_stix_object_from_value(
     } else {
         return Err(crate::ParseError::UnknownObjectType(type_name.to_owned()));
     };
+
+    if let Some(wire) = wire_for_extra.as_ref() {
+        capture_unmodeled_properties(wire, &object, &mut extra)?;
+    }
 
     Ok((object, extra))
 }

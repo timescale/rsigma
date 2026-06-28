@@ -549,6 +549,9 @@ pub fn validate_sco_forbidden_common_keys(
 }
 
 /// Verify SCO id against deterministic UUIDv5 when id-contributing properties exist.
+///
+/// STIX §2.9 marks deterministic ids as a SHOULD; callers use this for optional
+/// Validation Pipeline diagnostics, not for Data Model parse rejection.
 pub fn validate_sco_deterministic_id(
     type_name: &str,
     wire_value: &serde_json::Value,

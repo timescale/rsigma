@@ -117,8 +117,7 @@ mod integration {
                 json.push(',');
             }
             json.push_str(&format!(
-                r#"{{"type":"identity","spec_version":"2.1","id":"identity--{index:08x}-0000-4000-8000-{tail:012x}","created":"2016-05-12T08:17:27.000Z","modified":"2016-05-12T08:17:27.000Z","name":"org-{index}","identity_class":"organization"}}"#,
-                tail = index
+                r#"{{"type":"identity","spec_version":"2.1","id":"identity--{index:08x}-0000-4000-8000-{index:012x}","created":"2016-05-12T08:17:27.000Z","modified":"2016-05-12T08:17:27.000Z","name":"org-{index}","identity_class":"organization"}}"#
             ));
         }
         json.push_str("]}");

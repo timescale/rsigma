@@ -181,7 +181,7 @@ The **Data Model + Serialization** phase validates STIX invariants at deserializ
 | `marking-definition` | `spec_version` required; legacy `definition_type` + `definition` required when `extensions` empty. | STIX §7.2.1. |
 | `extension-definition` | Rejects `extensions`, `confidence`, and `lang` on common props. | STIX §7.2.2 forbidden common properties. |
 | SCO ref/format checks | `file.contains_refs` SCO kind; domain-name/email-addr/url basic format validation; artifact `encryption_algorithm` closed vocab; observed-data `object_refs` SCO or SRO kind. | STIX §6 reference targets and vocabularies. |
-| Extension map | Predefined extension keys (`*-ext`, TLP definition id) must not carry `extension_type`; toplevel-property-extension entries peeled before typed deserialize. | STIX §3.10 / §7.3. |
+| Extension map | Predefined extension keys (`*-ext`, TLP definition id) must not carry `extension_type`; toplevel-property-extension entries peeled before typed deserialize and hoisted keys stored in `extra_properties` (with unmodeled top-level keys captured on reparse). | STIX §3.10 / §7.3. |
 | `Sighting.count` | `0..=999_999_999` when present. | STIX §5.2.1 inclusive range. |
 | `Sighting` time window | `last_seen >= first_seen` when both set. | STIX §5.2.1 ordering rule. |
 | `Sighting.where_sighted_refs` | Each entry must be `identity` or `location` (`WhereSightedRef`). | STIX §5.2.1 reference targets. |

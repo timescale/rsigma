@@ -236,9 +236,6 @@ pub(crate) fn deserialize_sco_object_from_value(
             ))
         })?;
 
-    crate::model::validate::validate_sco_deterministic_id(type_name, &value)
-        .map_err(serde::de::Error::custom)?;
-
     match type_name {
         "artifact" => serde_json::from_value(value).map(ScoObject::Artifact),
         "autonomous-system" => serde_json::from_value(value).map(ScoObject::AutonomousSystem),
