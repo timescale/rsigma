@@ -112,16 +112,25 @@ impl WebhookSigner {
             .unwrap_or(0);
         match &self.scheme {
             SigningScheme::Standard => {
-                let signed = format!("{id}.{ts}.{body}");
+                // Sign "{id}.{timestamp}.{body}" without allocating a combined
+                // body-sized string: feed the parts to the MAC incrementally.
+                let ts_str = ts.to_string();
+                let parts: [&[u8]; 5] = [
+                    id.as_bytes(),
+                    b".",
+                    ts_str.as_bytes(),
+                    b".",
+                    body.as_bytes(),
+                ];
                 let value = self
                     .keys
                     .iter()
-                    .map(|k| format!("v1,{}", BASE64.encode(hmac_sha256(k, signed.as_bytes()))))
+                    .map(|k| format!("v1,{}", BASE64.encode(hmac_sha256_parts(k, &parts))))
                     .collect::<Vec<_>>()
                     .join(" ");
                 vec![
                     ("webhook-id".to_string(), id.to_string()),
-                    ("webhook-timestamp".to_string(), ts.to_string()),
+                    ("webhook-timestamp".to_string(), ts_str),
                     ("webhook-signature".to_string(), value),
                 ]
             }
@@ -173,8 +182,14 @@ impl WebhookSigner {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    hmac_sha256_parts(key, &[data])
+}
+
+fn hmac_sha256_parts(key: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a key of any length");
-    mac.update(data);
+    for part in parts {
+        mac.update(part);
+    }
     mac.finalize().into_bytes().to_vec()
 }
 

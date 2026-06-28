@@ -697,8 +697,8 @@ fn read_secret(id: &str, var: &str, encoding: Option<&str>) -> Result<Vec<u8>, W
             webhook_id: id.to_string(),
             var: var.to_string(),
         })?;
-    match encoding.unwrap_or("utf8") {
-        "utf8" => Ok(raw.into_bytes()),
+    let key = match encoding.unwrap_or("utf8") {
+        "utf8" => raw.into_bytes(),
         "base64" => {
             let trimmed = raw.strip_prefix("whsec_").unwrap_or(&raw);
             BASE64
@@ -706,13 +706,25 @@ fn read_secret(id: &str, var: &str, encoding: Option<&str>) -> Result<Vec<u8>, W
                 .map_err(|e| WebhookConfigError::InvalidSigning {
                     webhook_id: id.to_string(),
                     message: format!("secret in '{var}' is not valid base64: {e}"),
-                })
+                })?
         }
-        other => Err(WebhookConfigError::InvalidSigning {
+        other => {
+            return Err(WebhookConfigError::InvalidSigning {
+                webhook_id: id.to_string(),
+                message: format!("unknown secret_encoding '{other}' (valid: utf8, base64)"),
+            });
+        }
+    };
+    // A zero-length HMAC key is accepted by the primitive but is effectively no
+    // key at all; reject it so a misconfigured `base64` secret (e.g. a bare
+    // `whsec_` prefix) cannot silently weaken signing.
+    if key.is_empty() {
+        return Err(WebhookConfigError::InvalidSigning {
             webhook_id: id.to_string(),
-            message: format!("unknown secret_encoding '{other}' (valid: utf8, base64)"),
-        }),
+            message: format!("signing secret in '{var}' decoded to an empty key"),
+        });
     }
+    Ok(key)
 }
 
 /// Validate and resolve a `signing.custom:` block.
@@ -1185,6 +1197,27 @@ webhooks:
                 .contains("custom.value_format must contain the {signature} token"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn signing_empty_base64_secret_is_rejected() {
+        // A bare `whsec_` prefix decodes to an empty key; reject it rather than
+        // sign with effectively no key.
+        // SAFETY: single-threaded test; the var is unique to this case.
+        unsafe { std::env::set_var("RSIGMA_TEST_EMPTY_B64_SECRET", "whsec_") };
+        let err = build_err(
+            r#"
+webhooks:
+  - id: x
+    kind: detection
+    url: https://example.test/hook
+    signing:
+      secret_env: RSIGMA_TEST_EMPTY_B64_SECRET
+      secret_encoding: base64
+"#,
+        );
+        unsafe { std::env::remove_var("RSIGMA_TEST_EMPTY_B64_SECRET") };
+        assert!(err.to_string().contains("decoded to an empty key"), "{err}");
     }
 
     #[test]

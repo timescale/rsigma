@@ -10,7 +10,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use parking_lot::Mutex;
@@ -116,7 +116,7 @@ impl Default for DeliveryConfig {
     }
 }
 
-/// Per-delivery identity, minted once per queued item and reused on every
+/// Per-delivery identity, created once per queued item and reused on every
 /// retry attempt.
 ///
 /// The worker creates one of these before the retry loop and hands the same
@@ -124,21 +124,46 @@ impl Default for DeliveryConfig {
 /// from it (today, a signed webhook) therefore reproduces a byte-identical id,
 /// timestamp, and signature when a delivery is retried, which is what lets a
 /// receiver dedupe redeliveries and enforce a replay window.
+///
+/// The id and timestamp are computed lazily on first access: most deliveries go
+/// to sinks that never read them (stdout, file, NATS, OTLP), so the worker pays
+/// no per-item RNG call or allocation unless a sink actually signs. The first
+/// access (the first signing attempt) fixes the value, and every retry reuses
+/// the same one.
 pub struct DeliveryContext {
-    /// Stable base id for this delivery (`msg_<uuid>`). A sink may append a
-    /// per-result suffix to address individual results within one batch.
-    pub id_base: String,
-    /// Wall-clock time of the first attempt; used as the signed timestamp.
-    pub first_attempt: SystemTime,
+    inner: OnceLock<ContextData>,
+}
+
+struct ContextData {
+    id_base: String,
+    first_attempt: SystemTime,
 }
 
 impl DeliveryContext {
-    /// Mint a fresh context (random id, current time). Called once per item.
+    /// Create a context with nothing computed yet. Cheap; no RNG, no syscall.
     pub fn new() -> Self {
         DeliveryContext {
+            inner: OnceLock::new(),
+        }
+    }
+
+    fn data(&self) -> &ContextData {
+        self.inner.get_or_init(|| ContextData {
             id_base: format!("msg_{}", Uuid::new_v4().simple()),
             first_attempt: SystemTime::now(),
-        }
+        })
+    }
+
+    /// Stable base id for this delivery (`msg_<uuid>`). A sink may append a
+    /// per-result suffix to address individual results within one batch.
+    pub fn id_base(&self) -> &str {
+        &self.data().id_base
+    }
+
+    /// Wall-clock time of the first access (the first delivery attempt that
+    /// reads the context); used as the signed timestamp.
+    pub fn first_attempt(&self) -> SystemTime {
+        self.data().first_attempt
     }
 }
 
@@ -521,7 +546,7 @@ mod tests {
             let permanent = self.permanent;
             let gate = self.gate.clone();
             let ctx_ids = self.ctx_ids.clone();
-            let ctx_id = ctx.id_base.clone();
+            let ctx_id = ctx.id_base().to_string();
             Box::pin(async move {
                 ctx_ids.lock().unwrap().push(ctx_id);
                 if let Some(mut rx) = gate {

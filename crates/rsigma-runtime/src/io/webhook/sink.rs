@@ -186,7 +186,11 @@ impl WebhookSink {
         }
 
         let url = render_template(&self.url, eval);
-        let mut header_map = HeaderMap::with_capacity(self.headers.len());
+        // Reserve for the user headers plus up to three signing headers
+        // (webhook-id/timestamp/signature is the widest scheme) so a signed
+        // request does not reallocate the map.
+        let signing_headroom = if self.signer.is_some() { 3 } else { 0 };
+        let mut header_map = HeaderMap::with_capacity(self.headers.len() + signing_headroom);
         for (name, value_template) in &self.headers {
             let rendered = render_template(value_template, eval);
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
@@ -209,10 +213,10 @@ impl WebhookSink {
         // come from the per-delivery context, so a retry reproduces the same
         // signature. The id is unique per result within the delivery.
         if let Some(signer) = &self.signer {
-            let request_id = format!("{}-{idx}", ctx.id_base);
+            let request_id = format!("{}-{idx}", ctx.id_base());
             for (name, value) in signer.sign(
                 body.as_deref().unwrap_or(""),
-                ctx.first_attempt,
+                ctx.first_attempt(),
                 &request_id,
             ) {
                 let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
