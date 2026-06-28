@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Webhook HMAC request signing
+### Webhook HMAC request signing (#266)
 
 The webhook sink can now HMAC-sign every outbound request so a receiving endpoint can verify the delivery's authenticity and integrity, and reject replays. Signing is opt-in per webhook through a `signing:` block and is computed over the exact rendered body bytes. It is most useful for the custom and internal relay endpoints an operator controls; the public chat and paging services do not verify a sender HMAC, so it complements the existing per-webhook TLS and bearer-token options rather than replacing them.
 
