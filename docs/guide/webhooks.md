@@ -60,6 +60,9 @@ webhooks:
       ca: /etc/rsigma/tls/relay-ca.pem
       client_cert: /etc/rsigma/tls/client.pem
       client_key: /etc/rsigma/tls/client.key
+    signing:                        # optional; HMAC-sign each request
+      secret_env: RSIGMA_WEBHOOK_SECRET
+      scheme: standard              # standard (default) | github | custom
 ```
 
 | Field | Required | Default | Notes |
@@ -78,6 +81,11 @@ webhooks:
 | `scope.rules` / `scope.tags` / `scope.levels` | no | unrestricted | Same axes as enricher [scopes](enrichers.md); each populated axis must match. |
 | `queue_size` | no | `1024` | Bounded queue depth between the dispatcher and the worker. |
 | `tls.ca` / `tls.client_cert` / `tls.client_key` | no | system roots | PEM file paths. `ca` trusts a private CA in addition to the system roots; `client_cert` and `client_key` (set together) enable mutual TLS. See [TLS to internal endpoints](#tls-to-internal-endpoints). |
+| `signing.secret_env` | yes (if signing) | — | Environment variable holding the HMAC key. The secret is never stored in the YAML. |
+| `signing.secret_encoding` | no | `utf8` | `utf8` (raw bytes) or `base64` (decoded, stripping an optional `whsec_` prefix) for a svix-issued secret. |
+| `signing.scheme` | no | `standard` | `standard` (Standard Webhooks), `github` (`X-Hub-Signature-256`), or `custom`. See [Signing requests](#signing-requests). |
+| `signing.rotate_secret_env` | no | — | A second key (another env var) emitted as an extra signature during rotation. Not supported by `github`. |
+| `signing.custom.*` | no | — | Custom-scheme knobs: `algorithm`, `encoding`, `signature_header`, `value_format`, `signed_payload`, `timestamp_header`, `id_header`. |
 
 The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` delivery defaults for this webhook only.
 
@@ -107,7 +115,7 @@ Each webhook is driven by one bounded queue and worker. The worker owns the queu
 
 Webhooks use the daemon's egress-filtered HTTP client, so they honor `--egress-policy`. The `strict` policy blocks RFC1918 ranges, so a webhook targeting an internal relay needs `default` (the default) or `permissive`. Outbound proxies follow the standard `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables. TLS uses rustls with the system root store.
 
-Keep secrets in the environment and reference them with `${ENV_VAR}`; do not put tokens or signing URLs in the webhook YAML.
+Keep secrets in the environment and reference them with `${ENV_VAR}`; do not put tokens or signing URLs in the webhook YAML. The HMAC signing key follows the same rule: name it with `signing.secret_env` rather than embedding it (see [Signing requests](#signing-requests)).
 
 ## TLS to internal endpoints
 
@@ -129,6 +137,93 @@ webhooks:
 ```
 
 Webhook TLS uses rustls and verifies the endpoint against the URL host. PEM files are read and validated at startup, so a missing file, a malformed certificate, or a `client_cert` without its `client_key` rejects the daemon with a clear error.
+
+## Signing requests
+
+A webhook can HMAC-sign every request so a receiving endpoint can confirm it came from rsigma (authenticity), that the body was not altered in transit (integrity), and, for the timestamped default, that it is not a replay. The signature covers the exact rendered body bytes, which the template engine cannot produce on its own, so signing is a first-class `signing:` block rather than a header recipe.
+
+Signing only helps endpoints you control and write the verifier for, such as an internal relay or a custom receiver. The public services (Slack, Microsoft Teams, Discord, PagerDuty) do not verify a sender HMAC, so it adds nothing there. It complements the `tls:` and `Authorization`-header mechanisms rather than replacing them.
+
+The key always comes from the environment via `signing.secret_env`, resolved once at startup, so a missing key fails the daemon at boot instead of silently shipping unsigned requests.
+
+### Schemes
+
+`signing.scheme` selects one of three conventions:
+
+- **`standard`** (default): the cross-industry [Standard Webhooks](https://www.standardwebhooks.com/) scheme. It emits `webhook-id` (a per-delivery `msg_<uuid>`), `webhook-timestamp` (unix seconds), and `webhook-signature` (`v1,<base64 HMAC-SHA256 of "{id}.{timestamp}.{body}">`). The signed timestamp gives receivers a replay window and the id lets them dedupe, which makes it the most secure default; verification libraries exist in many languages.
+- **`github`**: `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of body>`, the widely recognized GitHub convention. It signs the body only, so it has no replay protection, and rotation is not supported.
+- **`custom`**: an operator-defined header name, algorithm (`sha256` or `sha512`), encoding (`hex` or `base64`), value format, and signed-payload template, for receivers like Stripe.
+
+A retry reproduces an identical id, timestamp, and signature, so a receiver can dedupe redeliveries on `webhook-id` and enforce a replay window on `webhook-timestamp`. rsigma only generates signatures; the verifier on the receiving side must compare them in constant time.
+
+### Standard Webhooks (default)
+
+```yaml
+webhooks:
+  - id: relay-critical
+    kind: detection
+    url: https://relay.internal/alerts
+    body: '{"text": "${detection.rule.title}"}'
+    scope:
+      levels: [critical]
+    signing:
+      secret_env: RSIGMA_WEBHOOK_SECRET
+```
+
+The key is the raw value of `$RSIGMA_WEBHOOK_SECRET`. If you generated it with a Standard Webhooks library (a `whsec_`-prefixed base64 secret), set `secret_encoding: base64` and rsigma strips the prefix and decodes it before signing. A receiver verifies with any Standard Webhooks library, or directly:
+
+```python
+import base64, hashlib, hmac
+
+def verify(secret: bytes, headers: dict, body: bytes) -> bool:
+    signed = f"{headers['webhook-id']}.{headers['webhook-timestamp']}.".encode() + body
+    expected = "v1," + base64.b64encode(hmac.new(secret, signed, hashlib.sha256).digest()).decode()
+    # webhook-signature can carry several space-separated signatures (rotation).
+    sent = headers["webhook-signature"].split(" ")
+    return any(hmac.compare_digest(expected, s) for s in sent)
+```
+
+### GitHub-style
+
+For a receiver that expects the GitHub `X-Hub-Signature-256` header:
+
+```yaml
+webhooks:
+  - id: github-style
+    kind: detection
+    url: https://receiver.internal/hook
+    body: '{"text": "${detection.rule.title}"}'
+    signing:
+      secret_env: RSIGMA_WEBHOOK_SECRET
+      scheme: github
+```
+
+### Custom (Stripe-style)
+
+The custom scheme signs a templated payload and renders a templated header value, which covers schemes like Stripe's `t=<timestamp>,v1=<hex>`:
+
+```yaml
+webhooks:
+  - id: stripe-style
+    kind: detection
+    url: https://receiver.internal/hook
+    body: '{"text": "${detection.rule.title}"}'
+    signing:
+      secret_env: RSIGMA_WEBHOOK_SECRET
+      scheme: custom
+      custom:
+        algorithm: sha256
+        encoding: hex
+        signature_header: X-Signature
+        value_format: "t={timestamp},v1={signature}"
+        signed_payload: "{timestamp}.{body}"
+```
+
+`value_format` accepts the `{signature}`, `{timestamp}`, and `{id}` tokens and must contain `{signature}`; `signed_payload` accepts `{body}`, `{timestamp}`, and `{id}`. Optional `timestamp_header` and `id_header` emit those values as separate headers.
+
+### Key rotation
+
+To rotate a secret without dropping deliveries, set `rotate_secret_env` to the previous key's variable. rsigma emits a signature for each key (space-separated for the `standard` and `custom` schemes), so a receiver that accepts either verifies throughout the rollover. Drop `rotate_secret_env` once every receiver trusts the new key. Rotation is not available for `github`, which carries a single signature value.
 
 ## Observability
 
