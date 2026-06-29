@@ -47,7 +47,6 @@ A new optional post-engine daemon capability that shifts the unit of alerting fr
 * Nine pre-registered Prometheus metrics: `rsigma_risk_annotations_total{action}`, `rsigma_risk_annotation_score`, `rsigma_risk_objects_total`, `rsigma_risk_entities_open`, `rsigma_risk_state_entries`, `rsigma_risk_evictions_total`, `rsigma_risk_incidents_emitted_total{trigger}`, `rsigma_risk_incident_results_total`, and `rsigma_risk_layer_duration_seconds`.
 * The field-selector resolver moved to a shared crate-level `rsigma_runtime::selector` module so the alert pipeline and the risk layer share one implementation; `rsigma_runtime::Selector` and `rsigma_runtime::alert_pipeline::Selector` are unchanged.
 
-
 ### Triage feedback loop: analyst dispositions and a per-rule false-positive ratio (#263)
 
 A new opt-in daemon capability that captures analyst verdicts on the alerts a ruleset produces and turns them into a live per-rule false-positive ratio, the canonical SOC detection-quality metric. It is a measurement loop, not a case manager: it ingests a verdict and emits a ratio. Enabled with `--enable-dispositions` or `daemon.dispositions.enabled: true`; off by default, so existing deployments are unchanged.
