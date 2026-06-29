@@ -10,13 +10,19 @@ use crate::model::sdo::validate_number_observed;
 use crate::model::sro::{SroObject, deserialize_sro_object_from_value};
 use crate::model::validate::validate_sco_or_sro_ref;
 
-/// Embedded object in deprecated observed-data `objects` (SCO or SRO).
+/// Embedded object in the deprecated observed-data `objects` map (STIX §4.14.1).
+///
+/// The STIX 2.1 Specification §4.14.1 defines deprecated **`objects`** as a dictionary of
+/// cyber-observable (SCO) content and **`object_refs`** as a list of SCO and SRO
+/// identifiers. This enum accepts both SCO and SRO members in the deprecated map so
+/// embedded entries align with the **`object_refs`** target set from the same section
+/// (§4.14.1, embedded **`object_refs`** in §4.14.2).
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObservedDataEmbeddedObject {
-    /// Embedded cyber-observable.
+    /// Embedded cyber-observable (SCO), the type required by §4.14.1 **`objects`**.
     Sco(ScoObject),
-    /// Embedded relationship or sighting (STIX §4.14.1 deprecated form).
+    /// Embedded SRO in deprecated **`objects`** (see type-level note; allowed by **`object_refs`** targets in §4.14.1).
     Sro(SroObject),
 }
 

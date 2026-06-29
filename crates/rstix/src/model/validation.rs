@@ -396,6 +396,13 @@ fn selector_resolves(value: &serde_json::Value, selector: &str) -> bool {
     resolve_selector_value(value, selector).is_some()
 }
 
+/// Language-content nested rules (STIX 2.1 Specification §7.1.1).
+///
+/// When **`object_modified`** is present it MUST exactly match the referenced object's
+/// **`modified`** timestamp (§7.1.1). Mismatch is reported at validate time rather than
+/// during parse. [`Bundle::validate()`] emits
+/// [`ValidationCode::LanguageContentObjectModifiedMismatch`] when the target is in the
+/// bundle and the timestamps differ.
 fn check_language_content(
     bundle: &Bundle,
     content: &LanguageContent,

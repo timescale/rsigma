@@ -1,0 +1,12 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000018",
+  "objects": [
+    {
+      "type": "domain-name",
+      "spec_version": "2.1",
+      "id": "domain-name--00000000-0000-0000-0000-000000000001",
+      "value": "example.com"
+    }
+  ]
+}

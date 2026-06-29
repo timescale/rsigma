@@ -1,0 +1,28 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-00000000001b",
+  "objects": [
+    {
+      "type": "attack-pattern",
+      "spec_version": "2.1",
+      "id": "attack-pattern--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "name": "Spearphishing"
+    },
+    {
+      "type": "language-content",
+      "spec_version": "2.1",
+      "id": "language-content--c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "object_ref": "attack-pattern--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "object_modified": "2017-01-01T00:00:00.000Z",
+      "contents": {
+        "de": {
+          "name": "Spearphishing"
+        }
+      }
+    }
+  ]
+}
