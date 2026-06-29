@@ -48,7 +48,7 @@ pub struct RuleExplanation {
 }
 
 /// A node in the explained condition tree, mirroring
-/// [`ConditionExpr`](rsigma_parser::ConditionExpr).
+/// [`ConditionExpr`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConditionTrace {
@@ -109,7 +109,7 @@ pub struct SelectionBranch {
 }
 
 /// A node in the explained detection tree, mirroring
-/// [`CompiledDetection`](crate::compiler::CompiledDetection).
+/// [`CompiledDetection`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DetectionTrace {
