@@ -1,5 +1,7 @@
 //! Common properties shared by all STIX Cyber-observable Objects.
 
+use std::collections::BTreeMap;
+
 use crate::core::{MarkingDefinitionId, SpecVersion, StixId};
 use crate::model::common::{ExtensionMap, GranularMarking};
 
@@ -53,6 +55,12 @@ pub struct ScoCommonProps {
         serde(default, skip_serializing_if = "ExtensionMap::is_empty")
     )]
     pub extensions: ExtensionMap,
+    /// Unmodeled top-level properties captured during standalone deserialize.
+    #[cfg_attr(
+        feature = "serde",
+        serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")
+    )]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl ScoCommonProps {
@@ -65,6 +73,7 @@ impl ScoCommonProps {
             granular_markings: Vec::new(),
             defanged: None,
             extensions: ExtensionMap::default(),
+            extra: BTreeMap::new(),
         }
     }
 }

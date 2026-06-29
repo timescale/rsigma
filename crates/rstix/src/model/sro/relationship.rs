@@ -3,7 +3,7 @@
 use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTimestamp};
 use crate::model::ModelError;
 use crate::model::common::SdoSroCommonProps;
-use crate::model::validate::{validate_relationship_endpoints, validate_relationship_type};
+use crate::model::validate::validate_relationship_type;
 
 /// Source object reference (STIX §5.1.2 — SDO or SCO).
 pub type RelSourceRef = StixId;
@@ -86,11 +86,6 @@ impl Relationship {
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_relationship_type(&self.relationship_type)?;
-        validate_relationship_endpoints(
-            &self.source_ref,
-            &self.target_ref,
-            &self.relationship_type,
-        )?;
         if let (Some(start_time), Some(stop_time)) = (&self.start_time, &self.stop_time)
             && stop_time <= start_time
         {

@@ -86,6 +86,55 @@ pub enum ScoObject {
     X509Certificate(X509Certificate),
 }
 
+impl ScoObject {
+    /// Borrow shared SCO common properties.
+    pub fn common_props(&self) -> &crate::model::common::ScoCommonProps {
+        match self {
+            Self::Artifact(inner) => &inner.common,
+            Self::AutonomousSystem(inner) => &inner.common,
+            Self::Directory(inner) => &inner.common,
+            Self::DomainName(inner) => &inner.common,
+            Self::EmailAddr(inner) => &inner.common,
+            Self::EmailMessage(inner) => &inner.common,
+            Self::File(inner) => &inner.common,
+            Self::Ipv4Addr(inner) => &inner.common,
+            Self::Ipv6Addr(inner) => &inner.common,
+            Self::MacAddr(inner) => &inner.common,
+            Self::Mutex(inner) => &inner.common,
+            Self::NetworkTraffic(inner) => &inner.common,
+            Self::Process(inner) => &inner.common,
+            Self::Software(inner) => &inner.common,
+            Self::Url(inner) => &inner.common,
+            Self::UserAccount(inner) => &inner.common,
+            Self::WindowsRegistryKey(inner) => &inner.common,
+            Self::X509Certificate(inner) => &inner.common,
+        }
+    }
+
+    pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::ScoCommonProps {
+        match self {
+            Self::Artifact(inner) => &mut inner.common,
+            Self::AutonomousSystem(inner) => &mut inner.common,
+            Self::Directory(inner) => &mut inner.common,
+            Self::DomainName(inner) => &mut inner.common,
+            Self::EmailAddr(inner) => &mut inner.common,
+            Self::EmailMessage(inner) => &mut inner.common,
+            Self::File(inner) => &mut inner.common,
+            Self::Ipv4Addr(inner) => &mut inner.common,
+            Self::Ipv6Addr(inner) => &mut inner.common,
+            Self::MacAddr(inner) => &mut inner.common,
+            Self::Mutex(inner) => &mut inner.common,
+            Self::NetworkTraffic(inner) => &mut inner.common,
+            Self::Process(inner) => &mut inner.common,
+            Self::Software(inner) => &mut inner.common,
+            Self::Url(inner) => &mut inner.common,
+            Self::UserAccount(inner) => &mut inner.common,
+            Self::WindowsRegistryKey(inner) => &mut inner.common,
+            Self::X509Certificate(inner) => &mut inner.common,
+        }
+    }
+}
+
 impl QueryableStixObject for ScoObject {
     fn id(&self) -> &StixId {
         match self {

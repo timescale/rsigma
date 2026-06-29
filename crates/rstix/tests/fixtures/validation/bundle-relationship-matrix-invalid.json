@@ -1,0 +1,33 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000012",
+  "objects": [
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "name": "test-malware",
+      "is_family": false
+    },
+    {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--023d105b-752e-4e3c-941c-7d3f3cb15e9e",
+      "created": "2016-04-06T20:03:00.000Z",
+      "modified": "2016-04-06T20:03:00.000Z",
+      "name": "John Smith"
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--a2216352-483a-4941-842c-5328ad08abfd",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "relationship_type": "uses",
+      "source_ref": "malware--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "target_ref": "identity--023d105b-752e-4e3c-941c-7d3f3cb15e9e"
+    }
+  ]
+}

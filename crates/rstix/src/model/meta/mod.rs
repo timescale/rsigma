@@ -25,6 +25,16 @@ pub enum MetaObject {
     LanguageContent(LanguageContent),
 }
 
+impl MetaObject {
+    pub(crate) fn drain_extra(&mut self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        match self {
+            Self::MarkingDefinition(inner) => std::mem::take(&mut inner.extra),
+            Self::ExtensionDefinition(inner) => std::mem::take(&mut inner.common.extra),
+            Self::LanguageContent(inner) => std::mem::take(&mut inner.common.extra),
+        }
+    }
+}
+
 impl QueryableStixObject for MetaObject {
     fn id(&self) -> &StixId {
         match self {

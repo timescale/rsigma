@@ -79,7 +79,7 @@ pub enum ParseError {
 #[cfg(feature = "serde")]
 pub use model::{
     Bundle, BundleObjectCast, CustomStixObject, ParseOptions, QueryableContainer, SdoObject,
-    StixObject, TypeRegistry,
+    StixObject, TypeRegistry, ValidationCode, ValidationFinding, ValidationReport,
 };
 
 /// Parse a STIX bundle from a JSON string using default options.

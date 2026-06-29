@@ -64,7 +64,7 @@ For rule quality and editor integration, a built-in linter validates rules again
 | [`rsigma-mcp`](crates/rsigma-mcp/) | Model Context Protocol (MCP) server exposing the toolchain as tools for AI agents |
 | [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, field catalog, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
-| [`rstix`](crates/rstix/) | STIX 2.1 and TAXII 2.1 library crate under phased implementation |
+| [`rstix`](crates/rstix/) | STIX 2.1 library: typed objects, bundle parse/stream, semantic validation (TAXII client planned) |
 
 > [!TIP]
 > To learn more about RSigma, read these articles:

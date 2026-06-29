@@ -32,11 +32,6 @@ fn bundle_minimal_parses_three_objects() {
         extra.get("x_custom_prop"),
         Some(&serde_json::Value::String("preserved".into()))
     );
-    let raw_object = bundle.raw_object(&attack_id).expect("raw object stored");
-    assert_eq!(
-        raw_object.get("x_custom_prop"),
-        Some(&serde_json::Value::String("preserved".into()))
-    );
 }
 
 #[test]

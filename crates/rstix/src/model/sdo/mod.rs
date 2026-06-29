@@ -40,7 +40,7 @@ pub use location::Location;
 pub use malware::Malware;
 pub use malware_analysis::MalwareAnalysis;
 pub use note::Note;
-pub use observed_data::{ObservedData, ObservedDataForm};
+pub use observed_data::{ObservedData, ObservedDataEmbeddedObject, ObservedDataForm};
 pub use opinion::Opinion;
 pub use ref_types::{MalwareAnalysisSampleRef, MalwareSampleRef};
 pub use report::Report;
@@ -117,6 +117,30 @@ impl SdoObject {
             Self::ThreatActor(inner) => &inner.common,
             Self::Tool(inner) => &inner.common,
             Self::Vulnerability(inner) => &inner.common,
+        }
+    }
+
+    pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::SdoSroCommonProps {
+        match self {
+            Self::AttackPattern(inner) => &mut inner.common,
+            Self::Campaign(inner) => &mut inner.common,
+            Self::CourseOfAction(inner) => &mut inner.common,
+            Self::Grouping(inner) => &mut inner.common,
+            Self::Identity(inner) => &mut inner.common,
+            Self::Incident(inner) => &mut inner.common,
+            Self::Indicator(inner) => &mut inner.common,
+            Self::Infrastructure(inner) => &mut inner.common,
+            Self::IntrusionSet(inner) => &mut inner.common,
+            Self::Location(inner) => &mut inner.common,
+            Self::Malware(inner) => &mut inner.common,
+            Self::MalwareAnalysis(inner) => &mut inner.common,
+            Self::Note(inner) => &mut inner.common,
+            Self::ObservedData(inner) => &mut inner.common,
+            Self::Opinion(inner) => &mut inner.common,
+            Self::Report(inner) => &mut inner.common,
+            Self::ThreatActor(inner) => &mut inner.common,
+            Self::Tool(inner) => &mut inner.common,
+            Self::Vulnerability(inner) => &mut inner.common,
         }
     }
 }

@@ -156,7 +156,7 @@ mod integration {
             });
         if !path.is_file() {
             eprintln!(
-                "skip attck_corpus_roundtrip_when_present: set RSTIX_ATTCK_BUNDLE or place bundle at {}",
+                "skip attck_corpus_roundtrip_when_present: set RSTIX_ATTCK_BUNDLE (e.g. enterprise-attack-19.1.json) or place bundle at {}",
                 path.display()
             );
             return;

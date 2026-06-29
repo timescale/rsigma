@@ -99,7 +99,7 @@ rsigma is a Cargo workspace with the following crates:
 | `rsigma-runtime` | Streaming I/O, daemon engine, input adapters |
 | `rsigma-cli` | CLI binary (validate, lint, convert, daemon) |
 | `rsigma-lsp` | Language Server Protocol implementation |
-| `rstix` | STIX 2.1 + TAXII 2.1 library crate under phased implementation |
+| `rstix` | STIX 2.1 library: typed objects, bundle parse/stream, semantic validation (TAXII client planned) |
 
 ## License
 

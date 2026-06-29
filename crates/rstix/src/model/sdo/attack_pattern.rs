@@ -4,7 +4,6 @@ use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTime
 use crate::model::ModelError;
 use crate::model::common::{KillChainPhase, SdoSroCommonProps};
 use crate::model::sdo::validate_kill_chain_phases;
-use crate::model::validate::validate_capec_external_refs;
 
 /// A STIX attack pattern describing adversary TTP behavior (STIX §4.1).
 ///
@@ -75,8 +74,7 @@ impl AttackPattern {
     /// Check attack-pattern-specific invariants.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
-        validate_kill_chain_phases(&self.kill_chain_phases)?;
-        validate_capec_external_refs(&self.common.external_references)
+        validate_kill_chain_phases(&self.kill_chain_phases)
     }
 }
 

@@ -1,0 +1,13 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000013",
+  "objects": [
+    {
+      "type": "artifact",
+      "spec_version": "2.1",
+      "id": "artifact--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "payload_bin": "Zm9v",
+      "encryption_algorithm": "custom-cipher"
+    }
+  ]
+}

@@ -23,6 +23,8 @@ pub mod stix_object;
 #[cfg(feature = "serde")]
 pub(crate) mod type_check;
 pub mod validate;
+#[cfg(feature = "serde")]
+pub mod validation;
 
 #[cfg(feature = "serde")]
 pub use bundle::{Bundle, QueryableContainer};
@@ -35,3 +37,5 @@ pub use sdo::SdoObject;
 pub use sro::SroObject;
 #[cfg(feature = "serde")]
 pub use stix_object::{CustomStixObject, StixObject};
+#[cfg(feature = "serde")]
+pub use validation::{ValidationCode, ValidationFinding, ValidationReport};

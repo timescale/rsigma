@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Complete rstix Data Model + Serialization phase (#268)
+
+Closes the **Data Model + Serialization** phase for `rstix` with semantic validation, spec-audit alignment on MUST vs SHOULD rules, and remaining model gaps:
+
+* **`Bundle::validate()`** — returns `ValidationReport` with advisory warnings: STIX-W0031 (TLP v1 encoding), SCO deterministic id mismatch, granular-marking selector semantics, language-content field/type/list-length checks, ISO 3166-1 alpha-2 country codes, region open vocabulary, CAPEC/CVE external references, relationship endpoint matrix, and encryption-algorithm closed vocabulary. Parse remains permissive for these SHOULD-level rules.
+* **Removed `Bundle::raw_object()`** — unmodeled properties round-trip via `extra_properties` and `common.extra` only.
+* **`ObservedDataEmbeddedObject`** — deprecated observed-data `objects` map accepts embedded SCO or SRO members.
+* **`common.extra`** on `SdoSroCommonProps` / `ScoCommonProps` — captures unknown top-level keys on standalone leaf deserialize; drained into bundle `extra_properties` during bundle parse.
+* **`email-message`** — added `subject_enc` and `body_enc` fields (STIX §6.6.2).
+* **Tests:** `tests/validation.rs` with negative fixtures under `tests/fixtures/validation/`.
+
 ### STIX domain objects, bundle parse, and reference validation (`rstix`) (#265)
 
 The **Data Model + Serialization** phase adds the full STIX 2.1 domain-object layer and bundle ingestion to `rstix`:

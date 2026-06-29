@@ -1,0 +1,20 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000011",
+  "objects": [
+    {
+      "type": "vulnerability",
+      "spec_version": "2.1",
+      "id": "vulnerability--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "name": "Bad CVE ref",
+      "external_references": [
+        {
+          "source_name": "cve",
+          "external_id": "2016-1234"
+        }
+      ]
+    }
+  ]
+}

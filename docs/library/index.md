@@ -13,7 +13,7 @@ For the canonical, line-by-line API reference, follow [docs.rs/rsigma](https://d
 | [`rsigma-convert`](convert.md) | `rsigma-parser` | Emit backend-native query strings (PostgreSQL, LynxDB, or a custom backend you implement). |
 | [`rsigma-runtime`](runtime.md) | `rsigma-parser`, `rsigma-eval` | Wrap the engine in a streaming runtime: input adapters, sinks, hot-reload, dynamic source resolution. |
 | `rsigma-lsp` | `rsigma-parser`, `rsigma-eval` | Run the Sigma language server in your own editor integration. |
-| [`rstix`](rstix.md) | (workspace-internal foundations in progress) | Build STIX 2.1 and TAXII 2.1 parsing, validation, graph, and client workflows. |
+| [`rstix`](rstix.md) | (standalone STIX/TAXII foundations) | Parse STIX 2.1 bundles, run semantic validation, register custom object types, and stream large corpora (for example MITRE ATT&CK). |
 
 `rsigma-cli` (the binary) ties everything together but is not a library and is not published to crates.io.
 
@@ -21,6 +21,7 @@ For the canonical, line-by-line API reference, follow [docs.rs/rsigma](https://d
 
 | You want to... | Reach for |
 |----------------|-----------|
+| Parse and validate a STIX 2.1 bundle (including ATT&CK-scale JSON) | `rstix` — [`Bundle::parse`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html) / [`parse_reader`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.parse_reader), then [`Bundle::validate`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.validate). |
 | Lint or parse rules in a CI step | `rsigma-parser` only. |
 | Run a one-shot evaluation against an in-memory event | `rsigma-parser` + `rsigma-eval`. |
 | Generate SQL or SPL queries from rules | `rsigma-parser` + `rsigma-convert`. |
