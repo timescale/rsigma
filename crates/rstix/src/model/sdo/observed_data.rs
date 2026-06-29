@@ -10,7 +10,7 @@ use crate::model::sdo::validate_number_observed;
 use crate::model::sro::{SroObject, deserialize_sro_object_from_value};
 use crate::model::validate::validate_sco_or_sro_ref;
 
-/// Embedded object in deprecated observed-data [`objects`] (STIX §4.14.1).
+/// Embedded object in the deprecated observed-data `objects` map (STIX §4.14.1).
 ///
 /// The STIX 2.1 Specification §4.14.1 defines deprecated **`objects`** as a dictionary of
 /// cyber-observable (SCO) content and **`object_refs`** as a list of SCO and SRO
