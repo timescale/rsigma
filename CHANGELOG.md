@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Explain and introspect toolkit: detection explain, pipeline diff, correlation introspection
+### Explain and introspect toolkit: detection explain, pipeline diff, correlation introspection (#270)
 
 A data-aware diagnostics suite that answers questions static tooling structurally cannot. Validation, linting, and the LSP operate on rule files with no event data, so they answer "is this rule well-formed?" A rule can be valid and still silently fail to match the event it was written for. This toolkit answers the orthogonal question: given this rule, this event, this pipeline, and this correlation state, why did I get this result? It ships in three independent tiers, all additive with no hot-path change.
 
