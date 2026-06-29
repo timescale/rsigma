@@ -203,11 +203,13 @@ fn tlp1_object_marking_ref_warns() {
     let bundle =
         parse_bundle(&load_fixture("validation/bundle-tlp1-marking-ref.json")).expect("parse");
     let report = bundle.validate();
-    assert!(
-        report
-            .warnings_with_code(ValidationCode::StixW0031TlpV1Encoding)
-            .next()
-            .is_some()
+    let warnings: Vec<_> = report
+        .warnings_with_code(ValidationCode::StixW0031TlpV1Encoding)
+        .collect();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        warnings[0].object_id.as_deref(),
+        Some("attack-pattern--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061")
     );
 }
 
