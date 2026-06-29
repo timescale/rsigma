@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Complete rstix Data Model + Serialization phase
+### Complete rstix Data Model + Serialization phase (#268)
 
 Closes the **Data Model + Serialization** phase for `rstix` with semantic validation, spec-audit alignment on MUST vs SHOULD rules, and remaining model gaps:
 
