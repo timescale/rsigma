@@ -50,6 +50,7 @@ This library is part of [rsigma].
 | `process_with_detections(event, detections, ts)` | Feed pre-computed detections into correlation state |
 | `process_batch(events: &[&Event])` | Parallel detection + sequential correlation for a batch of events |
 | `evict_expired(now)` | Manually evict expired state entries |
+| `introspect()` / `introspect_filtered(id, group)` | Read-only `CorrelationStateSnapshot`: per correlation and group, the current aggregate vs threshold, window contents, last alert and remaining suppression, and seconds to eviction |
 | `state_count()` | Number of active correlation state entries |
 | `event_buffer_count()` | Total events stored across all buffers |
 | `event_buffer_bytes()` | Total bytes of compressed event data |
@@ -65,6 +66,16 @@ This library is part of [rsigma].
 | `compile_detection(detection: &Detection)` | Compile a detection tree |
 | `evaluate_rule(rule: &CompiledRule, event: &Event)` | Evaluate one compiled rule |
 | `eval_condition(expr, detections, event, matched)` | Evaluate a condition expression tree |
+
+### Explain (`explain` module)
+
+A non-short-circuiting, bloom-free recording evaluator that backs `rsigma engine explain`. It visits every condition branch and field so a non-match can be explained, recording per-node and per-leaf outcomes and reasons. The trace verdict is computed from the same eval primitives the engine uses, so it can never disagree with `evaluate_rule`.
+
+| Function / type | Description |
+|-----------------|-------------|
+| `explain_rule(rule: &CompiledRule, event: &Event)` | Return a `RuleExplanation` (verdict + condition tree) for one rule and one event |
+| `RuleExplanation` / `ConditionTrace` / `DetectionTrace` / `ItemTrace` | The serializable trace model (mirrors `ConditionExpr` / `CompiledDetection` / `CompiledDetectionItem`) |
+| `MatchReason` | Per-leaf reason: `Matched`, `FieldAbsent`, `ValueMismatch`, `CaseMismatch`, `Existence`, `NoKeywordMatch` |
 
 ### Pipeline
 

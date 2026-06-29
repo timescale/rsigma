@@ -96,6 +96,7 @@ pub mod correlation_engine;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod explain;
 pub mod field_observer;
 pub mod fields;
 pub mod logsource;
@@ -115,12 +116,17 @@ pub use correlation::{
     GroupKey, WindowState,
 };
 pub use correlation_engine::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode,
-    CorrelationSnapshot, ProcessResult, TimestampFallback,
+    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, CorrelationInfo,
+    CorrelationSnapshot, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo, ProcessResult,
+    TimestampFallback,
 };
 pub use engine::Engine;
 pub use error::{EvalError, Result};
 pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, MappedEvent, PlainEvent};
+pub use explain::{
+    ConditionTrace, DetectionTrace, ItemTrace, MatchReason, RuleExplanation, SelectionBranch,
+    explain_rule,
+};
 pub use field_observer::{FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver};
 pub use fields::{FieldOrigin, FieldSource, RuleFieldSet};
 pub use logsource::LogSourceExtractor;

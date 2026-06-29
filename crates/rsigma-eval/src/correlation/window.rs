@@ -330,6 +330,97 @@ impl WindowState {
     }
 }
 
+impl WindowState {
+    /// Number of retained entries in this window. For temporal state this is
+    /// the total across all per-rule hit deques.
+    pub fn entry_count(&self) -> usize {
+        match self {
+            WindowState::EventCount { timestamps } => timestamps.len(),
+            WindowState::ValueCount { entries } => entries.len(),
+            WindowState::Temporal { rule_hits } => rule_hits.values().map(VecDeque::len).sum(),
+            WindowState::NumericAgg { entries } => entries.len(),
+        }
+    }
+
+    /// Compute the current aggregate value for this window *without* applying
+    /// the correlation's threshold condition.
+    ///
+    /// Unlike [`check_condition`](WindowState::check_condition), which returns
+    /// `None` when the threshold is not met, this returns the raw "got" value
+    /// the introspection surface reports so an operator can see the gap to the
+    /// threshold. Returns `None` only when no value is defined (an empty
+    /// percentile/median window, or a state/type mismatch).
+    pub fn current_value(
+        &self,
+        corr_type: CorrelationType,
+        rule_refs: &[String],
+        percentile: Option<u64>,
+    ) -> Option<f64> {
+        match (self, corr_type) {
+            (WindowState::EventCount { timestamps }, CorrelationType::EventCount) => {
+                Some(timestamps.len() as f64)
+            }
+            (WindowState::ValueCount { entries }, CorrelationType::ValueCount) => {
+                let distinct: HashSet<&String> = entries.iter().map(|(_, v)| v).collect();
+                Some(distinct.len() as f64)
+            }
+            (
+                WindowState::Temporal { rule_hits },
+                CorrelationType::Temporal | CorrelationType::TemporalOrdered,
+            ) => {
+                let fired = rule_refs
+                    .iter()
+                    .filter(|r| rule_hits.get(r.as_str()).is_some_and(|ts| !ts.is_empty()))
+                    .count();
+                Some(fired as f64)
+            }
+            (WindowState::NumericAgg { entries }, CorrelationType::ValueSum) => {
+                Some(entries.iter().map(|(_, v)| v).sum())
+            }
+            (WindowState::NumericAgg { entries }, CorrelationType::ValueAvg) => {
+                if entries.is_empty() {
+                    Some(0.0)
+                } else {
+                    let sum: f64 = entries.iter().map(|(_, v)| v).sum();
+                    Some(sum / entries.len() as f64)
+                }
+            }
+            (WindowState::NumericAgg { entries }, CorrelationType::ValuePercentile) => {
+                let mut values: Vec<f64> = entries
+                    .iter()
+                    .map(|(_, v)| *v)
+                    .filter(|v| v.is_finite())
+                    .collect();
+                if values.is_empty() {
+                    return None;
+                }
+                values.sort_by(|a, b| a.total_cmp(b));
+                let rank = percentile.map(|p| p as f64).unwrap_or(50.0);
+                Some(percentile_linear_interp(&values, rank))
+            }
+            (WindowState::NumericAgg { entries }, CorrelationType::ValueMedian) => {
+                let mut values: Vec<f64> = entries
+                    .iter()
+                    .map(|(_, v)| *v)
+                    .filter(|v| v.is_finite())
+                    .collect();
+                if values.is_empty() {
+                    return None;
+                }
+                values.sort_by(|a, b| a.total_cmp(b));
+                let mid = values.len() / 2;
+                let v = if values.len().is_multiple_of(2) && values.len() >= 2 {
+                    (values[mid - 1] + values[mid]) / 2.0
+                } else {
+                    values[mid]
+                };
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Start of the tumbling bucket that contains `ts`, aligned to epoch.
 ///
 /// Uses `rem_euclid` so negative timestamps align to the bucket below them

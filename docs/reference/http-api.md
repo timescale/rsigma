@@ -12,6 +12,8 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/readyz` | GET | none | Readiness probe. 200 when rules and pipelines are loaded; 503 during startup or after a failed reload. |
 | `/metrics` | GET | none | Prometheus text format. See [Prometheus metrics](metrics.md). |
 | `/api/v1/status` | GET | none | Counters, state-entry counts, uptime, and (when configured) dynamic-source summary. |
+| `/api/v1/correlations` | GET | none | Compiled correlation list with per-group counts. Empty when the engine has no correlation rules. |
+| `/api/v1/correlations/state` | GET | none | Live per-group correlation window snapshot (current aggregate vs threshold, window entries, last alert, seconds to eviction). Filter with `?id=` and `?group=`. |
 | `/api/v1/incidents` | GET | none | Open incidents from the alert-pipeline grouping stage. |
 | `/api/v1/risk` | GET | none | Open entities tracked by the risk accumulator, with their window score, tactic count, source count, and window bounds. |
 | `/api/v1/silences` | GET, POST | none | List silences, or create one (returns its id). |
@@ -98,6 +100,63 @@ curl -sS http://127.0.0.1:9090/api/v1/status
 ```
 
 The same counters are exposed in Prometheus form on `/metrics`. Use `/api/v1/status` for a quick one-shot snapshot; use `/metrics` for monitoring. For a formatted view from the command line, [`rsigma engine status`](../cli/engine/status.md) fetches this endpoint and renders it as a table (or `json`/`ndjson`/`csv`/`tsv`).
+
+### `GET /api/v1/correlations`
+
+The compiled correlation list with per-group counts (no window contents). Empty when the engine has no correlation rules.
+
+```bash
+curl -sS http://127.0.0.1:9090/api/v1/correlations
+```
+
+```json
+{
+  "correlations": [
+    {
+      "index": 0,
+      "title": "Many Logins",
+      "type": "event_count",
+      "timespan_secs": 3600,
+      "group_by": ["User"],
+      "rule_refs": ["login-rule"],
+      "threshold": ">= 3",
+      "active_groups": 1
+    }
+  ],
+  "count": 1
+}
+```
+
+### `GET /api/v1/correlations/state`
+
+The live per-group window snapshot, the live counterpart of [`engine eval --dump-correlation-state`](../cli/engine/eval.md). Each group reports the current aggregate (`got`) against the `threshold`, whether the condition is currently `met`, the window `entries`, `earliest`/`latest` timestamps, `seconds_to_eviction`, the `last_alert` and `suppression_remaining` (when applicable), and the raw `window` state. Filter with `?id=` (correlation id, name, or title) and `?group=` (substring of the rendered `field=value` key).
+
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/correlations/state?group=admin'
+```
+
+```json
+{
+  "correlations": [ { "index": 0, "title": "Many Logins", "type": "event_count", "threshold": ">= 3", "active_groups": 1, "...": "..." } ],
+  "groups": [
+    {
+      "correlation_index": 0,
+      "correlation_title": "Many Logins",
+      "type": "event_count",
+      "group_key": [ { "field": "User", "value": "admin" } ],
+      "group_key_display": "User=admin",
+      "got": 2.0,
+      "threshold": ">= 3",
+      "met": false,
+      "entries": 2,
+      "timespan_secs": 3600,
+      "seconds_to_eviction": 3590,
+      "window": { "EventCount": { "timestamps": [1767225600, 1767225610] } }
+    }
+  ],
+  "count": 1
+}
+```
 
 ### `GET /api/v1/incidents`
 

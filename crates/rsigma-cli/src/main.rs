@@ -15,8 +15,9 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DocArgs, EvalArgs,
-    FieldsArgs, HygieneArgs, LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs,
-    ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
+    ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts, ListFormatsArgs,
+    MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ScorecardArgs, StatusArgs, StdinArgs,
+    TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -128,8 +129,7 @@ enum Commands {
         cmd: BackendCommands,
     },
 
-    /// Pipeline tooling (resolve dynamic sources, …)
-    #[cfg(feature = "daemon")]
+    /// Pipeline tooling (diff a rule through pipelines, resolve dynamic sources, …)
     Pipeline {
         #[command(subcommand)]
         cmd: PipelineCommands,
@@ -206,6 +206,9 @@ enum EngineCommands {
     /// Evaluate events against Sigma rules
     Eval(EvalArgs),
 
+    /// Explain why a rule did or did not match a single event
+    Explain(ExplainArgs),
+
     /// Report which schema each event matches (content-based recognition)
     Classify(ClassifyArgs),
 
@@ -279,10 +282,13 @@ enum BackendCommands {
     Formats(ListFormatsArgs),
 }
 
-#[cfg(feature = "daemon")]
 #[derive(Subcommand)]
 enum PipelineCommands {
+    /// Show how processing pipelines rewrite a rule (before/after AST diff)
+    Diff(PipelineDiffArgs),
+
     /// Resolve dynamic pipeline sources and display their data
+    #[cfg(feature = "daemon")]
     Resolve(ResolveArgs),
 }
 
@@ -380,8 +386,7 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
         Commands::Engine { cmd } => dispatch_engine(cmd, matches, ctx),
         Commands::Rule { cmd } => dispatch_rule(cmd, matches, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
-        #[cfg(feature = "daemon")]
-        Commands::Pipeline { cmd } => dispatch_pipeline(cmd),
+        Commands::Pipeline { cmd } => dispatch_pipeline(cmd, ctx),
         #[cfg(feature = "mcp")]
         Commands::Mcp { cmd } => dispatch_mcp(cmd),
         Commands::Config { cmd } => config::commands::dispatch(cmd),
@@ -455,6 +460,7 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::Outpu
                 .expect("engine eval submatches present");
             run_eval(args, em, ctx);
         }
+        EngineCommands::Explain(args) => commands::cmd_explain(args, ctx),
         EngineCommands::Classify(args) => commands::cmd_classify(args, ctx),
         EngineCommands::Status(args) => commands::cmd_status(args, ctx),
         EngineCommands::Tap(args) => commands::cmd_tap(args, ctx),
@@ -532,9 +538,10 @@ fn dispatch_backend(cmd: BackendCommands, ctx: output::OutputCtx) {
     }
 }
 
-#[cfg(feature = "daemon")]
-fn dispatch_pipeline(cmd: PipelineCommands) {
+fn dispatch_pipeline(cmd: PipelineCommands, ctx: output::OutputCtx) {
     match cmd {
+        PipelineCommands::Diff(args) => commands::cmd_pipeline_diff(args, ctx),
+        #[cfg(feature = "daemon")]
         PipelineCommands::Resolve(args) => commands::cmd_resolve(args),
     }
 }

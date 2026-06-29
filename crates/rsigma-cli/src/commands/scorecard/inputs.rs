@@ -200,7 +200,9 @@ mod tests {
 
     // The triage feedback loop owns this schema; pin that the feed it emits
     // deserializes as the scorecard's `--triage` input and yields the same
-    // per-rule false-positive ratio.
+    // per-rule false-positive ratio. `rsigma_runtime` is only linked with the
+    // `daemon` feature, so this cross-crate contract test is gated on it.
+    #[cfg(feature = "daemon")]
     #[test]
     fn runtime_triage_feed_parses_as_scorecard_input() {
         use rsigma_runtime::{Disposition, DispositionConfig, DispositionStore, RawDisposition};

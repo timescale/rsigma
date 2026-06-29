@@ -7,6 +7,7 @@ mod daemon;
 mod doc;
 mod eval;
 mod eval_stream;
+mod explain;
 mod fields;
 mod hygiene;
 mod lint;
@@ -15,6 +16,7 @@ mod mcp;
 mod migrate_sources;
 mod navigator;
 mod parse;
+mod pipeline_diff;
 // Shared serializable report shapes for the detection-as-code `rule` commands:
 // `backtest`/`coverage` produce them, `scorecard` consumes them.
 pub(crate) mod reports;
@@ -41,6 +43,7 @@ pub(crate) use coverage::{CoverageArgs, apply_coverage_config, cmd_coverage};
 pub(crate) use daemon::{DaemonArgs, cmd_daemon, parse_input_format};
 pub(crate) use doc::{DocArgs, apply_doc_config, cmd_doc};
 pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};
+pub(crate) use explain::{ExplainArgs, cmd_explain};
 pub(crate) use fields::{FieldsArgs, cmd_fields};
 pub(crate) use hygiene::{HygieneArgs, apply_hygiene_config, cmd_hygiene};
 pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
@@ -48,6 +51,7 @@ pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
 pub(crate) use mcp::{McpCommands, dispatch_mcp};
 pub(crate) use migrate_sources::{MigrateSourcesArgs, cmd_migrate_sources};
 pub(crate) use parse::{ConditionArgs, ParseArgs, StdinArgs, cmd_condition, cmd_parse, cmd_stdin};
+pub(crate) use pipeline_diff::{PipelineDiffArgs, cmd_pipeline_diff};
 #[cfg(feature = "daemon")]
 pub(crate) use resolve::{ResolveArgs, cmd_resolve};
 pub(crate) use scorecard::{ScorecardArgs, apply_scorecard_config, cmd_scorecard};

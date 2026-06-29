@@ -4,9 +4,9 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
 use rsigma_eval::{
-    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, Engine, LogSourceExtractor,
-    MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet, SchemaClassifier,
-    SchemaRouter, parse_pipeline_file,
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
+    LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
+    SchemaClassifier, SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -561,6 +561,21 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(_) => None,
             EngineVariant::WithCorrelations(engine) => Some(engine.export_state()),
             EngineVariant::Routed(router) => router.export_state(),
+        }
+    }
+
+    /// Read-only introspection of the correlation window state, filtered by
+    /// correlation id and/or group-key substring. `None` for a detection-only
+    /// engine or a routed engine with no correlation rules.
+    pub fn introspect_correlations(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+    ) -> Option<CorrelationStateSnapshot> {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => None,
+            EngineVariant::WithCorrelations(engine) => Some(engine.introspect_filtered(id, group)),
+            EngineVariant::Routed(router) => router.correlation_introspect(id, group),
         }
     }
 

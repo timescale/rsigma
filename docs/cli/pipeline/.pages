@@ -1,3 +1,4 @@
 title: pipeline
 nav:
+  - diff: diff.md
   - resolve: resolve.md

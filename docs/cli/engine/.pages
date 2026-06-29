@@ -1,6 +1,7 @@
 title: engine
 nav:
   - eval: eval.md
+  - explain: explain.md
   - classify: classify.md
   - status: status.md
   - tap: tap.md

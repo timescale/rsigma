@@ -843,6 +843,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/metrics", get(metrics_handler))
         .route("/api/v1/rules", get(list_rules))
         .route("/api/v1/status", get(status))
+        .route("/api/v1/correlations", get(list_correlations))
+        .route("/api/v1/correlations/state", get(correlations_state))
         .route("/api/v1/incidents", get(list_incidents))
         .route("/api/v1/risk", get(list_risk_entities))
         .route("/api/v1/silences", get(list_silences).post(create_silence))
@@ -2353,6 +2355,52 @@ async fn list_risk_entities(State(state): State<AppState>) -> impl IntoResponse 
     };
     let count = entities.len();
     Json(serde_json::json!({ "entities": entities, "count": count }))
+}
+
+/// `GET /api/v1/correlations` — the compiled correlation list with per-group
+/// counts (no window contents). Empty when the engine has no correlation rules.
+async fn list_correlations(State(state): State<AppState>) -> impl IntoResponse {
+    let correlations = state
+        .processor
+        .introspect_correlations(None, None)
+        .map(|s| s.correlations)
+        .unwrap_or_default();
+    let count = correlations.len();
+    Json(serde_json::json!({ "correlations": correlations, "count": count }))
+}
+
+/// Query parameters for `GET /api/v1/correlations/state`.
+#[derive(serde::Deserialize)]
+struct CorrelationStateQuery {
+    /// Keep only the correlation whose id, name, or title equals this value.
+    id: Option<String>,
+    /// Keep only groups whose rendered key (`field=value, ...`) contains this
+    /// substring.
+    group: Option<String>,
+}
+
+/// `GET /api/v1/correlations/state` — the live per-group window snapshot
+/// (current aggregate vs threshold, window entries, last alert, seconds to
+/// eviction), optionally filtered by `?id=` and `?group=`. Empty when the
+/// engine has no correlation rules.
+async fn correlations_state(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<CorrelationStateQuery>,
+) -> impl IntoResponse {
+    let snapshot = state
+        .processor
+        .introspect_correlations(query.id.as_deref(), query.group.as_deref());
+    match snapshot {
+        Some(s) => {
+            let count = s.groups.len();
+            Json(serde_json::json!({
+                "correlations": s.correlations,
+                "groups": s.groups,
+                "count": count,
+            }))
+        }
+        None => Json(serde_json::json!({ "correlations": [], "groups": [], "count": 0 })),
+    }
 }
 
 /// Build the `503` body returned by the disposition endpoints when the triage

@@ -70,6 +70,7 @@ The global `--output-format` / `--color` / `--quiet` / `--no-stats` flags apply 
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded. Equivalent to the `rsigma.max_group_entries` custom attribute. |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction priority list. Default list: `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`. Repeatable. |
+| `--dump-correlation-state` | off | After replaying all events, print the final correlation window state (per correlation and group: current aggregate vs threshold, window entries, last alert, seconds to eviction) to stderr as JSON, for offline "why didn't it fire?" diagnosis. Correlation mode only; ignored with `--schema-routing`. |
 
 ### Performance (advanced)
 

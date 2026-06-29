@@ -3908,6 +3908,7 @@ dependencies = [
  "serde_json",
  "serde_json_path",
  "sha2 0.11.0",
+ "similar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",

@@ -243,6 +243,13 @@ pub(crate) struct EvalArgs {
     /// pipeline. Used with `--logsource-routing`.
     #[arg(long = "event-logsource", value_name = "LOGSOURCE")]
     pub event_logsource: Option<String>,
+
+    /// After replaying all events, print the final correlation window state
+    /// (per correlation and group: current aggregate vs threshold, window
+    /// entries, last alert, seconds to eviction) to stderr as JSON. Useful for
+    /// offline "why didn't it fire?" diagnosis. Correlation mode only.
+    #[arg(long = "dump-correlation-state")]
+    pub dump_correlation_state: bool,
 }
 
 /// Resolved event source from the `--event` flag.
@@ -426,6 +433,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         logsource_routing,
         logsource_field_map,
         event_logsource,
+        dump_correlation_state,
     } = args;
 
     let rules_path = rules_opt.unwrap_or_else(|| {
@@ -445,6 +453,13 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     }
 
     let has_correlations = !collection.correlations.is_empty();
+
+    if dump_correlation_state && (schema_routing || !has_correlations) {
+        eprintln!(
+            "warning: --dump-correlation-state needs correlation rules and is not supported with \
+             --schema-routing; ignoring"
+        );
+    }
 
     // `value_parser` restricts this to off/summary/full, so parsing cannot fail.
     let match_detail = match_detail
@@ -561,6 +576,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             cross_rule_ac,
             logsource_extractor,
             observe_ref,
+            dump_correlation_state,
         )
     } else {
         cmd_eval_detection_only(
@@ -823,6 +839,7 @@ fn cmd_eval_with_correlations(
     #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
     logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
+    dump_correlation_state: bool,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
     engine.set_include_event(include_event);
@@ -857,7 +874,7 @@ fn cmd_eval_with_correlations(
         "Rules loaded",
     );
 
-    match event_source {
+    let had_matches = match event_source {
         EventSource::SingleJson(json_str) => {
             let value: serde_json::Value = match serde_json::from_str(&json_str) {
                 Ok(v) => v,
@@ -985,6 +1002,22 @@ fn cmd_eval_with_correlations(
             }
             det_count > 0 || corr_count > 0
         }
+    };
+
+    if dump_correlation_state {
+        dump_correlation_snapshot(&engine);
+    }
+    had_matches
+}
+
+/// Print the final correlation window snapshot to stderr as pretty JSON, so a
+/// user can replay an NDJSON file and see why a correlation did or did not
+/// fire. Goes to stderr to keep detection output on stdout machine-consumable.
+fn dump_correlation_snapshot(engine: &CorrelationEngine) {
+    let snapshot = engine.introspect();
+    match serde_json::to_string_pretty(&snapshot) {
+        Ok(json) => eprintln!("--- correlation state snapshot ---\n{json}"),
+        Err(e) => eprintln!("failed to serialize correlation state snapshot: {e}"),
     }
 }
 

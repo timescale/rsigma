@@ -12,10 +12,12 @@
 //! 3. When a correlation condition is met, a `CorrelationResult` is emitted
 //! 4. Correlation results can chain into higher-level correlations
 
+mod introspect;
 #[cfg(test)]
 mod tests;
 mod types;
 
+pub use introspect::{CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo};
 pub use types::*;
 
 use std::collections::HashMap;

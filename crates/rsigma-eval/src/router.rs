@@ -26,7 +26,8 @@ use std::collections::HashMap;
 use rsigma_parser::SigmaCollection;
 
 use crate::correlation_engine::{
-    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, ProcessResult,
+    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot,
+    ProcessResult,
 };
 use crate::engine::Engine;
 use crate::error::Result;
@@ -220,6 +221,17 @@ impl SchemaRouter {
             .as_ref()
             .map(|c| c.state_count())
             .unwrap_or(0)
+    }
+
+    /// Introspect the shared correlation store, if any (id/group filtered).
+    pub fn correlation_introspect(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+    ) -> Option<CorrelationStateSnapshot> {
+        self.correlation
+            .as_ref()
+            .map(|c| c.introspect_filtered(id, group))
     }
 
     /// Export the shared correlation state, if any, for hot-reload carry-over.

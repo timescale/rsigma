@@ -1109,6 +1109,25 @@ fn eval_detection_item(item: &CompiledDetectionItem, event: &impl Event) -> bool
     eval_detection_item_with_bloom(item, event, &crate::engine::bloom_index::NoBloom)
 }
 
+/// Evaluate a compiled detection against an event without bloom pre-filtering.
+///
+/// Used by the [`crate::explain`] recording evaluator to obtain the exact
+/// verdict for a detection subtree (including opaque array/conditional bodies)
+/// so the explain trace can never disagree with the production engine.
+pub(crate) fn eval_detection_no_bloom(detection: &CompiledDetection, event: &impl Event) -> bool {
+    eval_detection_with_bloom(detection, event, &crate::engine::bloom_index::NoBloom)
+}
+
+/// Evaluate a single compiled detection item against an event without bloom
+/// pre-filtering. Used by the [`crate::explain`] recording evaluator so each
+/// per-item verdict matches the production engine exactly.
+pub(crate) fn eval_detection_item_no_bloom(
+    item: &CompiledDetectionItem,
+    event: &impl Event,
+) -> bool {
+    eval_detection_item_with_bloom(item, event, &crate::engine::bloom_index::NoBloom)
+}
+
 /// Evaluate a compiled detection against an event with a bloom lookup.
 fn eval_detection_with_bloom<E, B>(detection: &CompiledDetection, event: &E, bloom: &B) -> bool
 where

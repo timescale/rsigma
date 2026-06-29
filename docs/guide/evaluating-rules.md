@@ -169,6 +169,35 @@ A `full` entry looks like:
 
 Negated matchers add `"negated": true`. Higher levels enlarge each detection line and only run when a rule matches, so they cost nothing on the non-matching hot path. The daemon exposes the same control via `--match-detail` or the `daemon.engine.match_detail` config key.
 
+## Debugging why a rule did not match
+
+`--match-detail` explains a match. The harder question is why a rule did *not* match the event you wrote it for, and the answer is usually a single field: a renamed key, a wrong value, or a casing difference. [`engine explain`](../cli/engine/explain.md) answers it directly. It runs a non-short-circuiting evaluator over one rule and one event and prints, for every condition node and field, whether it passed and why not:
+
+```bash
+rsigma engine explain -r rules/ -e '{"Image":"C:\\Windows\\cmd.exe"}'
+```
+
+```text
+Suspicious PowerShell (ps-1): NO MATCH
+  FAIL all of:
+    FAIL selection
+      FAIL Image|endswith "\powershell.exe"  actual="C:\Windows\cmd.exe" (value mismatch)
+      PASS CommandLine|contains "-enc" (matched)
+    FAIL not:
+      PASS filter
+        PASS User|exact "system" (matched)
+```
+
+Each failed leaf carries a reason: `field absent`, `value mismatch` (with the actual value), `case mismatch`, an existence-check failure, or no keyword match. The verdict always agrees with `engine eval`, since it runs the same matchers. Add `--output-format json` for a machine-readable trace, `--rule-id` to focus one rule, and `-p` to explain through a pipeline (with `--show-pipeline` to print the pipeline rewrite first).
+
+When the field name itself is in doubt, [`pipeline diff`](../cli/pipeline/diff.md) shows exactly how a pipeline rewrites the rule before evaluation (a renamed field, or an `AllOf` expanded into an `AnyOf`):
+
+```bash
+rsigma pipeline diff -r rules/ -p ecs_windows --rule-id ps-1
+```
+
+For correlations, [`engine eval --dump-correlation-state`](../cli/engine/eval.md) prints the final window state after a replay (current aggregate vs threshold, what is in the window, seconds to eviction), and the daemon exposes the same view live at `GET /api/v1/correlations/state`.
+
 ## Input formats other than JSON
 
 `--input-format` accepts `auto` (the default), `json`, `syslog`, `plain`, and the feature-gated `logfmt`, `cef`. Auto-detect tries JSON, then syslog, then plain text:

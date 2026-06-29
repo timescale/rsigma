@@ -480,6 +480,19 @@ impl LogProcessor {
         engine.stats()
     }
 
+    /// Read-only snapshot of the correlation window state, filtered by
+    /// correlation id and/or group-key substring. Holds the engine lock only
+    /// for the projection. `None` for a detection-only engine.
+    pub fn introspect_correlations(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+    ) -> Option<rsigma_eval::CorrelationStateSnapshot> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        engine.introspect_correlations(id, group)
+    }
+
     /// Total rule candidates pruned by logsource on the current engine.
     pub fn logsource_pruned_total(&self) -> u64 {
         let snapshot = self.engine.load();
