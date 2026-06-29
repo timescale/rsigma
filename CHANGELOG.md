@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Security: transitive `anyhow` bump for RUSTSEC-2026-0190
+### Security: transitive `anyhow` bump for RUSTSEC-2026-0190 (#271)
 
 `cargo deny` flagged [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190), an unsoundness in `anyhow`'s `Error::downcast_mut()` where adding context via `Error::context` and then calling `downcast_mut` on the returned error violates borrow rules and triggers undefined behavior. It reaches the tree transitively. A targeted `cargo update -p anyhow` moves the workspace lockfile from 1.0.102 to the fixed 1.0.103 with no other dependency changes.
 
