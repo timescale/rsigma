@@ -1,39 +1,209 @@
 # rstix
 
-`rstix` is the rsigma workspace crate for STIX 2.1 and TAXII 2.1 functionality.
+`rstix` is the rsigma workspace crate for **STIX 2.1** (and future **TAXII 2.1** client work). It provides typed Rust objects for all 42 built-in STIX types, bundle ingestion, extension round-trip, and a semantic validation pipeline.
 
-- [README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)
+Canonical API reference: [docs.rs/rstix](https://docs.rs/rstix). Contributor-facing detail: [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md).
 
-The crate is delivered incrementally by phase. **Core Foundation** is complete with core primitives, deterministic SCO ID helpers, and vocabulary tables.
+## Phase status
 
-**Data Model + Serialization** is **in progress**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, and `Bundle` parsing are in place with fixture-backed tests.
+| Phase | Status |
+| ----- | ------ |
+| **Core Foundation** (`core`, `id`, `vocab`) | Complete |
+| **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete |
+| **Pattern Engine** (STIX indicator pattern AST) | Planned |
+| **Graph + Marking + Store** | Planned |
+| **TAXII Client** | Planned |
 
-## Current scope
+## Quick start
 
-- Workspace-integrated crate with rsigma-standard metadata (`edition`, `MSRV`, licensing).
-- Minimal feature/dependency surface aligned with implemented modules.
-- Core primitives (`StixId`, object-kind discriminants, typed IDs, timestamps, confidence scales, spec version, language tags, query traits).
-- Deterministic SCO ID helpers (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
-- Open and closed vocabulary tables (`vocab`) including `OpinionValue` ordering.
-- `model::common` property containers (`SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase`).
-- `model::meta` objects (`MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`) with TLP UUID constants.
-- `model::sdo` objects (all 19 STIX domain objects, `SdoObject`, `IndicatorPattern`, `ObservedDataForm`).
-- `model::sro` objects (`Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`).
-- `model::sco` objects (all 18 STIX cyber-observable types, `ScoObject`, typed ref unions, 12 predefined extensions).
-- `model::StixObject` and `model::Bundle` with `parse_bundle()` entrypoint, bundle ref validation, and `x_*` property capture.
-- Leaf-type serde (`StixId`, timestamps, typed IDs, `LanguageTag`) via `serde_impls/` and inline/`macro` impls.
-- Integration tests in `tests/spec.rs` and `tests/bundle.rs` backed by JSON fixtures under `tests/fixtures/spec/`.
+```rust
+use std::fs::File;
+use std::io::BufReader;
+
+use rstix::model::{Bundle, ValidationCode};
+use rstix::parse_bundle;
+
+// String parse (small bundles)
+let bundle = parse_bundle(json_str)?;
+
+// Streaming parse (large bundles, e.g. MITRE ATT&CK ~50 MiB)
+let file = File::open("enterprise-attack.json")?;
+let bundle = Bundle::parse_reader(BufReader::new(file))?;
+
+// MUST rules enforced at parse; SHOULD rules as warnings
+let report = bundle.validate();
+for warning in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
+    eprintln!("{}: {}", warning.object_id.as_deref().unwrap_or("?"), warning.message);
+}
+
+// Round-trip
+let out = serde_json::to_string(&bundle)?;
+```
+
+## Public API surface
+
+### Crate root (`rstix`)
+
+| Symbol | Role |
+| ------ | ---- |
+| `parse_bundle(&str)` | Parse a bundle JSON string with default [`ParseOptions`](https://docs.rs/rstix/latest/rstix/model/struct.ParseOptions.html). |
+| `Bundle` | Typed container; navigation, serialize, `validate()`. |
+| `StixObject` | Top-level enum: SDO / SCO / SRO / Meta / Custom. |
+| `ParseOptions`, `TypeRegistry` | Limits, custom type registration. |
+| `ValidationReport`, `ValidationCode`, `ValidationFinding` | Semantic validation output. |
+| `ParseError`, `model::ModelError` | Parse-time failures (MUST rules). |
+
+### `core`
+
+`StixId`, 42 typed ID wrappers, `StixObjectKind`, `StixTimestamp`, `TaxiiTimestamp`, `Confidence`, `SpecVersion`, `LanguageTag`, `QueryableStixObject`, `QueryValue`.
+
+### `model`
+
+| Submodule | Contents |
+| --------- | -------- |
+| `common` | `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase` |
+| `meta` | `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, TLP UUID constants |
+| `sdo` | All 19 SDOs, `SdoObject`, `IndicatorPattern`, `ObservedDataForm`, `ObservedDataEmbeddedObject` |
+| `sro` | `Relationship`, `Sighting`, `SroObject` |
+| `sco` | All 18 SCOs, `ScoObject`, typed ref unions, 12 predefined extensions under `sco::extensions` |
+| `validate` | Shared MUST validators (used at deserialize and bundle ref checks) |
+| `validation` | `Bundle::validate()` implementation and `ValidationCode` enum |
+
+### `id`
+
+Deterministic SCO UUIDv5: `select_id_contributing_properties`, JCS canonicalization, `generate_sco_id`, `verify_sco_deterministic_id`.
+
+### `vocab`
+
+Closed enums (hash algorithms, encryption algorithms, opinion values) and open vocabularies (`REGION_OV`, malware types, etc.).
+
+## Bundle parsing
+
+### Methods
+
+| Method | Use when |
+| ------ | -------- |
+| `Bundle::parse(&str)` | Entire JSON is in memory. |
+| `Bundle::parse_with_options(&str, &ParseOptions)` | Custom types or stricter limits. |
+| `Bundle::parse_reader(R: Read)` | Large files; uses `serde_json` streaming reader with byte cap. |
+| `Bundle::parse_reader_with_options(R, &ParseOptions)` | Streaming + options. |
+
+### Default `ParseOptions`
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `max_nesting_depth` | 64 | Reject deeply nested JSON (DoS guard). |
+| `max_string_length` | 1_048_576 (1 MiB) | Max length of any JSON string value. |
+| `max_bundle_bytes` | 256 MiB | Max bytes read from stream / checked for string parse. |
+| `max_object_count` | `usize::MAX` | Max objects in one bundle. |
+| `allow_custom` | `false` | Unknown `type` → error unless registered or allowed. |
+
+### Navigation
+
+| Method | Description |
+| ------ | ----------- |
+| `bundle.objects()` | All objects in document order. |
+| `bundle.get(&StixId)` | Untyped lookup by id. |
+| `bundle.get_typed::<T>(&StixId)` | Typed lookup (`Malware`, custom types, …). |
+| `bundle.objects_of_type::<T>()` | Iterator over all objects of type `T`. |
+| `bundle.extra_properties(&StixId)` | Top-level `x_*` and hoisted extension keys peeled at parse. |
+| `bundle.validate_refs()` | Re-run MUST ref resolution (normally called during parse). |
+
+Plan API name `get::<T>()` is implemented as **`get_typed::<T>()`** to avoid clashing with untyped `get`.
+
+## Custom STIX types
+
+Register extension SDOs per `ParseOptions` instance (not global):
+
+```rust
+use rstix::model::{Bundle, BundleObjectCast, ParseOptions, StixObject};
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct XMySdo { /* ... */ }
+
+impl BundleObjectCast for XMySdo {
+    fn cast_from(object: &StixObject) -> Option<&Self> {
+        match object {
+            StixObject::Custom(c) => c.downcast_typed(),
+            _ => None,
+        }
+    }
+}
+
+let opts = ParseOptions::new().register_custom_type::<XMySdo>("x-my-sdo");
+let bundle = Bundle::parse_with_options(json, &opts)?;
+```
+
+## Semantic validation (`Bundle::validate`)
+
+Parse enforces STIX **MUST** rules (hard errors). **`Bundle::validate()`** collects **SHOULD**-level and advisory findings without rejecting the bundle.
+
+| `ValidationCode` | Meaning |
+| ---------------- | ------- |
+| `StixW0031TlpV1Encoding` | Legacy TLP 1.x marking encoding or TLP1 marking ref (STIX-W0031). |
+| `ScoDeterministicIdMismatch` | SCO `id` does not match UUIDv5 from id-contributing properties. |
+| `GranularSelectorSemanticInvalid` | Granular-marking selector does not resolve on the object. |
+| `LanguageContentFieldUnknown` | Translation field is not a property on the target object. |
+| `LanguageContentValueMismatch` | Translation type or list length does not mirror the target property. |
+| `LanguageContentObjectModifiedMismatch` | `object_modified` does not match target `modified`. |
+| `LocationCountryNotIso3166` | `country` is not ISO 3166-1 alpha-2. |
+| `LocationRegionNotInOpenVocab` | `region` is not in STIX `region-ov`. |
+| `InvalidCapecExternalReference` | CAPEC `external_id` shape (attack-pattern). |
+| `InvalidCveExternalReference` | CVE `external_id` shape (vulnerability). |
+| `RelationshipEndpointMatrixInvalid` | Relationship source/target types outside STIX 2.1 matrix. |
+| `EncryptionAlgorithmInvalid` | Artifact `encryption_algorithm` not in closed vocabulary. |
+
+There is no `strict` parse flag: permissive parse + explicit `validate()` is the supported workflow (see maintainer direction on [issue #267](https://github.com/timescale/rsigma/issues/267)).
+
+## Wire-format validation (pragmatic vs full spec)
+
+STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at parse time — enough to reject obvious garbage without pulling in full IDNA/email parsers.
+
+| Field | STIX reference | rstix today | Full standard (not implemented) |
+| ----- | -------------- | ----------- | -------------------------------- |
+| `domain-name.value` | RFC 1034 / 5890 | Label structure, no empty labels, no `..` | **IDNA**: Unicode domain → Punycode (`xn--…`), full UTS #46 |
+| `email-addr.value` | RFC 5322 | Non-empty local@domain with dot in domain, no whitespace | **RFC 5322**: full addr-spec grammar (quoted strings, comments, IP literals) |
+| `url.value` | Valid URL | `http://`, `https://`, or `ftp://` prefix | WHATWG URL parser, IDNA in host, normalization |
+
+**Why full IDNA / RFC 5322 are not in Data Model + Serialization:** they are large, locale-sensitive parsers unrelated to STIX object typing. Basic checks catch malformed CTI early; strict compliance belongs in an optional validation profile or a dedicated dependency (`idna`, `mail-parser`, etc.) if a downstream consumer requires it. This is documented in `plan/spec-differential-status.md` under later-phase polish.
+
+## Extensions and round-trip
+
+- Top-level **`x_*`** keys are peeled before typed deserialize → `Bundle::extra_properties()`, merged back on serialize.
+- **`toplevel-property-extension`** keys are hoisted from `extensions` the same way.
+- Standalone leaf deserialize stores unknown keys in **`common.extra`** (SDO/SRO/SCO) or **`MarkingDefinition.extra`**, drained into `extra_properties` during bundle parse.
 
 ## Testing
 
-See [crate README — Development Notes](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#development-notes) for the full convention. Summary:
+| Layer | Location |
+| ----- | -------- |
+| Wire round-trip | `tests/spec.rs`, `tests/fixtures/spec/` |
+| Bundle integration | `tests/bundle.rs` |
+| Semantic validation | `tests/validation.rs`, `tests/fixtures/validation/` |
+| Streaming + custom types + ATT&CK | `tests/integration.rs` |
+| Fuzz | `fuzz/fuzz_targets/fuzz_rstix_parse_bundle.rs` |
 
-- **Wire tests** (`tests/spec.rs`, `tests/bundle.rs`, `tests/fixtures/spec/`): JSON round-trip via `roundtrip_strict` (complete types) or subset `roundtrip` (common-property-only structs), plus reject fixtures.
-- **Unit tests** (`src/**` `#[cfg(test)]`): invariants and normative pins without duplicating wire coverage.
+Run crate tests:
 
-### STIX version vs TLP marking encoding
+```bash
+cargo test -p rstix --features serde
+```
 
-Three separate ideas — do not mix them:
+### Local MITRE ATT&CK corpus (not in git)
+
+The full ATT&CK STIX bundle (~50 MiB) is **not committed**. CI uses a synthetic 5 000-object streaming test. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
+
+```bash
+# Example: file at plan/enterprise-attack-19.1.json (plan/ is gitignored)
+RSTIX_ATTCK_BUNDLE=plan/enterprise-attack-19.1.json \
+  cargo test -p rstix --features serde attck_corpus_roundtrip_when_present -- --nocapture
+```
+
+This runs `parse_reader` → serialize → reparse and asserts object count stability. Verified against `enterprise-attack-19.1.json` (~53 MiB) locally.
+
+## STIX version vs TLP marking encoding
+
+Three independent ideas — do not mix them:
 
 | | STIX object model | TLP v1 encoding (legacy) | TLP v2 encoding (current) |
 | --- | --- | --- | --- |
@@ -41,45 +211,26 @@ Three separate ideas — do not mix them:
 | **Meaning** | Object follows STIX 2.1 rules | Old TLP label wire format (deprecated for **new** markings) | Current TLP label wire format |
 | **rstix constants** | `SpecVersion::V2_1` | `TLP1_WHITE_ID` … `TLP1_RED_ID` | `TLP2_CLEAR_ID` … `TLP2_RED_ID` |
 
-A STIX **2.1** bundle can contain `marking-definition` objects that still use the **legacy TLP v1 encoding** — that is normal (ATT&CK and others reference the predefined v1 UUIDs). Fixture names like `marking-definition-tlp-v1-white-stix21.json` mean: *TLP encoding v1, white level, STIX 2.1 object*.
+A STIX **2.1** bundle can contain `marking-definition` objects that still use the **legacy TLP v1 encoding** — that is normal (ATT&CK references the predefined v1 UUIDs).
 
-Full developer guide (usage examples, deprecation scope, fixture naming): [crate README — STIX version vs TLP marking encoding](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#stix-version-vs-tlp-marking-encoding).
+Full developer guide: [crate README — STIX version vs TLP marking encoding](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#stix-version-vs-tlp-marking-encoding).
 
-### TLP UUID constants (`model::meta::marking_def`)
+## Model invariants (summary)
 
-Nine public constants (`TLP1_*`, `TLP2_*`) hold the predefined STIX `marking-definition` ids for Traffic Light Protocol 1.x and 2.0. They are hardcoded because the STIX specification assigns fixed UUIDs; consumers match markings by id without parsing bundle JSON.
+Full table: [crate README — Model invariant decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#model-invariant-decisions-modelcommon).
 
-| Check | What it validates |
-| ----- | ----------------- |
-| `constants_match_spec_ids` (unit, `marking_def.rs`) | All nine `pub const` values still equal the spec literals (regression pin for the full set). |
-| `marking_definition_round_trips_legacy_and_current_tlp_encodings` (`tests/spec.rs`) | Legacy TLP v1 and current TLP v2 fixtures (both STIX 2.1) parse, round-trip; ids match `TLP1_WHITE_ID` / `TLP2_CLEAR_ID`. |
-| `marking_definition_round_trips_with_common_properties` (`tests/spec.rs`) | Rich fixture with `created_by_ref`, `object_marking_refs`, `external_references`, and `granular_markings` round-trips without field loss. |
-| `meta_types_reject_wrong_type_field` (`tests/spec.rs`) | Cross-type JSON rejected when `"type"` does not match the target meta struct. |
-
-The unit pin does not replace wire tests: it covers ids that do not yet have dedicated JSON fixtures. The wire tests prove serde and field mapping for representative TLP 1.x and 2.0 shapes.
-
-### Model invariant decisions
-
-rstix enforces STIX invariants at deserialize time (and bundle-scoped checks after parse). See [crate README — Model invariant decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#model-invariant-decisions-modelcommon) for the full table. Summary:
-
-- **`confidence`:** `Option<Confidence>` on SDO/SRO common props (absent vs present).
-- **`external-reference` §2.5.2:** non-empty `source_name` plus at least one detail field.
-- **`granular-marking`:** required non-empty `selectors`; `marking_ref` xor `lang`.
-- **SDO/SRO/Meta/SCO `type`:** deserialize rejects wrong or missing `"type"`.
-- **SRO refs:** relationship endpoints must be SDO or SCO kinds; `sighting_of_ref` must be SDO kind; bundle parse verifies referenced ids exist in the same bundle.
-- **Relationship matrix:** per-`relationship_type` allowed source/target pairs deferred to the **Validation Pipeline**.
-- **`x_*` properties:** captured in `Bundle::extra_properties()` during parse.
-- **SCO invariants:** see crate README for artifact/file/process/user-account rules and extension validation.
+- **MUST at parse:** id/type match, ref resolution in bundle, extension routing, SCO forbidden common props, SDO/SRO time ordering, and type-specific MUST rules documented in `ModelError`.
+- **SHOULD via `validate()`:** relationship matrix, CAPEC/CVE, encryption algorithm, TLP v1 warnings, granular selector semantics, language-content rules, location country/region vocabularies, SCO deterministic id.
 
 ## Feature flags
 
 | Feature | Purpose |
-| --------- | --------- |
-| `serde` (default) | Serialization and deserialization support. |
+| ------- | ------- |
+| `serde` (default) | Bundle parsing, serialization, validation. |
 
 ## Related docs
 
-- [`rstix` README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)
-- [Architecture](../reference/architecture.md)
-- [Feature flags reference](../reference/feature-flags.md)
-- [Contributing](../contributing.md)
+- [Architecture — crate map](../reference/architecture.md)
+- [Feature flags — rstix](../reference/feature-flags.md#rstix)
+- [Fuzzing — `fuzz_rstix_parse_bundle`](../developers/fuzzing.md)
+- [Crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)

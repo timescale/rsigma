@@ -155,6 +155,12 @@ pub struct EmailMessage {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject: Option<String>,
+    /// Encrypted subject line (STIX §6.6.2).
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub subject_enc: Option<String>,
     /// `Received` header lines in order (STIX §6.6.2).
     #[cfg_attr(
         feature = "serde",
@@ -173,6 +179,12 @@ pub struct EmailMessage {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body: Option<String>,
+    /// Encrypted body of a single-part message (STIX §6.6.2).
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub body_enc: Option<String>,
     /// MIME parts of a multipart message (STIX §6.6.2; required when `is_multipart` is true).
     #[cfg_attr(
         feature = "serde",
@@ -252,11 +264,15 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             #[serde(default)]
             subject: Option<String>,
             #[serde(default)]
+            subject_enc: Option<String>,
+            #[serde(default)]
             received_lines: Vec<String>,
             #[serde(default)]
             additional_header_fields: BTreeMap<String, Vec<String>>,
             #[serde(default)]
             body: Option<String>,
+            #[serde(default)]
+            body_enc: Option<String>,
             #[serde(default)]
             body_multipart: Option<Vec<EmailMimePart>>,
             #[serde(default)]
@@ -276,9 +292,11 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             bcc_refs: raw.bcc_refs,
             message_id: raw.message_id,
             subject: raw.subject,
+            subject_enc: raw.subject_enc,
             received_lines: raw.received_lines,
             additional_header_fields: raw.additional_header_fields,
             body: raw.body,
+            body_enc: raw.body_enc,
             body_multipart: raw.body_multipart,
             raw_email_ref: raw.raw_email_ref,
         };

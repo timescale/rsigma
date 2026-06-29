@@ -1,9 +1,11 @@
 //! STIX vocabulary tables.
 
 mod closed;
+mod iso3166;
 mod open;
 
 pub use closed::*;
+pub use iso3166::{ISO3166_ALPHA2, is_iso3166_alpha2};
 pub use open::*;
 
 #[cfg(test)]

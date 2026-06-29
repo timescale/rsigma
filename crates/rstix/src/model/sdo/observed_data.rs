@@ -7,7 +7,49 @@ use crate::model::ModelError;
 use crate::model::common::SdoSroCommonProps;
 use crate::model::sco::{ScoObject, deserialize_sco_object_from_value};
 use crate::model::sdo::validate_number_observed;
+use crate::model::sro::{SroObject, deserialize_sro_object_from_value};
 use crate::model::validate::validate_sco_or_sro_ref;
+
+/// Embedded object in deprecated observed-data `objects` (SCO or SRO).
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ObservedDataEmbeddedObject {
+    /// Embedded cyber-observable.
+    Sco(ScoObject),
+    /// Embedded relationship or sighting (STIX §4.14.1 deprecated form).
+    Sro(SroObject),
+}
+
+impl ObservedDataEmbeddedObject {
+    /// STIX id of the embedded object.
+    pub fn id(&self) -> &StixId {
+        match self {
+            Self::Sco(sco) => sco.id(),
+            Self::Sro(sro) => sro.id(),
+        }
+    }
+
+    pub(crate) fn collect_internal_refs(&self, refs: &mut Vec<StixId>) {
+        use crate::model::stix_object::StixObject;
+        match self {
+            Self::Sco(sco) => StixObject::Sco(sco.clone()).collect_internal_refs(refs),
+            Self::Sro(sro) => StixObject::Sro(sro.clone()).collect_internal_refs(refs),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for ObservedDataEmbeddedObject {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Sco(sco) => sco.serialize(serializer),
+            Self::Sro(sro) => sro.serialize(serializer),
+        }
+    }
+}
 
 /// Content form for an [`ObservedData`] object (STIX §4.14.1).
 ///
@@ -17,8 +59,8 @@ use crate::model::validate::validate_sco_or_sro_ref;
 pub enum ObservedDataForm {
     /// References to standalone SCO/SRO objects (`object_refs`).
     ObjectRefs(Vec<StixId>),
-    /// Deprecated embedded SCO dictionary (`objects`).
-    DeprecatedObjects(BTreeMap<String, ScoObject>),
+    /// Deprecated embedded SCO/SRO dictionary (`objects`).
+    DeprecatedObjects(BTreeMap<String, ObservedDataEmbeddedObject>),
 }
 
 /// A STIX observed-data object capturing raw cyber-observable sightings (STIX §4.14).
@@ -82,7 +124,7 @@ where
 #[cfg(feature = "serde")]
 fn deserialize_objects<'de, D>(
     deserializer: D,
-) -> Result<Option<BTreeMap<String, ScoObject>>, D::Error>
+) -> Result<Option<BTreeMap<String, ObservedDataEmbeddedObject>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -92,15 +134,26 @@ where
     };
     let mut objects = BTreeMap::new();
     for (key, value) in raw {
-        let sco = deserialize_sco_object_from_value(value).map_err(serde::de::Error::custom)?;
-        objects.insert(key, sco);
+        let type_name = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let embedded = match type_name {
+            "relationship" | "sighting" => ObservedDataEmbeddedObject::Sro(
+                deserialize_sro_object_from_value(value).map_err(serde::de::Error::custom)?,
+            ),
+            _ => ObservedDataEmbeddedObject::Sco(
+                deserialize_sco_object_from_value(value).map_err(serde::de::Error::custom)?,
+            ),
+        };
+        objects.insert(key, embedded);
     }
     Ok(Some(objects))
 }
 
 #[cfg(feature = "serde")]
 fn observed_data_form_from_wire(
-    objects: Option<BTreeMap<String, ScoObject>>,
+    objects: Option<BTreeMap<String, ObservedDataEmbeddedObject>>,
     object_refs: Option<Vec<StixId>>,
 ) -> Result<ObservedDataForm, ModelError> {
     match (objects, object_refs) {
@@ -132,7 +185,7 @@ impl serde::Serialize for ObservedData {
             last_observed: &'a StixTimestamp,
             number_observed: i64,
             #[serde(skip_serializing_if = "Option::is_none")]
-            objects: Option<&'a BTreeMap<String, ScoObject>>,
+            objects: Option<&'a BTreeMap<String, ObservedDataEmbeddedObject>>,
             #[serde(skip_serializing_if = "Option::is_none")]
             object_refs: Option<&'a Vec<StixId>>,
         }
@@ -166,7 +219,7 @@ impl<'de> serde::Deserialize<'de> for ObservedData {
             last_observed: StixTimestamp,
             number_observed: i64,
             #[serde(default, deserialize_with = "deserialize_objects")]
-            objects: Option<BTreeMap<String, ScoObject>>,
+            objects: Option<BTreeMap<String, ObservedDataEmbeddedObject>>,
             #[serde(default)]
             object_refs: Option<Vec<StixId>>,
         }

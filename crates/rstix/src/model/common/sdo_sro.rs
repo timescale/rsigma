@@ -1,6 +1,8 @@
 //! Common properties shared by all STIX Domain Objects and Relationship
 //! Objects (STIX §3.2).
 
+use std::collections::BTreeMap;
+
 use crate::core::{
     Confidence, IdentityId, LanguageTag, MarkingDefinitionId, SpecVersion, StixId, StixTimestamp,
 };
@@ -87,6 +89,12 @@ pub struct SdoSroCommonProps {
         serde(default, skip_serializing_if = "ExtensionMap::is_empty")
     )]
     pub extensions: ExtensionMap,
+    /// Unmodeled top-level properties captured during standalone deserialize.
+    #[cfg_attr(
+        feature = "serde",
+        serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")
+    )]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl SdoSroCommonProps {
@@ -107,6 +115,7 @@ impl SdoSroCommonProps {
             object_marking_refs: Vec::new(),
             granular_markings: Vec::new(),
             extensions: ExtensionMap::default(),
+            extra: BTreeMap::new(),
         }
     }
 

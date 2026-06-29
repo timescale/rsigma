@@ -197,8 +197,8 @@ impl StixObject {
                             refs.extend(object_refs.iter().cloned());
                         }
                         ObservedDataForm::DeprecatedObjects(objects) => {
-                            for sco in objects.values() {
-                                refs.push(sco.id().clone());
+                            for embedded in objects.values() {
+                                embedded.collect_internal_refs(refs);
                             }
                         }
                     }
@@ -541,7 +541,7 @@ pub(crate) fn deserialize_stix_object_from_value(
             )))
         })?;
 
-    let object = if let Some(kind) = crate::core::StixObjectKind::from_type_str(type_name) {
+    let mut object = if let Some(kind) = crate::core::StixObjectKind::from_type_str(type_name) {
         match kind {
             crate::core::StixObjectKind::Sdo(_) => {
                 super::sdo::deserialize_sdo_object_from_value(typed_value)
@@ -601,8 +601,20 @@ pub(crate) fn deserialize_stix_object_from_value(
     if let Some(wire) = wire_for_extra.as_ref() {
         capture_unmodeled_properties(wire, &object, &mut extra)?;
     }
+    extra.extend(drain_common_extra(&mut object));
 
     Ok((object, extra))
+}
+
+#[cfg(feature = "serde")]
+fn drain_common_extra(object: &mut StixObject) -> BTreeMap<String, serde_json::Value> {
+    match object {
+        StixObject::Sdo(sdo) => std::mem::take(&mut sdo.common_props_mut().extra),
+        StixObject::Sro(sro) => std::mem::take(&mut sro.common_props_mut().extra),
+        StixObject::Sco(sco) => std::mem::take(&mut sco.common_props_mut().extra),
+        StixObject::Meta(meta) => meta.drain_extra(),
+        StixObject::Custom(_) => BTreeMap::new(),
+    }
 }
 
 impl QueryableStixObject for StixObject {

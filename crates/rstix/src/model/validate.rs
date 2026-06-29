@@ -507,6 +507,45 @@ pub fn validate_granular_selector_syntax(selector: &str) -> Result<(), ModelErro
     Ok(())
 }
 
+/// Resolve a STIX property selector against a JSON object (syntax must already be valid).
+pub fn resolve_selector_value<'a>(
+    value: &'a serde_json::Value,
+    selector: &str,
+) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in selector.split('.') {
+        current = if segment.starts_with('[') && segment.ends_with(']') {
+            let index: usize = segment[1..segment.len() - 1].parse().ok()?;
+            current.get(index)?
+        } else {
+            current.get(segment)?
+        };
+    }
+    Some(current)
+}
+
+/// Returns true when a language-content translation mirrors the target property type and list length (STIX §7.2.4).
+pub fn language_content_translation_matches_target(
+    target: &serde_json::Value,
+    translation: &serde_json::Value,
+) -> bool {
+    match (target, translation) {
+        (serde_json::Value::Null, serde_json::Value::Null) => true,
+        (serde_json::Value::Bool(_), serde_json::Value::Bool(_)) => true,
+        (serde_json::Value::Number(_), serde_json::Value::Number(_)) => true,
+        (serde_json::Value::String(_), serde_json::Value::String(_)) => true,
+        (serde_json::Value::Array(target_items), serde_json::Value::Array(translation_items)) => {
+            target_items.len() == translation_items.len()
+                && target_items
+                    .iter()
+                    .zip(translation_items)
+                    .all(|(t, tr)| language_content_translation_matches_target(t, tr))
+        }
+        (serde_json::Value::Object(_), serde_json::Value::Object(_)) => true,
+        _ => false,
+    }
+}
+
 /// Validate language-content `contents` top-level keys as RFC 5646 tags.
 pub fn validate_language_content_contents(
     contents: &std::collections::BTreeMap<
@@ -570,4 +609,48 @@ pub fn validate_sco_deterministic_id(
     };
     verify_sco_deterministic_id(kind, wire_value, &actual_id)
         .map_err(|_| ModelError::ScoDeterministicIdMismatch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_selector_value_supports_property_and_index_segments() {
+        let wire = json!({"labels": ["a", "b"], "nested": {"name": "x"}});
+        assert_eq!(
+            resolve_selector_value(&wire, "labels"),
+            Some(&json!(["a", "b"]))
+        );
+        assert_eq!(
+            resolve_selector_value(&wire, "labels.[0]"),
+            Some(&json!("a"))
+        );
+        assert_eq!(
+            resolve_selector_value(&wire, "nested.name"),
+            Some(&json!("x"))
+        );
+        assert!(resolve_selector_value(&wire, "missing").is_none());
+    }
+
+    #[test]
+    fn language_content_translation_matches_target_type_and_list_length() {
+        assert!(language_content_translation_matches_target(
+            &json!("hello"),
+            &json!("hallo")
+        ));
+        assert!(!language_content_translation_matches_target(
+            &json!("hello"),
+            &json!(42)
+        ));
+        assert!(language_content_translation_matches_target(
+            &json!(["a", "b"]),
+            &json!(["x", "y"])
+        ));
+        assert!(!language_content_translation_matches_target(
+            &json!(["a", "b"]),
+            &json!(["x"])
+        ));
+    }
 }

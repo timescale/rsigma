@@ -26,6 +26,13 @@ impl SroObject {
             Self::Sighting(inner) => &inner.common,
         }
     }
+
+    pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::SdoSroCommonProps {
+        match self {
+            Self::Relationship(inner) => &mut inner.common,
+            Self::Sighting(inner) => &mut inner.common,
+        }
+    }
 }
 
 impl QueryableStixObject for SroObject {

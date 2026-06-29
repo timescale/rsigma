@@ -52,11 +52,13 @@ The Model Context Protocol server library. No Cargo features of its own; it is g
 
 ## `rstix`
 
-STIX 2.1 + TAXII 2.1 library crate under phased implementation.
+STIX 2.1 library crate. **Data Model + Serialization** is complete (typed objects, bundle parse/stream, semantic validation). **Pattern Engine**, graph/store, and TAXII client are later phases.
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
-| `serde` | yes | `serde` | Serialization and deserialization support (for example `SpecVersion`). |
+| `serde` | yes | `serde`, `serde_json` | `Bundle::parse`, `parse_reader`, `serde` on all model types, `Bundle::validate`. |
+
+Without `serde`, only `core`, `id`, and `vocab` modules are available (no bundle parsing).
 
 ## Building with features
 

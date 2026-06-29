@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 
-use crate::core::{QueryableStixObject, StixId};
+use crate::core::StixId;
 use crate::model::BundleObjectCast;
 use crate::model::ModelError;
 use crate::model::json_limits::{LimitedReader, validate_value_limits};
@@ -32,7 +32,6 @@ pub struct Bundle {
     id: StixId,
     objects: Vec<StixObject>,
     id_index: HashMap<String, usize>,
-    raw_objects: HashMap<String, serde_json::Value>,
     extra_properties: HashMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
@@ -161,12 +160,10 @@ impl Bundle {
 
         let mut objects = Vec::with_capacity(object_values.len());
         let mut id_index = HashMap::with_capacity(object_values.len());
-        let mut raw_objects = HashMap::with_capacity(object_values.len());
         let mut extra_properties = HashMap::with_capacity(object_values.len());
 
         for value in object_values {
-            let raw = value.clone();
-            let object_id = raw
+            let object_id = value
                 .get("id")
                 .ok_or(crate::ParseError::MissingObjectId)
                 .and_then(|id_value| {
@@ -179,7 +176,6 @@ impl Bundle {
             }
 
             let (object, extra) = deserialize_stix_object_from_value(value, opts)?;
-            raw_objects.insert(id_key.clone(), raw);
             if !extra.is_empty() {
                 extra_properties.insert(id_key.clone(), extra);
             }
@@ -192,7 +188,6 @@ impl Bundle {
             id,
             objects,
             id_index,
-            raw_objects,
             extra_properties,
         };
         bundle.validate_refs()?;
@@ -224,11 +219,6 @@ impl Bundle {
     /// Iterate objects of a concrete STIX type.
     pub fn objects_of_type<T: BundleObjectCast>(&self) -> impl Iterator<Item = &T> {
         self.objects.iter().filter_map(T::cast_from)
-    }
-
-    /// Original JSON for an object before top-level `x_*` keys were peeled.
-    pub fn raw_object(&self, id: &StixId) -> Option<&serde_json::Value> {
-        self.raw_objects.get(id.as_str())
     }
 
     /// Top-level custom `x_*` properties captured at parse time for `id`.
@@ -409,27 +399,12 @@ impl Bundle {
                     }
                 }
                 MetaObject::LanguageContent(LanguageContent {
-                    common,
-                    object_ref,
-                    object_modified,
-                    ..
+                    common, object_ref, ..
                 }) => {
                     if let Some(created_by) = &common.created_by_ref {
                         validate_identity_ref(created_by.as_stix_id())?;
                     }
                     validate_sdo_ref(object_ref)?;
-                    if let Some(modified) = object_modified {
-                        let target = self.get(object_ref).ok_or_else(|| {
-                            ModelError::BundleReferenceMissing {
-                                ref_id: object_ref.as_str().to_owned(),
-                            }
-                        })?;
-                        let target_modified = QueryableStixObject::modified(target)
-                            .ok_or(ModelError::LanguageContentObjectModifiedMismatch)?;
-                        if modified != target_modified {
-                            return Err(ModelError::LanguageContentObjectModifiedMismatch);
-                        }
-                    }
                 }
             },
             StixObject::Sco(_) | StixObject::Custom(_) => {}
