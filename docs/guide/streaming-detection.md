@@ -58,6 +58,7 @@ The `--input` flag selects the primary event source:
 | stdin | `--input stdin` (default) | Read NDJSON from standard input. |
 | HTTP | `--input http` | Accept NDJSON `POST` requests on `/api/v1/events`. |
 | NATS JetStream | `--input nats://host:port/subject` | Subscribe to a JetStream subject with at-least-once delivery. Requires the `daemon-nats` feature. |
+| Unix socket | `--input unix:///path/to.sock` | Accept newline-delimited events over a Unix domain socket (Unix only). Co-located log shippers (rsyslog `omuxsock`, syslog-ng `unix-stream`, Vector, Fluent Bit) write to it directly without a TCP port. |
 
 OTLP ingestion is always available alongside the primary source when the daemon is built with the `daemon-otlp` feature. Agents can post to `/v1/logs` (HTTP, protobuf or JSON) or use the gRPC `LogsService/Export` on the same `--api-addr` port.
 
@@ -120,6 +121,7 @@ The `--output` flag is repeatable, which gives you fan-out for free. Each match 
 | `stdout` | NDJSON to stdout. Default. |
 | `file:///path/to/file.ndjson` | Append NDJSON to a file, rotating only if you wrap it externally (logrotate, etc.). |
 | `nats://host:port/subject` | Publish via JetStream with server-confirmed persistence. Requires `daemon-nats`. |
+| `unix:///path/to.sock` | Write NDJSON to a collector listening on a Unix domain socket (Unix only). Reconnects once on a transient write failure. |
 
 Failed deliveries are routed to the dead-letter queue when `--dlq` is configured:
 

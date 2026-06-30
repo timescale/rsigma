@@ -105,8 +105,9 @@ The `engine daemon` HTTP and gRPC listeners share one socket. With the optional 
 - Build with `daemon-tls` and pass `--tls-cert`/`--tls-key` to terminate TLS in-process for HTTP REST, OTLP/HTTP, and OTLP/gRPC on the same `--api-addr`. Add `--tls-client-ca` to require mTLS for agent-to-daemon pinning. See [TLS termination](#tls-termination-for-the-api-listener).
 - Bind to loopback (`--api-addr 127.0.0.1:9090`) and access via a reverse proxy that adds TLS and authentication. Nginx, Caddy, and Traefik all work; an example is documented in [Docker deployment](../deployment/docker.md).
 - Bind to a private network segment that the SOC controls.
+- On Unix, bind a domain socket with `--api-addr unix:///run/rsigma/api.sock`. Access is gated by the socket file's permissions (created `0600`), so it never leaves the host and needs no TLS. This is the simplest hardened shape for a co-located admin/metrics client or a sidecar that proxies the socket.
 
-To prevent accidental cleartext exposure when `daemon-tls` is built in, the daemon refuses to start on a non-loopback `--api-addr` unless either `--tls-cert`/`--tls-key` or `--allow-plaintext` is supplied. Loopback (`127.0.0.0/8`, `::1`) always allows plaintext.
+To prevent accidental cleartext exposure when `daemon-tls` is built in, the daemon refuses to start on a non-loopback `--api-addr` unless either `--tls-cert`/`--tls-key` or `--allow-plaintext` is supplied. Loopback (`127.0.0.0/8`, `::1`) always allows plaintext. A `unix://` address is treated as local: it is exempt from this refusal and, because TLS terminates on TCP only, combining it with `--tls-cert`/`--tls-key` is rejected at startup.
 
 NATS connections from the daemon (source, sink, DLQ) support five auth methods (creds file, token, user+password, NKey, mTLS) and TLS-required mode. See [NATS Streaming: authentication](../guide/nats-streaming.md#authentication).
 

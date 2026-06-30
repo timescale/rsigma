@@ -16,6 +16,9 @@ otlp = ["opentelemetry-proto", "prost", "tonic", "flate2", "rustls"]
 logfmt = []
 cef = []
 evtx = ["dep:evtx"]
+# Unix domain socket event source and sink (unix:// input/output). Pulls in
+# tokio's net feature; the code is additionally #[cfg(unix)]-gated.
+uds = ["tokio/net"]
 daachorse-index = ["rsigma-eval/daachorse-index"]
 
 [dependencies]

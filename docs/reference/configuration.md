@@ -47,13 +47,13 @@ daemon:
   # alert_pipeline: /etc/rsigma/alert-pipeline.yml   # dedup (see the Alert Pipeline guide)
   # risk: /etc/rsigma/risk.yml                       # risk-based alerting (see the Risk-Based Alerting guide)
   api:
-    addr: "0.0.0.0:9090"
+    addr: "0.0.0.0:9090"   # TCP host:port, or unix:///run/rsigma/api.sock (Unix; no TLS)
   input:
-    source: stdin
+    source: stdin          # stdin | http | nats://... | unix:///run/rsigma/ingest.sock (Unix)
     format: auto
     buffer_size: 10000
   output:
-    sinks: [stdout]
+    sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
     drain_timeout: 5
     # webhooks: [/etc/rsigma/webhooks/]   # template-driven HTTP sinks
   correlation:

@@ -2,6 +2,7 @@ pub(crate) mod dispositions;
 pub(crate) mod enrichment;
 mod health;
 mod instrumented_resolver;
+pub(crate) mod listen;
 mod metrics;
 mod reload;
 pub(crate) mod server;

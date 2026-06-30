@@ -190,7 +190,9 @@ impl Merge for DaemonPartial {
 /// API listener settings.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ApiPartial {
-    /// Bind address for health, metrics, and the HTTP/OTLP API.
+    /// Bind address for health, metrics, and the HTTP/OTLP API: a TCP
+    /// `host:port`, or on Unix `unix:///path/to.sock` (TLS is rejected on a
+    /// unix:// address).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub addr: Option<String>,
     /// TLS settings. Ignored unless built with `daemon-tls`.
@@ -237,7 +239,8 @@ impl Merge for TlsPartial {
 /// Event input settings.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct InputPartial {
-    /// Event source: `stdin`, `http`, `nats://host:port/subject`.
+    /// Event source: `stdin`, `http`, `nats://host:port/subject`, or on Unix
+    /// `unix:///path/to.sock` (newline-delimited events over a Unix socket).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     /// Log format: `auto`, `json`, `syslog`, `plain`, `logfmt`, `cef`.
@@ -281,7 +284,8 @@ impl Merge for InputPartial {
 pub(crate) struct OutputPartial {
     /// Detection sinks: `stdout`, `file://path`, `nats://host:port/subject`,
     /// `otlp(s)://host:port` (gRPC), `otlphttp(s)://host:port` (HTTP); the `s`
-    /// variants use TLS. Optional query suffixes: `?on_full=drop`,
+    /// variants use TLS. On Unix, `unix:///path/to.sock` writes NDJSON to a
+    /// local socket. Optional query suffixes: `?on_full=drop`,
     /// `?compression=gzip`, and for TLS `?ca=`, `?client_cert=`, `?client_key=`,
     /// `?tls_domain=`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

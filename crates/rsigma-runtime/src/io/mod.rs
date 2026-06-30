@@ -10,6 +10,12 @@ mod nats_source;
 pub mod otlp;
 mod stdin;
 mod stdout;
+#[cfg(all(unix, feature = "uds"))]
+mod unix;
+#[cfg(all(unix, feature = "uds"))]
+mod unix_sink;
+#[cfg(all(unix, feature = "uds"))]
+mod unix_source;
 pub mod webhook;
 
 pub use delivery::{
@@ -24,6 +30,12 @@ pub use nats_sink::NatsSink;
 pub use nats_source::{NatsSource, ReplayPolicy};
 pub use stdin::StdinSource;
 pub use stdout::StdoutSink;
+#[cfg(all(unix, feature = "uds"))]
+pub use unix::{UnixSocketGuard, bind_unix_listener, parse_unix_scheme};
+#[cfg(all(unix, feature = "uds"))]
+pub use unix_sink::UnixSocketSink;
+#[cfg(all(unix, feature = "uds"))]
+pub use unix_source::UnixSocketSource;
 
 use std::sync::Arc;
 
@@ -128,6 +140,9 @@ pub enum Sink {
     Otlp(Box<otlp::OtlpSink>),
     /// Render and POST a templated HTTP request per result.
     Webhook(Box<webhook::WebhookSink>),
+    /// Write NDJSON to a Unix domain socket (client connection).
+    #[cfg(all(unix, feature = "uds"))]
+    Unix(Box<UnixSocketSink>),
     /// Fan out to multiple sinks.
     FanOut(Vec<Sink>),
 }
@@ -163,6 +178,8 @@ impl Sink {
                 // with a per-item context; this direct path is a completeness
                 // fallback, so it mints a one-shot context.
                 Sink::Webhook(s) => s.send(result, &DeliveryContext::new()).await,
+                #[cfg(all(unix, feature = "uds"))]
+                Sink::Unix(s) => s.send(result).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send(result).await {
@@ -200,6 +217,8 @@ impl Sink {
                 // delivery path always uses `send`, so this is never hit on
                 // the webhook hot path.
                 Sink::Webhook(_) => Ok(()),
+                #[cfg(all(unix, feature = "uds"))]
+                Sink::Unix(s) => s.send_raw(json).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_raw(json).await {
@@ -241,6 +260,8 @@ impl Sink {
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
                 Sink::Webhook(_) => Ok(()),
+                #[cfg(all(unix, feature = "uds"))]
+                Sink::Unix(s) => s.send_raw(&env.json).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_incident(env).await {
@@ -272,6 +293,8 @@ impl Sink {
             // The webhook id (leaked to `&'static`) so its shared per-sink
             // series maps one-to-one to the `rsigma_webhook_*` series.
             Sink::Webhook(s) => s.label(),
+            #[cfg(all(unix, feature = "uds"))]
+            Sink::Unix(_) => "unix",
             Sink::FanOut(_) => "fanout",
         }
     }

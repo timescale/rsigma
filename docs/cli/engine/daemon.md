@@ -35,7 +35,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--input <URL>` | `stdin` | Event source. Schemes: `stdin`, `http` (accepts `POST /api/v1/events`), `nats://<host>:<port>/<subject>`. |
+| `--input <URL>` | `stdin` | Event source. Schemes: `stdin`, `http` (accepts `POST /api/v1/events`), `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock` (newline-delimited events over a Unix domain socket). |
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With features: `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog (`+HH:MM` or `-HH:MM`). |
 | `--syslog-strip-bom <BOOL>` | `true` | Strip a leading UTF-8 BOM (`U+FEFF`) from RFC 5424 syslog messages. RFC 5424 treats the BOM as an encoding marker, not content. Pass `--syslog-strip-bom false` to keep it byte-for-byte. |
@@ -46,7 +46,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC), `otlphttp(s)://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`); the `s` variants use TLS. Repeatable for fan-out. Query params: `?on_full=drop` (best-effort), `?compression=gzip` (OTLP), and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last two for mutual TLS) and `?tls_domain=` (SNI override). OTLP schemes require the `daemon-otlp` build. |
+| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC), `otlphttp(s)://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`); the `s` variants use TLS. On Unix, `unix:///path/to.sock` writes NDJSON to a local collector socket. Repeatable for fan-out. Query params: `?on_full=drop` (best-effort), `?compression=gzip` (OTLP), and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last two for mutual TLS) and `?tls_domain=` (SNI override). OTLP schemes require the `daemon-otlp` build. |
 | `--dlq <URL>` | unset | Dead-letter queue for events that fail parsing or sink delivery. Same schemes as `--output`. When unset, failed events are logged and discarded. |
 | `--include-event` | off | Embed the full event JSON in every detection match. |
 | `--match-detail <LEVEL>` | `off` | Match-detail verbosity: `off` (field + value only), `summary` (adds matcher kind, selection, case sensitivity, and reports keyword/absence matches), or `full` (also records the matched pattern). Also settable via `daemon.engine.match_detail`. See [Evaluating Rules](../../guide/evaluating-rules.md#match-detail). |
@@ -87,7 +87,7 @@ The webhooks file (also settable as the `daemon.output.webhooks` path list) decl
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--api-addr <ADDR>` | `0.0.0.0:9090` | Bind address for `/healthz`, `/readyz`, `/metrics`, `/api/v1/*`, and (with the `daemon-otlp` feature) `/v1/logs`. |
+| `--api-addr <ADDR>` | `0.0.0.0:9090` | Bind address for `/healthz`, `/readyz`, `/metrics`, `/api/v1/*`, and (with the `daemon-otlp` feature) `/v1/logs`. A TCP `host:port`, or on Unix `unix:///path/to.sock` for a permission-gated local socket. A `unix://` address cannot be combined with TLS (the socket file is the trust boundary) and is exempt from the plaintext-bind refusal. |
 
 ### TLS (requires the `daemon-tls` build feature)
 

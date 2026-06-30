@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Unix domain socket support for the daemon (input source, output sink, API listener) (#273)
+
+The daemon now speaks `unix://` on three surfaces (Unix targets only; gated behind the new runtime `uds` feature, which the `daemon` feature enables):
+
+* **`--input unix:///path/to.sock`** ingests newline-delimited events over a Unix domain socket, so co-located log shippers (rsyslog `omuxsock`, syslog-ng `unix-stream`, Vector, Fluent Bit) can feed the daemon without a TCP port or the HTTP-ingest overhead. One reader task per connection feeds the bounded event channel (the same back-pressure model as stdin), with a 1 MiB per-line cap so an unterminated line cannot exhaust memory.
+* **`--output unix:///path/to.sock`** (also accepted by `--dlq`) writes NDJSON detections and incidents to a collector listening on a local socket, reconnecting once on a transient write failure before routing to the DLQ.
+* **`--api-addr unix:///path/to.sock`** serves the health, metrics, and `/api/v1/*` API (plus OTLP ingestion when built with `daemon-otlp`) over a permission-gated local socket. The socket is created `0600` and unlinked on clean shutdown, and a stale socket left by a crashed run is reclaimed on the next start. TLS terminates on TCP only, so `--tls-cert`/`--tls-key` combined with a `unix://` address is rejected at startup, and a `unix://` address is exempt from the non-loopback plaintext-bind refusal (the socket file is the trust boundary).
+
+On non-Unix targets `unix://` is rejected with the existing unsupported-scheme config error.
+
 ### Security: transitive `anyhow` bump for RUSTSEC-2026-0190 (#271)
 
 `cargo deny` flagged [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190), an unsoundness in `anyhow`'s `Error::downcast_mut()` where adding context via `Error::context` and then calling `downcast_mut` on the returned error violates borrow rules and triggers undefined behavior. It reaches the tree transitively. A targeted `cargo update -p anyhow` moves the workspace lockfile from 1.0.102 to the fixed 1.0.103 with no other dependency changes.

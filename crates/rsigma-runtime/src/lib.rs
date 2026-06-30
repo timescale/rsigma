@@ -100,6 +100,10 @@ pub use io::{
     EventSource, FileSink, IncidentEnvelope, OnFull, RawEvent, Sink, StdinSource, StdoutSink,
     spawn_source,
 };
+#[cfg(all(unix, feature = "uds"))]
+pub use io::{
+    UnixSocketGuard, UnixSocketSink, UnixSocketSource, bind_unix_listener, parse_unix_scheme,
+};
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
