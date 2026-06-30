@@ -103,7 +103,8 @@ pub(crate) struct DaemonArgs {
     pub state_save_interval: u64,
 
     /// Event input source. Supported schemes: `stdin`, `http`,
-    /// `nats://<host>:<port>/<subject>`.
+    /// `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock`
+    /// (newline-delimited events over a Unix domain socket).
     #[arg(long = "input", default_value = config::defaults::INPUT_SOURCE)]
     pub input: String,
 
@@ -111,6 +112,7 @@ pub(crate) struct DaemonArgs {
     /// Supported schemes: `stdout`, `file://<path>`,
     /// `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC),
     /// `otlphttp(s)://<host>:<port>` (OTLP/HTTP); the `s` variants use TLS.
+    /// On Unix, `unix:///path/to.sock` writes NDJSON to a local socket.
     /// Query params: `?on_full=drop` (best-effort), `?compression=gzip` (OTLP),
     /// and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last
     /// two for mutual TLS) and `?tls_domain=` (SNI override).
@@ -152,9 +154,9 @@ pub(crate) struct DaemonArgs {
     pub batch_flush_ms: u64,
 
     /// Dead-letter queue target for events that fail processing.
-    /// Accepts the same schemes as `--output`: `stdout`,
-    /// `file://<path>`, `nats://<host>:<port>/<subject>`. When not
-    /// set, failed events are logged and discarded.
+    /// Accepts the same schemes as `--output` (`stdout`, `file://<path>`,
+    /// `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock`).
+    /// When not set, failed events are logged and discarded.
     #[arg(long = "dlq")]
     pub dlq: Option<String>,
 

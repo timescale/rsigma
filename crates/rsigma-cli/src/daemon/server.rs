@@ -1259,10 +1259,29 @@ pub async fn run_daemon(config: DaemonConfig) {
                 }
             }
         }
+        #[cfg(unix)]
+        input if input.starts_with("unix://") => {
+            let path = input.strip_prefix("unix://").unwrap_or(input);
+            match rsigma_runtime::UnixSocketSource::bind(std::path::Path::new(path)).await {
+                Ok(source) => {
+                    let h = spawn_source(
+                        source,
+                        event_tx,
+                        Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                    );
+                    tracing::info!(path = path, "Unix socket source started");
+                    Some(h)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, path = path, "Failed to bind unix socket source");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
         other => {
             tracing::error!(
                 input = other,
-                "Unsupported input source (supported: stdin, http, nats://)"
+                "Unsupported input source (supported: stdin, http, nats://, unix://)"
             );
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
@@ -2077,9 +2096,23 @@ async fn build_sink(
         }
     }
 
+    #[cfg(unix)]
+    if let Some(path) = base.strip_prefix("unix://") {
+        return match rsigma_runtime::UnixSocketSink::connect(std::path::Path::new(path)).await {
+            Ok(unix_sink) => {
+                tracing::info!(path, "Unix socket sink started");
+                (Sink::Unix(Box::new(unix_sink)), on_full)
+            }
+            Err(e) => {
+                tracing::error!(path, error = %e, "Failed to connect unix socket sink");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        };
+    }
+
     tracing::error!(
         output = base,
-        "Unsupported output sink (supported: stdout, file://<path>, nats://, otlp://, otlphttp://)"
+        "Unsupported output sink (supported: stdout, file://<path>, nats://, otlp://, otlphttp://, unix://)"
     );
     std::process::exit(crate::exit_code::CONFIG_ERROR);
 }

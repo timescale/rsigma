@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = ["daemon"]
-daemon = ["rsigma-runtime", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http", "tokio-stream", "dep:sha2", "dep:getrandom"]
+daemon = ["rsigma-runtime", "rsigma-runtime/uds", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http", "tokio-stream", "dep:sha2", "dep:getrandom"]
 # MCP server (`rsigma mcp serve`). Pulls in rmcp via rsigma-mcp and needs a
 # tokio runtime; opt-in, build with --features mcp (the prebuilt binaries and
 # Docker image, built with --all-features, include it).
