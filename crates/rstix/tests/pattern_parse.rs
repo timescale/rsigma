@@ -83,12 +83,43 @@ fn level3_repeats_qualifier() {
 }
 
 #[test]
-fn level3_start_stop_wraps_expression() {
+fn level3_start_stop_postfix() {
     let pattern = Pattern::parse(
-        "START t'2016-05-12T08:17:27.000Z' STOP t'2016-05-13T08:17:27.000Z' [ipv4-addr:value = '1.2.3.4']",
+        "[ipv4-addr:value = '198.51.100.1/32'] START t'2014-06-01T00:00:00Z' STOP t'2014-07-01T00:00:00Z'",
     )
     .expect("parse");
-    assert!(matches!(pattern.ast(), PatternAst::StartStop { .. }));
+    assert!(matches!(pattern.ast(), PatternAst::StartStop { inner, .. }
+            if matches!(inner.as_ref(), PatternAst::Observation(_))));
+}
+
+#[test]
+fn level3_followedby_within_binds_to_right_observation() {
+    let pattern = Pattern::parse(
+        "[ipv4-addr:value = '1.1.1.1'] FOLLOWEDBY [ipv4-addr:value = '2.2.2.2'] WITHIN 300 SECONDS",
+    )
+    .expect("parse");
+    assert!(matches!(
+        pattern.ast(),
+        PatternAst::FollowedBy {
+            right,
+            ..
+        } if matches!(right.as_ref(), PatternAst::Within { .. })
+    ));
+}
+
+#[test]
+fn level2_followedby_looser_than_and() {
+    let pattern = Pattern::parse(
+        "[ipv4-addr:value = '1.1.1.1'] FOLLOWEDBY [ipv4-addr:value = '2.2.2.2'] AND [ipv4-addr:value = '3.3.3.3']",
+    )
+    .expect("parse");
+    assert!(matches!(
+        pattern.ast(),
+        PatternAst::FollowedBy {
+            right,
+            ..
+        } if matches!(right.as_ref(), PatternAst::And { .. })
+    ));
 }
 
 #[test]

@@ -29,7 +29,7 @@ pub fn parse(source: &str) -> Result<PatternAst, PatternError> {
 pub fn parse_level1(source: &str) -> Result<PatternAst, PatternError> {
     let tokens = lex(source)?;
     let mut parser = Parser::new(&tokens);
-    let obs = parser.parse_observation_expression()?;
+    let obs = parser.parse_bracketed_observation()?;
     parser.expect_eof()?;
     Ok(PatternAst::Observation(obs))
 }
@@ -90,8 +90,74 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Top-level pattern (STIXPattern.g4 `observationExpressions`).
     fn parse_pattern_expression(&mut self) -> Result<PatternAst, PatternError> {
-        let mut node = self.with_depth(|p| p.parse_pattern_or())?;
+        self.with_depth(|p| p.parse_observation_expressions())
+    }
+
+    /// `observationExpressions` — FOLLOWEDBY is the loosest operator.
+    fn parse_observation_expressions(&mut self) -> Result<PatternAst, PatternError> {
+        let mut left = self.parse_observation_expression_or()?;
+        while matches!(self.peek(), Token::FollowedBy) {
+            let op_start = self.current().start;
+            self.bump();
+            let right = self.parse_observation_expression_or()?;
+            let span = Span {
+                start: op_start,
+                end: self.tokens[self.pos.saturating_sub(1)].end,
+            };
+            left = PatternAst::FollowedBy {
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    /// `observationExpressionOr` — OR binds tighter than FOLLOWEDBY.
+    fn parse_observation_expression_or(&mut self) -> Result<PatternAst, PatternError> {
+        let mut left = self.parse_observation_expression_and()?;
+        while matches!(self.peek(), Token::Or) {
+            let op_start = self.current().start;
+            self.bump();
+            let right = self.parse_observation_expression_and()?;
+            let span = Span {
+                start: op_start,
+                end: self.tokens[self.pos.saturating_sub(1)].end,
+            };
+            left = PatternAst::Or {
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    /// `observationExpressionAnd` — AND binds tighter than OR.
+    fn parse_observation_expression_and(&mut self) -> Result<PatternAst, PatternError> {
+        let mut left = self.parse_observation_expression()?;
+        while matches!(self.peek(), Token::And) {
+            let op_start = self.current().start;
+            self.bump();
+            let right = self.parse_observation_expression()?;
+            let span = Span {
+                start: op_start,
+                end: self.tokens[self.pos.saturating_sub(1)].end,
+            };
+            left = PatternAst::And {
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    /// One observation expression with optional postfix qualifiers (WITHIN / REPEATS / START-STOP).
+    fn parse_observation_expression(&mut self) -> Result<PatternAst, PatternError> {
+        let mut node = self.parse_observation_primary()?;
         loop {
             match self.peek() {
                 Token::Within => {
@@ -123,101 +189,43 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                Token::Start => {
+                    let op_start = self.current().start;
+                    self.bump();
+                    let start_ts = self.expect_timestamp()?;
+                    self.expect(&Token::Stop)?;
+                    let stop_ts = self.expect_timestamp()?;
+                    let span = Span {
+                        start: op_start,
+                        end: self.tokens[self.pos.saturating_sub(1)].end,
+                    };
+                    node = PatternAst::StartStop {
+                        inner: Box::new(node),
+                        start: start_ts,
+                        stop: stop_ts,
+                        span,
+                    };
+                }
                 _ => break,
             }
         }
         Ok(node)
     }
 
-    fn parse_pattern_or(&mut self) -> Result<PatternAst, PatternError> {
-        let mut left = self.parse_pattern_and()?;
-        while matches!(self.peek(), Token::Or) {
-            let op_start = self.current().start;
-            self.bump();
-            let right = self.parse_pattern_and()?;
-            let span = Span {
-                start: op_start,
-                end: self.tokens[self.pos.saturating_sub(1)].end,
-            };
-            left = PatternAst::Or {
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_pattern_and(&mut self) -> Result<PatternAst, PatternError> {
-        let mut left = self.parse_pattern_followedby()?;
-        while matches!(self.peek(), Token::And) {
-            let op_start = self.current().start;
-            self.bump();
-            let right = self.parse_pattern_followedby()?;
-            let span = Span {
-                start: op_start,
-                end: self.tokens[self.pos.saturating_sub(1)].end,
-            };
-            left = PatternAst::And {
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_pattern_followedby(&mut self) -> Result<PatternAst, PatternError> {
-        let mut left = self.parse_pattern_primary()?;
-        while matches!(self.peek(), Token::FollowedBy) {
-            let op_start = self.current().start;
-            self.bump();
-            let right = self.parse_pattern_primary()?;
-            let span = Span {
-                start: op_start,
-                end: self.tokens[self.pos.saturating_sub(1)].end,
-            };
-            left = PatternAst::FollowedBy {
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_pattern_primary(&mut self) -> Result<PatternAst, PatternError> {
-        if matches!(self.peek(), Token::Start) {
-            let start_pos = self.current().start;
-            self.bump();
-            let start_ts = self.expect_timestamp()?;
-            self.expect(&Token::Stop)?;
-            let stop_ts = self.expect_timestamp()?;
-            let inner = self.with_depth(|p| p.parse_pattern_expression())?;
-            let end = self.tokens[self.pos.saturating_sub(1)].end;
-            return Ok(PatternAst::StartStop {
-                inner: Box::new(inner),
-                start: start_ts,
-                stop: stop_ts,
-                span: Span {
-                    start: start_pos,
-                    end,
-                },
-            });
-        }
+    fn parse_observation_primary(&mut self) -> Result<PatternAst, PatternError> {
         if matches!(self.peek(), Token::LBracket) {
-            let obs = self.with_depth(|p| p.parse_observation_expression())?;
+            let obs = self.with_depth(|p| p.parse_bracketed_observation())?;
             return Ok(PatternAst::Observation(obs));
         }
         if matches!(self.peek(), Token::LParen) {
             self.bump();
-            let inner = self.with_depth(|p| p.parse_pattern_expression())?;
+            let inner = self.with_depth(|p| p.parse_observation_expressions())?;
             self.expect(&Token::RParen)?;
             return Ok(inner);
         }
         Err(parse_error(
             self.current().start,
-            "expected observation expression, '(', or START",
+            "expected observation expression or '('",
         ))
     }
 
@@ -286,7 +294,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_observation_expression(&mut self) -> Result<ObservationExpr, PatternError> {
+    fn parse_bracketed_observation(&mut self) -> Result<ObservationExpr, PatternError> {
         let start = self.current().start;
         self.expect(&Token::LBracket)?;
         let root = self.with_depth(|p| p.parse_prop_test_or())?;
@@ -842,6 +850,7 @@ mod not {
 #[cfg(test)]
 mod level23 {
     use super::*;
+    use crate::pattern::ast::PatternAst;
 
     #[test]
     fn and_two_observations() {
@@ -852,10 +861,37 @@ mod level23 {
     }
 
     #[test]
-    fn followedby_within() {
+    fn followedby_within_parenthesized() {
         let pattern = "([file:hashes.MD5 = '79054025255fb1a26e4bc422aef54eb4'] FOLLOWEDBY [windows-registry-key:key = 'HKEY_LOCAL_MACHINE\\\\foo\\\\bar']) WITHIN 300 SECONDS";
         let ast = parse(pattern).unwrap();
-        assert!(matches!(ast, PatternAst::Within { .. }));
+        assert!(
+            matches!(ast, PatternAst::Within { inner, .. } if matches!(inner.as_ref(), PatternAst::FollowedBy { .. })),
+            "expected (A FOLLOWEDBY B) WITHIN to bind WITHIN to the parenthesized group"
+        );
+    }
+
+    #[test]
+    fn followedby_within_binds_to_last_observation() {
+        let pattern = "[ipv4-addr:value = '1.1.1.1'] FOLLOWEDBY [ipv4-addr:value = '2.2.2.2'] WITHIN 300 SECONDS";
+        let ast = parse(pattern).unwrap();
+        assert!(
+            matches!(ast, PatternAst::FollowedBy { left, right, .. }
+                if matches!(left.as_ref(), PatternAst::Observation(_))
+                && matches!(right.as_ref(), PatternAst::Within { .. })),
+            "expected WITHIN to qualify the right operand, not the whole FOLLOWEDBY chain"
+        );
+    }
+
+    #[test]
+    fn followedby_looser_than_and() {
+        let pattern = "[ipv4-addr:value = '1.1.1.1'] FOLLOWEDBY [ipv4-addr:value = '2.2.2.2'] AND [ipv4-addr:value = '3.3.3.3']";
+        let ast = parse(pattern).unwrap();
+        assert!(
+            matches!(ast, PatternAst::FollowedBy { left, right, .. }
+                if matches!(left.as_ref(), PatternAst::Observation(_))
+                && matches!(right.as_ref(), PatternAst::And { .. })),
+            "expected [a] FOLLOWEDBY ([b] AND [c]) per STIXPattern.g4 precedence"
+        );
     }
 
     #[test]
@@ -868,5 +904,27 @@ mod level23 {
     fn repeats_qualifier() {
         let ast = parse("[ipv4-addr:value = '1.2.3.4'] REPEATS 3 TIMES").unwrap();
         assert!(matches!(ast, PatternAst::Repeats { .. }));
+    }
+
+    #[test]
+    fn start_stop_postfix() {
+        let ast = parse(
+            "[ipv4-addr:value = '198.51.100.1/32'] START t'2014-06-01T00:00:00Z' STOP t'2014-07-01T00:00:00Z'",
+        )
+        .unwrap();
+        assert!(
+            matches!(ast, PatternAst::StartStop { inner, .. }
+                if matches!(inner.as_ref(), PatternAst::Observation(_))),
+            "expected START/STOP as postfix qualifiers on an observation"
+        );
+    }
+
+    #[test]
+    fn rejects_prefix_start_stop() {
+        let err = parse(
+            "START t'2016-05-12T08:17:27.000Z' STOP t'2016-05-13T08:17:27.000Z' [ipv4-addr:value = '1.2.3.4']",
+        )
+        .unwrap_err();
+        assert!(matches!(err, PatternError::ParseError { .. }));
     }
 }

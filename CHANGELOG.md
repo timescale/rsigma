@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix Pattern Engine: parse and type-check (Levels 1–3)
+### rstix Pattern Engine: parse and type-check (Levels 1–3) (#272)
 
 Adds the `pattern` feature to `rstix` with a hand-written lexer, recursive-descent parser for STIX patterning Levels 1–3, and an SCO schema type-checker for all 18 cyber-observable types:
 
