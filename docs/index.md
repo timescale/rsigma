@@ -124,7 +124,7 @@ RSigma is the only Sigma toolkit that combines pySigma-style conversion with a r
 
 ## Read the deep dives
 
-A five-part article series on building RSigma and using it in production:
+An article series on building RSigma and using it in production:
 
 | # | Article | Topic |
 |---|---------|-------|
@@ -134,6 +134,8 @@ A five-part article series on building RSigma and using it in production:
 | 4 | [Security Observability with RSigma and the LGTM Stack](https://mostafa.dev/security-observability-with-rsigma-and-the-lgtm-stack-375ccd260795) | Pairing RSigma with Loki, Mimir, and Grafana. |
 | 5 | [Wiring Live Threat Intel into Sigma Detection with Dynamic Pipelines](https://mostafa.dev/wiring-live-threat-intel-into-sigma-detection-with-dynamic-pipelines-4de29b4af7ca) | Dynamic pipelines: HTTP, file, command, and NATS sources. |
 | 6 | [Cloud Detection at Scale on a Laptop](https://mostafa.dev/cloud-detection-at-scale-on-a-laptop-e46540322856) | Running cloud-scale detection locally with RSigma. |
+| 7 | [The State of RSigma](https://mostafa.dev/the-state-of-rsigma-7ba0a99020d9) | A tour of everything RSigma does today and where it is headed. |
+| 8 | [Detection-as-Code in One GitHub Action with RSigma](https://mostafa.dev/detection-as-code-in-one-github-action-with-rsigma-0ebfb4c857fa) | Gating a Sigma rule repository in CI with lint, validate, fields-drift, backtest, and ATT&CK coverage. |
 
 ## At a glance
 
