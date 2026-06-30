@@ -126,6 +126,12 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      # Link with LLVM's lld-link instead of MSVC link.exe on the Windows
+      # target (the windows-latest runner ships LLVM on PATH). LLD roughly
+      # halves MSVC link time, which dominates this job. The var only affects
+      # the windows-msvc target, so it is a no-op on the Linux/macOS legs and
+      # never touches the release-binary builds.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: lld-link.exe
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
