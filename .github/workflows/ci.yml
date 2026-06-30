@@ -118,6 +118,14 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     permissions:
       contents: read
+    env:
+      # Drop full debuginfo down to line tables: cuts codegen and, on
+      # Windows, the expensive PDB generation/link step, while keeping panic
+      # file:line in CI logs. Disable incremental compilation: it adds
+      # overhead and bloats the cache for no benefit in from-scratch CI runs.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
