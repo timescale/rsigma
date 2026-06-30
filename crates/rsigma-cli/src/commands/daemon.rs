@@ -52,7 +52,10 @@ pub(crate) struct DaemonArgs {
     #[arg(long)]
     pub pretty: bool,
 
-    /// Address for health, metrics, and API server (default: 0.0.0.0:9090)
+    /// Address for the health, metrics, and API server. A TCP `host:port`
+    /// (default 0.0.0.0:9090), or on Unix `unix:///path/to.sock` for a
+    /// permission-gated local socket (TLS is rejected on a unix:// address;
+    /// the socket file is the trust boundary).
     #[arg(long = "api-addr", default_value = config::defaults::API_ADDR)]
     pub api_addr: String,
 
@@ -1414,13 +1417,13 @@ fn run_daemon(
         &timestamp_fallback,
     );
 
-    let addr: std::net::SocketAddr = api_addr.parse().unwrap_or_else(|e| {
+    let addr = daemon::listen::ListenAddr::parse(&api_addr).unwrap_or_else(|e| {
         eprintln!("Invalid API address '{api_addr}': {e}");
         process::exit(exit_code::CONFIG_ERROR);
     });
 
     #[cfg(feature = "daemon-tls")]
-    let tls_state = build_tls_state(&tls_args, addr);
+    let tls_state = build_tls_state(&tls_args, &addr);
 
     #[cfg(feature = "daemon-nats")]
     let nats_config = rsigma_runtime::NatsConnectConfig {
@@ -1585,8 +1588,29 @@ pub(crate) fn parse_input_format(
 /// requested. Exits with `CONFIG_ERROR` on validation failure so the
 /// operator sees the problem before the daemon spins up.
 #[cfg(feature = "daemon-tls")]
-fn build_tls_state(args: &TlsCliArgs, addr: std::net::SocketAddr) -> Option<daemon::tls::TlsState> {
+fn build_tls_state(
+    args: &TlsCliArgs,
+    addr: &daemon::listen::ListenAddr,
+) -> Option<daemon::tls::TlsState> {
     use daemon::tls::{TlsCliConfig, TlsMinVersion, TlsState, enforce_plaintext_policy};
+
+    // TLS terminates on a TCP socket. A unix:// listener is gated by filesystem
+    // permissions instead, so cert/key on a UDS address is a configuration
+    // error and plaintext over a UDS needs no `--allow-plaintext` opt-in.
+    let tcp_addr = match addr {
+        daemon::listen::ListenAddr::Tcp(sa) => *sa,
+        #[cfg(unix)]
+        daemon::listen::ListenAddr::Unix(_) => {
+            if args.cert.is_some() || args.key.is_some() {
+                eprintln!(
+                    "--tls-cert/--tls-key cannot be combined with a unix:// API address; \
+                     a unix socket is secured by filesystem permissions, not TLS"
+                );
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+            return None;
+        }
+    };
 
     match (args.cert.as_ref(), args.key.as_ref()) {
         (Some(cert), Some(key)) => {
@@ -1610,7 +1634,7 @@ fn build_tls_state(args: &TlsCliArgs, addr: std::net::SocketAddr) -> Option<daem
             }
         }
         (None, None) => {
-            if let Err(msg) = enforce_plaintext_policy(addr, args.allow_plaintext) {
+            if let Err(msg) = enforce_plaintext_policy(tcp_addr, args.allow_plaintext) {
                 eprintln!("{msg}");
                 process::exit(exit_code::CONFIG_ERROR);
             }

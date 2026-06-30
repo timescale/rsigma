@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -37,10 +36,18 @@ struct DlqEntry {
 }
 
 use super::health::HealthState;
+use super::listen::ListenAddr;
 use super::metrics::Metrics;
 use super::reload;
 use super::store::{SourcePosition, SqliteStateStore};
 use crate::EventFilter;
+
+/// The bound API listener: a TCP socket, or a Unix domain socket on Unix.
+enum BoundListener {
+    Tcp(tokio::net::TcpListener),
+    #[cfg(unix)]
+    Unix(tokio::net::UnixListener),
+}
 
 /// Effective live event-tap limits, resolved from `daemon.tap.*` plus the
 /// `--enable-tap` flag.
@@ -155,7 +162,7 @@ pub struct DaemonConfig {
     pub corr_config: CorrelationConfig,
     pub include_event: bool,
     pub pretty: bool,
-    pub api_addr: SocketAddr,
+    pub api_addr: super::listen::ListenAddr,
     pub event_filter: Arc<EventFilter>,
     pub state_db: Option<PathBuf>,
     pub state_save_interval: u64,
@@ -878,13 +885,39 @@ pub async fn run_daemon(config: DaemonConfig) {
 
     let app = app.layer(TraceLayer::new_for_http()).with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind(config.api_addr)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(addr = %config.api_addr, error = %e, "Failed to bind API server");
-            std::process::exit(crate::exit_code::CONFIG_ERROR);
-        });
-    let actual_addr = listener.local_addr().unwrap_or(config.api_addr);
+    // The UDS guard unlinks the socket file when `run_daemon` returns (after
+    // the drain), so a clean shutdown leaves no stale socket behind.
+    #[cfg(unix)]
+    let mut _uds_guard: Option<rsigma_runtime::UnixSocketGuard> = None;
+    let (bound, actual_addr) = match &config.api_addr {
+        ListenAddr::Tcp(addr) => {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!(addr = %addr, error = %e, "Failed to bind API server");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                });
+            let actual = listener
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| addr.to_string());
+            (BoundListener::Tcp(listener), actual)
+        }
+        #[cfg(unix)]
+        ListenAddr::Unix(path) => {
+            let (listener, guard) = rsigma_runtime::bind_unix_listener(path)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!(path = %path.display(), error = %e, "Failed to bind API server unix socket");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                });
+            _uds_guard = Some(guard);
+            (
+                BoundListener::Unix(listener),
+                format!("unix://{}", path.display()),
+            )
+        }
+    };
 
     // Install the OS signal handlers eagerly, before the listener is
     // announced and reachable. The kernel completes the TCP handshake for
@@ -1767,25 +1800,39 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(not(feature = "daemon-otlp"))]
     let unified_app: axum::Router = app;
 
-    let mut serve_handle = {
-        #[cfg(feature = "daemon-tls")]
-        {
-            if let Some(state) = tls_state {
-                let tls_listener = super::tls::RustlsListener::new(
-                    listener,
-                    state.config.clone(),
-                    metrics.tls_active_connections.clone(),
-                );
-                let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
-                tokio::spawn(async move {
-                    if let Err(e) = axum::serve(tls_listener, unified_app)
-                        .with_graceful_shutdown(shutdown_fut)
-                        .await
-                    {
-                        tracing::error!(error = %e, "server error");
-                    }
-                })
-            } else {
+    let mut serve_handle = match bound {
+        BoundListener::Tcp(listener) => {
+            #[cfg(feature = "daemon-tls")]
+            {
+                if let Some(state) = tls_state {
+                    let tls_listener = super::tls::RustlsListener::new(
+                        listener,
+                        state.config.clone(),
+                        metrics.tls_active_connections.clone(),
+                    );
+                    let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
+                    tokio::spawn(async move {
+                        if let Err(e) = axum::serve(tls_listener, unified_app)
+                            .with_graceful_shutdown(shutdown_fut)
+                            .await
+                        {
+                            tracing::error!(error = %e, "server error");
+                        }
+                    })
+                } else {
+                    let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
+                    tokio::spawn(async move {
+                        if let Err(e) = axum::serve(listener, unified_app)
+                            .with_graceful_shutdown(shutdown_fut)
+                            .await
+                        {
+                            tracing::error!(error = %e, "server error");
+                        }
+                    })
+                }
+            }
+            #[cfg(not(feature = "daemon-tls"))]
+            {
                 let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
                 tokio::spawn(async move {
                     if let Err(e) = axum::serve(listener, unified_app)
@@ -1797,8 +1844,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                 })
             }
         }
-        #[cfg(not(feature = "daemon-tls"))]
-        {
+        // A unix:// listener never terminates TLS (rejected at config time), so
+        // it always serves plaintext over the socket.
+        #[cfg(unix)]
+        BoundListener::Unix(listener) => {
             let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
             tokio::spawn(async move {
                 if let Err(e) = axum::serve(listener, unified_app)
