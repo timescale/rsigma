@@ -46,6 +46,11 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          # Write the cache only from main; PRs restore it but never save. This
+          # drops the slow per-PR cache upload (notably ~3 min on the Windows
+          # runner) and keeps the shared cache from thrashing across branches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --all-features --locked
 
   msrv:
@@ -64,6 +69,8 @@ jobs:
       - name: Install Rust 1.88.0
         run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # `--all-targets` so tests, examples, and benches compile against
       # the MSRV too. Without it a contributor can add a test-only
       # dependency that requires a newer Rust without anyone noticing.
@@ -98,6 +105,8 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
@@ -109,6 +118,20 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     permissions:
       contents: read
+    env:
+      # Drop full debuginfo down to line tables: cuts codegen and, on
+      # Windows, the expensive PDB generation/link step, while keeping panic
+      # file:line in CI logs. Disable incremental compilation: it adds
+      # overhead and bloats the cache for no benefit in from-scratch CI runs.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+      # Link with LLVM's lld-link instead of MSVC link.exe on the Windows
+      # target (the windows-latest runner ships LLVM on PATH). LLD roughly
+      # halves MSVC link time, which dominates this job. The var only affects
+      # the windows-msvc target, so it is a no-op on the Linux/macOS legs and
+      # never touches the release-binary builds.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: lld-link.exe
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -119,6 +142,8 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --all-features --locked
 
   coverage:
@@ -138,6 +163,8 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate coverage
         run: |
           cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
@@ -170,6 +197,8 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Fail the build on broken intra-doc links and any other rustdoc
       # warning. `--no-deps` keeps the work bounded to first-party
       # crates so this job does not chase a transitive dep's doc
@@ -199,6 +228,8 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build rsigma
         run: cargo build --release --all-features --locked -p rsigma
       - name: Fetch SigmaHQ rules at pinned SHA
@@ -259,6 +290,8 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Build the CLI with the opt-in `mcp` feature, then drive the
       # built binary end to end over both transports. `python3` ships
       # on the runner and the harness uses only the standard library.
