@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-01
+
+**TL;DR**
+RSigma v0.18.0 is the "post-engine alerting and detection lifecycle" release: the daemon grows an Alertmanager-style processing stage and an entity risk layer, the toolkit gains the triage, hygiene, and ADS pieces that close the detection lifecycle, content-based schema and logsource routing lands, a data-aware diagnostics toolkit ships, and `rstix` completes its STIX 2.1 data model and gains a pattern engine.
+* Post-engine alert processing: an alert pipeline adds deduplication, silencing, inhibition, and incident grouping to the daemon sink path (#255); risk-based alerting scores entities and emits a risk-incident layer (#264); the webhook sink can HMAC-sign every request (#266).
+* Detection lifecycle: a triage feedback loop turns analyst dispositions into a live per-rule false-positive ratio (#263); a rule hygiene report surfaces retirement and clean-up candidates (#262); optional ADS metadata gains linter enforcement and an authoring command (#261).
+* Schema and logsource routing: content-based schema recognition (#245) and per-schema pipeline routing (#246), plus opt-in conflict-based logsource pruning in the evaluator (#249).
+* Diagnostics: an explain-and-introspect toolkit adds detection explain, pipeline transform diff, and correlation window introspection (#270).
+* Daemon transport: Unix domain socket support for the input source, output sink, and API listener (#273).
+* `rstix` (threat-intel library, not yet independently releasable): completes the STIX 2.1 data model and serialization (#248, #254, #265, #268) and adds a pattern engine that parses and type-checks STIX patterning Levels 1-3 (#272).
+* Fixes, security, and dependencies: jq `halt`/`halt_error` can no longer terminate the process (#247); a transitive `anyhow` bump clears RUSTSEC-2026-0190 (#271); a rolled-up dependency bump (#257); and the CI/CD guide documents `rsigma-action` (#260).
+
 ### rstix Pattern Engine: parse and type-check (Levels 1–3) (#272)
 
 Adds the `pattern` feature to `rstix` with a hand-written lexer, recursive-descent parser for STIX patterning Levels 1–3, and an SCO schema type-checker for all 18 cyber-observable types:
@@ -201,6 +213,8 @@ Content-based schema classification that recognizes the structure of each event 
 ### Dependency bumps (#257)
 
 Rolls up the open Dependabot PRs into a single merge, regenerating the lockfiles against current `main` rather than replaying stale lockfile bases. Rust (workspace `Cargo.lock`): `opentelemetry_sdk` 0.32.0 to 0.32.1 (#256), `jaq-core` 3.0.0 to 3.1.0 (#235), `jaq-json` 2.0.0 to 2.0.1 and `jaq-std` 3.0.0 to 3.0.1 (#258), `insta` 1.47.2 to 1.48.0 (#233), `evtx` 0.11 to 0.12.2 (#232), and the `patch-updates` group (#253) `regex` 1.12.3 to 1.12.4, `daachorse` 3.0.1 to 3.0.2, `time` 0.3.47 to 0.3.49, `prost` 0.14.3 to 0.14.4, `getrandom` 0.4.2 to 0.4.3, and `uuid` 1.23.2 to 1.23.3 (the `getrandom` bump drops the `wit-bindgen`/`wasi` build toolchain 0.4.2 pulled in); `regex` 1.12.3 to 1.12.4 in `fuzz/Cargo.lock` (#229). CI (all repinned by commit SHA, batched via the `actions-updates` group, #252): `actions/checkout` v6.0.3 to v7.0.0, `taiki-e/install-action` v2.81.4 to v2.82.0, and `rust-lang/crates-io-auth-action` v1.0.4 to v1.0.5. VS Code extension: `@types/node` 25.9.1 to 25.9.3 and `@types/vscode` 1.120.0 to 1.125.0 (#251), plus the transitive `form-data` 4.0.5 to 4.0.6 (#224), `js-yaml` 4.1.1 to 4.2.0 (#225), `markdown-it` 14.1.1 to 14.2.0 (#226), and `undici` 7.25.0 to 7.28.0 (#236). The `rusqlite` 0.39 to 0.40.1 bump (#234) is held back: it pulls `libsqlite3-sys` 0.38.1, whose build script needs the `cfg_select!` macro that is unavailable on the pinned MSRV (1.88.0).
+
+[v0.17.0...v0.18.0](https://github.com/timescale/rsigma/compare/v0.17.0...v0.18.0)
 
 ## [0.17.0] - 2026-06-23
 
@@ -2187,6 +2201,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.18.0]: https://github.com/timescale/rsigma/releases/tag/v0.18.0
 [0.17.0]: https://github.com/timescale/rsigma/releases/tag/v0.17.0
 [0.16.0]: https://github.com/timescale/rsigma/releases/tag/v0.16.0
 [0.15.0]: https://github.com/timescale/rsigma/releases/tag/v0.15.0
