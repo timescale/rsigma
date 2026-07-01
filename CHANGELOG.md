@@ -13,7 +13,7 @@ RSigma v0.18.0 is the "post-engine alerting and detection lifecycle" release: th
 * Schema and logsource routing: content-based schema recognition (#245) and per-schema pipeline routing (#246), plus opt-in conflict-based logsource pruning in the evaluator (#249).
 * Diagnostics: an explain-and-introspect toolkit adds detection explain, pipeline transform diff, and correlation window introspection (#270).
 * Daemon transport: Unix domain socket support for the input source, output sink, and API listener (#273).
-* `rstix` (threat-intel library, not yet independently releasable): completes the STIX 2.1 data model and serialization (#248, #254, #265, #268) and adds a pattern engine that parses and type-checks STIX patterning Levels 1-3 (#272).
+* `rstix` (threat-intel library, not yet independently releasable): completes the STIX 2.1 data model and serialization (#248, #254, #265, #268) and adds a pattern engine that parses and type-checks STIX patterning Levels 1-3 (#272), thanks to @SecurityEnthusiast.
 * Fixes, security, and dependencies: jq `halt`/`halt_error` can no longer terminate the process (#247); a transitive `anyhow` bump clears RUSTSEC-2026-0190 (#271); a rolled-up dependency bump (#257); and the CI/CD guide documents `rsigma-action` (#260).
 
 ### rstix Pattern Engine: parse and type-check (Levels 1–3) (#272)
