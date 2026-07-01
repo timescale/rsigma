@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix Pattern Engine: evaluation (Levels 1–3)
+### rstix Pattern Engine: evaluation (Levels 1–3) (#276)
 
 Adds STIX pattern evaluation to the `pattern` feature:
 
