@@ -1,0 +1,43 @@
+{
+  "type": "email-message",
+  "spec_version": "2.1",
+  "id": "email-message--00000000-0000-0000-0000-000000000007",
+  "defanged": false,
+  "is_multipart": true,
+  "date": "2020-01-01T00:00:00.000Z",
+  "content_type": "multipart/mixed",
+  "message_id": "<msg-001@example.com>",
+  "subject": "Test subject",
+  "subject_enc": "encrypted-subject",
+  "from_ref": "email-addr--00000000-0000-0000-0000-000000000005",
+  "sender_ref": "email-addr--00000000-0000-0000-0000-000000000022",
+  "to_refs": [
+    "email-addr--00000000-0000-0000-0000-000000000006"
+  ],
+  "cc_refs": [
+    "email-addr--00000000-0000-0000-0000-000000000020"
+  ],
+  "bcc_refs": [
+    "email-addr--00000000-0000-0000-0000-000000000021"
+  ],
+  "received_lines": [
+    "from mail.example.com by mx.example.com"
+  ],
+  "additional_header_fields": {
+    "X-Custom": [
+      "custom-value"
+    ]
+  },
+  "raw_email_ref": "artifact--00000000-0000-0000-0000-00000000001c",
+  "body_multipart": [
+    {
+      "content_type": "text/plain; charset=utf-8",
+      "content_disposition": "inline",
+      "body": "Hello multipart"
+    },
+    {
+      "content_type": "application/octet-stream",
+      "body_raw_ref": "artifact--00000000-0000-0000-0000-00000000001c"
+    }
+  ]
+}

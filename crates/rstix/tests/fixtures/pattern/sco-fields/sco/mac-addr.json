@@ -1,0 +1,7 @@
+{
+  "type": "mac-addr",
+  "spec_version": "2.1",
+  "id": "mac-addr--00000000-0000-0000-0000-00000000000b",
+  "defanged": false,
+  "value": "08:00:27:1a:2b:3c"
+}

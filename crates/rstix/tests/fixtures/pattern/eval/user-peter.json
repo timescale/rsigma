@@ -1,0 +1,8 @@
+{
+  "type": "user-account",
+  "spec_version": "2.1",
+  "id": "user-account--00000000-0000-0000-0000-000000000241",
+  "account_type": "unix",
+  "user_id": "1007",
+  "account_login": "Peter"
+}

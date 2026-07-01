@@ -7,7 +7,7 @@ pub trait QueryableStixObject: Send + Sync + 'static {
     /// Object identifier.
     fn id(&self) -> &StixId;
     /// Object type string.
-    fn type_name(&self) -> &'static str;
+    fn type_name(&self) -> &str;
     /// Optional object spec version.
     fn spec_version(&self) -> Option<SpecVersion>;
     /// Created timestamp (SCOs may return `None`).
@@ -34,6 +34,8 @@ pub enum QueryValue<'a> {
     Timestamp(&'a StixTimestamp),
     /// STIX object reference id.
     Id(&'a StixId),
+    /// Decoded binary payload (e.g. artifact `payload_bin`).
+    Bytes(&'a [u8]),
     /// Null value.
     Null,
 }

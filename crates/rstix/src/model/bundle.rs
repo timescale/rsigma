@@ -194,6 +194,21 @@ impl Bundle {
         Ok(bundle)
     }
 
+    /// Build a bundle without reference validation (unit tests only).
+    #[cfg(test)]
+    pub(crate) fn from_objects_for_test(id: StixId, objects: Vec<StixObject>) -> Self {
+        let mut id_index = HashMap::with_capacity(objects.len());
+        for (index, object) in objects.iter().enumerate() {
+            id_index.insert(object.id().as_str().to_owned(), index);
+        }
+        Self {
+            id,
+            objects,
+            id_index,
+            extra_properties: HashMap::new(),
+        }
+    }
+
     /// Bundle identifier.
     pub fn id(&self) -> &StixId {
         &self.id
@@ -281,6 +296,7 @@ impl Bundle {
                     ScoObject::UserAccount(v) => vec![&v.common.extensions],
                     ScoObject::WindowsRegistryKey(v) => vec![&v.common.extensions],
                     ScoObject::X509Certificate(v) => vec![&v.common.extensions],
+                    ScoObject::Custom(v) => vec![&v.common.extensions],
                 },
                 StixObject::Meta(meta) => match meta {
                     MetaObject::MarkingDefinition(MarkingDefinition { extensions, .. }) => {

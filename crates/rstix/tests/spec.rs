@@ -5,8 +5,12 @@
 
 #![cfg(feature = "serde")]
 
-mod support;
+#[path = "support/fixtures_spec.rs"]
+mod fixtures_spec;
+#[path = "support/roundtrip.rs"]
+mod roundtrip;
 
+use roundtrip::{assert_fixture_rejects, roundtrip, roundtrip_strict};
 use rstix::core::{Confidence, QueryValue, QueryableStixObject, SpecVersion};
 use rstix::model::common::{
     ExtensionMap, ExternalReference, GranularMarking, ScoCommonProps, SdoSroCommonProps,
@@ -29,7 +33,7 @@ use rstix::vocab::OpinionValue;
 
 #[test]
 fn sdo_sro_round_trips_attack_pattern() {
-    let parsed = support::roundtrip::<SdoSroCommonProps>("common/sdo_attack-pattern.json");
+    let parsed = roundtrip::<SdoSroCommonProps>("common/sdo_attack-pattern.json");
     assert_eq!(parsed.spec_version, SpecVersion::V2_1);
     let created_by = parsed
         .created_by_ref
@@ -42,7 +46,7 @@ fn sdo_sro_round_trips_attack_pattern() {
 
 #[test]
 fn sdo_sro_minimal_omits_empty_optionals() {
-    let parsed = support::roundtrip::<SdoSroCommonProps>("common/sdo_minimal.json");
+    let parsed = roundtrip::<SdoSroCommonProps>("common/sdo_minimal.json");
     let value = serde_json::to_value(&parsed).expect("serialize");
     for absent in [
         "created_by_ref",
@@ -64,12 +68,12 @@ fn sdo_sro_minimal_omits_empty_optionals() {
 
 #[test]
 fn sdo_sro_rejects_missing_spec_version() {
-    support::assert_fixture_rejects::<SdoSroCommonProps>("common/sdo_missing_spec_version.json");
+    assert_fixture_rejects::<SdoSroCommonProps>("common/sdo_missing_spec_version.json");
 }
 
 #[test]
 fn sco_round_trips_ipv4_and_omits_sdo_fields() {
-    let parsed = support::roundtrip::<ScoCommonProps>("common/sco_ipv4-addr.json");
+    let parsed = roundtrip::<ScoCommonProps>("common/sco_ipv4-addr.json");
     assert_eq!(parsed.spec_version, Some(SpecVersion::V2_1));
 
     let value = serde_json::to_value(&parsed).expect("serialize");
@@ -92,26 +96,25 @@ fn sco_round_trips_ipv4_and_omits_sdo_fields() {
 
 #[test]
 fn external_reference_round_trips_full_fixture() {
-    let parsed = support::roundtrip_strict::<ExternalReference>("common/external-reference.json");
+    let parsed = roundtrip_strict::<ExternalReference>("common/external-reference.json");
     assert_eq!(parsed.source_name, "capec");
     assert_eq!(parsed.external_id.as_deref(), Some("CAPEC-163"));
 }
 
 #[test]
 fn sdo_sro_confidence_round_trips_and_rejects_out_of_range() {
-    let parsed = support::roundtrip::<SdoSroCommonProps>("common/sdo_confidence.json");
+    let parsed = roundtrip::<SdoSroCommonProps>("common/sdo_confidence.json");
     assert_eq!(
         parsed.confidence,
         Some(Confidence::new(85).expect("in range"))
     );
 
-    support::assert_fixture_rejects::<SdoSroCommonProps>("common/sdo_confidence-out-of-range.json");
+    assert_fixture_rejects::<SdoSroCommonProps>("common/sdo_confidence-out-of-range.json");
 }
 
 #[test]
 fn external_reference_minimal_omits_empty_optionals() {
-    let parsed =
-        support::roundtrip_strict::<ExternalReference>("common/external-reference-minimal.json");
+    let parsed = roundtrip_strict::<ExternalReference>("common/external-reference-minimal.json");
     let value = serde_json::to_value(&parsed).expect("serialize");
     assert_eq!(
         value.get("source_name").and_then(|v| v.as_str()),
@@ -131,23 +134,15 @@ fn external_reference_minimal_omits_empty_optionals() {
 
 #[test]
 fn external_reference_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<ExternalReference>(
-        "common/external-reference-missing-source.json",
-    );
-    support::assert_fixture_rejects::<ExternalReference>(
-        "common/external-reference-empty-source.json",
-    );
-    support::assert_fixture_rejects::<ExternalReference>(
-        "common/external-reference-whitespace-source.json",
-    );
-    support::assert_fixture_rejects::<ExternalReference>(
-        "common/external-reference-source-only.json",
-    );
+    assert_fixture_rejects::<ExternalReference>("common/external-reference-missing-source.json");
+    assert_fixture_rejects::<ExternalReference>("common/external-reference-empty-source.json");
+    assert_fixture_rejects::<ExternalReference>("common/external-reference-whitespace-source.json");
+    assert_fixture_rejects::<ExternalReference>("common/external-reference-source-only.json");
 }
 
 #[test]
 fn extension_map_round_trips() {
-    let map = support::roundtrip_strict::<ExtensionMap>("common/extension-map.json");
+    let map = roundtrip_strict::<ExtensionMap>("common/extension-map.json");
     assert!(
         map.get("extension-definition--04ee437a-1b58-4f6e-8b3e-6c0d0c7b9b21")
             .is_some()
@@ -156,43 +151,38 @@ fn extension_map_round_trips() {
 
 #[test]
 fn granular_marking_round_trips_marking_ref() {
-    let parsed = support::roundtrip_strict::<GranularMarking>("common/granular-marking-ref.json");
+    let parsed = roundtrip_strict::<GranularMarking>("common/granular-marking-ref.json");
     assert!(parsed.marking_ref.is_some());
     assert!(parsed.lang.is_none());
 }
 
 #[test]
 fn granular_marking_round_trips_lang() {
-    let parsed = support::roundtrip_strict::<GranularMarking>("common/granular-marking-lang.json");
+    let parsed = roundtrip_strict::<GranularMarking>("common/granular-marking-lang.json");
     assert!(parsed.lang.is_some());
     assert!(parsed.marking_ref.is_none());
 }
 
 #[test]
 fn granular_marking_rejects_both_and_neither() {
-    support::assert_fixture_rejects::<GranularMarking>("common/granular-marking-both.json");
-    support::assert_fixture_rejects::<GranularMarking>("common/granular-marking-neither.json");
+    assert_fixture_rejects::<GranularMarking>("common/granular-marking-both.json");
+    assert_fixture_rejects::<GranularMarking>("common/granular-marking-neither.json");
 }
 
 #[test]
 fn granular_marking_rejects_empty_selectors() {
-    support::assert_fixture_rejects::<GranularMarking>(
-        "common/granular-marking-empty-selectors.json",
-    );
+    assert_fixture_rejects::<GranularMarking>("common/granular-marking-empty-selectors.json");
 }
 
 #[test]
 fn granular_marking_rejects_missing_selectors() {
-    support::assert_fixture_rejects::<GranularMarking>(
-        "common/granular-marking-missing-selectors.json",
-    );
+    assert_fixture_rejects::<GranularMarking>("common/granular-marking-missing-selectors.json");
 }
 
 #[test]
 fn marking_definition_round_trips_legacy_and_current_tlp_encodings() {
-    let legacy = support::roundtrip_strict::<MarkingDefinition>(
-        "meta/marking-definition-tlp-v1-white-stix21.json",
-    );
+    let legacy =
+        roundtrip_strict::<MarkingDefinition>("meta/marking-definition-tlp-v1-white-stix21.json");
     assert_eq!(legacy.id.as_str(), TLP1_WHITE_ID);
     assert_eq!(legacy.definition_type.as_deref(), Some("tlp"));
     assert_eq!(
@@ -205,16 +195,15 @@ fn marking_definition_round_trips_legacy_and_current_tlp_encodings() {
     );
     assert!(legacy.is_non_versionable());
 
-    let current = support::roundtrip_strict::<MarkingDefinition>(
-        "meta/marking-definition-tlp-v2-clear-stix21.json",
-    );
+    let current =
+        roundtrip_strict::<MarkingDefinition>("meta/marking-definition-tlp-v2-clear-stix21.json");
     assert_eq!(current.id.as_str(), TLP2_CLEAR_ID);
     assert!(!current.extensions.is_empty());
 }
 
 #[test]
 fn marking_definition_round_trips_with_common_properties() {
-    let parsed = support::roundtrip_strict::<MarkingDefinition>(
+    let parsed = roundtrip_strict::<MarkingDefinition>(
         "meta/marking-definition-with-common-props-stix21.json",
     );
     assert!(parsed.created_by_ref.is_some());
@@ -225,33 +214,31 @@ fn marking_definition_round_trips_with_common_properties() {
 
 #[test]
 fn meta_types_reject_wrong_type_field() {
-    support::assert_fixture_rejects::<MarkingDefinition>("meta/language-content.json");
-    support::assert_fixture_rejects::<LanguageContent>(
-        "meta/marking-definition-tlp-v1-white-stix21.json",
-    );
-    support::assert_fixture_rejects::<ExtensionDefinition>(
+    assert_fixture_rejects::<MarkingDefinition>("meta/language-content.json");
+    assert_fixture_rejects::<LanguageContent>("meta/marking-definition-tlp-v1-white-stix21.json");
+    assert_fixture_rejects::<ExtensionDefinition>(
         "meta/marking-definition-tlp-v2-clear-stix21.json",
     );
 }
 
 #[test]
 fn extension_definition_round_trips_and_rejects_missing_created_by_ref() {
-    support::roundtrip_strict::<ExtensionDefinition>("meta/extension-definition.json");
-    support::assert_fixture_rejects::<ExtensionDefinition>(
+    roundtrip_strict::<ExtensionDefinition>("meta/extension-definition.json");
+    assert_fixture_rejects::<ExtensionDefinition>(
         "meta/extension-definition-missing-created-by-ref.json",
     );
 }
 
 #[test]
 fn language_content_round_trips() {
-    let parsed = support::roundtrip_strict::<LanguageContent>("meta/language-content.json");
+    let parsed = roundtrip_strict::<LanguageContent>("meta/language-content.json");
     assert_eq!(parsed.object_ref.type_name(), "attack-pattern");
     assert!(parsed.contents.contains_key("de"));
 }
 
 #[test]
 fn relationship_round_trips() {
-    let parsed = support::roundtrip_strict::<Relationship>("sro/relationship.json");
+    let parsed = roundtrip_strict::<Relationship>("sro/relationship.json");
     assert_eq!(parsed.relationship_type, "uses");
     assert_eq!(parsed.source_ref.type_name(), "malware");
     assert_eq!(parsed.target_ref.type_name(), "attack-pattern");
@@ -262,7 +249,7 @@ fn relationship_round_trips() {
 
 #[test]
 fn relationship_round_trips_with_times_and_description() {
-    let parsed = support::roundtrip_strict::<Relationship>("sro/relationship-with-times.json");
+    let parsed = roundtrip_strict::<Relationship>("sro/relationship-with-times.json");
     assert_eq!(parsed.relationship_type, "related-to");
     assert!(parsed.description.is_some());
     assert!(parsed.start_time.is_some());
@@ -271,8 +258,7 @@ fn relationship_round_trips_with_times_and_description() {
 
 #[test]
 fn relationship_round_trips_with_common_properties() {
-    let parsed =
-        support::roundtrip_strict::<Relationship>("sro/relationship-with-common-props-stix21.json");
+    let parsed = roundtrip_strict::<Relationship>("sro/relationship-with-common-props-stix21.json");
     assert!(parsed.common.created_by_ref.is_some());
     assert_eq!(parsed.common.labels.len(), 1);
     assert!(parsed.common.confidence.is_some());
@@ -280,20 +266,20 @@ fn relationship_round_trips_with_common_properties() {
 
 #[test]
 fn relationship_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<Relationship>("sro/relationship-stop-before-start.json");
-    support::assert_fixture_rejects::<Relationship>("sro/relationship-type-invalid.json");
+    assert_fixture_rejects::<Relationship>("sro/relationship-stop-before-start.json");
+    assert_fixture_rejects::<Relationship>("sro/relationship-type-invalid.json");
 }
 
 #[test]
 fn sighting_round_trips_minimal_spec_example() {
-    let parsed = support::roundtrip_strict::<Sighting>("sro/sighting-minimal.json");
+    let parsed = roundtrip_strict::<Sighting>("sro/sighting-minimal.json");
     assert_eq!(parsed.sighting_of_ref.type_name(), "indicator");
     assert!(parsed.common.created_by_ref.is_some());
 }
 
 #[test]
 fn sighting_round_trips_rich_spec_example() {
-    let parsed = support::roundtrip_strict::<Sighting>("sro/sighting-rich.json");
+    let parsed = roundtrip_strict::<Sighting>("sro/sighting-rich.json");
     assert_eq!(parsed.sighting_of_ref.type_name(), "indicator");
     assert_eq!(parsed.count, Some(50));
     assert_eq!(parsed.summary.as_deref(), Some("false"));
@@ -308,7 +294,7 @@ fn sighting_round_trips_rich_spec_example() {
 
 #[test]
 fn sighting_round_trips_with_location_where_sighted_ref() {
-    let parsed = support::roundtrip_strict::<Sighting>("sro/sighting-with-location.json");
+    let parsed = roundtrip_strict::<Sighting>("sro/sighting-with-location.json");
     assert!(matches!(
         &parsed.where_sighted_refs[0],
         rstix::model::sro::WhereSightedRef::Location(_)
@@ -317,7 +303,7 @@ fn sighting_round_trips_with_location_where_sighted_ref() {
 
 #[test]
 fn sighting_minimal_omits_empty_optionals() {
-    let parsed = support::roundtrip_strict::<Sighting>("sro/sighting-minimal.json");
+    let parsed = roundtrip_strict::<Sighting>("sro/sighting-minimal.json");
     let value = serde_json::to_value(&parsed).expect("serialize");
     for absent in [
         "description",
@@ -337,140 +323,138 @@ fn sighting_minimal_omits_empty_optionals() {
 
 #[test]
 fn sighting_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<Sighting>("sro/sighting-count-out-of-range.json");
-    support::assert_fixture_rejects::<Sighting>("sro/sighting-last-seen-before-first-seen.json");
-    support::assert_fixture_rejects::<Sighting>("sro/sighting-where-sighted-wrong-type.json");
+    assert_fixture_rejects::<Sighting>("sro/sighting-count-out-of-range.json");
+    assert_fixture_rejects::<Sighting>("sro/sighting-last-seen-before-first-seen.json");
+    assert_fixture_rejects::<Sighting>("sro/sighting-where-sighted-wrong-type.json");
 }
 
 #[test]
 fn sro_types_reject_wrong_type_field() {
-    support::assert_fixture_rejects::<Relationship>("sro/sighting-minimal.json");
-    support::assert_fixture_rejects::<Sighting>("sro/relationship.json");
+    assert_fixture_rejects::<Relationship>("sro/sighting-minimal.json");
+    assert_fixture_rejects::<Sighting>("sro/relationship.json");
 }
 
 #[test]
 fn sco_artifact_round_trips_and_rejects_payload_xor_url() {
-    support::roundtrip_strict::<Artifact>("sco/artifact-image.json");
-    support::assert_fixture_rejects::<Artifact>("sco/artifact-payload-and-url.json");
+    roundtrip_strict::<Artifact>("sco/artifact-image.json");
+    assert_fixture_rejects::<Artifact>("sco/artifact-payload-and-url.json");
 }
 
 #[test]
 fn sco_autonomous_system_round_trips() {
-    support::roundtrip_strict::<AutonomousSystem>("sco/autonomous-system-basic.json");
+    roundtrip_strict::<AutonomousSystem>("sco/autonomous-system-basic.json");
 }
 
 #[test]
 fn sco_directory_round_trips_and_rejects_wrong_contains_ref() {
-    support::roundtrip_strict::<Directory>("sco/directory-basic.json");
-    support::assert_fixture_rejects::<Directory>("sco/directory-contains-wrong-type.json");
+    roundtrip_strict::<Directory>("sco/directory-basic.json");
+    assert_fixture_rejects::<Directory>("sco/directory-contains-wrong-type.json");
 }
 
 #[test]
 fn sco_domain_name_round_trips_and_rejects_wrong_resolves_ref() {
-    support::roundtrip_strict::<DomainName>("sco/domain-name-basic.json");
-    support::assert_fixture_rejects::<DomainName>("sco/domain-name-resolves-wrong-type.json");
+    roundtrip_strict::<DomainName>("sco/domain-name-basic.json");
+    assert_fixture_rejects::<DomainName>("sco/domain-name-resolves-wrong-type.json");
 }
 
 #[test]
 fn sco_email_addr_round_trips_and_rejects_empty_value() {
-    support::roundtrip_strict::<EmailAddr>("sco/email-addr-basic.json");
-    support::assert_fixture_rejects::<EmailAddr>("sco/email-addr-empty-value.json");
+    roundtrip_strict::<EmailAddr>("sco/email-addr-basic.json");
+    assert_fixture_rejects::<EmailAddr>("sco/email-addr-empty-value.json");
 }
 
 #[test]
 fn sco_email_message_round_trips_and_rejects_multipart_violation() {
-    support::roundtrip_strict::<EmailMessage>("sco/email-message-simple.json");
-    support::roundtrip_strict::<EmailMessage>("sco/email-message-multipart.json");
-    support::assert_fixture_rejects::<EmailMessage>("sco/email-message-body-with-multipart.json");
+    roundtrip_strict::<EmailMessage>("sco/email-message-simple.json");
+    roundtrip_strict::<EmailMessage>("sco/email-message-multipart.json");
+    assert_fixture_rejects::<EmailMessage>("sco/email-message-body-with-multipart.json");
 }
 
 #[test]
 fn sco_file_round_trips_and_rejects_missing_name_and_hash() {
-    support::roundtrip_strict::<File>("sco/file-basic.json");
-    support::roundtrip_strict::<File>("sco/file-with-parent.json");
-    support::roundtrip_strict::<File>("sco/file-with-archive-ext.json");
-    support::assert_fixture_rejects::<File>("sco/file-no-name-or-hash.json");
-    support::assert_fixture_rejects::<File>("sco/file-with-invalid-archive-ext.json");
+    roundtrip_strict::<File>("sco/file-basic.json");
+    roundtrip_strict::<File>("sco/file-with-parent.json");
+    roundtrip_strict::<File>("sco/file-with-archive-ext.json");
+    assert_fixture_rejects::<File>("sco/file-no-name-or-hash.json");
+    assert_fixture_rejects::<File>("sco/file-with-invalid-archive-ext.json");
 }
 
 #[test]
 fn sco_ipv4_addr_round_trips_and_rejects_wrong_resolves_ref() {
-    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-single.json");
-    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-cidr.json");
-    support::roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-with-belongs.json");
-    support::assert_fixture_rejects::<Ipv4Addr>("sco/ipv4-addr-resolves-wrong-type.json");
+    roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-single.json");
+    roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-cidr.json");
+    roundtrip_strict::<Ipv4Addr>("sco/ipv4-addr-with-belongs.json");
+    assert_fixture_rejects::<Ipv4Addr>("sco/ipv4-addr-resolves-wrong-type.json");
 }
 
 #[test]
 fn sco_ipv6_addr_round_trips() {
-    support::roundtrip_strict::<Ipv6Addr>("sco/ipv6-addr-single.json");
+    roundtrip_strict::<Ipv6Addr>("sco/ipv6-addr-single.json");
 }
 
 #[test]
 fn sco_mac_addr_round_trips() {
-    support::roundtrip_strict::<MacAddr>("sco/mac-addr.json");
+    roundtrip_strict::<MacAddr>("sco/mac-addr.json");
 }
 
 #[test]
 fn sco_mutex_round_trips() {
-    support::roundtrip_strict::<Mutex>("sco/mutex.json");
+    roundtrip_strict::<Mutex>("sco/mutex.json");
 }
 
 #[test]
 fn sco_network_traffic_round_trips_and_rejects_invalid_fixtures() {
-    support::roundtrip_strict::<NetworkTraffic>("sco/network-traffic-tcp.json");
-    support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-no-protocols.json");
-    support::assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-end-with-active.json");
-    support::assert_fixture_rejects::<NetworkTraffic>(
-        "sco/network-traffic-with-invalid-tcp-ext.json",
-    );
+    roundtrip_strict::<NetworkTraffic>("sco/network-traffic-tcp.json");
+    assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-no-protocols.json");
+    assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-end-with-active.json");
+    assert_fixture_rejects::<NetworkTraffic>("sco/network-traffic-with-invalid-tcp-ext.json");
 }
 
 #[test]
 fn sco_process_round_trips_and_rejects_no_properties() {
-    support::roundtrip_strict::<Process>("sco/process-basic.json");
-    support::assert_fixture_rejects::<Process>("sco/process-no-properties.json");
-    support::assert_fixture_rejects::<Process>("sco/process-with-invalid-windows-process-ext.json");
+    roundtrip_strict::<Process>("sco/process-basic.json");
+    assert_fixture_rejects::<Process>("sco/process-no-properties.json");
+    assert_fixture_rejects::<Process>("sco/process-with-invalid-windows-process-ext.json");
 }
 
 #[test]
 fn sco_software_round_trips() {
-    support::roundtrip_strict::<Software>("sco/software-basic.json");
+    roundtrip_strict::<Software>("sco/software-basic.json");
 }
 
 #[test]
 fn sco_url_round_trips() {
-    support::roundtrip_strict::<Url>("sco/url.json");
+    roundtrip_strict::<Url>("sco/url.json");
 }
 
 #[test]
 fn sco_user_account_round_trips_and_rejects_no_properties() {
-    support::roundtrip_strict::<UserAccount>("sco/user-account-unix.json");
-    support::assert_fixture_rejects::<UserAccount>("sco/user-account-no-properties.json");
-    support::assert_fixture_rejects::<UserAccount>("sco/user-account-with-invalid-unix-ext.json");
+    roundtrip_strict::<UserAccount>("sco/user-account-unix.json");
+    assert_fixture_rejects::<UserAccount>("sco/user-account-no-properties.json");
+    assert_fixture_rejects::<UserAccount>("sco/user-account-with-invalid-unix-ext.json");
 }
 
 #[test]
 fn sco_windows_registry_key_round_trips() {
-    support::roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-basic.json");
-    support::roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-with-creator.json");
+    roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-basic.json");
+    roundtrip_strict::<WindowsRegistryKey>("sco/windows-registry-key-with-creator.json");
 }
 
 #[test]
 fn sco_x509_certificate_round_trips() {
-    support::roundtrip_strict::<X509Certificate>("sco/x509-certificate-basic.json");
+    roundtrip_strict::<X509Certificate>("sco/x509-certificate-basic.json");
 }
 
 #[test]
 fn sco_types_reject_wrong_type_field() {
-    support::assert_fixture_rejects::<Url>("sco/mutex.json");
-    support::assert_fixture_rejects::<Mutex>("sco/url.json");
-    support::assert_fixture_rejects::<File>("sco/artifact-image.json");
+    assert_fixture_rejects::<Url>("sco/mutex.json");
+    assert_fixture_rejects::<Mutex>("sco/url.json");
+    assert_fixture_rejects::<File>("sco/artifact-image.json");
 }
 
 #[test]
 fn sco_object_enum_delegates_queryable_stix_object() {
-    let parsed = support::roundtrip_strict::<Url>("sco/url.json");
+    let parsed = roundtrip_strict::<Url>("sco/url.json");
     let sco = ScoObject::Url(parsed.clone());
     assert_eq!(sco.id(), parsed.id());
     assert_eq!(sco.type_name(), Url::TYPE_NAME);
@@ -480,11 +464,11 @@ fn sco_object_enum_delegates_queryable_stix_object() {
 
 #[test]
 fn indicator_round_trips_minimal_and_rich() {
-    let minimal = support::roundtrip_strict::<Indicator>("sdo/indicator-minimal.json");
+    let minimal = roundtrip_strict::<Indicator>("sdo/indicator-minimal.json");
     assert_eq!(minimal.pattern.pattern_type(), "stix");
     assert_eq!(minimal.indicator_types, vec!["malicious-activity"]);
 
-    let rich = support::roundtrip_strict::<Indicator>("sdo/indicator-rich.json");
+    let rich = roundtrip_strict::<Indicator>("sdo/indicator-rich.json");
     assert!(rich.valid_until.is_some());
     assert_eq!(rich.kill_chain_phases.len(), 1);
     assert_eq!(
@@ -495,16 +479,16 @@ fn indicator_round_trips_minimal_and_rich() {
 
 #[test]
 fn indicator_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<Indicator>("sdo/indicator-valid-until-before-from.json");
+    assert_fixture_rejects::<Indicator>("sdo/indicator-valid-until-before-from.json");
 }
 
 #[test]
 fn note_round_trips_minimal_and_rich() {
-    let minimal = support::roundtrip_strict::<Note>("sdo/note-minimal.json");
+    let minimal = roundtrip_strict::<Note>("sdo/note-minimal.json");
     assert_eq!(minimal.authors, vec!["John Doe"]);
     assert_eq!(minimal.object_refs.len(), 1);
 
-    let rich = support::roundtrip_strict::<Note>("sdo/note-rich.json");
+    let rich = roundtrip_strict::<Note>("sdo/note-rich.json");
     assert_eq!(rich.object_refs.len(), 2);
     assert!(rich.common.created_by_ref.is_some());
 }
@@ -514,29 +498,29 @@ fn note_rejects_invalid_fixtures() {}
 
 #[test]
 fn opinion_round_trips_minimal_and_rich() {
-    let minimal = support::roundtrip_strict::<Opinion>("sdo/opinion-minimal.json");
+    let minimal = roundtrip_strict::<Opinion>("sdo/opinion-minimal.json");
     assert_eq!(minimal.opinion, OpinionValue::StronglyDisagree);
     assert!(minimal.explanation.is_some());
 
-    let rich = support::roundtrip_strict::<Opinion>("sdo/opinion-rich.json");
+    let rich = roundtrip_strict::<Opinion>("sdo/opinion-rich.json");
     assert_eq!(rich.opinion, OpinionValue::Agree);
     assert_eq!(rich.object_refs.len(), 2);
 }
 
 #[test]
 fn opinion_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<Opinion>("sdo/opinion-invalid-value.json");
+    assert_fixture_rejects::<Opinion>("sdo/opinion-invalid-value.json");
 }
 
 #[test]
 fn observed_data_round_trips_object_refs_and_objects() {
     use rstix::model::sdo::ObservedDataForm;
 
-    let refs = support::roundtrip_strict::<ObservedData>("sdo/observed-data-object-refs.json");
+    let refs = roundtrip_strict::<ObservedData>("sdo/observed-data-object-refs.json");
     assert_eq!(refs.number_observed, 50);
     assert!(matches!(refs.form, ObservedDataForm::ObjectRefs(_)));
 
-    let objects = support::roundtrip_strict::<ObservedData>("sdo/observed-data-objects.json");
+    let objects = roundtrip_strict::<ObservedData>("sdo/observed-data-objects.json");
     assert_eq!(objects.number_observed, 1);
     assert!(matches!(
         objects.form,
@@ -546,23 +530,23 @@ fn observed_data_round_trips_object_refs_and_objects() {
 
 #[test]
 fn observed_data_rejects_invalid_fixtures() {
-    support::assert_fixture_rejects::<ObservedData>("sdo/observed-data-both-content.json");
-    support::assert_fixture_rejects::<ObservedData>("sdo/observed-data-neither-content.json");
-    support::assert_fixture_rejects::<ObservedData>("sdo/observed-data-last-before-first.json");
-    support::assert_fixture_rejects::<ObservedData>("sdo/observed-data-number-out-of-range.json");
+    assert_fixture_rejects::<ObservedData>("sdo/observed-data-both-content.json");
+    assert_fixture_rejects::<ObservedData>("sdo/observed-data-neither-content.json");
+    assert_fixture_rejects::<ObservedData>("sdo/observed-data-last-before-first.json");
+    assert_fixture_rejects::<ObservedData>("sdo/observed-data-number-out-of-range.json");
 }
 
 #[test]
 fn complex_sdo_types_reject_wrong_type_field() {
-    support::assert_fixture_rejects::<Indicator>("sdo/note-minimal.json");
-    support::assert_fixture_rejects::<Note>("sdo/opinion-minimal.json");
-    support::assert_fixture_rejects::<Opinion>("sdo/indicator-minimal.json");
-    support::assert_fixture_rejects::<ObservedData>("sdo/indicator-minimal.json");
+    assert_fixture_rejects::<Indicator>("sdo/note-minimal.json");
+    assert_fixture_rejects::<Note>("sdo/opinion-minimal.json");
+    assert_fixture_rejects::<Opinion>("sdo/indicator-minimal.json");
+    assert_fixture_rejects::<ObservedData>("sdo/indicator-minimal.json");
 }
 
 #[test]
 fn sdo_object_enum_delegates_queryable_stix_object() {
-    let parsed = support::roundtrip_strict::<Indicator>("sdo/indicator-minimal.json");
+    let parsed = roundtrip_strict::<Indicator>("sdo/indicator-minimal.json");
     let sdo = SdoObject::Indicator(parsed.clone());
     assert_eq!(sdo.id(), parsed.id());
     assert_eq!(sdo.type_name(), Indicator::TYPE_NAME);
@@ -576,65 +560,63 @@ fn sdo_object_enum_delegates_queryable_stix_object() {
 
 #[test]
 fn sdo_attack_pattern_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<AttackPattern>("sdo/attack-pattern-minimal.json");
+    let parsed = roundtrip_strict::<AttackPattern>("sdo/attack-pattern-minimal.json");
     assert_eq!(parsed.name, "Spear Phishing");
-    let rich = support::roundtrip_strict::<AttackPattern>("sdo/attack-pattern-rich.json");
+    let rich = roundtrip_strict::<AttackPattern>("sdo/attack-pattern-rich.json");
     assert!(rich.description.is_some());
     assert_eq!(rich.common.external_references.len(), 1);
-    support::assert_fixture_rejects::<AttackPattern>(
-        "sdo/attack-pattern-kill-chain-phase-empty.json",
-    );
+    assert_fixture_rejects::<AttackPattern>("sdo/attack-pattern-kill-chain-phase-empty.json");
 }
 
 #[test]
 fn sdo_campaign_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Campaign>("sdo/campaign-minimal.json");
+    let parsed = roundtrip_strict::<Campaign>("sdo/campaign-minimal.json");
     assert_eq!(parsed.name, "Green Group Attacks Against Finance");
     assert!(parsed.common.created_by_ref.is_none());
-    let rich = support::roundtrip_strict::<Campaign>("sdo/campaign-rich.json");
+    let rich = roundtrip_strict::<Campaign>("sdo/campaign-rich.json");
     assert!(rich.description.is_some());
     assert_eq!(rich.aliases, vec!["Green Group".to_string()]);
-    support::assert_fixture_rejects::<Campaign>("sdo/campaign-last-seen-before-first-seen.json");
+    assert_fixture_rejects::<Campaign>("sdo/campaign-last-seen-before-first-seen.json");
 }
 
 #[test]
 fn sdo_course_of_action_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<CourseOfAction>("sdo/course-of-action-minimal.json");
+    let parsed = roundtrip_strict::<CourseOfAction>("sdo/course-of-action-minimal.json");
     assert!(parsed.name.contains("TCP port 80"));
-    let rich = support::roundtrip_strict::<CourseOfAction>("sdo/course-of-action-rich.json");
+    let rich = roundtrip_strict::<CourseOfAction>("sdo/course-of-action-rich.json");
     assert!(rich.description.is_some());
 }
 
 #[test]
 fn sdo_grouping_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Grouping>("sdo/grouping-minimal.json");
+    let parsed = roundtrip_strict::<Grouping>("sdo/grouping-minimal.json");
     assert_eq!(parsed.context, "suspicious-activity");
     assert_eq!(parsed.object_refs.len(), 4);
-    let rich = support::roundtrip_strict::<Grouping>("sdo/grouping-rich.json");
+    let rich = roundtrip_strict::<Grouping>("sdo/grouping-rich.json");
     assert_eq!(rich.common.labels, vec!["apt".to_string()]);
 }
 
 #[test]
 fn sdo_identity_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Identity>("sdo/identity-minimal.json");
+    let parsed = roundtrip_strict::<Identity>("sdo/identity-minimal.json");
     assert_eq!(parsed.name, "John Smith");
     assert_eq!(parsed.identity_class.as_deref(), Some("individual"));
-    let rich = support::roundtrip_strict::<Identity>("sdo/identity-rich.json");
+    let rich = roundtrip_strict::<Identity>("sdo/identity-rich.json");
     assert_eq!(rich.identity_class.as_deref(), Some("organization"));
     assert_eq!(rich.sectors, vec!["technology".to_string()]);
 }
 
 #[test]
 fn sdo_incident_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Incident>("sdo/incident-minimal.json");
+    let parsed = roundtrip_strict::<Incident>("sdo/incident-minimal.json");
     assert_eq!(parsed.name, "Incident 43");
-    let rich = support::roundtrip_strict::<Incident>("sdo/incident-rich.json");
+    let rich = roundtrip_strict::<Incident>("sdo/incident-rich.json");
     assert_eq!(rich.common.external_references.len(), 1);
 }
 
 #[test]
 fn sdo_threat_actor_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<ThreatActor>("sdo/threat-actor-minimal.json");
+    let parsed = roundtrip_strict::<ThreatActor>("sdo/threat-actor-minimal.json");
     assert_eq!(parsed.name, "Evil Org");
     assert_eq!(
         parsed.threat_actor_types,
@@ -644,57 +626,53 @@ fn sdo_threat_actor_round_trips_and_rejects_invalid_fixtures() {
         parsed.primary_motivation.as_deref(),
         Some("organizational-gain")
     );
-    let rich = support::roundtrip_strict::<ThreatActor>("sdo/threat-actor-rich.json");
+    let rich = roundtrip_strict::<ThreatActor>("sdo/threat-actor-rich.json");
     assert_eq!(
         rich.secondary_motivations,
         vec!["personal-gain".to_string()]
     );
     assert!(rich.first_seen.is_some());
-    support::assert_fixture_rejects::<ThreatActor>(
-        "sdo/threat-actor-last-seen-before-first-seen.json",
-    );
+    assert_fixture_rejects::<ThreatActor>("sdo/threat-actor-last-seen-before-first-seen.json");
 }
 
 #[test]
 fn sdo_tool_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Tool>("sdo/tool-minimal.json");
+    let parsed = roundtrip_strict::<Tool>("sdo/tool-minimal.json");
     assert_eq!(parsed.name, "VNC");
     assert_eq!(parsed.tool_types, vec!["remote-access".to_string()]);
-    let rich = support::roundtrip_strict::<Tool>("sdo/tool-rich.json");
+    let rich = roundtrip_strict::<Tool>("sdo/tool-rich.json");
     assert_eq!(rich.tool_version.as_deref(), Some("1.3.10"));
     assert_eq!(rich.kill_chain_phases.len(), 1);
-    support::assert_fixture_rejects::<Tool>("sdo/tool-kill-chain-phase-empty.json");
+    assert_fixture_rejects::<Tool>("sdo/tool-kill-chain-phase-empty.json");
 }
 
 #[test]
 fn sdo_intrusion_set_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<IntrusionSet>("sdo/intrusion-set-minimal.json");
+    let parsed = roundtrip_strict::<IntrusionSet>("sdo/intrusion-set-minimal.json");
     assert_eq!(parsed.name, "Bobcat Breakin");
-    let rich = support::roundtrip_strict::<IntrusionSet>("sdo/intrusion-set-rich.json");
+    let rich = roundtrip_strict::<IntrusionSet>("sdo/intrusion-set-rich.json");
     assert_eq!(rich.aliases, vec!["Zookeeper".to_string()]);
     assert_eq!(rich.goals.len(), 3);
-    support::assert_fixture_rejects::<IntrusionSet>(
-        "sdo/intrusion-set-last-seen-before-first-seen.json",
-    );
+    assert_fixture_rejects::<IntrusionSet>("sdo/intrusion-set-last-seen-before-first-seen.json");
 }
 
 #[test]
 fn sdo_location_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Location>("sdo/location-minimal.json");
+    let parsed = roundtrip_strict::<Location>("sdo/location-minimal.json");
     assert_eq!(parsed.region.as_deref(), Some("northern-america"));
-    let rich = support::roundtrip_strict::<Location>("sdo/location-rich.json");
+    let rich = roundtrip_strict::<Location>("sdo/location-rich.json");
     assert_eq!(rich.country.as_deref(), Some("th"));
     assert_eq!(rich.postal_code.as_deref(), Some("63170"));
-    support::assert_fixture_rejects::<Location>("sdo/location-missing-geo.json");
-    support::assert_fixture_rejects::<Location>("sdo/location-latitude-without-longitude.json");
-    support::assert_fixture_rejects::<Location>("sdo/location-latitude-out-of-range.json");
+    assert_fixture_rejects::<Location>("sdo/location-missing-geo.json");
+    assert_fixture_rejects::<Location>("sdo/location-latitude-without-longitude.json");
+    assert_fixture_rejects::<Location>("sdo/location-latitude-out-of-range.json");
 }
 
 #[test]
 fn sdo_infrastructure_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Infrastructure>("sdo/infrastructure-minimal.json");
+    let parsed = roundtrip_strict::<Infrastructure>("sdo/infrastructure-minimal.json");
     assert_eq!(parsed.name, "Poison Ivy C2");
-    let rich = support::roundtrip_strict::<Infrastructure>("sdo/infrastructure-rich.json");
+    let rich = roundtrip_strict::<Infrastructure>("sdo/infrastructure-rich.json");
     assert_eq!(
         rich.infrastructure_types,
         vec!["command-and-control".to_string()]
@@ -703,60 +681,60 @@ fn sdo_infrastructure_round_trips_and_rejects_invalid_fixtures() {
 
 #[test]
 fn sdo_vulnerability_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Vulnerability>("sdo/vulnerability-minimal.json");
+    let parsed = roundtrip_strict::<Vulnerability>("sdo/vulnerability-minimal.json");
     assert_eq!(parsed.name, "CVE-2016-1234");
-    let rich = support::roundtrip_strict::<Vulnerability>("sdo/vulnerability-rich.json");
+    let rich = roundtrip_strict::<Vulnerability>("sdo/vulnerability-rich.json");
     assert_eq!(rich.common.external_references.len(), 1);
 }
 
 #[test]
 fn sdo_report_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<Report>("sdo/report-minimal.json");
+    let parsed = roundtrip_strict::<Report>("sdo/report-minimal.json");
     assert_eq!(parsed.name, "The Black Vine Cyberespionage Group");
     assert_eq!(parsed.object_refs.len(), 1);
-    let rich = support::roundtrip_strict::<Report>("sdo/report-rich.json");
+    let rich = roundtrip_strict::<Report>("sdo/report-rich.json");
     assert_eq!(rich.report_types, vec!["campaign".to_string()]);
     assert_eq!(rich.object_refs.len(), 3);
 }
 
 #[test]
 fn sdo_malware_round_trips_and_rejects_invalid_fixtures() {
-    let minimal = support::roundtrip_strict::<Malware>("sdo/malware-minimal.json");
+    let minimal = roundtrip_strict::<Malware>("sdo/malware-minimal.json");
     assert!(minimal.is_family.is_none());
     assert!(minimal.name.is_none());
-    let rich = support::roundtrip_strict::<Malware>("sdo/malware-rich.json");
+    let rich = roundtrip_strict::<Malware>("sdo/malware-rich.json");
     assert_eq!(rich.is_family, Some(false));
     assert_eq!(rich.malware_types, vec!["ransomware".to_string()]);
-    let family = support::roundtrip_strict::<Malware>("sdo/malware-family-rich.json");
+    let family = roundtrip_strict::<Malware>("sdo/malware-family-rich.json");
     assert_eq!(family.is_family, Some(true));
-    support::assert_fixture_rejects::<Malware>("sdo/malware-last-seen-before-first-seen.json");
-    support::assert_fixture_rejects::<Malware>("sdo/malware-sample-ref-invalid.json");
+    assert_fixture_rejects::<Malware>("sdo/malware-last-seen-before-first-seen.json");
+    assert_fixture_rejects::<Malware>("sdo/malware-sample-ref-invalid.json");
 }
 
 #[test]
 fn sdo_malware_analysis_round_trips_and_rejects_invalid_fixtures() {
-    let parsed = support::roundtrip_strict::<MalwareAnalysis>("sdo/malware-analysis-minimal.json");
+    let parsed = roundtrip_strict::<MalwareAnalysis>("sdo/malware-analysis-minimal.json");
     assert_eq!(parsed.product, "microsoft");
     assert_eq!(parsed.result.as_deref(), Some("malicious"));
-    let rich = support::roundtrip_strict::<MalwareAnalysis>("sdo/malware-analysis-rich.json");
+    let rich = roundtrip_strict::<MalwareAnalysis>("sdo/malware-analysis-rich.json");
     assert!(rich.sample_ref.is_some());
-    support::assert_fixture_rejects::<MalwareAnalysis>(
+    assert_fixture_rejects::<MalwareAnalysis>(
         "sdo/malware-analysis-missing-result-and-sco-refs.json",
     );
 }
 
 #[test]
 fn sdo_types_reject_wrong_type_field() {
-    support::assert_fixture_rejects::<AttackPattern>("sdo/campaign-minimal.json");
-    support::assert_fixture_rejects::<Campaign>("sdo/attack-pattern-minimal.json");
-    support::assert_fixture_rejects::<CourseOfAction>("sdo/tool-minimal.json");
-    support::assert_fixture_rejects::<Grouping>("sdo/identity-minimal.json");
-    support::assert_fixture_rejects::<Identity>("sdo/incident-minimal.json");
-    support::assert_fixture_rejects::<Incident>("sdo/threat-actor-minimal.json");
-    support::assert_fixture_rejects::<ThreatActor>("sdo/campaign-minimal.json");
-    support::assert_fixture_rejects::<Tool>("sdo/course-of-action-minimal.json");
-    support::assert_fixture_rejects::<IntrusionSet>("sdo/malware-minimal.json");
-    support::assert_fixture_rejects::<Location>("sdo/infrastructure-minimal.json");
-    support::assert_fixture_rejects::<Malware>("sdo/intrusion-set-minimal.json");
-    support::assert_fixture_rejects::<Report>("sdo/vulnerability-minimal.json");
+    assert_fixture_rejects::<AttackPattern>("sdo/campaign-minimal.json");
+    assert_fixture_rejects::<Campaign>("sdo/attack-pattern-minimal.json");
+    assert_fixture_rejects::<CourseOfAction>("sdo/tool-minimal.json");
+    assert_fixture_rejects::<Grouping>("sdo/identity-minimal.json");
+    assert_fixture_rejects::<Identity>("sdo/incident-minimal.json");
+    assert_fixture_rejects::<Incident>("sdo/threat-actor-minimal.json");
+    assert_fixture_rejects::<ThreatActor>("sdo/campaign-minimal.json");
+    assert_fixture_rejects::<Tool>("sdo/course-of-action-minimal.json");
+    assert_fixture_rejects::<IntrusionSet>("sdo/malware-minimal.json");
+    assert_fixture_rejects::<Location>("sdo/infrastructure-minimal.json");
+    assert_fixture_rejects::<Malware>("sdo/intrusion-set-minimal.json");
+    assert_fixture_rejects::<Report>("sdo/vulnerability-minimal.json");
 }

@@ -4,6 +4,24 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix Pattern Engine: evaluation (Levels 1–3) (#276)
+
+Adds STIX pattern evaluation to the `pattern` feature:
+
+* **`Pattern::evaluate`** — match a parsed pattern against timestamped observations (Levels 2–3: `AND`, `OR`, `FOLLOWEDBY`, `WITHIN`, `REPEATS`, `START`/`STOP`).
+* **`Pattern::matches_single`** — Level 1 shortcut for a single top-level observation against one SCO.
+* **`Pattern::evaluate_observed_data`** — build `ObservationContext` from `observed-data.object_refs` and evaluate against a bundle.
+* **`ObservationContext` / `TimestampedObservation`** — evaluation context with optional bundle for `_ref` dereference.
+* **`Pattern::matches_single_with_bundle`** — Level 1 evaluation with optional bundle for `_ref` dereference.
+* **`CustomSco`** — vendor/custom SCO types deserialize and evaluate (e.g. `x-usb-device` paths).
+* **`TimestampedObservation::at`** — `Option<StixTimestamp>`; temporal patterns return `MissingTimestamp` when any observation lacks a timestamp.
+* **Object-path resolver** — full §9.8 paths: extension `sections[*].entropy`, ref lists `resolves_to_refs[*].value`, `body_multipart[*].body_raw_ref.name`, `dst_ref.type`/`value`, binary `payload_bin`, `EXISTS` on registry `values`, nested custom properties.
+* **`pattern::security`** — regex compile size limit (1 MiB) enforced during `MATCHES` evaluation.
+* **Observed-data** — embedded SRO members in deprecated `objects` are skipped (not an error).
+* **Tests** — manifest-driven SCO field coverage (`tests/pattern_eval_sco_fields.rs`, 276 cases), per-operator eval (`tests/pattern_eval_operators.rs`), every `PatternMatchError` path (`tests/pattern_eval_errors.rs`), §9.8 spec eval (`tests/pattern_spec_eval.rs`); 447 tests pass with `pattern,serde`.
+
+Canonical printer, `IndicatorPattern::Stix { ast }` serde wiring, and `fuzz_stix_pattern` remain in the next Pattern Engine slice.
+
 ## [0.18.0] - 2026-07-01
 
 **TL;DR**

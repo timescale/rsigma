@@ -274,17 +274,49 @@ impl QueryableStixObject for NetworkTraffic {
 
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
+            ["start"] => self.start.as_ref().map(QueryValue::Timestamp),
+            ["end"] => self.end.as_ref().map(QueryValue::Timestamp),
+            ["is_active"] => self.is_active.map(QueryValue::Bool),
+            ["src_port"] => self.src_port.map(|p| QueryValue::Int(i64::from(p))),
+            ["dst_port"] => self.dst_port.map(|p| QueryValue::Int(i64::from(p))),
+            ["protocols"] if !self.protocols.is_empty() => Some(QueryValue::Null),
             ["protocols", index] => index
                 .parse::<usize>()
                 .ok()
                 .and_then(|i| self.protocols.get(i))
                 .map(|p| QueryValue::Str(p.as_str())),
+            ["ipfix"] if !self.ipfix.is_empty() => Some(QueryValue::Null),
+            ["ipfix", key] => self
+                .ipfix
+                .get(*key)
+                .and_then(|v| v.as_str())
+                .map(QueryValue::Str),
+            ["src_byte_count"] => self
+                .src_byte_count
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            ["dst_byte_count"] => self
+                .dst_byte_count
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            ["src_packets"] => self
+                .src_packets
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            ["dst_packets"] => self
+                .dst_packets
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
             ["src_ref"] => self
                 .src_ref
                 .as_ref()
                 .map(|id| QueryValue::Id(id.as_stix_id())),
             ["dst_ref"] => self
                 .dst_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["src_payload_ref"] => self
+                .src_payload_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["dst_payload_ref"] => self
+                .dst_payload_ref
                 .as_ref()
                 .map(|id| QueryValue::Id(id.as_stix_id())),
             ["encapsulates_refs", index] => index

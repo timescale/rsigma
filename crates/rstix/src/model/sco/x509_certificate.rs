@@ -362,9 +362,83 @@ impl QueryableStixObject for X509Certificate {
 
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
+            ["is_self_signed"] => self.is_self_signed.map(QueryValue::Bool),
+            ["hashes", key] => self
+                .hashes
+                .get(*key)
+                .map(String::as_str)
+                .map(QueryValue::Str),
+            ["version"] => self.version.as_deref().map(QueryValue::Str),
+            ["serial_number"] => self.serial_number.as_deref().map(QueryValue::Str),
+            ["signature_algorithm"] => self.signature_algorithm.as_deref().map(QueryValue::Str),
             ["issuer"] => self.issuer.as_deref().map(QueryValue::Str),
             ["subject"] => self.subject.as_deref().map(QueryValue::Str),
-            ["serial_number"] => self.serial_number.as_deref().map(QueryValue::Str),
+            ["validity_not_before"] => self.validity_not_before.as_ref().map(QueryValue::Timestamp),
+            ["validity_not_after"] => self.validity_not_after.as_ref().map(QueryValue::Timestamp),
+            ["subject_public_key_algorithm"] => self
+                .subject_public_key_algorithm
+                .as_deref()
+                .map(QueryValue::Str),
+            ["subject_public_key_modulus"] => self
+                .subject_public_key_modulus
+                .as_deref()
+                .map(QueryValue::Str),
+            ["subject_public_key_exponent"] => self
+                .subject_public_key_exponent
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            ["x509_v3_extensions"] if self.x509_v3_extensions.is_some() => Some(QueryValue::Null),
+            ["x509_v3_extensions", field] => {
+                self.x509_v3_extensions
+                    .as_ref()
+                    .and_then(|ext| match *field {
+                        "basic_constraints" => {
+                            ext.basic_constraints.as_deref().map(QueryValue::Str)
+                        }
+                        "name_constraints" => ext.name_constraints.as_deref().map(QueryValue::Str),
+                        "policy_constraints" => {
+                            ext.policy_constraints.as_deref().map(QueryValue::Str)
+                        }
+                        "key_usage" => ext.key_usage.as_deref().map(QueryValue::Str),
+                        "extended_key_usage" => {
+                            ext.extended_key_usage.as_deref().map(QueryValue::Str)
+                        }
+                        "subject_key_identifier" => {
+                            ext.subject_key_identifier.as_deref().map(QueryValue::Str)
+                        }
+                        "authority_key_identifier" => {
+                            ext.authority_key_identifier.as_deref().map(QueryValue::Str)
+                        }
+                        "subject_alternative_name" => {
+                            ext.subject_alternative_name.as_deref().map(QueryValue::Str)
+                        }
+                        "issuer_alternative_name" => {
+                            ext.issuer_alternative_name.as_deref().map(QueryValue::Str)
+                        }
+                        "subject_directory_attributes" => ext
+                            .subject_directory_attributes
+                            .as_deref()
+                            .map(QueryValue::Str),
+                        "crl_distribution_points" => {
+                            ext.crl_distribution_points.as_deref().map(QueryValue::Str)
+                        }
+                        "inhibit_any_policy" => {
+                            ext.inhibit_any_policy.as_deref().map(QueryValue::Str)
+                        }
+                        "certificate_policies" => {
+                            ext.certificate_policies.as_deref().map(QueryValue::Str)
+                        }
+                        "policy_mappings" => ext.policy_mappings.as_deref().map(QueryValue::Str),
+                        "private_key_usage_period_not_before" => ext
+                            .private_key_usage_period_not_before
+                            .as_ref()
+                            .map(QueryValue::Timestamp),
+                        "private_key_usage_period_not_after" => ext
+                            .private_key_usage_period_not_after
+                            .as_ref()
+                            .map(QueryValue::Timestamp),
+                        _ => None,
+                    })
+            }
             _ => None,
         }
     }

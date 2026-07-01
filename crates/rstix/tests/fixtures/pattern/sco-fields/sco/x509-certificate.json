@@ -1,0 +1,38 @@
+{
+  "type": "x509-certificate",
+  "spec_version": "2.1",
+  "id": "x509-certificate--00000000-0000-0000-0000-000000000013",
+  "defanged": false,
+  "is_self_signed": false,
+  "hashes": {
+    "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+  },
+  "version": "3",
+  "serial_number": "01:02:03",
+  "signature_algorithm": "sha256WithRSAEncryption",
+  "issuer": "CN=Example CA",
+  "subject": "CN=Example User",
+  "validity_not_before": "2020-01-01T00:00:00.000Z",
+  "validity_not_after": "2020-01-01T00:00:00.000Z",
+  "subject_public_key_algorithm": "rsaEncryption",
+  "subject_public_key_modulus": "modulus-hex",
+  "subject_public_key_exponent": 65537,
+  "x509_v3_extensions": {
+    "basic_constraints": "CA:FALSE",
+    "name_constraints": "nc",
+    "policy_constraints": "pc",
+    "key_usage": "digitalSignature",
+    "extended_key_usage": "clientAuth",
+    "subject_key_identifier": "ski",
+    "authority_key_identifier": "aki",
+    "subject_alternative_name": "san",
+    "issuer_alternative_name": "ian",
+    "subject_directory_attributes": "sda",
+    "crl_distribution_points": "cdp",
+    "inhibit_any_policy": "iap",
+    "certificate_policies": "cp",
+    "policy_mappings": "pm",
+    "private_key_usage_period_not_before": "2020-01-01T00:00:00.000Z",
+    "private_key_usage_period_not_after": "2020-01-01T00:00:00.000Z"
+  }
+}

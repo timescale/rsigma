@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::load_spec_fixture;
+use super::fixtures_spec::load_spec_fixture;
 
 /// Load `relative_path`, round-trip through JSON with **strict** fixture equality, and
 /// return the parsed value.

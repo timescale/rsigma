@@ -1,0 +1,513 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000001",
+  "objects": [
+    {
+      "type": "artifact",
+      "spec_version": "2.1",
+      "id": "artifact--00000000-0000-0000-0000-000000000001",
+      "defanged": false,
+      "mime_type": "application/octet-stream",
+      "payload_bin": "SGVsbG8=",
+      "encryption_algorithm": "AES-256-GCM",
+      "decryption_key": "secret-key",
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f",
+        "MD5": "79054025255fb1a26e4bc422aef54eb4"
+      }
+    },
+    {
+      "type": "autonomous-system",
+      "spec_version": "2.1",
+      "id": "autonomous-system--00000000-0000-0000-0000-000000000002",
+      "defanged": false,
+      "number": 15139,
+      "name": "Slime Industries",
+      "rir": "ARIN"
+    },
+    {
+      "type": "directory",
+      "spec_version": "2.1",
+      "id": "directory--00000000-0000-0000-0000-000000000003",
+      "defanged": false,
+      "path": "/usr/home/temp",
+      "path_enc": "L3Vzci9ob21lL3RlbXAvZW5j",
+      "ctime": "2020-01-01T00:00:00.000Z",
+      "mtime": "2020-01-01T00:00:00.000Z",
+      "atime": "2020-01-01T00:00:00.000Z",
+      "contains_refs": [
+        "file--00000000-0000-0000-0000-000000000015",
+        "directory--00000000-0000-0000-0000-000000000003"
+      ]
+    },
+    {
+      "type": "domain-name",
+      "spec_version": "2.1",
+      "id": "domain-name--00000000-0000-0000-0000-000000000004",
+      "defanged": false,
+      "value": "example.com",
+      "resolves_to_refs": [
+        "ipv4-addr--00000000-0000-0000-0000-000000000009",
+        "ipv6-addr--00000000-0000-0000-0000-00000000000a",
+        "domain-name--00000000-0000-0000-0000-000000000004"
+      ]
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000005",
+      "defanged": false,
+      "value": "sender@example.com",
+      "display_name": "Sender Example",
+      "belongs_to_ref": "user-account--00000000-0000-0000-0000-000000000011"
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000006",
+      "value": "recipient@example.com"
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000020",
+      "value": "cc@example.com"
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000021",
+      "value": "bcc@example.com"
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000022",
+      "value": "smtp@example.com"
+    },
+    {
+      "type": "email-message",
+      "spec_version": "2.1",
+      "id": "email-message--00000000-0000-0000-0000-000000000007",
+      "defanged": false,
+      "is_multipart": true,
+      "date": "2020-01-01T00:00:00.000Z",
+      "content_type": "multipart/mixed",
+      "message_id": "<msg-001@example.com>",
+      "subject": "Test subject",
+      "subject_enc": "encrypted-subject",
+      "from_ref": "email-addr--00000000-0000-0000-0000-000000000005",
+      "sender_ref": "email-addr--00000000-0000-0000-0000-000000000022",
+      "to_refs": [
+        "email-addr--00000000-0000-0000-0000-000000000006"
+      ],
+      "cc_refs": [
+        "email-addr--00000000-0000-0000-0000-000000000020"
+      ],
+      "bcc_refs": [
+        "email-addr--00000000-0000-0000-0000-000000000021"
+      ],
+      "received_lines": [
+        "from mail.example.com by mx.example.com"
+      ],
+      "additional_header_fields": {
+        "X-Custom": [
+          "custom-value"
+        ]
+      },
+      "raw_email_ref": "artifact--00000000-0000-0000-0000-00000000001c",
+      "body_multipart": [
+        {
+          "content_type": "text/plain; charset=utf-8",
+          "content_disposition": "inline",
+          "body": "Hello multipart"
+        },
+        {
+          "content_type": "application/octet-stream",
+          "body_raw_ref": "artifact--00000000-0000-0000-0000-00000000001c"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "spec_version": "2.1",
+      "id": "file--00000000-0000-0000-0000-000000000008",
+      "defanged": false,
+      "name": "sample.exe",
+      "name_enc": "c2FtcGxlLmVuYw==",
+      "size": 4096,
+      "mime_type": "application/x-dosexec",
+      "magic_number_hex": "4d5a",
+      "ctime": "2020-01-01T00:00:00.000Z",
+      "mtime": "2020-01-01T00:00:00.000Z",
+      "atime": "2020-01-01T00:00:00.000Z",
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f",
+        "MD5": "79054025255fb1a26e4bc422aef54eb4"
+      },
+      "parent_directory_ref": "directory--00000000-0000-0000-0000-000000000003",
+      "contains_refs": [
+        "file--00000000-0000-0000-0000-000000000015"
+      ],
+      "content_ref": "artifact--00000000-0000-0000-0000-000000000001",
+      "extensions": {
+        "windows-pebinary-ext": {
+          "pe_type": "exe",
+          "imphash": "imphash-value",
+          "machine_hex": "014c",
+          "number_of_sections": 3,
+          "number_of_symbols": 0,
+          "size_of_optional_header": 224,
+          "time_date_stamp": "2020-01-01T00:00:00.000Z",
+          "pointer_to_symbol_table_hex": "00000000",
+          "characteristics_hex": "0102",
+          "checksum_hex": "00000000",
+          "subsystem_hex": "0002",
+          "dll_characteristics_hex": "0000",
+          "loader_flags_hex": "00000000",
+          "file_header_hashes": {
+            "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+          },
+          "sections": [
+            {
+              "name": ".text",
+              "size": 512,
+              "entropy": 6.5
+            }
+          ]
+        },
+        "raster-image-ext": {
+          "image_height": 100,
+          "image_width": 200,
+          "bits_per_pixel": 24,
+          "exif_tags": {
+            "Make": "Example"
+          }
+        },
+        "archive-ext": {
+          "contains_refs": [
+            "file--00000000-0000-0000-0000-000000000015"
+          ],
+          "comment": "archive comment"
+        },
+        "ntfs-ext": {
+          "sid": "S-1-5-21-1234567890"
+        },
+        "pdf-ext": {
+          "version": "1.7",
+          "document_info_dict": {
+            "Title": "Example"
+          },
+          "pdfid0": "pdfid0",
+          "pdfid1": "pdfid1"
+        }
+      }
+    },
+    {
+      "type": "file",
+      "spec_version": "2.1",
+      "id": "file--00000000-0000-0000-0000-000000000015",
+      "name": "inner.txt",
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+      }
+    },
+    {
+      "type": "file",
+      "spec_version": "2.1",
+      "id": "file--00000000-0000-0000-0000-000000000016",
+      "name": "proc.exe",
+      "hashes": {
+        "MD5": "79054025255fb1a26e4bc422aef54eb4"
+      }
+    },
+    {
+      "type": "ipv4-addr",
+      "spec_version": "2.1",
+      "id": "ipv4-addr--00000000-0000-0000-0000-000000000009",
+      "defanged": false,
+      "value": "198.51.100.1/32",
+      "resolves_to_refs": [
+        "mac-addr--00000000-0000-0000-0000-00000000000b"
+      ],
+      "belongs_to_refs": [
+        "autonomous-system--00000000-0000-0000-0000-000000000002"
+      ]
+    },
+    {
+      "type": "ipv6-addr",
+      "spec_version": "2.1",
+      "id": "ipv6-addr--00000000-0000-0000-0000-00000000000a",
+      "defanged": false,
+      "value": "2001:0db8:85a3::8a2e:0370:7334/128",
+      "resolves_to_refs": [
+        "mac-addr--00000000-0000-0000-0000-00000000000b"
+      ],
+      "belongs_to_refs": [
+        "autonomous-system--00000000-0000-0000-0000-000000000002"
+      ]
+    },
+    {
+      "type": "mac-addr",
+      "spec_version": "2.1",
+      "id": "mac-addr--00000000-0000-0000-0000-00000000000b",
+      "defanged": false,
+      "value": "08:00:27:1a:2b:3c"
+    },
+    {
+      "type": "mutex",
+      "spec_version": "2.1",
+      "id": "mutex--00000000-0000-0000-0000-00000000000c",
+      "defanged": false,
+      "name": "MyMutex"
+    },
+    {
+      "type": "network-traffic",
+      "spec_version": "2.1",
+      "id": "network-traffic--00000000-0000-0000-0000-00000000000d",
+      "defanged": false,
+      "start": "2020-01-01T00:00:00.000Z",
+      "end": "2020-01-01T00:00:00.000Z",
+      "is_active": false,
+      "src_ref": "ipv4-addr--00000000-0000-0000-0000-000000000009",
+      "dst_ref": "domain-name--00000000-0000-0000-0000-000000000004",
+      "src_port": 443,
+      "dst_port": 8443,
+      "protocols": [
+        "ipv4",
+        "tcp"
+      ],
+      "src_byte_count": 1000,
+      "dst_byte_count": 2000,
+      "src_packets": 10,
+      "dst_packets": 20,
+      "ipfix": {
+        "flowLabel": "0x000000"
+      },
+      "src_payload_ref": "artifact--00000000-0000-0000-0000-00000000001a",
+      "dst_payload_ref": "artifact--00000000-0000-0000-0000-00000000001b",
+      "encapsulates_refs": [
+        "network-traffic--00000000-0000-0000-0000-000000000019"
+      ],
+      "encapsulated_by_ref": "network-traffic--00000000-0000-0000-0000-000000000019",
+      "extensions": {
+        "http-request-ext": {
+          "request_method": "get",
+          "request_value": "/download.html",
+          "request_version": "http/1.1"
+        },
+        "tcp-ext": {
+          "src_flags_hex": "00000002"
+        },
+        "socket-ext": {
+          "is_listening": true,
+          "address_family": "AF_INET",
+          "socket_type": "SOCK_STREAM"
+        },
+        "icmp-ext": {
+          "icmp_type_hex": "08",
+          "icmp_code_hex": "00"
+        }
+      }
+    },
+    {
+      "type": "network-traffic",
+      "spec_version": "2.1",
+      "id": "network-traffic--00000000-0000-0000-0000-000000000019",
+      "protocols": [
+        "ipv4"
+      ],
+      "src_ref": "ipv4-addr--00000000-0000-0000-0000-000000000009"
+    },
+    {
+      "type": "process",
+      "spec_version": "2.1",
+      "id": "process--00000000-0000-0000-0000-00000000000e",
+      "defanged": false,
+      "is_hidden": false,
+      "pid": 4242,
+      "created_time": "2020-01-01T00:00:00.000Z",
+      "cwd": "/tmp",
+      "command_line": "proc.exe --verbose",
+      "environment_variables": {
+        "PATH": "/usr/bin"
+      },
+      "opened_connection_refs": [
+        "network-traffic--00000000-0000-0000-0000-00000000000d"
+      ],
+      "creator_user_ref": "user-account--00000000-0000-0000-0000-000000000011",
+      "image_ref": "file--00000000-0000-0000-0000-000000000016",
+      "parent_ref": "process--00000000-0000-0000-0000-000000000017",
+      "child_refs": [
+        "process--00000000-0000-0000-0000-000000000018"
+      ],
+      "extensions": {
+        "windows-process-ext": {
+          "aslr_enabled": true,
+          "dep_enabled": true,
+          "priority": "HIGH_PRIORITY_CLASS"
+        },
+        "windows-service-ext": {
+          "service_name": "sirvizio",
+          "display_name": "Sirvizio",
+          "start_type": "SERVICE_AUTO_START"
+        }
+      }
+    },
+    {
+      "type": "process",
+      "spec_version": "2.1",
+      "id": "process--00000000-0000-0000-0000-000000000017",
+      "pid": 1,
+      "command_line": "init"
+    },
+    {
+      "type": "process",
+      "spec_version": "2.1",
+      "id": "process--00000000-0000-0000-0000-000000000018",
+      "pid": 4243,
+      "command_line": "child.exe"
+    },
+    {
+      "type": "software",
+      "spec_version": "2.1",
+      "id": "software--00000000-0000-0000-0000-00000000000f",
+      "defanged": false,
+      "name": "ExampleSoft",
+      "cpe": "cpe:2.3:a:example:soft:1.0:*:*:*:*:*:*:*",
+      "swid": "SWID-12345",
+      "vendor": "Example Corp",
+      "version": "1.0.0",
+      "languages": [
+        "en",
+        "fr"
+      ]
+    },
+    {
+      "type": "url",
+      "spec_version": "2.1",
+      "id": "url--00000000-0000-0000-0000-000000000010",
+      "defanged": false,
+      "value": "https://example.com/path"
+    },
+    {
+      "type": "user-account",
+      "spec_version": "2.1",
+      "id": "user-account--00000000-0000-0000-0000-000000000011",
+      "defanged": false,
+      "user_id": "jdoe",
+      "credential": "hashed-credential",
+      "account_login": "jdoe",
+      "account_type": "unix",
+      "display_name": "John Doe",
+      "is_service_account": false,
+      "is_privileged": true,
+      "can_escalate_privs": false,
+      "is_disabled": false,
+      "account_created": "2020-01-01T00:00:00.000Z",
+      "account_expires": "2020-01-01T00:00:00.000Z",
+      "credential_last_changed": "2020-01-01T00:00:00.000Z",
+      "account_first_login": "2020-01-01T00:00:00.000Z",
+      "account_last_login": "2020-01-01T00:00:00.000Z",
+      "extensions": {
+        "unix-account-ext": {
+          "gid": 1000,
+          "home_dir": "/home/jdoe",
+          "shell": "/bin/bash",
+          "groups": [
+            "wheel"
+          ]
+        }
+      }
+    },
+    {
+      "type": "windows-registry-key",
+      "spec_version": "2.1",
+      "id": "windows-registry-key--00000000-0000-0000-0000-000000000012",
+      "defanged": false,
+      "key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Example",
+      "values": [
+        {
+          "name": "Foo",
+          "data": "bar",
+          "data_type": "REG_SZ"
+        }
+      ],
+      "modified_time": "2020-01-01T00:00:00.000Z",
+      "creator_user_ref": "user-account--00000000-0000-0000-0000-000000000011",
+      "number_of_subkeys": 3
+    },
+    {
+      "type": "x509-certificate",
+      "spec_version": "2.1",
+      "id": "x509-certificate--00000000-0000-0000-0000-000000000013",
+      "defanged": false,
+      "is_self_signed": false,
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+      },
+      "version": "3",
+      "serial_number": "01:02:03",
+      "signature_algorithm": "sha256WithRSAEncryption",
+      "issuer": "CN=Example CA",
+      "subject": "CN=Example User",
+      "validity_not_before": "2020-01-01T00:00:00.000Z",
+      "validity_not_after": "2020-01-01T00:00:00.000Z",
+      "subject_public_key_algorithm": "rsaEncryption",
+      "subject_public_key_modulus": "modulus-hex",
+      "subject_public_key_exponent": 65537,
+      "x509_v3_extensions": {
+        "basic_constraints": "CA:FALSE",
+        "name_constraints": "nc",
+        "policy_constraints": "pc",
+        "key_usage": "digitalSignature",
+        "extended_key_usage": "clientAuth",
+        "subject_key_identifier": "ski",
+        "authority_key_identifier": "aki",
+        "subject_alternative_name": "san",
+        "issuer_alternative_name": "ian",
+        "subject_directory_attributes": "sda",
+        "crl_distribution_points": "cdp",
+        "inhibit_any_policy": "iap",
+        "certificate_policies": "cp",
+        "policy_mappings": "pm",
+        "private_key_usage_period_not_before": "2020-01-01T00:00:00.000Z",
+        "private_key_usage_period_not_after": "2020-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "x-usb-device",
+      "spec_version": "2.1",
+      "id": "x-usb-device--00000000-0000-0000-0000-000000000014",
+      "defanged": false,
+      "usbdrive": {
+        "serial_number": "575833314133343231313937"
+      }
+    },
+    {
+      "type": "artifact",
+      "spec_version": "2.1",
+      "id": "artifact--00000000-0000-0000-0000-00000000001a",
+      "url": "https://example.com/src.bin",
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+      }
+    },
+    {
+      "type": "artifact",
+      "spec_version": "2.1",
+      "id": "artifact--00000000-0000-0000-0000-00000000001b",
+      "url": "https://example.com/dst.bin",
+      "hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+      }
+    },
+    {
+      "type": "artifact",
+      "spec_version": "2.1",
+      "id": "artifact--00000000-0000-0000-0000-00000000001c",
+      "mime_type": "message/rfc822",
+      "payload_bin": "cmF3"
+    }
+  ]
+}

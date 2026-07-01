@@ -1,0 +1,1934 @@
+[
+  {
+    "id": "artifact:type",
+    "pattern": "[artifact:type = 'artifact']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:id",
+    "pattern": "[artifact:id = 'artifact--00000000-0000-0000-0000-000000000001']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:spec_version",
+    "pattern": "[artifact:spec_version = '2.1']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:defanged",
+    "pattern": "[artifact:defanged = false]",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:type",
+    "pattern": "[autonomous-system:type = 'autonomous-system']",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:id",
+    "pattern": "[autonomous-system:id = 'autonomous-system--00000000-0000-0000-0000-000000000002']",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:spec_version",
+    "pattern": "[autonomous-system:spec_version = '2.1']",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:defanged",
+    "pattern": "[autonomous-system:defanged = false]",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:type",
+    "pattern": "[directory:type = 'directory']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:id",
+    "pattern": "[directory:id = 'directory--00000000-0000-0000-0000-000000000003']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:spec_version",
+    "pattern": "[directory:spec_version = '2.1']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:defanged",
+    "pattern": "[directory:defanged = false]",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:type",
+    "pattern": "[domain-name:type = 'domain-name']",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:id",
+    "pattern": "[domain-name:id = 'domain-name--00000000-0000-0000-0000-000000000004']",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:spec_version",
+    "pattern": "[domain-name:spec_version = '2.1']",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:defanged",
+    "pattern": "[domain-name:defanged = false]",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:type",
+    "pattern": "[email-addr:type = 'email-addr']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:id",
+    "pattern": "[email-addr:id = 'email-addr--00000000-0000-0000-0000-000000000005']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:spec_version",
+    "pattern": "[email-addr:spec_version = '2.1']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:defanged",
+    "pattern": "[email-addr:defanged = false]",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:type",
+    "pattern": "[email-message:type = 'email-message']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:id",
+    "pattern": "[email-message:id = 'email-message--00000000-0000-0000-0000-000000000007']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:spec_version",
+    "pattern": "[email-message:spec_version = '2.1']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:defanged",
+    "pattern": "[email-message:defanged = false]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:type",
+    "pattern": "[file:type = 'file']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:id",
+    "pattern": "[file:id = 'file--00000000-0000-0000-0000-000000000008']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:spec_version",
+    "pattern": "[file:spec_version = '2.1']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:defanged",
+    "pattern": "[file:defanged = false]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions",
+    "pattern": "[EXISTS file:extensions]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:type",
+    "pattern": "[ipv4-addr:type = 'ipv4-addr']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:id",
+    "pattern": "[ipv4-addr:id = 'ipv4-addr--00000000-0000-0000-0000-000000000009']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:spec_version",
+    "pattern": "[ipv4-addr:spec_version = '2.1']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:defanged",
+    "pattern": "[ipv4-addr:defanged = false]",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:type",
+    "pattern": "[ipv6-addr:type = 'ipv6-addr']",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:id",
+    "pattern": "[ipv6-addr:id = 'ipv6-addr--00000000-0000-0000-0000-00000000000a']",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:spec_version",
+    "pattern": "[ipv6-addr:spec_version = '2.1']",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:defanged",
+    "pattern": "[ipv6-addr:defanged = false]",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mac-addr:type",
+    "pattern": "[mac-addr:type = 'mac-addr']",
+    "sco_file": "sco/mac-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mac-addr:id",
+    "pattern": "[mac-addr:id = 'mac-addr--00000000-0000-0000-0000-00000000000b']",
+    "sco_file": "sco/mac-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mac-addr:spec_version",
+    "pattern": "[mac-addr:spec_version = '2.1']",
+    "sco_file": "sco/mac-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mac-addr:defanged",
+    "pattern": "[mac-addr:defanged = false]",
+    "sco_file": "sco/mac-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mutex:type",
+    "pattern": "[mutex:type = 'mutex']",
+    "sco_file": "sco/mutex.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mutex:id",
+    "pattern": "[mutex:id = 'mutex--00000000-0000-0000-0000-00000000000c']",
+    "sco_file": "sco/mutex.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mutex:spec_version",
+    "pattern": "[mutex:spec_version = '2.1']",
+    "sco_file": "sco/mutex.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mutex:defanged",
+    "pattern": "[mutex:defanged = false]",
+    "sco_file": "sco/mutex.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:type",
+    "pattern": "[network-traffic:type = 'network-traffic']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:id",
+    "pattern": "[network-traffic:id = 'network-traffic--00000000-0000-0000-0000-00000000000d']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:spec_version",
+    "pattern": "[network-traffic:spec_version = '2.1']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:defanged",
+    "pattern": "[network-traffic:defanged = false]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:extensions",
+    "pattern": "[EXISTS network-traffic:extensions]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:type",
+    "pattern": "[process:type = 'process']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:id",
+    "pattern": "[process:id = 'process--00000000-0000-0000-0000-00000000000e']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:spec_version",
+    "pattern": "[process:spec_version = '2.1']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:defanged",
+    "pattern": "[process:defanged = false]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:extensions",
+    "pattern": "[EXISTS process:extensions]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:type",
+    "pattern": "[software:type = 'software']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:id",
+    "pattern": "[software:id = 'software--00000000-0000-0000-0000-00000000000f']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:spec_version",
+    "pattern": "[software:spec_version = '2.1']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:defanged",
+    "pattern": "[software:defanged = false]",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "url:type",
+    "pattern": "[url:type = 'url']",
+    "sco_file": "sco/url.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "url:id",
+    "pattern": "[url:id = 'url--00000000-0000-0000-0000-000000000010']",
+    "sco_file": "sco/url.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "url:spec_version",
+    "pattern": "[url:spec_version = '2.1']",
+    "sco_file": "sco/url.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "url:defanged",
+    "pattern": "[url:defanged = false]",
+    "sco_file": "sco/url.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:type",
+    "pattern": "[user-account:type = 'user-account']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:id",
+    "pattern": "[user-account:id = 'user-account--00000000-0000-0000-0000-000000000011']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:spec_version",
+    "pattern": "[user-account:spec_version = '2.1']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:defanged",
+    "pattern": "[user-account:defanged = false]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:extensions",
+    "pattern": "[EXISTS user-account:extensions]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:type",
+    "pattern": "[windows-registry-key:type = 'windows-registry-key']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:id",
+    "pattern": "[windows-registry-key:id = 'windows-registry-key--00000000-0000-0000-0000-000000000012']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:spec_version",
+    "pattern": "[windows-registry-key:spec_version = '2.1']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:defanged",
+    "pattern": "[windows-registry-key:defanged = false]",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:type",
+    "pattern": "[x509-certificate:type = 'x509-certificate']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:id",
+    "pattern": "[x509-certificate:id = 'x509-certificate--00000000-0000-0000-0000-000000000013']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:spec_version",
+    "pattern": "[x509-certificate:spec_version = '2.1']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:defanged",
+    "pattern": "[x509-certificate:defanged = false]",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x-usb-device:type",
+    "pattern": "[x-usb-device:type = 'x-usb-device']",
+    "sco_file": "sco/x-usb-device.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x-usb-device:id",
+    "pattern": "[x-usb-device:id = 'x-usb-device--00000000-0000-0000-0000-000000000014']",
+    "sco_file": "sco/x-usb-device.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x-usb-device:spec_version",
+    "pattern": "[x-usb-device:spec_version = '2.1']",
+    "sco_file": "sco/x-usb-device.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x-usb-device:defanged",
+    "pattern": "[x-usb-device:defanged = false]",
+    "sco_file": "sco/x-usb-device.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:mime_type",
+    "pattern": "[artifact:mime_type = 'application/octet-stream']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:payload_bin",
+    "pattern": "[EXISTS artifact:payload_bin]",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:encryption_algorithm",
+    "pattern": "[artifact:encryption_algorithm = 'AES-256-GCM']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:decryption_key",
+    "pattern": "[artifact:decryption_key = 'secret-key']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:hashes",
+    "pattern": "[EXISTS artifact:hashes]",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "artifact:hashes.SHA-256",
+    "pattern": "[artifact:hashes.'SHA-256' = 'aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f']",
+    "sco_file": "sco/artifact.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:number",
+    "pattern": "[autonomous-system:number = 15139]",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:name",
+    "pattern": "[autonomous-system:name = 'Slime Industries']",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "autonomous-system:rir",
+    "pattern": "[autonomous-system:rir = 'ARIN']",
+    "sco_file": "sco/autonomous-system.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:path",
+    "pattern": "[directory:path = '/usr/home/temp']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:path_enc",
+    "pattern": "[directory:path_enc = 'L3Vzci9ob21lL3RlbXAvZW5j']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:ctime",
+    "pattern": "[directory:ctime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:mtime",
+    "pattern": "[directory:mtime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:atime",
+    "pattern": "[directory:atime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:contains_refs",
+    "pattern": "[EXISTS directory:contains_refs]",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "directory:contains_refs[0]",
+    "pattern": "[directory:contains_refs[0] = 'file--00000000-0000-0000-0000-000000000015']",
+    "sco_file": "sco/directory.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:value",
+    "pattern": "[domain-name:value = 'example.com']",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:resolves_to_refs",
+    "pattern": "[EXISTS domain-name:resolves_to_refs]",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "domain-name:resolves_to_refs[0]",
+    "pattern": "[domain-name:resolves_to_refs[0] = 'ipv4-addr--00000000-0000-0000-0000-000000000009']",
+    "sco_file": "sco/domain-name.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:value",
+    "pattern": "[email-addr:value = 'sender@example.com']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:display_name",
+    "pattern": "[email-addr:display_name = 'Sender Example']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-addr:belongs_to_ref",
+    "pattern": "[email-addr:belongs_to_ref = 'user-account--00000000-0000-0000-0000-000000000011']",
+    "sco_file": "sco/email-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:is_multipart",
+    "pattern": "[email-message:is_multipart = true]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:date",
+    "pattern": "[email-message:date = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:content_type",
+    "pattern": "[email-message:content_type = 'multipart/mixed']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:message_id",
+    "pattern": "[email-message:message_id = '<msg-001@example.com>']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:subject",
+    "pattern": "[email-message:subject = 'Test subject']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:subject_enc",
+    "pattern": "[email-message:subject_enc = 'encrypted-subject']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:from_ref",
+    "pattern": "[email-message:from_ref = 'email-addr--00000000-0000-0000-0000-000000000005']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:sender_ref",
+    "pattern": "[email-message:sender_ref = 'email-addr--00000000-0000-0000-0000-000000000022']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:to_refs",
+    "pattern": "[EXISTS email-message:to_refs]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:to_refs[0]",
+    "pattern": "[email-message:to_refs[0] = 'email-addr--00000000-0000-0000-0000-000000000006']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:cc_refs",
+    "pattern": "[EXISTS email-message:cc_refs]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:cc_refs[0]",
+    "pattern": "[email-message:cc_refs[0] = 'email-addr--00000000-0000-0000-0000-000000000020']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:bcc_refs",
+    "pattern": "[EXISTS email-message:bcc_refs]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:bcc_refs[0]",
+    "pattern": "[email-message:bcc_refs[0] = 'email-addr--00000000-0000-0000-0000-000000000021']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:received_lines",
+    "pattern": "[EXISTS email-message:received_lines]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:additional_header_fields",
+    "pattern": "[EXISTS email-message:additional_header_fields]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:body_multipart",
+    "pattern": "[EXISTS email-message:body_multipart]",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:body_multipart[0].body",
+    "pattern": "[email-message:body_multipart[0].body = 'Hello multipart']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:body_multipart[0].content_type",
+    "pattern": "[email-message:body_multipart[0].content_type = 'text/plain; charset=utf-8']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:body_multipart[0].content_disposition",
+    "pattern": "[email-message:body_multipart[0].content_disposition = 'inline']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:body_multipart[1].body_raw_ref",
+    "pattern": "[email-message:body_multipart[1].body_raw_ref = 'artifact--00000000-0000-0000-0000-00000000001c']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "email-message:raw_email_ref",
+    "pattern": "[email-message:raw_email_ref = 'artifact--00000000-0000-0000-0000-00000000001c']",
+    "sco_file": "sco/email-message.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:hashes",
+    "pattern": "[EXISTS file:hashes]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:hashes.MD5",
+    "pattern": "[file:hashes.'MD5' = '79054025255fb1a26e4bc422aef54eb4']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:size",
+    "pattern": "[file:size = 4096]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:name",
+    "pattern": "[file:name = 'sample.exe']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:name_enc",
+    "pattern": "[file:name_enc = 'c2FtcGxlLmVuYw==']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:magic_number_hex",
+    "pattern": "[file:magic_number_hex = '4d5a']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:mime_type",
+    "pattern": "[file:mime_type = 'application/x-dosexec']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:ctime",
+    "pattern": "[file:ctime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:mtime",
+    "pattern": "[file:mtime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:atime",
+    "pattern": "[file:atime = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:parent_directory_ref",
+    "pattern": "[file:parent_directory_ref = 'directory--00000000-0000-0000-0000-000000000003']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:contains_refs",
+    "pattern": "[EXISTS file:contains_refs]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:contains_refs[0]",
+    "pattern": "[file:contains_refs[0] = 'file--00000000-0000-0000-0000-000000000015']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:content_ref",
+    "pattern": "[file:content_ref = 'artifact--00000000-0000-0000-0000-000000000001']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.pe_type",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.pe_type = 'exe']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.imphash",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.imphash = 'imphash-value']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.machine_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.machine_hex = '014c']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.number_of_sections",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.number_of_sections = 3]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.number_of_symbols",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.number_of_symbols = 0]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.size_of_optional_header",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.size_of_optional_header = 224]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.time_date_stamp",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.time_date_stamp = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.pointer_to_symbol_table_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.pointer_to_symbol_table_hex = '00000000']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.characteristics_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.characteristics_hex = '0102']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.checksum_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.checksum_hex = '00000000']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.subsystem_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.subsystem_hex = '0002']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.dll_characteristics_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.dll_characteristics_hex = '0000']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.loader_flags_hex",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.loader_flags_hex = '00000000']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.file_header_hashes",
+    "pattern": "[EXISTS file:extensions.'windows-pebinary-ext'.file_header_hashes]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.sections",
+    "pattern": "[EXISTS file:extensions.'windows-pebinary-ext'.sections]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.sections[0].name",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.sections[0].name = '.text']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.sections[0].size",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.sections[0].size = 512]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.windows-pebinary-ext.sections[0].entropy",
+    "pattern": "[file:extensions.'windows-pebinary-ext'.sections[0].entropy = 6.5]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.raster-image-ext.image_height",
+    "pattern": "[file:extensions.'raster-image-ext'.image_height = '100']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.raster-image-ext.image_width",
+    "pattern": "[file:extensions.'raster-image-ext'.image_width = '200']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.raster-image-ext.bits_per_pixel",
+    "pattern": "[file:extensions.'raster-image-ext'.bits_per_pixel = '24']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.raster-image-ext.exif_tags",
+    "pattern": "[EXISTS file:extensions.'raster-image-ext'.exif_tags]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.archive-ext.contains_refs",
+    "pattern": "[EXISTS file:extensions.'archive-ext'.contains_refs]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.archive-ext.comment",
+    "pattern": "[file:extensions.'archive-ext'.comment = 'archive comment']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.ntfs-ext.sid",
+    "pattern": "[file:extensions.'ntfs-ext'.sid = 'S-1-5-21-1234567890']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.pdf-ext.version",
+    "pattern": "[file:extensions.'pdf-ext'.version = '1.7']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.pdf-ext.document_info_dict",
+    "pattern": "[EXISTS file:extensions.'pdf-ext'.document_info_dict]",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.pdf-ext.pdfid0",
+    "pattern": "[file:extensions.'pdf-ext'.pdfid0 = 'pdfid0']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "file:extensions.pdf-ext.pdfid1",
+    "pattern": "[file:extensions.'pdf-ext'.pdfid1 = 'pdfid1']",
+    "sco_file": "sco/file.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:value",
+    "pattern": "[ipv4-addr:value = '198.51.100.1/32']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:resolves_to_refs",
+    "pattern": "[EXISTS ipv4-addr:resolves_to_refs]",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:resolves_to_refs[0]",
+    "pattern": "[ipv4-addr:resolves_to_refs[0] = 'mac-addr--00000000-0000-0000-0000-00000000000b']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:belongs_to_refs",
+    "pattern": "[EXISTS ipv4-addr:belongs_to_refs]",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv4-addr:belongs_to_refs[0]",
+    "pattern": "[ipv4-addr:belongs_to_refs[0] = 'autonomous-system--00000000-0000-0000-0000-000000000002']",
+    "sco_file": "sco/ipv4-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:value",
+    "pattern": "[ipv6-addr:value = '2001:0db8:85a3::8a2e:0370:7334/128']",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:resolves_to_refs",
+    "pattern": "[EXISTS ipv6-addr:resolves_to_refs]",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "ipv6-addr:belongs_to_refs",
+    "pattern": "[EXISTS ipv6-addr:belongs_to_refs]",
+    "sco_file": "sco/ipv6-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mac-addr:value",
+    "pattern": "[mac-addr:value = '08:00:27:1a:2b:3c']",
+    "sco_file": "sco/mac-addr.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "mutex:name",
+    "pattern": "[mutex:name = 'MyMutex']",
+    "sco_file": "sco/mutex.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:start",
+    "pattern": "[network-traffic:start = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:end",
+    "pattern": "[network-traffic:end = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:is_active",
+    "pattern": "[network-traffic:is_active = false]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:src_ref",
+    "pattern": "[network-traffic:src_ref = 'ipv4-addr--00000000-0000-0000-0000-000000000009']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:dst_ref",
+    "pattern": "[network-traffic:dst_ref = 'domain-name--00000000-0000-0000-0000-000000000004']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:src_port",
+    "pattern": "[network-traffic:src_port = 443]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:dst_port",
+    "pattern": "[network-traffic:dst_port = 8443]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:protocols",
+    "pattern": "[EXISTS network-traffic:protocols]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:src_byte_count",
+    "pattern": "[network-traffic:src_byte_count = 1000]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:dst_byte_count",
+    "pattern": "[network-traffic:dst_byte_count = 2000]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:src_packets",
+    "pattern": "[network-traffic:src_packets = 10]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:dst_packets",
+    "pattern": "[network-traffic:dst_packets = 20]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:ipfix",
+    "pattern": "[EXISTS network-traffic:ipfix]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:src_payload_ref",
+    "pattern": "[network-traffic:src_payload_ref = 'artifact--00000000-0000-0000-0000-00000000001a']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:dst_payload_ref",
+    "pattern": "[network-traffic:dst_payload_ref = 'artifact--00000000-0000-0000-0000-00000000001b']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:encapsulates_refs",
+    "pattern": "[EXISTS network-traffic:encapsulates_refs]",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:encapsulated_by_ref",
+    "pattern": "[network-traffic:encapsulated_by_ref = 'network-traffic--00000000-0000-0000-0000-000000000019']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:extensions.http-request-ext.request_method",
+    "pattern": "[network-traffic:extensions.'http-request-ext'.request_method = 'get']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:extensions.tcp-ext.src_flags_hex",
+    "pattern": "[network-traffic:extensions.'tcp-ext'.src_flags_hex = '00000002']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:extensions.socket-ext.is_listening",
+    "pattern": "[network-traffic:extensions.'socket-ext'.is_listening = 'true']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "network-traffic:extensions.icmp-ext.icmp_type_hex",
+    "pattern": "[network-traffic:extensions.'icmp-ext'.icmp_type_hex = '08']",
+    "sco_file": "sco/network-traffic.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:name",
+    "pattern": "[process:name = 'proc.exe']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:cwd",
+    "pattern": "[process:cwd = '/tmp']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:command_line",
+    "pattern": "[process:command_line = 'proc.exe --verbose']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:is_hidden",
+    "pattern": "[process:is_hidden = false]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:pid",
+    "pattern": "[process:pid = 4242]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:created_time",
+    "pattern": "[process:created_time = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:environment_variables",
+    "pattern": "[EXISTS process:environment_variables]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:opened_connection_refs",
+    "pattern": "[EXISTS process:opened_connection_refs]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:creator_user_ref",
+    "pattern": "[process:creator_user_ref = 'user-account--00000000-0000-0000-0000-000000000011']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:image_ref",
+    "pattern": "[process:image_ref = 'file--00000000-0000-0000-0000-000000000016']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:parent_ref",
+    "pattern": "[process:parent_ref = 'process--00000000-0000-0000-0000-000000000017']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:child_refs",
+    "pattern": "[EXISTS process:child_refs]",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:child_refs[0]",
+    "pattern": "[process:child_refs[0] = 'process--00000000-0000-0000-0000-000000000018']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:extensions.windows-process-ext.aslr_enabled",
+    "pattern": "[process:extensions.'windows-process-ext'.aslr_enabled = 'true']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "process:extensions.windows-service-ext.service_name",
+    "pattern": "[process:extensions.'windows-service-ext'.service_name = 'sirvizio']",
+    "sco_file": "sco/process.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:name",
+    "pattern": "[software:name = 'ExampleSoft']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:cpe",
+    "pattern": "[software:cpe = 'cpe:2.3:a:example:soft:1.0:*:*:*:*:*:*:*']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:swid",
+    "pattern": "[software:swid = 'SWID-12345']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:vendor",
+    "pattern": "[software:vendor = 'Example Corp']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:version",
+    "pattern": "[software:version = '1.0.0']",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "software:languages",
+    "pattern": "[EXISTS software:languages]",
+    "sco_file": "sco/software.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "url:value",
+    "pattern": "[url:value = 'https://example.com/path']",
+    "sco_file": "sco/url.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:user_id",
+    "pattern": "[user-account:user_id = 'jdoe']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:credential",
+    "pattern": "[user-account:credential = 'hashed-credential']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_login",
+    "pattern": "[user-account:account_login = 'jdoe']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_type",
+    "pattern": "[user-account:account_type = 'unix']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:display_name",
+    "pattern": "[user-account:display_name = 'John Doe']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:is_service_account",
+    "pattern": "[user-account:is_service_account = false]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:is_privileged",
+    "pattern": "[user-account:is_privileged = true]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:can_escalate_privs",
+    "pattern": "[user-account:can_escalate_privs = false]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:is_disabled",
+    "pattern": "[user-account:is_disabled = false]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_created",
+    "pattern": "[user-account:account_created = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_expires",
+    "pattern": "[user-account:account_expires = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:credential_last_changed",
+    "pattern": "[user-account:credential_last_changed = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_first_login",
+    "pattern": "[user-account:account_first_login = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:account_last_login",
+    "pattern": "[user-account:account_last_login = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:extensions.unix-account-ext.gid",
+    "pattern": "[EXISTS user-account:extensions.'unix-account-ext'.gid]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:extensions.unix-account-ext.home_dir",
+    "pattern": "[user-account:extensions.'unix-account-ext'.home_dir = '/home/jdoe']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:extensions.unix-account-ext.shell",
+    "pattern": "[user-account:extensions.'unix-account-ext'.shell = '/bin/bash']",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "user-account:extensions.unix-account-ext.groups",
+    "pattern": "[EXISTS user-account:extensions.'unix-account-ext'.groups]",
+    "sco_file": "sco/user-account.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:key",
+    "pattern": "[windows-registry-key:key = 'HKEY_LOCAL_MACHINE\\\\SOFTWARE\\\\Example']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:values",
+    "pattern": "[EXISTS windows-registry-key:values]",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:values[0].name",
+    "pattern": "[windows-registry-key:values[0].name = 'Foo']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:values[0].data",
+    "pattern": "[windows-registry-key:values[0].data = 'bar']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:values[0].data_type",
+    "pattern": "[windows-registry-key:values[0].data_type = 'REG_SZ']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:modified_time",
+    "pattern": "[windows-registry-key:modified_time = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:creator_user_ref",
+    "pattern": "[windows-registry-key:creator_user_ref = 'user-account--00000000-0000-0000-0000-000000000011']",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "windows-registry-key:number_of_subkeys",
+    "pattern": "[windows-registry-key:number_of_subkeys = 3]",
+    "sco_file": "sco/windows-registry-key.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:is_self_signed",
+    "pattern": "[x509-certificate:is_self_signed = false]",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:hashes",
+    "pattern": "[EXISTS x509-certificate:hashes]",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:version",
+    "pattern": "[x509-certificate:version = '3']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:serial_number",
+    "pattern": "[x509-certificate:serial_number = '01:02:03']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:signature_algorithm",
+    "pattern": "[x509-certificate:signature_algorithm = 'sha256WithRSAEncryption']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:issuer",
+    "pattern": "[x509-certificate:issuer = 'CN=Example CA']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:subject",
+    "pattern": "[x509-certificate:subject = 'CN=Example User']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:validity_not_before",
+    "pattern": "[x509-certificate:validity_not_before = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:validity_not_after",
+    "pattern": "[x509-certificate:validity_not_after = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:subject_public_key_algorithm",
+    "pattern": "[x509-certificate:subject_public_key_algorithm = 'rsaEncryption']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:subject_public_key_modulus",
+    "pattern": "[x509-certificate:subject_public_key_modulus = 'modulus-hex']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:subject_public_key_exponent",
+    "pattern": "[x509-certificate:subject_public_key_exponent = 65537]",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions",
+    "pattern": "[EXISTS x509-certificate:x509_v3_extensions]",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.basic_constraints",
+    "pattern": "[x509-certificate:x509_v3_extensions.basic_constraints = 'CA:FALSE']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.name_constraints",
+    "pattern": "[x509-certificate:x509_v3_extensions.name_constraints = 'nc']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.policy_constraints",
+    "pattern": "[x509-certificate:x509_v3_extensions.policy_constraints = 'pc']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.key_usage",
+    "pattern": "[x509-certificate:x509_v3_extensions.key_usage = 'digitalSignature']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.extended_key_usage",
+    "pattern": "[x509-certificate:x509_v3_extensions.extended_key_usage = 'clientAuth']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.subject_key_identifier",
+    "pattern": "[x509-certificate:x509_v3_extensions.subject_key_identifier = 'ski']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.authority_key_identifier",
+    "pattern": "[x509-certificate:x509_v3_extensions.authority_key_identifier = 'aki']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.subject_alternative_name",
+    "pattern": "[x509-certificate:x509_v3_extensions.subject_alternative_name = 'san']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.issuer_alternative_name",
+    "pattern": "[x509-certificate:x509_v3_extensions.issuer_alternative_name = 'ian']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.subject_directory_attributes",
+    "pattern": "[x509-certificate:x509_v3_extensions.subject_directory_attributes = 'sda']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.crl_distribution_points",
+    "pattern": "[x509-certificate:x509_v3_extensions.crl_distribution_points = 'cdp']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.inhibit_any_policy",
+    "pattern": "[x509-certificate:x509_v3_extensions.inhibit_any_policy = 'iap']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.certificate_policies",
+    "pattern": "[x509-certificate:x509_v3_extensions.certificate_policies = 'cp']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.policy_mappings",
+    "pattern": "[x509-certificate:x509_v3_extensions.policy_mappings = 'pm']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.private_key_usage_period_not_before",
+    "pattern": "[x509-certificate:x509_v3_extensions.private_key_usage_period_not_before = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x509-certificate:x509_v3_extensions.private_key_usage_period_not_after",
+    "pattern": "[x509-certificate:x509_v3_extensions.private_key_usage_period_not_after = t'2020-01-01T00:00:00.000Z']",
+    "sco_file": "sco/x509-certificate.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  },
+  {
+    "id": "x-usb-device:usbdrive.serial_number",
+    "pattern": "[x-usb-device:usbdrive.serial_number = '575833314133343231313937']",
+    "sco_file": "sco/x-usb-device.json",
+    "bundle_file": "full-bundle.json",
+    "expect": true
+  }
+]

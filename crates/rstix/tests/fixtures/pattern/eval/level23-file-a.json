@@ -1,0 +1,10 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--00000000-0000-0000-0000-000000000220",
+  "hashes": {
+    "SHA-256": "bf07a7fbb825fc0aae7bf4a1177b2b31fcf8a3feeaf7092761e18c859ee52a9c",
+    "MD5": "cead3f77f6cda6ec00f57d76c9a6879f"
+  },
+  "name": "level23-a.dll"
+}

@@ -1,0 +1,9 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--00000000-0000-0000-0000-000000000272",
+  "hashes": { "MD5": "00000000000000000000000000000000" },
+  "name": "photo.bmp",
+  "mime_type": "image/bmp",
+  "magic_number_hex": "ffd8"
+}

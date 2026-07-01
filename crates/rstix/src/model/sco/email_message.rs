@@ -328,9 +328,39 @@ impl QueryableStixObject for EmailMessage {
 
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
+            ["is_multipart"] => Some(QueryValue::Bool(self.is_multipart)),
+            ["date"] => self.date.as_ref().map(QueryValue::Timestamp),
+            ["content_type"] => self.content_type.as_deref().map(QueryValue::Str),
+            ["message_id"] => self.message_id.as_deref().map(QueryValue::Str),
             ["subject"] => self.subject.as_deref().map(QueryValue::Str),
+            ["subject_enc"] => self.subject_enc.as_deref().map(QueryValue::Str),
+            ["body"] => self.body.as_deref().map(QueryValue::Str),
+            ["body_enc"] => self.body_enc.as_deref().map(QueryValue::Str),
+            ["received_lines"] if !self.received_lines.is_empty() => Some(QueryValue::Null),
+            ["additional_header_fields"] if !self.additional_header_fields.is_empty() => {
+                Some(QueryValue::Null)
+            }
+            ["body_multipart"] if self.body_multipart.as_ref().is_some_and(|p| !p.is_empty()) => {
+                Some(QueryValue::Null)
+            }
+            ["received_lines", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.received_lines.get(i))
+                .map(|line| QueryValue::Str(line.as_str())),
+            ["additional_header_fields", key, index] => {
+                let idx = index.parse::<usize>().ok()?;
+                self.additional_header_fields
+                    .get(*key)
+                    .and_then(|values| values.get(idx))
+                    .map(|value| QueryValue::Str(value.as_str()))
+            }
             ["from_ref"] => self
                 .from_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["sender_ref"] => self
+                .sender_ref
                 .as_ref()
                 .map(|id| QueryValue::Id(id.as_stix_id())),
             ["to_refs", index] => index
@@ -338,10 +368,36 @@ impl QueryableStixObject for EmailMessage {
                 .ok()
                 .and_then(|i| self.to_refs.get(i))
                 .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["cc_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.cc_refs.get(i))
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["bcc_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.bcc_refs.get(i))
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             ["raw_email_ref"] => self
                 .raw_email_ref
                 .as_ref()
                 .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["body_multipart", index, field] => {
+                let idx = index.parse::<usize>().ok()?;
+                let part = self.body_multipart.as_ref()?.get(idx)?;
+                match *field {
+                    "body" => part.body.as_deref().map(QueryValue::Str),
+                    "content_type" => part.content_type.as_deref().map(QueryValue::Str),
+                    "content_disposition" => {
+                        part.content_disposition.as_deref().map(QueryValue::Str)
+                    }
+                    "body_raw_ref" => part
+                        .body_raw_ref
+                        .as_ref()
+                        .map(|id| QueryValue::Id(id.as_stix_id())),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

@@ -185,7 +185,7 @@ fn common_property(name: &str) -> Option<PropSchema> {
 
 fn lookup_property(ctx: PathContext, name: &str) -> Result<PropSchema, PatternError> {
     let schema = match ctx {
-        PathContext::Custom => Some(prop(ValueKind::String)),
+        PathContext::Custom => common_property(name).or(Some(prop(ValueKind::String))),
         PathContext::ExtensionUnknown => Some(prop(ValueKind::String)),
         PathContext::Extension(key) => extension_property(key, name),
         PathContext::Sco(kind) => sco_property(kind, name),

@@ -1,0 +1,7 @@
+{
+  "type": "artifact",
+  "spec_version": "2.1",
+  "id": "artifact--00000000-0000-0000-0000-000000000270",
+  "mime_type": "application/vnd.tcpdump.pcap",
+  "payload_bin": "1MOyoQIABAA="
+}

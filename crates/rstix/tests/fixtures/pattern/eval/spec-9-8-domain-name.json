@@ -1,0 +1,7 @@
+{
+  "type": "domain-name",
+  "spec_version": "2.1",
+  "id": "domain-name--00000000-0000-0000-0000-000000000001",
+  "value": "www.5z8.info",
+  "resolves_to_refs": ["ipv4-addr--00000000-0000-0000-0000-000000000011"]
+}

@@ -236,8 +236,22 @@ impl QueryableStixObject for UserAccount {
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
             ["user_id"] => self.user_id.as_deref().map(QueryValue::Str),
+            ["credential"] => self.credential.as_deref().map(QueryValue::Str),
             ["account_login"] => self.account_login.as_deref().map(QueryValue::Str),
+            ["account_type"] => self.account_type.as_deref().map(QueryValue::Str),
             ["display_name"] => self.display_name.as_deref().map(QueryValue::Str),
+            ["is_service_account"] => self.is_service_account.map(QueryValue::Bool),
+            ["is_privileged"] => self.is_privileged.map(QueryValue::Bool),
+            ["can_escalate_privs"] => self.can_escalate_privs.map(QueryValue::Bool),
+            ["is_disabled"] => self.is_disabled.map(QueryValue::Bool),
+            ["account_created"] => self.account_created.as_ref().map(QueryValue::Timestamp),
+            ["account_expires"] => self.account_expires.as_ref().map(QueryValue::Timestamp),
+            ["credential_last_changed"] => self
+                .credential_last_changed
+                .as_ref()
+                .map(QueryValue::Timestamp),
+            ["account_first_login"] => self.account_first_login.as_ref().map(QueryValue::Timestamp),
+            ["account_last_login"] => self.account_last_login.as_ref().map(QueryValue::Timestamp),
             _ => None,
         }
     }

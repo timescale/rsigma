@@ -1,0 +1,9 @@
+{
+  "type": "email-addr",
+  "spec_version": "2.1",
+  "id": "email-addr--00000000-0000-0000-0000-000000000005",
+  "defanged": false,
+  "value": "sender@example.com",
+  "display_name": "Sender Example",
+  "belongs_to_ref": "user-account--00000000-0000-0000-0000-000000000011"
+}

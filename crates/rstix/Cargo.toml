@@ -13,7 +13,7 @@ homepage.workspace = true
 default = ["serde"]
 
 serde = ["dep:serde"]
-pattern = ["dep:base64"]
+pattern = ["dep:base64", "dep:ipnet", "dep:regex"]
 
 [dependencies]
 phf = { version = "0.13", features = ["macros"] }
@@ -25,7 +25,29 @@ uuid = { version = "1", features = ["v4", "v5"] }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
 base64 = { version = "0.22", optional = true }
+ipnet = { version = "2", optional = true }
+regex = { version = "1", optional = true }
 
 [[test]]
 name = "pattern_parse"
 required-features = ["pattern"]
+
+[[test]]
+name = "pattern_eval"
+required-features = ["pattern", "serde"]
+
+[[test]]
+name = "pattern_spec_eval"
+required-features = ["pattern", "serde"]
+
+[[test]]
+name = "pattern_eval_operators"
+required-features = ["pattern", "serde"]
+
+[[test]]
+name = "pattern_eval_sco_fields"
+required-features = ["pattern", "serde"]
+
+[[test]]
+name = "pattern_eval_errors"
+required-features = ["pattern", "serde"]

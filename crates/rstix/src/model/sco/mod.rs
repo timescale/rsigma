@@ -5,6 +5,7 @@ pub mod ref_types;
 
 mod artifact;
 mod autonomous_system;
+mod custom;
 mod directory;
 mod domain_name;
 mod email_address;
@@ -24,6 +25,7 @@ mod x509_certificate;
 
 pub use artifact::Artifact;
 pub use autonomous_system::AutonomousSystem;
+pub use custom::CustomSco;
 pub use directory::Directory;
 pub use domain_name::DomainName;
 pub use email_address::EmailAddr;
@@ -39,11 +41,11 @@ pub use software::Software;
 pub use url::Url;
 pub use user_account::UserAccount;
 pub use windows_registry_key::WindowsRegistryKey;
-pub use x509_certificate::X509Certificate;
+pub use x509_certificate::{X509Certificate, X509V3Extensions};
 
 use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTimestamp};
 
-/// STIX SCO enum (18 variants).
+/// STIX SCO enum (18 built-in types plus custom/vendor types).
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
@@ -84,6 +86,8 @@ pub enum ScoObject {
     WindowsRegistryKey(WindowsRegistryKey),
     /// STIX `x509-certificate` object.
     X509Certificate(X509Certificate),
+    /// Vendor-defined or custom SCO type (STIX §9.8).
+    Custom(CustomSco),
 }
 
 impl ScoObject {
@@ -108,6 +112,7 @@ impl ScoObject {
             Self::UserAccount(inner) => &inner.common,
             Self::WindowsRegistryKey(inner) => &inner.common,
             Self::X509Certificate(inner) => &inner.common,
+            Self::Custom(inner) => &inner.common,
         }
     }
 
@@ -131,7 +136,15 @@ impl ScoObject {
             Self::UserAccount(inner) => &mut inner.common,
             Self::WindowsRegistryKey(inner) => &mut inner.common,
             Self::X509Certificate(inner) => &mut inner.common,
+            Self::Custom(inner) => &mut inner.common,
         }
+    }
+
+    /// Parse a single SCO from JSON (no bundle reference validation).
+    #[cfg(feature = "serde")]
+    pub fn parse_str(json: &str) -> Result<Self, serde_json::Error> {
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        deserialize_sco_object_from_value(value)
     }
 }
 
@@ -156,10 +169,11 @@ impl QueryableStixObject for ScoObject {
             Self::UserAccount(inner) => inner.id(),
             Self::WindowsRegistryKey(inner) => inner.id(),
             Self::X509Certificate(inner) => inner.id(),
+            Self::Custom(inner) => inner.id(),
         }
     }
 
-    fn type_name(&self) -> &'static str {
+    fn type_name(&self) -> &str {
         match self {
             Self::Artifact(_) => Artifact::TYPE_NAME,
             Self::AutonomousSystem(_) => AutonomousSystem::TYPE_NAME,
@@ -179,6 +193,7 @@ impl QueryableStixObject for ScoObject {
             Self::UserAccount(_) => UserAccount::TYPE_NAME,
             Self::WindowsRegistryKey(_) => WindowsRegistryKey::TYPE_NAME,
             Self::X509Certificate(_) => X509Certificate::TYPE_NAME,
+            Self::Custom(inner) => inner.type_name(),
         }
     }
 
@@ -202,6 +217,7 @@ impl QueryableStixObject for ScoObject {
             Self::UserAccount(inner) => inner.spec_version(),
             Self::WindowsRegistryKey(inner) => inner.spec_version(),
             Self::X509Certificate(inner) => inner.spec_version(),
+            Self::Custom(inner) => inner.spec_version(),
         }
     }
 
@@ -233,6 +249,7 @@ impl QueryableStixObject for ScoObject {
             Self::UserAccount(inner) => inner.get_field(path),
             Self::WindowsRegistryKey(inner) => inner.get_field(path),
             Self::X509Certificate(inner) => inner.get_field(path),
+            Self::Custom(inner) => inner.get_field(path),
         }
     }
 }
@@ -262,6 +279,7 @@ impl serde::Serialize for ScoObject {
             Self::UserAccount(inner) => inner.serialize(serializer),
             Self::WindowsRegistryKey(inner) => inner.serialize(serializer),
             Self::X509Certificate(inner) => inner.serialize(serializer),
+            Self::Custom(inner) => inner.serialize(serializer),
         }
     }
 }
@@ -290,7 +308,7 @@ pub(crate) fn deserialize_sco_object_from_value(
         "autonomous-system" => serde_json::from_value(value).map(ScoObject::AutonomousSystem),
         "directory" => serde_json::from_value(value).map(ScoObject::Directory),
         "domain-name" => serde_json::from_value(value).map(ScoObject::DomainName),
-        "email-address" => serde_json::from_value(value).map(ScoObject::EmailAddr),
+        "email-addr" => serde_json::from_value(value).map(ScoObject::EmailAddr),
         "email-message" => serde_json::from_value(value).map(ScoObject::EmailMessage),
         "file" => serde_json::from_value(value).map(ScoObject::File),
         "ipv4-addr" => serde_json::from_value(value).map(ScoObject::Ipv4Addr),
@@ -304,10 +322,7 @@ pub(crate) fn deserialize_sco_object_from_value(
         "user-account" => serde_json::from_value(value).map(ScoObject::UserAccount),
         "windows-registry-key" => serde_json::from_value(value).map(ScoObject::WindowsRegistryKey),
         "x509-certificate" => serde_json::from_value(value).map(ScoObject::X509Certificate),
-        _ => Err(serde_json::Error::io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("unknown SCO type `{type_name}`"),
-        ))),
+        _ => serde_json::from_value(value).map(ScoObject::Custom),
     }
 }
 
@@ -329,6 +344,7 @@ crate::impl_bundle_object_cast!(Sco, Url, Url);
 crate::impl_bundle_object_cast!(Sco, UserAccount, UserAccount);
 crate::impl_bundle_object_cast!(Sco, WindowsRegistryKey, WindowsRegistryKey);
 crate::impl_bundle_object_cast!(Sco, X509Certificate, X509Certificate);
+crate::impl_bundle_object_cast!(Sco, CustomSco, Custom);
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {

@@ -1,0 +1,9 @@
+{
+  "type": "x-usb-device",
+  "spec_version": "2.1",
+  "id": "x-usb-device--00000000-0000-0000-0000-000000000014",
+  "defanged": false,
+  "usbdrive": {
+    "serial_number": "575833314133343231313937"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--949eb97a-da1e-5292-8959-03c4249dc9f3",
+  "hashes": {
+    "SHA-256": "fe90a7e910cb3a4739bed9180e807e93fa70c90f25a8915476f5e4bfbac681db"
+  },
+  "name": "foo.dll",
+  "extensions": {
+    "windows-pebinary-ext": {
+      "pe_type": "exe",
+      "sections": [{ "name": "CODE", "entropy": 0.061089 }]
+    }
+  }
+}

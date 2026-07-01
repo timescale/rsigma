@@ -1,0 +1,19 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000003",
+  "objects": [
+    {
+      "type": "domain-name",
+      "spec_version": "2.1",
+      "id": "domain-name--00000000-0000-0000-0000-000000000001",
+      "value": "www.5z8.info",
+      "resolves_to_refs": ["ipv4-addr--00000000-0000-0000-0000-000000000011"]
+    },
+    {
+      "type": "ipv4-addr",
+      "spec_version": "2.1",
+      "id": "ipv4-addr--00000000-0000-0000-0000-000000000011",
+      "value": "198.51.100.1"
+    }
+  ]
+}

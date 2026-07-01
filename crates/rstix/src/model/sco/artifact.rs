@@ -164,6 +164,14 @@ impl QueryableStixObject for Artifact {
         match path {
             ["mime_type"] => self.mime_type.as_deref().map(QueryValue::Str),
             ["url"] => self.url.as_deref().map(QueryValue::Str),
+            ["payload_bin"] => self.payload_bin.as_deref().map(QueryValue::Str),
+            ["encryption_algorithm"] => self.encryption_algorithm.as_deref().map(QueryValue::Str),
+            ["decryption_key"] => self.decryption_key.as_deref().map(QueryValue::Str),
+            ["hashes", key] => self
+                .hashes
+                .get(*key)
+                .map(String::as_str)
+                .map(QueryValue::Str),
             _ => None,
         }
     }

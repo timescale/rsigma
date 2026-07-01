@@ -158,6 +158,10 @@ impl QueryableStixObject for Directory {
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
             ["path"] => Some(QueryValue::Str(&self.path)),
+            ["path_enc"] => self.path_enc.as_deref().map(QueryValue::Str),
+            ["ctime"] => self.ctime.as_ref().map(QueryValue::Timestamp),
+            ["mtime"] => self.mtime.as_ref().map(QueryValue::Timestamp),
+            ["atime"] => self.atime.as_ref().map(QueryValue::Timestamp),
             ["contains_refs", index] => index
                 .parse::<usize>()
                 .ok()

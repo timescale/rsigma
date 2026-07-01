@@ -1,0 +1,44 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000100",
+  "objects": [
+    {
+      "type": "email-message",
+      "spec_version": "2.1",
+      "id": "email-message--00000000-0000-0000-0000-000000000001",
+      "is_multipart": true,
+      "subject": "Conference Info",
+      "from_ref": "email-addr--00000000-0000-0000-0000-000000000010",
+      "sender_ref": "email-addr--00000000-0000-0000-0000-000000000011",
+      "body_multipart": [
+        {
+          "content_type": "text/plain",
+          "body": "Hello"
+        },
+        {
+          "content_type": "application/octet-stream",
+          "body_raw_ref": "file--00000000-0000-0000-0000-000000000020"
+        }
+      ]
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000010",
+      "value": "from@example.com"
+    },
+    {
+      "type": "email-addr",
+      "spec_version": "2.1",
+      "id": "email-addr--00000000-0000-0000-0000-000000000011",
+      "value": "sender@example.com"
+    },
+    {
+      "type": "file",
+      "spec_version": "2.1",
+      "id": "file--00000000-0000-0000-0000-000000000020",
+      "hashes": { "MD5": "a" },
+      "name": "Final Report Q3.exe"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "type": "artifact",
+  "spec_version": "2.1",
+  "id": "artifact--00000000-0000-0000-0000-000000000001",
+  "defanged": false,
+  "mime_type": "application/octet-stream",
+  "payload_bin": "SGVsbG8=",
+  "encryption_algorithm": "AES-256-GCM",
+  "decryption_key": "secret-key",
+  "hashes": {
+    "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f",
+    "MD5": "79054025255fb1a26e4bc422aef54eb4"
+  }
+}

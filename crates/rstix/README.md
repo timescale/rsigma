@@ -6,7 +6,7 @@
 **Core Foundation** is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
 
-**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and the semantic **validation pipeline** (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine**, graph/store, and TAXII runtime behaviors follow in later phases.
+**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and the semantic **validation pipeline** (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** parse, type-check, and evaluation are **complete** behind the optional `pattern` feature; canonical printer, graph/store, and TAXII runtime behaviors follow in later work.
 
 This library is part of [rsigma].
 
@@ -39,18 +39,18 @@ This library is part of [rsigma].
 - `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase`, and related types; `model::meta` — `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`, and TLP UUID constants; `model::sdo` — all 19 STIX domain objects, `SdoObject`, `IndicatorPattern`, `ObservedDataForm`, `ObservedDataEmbeddedObject`, and typed ref unions; `model::sro` — `Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`, and typed ref unions; `model::sco` — all 18 STIX cyber-observable types, `ScoObject`, typed ref unions, and 12 predefined SCO extensions; `model::StixObject` — top-level enum dispatching SDO/SCO/SRO/Meta plus `CustomStixObject`; `model::Bundle` — bundle container with ref validation, `x_*` property capture, and `validate()` semantic warnings; `model::ValidationReport` / `ValidationCode` / `ValidationFinding` — SHOULD-level advisory findings; `model::ParseOptions` / `TypeRegistry` — parse-time limits and optional custom type registration.
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
-- `pattern` (`pattern` feature): `Pattern::parse`, `PatternAst`, `PatternScoType`, `PatternError`, `PatternMatchError` — STIX Specification §9 Levels 1–3 parse and type-check (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
+- `pattern` (`pattern` feature): `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::evaluate_observed_data`, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError` — STIX Specification §9 Levels 1–3 parse, type-check, and evaluation (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
 - `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId`, timestamps, and `Confidence`; typed-ID serde is generated in the `define_typed_id!` macro.
 
 ## Feature flags
 
 - `serde` (default): enables serialization and deserialization support.
-- `pattern`: STIX patterning lexer, Level 1–3 parser, and SCO schema type-checker (`Pattern::parse`).
+- `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`).
 
 ## Current Phase Status
 
 - **Data Model + Serialization:** **complete**
-- **Pattern Engine:** **parse + type-check complete** (`--features pattern`); evaluation, printer, and Indicator wiring in later Pattern Engine work
+- **Pattern Engine:** **parse + type-check + evaluation complete** (`--features pattern`); canonical printer and Indicator wiring in later Pattern Engine work
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
 ## Usage
@@ -78,7 +78,7 @@ assert!(json.contains("\"spec_version\":\"2.1\""));
 
 ## Pattern Engine (STIX §9)
 
-The optional **`pattern`** feature adds STIX patterning: parse and type-check today; evaluation and canonical printer follow in later Pattern Engine work.
+The optional **`pattern`** feature adds STIX patterning: parse, type-check, and evaluate Levels 1–3; canonical printer and Indicator AST wiring follow in later Pattern Engine work.
 
 ```mermaid
 flowchart LR
@@ -87,8 +87,10 @@ flowchart LR
     PAR --> TCK["typeck.rs<br/>SCO schema + extensions"]
     TCK --> PAT["Pattern::parse"]
     PAT --> AST["PatternAst"]
+    AST --> EVAL["eval.rs<br/>Levels 1–3"]
+    CTX["context.rs<br/>ObservationContext"] --> EVAL
+    EVAL --> OUT["bool match"]
 
-    PAT -.->|"deferred"| EVAL["eval.rs"]
     PAT -.->|"deferred"| PRINT["print.rs"]
     IND["IndicatorPattern::Stix"] -.->|"deferred"| PAT
 ```
@@ -98,43 +100,57 @@ flowchart LR
 | `pattern/lexer.rs` | Tokenizer; 64 KiB input cap | Done |
 | `pattern/parser.rs` | Recursive-descent parser; dict keys, ref-list `[*]`, custom SCO types | Done |
 | `pattern/typeck.rs` | Property paths, `extensions.'…'`, `_ref.type`, ISSUBSET on CIDR strings | Done |
-| `pattern/eval.rs` | Level 1–3 evaluation, `matches_single` | Planned |
+| `pattern/eval.rs` | Level 1–3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Done |
+| `pattern/context.rs` | `ObservationContext`, `TimestampedObservation` (`at: Option<_>`), observed-data builder | Done |
+| `pattern/path.rs` | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle | Done |
+| `pattern/security.rs` | Regex compile size limit for `MATCHES` | Done |
 | `pattern/print.rs` | Canonical pattern printer | Planned |
-| `pattern/context.rs` | `ObservationContext` for temporal patterns | Planned |
 
 ```rust
 use rstix::Pattern;
+use rstix::pattern::{ObservationContext, TimestampedObservation};
 
 let pattern = Pattern::parse("[ipv4-addr:value = '198.51.100.1/32']")?;
 assert_eq!(pattern.observed_types().len(), 1);
+
+// Level 1: single SCO
+let sco = /* ... */;
+assert!(pattern.matches_single(&sco)?);
+
+// Levels 2–3: timestamped observations
+let ctx = ObservationContext::from_scos(&observations);
+assert!(pattern.evaluate(&ctx)?);
 
 // Custom SCO types (STIX §9.8) appear in observed_type_names(), not observed_types().
 let custom = Pattern::parse("[x-usb-device:usbdrive.serial_number = '1']")?;
 assert_eq!(custom.observed_type_names(), vec!["x-usb-device"]);
 ```
 
-### Scope (parse + type-check)
+### Scope (parse + type-check + evaluation)
 
-| In this release | Deferred (later Pattern Engine work) |
-| --------------- | ------------------------------------- |
-| Lexer, Level 1–3 parser, `PatternAst` | `Pattern::evaluate`, `matches_single`, `evaluate_observed_data` |
-| SCO schema type-checker (18 built-in + custom types) | `ObservationContext`, temporal eval semantics |
-| `Pattern::parse`, `parse_level1`, `observed_types` / `observed_type_names` | Canonical printer (`print.rs`, round-trip AST) |
-| Spec §9.8 fixture-backed parse/type-check tests | `IndicatorPattern::Stix { ast }` serde wiring |
-| Security limits (64 KiB input, AST depth, observation/comparison caps) | `fuzz_stix_pattern` |
-| `PatternMatchError` type (defined; used when evaluation lands) | `MATCHES` regex execution (`UnsupportedOperator` at eval) |
+| Shipped in the `pattern` feature | Remaining Pattern Engine work (next slice) |
+| ---------------------------------- | ------------------------------------------ |
+| Lexer, Level 1–3 parser, `PatternAst`, type-checker | Canonical printer (`print.rs`, round-trip AST) |
+| `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | `IndicatorPattern::Stix { ast }` serde wiring |
+| Full §9 evaluation: comparisons (including `MATCHES`, hex/binary), temporal qualifiers, `_ref` paths, custom SCO types | `fuzz_stix_pattern` |
+| `ObservationContext`, observed-data context builder (embedded SRO skipped) | |
+| Spec §9.8 fixture-backed parse + eval tests (`tests/pattern_spec_eval.rs`) | |
 
-Authoritative grammar: **STIX Specification §9** (not §8). The internal `Pattern` struct holds a validated `PatternAst` (plan sketch name `TypedPatternAst` — same role, different type name).
+Authoritative grammar: **STIX Specification §9** (not §8). The `Pattern` struct holds a validated `PatternAst` after parse and type-check.
 
-Type-checker notes (spec-aligned):
+Evaluation notes (STIX §9):
 
-- **`process:name`**, **`file:created`**, **`dst_ref.type`**: pattern virtual paths used in §9 examples; evaluation resolves them when the evaluator ships.
+- **`TimestampedObservation::at`**: `Option<StixTimestamp>`; temporal patterns return `MissingTimestamp` when any observation lacks a timestamp.
+- **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths.
+- **Custom SCO types**: vendor types (e.g. `x-usb-device`) deserialize as `CustomSco` and evaluate nested property paths.
+- **`file:created`**: alias for `ctime`.
+- **`network-traffic:dst_ref.type`**: `_ref` dereference then `type` property on the target SCO.
 - **`file:hashes.MD5`**: dictionary dot-key syntax per §9.7.3.
 - **`extensions.'…'`**: predefined SCO extension paths (e.g. `windows-pebinary-ext.sections[*].entropy`).
 - **`ISSUBSET` / `ISSUPERSET` on string**: IP/CIDR subset checks per §9.6.
 - **Custom SCO types** (`x-usb-device`, …): parsed and type-checked permissively (leaf properties as string).
 
-Fixtures: `tests/fixtures/pattern/` (§9.8 examples). Acceptance tests: `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::security`.
+Fixtures: `tests/fixtures/pattern/` (§9.8 examples) and `tests/fixtures/pattern/sco-fields/` (manifest-driven SCO field paths). Acceptance tests: `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::security`, `pattern::eval`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`.
 
 User-facing docs: [rstix library page](../../docs/library/rstix.md#pattern-engine-stix-9).
 
@@ -159,7 +175,7 @@ Navigation:
 | `bundle.validate_refs()` | Re-run MUST ref resolution (normally called during parse). |
 | `bundle.validate()` | Collect SHOULD-level semantic warnings (see below). |
 
-The plan name `get::<T>()` is implemented as **`get_typed::<T>()`** to avoid clashing with untyped `get`.
+The originally sketched `get::<T>()` API is implemented as **`get_typed::<T>()`** to avoid clashing with untyped `get`.
 
 ### `ParseOptions` defaults
 
@@ -212,15 +228,15 @@ STIX **SHOULD** cite full Internet standards for some string fields. rstix uses 
 | `email-addr.value` | RFC 5322 | Non-empty `local@domain` with dot in domain, no whitespace | **RFC 5322**: full addr-spec grammar (quoted strings, comments, IP literals) |
 | `url.value` | Valid URL | `http://`, `https://`, or `ftp://` prefix | WHATWG URL parser, IDNA in host, normalization |
 
-**Why full IDNA / RFC 5322 are not in Data Model + Serialization:** they are large, locale-sensitive parsers unrelated to STIX object typing. Basic checks catch malformed CTI early; strict compliance belongs in an optional validation profile or dedicated dependencies (`idna`, `mail-parser`, etc.) if a downstream consumer requires it. Recorded in `plan/spec-differential-status.md` under later-phase optional polish.
+**Why full IDNA / RFC 5322 are not in Data Model + Serialization:** they are large, locale-sensitive parsers unrelated to STIX object typing. Basic checks catch malformed CTI early; strict compliance belongs in an optional validation profile or dedicated dependencies (`idna`, `mail-parser`, etc.) if a downstream consumer requires it.
 
 ### Local MITRE ATT&CK corpus test
 
-The full ATT&CK STIX bundle (~50 MiB) is **not committed** (`plan/` is gitignored). CI uses synthetic 5 000-object streaming tests. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
+The full ATT&CK STIX bundle (~50 MiB) locally tested. CI uses synthetic 5 000-object streaming tests. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
 
 ```bash
-# Example: plan/enterprise-attack-19.1.json (local only)
-RSTIX_ATTCK_BUNDLE=plan/enterprise-attack-19.1.json \
+# Point at a local ATT&CK bundle file (download separately; not in the repo)
+RSTIX_ATTCK_BUNDLE=/path/to/enterprise-attack-19.1.json \
   cargo test -p rstix --features serde attck_corpus_roundtrip_when_present -- --nocapture
 ```
 
@@ -319,8 +335,6 @@ Prefer **id comparison** (`TLP1_*` / `TLP2_*`) on `object_marking_refs` when you
 
 The **Data Model + Serialization** phase validates STIX invariants at deserialize time (and via `new` / `validate` for programmatic construction). Where the spec distinguishes “absent” from “invalid”, rstix **enforces MUST rules at parse time** and emits SHOULD-level findings via **`Bundle::validate()`**.
 
-**Spec audit record:** open vs resolved differentials vs `plan/stix-v2.1-spec.md` are documented in `plan/spec-differential-status.md` (local plan folder; not committed to git).
-
 | Area | Enforced behavior | Why not defer? |
 | ---- | ----------------- | -------------- |
 | `confidence` on SDO/SRO common props | `Option<Confidence>` — omitted in JSON → `None`; present values use typed `Confidence` (range + scale). | Distinguishes “not set” from “set to zero/unknown”; avoids silently accepting out-of-range integers. |
@@ -355,8 +369,8 @@ The **Data Model + Serialization** phase validates STIX invariants at deserializ
 | SCO invariants (artifact, file, email-message, network-traffic, process, user-account, …) | Enforced in `validate()` called from custom `Deserialize`; see `ModelError` variants. | Spec MUST rules (payload XOR url, hashes or name, multipart body rules, protocols + endpoint refs, at-least-one-property types). |
 | SCO typed ref unions | `DomainNameResolvesToRef`, `DirectoryContainsRef`, `NetworkTrafficEndpointRef`, `EmailMimeBodyRawRef` reject wrong target types at deserialize. | STIX §6 union ref targets. |
 | SCO extensions | Parent types (`File`, `NetworkTraffic`, `Process`, `UserAccount`) call `validate_in_map` for known extension keys during `validate()`. Negative unit fixtures: shared `extensions/no-properties.json` for empty-body `*NoProperties` cases, plus per-extension invalid payloads where the failure mode differs. Parent `*-with-invalid-*-ext.json` fixtures in `spec.rs` prove dispatch. `ExtensionDeserializeFailed { key, detail }` preserves serde context. | Predefined extension invariants (STIX 2.1 §3.10). |
-| `Process` at-least-one-property | §6.13 type-specific fields **or** `windows-process-ext` / `windows-service-ext` key present; extension body validated separately. | `plan/stix-v2.1-spec.md` §6.13. |
-| `UserAccount` at-least-one-property | §6.16.1 specific fields **or** `unix-account-ext` key present; extension body validated separately (`windows-registry-key` checks §6.17.1 fields only — no predefined extension). | `plan/stix-v2.1-spec.md` §6.16 / §6.16.2 / §6.17. |
+| `Process` at-least-one-property | §6.13 type-specific fields **or** `windows-process-ext` / `windows-service-ext` key present; extension body validated separately. | STIX 2.1 Specification §6.13. |
+| `UserAccount` at-least-one-property | §6.16.1 specific fields **or** `unix-account-ext` key present; extension body validated separately (`windows-registry-key` checks §6.17.1 fields only — no predefined extension). | STIX 2.1 Specification §6.16 / §6.16.2 / §6.17. |
 | `ScoObject` / `QueryValue` | `#[non_exhaustive]`; `created()` / `modified()` always `None` for SCO arms. | STIX §3.2 — SCOs have no created/modified. |
 | `ExtensionMap` | Public `insert()` mirrors `BTreeMap` semantics. | Programmatic extension assembly without reaching into the inner map. |
 | Round-trip helpers (`tests/support/roundtrip.rs`) | `roundtrip_strict`: re-serialized JSON must equal the fixture (complete types — meta, SDO, SRO, SCO, common leaf types). `roundtrip`: subset compare for `SdoSroCommonProps` / `ScoCommonProps` fixtures only. | Strict mode catches dropped fields; subset mode is documented as partial. |

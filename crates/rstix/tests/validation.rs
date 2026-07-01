@@ -2,10 +2,13 @@
 
 #![cfg(feature = "serde")]
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+#[path = "support/fixtures_root.rs"]
+mod fixtures_root;
+#[path = "support/fixtures_spec.rs"]
+mod fixtures_spec;
 
-use fixtures::load_fixture;
+use fixtures_root::load_fixture;
+use fixtures_spec::load_spec_fixture;
 use rstix::model::sdo::{ObservedData, ObservedDataEmbeddedObject, ObservedDataForm};
 use rstix::model::{Bundle, ValidationCode};
 use rstix::parse_bundle;
@@ -215,7 +218,7 @@ fn tlp1_object_marking_ref_warns() {
 
 #[test]
 fn validate_is_clean_for_minimal_bundle() {
-    let raw = fixtures::load_spec_fixture("bundle/bundle-minimal.json");
+    let raw = load_spec_fixture("bundle/bundle-minimal.json");
     let bundle = Bundle::parse(&raw).expect("parse");
     assert!(bundle.validate().is_clean());
 }

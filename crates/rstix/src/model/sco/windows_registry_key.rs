@@ -191,6 +191,21 @@ impl QueryableStixObject for WindowsRegistryKey {
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
             ["key"] => self.key.as_deref().map(QueryValue::Str),
+            ["values"] if !self.values.is_empty() => Some(QueryValue::Null),
+            ["values", index, field] => {
+                let idx = index.parse::<usize>().ok()?;
+                let value = self.values.get(idx)?;
+                match *field {
+                    "name" => value.name.as_deref().map(QueryValue::Str),
+                    "data" => value.data.as_deref().map(QueryValue::Str),
+                    "data_type" => value.data_type.as_deref().map(QueryValue::Str),
+                    _ => None,
+                }
+            }
+            ["modified_time"] => self.modified_time.as_ref().map(QueryValue::Timestamp),
+            ["number_of_subkeys"] => self
+                .number_of_subkeys
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
             ["creator_user_ref"] => self
                 .creator_user_ref
                 .as_ref()

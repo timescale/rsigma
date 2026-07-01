@@ -1,0 +1,30 @@
+{
+  "type": "user-account",
+  "spec_version": "2.1",
+  "id": "user-account--00000000-0000-0000-0000-000000000011",
+  "defanged": false,
+  "user_id": "jdoe",
+  "credential": "hashed-credential",
+  "account_login": "jdoe",
+  "account_type": "unix",
+  "display_name": "John Doe",
+  "is_service_account": false,
+  "is_privileged": true,
+  "can_escalate_privs": false,
+  "is_disabled": false,
+  "account_created": "2020-01-01T00:00:00.000Z",
+  "account_expires": "2020-01-01T00:00:00.000Z",
+  "credential_last_changed": "2020-01-01T00:00:00.000Z",
+  "account_first_login": "2020-01-01T00:00:00.000Z",
+  "account_last_login": "2020-01-01T00:00:00.000Z",
+  "extensions": {
+    "unix-account-ext": {
+      "gid": 1000,
+      "home_dir": "/home/jdoe",
+      "shell": "/bin/bash",
+      "groups": [
+        "wheel"
+      ]
+    }
+  }
+}

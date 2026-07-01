@@ -1,0 +1,13 @@
+{
+  "type": "ipv6-addr",
+  "spec_version": "2.1",
+  "id": "ipv6-addr--00000000-0000-0000-0000-00000000000a",
+  "defanged": false,
+  "value": "2001:0db8:85a3::8a2e:0370:7334/128",
+  "resolves_to_refs": [
+    "mac-addr--00000000-0000-0000-0000-00000000000b"
+  ],
+  "belongs_to_refs": [
+    "autonomous-system--00000000-0000-0000-0000-000000000002"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "type": "mutex",
+  "spec_version": "2.1",
+  "id": "mutex--00000000-0000-0000-0000-00000000000c",
+  "defanged": false,
+  "name": "MyMutex"
+}

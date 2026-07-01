@@ -1,0 +1,12 @@
+{
+  "type": "domain-name",
+  "spec_version": "2.1",
+  "id": "domain-name--00000000-0000-0000-0000-000000000004",
+  "defanged": false,
+  "value": "example.com",
+  "resolves_to_refs": [
+    "ipv4-addr--00000000-0000-0000-0000-000000000009",
+    "ipv6-addr--00000000-0000-0000-0000-00000000000a",
+    "domain-name--00000000-0000-0000-0000-000000000004"
+  ]
+}

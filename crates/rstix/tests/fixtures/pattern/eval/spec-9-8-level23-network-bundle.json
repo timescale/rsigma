@@ -1,0 +1,33 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000104",
+  "objects": [
+    {
+      "type": "network-traffic",
+      "spec_version": "2.1",
+      "id": "network-traffic--00000000-0000-0000-0000-000000000201",
+      "protocols": ["tcp"],
+      "dst_ref": "domain-name--00000000-0000-0000-0000-000000000210"
+    },
+    {
+      "type": "network-traffic",
+      "spec_version": "2.1",
+      "id": "network-traffic--00000000-0000-0000-0000-000000000202",
+      "protocols": ["tcp"],
+      "dst_ref": "domain-name--00000000-0000-0000-0000-000000000210"
+    },
+    {
+      "type": "network-traffic",
+      "spec_version": "2.1",
+      "id": "network-traffic--00000000-0000-0000-0000-000000000203",
+      "protocols": ["tcp"],
+      "dst_ref": "domain-name--00000000-0000-0000-0000-000000000210"
+    },
+    {
+      "type": "domain-name",
+      "spec_version": "2.1",
+      "id": "domain-name--00000000-0000-0000-0000-000000000210",
+      "value": "example.com"
+    }
+  ]
+}

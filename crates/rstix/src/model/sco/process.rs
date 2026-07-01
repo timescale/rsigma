@@ -226,7 +226,27 @@ impl QueryableStixObject for Process {
 
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
+            ["is_hidden"] => self.is_hidden.map(QueryValue::Bool),
+            ["pid"] => self.pid.map(|p| QueryValue::Int(i64::from(p))),
+            ["created_time"] => self.created_time.as_ref().map(QueryValue::Timestamp),
+            ["cwd"] => self.cwd.as_deref().map(QueryValue::Str),
             ["command_line"] => self.command_line.as_deref().map(QueryValue::Str),
+            ["environment_variables"] if !self.environment_variables.is_empty() => {
+                Some(QueryValue::Null)
+            }
+            ["opened_connection_refs"] if !self.opened_connection_refs.is_empty() => {
+                Some(QueryValue::Null)
+            }
+            ["child_refs"] if !self.child_refs.is_empty() => Some(QueryValue::Null),
+            ["environment_variables", key] => self
+                .environment_variables
+                .get(*key)
+                .map(String::as_str)
+                .map(QueryValue::Str),
+            ["creator_user_ref"] => self
+                .creator_user_ref
+                .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
             ["image_ref"] => self
                 .image_ref
                 .as_ref()
@@ -234,6 +254,11 @@ impl QueryableStixObject for Process {
             ["parent_ref"] => self
                 .parent_ref
                 .as_ref()
+                .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["child_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.child_refs.get(i))
                 .map(|id| QueryValue::Id(id.as_stix_id())),
             ["opened_connection_refs", index] => index
                 .parse::<usize>()

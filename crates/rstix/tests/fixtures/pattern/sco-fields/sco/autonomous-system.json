@@ -1,0 +1,9 @@
+{
+  "type": "autonomous-system",
+  "spec_version": "2.1",
+  "id": "autonomous-system--00000000-0000-0000-0000-000000000002",
+  "defanged": false,
+  "number": 15139,
+  "name": "Slime Industries",
+  "rir": "ARIN"
+}

@@ -162,8 +162,15 @@ impl QueryableStixObject for Software {
         match path {
             ["name"] => Some(QueryValue::Str(&self.name)),
             ["cpe"] => self.cpe.as_deref().map(QueryValue::Str),
+            ["swid"] => self.swid.as_deref().map(QueryValue::Str),
             ["vendor"] => self.vendor.as_deref().map(QueryValue::Str),
             ["version"] => self.version.as_deref().map(QueryValue::Str),
+            ["languages"] if !self.languages.is_empty() => Some(QueryValue::Null),
+            ["languages", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.languages.get(i))
+                .map(|lang| QueryValue::Str(lang.as_str())),
             _ => None,
         }
     }

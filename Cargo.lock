@@ -4095,7 +4095,9 @@ name = "rstix"
 version = "0.18.0"
 dependencies = [
  "base64",
+ "ipnet",
  "phf",
+ "regex",
  "serde",
  "serde_jcs",
  "serde_json",

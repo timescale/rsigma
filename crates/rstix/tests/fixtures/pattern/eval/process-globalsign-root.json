@@ -1,0 +1,7 @@
+{
+  "type": "process",
+  "spec_version": "2.1",
+  "id": "process--00000000-0000-0000-0000-000000000251",
+  "pid": 1001,
+  "command_line": "certutil.exe>-add GlobalSign.cer -c -s -r localMachine Root"
+}

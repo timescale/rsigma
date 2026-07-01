@@ -1,0 +1,20 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000101",
+  "objects": [
+    {
+      "type": "file",
+      "spec_version": "2.1",
+      "id": "file--00000000-0000-0000-0000-000000000001",
+      "hashes": { "MD5": "a" },
+      "name": "foo.dll",
+      "parent_directory_ref": "directory--00000000-0000-0000-0000-000000000002"
+    },
+    {
+      "type": "directory",
+      "spec_version": "2.1",
+      "id": "directory--00000000-0000-0000-0000-000000000002",
+      "path": "C:\\Windows\\System32"
+    }
+  ]
+}

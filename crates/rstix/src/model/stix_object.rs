@@ -346,6 +346,7 @@ impl StixObject {
                     }
                 }
                 ScoObject::X509Certificate(inner) => push_sco_common_refs(&inner.common, refs),
+                ScoObject::Custom(inner) => push_sco_common_refs(&inner.common, refs),
             },
             Self::Sro(sro) => match sro {
                 SroObject::Relationship(Relationship {
@@ -628,13 +629,13 @@ impl QueryableStixObject for StixObject {
         }
     }
 
-    fn type_name(&self) -> &'static str {
+    fn type_name(&self) -> &str {
         match self {
             Self::Sdo(inner) => inner.type_name(),
             Self::Sco(inner) => inner.type_name(),
             Self::Sro(inner) => inner.type_name(),
             Self::Meta(inner) => inner.type_name(),
-            Self::Custom(_) => "custom",
+            Self::Custom(custom) => custom.type_name.as_str(),
         }
     }
 

@@ -1,0 +1,7 @@
+{
+  "type": "network-traffic",
+  "spec_version": "2.1",
+  "id": "network-traffic--00000000-0000-0000-0000-000000000201",
+  "protocols": ["tcp"],
+  "dst_ref": "domain-name--00000000-0000-0000-0000-000000000210"
+}

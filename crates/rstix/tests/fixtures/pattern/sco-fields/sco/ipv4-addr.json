@@ -1,0 +1,13 @@
+{
+  "type": "ipv4-addr",
+  "spec_version": "2.1",
+  "id": "ipv4-addr--00000000-0000-0000-0000-000000000009",
+  "defanged": false,
+  "value": "198.51.100.1/32",
+  "resolves_to_refs": [
+    "mac-addr--00000000-0000-0000-0000-00000000000b"
+  ],
+  "belongs_to_refs": [
+    "autonomous-system--00000000-0000-0000-0000-000000000002"
+  ]
+}

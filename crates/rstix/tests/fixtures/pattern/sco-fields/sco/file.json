@@ -1,0 +1,75 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--00000000-0000-0000-0000-000000000008",
+  "defanged": false,
+  "name": "sample.exe",
+  "name_enc": "c2FtcGxlLmVuYw==",
+  "size": 4096,
+  "mime_type": "application/x-dosexec",
+  "magic_number_hex": "4d5a",
+  "ctime": "2020-01-01T00:00:00.000Z",
+  "mtime": "2020-01-01T00:00:00.000Z",
+  "atime": "2020-01-01T00:00:00.000Z",
+  "hashes": {
+    "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f",
+    "MD5": "79054025255fb1a26e4bc422aef54eb4"
+  },
+  "parent_directory_ref": "directory--00000000-0000-0000-0000-000000000003",
+  "contains_refs": [
+    "file--00000000-0000-0000-0000-000000000015"
+  ],
+  "content_ref": "artifact--00000000-0000-0000-0000-000000000001",
+  "extensions": {
+    "windows-pebinary-ext": {
+      "pe_type": "exe",
+      "imphash": "imphash-value",
+      "machine_hex": "014c",
+      "number_of_sections": 3,
+      "number_of_symbols": 0,
+      "size_of_optional_header": 224,
+      "time_date_stamp": "2020-01-01T00:00:00.000Z",
+      "pointer_to_symbol_table_hex": "00000000",
+      "characteristics_hex": "0102",
+      "checksum_hex": "00000000",
+      "subsystem_hex": "0002",
+      "dll_characteristics_hex": "0000",
+      "loader_flags_hex": "00000000",
+      "file_header_hashes": {
+        "SHA-256": "aec070645fe53ee3b3763059376134f058cc337247c978add178b6ccdfb0019f"
+      },
+      "sections": [
+        {
+          "name": ".text",
+          "size": 512,
+          "entropy": 6.5
+        }
+      ]
+    },
+    "raster-image-ext": {
+      "image_height": 100,
+      "image_width": 200,
+      "bits_per_pixel": 24,
+      "exif_tags": {
+        "Make": "Example"
+      }
+    },
+    "archive-ext": {
+      "contains_refs": [
+        "file--00000000-0000-0000-0000-000000000015"
+      ],
+      "comment": "archive comment"
+    },
+    "ntfs-ext": {
+      "sid": "S-1-5-21-1234567890"
+    },
+    "pdf-ext": {
+      "version": "1.7",
+      "document_info_dict": {
+        "Title": "Example"
+      },
+      "pdfid0": "pdfid0",
+      "pdfid1": "pdfid1"
+    }
+  }
+}

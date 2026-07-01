@@ -214,10 +214,29 @@ impl QueryableStixObject for File {
     fn get_field(&self, path: &[&str]) -> Option<QueryValue<'_>> {
         match path {
             ["name"] => self.name.as_deref().map(QueryValue::Str),
+            ["name_enc"] => self.name_enc.as_deref().map(QueryValue::Str),
+            ["size"] => self
+                .size
+                .map(|n| QueryValue::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            ["mime_type"] => self.mime_type.as_deref().map(QueryValue::Str),
+            ["magic_number_hex"] => self.magic_number_hex.as_deref().map(QueryValue::Str),
+            ["created"] | ["ctime"] => self.ctime.as_ref().map(QueryValue::Timestamp),
+            ["mtime"] => self.mtime.as_ref().map(QueryValue::Timestamp),
+            ["atime"] => self.atime.as_ref().map(QueryValue::Timestamp),
+            ["hashes", key] => self
+                .hashes
+                .get(*key)
+                .map(String::as_str)
+                .map(QueryValue::Str),
             ["parent_directory_ref"] => self
                 .parent_directory_ref
                 .as_ref()
                 .map(|id| QueryValue::Id(id.as_stix_id())),
+            ["contains_refs", index] => index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.contains_refs.get(i))
+                .map(QueryValue::Id),
             ["content_ref"] => self
                 .content_ref
                 .as_ref()

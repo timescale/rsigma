@@ -1,0 +1,15 @@
+{
+  "type": "software",
+  "spec_version": "2.1",
+  "id": "software--00000000-0000-0000-0000-00000000000f",
+  "defanged": false,
+  "name": "ExampleSoft",
+  "cpe": "cpe:2.3:a:example:soft:1.0:*:*:*:*:*:*:*",
+  "swid": "SWID-12345",
+  "vendor": "Example Corp",
+  "version": "1.0.0",
+  "languages": [
+    "en",
+    "fr"
+  ]
+}

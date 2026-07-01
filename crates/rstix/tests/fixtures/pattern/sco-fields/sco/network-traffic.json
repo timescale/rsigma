@@ -1,0 +1,49 @@
+{
+  "type": "network-traffic",
+  "spec_version": "2.1",
+  "id": "network-traffic--00000000-0000-0000-0000-00000000000d",
+  "defanged": false,
+  "start": "2020-01-01T00:00:00.000Z",
+  "end": "2020-01-01T00:00:00.000Z",
+  "is_active": false,
+  "src_ref": "ipv4-addr--00000000-0000-0000-0000-000000000009",
+  "dst_ref": "domain-name--00000000-0000-0000-0000-000000000004",
+  "src_port": 443,
+  "dst_port": 8443,
+  "protocols": [
+    "ipv4",
+    "tcp"
+  ],
+  "src_byte_count": 1000,
+  "dst_byte_count": 2000,
+  "src_packets": 10,
+  "dst_packets": 20,
+  "ipfix": {
+    "flowLabel": "0x000000"
+  },
+  "src_payload_ref": "artifact--00000000-0000-0000-0000-00000000001a",
+  "dst_payload_ref": "artifact--00000000-0000-0000-0000-00000000001b",
+  "encapsulates_refs": [
+    "network-traffic--00000000-0000-0000-0000-000000000019"
+  ],
+  "encapsulated_by_ref": "network-traffic--00000000-0000-0000-0000-000000000019",
+  "extensions": {
+    "http-request-ext": {
+      "request_method": "get",
+      "request_value": "/download.html",
+      "request_version": "http/1.1"
+    },
+    "tcp-ext": {
+      "src_flags_hex": "00000002"
+    },
+    "socket-ext": {
+      "is_listening": true,
+      "address_family": "AF_INET",
+      "socket_type": "SOCK_STREAM"
+    },
+    "icmp-ext": {
+      "icmp_type_hex": "08",
+      "icmp_code_hex": "00"
+    }
+  }
+}

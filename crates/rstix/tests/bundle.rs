@@ -2,7 +2,7 @@
 
 #![cfg(feature = "serde")]
 
-#[path = "support/fixtures.rs"]
+#[path = "support/fixtures_spec.rs"]
 mod fixtures;
 
 use fixtures::load_spec_fixture;
