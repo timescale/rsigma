@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use regex::Regex;
 use rsigma_parser::LogSource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::event::Event;
 
@@ -56,6 +56,15 @@ impl CompareOp {
             CompareOp::Gte => lhs >= rhs,
             CompareOp::Lt => lhs < rhs,
             CompareOp::Lte => lhs <= rhs,
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            CompareOp::Gt => ">",
+            CompareOp::Gte => ">=",
+            CompareOp::Lt => "<",
+            CompareOp::Lte => "<=",
         }
     }
 }
@@ -147,6 +156,40 @@ impl SchemaPredicate {
             SchemaPredicate::HasAnyField => !event.field_keys().is_empty(),
         }
     }
+
+    /// A compact human description of the predicate, for `explain` output.
+    fn describe(&self) -> String {
+        match self {
+            SchemaPredicate::FieldPresent(f) => format!("field_present({f})"),
+            SchemaPredicate::FieldAbsent(f) => format!("field_absent({f})"),
+            SchemaPredicate::AnyOf(fs) => format!("any_of([{}])", fs.join(", ")),
+            SchemaPredicate::Equals { field, value } => format!("{field} == \"{value}\""),
+            SchemaPredicate::Matches { field, regex } => {
+                format!("{field} matches /{}/", regex.as_str())
+            }
+            SchemaPredicate::Compare { field, op, value } => {
+                format!("{field} {} {value}", op.symbol())
+            }
+            SchemaPredicate::In { field, values } => format!("{field} in [{}]", values.join(", ")),
+            SchemaPredicate::FieldEqualsField { left, right } => format!("{left} == {right}"),
+            SchemaPredicate::Not(inner) => format!("not({})", inner.describe()),
+            SchemaPredicate::Any(ps) => format!(
+                "any({})",
+                ps.iter()
+                    .map(|p| p.describe())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            SchemaPredicate::All(ps) => format!(
+                "all({})",
+                ps.iter()
+                    .map(|p| p.describe())
+                    .collect::<Vec<_>>()
+                    .join(" & ")
+            ),
+            SchemaPredicate::HasAnyField => "has_any_field".to_string(),
+        }
+    }
 }
 
 /// A named schema recognizer: every predicate must hold for the signature to
@@ -169,6 +212,61 @@ impl SchemaSignature {
     fn matches<E: Event + ?Sized>(&self, event: &E) -> bool {
         self.predicates.iter().all(|p| p.eval(event))
     }
+
+    fn explain<E: Event + ?Sized>(&self, event: &E) -> SignatureExplanation {
+        let predicates: Vec<PredicateOutcome> = self
+            .predicates
+            .iter()
+            .map(|p| PredicateOutcome {
+                predicate: p.describe(),
+                matched: p.eval(event),
+            })
+            .collect();
+        let predicates_matched = predicates.iter().all(|p| p.matched);
+        SignatureExplanation {
+            name: self.name.clone(),
+            specificity: self.specificity,
+            predicates_matched,
+            predicates,
+        }
+    }
+}
+
+/// The outcome of one predicate within a [`SignatureExplanation`].
+#[derive(Debug, Clone, Serialize)]
+pub struct PredicateOutcome {
+    /// Human description of the predicate (for example `field_present(ecs.version)`).
+    pub predicate: String,
+    /// Whether the predicate held for the event.
+    pub matched: bool,
+}
+
+/// Per-signature detail produced by [`SchemaClassifier::explain`].
+#[derive(Debug, Clone, Serialize)]
+pub struct SignatureExplanation {
+    /// The signature's schema name.
+    pub name: String,
+    /// The signature's tie-breaking specificity.
+    pub specificity: u32,
+    /// Whether every predicate held (the signature matched).
+    pub predicates_matched: bool,
+    /// Per-predicate outcomes, in signature order.
+    pub predicates: Vec<PredicateOutcome>,
+}
+
+/// Why an event classified (or did not) as reported by
+/// [`SchemaClassifier::explain`]: the winning schema (if any) plus the
+/// signature that explains the outcome (the winning signature, or for an
+/// unknown event the closest near-miss).
+#[derive(Debug, Clone, Serialize)]
+pub struct SchemaExplanation {
+    /// The classified schema name, or `None` when the event matched none.
+    pub matched: Option<String>,
+    /// The winning signature's specificity, when matched.
+    pub specificity: Option<u32>,
+    /// The explaining signature: the winner when matched, otherwise the
+    /// highest-scoring near-miss (most predicates passing).
+    pub signature: Option<SignatureExplanation>,
 }
 
 /// The result of classifying an event: the matched schema name and the
@@ -237,6 +335,37 @@ impl SchemaClassifier {
             }
         }
         out
+    }
+
+    /// Explain how an event classifies: the winning schema (if any) plus the
+    /// signature that explains it (the winning signature, or for an unknown
+    /// event the closest near-miss, the non-matching signature with the most
+    /// passing predicates). For tuning signatures.
+    pub fn explain<E: Event + ?Sized>(&self, event: &E) -> SchemaExplanation {
+        let mut best_near: Option<SignatureExplanation> = None;
+        let mut best_near_passing = 0usize;
+        for sig in &self.signatures {
+            let ex = sig.explain(event);
+            if ex.predicates_matched {
+                return SchemaExplanation {
+                    matched: Some(ex.name.clone()),
+                    specificity: Some(ex.specificity),
+                    signature: Some(ex),
+                };
+            }
+            // Signatures are sorted specificity-descending, so the first
+            // signature reaching a given passing count wins the tie-break.
+            let passing = ex.predicates.iter().filter(|p| p.matched).count();
+            if best_near.is_none() || passing > best_near_passing {
+                best_near_passing = passing;
+                best_near = Some(ex);
+            }
+        }
+        SchemaExplanation {
+            matched: None,
+            specificity: None,
+            signature: best_near,
+        }
     }
 
     /// Distinct schema names this classifier can produce, most specific first.
@@ -640,6 +769,91 @@ pub fn load_schema_config(
         source: e,
     })?;
     parse_schema_config(&content)
+}
+
+/// Validate a parsed schema config for common authoring mistakes, returning a
+/// list of human-readable findings (empty means clean). Static checks only, no
+/// event data:
+///
+/// - duplicate user signatures (same name and identical predicates);
+/// - unreachable signatures shadowed by a strictly-higher-specificity
+///   signature whose predicates are a subset (so the shadowed one can never be
+///   the top match);
+/// - routing bindings referencing a schema no signature can produce;
+/// - duplicate routing bindings for the same schema.
+///
+/// Pipeline-name resolvability is checked by the caller (the CLI), which owns
+/// pipeline resolution.
+pub fn validate_schema_config(
+    user_signatures: &[SchemaSignature],
+    routing: Option<&RoutingConfig>,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+
+    // The full effective signature set (built-ins plus user).
+    let mut all = builtin_signatures();
+    all.extend(user_signatures.iter().cloned());
+    let preds = |s: &SchemaSignature| -> Vec<String> {
+        s.predicates.iter().map(|p| p.describe()).collect()
+    };
+
+    // Duplicate user signatures (same name, identical predicate set).
+    for i in 0..user_signatures.len() {
+        for j in (i + 1)..user_signatures.len() {
+            if user_signatures[i].name == user_signatures[j].name
+                && preds(&user_signatures[i]) == preds(&user_signatures[j])
+            {
+                findings.push(format!(
+                    "duplicate signature '{}' with identical predicates",
+                    user_signatures[i].name
+                ));
+            }
+        }
+    }
+
+    // Unreachable (shadowed) signatures.
+    for b in &all {
+        let b_preds = preds(b);
+        for a in &all {
+            if a.name != b.name
+                && a.specificity > b.specificity
+                && !a.predicates.is_empty()
+                && preds(a).iter().all(|p| b_preds.contains(p))
+            {
+                findings.push(format!(
+                    "signature '{}' (specificity {}) is unreachable: shadowed by '{}' (specificity {}) whose predicates are a subset",
+                    b.name, b.specificity, a.name, a.specificity
+                ));
+                break;
+            }
+        }
+    }
+
+    // Routing binding checks.
+    if let Some(routing) = routing {
+        let mut known: std::collections::HashSet<&str> =
+            builtin_schema_names().into_iter().collect();
+        for s in user_signatures {
+            known.insert(s.name.as_str());
+        }
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for binding in &routing.bindings {
+            if !known.contains(binding.schema.as_str()) {
+                findings.push(format!(
+                    "routing binding references unknown schema '{}' (no built-in or user signature produces it)",
+                    binding.schema
+                ));
+            }
+            if !seen.insert(binding.schema.as_str()) {
+                findings.push(format!(
+                    "duplicate routing binding for schema '{}'",
+                    binding.schema
+                ));
+            }
+        }
+    }
+
+    findings
 }
 
 // =============================================================================
@@ -1251,6 +1465,69 @@ schemas:
         assert!(
             matches!(&err, SchemaError::Parse(m) if m.contains("multiple conditions")),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn explain_reports_matched_signature() {
+        let cls = SchemaClassifier::builtin();
+        let v = json!({"ecs.version": "8.0.0"});
+        let ex = cls.explain(&JsonEvent::borrow(&v));
+        assert_eq!(ex.matched.as_deref(), Some("ecs"));
+        let sig = ex.signature.expect("signature");
+        assert!(sig.predicates_matched);
+        assert!(sig.predicates.iter().all(|p| p.matched));
+    }
+
+    #[test]
+    fn explain_reports_near_miss_for_unknown() {
+        // Drop generic_json so a structured non-match is genuinely unknown.
+        let sigs = builtin_signatures()
+            .into_iter()
+            .filter(|s| s.name != "generic_json")
+            .collect();
+        let cls = SchemaClassifier::new(sigs);
+        // Sysmon-ish but missing ProcessGuid: unknown, near-miss is sysmon.
+        let v = json!({"EventID": 1, "Image": "C:/cmd.exe"});
+        let ex = cls.explain(&JsonEvent::borrow(&v));
+        assert_eq!(ex.matched, None);
+        let sig = ex.signature.expect("near-miss");
+        assert_eq!(sig.name, "sysmon");
+        assert!(!sig.predicates_matched);
+        assert!(sig.predicates.iter().any(|p| !p.matched));
+    }
+
+    #[test]
+    fn validate_flags_unknown_binding_and_shadow() {
+        let yaml = r#"
+schemas:
+  - name: shadowed
+    specificity: 40
+    match:
+      - field_present: ecs.version
+      - field_present: extra.marker
+routing:
+  bindings:
+    - schema: ecs
+      pipelines: [ecs_windows]
+    - schema: nonexistent
+      pipelines: [x]
+"#;
+        let (sigs, routing) = parse_schema_config(yaml).unwrap();
+        let findings = validate_schema_config(&sigs, routing.as_ref());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.contains("unknown schema 'nonexistent'")),
+            "findings: {findings:?}"
+        );
+        // `shadowed` needs ecs.version + extra.marker; the built-in ecs (spec
+        // 100) needs only ecs.version (a subset), so `shadowed` is unreachable.
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.contains("'shadowed'") && f.contains("unreachable")),
+            "findings: {findings:?}"
         );
     }
 

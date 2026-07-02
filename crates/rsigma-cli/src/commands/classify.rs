@@ -11,7 +11,10 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::Args;
-use rsigma_eval::{JsonEvent, SchemaClassifier, load_schema_signatures};
+use rsigma_eval::{
+    JsonEvent, RouteDecision, RoutingConfig, RoutingPlan, SchemaClassifier, SchemaExplanation,
+    load_schema_config, validate_schema_config,
+};
 use serde::Serialize;
 
 use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular, render_json};
@@ -24,25 +27,49 @@ pub(crate) struct ClassifyArgs {
     #[arg(short, long)]
     pub event: Option<String>,
 
-    /// Path to a YAML file of user-defined schema signatures, merged over the
-    /// built-ins.
+    /// Path to a YAML file of user-defined schema signatures (and optional
+    /// `routing:` bindings), merged over the built-ins.
     #[arg(long = "schema-config", value_name = "PATH")]
     pub schema_config: Option<PathBuf>,
+
+    /// Show, per event, why it classified as it did: the matched signature's
+    /// per-predicate pass/fail, or for an unknown event the closest near-miss.
+    #[arg(long)]
+    pub explain: bool,
+
+    /// Validate the `--schema-config` (unreachable signatures, unknown or
+    /// duplicate routing bindings, unresolvable pipeline paths) and exit. Does
+    /// not read events.
+    #[arg(long)]
+    pub check: bool,
 }
 
 pub(crate) fn cmd_classify(args: ClassifyArgs, ctx: OutputCtx) {
-    let classifier = match args.schema_config {
-        Some(path) => match load_schema_signatures(&path) {
-            Ok(sigs) => SchemaClassifier::with_user_signatures(sigs),
+    // Load signatures and any routing section from the schema config.
+    let (signatures, routing) = match &args.schema_config {
+        Some(path) => match load_schema_config(path) {
+            Ok(v) => v,
             Err(e) => {
-                eprintln!("Error loading schema signatures: {e}");
+                eprintln!("Error loading schema config: {e}");
                 process::exit(crate::exit_code::CONFIG_ERROR);
             }
         },
-        None => SchemaClassifier::builtin(),
+        None => (Vec::new(), None),
     };
 
-    let report = match build_report(&classifier, args.event) {
+    if args.check {
+        run_check(&signatures, routing.as_ref());
+        return;
+    }
+
+    let classifier = if signatures.is_empty() {
+        SchemaClassifier::builtin()
+    } else {
+        SchemaClassifier::with_user_signatures(signatures)
+    };
+    let plan = routing.map(|r| RoutingPlan::from_config(&r));
+
+    let report = match build_report(&classifier, plan.as_ref(), args.explain, args.event) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
@@ -62,6 +89,39 @@ pub(crate) fn cmd_classify(args: ClassifyArgs, ctx: OutputCtx) {
         OutputFormat::Tsv => render_delimited(&report, '\t', &ctx),
         OutputFormat::Table => print_table(&report, &ctx),
     }
+}
+
+/// Validate a schema config and exit: 0 when clean, `CONFIG_ERROR` otherwise.
+fn run_check(signatures: &[rsigma_eval::SchemaSignature], routing: Option<&RoutingConfig>) {
+    let mut findings = validate_schema_config(signatures, routing);
+    // Pipeline path resolvability: the CLI owns pipeline resolution, so it
+    // checks path-like binding pipelines here (built-in names are assumed
+    // valid and resolved at load time).
+    if let Some(routing) = routing {
+        for binding in &routing.bindings {
+            for pipeline in &binding.pipelines {
+                let looks_like_path = pipeline.contains(std::path::MAIN_SEPARATOR)
+                    || pipeline.ends_with(".yml")
+                    || pipeline.ends_with(".yaml");
+                if looks_like_path && !std::path::Path::new(pipeline).exists() {
+                    findings.push(format!(
+                        "binding '{}' references pipeline file '{}' which does not exist",
+                        binding.schema, pipeline
+                    ));
+                }
+            }
+        }
+    }
+
+    if findings.is_empty() {
+        println!("Schema config OK: no issues found.");
+        return;
+    }
+    eprintln!("Schema config has {} issue(s):", findings.len());
+    for finding in &findings {
+        eprintln!("  - {finding}");
+    }
+    process::exit(crate::exit_code::CONFIG_ERROR);
 }
 
 // ---------------------------------------------------------------------------
@@ -94,23 +154,57 @@ struct ClassifyRecord {
     /// `None` means the event matched no signature ("unknown").
     schema: Option<String>,
     specificity: Option<u32>,
+    /// Present with `--explain`: why the event classified as it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<SchemaExplanation>,
+    /// Present when the config carries a `routing:` section: where this event
+    /// would route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route: Option<RouteInfo>,
+}
+
+/// Where an event would route under the config's `routing:` bindings.
+#[derive(Debug, Serialize)]
+struct RouteInfo {
+    /// `evaluate`, `drop`, or `error`.
+    action: &'static str,
+    /// The pipeline-set the event evaluates against (empty means the
+    /// Sigma-native default set). Absent for drop/error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pipelines: Option<Vec<String>>,
+    /// True when the event matched no schema and fell through to the default.
+    unknown: bool,
 }
 
 // ---------------------------------------------------------------------------
 // Report building
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
-struct Accumulator {
+struct Accumulator<'a> {
     events: Vec<ClassifyRecord>,
     by_schema: BTreeMap<String, usize>,
     classified: usize,
     unknown: usize,
     parse_errors: usize,
     index: usize,
+    explain: bool,
+    plan: Option<&'a RoutingPlan>,
 }
 
-impl Accumulator {
+impl<'a> Accumulator<'a> {
+    fn new(explain: bool, plan: Option<&'a RoutingPlan>) -> Self {
+        Accumulator {
+            events: Vec::new(),
+            by_schema: BTreeMap::new(),
+            classified: 0,
+            unknown: 0,
+            parse_errors: 0,
+            index: 0,
+            explain,
+            plan,
+        }
+    }
+
     fn classify_value(&mut self, classifier: &SchemaClassifier, value: &serde_json::Value) {
         let event = JsonEvent::borrow(value);
         let matched = classifier.classify(&event);
@@ -121,10 +215,33 @@ impl Accumulator {
             }
             None => self.unknown += 1,
         }
+        let explanation = self.explain.then(|| classifier.explain(&event));
+        let route = self.plan.map(|plan| {
+            let schema = matched.as_ref().map(|m| m.name.as_str());
+            match plan.decide(schema) {
+                RouteDecision::Evaluate { set, unknown } => RouteInfo {
+                    action: "evaluate",
+                    pipelines: plan.pipeline_sets().get(set).cloned(),
+                    unknown,
+                },
+                RouteDecision::Drop => RouteInfo {
+                    action: "drop",
+                    pipelines: None,
+                    unknown: true,
+                },
+                RouteDecision::Error => RouteInfo {
+                    action: "error",
+                    pipelines: None,
+                    unknown: true,
+                },
+            }
+        });
         self.events.push(ClassifyRecord {
             index: self.index,
             schema: matched.as_ref().map(|m| m.name.clone()),
             specificity: matched.as_ref().map(|m| m.specificity),
+            explanation,
+            route,
         });
         self.index += 1;
     }
@@ -155,9 +272,11 @@ impl Accumulator {
 
 fn build_report(
     classifier: &SchemaClassifier,
+    plan: Option<&RoutingPlan>,
+    explain: bool,
     event_arg: Option<String>,
 ) -> Result<ClassifyReport, String> {
-    let mut acc = Accumulator::default();
+    let mut acc = Accumulator::new(explain, plan);
 
     match event_arg {
         Some(s) if s.starts_with('@') => {
@@ -262,6 +381,63 @@ fn print_table(report: &ClassifyReport, ctx: &OutputCtx) {
         eprintln!();
     }
     crate::output::render_table(&report.events);
+    print_detail_section(report);
+}
+
+/// Print the per-event `--explain` and routing dry-run detail below the table,
+/// when either is present. Structured formats carry this in the record itself.
+fn print_detail_section(report: &ClassifyReport) {
+    let any = report
+        .events
+        .iter()
+        .any(|r| r.explanation.is_some() || r.route.is_some());
+    if !any {
+        return;
+    }
+    println!();
+    for rec in &report.events {
+        if rec.explanation.is_none() && rec.route.is_none() {
+            continue;
+        }
+        let schema = rec.schema.as_deref().unwrap_or("unknown");
+        println!("#{} {schema}", rec.index);
+        if let Some(route) = &rec.route {
+            let suffix = if route.unknown {
+                " (unknown -> default)"
+            } else {
+                ""
+            };
+            match &route.pipelines {
+                Some(ps) if !ps.is_empty() => {
+                    println!("    route: {} -> [{}]{suffix}", route.action, ps.join(", "));
+                }
+                Some(_) => {
+                    println!(
+                        "    route: {} -> default (Sigma-native){suffix}",
+                        route.action
+                    );
+                }
+                None => println!("    route: {}", route.action),
+            }
+        }
+        if let Some(ex) = &rec.explanation
+            && let Some(sig) = &ex.signature
+        {
+            let label = if ex.matched.is_some() {
+                "matched"
+            } else {
+                "near-miss"
+            };
+            println!(
+                "    {label}: {} (specificity {})",
+                sig.name, sig.specificity
+            );
+            for p in &sig.predicates {
+                let mark = if p.matched { "PASS" } else { "FAIL" };
+                println!("      [{mark}] {}", p.predicate);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,7 +445,13 @@ mod tests {
     use super::*;
 
     fn report_for(event: &str) -> ClassifyReport {
-        build_report(&SchemaClassifier::builtin(), Some(event.to_string())).expect("report")
+        build_report(
+            &SchemaClassifier::builtin(),
+            None,
+            false,
+            Some(event.to_string()),
+        )
+        .expect("report")
     }
 
     #[test]
@@ -294,14 +476,19 @@ mod tests {
 
     #[test]
     fn invalid_inline_json_is_an_error() {
-        let err = build_report(&SchemaClassifier::builtin(), Some("not json".to_string()))
-            .expect_err("should error");
+        let err = build_report(
+            &SchemaClassifier::builtin(),
+            None,
+            false,
+            Some("not json".to_string()),
+        )
+        .expect_err("should error");
         assert!(err.contains("Invalid JSON event"));
     }
 
     #[test]
     fn counts_accumulate_across_lines() {
-        let mut acc = Accumulator::default();
+        let mut acc = Accumulator::new(false, None);
         let classifier = SchemaClassifier::builtin();
         acc.classify_line(&classifier, r#"{"ecs.version": "8.0.0"}"#);
         acc.classify_line(
@@ -324,6 +511,8 @@ mod tests {
     fn evtx_path_is_rejected_with_guidance() {
         let err = build_report(
             &SchemaClassifier::builtin(),
+            None,
+            false,
             Some("@security.evtx".to_string()),
         )
         .expect_err("should error");

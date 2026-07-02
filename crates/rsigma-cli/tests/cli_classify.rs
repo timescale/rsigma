@@ -95,3 +95,106 @@ fn invalid_inline_json_exits_nonzero() {
         .failure()
         .stderr(predicate::str::contains("Invalid JSON event"));
 }
+
+#[test]
+fn explain_reports_predicates_in_json() {
+    rsigma()
+        .args([
+            "engine",
+            "classify",
+            "-e",
+            r#"{"ecs.version":"8.11.0"}"#,
+            "--explain",
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"explanation\""))
+        .stdout(predicate::str::contains(
+            "\"predicate\": \"field_present(ecs.version)\"",
+        ))
+        .stdout(predicate::str::contains("\"matched\": true"));
+}
+
+#[test]
+fn routing_dry_run_shows_route_in_json() {
+    let config = temp_file(
+        ".yml",
+        r#"
+routing:
+  bindings:
+    - schema: ecs
+      pipelines: [ecs_windows]
+"#,
+    );
+    rsigma()
+        .args([
+            "engine",
+            "classify",
+            "-e",
+            r#"{"ecs.version":"8.11.0"}"#,
+            "--schema-config",
+            config.path().to_str().unwrap(),
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"route\""))
+        .stdout(predicate::str::contains("ecs_windows"));
+}
+
+#[test]
+fn check_flags_unknown_binding() {
+    let config = temp_file(
+        ".yml",
+        r#"
+routing:
+  bindings:
+    - schema: nonexistent_schema
+      pipelines: [ecs_windows]
+"#,
+    );
+    rsigma()
+        .args([
+            "engine",
+            "classify",
+            "--check",
+            "--schema-config",
+            config.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unknown schema 'nonexistent_schema'",
+        ));
+}
+
+#[test]
+fn check_passes_for_clean_config() {
+    let config = temp_file(
+        ".yml",
+        r#"
+schemas:
+  - name: my_vendor
+    match:
+      - field_present: vendor.id
+routing:
+  bindings:
+    - schema: my_vendor
+      pipelines: []
+"#,
+    );
+    rsigma()
+        .args([
+            "engine",
+            "classify",
+            "--check",
+            "--schema-config",
+            config.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no issues found"));
+}
