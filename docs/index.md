@@ -120,6 +120,14 @@ RSigma is the only Sigma toolkit that combines pySigma-style conversion with a r
 
     [:octicons-arrow-right-24: Source on GitHub](https://github.com/northsh/detection.studio)
 
+- :material-shield-search:{ .lg .middle } **[Rustinel](https://rustinel.io/)**
+
+    ---
+
+    An open-source, cross-platform endpoint detection engine. Ships RSigma as an opt-in Sigma backend next to its built-in matcher, evaluating normalized endpoint telemetry in real time on Windows, Linux, and macOS, with a throughput edge on large rulesets.
+
+    [:octicons-arrow-right-24: Source on GitHub](https://github.com/Karib0u/rustinel)
+
 </div>
 
 ## Read the deep dives
