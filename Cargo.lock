@@ -5385,9 +5385,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.8"
+version = "0.26.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "887bd495d0582c5e3e0d8ece2233666169fa56a9644d172fc22ad179ab2d0538"
+checksum = "3c343ed63e3f5c64d1acdecb5d2c13d4e169cb5fde0052106ebaa6c6f27f9e55"
 dependencies = [
  "cc",
  "regex",
@@ -5399,9 +5399,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-iter"
-version = "1.25.2"
+version = "1.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9199d1d8f51defb45b2a55af0545460e0a0265dfde45bdf412b33d13e09b923"
+checksum = "5fa36a1486a196f8de9ded8047a5c6e42d8b9d83a530a67e8316ba8468a325d4"
 dependencies = [
  "tree-sitter",
 ]
@@ -6181,9 +6181,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpath"
-version = "1.25.2"
+version = "1.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "582de007205c6ff9e4c1e57bf23955922e8020dd9fd479146ab2bb45138b44b4"
+checksum = "25eed75b3170866fd4ad5848fb7e19ce9344f3dbc12238d9b175ef0632d27779"
 dependencies = [
  "line-index",
  "self_cell",
