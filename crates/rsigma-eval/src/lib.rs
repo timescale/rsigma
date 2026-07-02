@@ -143,7 +143,7 @@ pub use result::{
     CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, MatchDetailLevel, MatcherKind,
     ProcessResultExt, ResultBody, RuleHeader,
 };
-pub use router::{RouteOutcome, RouteResult, SchemaRouter};
+pub use router::{RouteOutcome, RouteResult, SchemaPruning, SchemaRouter};
 pub use schema::{
     FieldValueConfig, OnUnknown, RouteDecision, RoutingConfig, RoutingPlan, SchemaBinding,
     SchemaClassifier, SchemaCountEntry, SchemaError, SchemaMatch, SchemaObservation,

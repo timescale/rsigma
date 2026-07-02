@@ -2364,6 +2364,9 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
         state.processor.logsource_pruned_total(),
         state.processor.logsource_absent_total(),
     );
+    state
+        .metrics
+        .update_schema_pruning_metrics(&state.processor.schema_pruning_summary());
 
     (
         [(

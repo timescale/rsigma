@@ -6,7 +6,7 @@ use rsigma_eval::event::Event;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
-    SchemaClassifier, SchemaRouter, parse_pipeline_file,
+    SchemaClassifier, SchemaPruning, SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -151,6 +151,15 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(engine) => engine.logsource_absent_total(),
             EngineVariant::WithCorrelations(engine) => engine.logsource_absent_total(),
             EngineVariant::Routed(router) => router.logsource_absent_total(),
+        }
+    }
+
+    /// Static per-schema logsource pruning summary. Non-empty only for the
+    /// routed variant with logsource routing enabled.
+    pub fn schema_pruning_summary(&self) -> Vec<SchemaPruning> {
+        match &self.engine {
+            EngineVariant::Routed(router) => router.schema_pruning_summary(),
+            _ => Vec::new(),
         }
     }
 

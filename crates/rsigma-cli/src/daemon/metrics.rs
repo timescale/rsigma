@@ -60,6 +60,8 @@ pub struct Metrics {
     pub events_unknown_schema: IntCounter,
     pub rules_pruned_by_logsource: IntCounter,
     pub events_without_logsource: IntCounter,
+    pub schema_rules_eligible: IntGaugeVec,
+    pub schema_rules_pruned: IntGaugeVec,
     pub tap_sessions_total: IntCounter,
     pub tap_active_sessions: IntGauge,
     pub tap_events_streamed_total: IntCounter,
@@ -560,8 +562,30 @@ impl Metrics {
             "Events with no extractable logsource, evaluated against every rule (fail-open)",
         ))
         .unwrap();
+        let schema_rules_eligible = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_schema_rules_eligible",
+                "Rules a schema's events evaluate after logsource pruning (schema routing + --logsource-routing)",
+            ),
+            &["schema"],
+        )
+        .unwrap();
+        let schema_rules_pruned = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_schema_rules_pruned",
+                "Rules pruned for a schema by its implied logsource (schema routing + --logsource-routing)",
+            ),
+            &["schema"],
+        )
+        .unwrap();
         registry
             .register(Box::new(rules_pruned_by_logsource.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(schema_rules_eligible.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(schema_rules_pruned.clone()))
             .unwrap();
         registry
             .register(Box::new(events_without_logsource.clone()))
@@ -980,6 +1004,8 @@ impl Metrics {
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
             events_by_schema,
+            schema_rules_eligible,
+            schema_rules_pruned,
             events_unknown_schema,
             rules_pruned_by_logsource,
             events_without_logsource,
@@ -1067,6 +1093,20 @@ impl Metrics {
         if unknown_now > unknown_prev {
             self.events_unknown_schema
                 .inc_by(unknown_now - unknown_prev);
+        }
+    }
+
+    /// Refresh the per-schema logsource eligibility gauges from the router's
+    /// static pruning summary. Gauges (not counters): they reflect the current
+    /// ruleset partition per schema and are re-set on each refresh and reload.
+    pub fn update_schema_pruning_metrics(&self, summary: &[rsigma_runtime::SchemaPruning]) {
+        for entry in summary {
+            self.schema_rules_eligible
+                .with_label_values(&[entry.schema.as_str()])
+                .set(entry.eligible as i64);
+            self.schema_rules_pruned
+                .with_label_values(&[entry.schema.as_str()])
+                .set(entry.pruned as i64);
         }
     }
 

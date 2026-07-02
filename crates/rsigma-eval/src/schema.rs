@@ -818,6 +818,14 @@ impl RoutingPlan {
         self.schema_logsource.get(schema)
     }
 
+    /// The recognized schema names that carry an implied logsource (built-in
+    /// defaults plus binding overrides), sorted for deterministic output.
+    pub fn schemas_with_logsource(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.schema_logsource.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Decide how to route an event given its classified schema (or `None`
     /// when nothing matched).
     pub fn decide(&self, schema: Option<&str>) -> RouteDecision {

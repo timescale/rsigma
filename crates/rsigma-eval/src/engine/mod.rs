@@ -263,6 +263,24 @@ impl Engine {
         self.logsource_absent.load(Ordering::Relaxed)
     }
 
+    /// Static view of how many loaded rules are eligible (logsource-compatible)
+    /// versus pruned (conflicting) for `event_logsource`, returned as
+    /// `(eligible, pruned)`. Used to report how much of a ruleset a given
+    /// logsource (for example a schema's implied logsource) actually evaluates,
+    /// independent of any specific event's field values.
+    pub fn logsource_eligibility(&self, event_logsource: &LogSource) -> (usize, usize) {
+        let mut eligible = 0;
+        let mut pruned = 0;
+        for rule in &self.rules {
+            if logsource_compatible(&rule.logsource, event_logsource) {
+                eligible += 1;
+            } else {
+                pruned += 1;
+            }
+        }
+        (eligible, pruned)
+    }
+
     /// Enable or disable the cross-rule Aho-Corasick pre-filter.
     ///
     /// When enabled, the engine builds a single per-field

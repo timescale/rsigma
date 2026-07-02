@@ -817,6 +817,16 @@ fn cmd_eval_routed(
         eprintln!(
             "Processed {events} events, {det_count} detection matches, {corr_count} correlation matches, {unknown} unknown schema, {dropped} dropped."
         );
+        let pruning = router.schema_pruning_summary();
+        if !pruning.is_empty() {
+            eprintln!("Logsource pruning by schema (eligible/pruned rules):");
+            for entry in pruning {
+                eprintln!(
+                    "  {}: {} eligible, {} pruned",
+                    entry.schema, entry.eligible, entry.pruned
+                );
+            }
+        }
     }
     det_count > 0 || corr_count > 0
 }

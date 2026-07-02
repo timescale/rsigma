@@ -118,7 +118,7 @@ pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 pub use rsigma_eval::{
     FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult,
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
-    SchemaObserver, load_schema_signatures,
+    SchemaObserver, SchemaPruning, load_schema_signatures,
 };
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{

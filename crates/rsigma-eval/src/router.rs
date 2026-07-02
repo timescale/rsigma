@@ -39,6 +39,19 @@ use crate::result::EvaluationResult;
 use crate::result::MatchDetailLevel;
 use crate::schema::{OnUnknown, RouteDecision, RoutingPlan, SchemaClassifier};
 
+/// Per-schema logsource pruning summary: how many rules a schema's events
+/// evaluate versus how many are pruned by its implied logsource. A static view
+/// (independent of any specific event's field values) for operator visibility.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaPruning {
+    /// The recognized schema name.
+    pub schema: String,
+    /// Rules evaluated for this schema (logsource-compatible).
+    pub eligible: usize,
+    /// Rules pruned for this schema (logsource-conflicting).
+    pub pruned: usize,
+}
+
 /// What the router did with an event, for reporting and `on_unknown` handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteOutcome {
@@ -250,6 +263,38 @@ impl SchemaRouter {
             .iter()
             .map(Engine::logsource_absent_total)
             .sum()
+    }
+
+    /// Static per-schema pruning summary: for each schema with an implied
+    /// logsource, how many rules its events evaluate versus prune. Empty when
+    /// logsource routing is disabled (no extractor). Sorted by descending
+    /// pruned count, then schema name.
+    pub fn schema_pruning_summary(&self) -> Vec<SchemaPruning> {
+        if self.logsource_extractor.is_none() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for schema in self.plan.schemas_with_logsource() {
+            let Some(implied) = self.plan.schema_logsource(&schema) else {
+                continue;
+            };
+            let set = match self.plan.decide(Some(&schema)) {
+                RouteDecision::Evaluate { set, .. } => set,
+                RouteDecision::Drop | RouteDecision::Error => 0,
+            };
+            let (eligible, pruned) = self.engines[set].logsource_eligibility(implied);
+            out.push(SchemaPruning {
+                schema,
+                eligible,
+                pruned,
+            });
+        }
+        out.sort_by(|a, b| {
+            b.pruned
+                .cmp(&a.pruned)
+                .then_with(|| a.schema.cmp(&b.schema))
+        });
+        out
     }
 
     /// Number of correlation rules in the shared store (0 when none).
@@ -652,5 +697,19 @@ level: high
             "schema-derived product prunes the Linux rule"
         );
         assert_eq!(pruned.logsource_pruned_total(), 1);
+
+        // The static per-schema summary reflects the same eligibility: for the
+        // sysmon schema (product: windows) the Linux rule is pruned and the
+        // Windows rule stays eligible. Cross-platform schemas are absent, and
+        // the summary is empty without an extractor.
+        let summary = pruned.schema_pruning_summary();
+        let sysmon = summary
+            .iter()
+            .find(|s| s.schema == "sysmon")
+            .expect("sysmon in summary");
+        assert_eq!(sysmon.eligible, 1);
+        assert_eq!(sysmon.pruned, 1);
+        assert!(!summary.iter().any(|s| s.schema == "ecs"));
+        assert!(plain.schema_pruning_summary().is_empty());
     }
 }

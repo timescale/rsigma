@@ -507,6 +507,14 @@ impl LogProcessor {
         engine.logsource_absent_total()
     }
 
+    /// Static per-schema logsource pruning summary on the current engine.
+    /// Empty unless schema routing and logsource routing are both enabled.
+    pub fn schema_pruning_summary(&self) -> Vec<rsigma_eval::SchemaPruning> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        engine.schema_pruning_summary()
+    }
+
     /// Return an immutable snapshot of the current rule field set
     /// (post-pipeline). The lock is held only long enough to clone the
     /// `Arc`; the returned value remains valid across reloads.
