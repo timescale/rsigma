@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Schema and logsource routing v2
+### Schema and logsource routing v2 (#277)
 
 Extends the shipped schema routing and logsource-aware evaluation with richer signatures, schema-derived logsource correctness, authoring tooling, and hardening. All additive and opt-in; existing schema configs and `--logsource-*` invocations behave identically.
 
