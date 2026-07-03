@@ -10,7 +10,7 @@
 //!
 //! The draft is verified end-to-end before it is returned: the emitted YAML is
 //! parsed via [`rsigma_parser::parse_sigma_yaml`] and compiled into the real
-//! [`Engine`](crate::Engine), every exemplar must match (with a bounded
+//! [`Engine`], every exemplar must match (with a bounded
 //! predicate-drop relaxation and a minimum-field floor that errors instead of
 //! emitting an over-broad draft), and the baseline hit count and rate are
 //! recorded as the draft's estimated false-positive rate.
