@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Schema signature discovery
+### Schema signature discovery (#285)
 
 Turns the unknown-schema signal the schema tooling surfaces into ranked candidate declarative signatures, so operators stop hand-writing every signature from scratch. Pure-Rust, glass-box mining (clustering plus discriminative feature selection); the output is the same `schemas:` YAML the classifier already consumes, so every proposed predicate is human-readable and reviewable. Additive and opt-in throughout; no black-box model, and nothing is applied automatically.
 
