@@ -106,6 +106,7 @@ pub mod result;
 pub mod router;
 pub mod rule_index;
 pub mod schema;
+pub mod schema_discovery;
 
 // Re-export the most commonly used types and functions at crate root
 pub use compiler::{
@@ -151,4 +152,8 @@ pub use schema::{
     SchemaSignatureConfig, SchemaSignaturesFile, SignatureExplanation, UnknownShapeEntry,
     builtin_schema_names, load_schema_config, load_schema_signatures, parse_schema_config,
     parse_schema_signatures, validate_schema_config,
+};
+pub use schema_discovery::{
+    CandidateSource, DiscoveryCandidate, DiscoveryConfig, DiscoveryReport, DiscoveryStats,
+    FieldProfile, mine_events, mine_shapes,
 };
