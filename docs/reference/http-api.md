@@ -31,6 +31,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/fields/missing` | GET | none | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
 | `/api/v1/fields/observer` | DELETE | none | Reset the field observer's counters. Requires `--observe-fields`. |
 | `/api/v1/schemas` | GET | none | Per-schema event breakdown and unknown rate. Requires `--observe-schemas`. |
+| `/api/v1/schemas` | DELETE | none | Reset the schema observer's counters and samples (including the discovery sample). Requires `--observe-schemas`. |
 | `/api/v1/schemas/suggestions` | GET | none | Candidate schema signatures mined from the unrecognized-event sample. Requires `--discover-schemas`. |
 | `/api/v1/tap` | GET | none | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
 | `/api/v1/detections/stream` | GET | none | Stream live detections as chunked NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. |
@@ -622,6 +623,14 @@ curl -sS http://127.0.0.1:9090/api/v1/schemas/suggestions
 ```
 
 The `rsigma_unknown_schema_clusters` gauge tracks how many distinct schemas discovery would propose. Review, rename, and refine the `signatures_yaml` before committing it to a `--schema-config` file.
+
+### `DELETE /api/v1/schemas`
+
+Reset the schema observer, clearing the per-schema counts, the unknown-shape sample, and the discovery sample. The discovery sample is capped and not a reservoir, so on a long-running daemon it eventually stops admitting genuinely new shapes; a `DELETE` refreshes it without a restart. Returns `503` when `--observe-schemas` is off.
+
+```bash
+curl -sS -X DELETE http://127.0.0.1:9090/api/v1/schemas
+```
 
 ## Live event tap
 

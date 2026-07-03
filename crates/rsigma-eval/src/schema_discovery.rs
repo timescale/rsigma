@@ -296,6 +296,23 @@ where
 /// Mine the daemon's keys-only unknown-shape sample (online). Proposals use
 /// presence predicates only (values are never retained in the sample).
 pub fn mine_shapes(shapes: &[UnknownShapeEntry], config: &DiscoveryConfig) -> DiscoveryReport {
+    let (shape_vec, events_mined) = shape_stats_from_entries(shapes);
+    build_report(shape_vec, events_mined, config, CandidateSource::KeysOnly)
+}
+
+/// Count how many distinct schema clusters the keys-only sample forms, without
+/// the cost of selecting, validating, and ranking candidates. Cheap enough to
+/// refresh a gauge on every metrics scrape; equal to
+/// [`mine_shapes`]`(shapes, config).stats.clusters`.
+pub fn cluster_count(shapes: &[UnknownShapeEntry], config: &DiscoveryConfig) -> usize {
+    let (mut shape_vec, _) = shape_stats_from_entries(shapes);
+    shape_vec.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.keys.cmp(&b.keys)));
+    cluster_shapes(&shape_vec, config).len()
+}
+
+/// Convert redacted keys-only shape entries into internal `ShapeStat`s (no
+/// values), returning the total event count. Skips empty-key shapes.
+fn shape_stats_from_entries(shapes: &[UnknownShapeEntry]) -> (Vec<ShapeStat>, u64) {
     let mut events_mined: u64 = 0;
     let shape_vec: Vec<ShapeStat> = shapes
         .iter()
@@ -312,7 +329,7 @@ pub fn mine_shapes(shapes: &[UnknownShapeEntry], config: &DiscoveryConfig) -> Di
             }
         })
         .collect();
-    build_report(shape_vec, events_mined, config, CandidateSource::KeysOnly)
+    (shape_vec, events_mined)
 }
 
 // =============================================================================
@@ -454,23 +471,7 @@ fn build_report(
     // Deterministic order: most frequent first, then lexicographic by keys.
     shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.keys.cmp(&b.keys)));
 
-    // Greedy Jaccard clustering with a value-based diversity guard.
-    let mut clusters: Vec<Cluster> = Vec::new();
-    for shape in &shapes {
-        let mut placed = false;
-        for cluster in &mut clusters {
-            if jaccard(&shape.keys, &cluster.seed_keys) >= config.similarity
-                && diversity_ok(cluster, shape)
-            {
-                cluster.merge(shape);
-                placed = true;
-                break;
-            }
-        }
-        if !placed {
-            clusters.push(Cluster::from_shape(shape));
-        }
-    }
+    let clusters = cluster_shapes(&shapes, config);
 
     // Global per-key counts for cross-cluster discriminativeness.
     let mut global_key_counts: HashMap<String, u64> = HashMap::new();
@@ -522,6 +523,29 @@ fn build_report(
         candidates: candidates.len(),
     };
     DiscoveryReport { candidates, stats }
+}
+
+/// Greedy Jaccard clustering with a value-based diversity guard. Expects
+/// `shapes` already ordered most-frequent-first (the merge anchor is the first
+/// shape of each cluster), so the result is deterministic.
+fn cluster_shapes(shapes: &[ShapeStat], config: &DiscoveryConfig) -> Vec<Cluster> {
+    let mut clusters: Vec<Cluster> = Vec::new();
+    for shape in shapes {
+        let mut placed = false;
+        for cluster in &mut clusters {
+            if jaccard(&shape.keys, &cluster.seed_keys) >= config.similarity
+                && diversity_ok(cluster, shape)
+            {
+                cluster.merge(shape);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            clusters.push(Cluster::from_shape(shape));
+        }
+    }
+    clusters
 }
 
 /// Refuse to merge a shape into a cluster when they disagree on a single
@@ -1025,6 +1049,31 @@ mod tests {
                 "keys-only proposals must be presence-only"
             );
         }
+    }
+
+    #[test]
+    fn cluster_count_matches_full_mine() {
+        let shapes = vec![
+            UnknownShapeEntry {
+                keys: vec!["a".into(), "b".into(), "vendor".into()],
+                count: 8,
+            },
+            UnknownShapeEntry {
+                keys: vec!["x".into(), "y".into(), "z".into()],
+                count: 5,
+            },
+            // An empty-key shape is skipped by both paths.
+            UnknownShapeEntry {
+                keys: vec![],
+                count: 3,
+            },
+        ];
+        let cfg = DiscoveryConfig::default();
+        assert_eq!(
+            cluster_count(&shapes, &cfg),
+            mine_shapes(&shapes, &cfg).stats.clusters,
+            "the cheap cluster count must equal the full pipeline's cluster count"
+        );
     }
 
     #[test]

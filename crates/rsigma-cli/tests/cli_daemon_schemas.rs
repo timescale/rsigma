@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{DaemonProcess, http_get, http_post, poll_until, temp_file};
+use common::{DaemonProcess, http_delete, http_get, http_post, poll_until, temp_file};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -158,4 +158,42 @@ fn suggestions_endpoint_mines_unrecognized_shapes() {
     let (status, metrics) = http_get(&daemon.url("/metrics"));
     assert_eq!(status, 200);
     assert!(metrics.contains("rsigma_unknown_schema_clusters"));
+}
+
+#[test]
+fn schemas_delete_resets_observer() {
+    let rule = temp_file(".yml", RULE);
+    let daemon =
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &["--observe-schemas"]);
+
+    let payload = concat!(
+        r#"{"ecs.version":"8.11.0","CommandLine":"whoami"}"#,
+        "\n",
+        r#"{"EventID":1,"ProcessGuid":"{x}","CommandLine":"whoami"}"#,
+    );
+    let (status, _body) = http_post(&daemon.url("/api/v1/events"), payload);
+    assert_eq!(status, 200);
+    let _ = wait_for_events_observed(&daemon, 2);
+
+    // Reset clears the since-reset counters and reports what was cleared.
+    let (status, body) = http_delete(&daemon.url("/api/v1/schemas"));
+    assert_eq!(status, 200);
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["status"], "reset");
+    assert_eq!(v["previous_classified"].as_u64().unwrap(), 2);
+
+    // A fresh snapshot starts from zero.
+    let (status, body) = http_get(&daemon.url("/api/v1/schemas"));
+    assert_eq!(status, 200);
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["summary"]["events_observed"].as_u64().unwrap(), 0);
+    assert_eq!(v["summary"]["classified"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn schemas_delete_requires_observer() {
+    let rule = temp_file(".yml", RULE);
+    let daemon = DaemonProcess::spawn_http(rule.path().to_str().unwrap());
+    let (status, _body) = http_delete(&daemon.url("/api/v1/schemas"));
+    assert_eq!(status, 503);
 }
