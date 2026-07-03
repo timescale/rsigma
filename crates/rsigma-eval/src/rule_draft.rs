@@ -875,7 +875,23 @@ fn infer_form(profile: &mut DraftFieldProfile, config: &DraftConfig) {
         return;
     }
     let distinct: Vec<DraftValue> = profile.distinct().into_iter().cloned().collect();
-    profile.form = derive_form(&distinct, config);
+    // A patterned field generalizes better as its shared pattern than as an
+    // exact OR list that would just memorize the exemplars.
+    if profile.stability == Stability::Patterned {
+        let strings: Vec<&str> = distinct
+            .iter()
+            .filter_map(|v| match v {
+                DraftValue::Str(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        if strings.len() == distinct.len() {
+            profile.form = derive_pattern_form(&strings, config);
+        }
+    }
+    if profile.form.is_none() {
+        profile.form = derive_form(&distinct, config);
+    }
     if profile.form.is_none() {
         profile.stability = Stability::Volatile;
     }
@@ -1081,6 +1097,11 @@ fn try_group_split<E: Event>(
         }
     }
     if groups.len() < 2 {
+        return None;
+    }
+    // Every group needs real support; splitting one exemplar per selection
+    // would just memorize the input.
+    if groups.iter().any(|(_, members)| members.len() < 2) {
         return None;
     }
 
