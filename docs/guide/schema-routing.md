@@ -138,3 +138,16 @@ Correlation works across schemas. Detections from each per-schema engine feed on
 An event that matches no signature is "unknown". The `on_unknown` policy decides its fate: `warn` and `passthrough` evaluate it against the default pipeline-set (the difference is a logged warning), `drop` skips it, and `error` skips it and flags an error. Pair routing with [`--observe-schemas`](../cli/engine/daemon.md) (daemon) or [`engine classify`](../cli/engine/classify.md) to find sources whose schema is not yet recognized, then add a signature and a binding.
 
 With `--observe-schemas`, the daemon's `GET /api/v1/schemas` endpoint reports a bounded, redacted sample of the field-key shapes of unknown events (`unknown_shapes`), so you can see exactly which key sets are unrecognized and author a signature for them without inspecting raw event values. The same endpoint reports a per-schema routing pruning summary (`routing_pruning`, eligible versus pruned rules) and an `ambiguous` count for events where two different-name signatures tied at the winning specificity. `engine classify` surfaces the same ambiguity per event; resolve it by giving one signature a distinguishing predicate or a higher `specificity`.
+
+## Discovering signatures
+
+Rather than reading the unknown shapes and hand-writing every signature, let RSigma propose them. [`engine discover-schemas`](../cli/engine/discover-schemas.md) mines a JSON/NDJSON corpus: it clusters the unrecognized events (the `unknown` and `generic_json` ones), picks the fields and low-cardinality values that discriminate each cluster, and emits ranked candidate signatures plus a paste-ready `schemas:` block.
+
+```bash
+cat events.ndjson | rsigma engine discover-schemas --output-format table
+rsigma engine discover-schemas -e @events.ndjson --emit yaml >> schemas.yml
+```
+
+The workflow is a loop: `engine classify` shows you have unknowns, `discover-schemas` proposes signatures, and classifying again with the pasted config verifies them (`--dry-run` previews the before/after classification counts in one step). Proposals are always declarative signatures a human reviews and renames; nothing is applied automatically.
+
+On a running daemon, `--discover-schemas` (which implies `--observe-schemas`) samples the shapes of unrecognized events live, and [`GET /api/v1/schemas/suggestions`](../cli/engine/discover-schemas.md) mines them into candidates. The daemon sample is keys-only, so its proposals use presence predicates; run the offline command over a corpus when you want `equals`/`in` value markers.

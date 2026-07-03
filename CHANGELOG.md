@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Schema signature discovery
+
+Turns the unknown-schema signal the schema tooling surfaces into ranked candidate declarative signatures, so operators stop hand-writing every signature from scratch. Pure-Rust, glass-box mining (clustering plus discriminative feature selection); the output is the same `schemas:` YAML the classifier already consumes, so every proposed predicate is human-readable and reviewable. Additive and opt-in throughout; no black-box model, and nothing is applied automatically.
+
+* **Mining core** — a new `rsigma_eval::schema_discovery` module clusters unrecognized events by field-key shape, selects the fields (and low-cardinality, non-sensitive values) that discriminate each cluster with a value-based diversity guard and cardinality-weighted scoring, validates proposals against the built-ins, and renders a paste-ready `schemas:` block that round-trips through `parse_schema_signatures`.
+* **`engine discover-schemas`** — an offline command that mines a JSON/NDJSON corpus (excluding events an existing built-in or `--schema-config` signature already recognizes) and prints ranked candidates plus the YAML. Flags: `--schema-config`, `--min-support`, `--similarity`, `--max-candidates`, `--max-predicates`, `--no-value-markers`, `--emit yaml|report`, and `--dry-run` (reclassify the corpus with the proposals loaded and report the before/after per-schema counts).
+* **Live daemon surface** — a new `--discover-schemas` flag (implies `--observe-schemas`) enables a separate, redacted, keys-only sampler of unrecognized events, and `GET /api/v1/schemas/suggestions` mines it into presence-only candidate signatures. A new `rsigma_unknown_schema_clusters` gauge tracks how many distinct schemas discovery would propose. The shipped `unknown_shapes` semantics are unchanged.
+* **Docs** — a new `engine discover-schemas` CLI page and schema-routing guide section, plus updates to the daemon CLI, HTTP API, and metrics references.
+
 ### Docs
 
 * Added [Rustinel](https://github.com/Karib0u/rustinel), an open-source cross-platform endpoint detection engine, to the `Built with RSigma` section on the docs home page. Rustinel ships RSigma as an opt-in Sigma backend alongside its built-in matcher.
