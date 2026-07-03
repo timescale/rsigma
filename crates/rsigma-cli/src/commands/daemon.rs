@@ -352,6 +352,16 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "observe-schemas")]
     pub observe_schemas: bool,
 
+    /// Enable schema signature discovery sampling (implies `--observe-schemas`).
+    ///
+    /// Off by default. When set, the schema observer also records the redacted
+    /// field-key shapes of unrecognized events (no match, or the low-specificity
+    /// `generic_json` catch-all) so `GET /api/v1/schemas/suggestions` can mine
+    /// them into candidate signatures and the `rsigma_unknown_schema_clusters`
+    /// gauge tracks how many distinct schemas discovery would propose.
+    #[arg(long = "discover-schemas")]
+    pub discover_schemas: bool,
+
     /// Path to a YAML file of user-defined schema signatures, merged over the
     /// built-ins, and (with `--schema-routing`) the `routing:` bindings. Used
     /// by `--observe-schemas` and `--schema-routing`.
@@ -690,6 +700,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields,
         observe_fields_max_keys,
         observe_schemas,
+        discover_schemas,
         schema_config,
         schema_routing,
         schema_partition_rules,
@@ -827,6 +838,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         observe_fields,
         observe_fields_max_keys,
         observe_schemas,
+        discover_schemas,
         schema_config,
         schema_routing,
         schema_partition_rules,
@@ -1256,6 +1268,11 @@ fn apply_daemon_config(
         {
             args.observe_schemas = v;
         }
+        if !explicit("discover_schemas")
+            && let Some(v) = schema.discover
+        {
+            args.discover_schemas = v;
+        }
         if !explicit("schema_routing")
             && let Some(v) = schema.routing
         {
@@ -1369,6 +1386,7 @@ fn run_daemon(
     observe_fields: bool,
     observe_fields_max_keys: usize,
     observe_schemas: bool,
+    discover_schemas: bool,
     schema_config: Option<PathBuf>,
     schema_routing: bool,
     schema_partition_rules: bool,
@@ -1527,6 +1545,7 @@ fn run_daemon(
         observe_fields,
         observe_fields_max_keys,
         observe_schemas,
+        discover_schemas,
         schema_config,
         schema_routing,
         schema_partition_rules,

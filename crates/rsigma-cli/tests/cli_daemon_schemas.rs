@@ -92,3 +92,70 @@ fn schemas_endpoint_reports_per_schema_and_unknown_counts() {
     assert!(metrics.contains(r#"schema="ecs""#));
     assert!(metrics.contains("rsigma_events_unknown_schema_total 1"));
 }
+
+#[test]
+fn suggestions_endpoint_requires_discover_flag() {
+    let rule = temp_file(".yml", RULE);
+    // Observer on, but discovery sampling off: 503 with a discover hint.
+    let daemon =
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &["--observe-schemas"]);
+    let (status, body) = http_get(&daemon.url("/api/v1/schemas/suggestions"));
+    assert_eq!(status, 503);
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["error"], "schema discovery sampling disabled");
+}
+
+#[test]
+fn suggestions_endpoint_mines_unrecognized_shapes() {
+    let rule = temp_file(".yml", RULE);
+    let daemon =
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &["--discover-schemas"]);
+
+    // Four same-shape vendor events. They carry fields, so they classify as the
+    // low-specificity generic_json catch-all, which the discovery sampler treats
+    // as unrecognized.
+    let payload = concat!(
+        r#"{"vendor":"acme","event_type":"alert","n":1}"#,
+        "\n",
+        r#"{"vendor":"acme","event_type":"alert","n":2}"#,
+        "\n",
+        r#"{"vendor":"acme","event_type":"alert","n":3}"#,
+        "\n",
+        r#"{"vendor":"acme","event_type":"alert","n":4}"#,
+    );
+    let (status, _body) = http_post(&daemon.url("/api/v1/events"), payload);
+    assert_eq!(status, 200);
+
+    // Wait until all four are observed (as generic_json).
+    let _ = wait_for_events_observed(&daemon, 4);
+
+    let suggestions = poll_until(Duration::from_secs(5), || {
+        let (status, body) = http_get(&daemon.url("/api/v1/schemas/suggestions"));
+        if status != 200 {
+            return None;
+        }
+        let v: Value = serde_json::from_str(&body).ok()?;
+        let candidates = v["candidates"].as_array()?;
+        if candidates.is_empty() {
+            return None;
+        }
+        Some(v)
+    })
+    .expect("no suggestions within 5s");
+
+    let candidates = suggestions["candidates"].as_array().unwrap();
+    assert!(!candidates.is_empty());
+    // Online proposals are presence-only and tagged keys-only.
+    assert_eq!(candidates[0]["source"], "keys-only");
+    assert!(
+        suggestions["signatures_yaml"]
+            .as_str()
+            .unwrap()
+            .contains("field_present")
+    );
+
+    // The cluster gauge is exposed and non-zero after a scrape.
+    let (status, metrics) = http_get(&daemon.url("/metrics"));
+    assert_eq!(status, 200);
+    assert!(metrics.contains("rsigma_unknown_schema_clusters"));
+}

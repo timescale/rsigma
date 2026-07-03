@@ -615,6 +615,10 @@ pub(crate) struct SchemaPartial {
     /// Enable the schema observer (daemon `--observe-schemas`). Ignored by eval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observe: Option<bool>,
+    /// Enable schema signature discovery sampling (daemon `--discover-schemas`;
+    /// implies `observe`). Ignored by eval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discover: Option<bool>,
     /// Enable schema routing (`--schema-routing`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<bool>,
@@ -635,6 +639,7 @@ impl Merge for SchemaPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             observe: over.observe.or(self.observe),
+            discover: over.discover.or(self.discover),
             routing: over.routing.or(self.routing),
             partition_rules: over.partition_rules.or(self.partition_rules),
             config: over.config.or(self.config),

@@ -31,6 +31,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/fields/missing` | GET | none | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
 | `/api/v1/fields/observer` | DELETE | none | Reset the field observer's counters. Requires `--observe-fields`. |
 | `/api/v1/schemas` | GET | none | Per-schema event breakdown and unknown rate. Requires `--observe-schemas`. |
+| `/api/v1/schemas/suggestions` | GET | none | Candidate schema signatures mined from the unrecognized-event sample. Requires `--discover-schemas`. |
 | `/api/v1/tap` | GET | none | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
 | `/api/v1/detections/stream` | GET | none | Stream live detections as chunked NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. |
 | `/v1/logs` | POST | none | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
@@ -592,6 +593,35 @@ curl -sS http://127.0.0.1:9090/api/v1/schemas
 ```
 
 `unknown_shapes` is a bounded, redacted sample of the field-key sets (key names only, never values) of unknown events, so you can author a signature for what is unrecognized. `routing_pruning` is the per-schema eligible-versus-pruned rule count, present when schema routing and logsource routing are both active. The same signals are exposed as the `rsigma_events_by_schema_total{schema}`, `rsigma_events_unknown_schema_total`, `rsigma_events_ambiguous_schema_total`, and `rsigma_schema_rules_eligible{schema}` / `rsigma_schema_rules_pruned{schema}` Prometheus metrics. A rising unknown rate flags a source whose schema RSigma does not recognize; add a signature with `--schema-config`.
+
+### `GET /api/v1/schemas/suggestions`
+
+Mines the daemon's unrecognized-event sample into candidate schema signatures, the live equivalent of [`engine discover-schemas`](../cli/engine/discover-schemas.md). Requires `--discover-schemas` (which implies `--observe-schemas`); returns `503` when that sampler is off. Because the sample is keys-only (values are never retained), proposals use presence predicates and are tagged `source: keys-only`; run the offline command over a corpus for value markers.
+
+```bash
+curl -sS http://127.0.0.1:9090/api/v1/schemas/suggestions
+```
+
+```json
+{
+  "summary": {"events_mined": 320, "shapes": 4, "clusters": 2, "candidates": 2},
+  "candidates": [
+    {
+      "name": "discovered_devicevendor",
+      "specificity": 60,
+      "source": "keys-only",
+      "support": 210,
+      "coverage_of_unknown": 0.66,
+      "predicates": ["field_present: deviceVendor", "field_present: signatureId"],
+      "sample_field_sets": [["deviceVendor", "signatureId", "src"]],
+      "overlap_warnings": []
+    }
+  ],
+  "signatures_yaml": "schemas:\n  - name: discovered_devicevendor\n    specificity: 60\n    match:\n      - field_present: deviceVendor\n      - field_present: signatureId\n"
+}
+```
+
+The `rsigma_unknown_schema_clusters` gauge tracks how many distinct schemas discovery would propose. Review, rename, and refine the `signatures_yaml` before committing it to a `--schema-config` file.
 
 ## Live event tap
 

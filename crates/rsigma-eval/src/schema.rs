@@ -1295,6 +1295,10 @@ pub struct SchemaObservation {
     /// Redacted field-key shapes of unknown events, most frequent first, to
     /// help author signatures for what is currently unrecognized.
     pub unknown_shapes: Vec<UnknownShapeEntry>,
+    /// Redacted field-key shapes of discovery-unrecognized events (no match or
+    /// `generic_json`), most frequent first. Populated only when the observer's
+    /// discovery sampler is enabled; the input to schema signature discovery.
+    pub unrecognized_shapes: Vec<UnknownShapeEntry>,
     /// Total events observed since the last reset (`classified + unknown`).
     pub events_observed: u64,
     /// Lifetime total of classified events, ignoring resets. Monotonic, so it
@@ -1318,9 +1322,19 @@ pub struct SchemaObserver {
     counts: Mutex<HashMap<String, u64>>,
     unknown: AtomicU64,
     ambiguous: AtomicU64,
-    /// Redacted field-key shapes of unknown events (bounded by
+    /// Redacted field-key shapes of unknown (no-match) events (bounded by
     /// [`UNKNOWN_SHAPE_CAP`]).
     unknown_shapes: Mutex<HashMap<Vec<String>, u64>>,
+    /// Opt-in: when set, also samples the redacted field-key shapes of events
+    /// that are unrecognized *for discovery purposes* (no match OR the
+    /// low-specificity `generic_json` catch-all) into
+    /// [`unrecognized_shapes`](Self::unrecognized_shapes), the input to schema
+    /// signature discovery. Kept separate from [`Self::unknown_shapes`] so the
+    /// existing `unknown` semantics are unchanged.
+    discovery_sampling: bool,
+    /// Redacted field-key shapes of discovery-unrecognized events (no-match or
+    /// `generic_json`), populated only when `discovery_sampling` is set.
+    unrecognized_shapes: Mutex<HashMap<Vec<String>, u64>>,
     events_observed: AtomicU64,
     lifetime_classified: AtomicU64,
     lifetime_unknown: AtomicU64,
@@ -1329,20 +1343,36 @@ pub struct SchemaObserver {
 }
 
 impl SchemaObserver {
-    /// Create an observer backed by the given classifier.
+    /// Create an observer backed by the given classifier (discovery sampling
+    /// off).
     pub fn new(classifier: SchemaClassifier) -> Self {
+        Self::new_with_discovery(classifier, false)
+    }
+
+    /// Create an observer, optionally enabling the discovery sampler that
+    /// records redacted shapes of `generic_json` and no-match events for
+    /// schema signature discovery.
+    pub fn new_with_discovery(classifier: SchemaClassifier, discovery_sampling: bool) -> Self {
         Self {
             classifier,
             counts: Mutex::new(HashMap::new()),
             unknown: AtomicU64::new(0),
             ambiguous: AtomicU64::new(0),
             unknown_shapes: Mutex::new(HashMap::new()),
+            discovery_sampling,
+            unrecognized_shapes: Mutex::new(HashMap::new()),
             events_observed: AtomicU64::new(0),
             lifetime_classified: AtomicU64::new(0),
             lifetime_unknown: AtomicU64::new(0),
             lifetime_ambiguous: AtomicU64::new(0),
             start: Mutex::new(Instant::now()),
         }
+    }
+
+    /// Whether the discovery sampler (recording unrecognized-event shapes into
+    /// [`SchemaObservation::unrecognized_shapes`]) is on.
+    pub fn discovery_sampling(&self) -> bool {
+        self.discovery_sampling
     }
 
     /// Create an observer using the built-in classifier.
@@ -1359,6 +1389,17 @@ impl SchemaObserver {
             self.ambiguous.fetch_add(1, Ordering::Relaxed);
             self.lifetime_ambiguous.fetch_add(1, Ordering::Relaxed);
         }
+        // Sample the shape for discovery when the event is unrecognized for
+        // discovery purposes: it matched nothing, or only the low-specificity
+        // `generic_json` catch-all (which is not a real schema).
+        let discovery_unrecognized = match &matched {
+            None => true,
+            Some(m) => m.name == "generic_json",
+        };
+        if self.discovery_sampling && discovery_unrecognized {
+            self.record_unrecognized_shape(event);
+        }
+
         match matched {
             Some(m) => {
                 self.lifetime_classified.fetch_add(1, Ordering::Relaxed);
@@ -1385,6 +1426,26 @@ impl SchemaObserver {
             .lock()
             .expect("schema observer shapes mutex poisoned");
         // Only add a new shape when under the cap; always count a known one.
+        if shapes.contains_key(&keys) || shapes.len() < UNKNOWN_SHAPE_CAP {
+            *shapes.entry(keys).or_insert(0) += 1;
+        }
+    }
+
+    /// Record the redacted field-key shape of one discovery-unrecognized event
+    /// (no match or `generic_json`) into the discovery sampler, capped the same
+    /// way as [`Self::record_unknown_shape`].
+    fn record_unrecognized_shape<E: Event + ?Sized>(&self, event: &E) {
+        let mut keys: Vec<String> = event.field_keys().iter().map(|k| k.to_string()).collect();
+        keys.sort();
+        keys.dedup();
+        keys.truncate(UNKNOWN_SHAPE_MAX_KEYS);
+        if keys.is_empty() {
+            return;
+        }
+        let mut shapes = self
+            .unrecognized_shapes
+            .lock()
+            .expect("schema observer shapes mutex poisoned");
         if shapes.contains_key(&keys) || shapes.len() < UNKNOWN_SHAPE_CAP {
             *shapes.entry(keys).or_insert(0) += 1;
         }
@@ -1418,6 +1479,20 @@ impl SchemaObserver {
         drop(shapes);
         unknown_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.keys.cmp(&b.keys)));
 
+        let unrec = self
+            .unrecognized_shapes
+            .lock()
+            .expect("schema observer shapes mutex poisoned");
+        let mut unrecognized_shapes: Vec<UnknownShapeEntry> = unrec
+            .iter()
+            .map(|(keys, count)| UnknownShapeEntry {
+                keys: keys.clone(),
+                count: *count,
+            })
+            .collect();
+        drop(unrec);
+        unrecognized_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.keys.cmp(&b.keys)));
+
         let unknown = self.unknown.load(Ordering::Relaxed);
         SchemaObservation {
             by_schema,
@@ -1425,6 +1500,7 @@ impl SchemaObserver {
             unknown,
             ambiguous: self.ambiguous.load(Ordering::Relaxed),
             unknown_shapes,
+            unrecognized_shapes,
             events_observed: self.events_observed.load(Ordering::Relaxed),
             lifetime_classified: self.lifetime_classified.load(Ordering::Relaxed),
             lifetime_unknown: self.lifetime_unknown.load(Ordering::Relaxed),
@@ -1446,6 +1522,10 @@ impl SchemaObserver {
         counts.clear();
         drop(counts);
         self.unknown_shapes
+            .lock()
+            .expect("schema observer shapes mutex poisoned")
+            .clear();
+        self.unrecognized_shapes
             .lock()
             .expect("schema observer shapes mutex poisoned")
             .clear();

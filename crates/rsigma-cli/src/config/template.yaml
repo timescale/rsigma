@@ -200,9 +200,12 @@ daemon:
   # `routing:` section of `config`, with one shared correlation store across
   # schemas. `config` adds user schema signatures and routing bindings on top
   # of the built-ins. `on_unknown` is the policy for events that match no
-  # schema: warn (default), drop, passthrough, or error.
+  # schema: warn (default), drop, passthrough, or error. `discover` (implies
+  # `observe`) also samples redacted shapes of unrecognized events so
+  # /api/v1/schemas/suggestions can mine candidate signatures.
   schema:
     observe: false
+    # discover: false   # implies observe; enables /api/v1/schemas/suggestions
     routing: false
     # partition_rules: false   # gated: compile each platform-locked per-schema engine with only its applicable rules
     # config: ./schema.yml

@@ -14,8 +14,8 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DocArgs, EvalArgs,
-    ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts, ListFormatsArgs,
+    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
+    EvalArgs, ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts, ListFormatsArgs,
     MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ScorecardArgs, StatusArgs, StdinArgs,
     TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
@@ -211,6 +211,9 @@ enum EngineCommands {
 
     /// Report which schema each event matches (content-based recognition)
     Classify(ClassifyArgs),
+
+    /// Mine unrecognized events into candidate schema signatures
+    DiscoverSchemas(DiscoverArgs),
 
     /// Query a running daemon's status (GET /api/v1/status)
     Status(StatusArgs),
@@ -462,6 +465,7 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::Outpu
         }
         EngineCommands::Explain(args) => commands::cmd_explain(args, ctx),
         EngineCommands::Classify(args) => commands::cmd_classify(args, ctx),
+        EngineCommands::DiscoverSchemas(args) => commands::cmd_discover(args, ctx),
         EngineCommands::Status(args) => commands::cmd_status(args, ctx),
         EngineCommands::Tap(args) => commands::cmd_tap(args, ctx),
         EngineCommands::Tail(args) => commands::cmd_tail(args, ctx),

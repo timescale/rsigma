@@ -59,6 +59,7 @@ pub(crate) const DISPOSITIONS_MIN_SAMPLE: u64 = 5;
 /// `eval.schema.*`). Both observation and routing are opt-in. The unknown-schema
 /// policy defaults to `warn` (log and evaluate against every set).
 pub(crate) const SCHEMA_OBSERVE: bool = false;
+pub(crate) const SCHEMA_DISCOVER: bool = false;
 pub(crate) const SCHEMA_ROUTING: bool = false;
 pub(crate) const SCHEMA_PARTITION_RULES: bool = false;
 pub(crate) const SCHEMA_ON_UNKNOWN: &str = "warn";
@@ -201,6 +202,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             }),
             schema: Some(SchemaPartial {
                 observe: Some(SCHEMA_OBSERVE),
+                discover: Some(SCHEMA_DISCOVER),
                 routing: Some(SCHEMA_ROUTING),
                 partition_rules: Some(SCHEMA_PARTITION_RULES),
                 config: None,
@@ -222,6 +224,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             fail_on_detection: Some(false),
             schema: Some(SchemaPartial {
                 observe: None,
+                discover: None,
                 routing: Some(SCHEMA_ROUTING),
                 partition_rules: Some(SCHEMA_PARTITION_RULES),
                 config: None,

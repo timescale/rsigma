@@ -63,6 +63,7 @@ pub struct Metrics {
     pub events_without_logsource: IntCounter,
     pub schema_rules_eligible: IntGaugeVec,
     pub schema_rules_pruned: IntGaugeVec,
+    pub unknown_schema_clusters: IntGauge,
     pub tap_sessions_total: IntCounter,
     pub tap_active_sessions: IntGauge,
     pub tap_events_streamed_total: IntCounter,
@@ -596,6 +597,15 @@ impl Metrics {
         registry
             .register(Box::new(schema_rules_pruned.clone()))
             .unwrap();
+
+        let unknown_schema_clusters = IntGauge::with_opts(Opts::new(
+            "rsigma_unknown_schema_clusters",
+            "Distinct clusters of unrecognized event shapes discovery would propose a signature for (--observe-schemas)",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(unknown_schema_clusters.clone()))
+            .unwrap();
         registry
             .register(Box::new(events_without_logsource.clone()))
             .unwrap();
@@ -1014,6 +1024,7 @@ impl Metrics {
             fields_observer_overflow_dropped_total,
             events_by_schema,
             events_ambiguous_schema,
+            unknown_schema_clusters,
             schema_rules_eligible,
             schema_rules_pruned,
             events_unknown_schema,
@@ -1110,6 +1121,17 @@ impl Metrics {
             self.events_ambiguous_schema
                 .inc_by(ambiguous_now - ambiguous_prev);
         }
+        // Cluster the current redacted discovery sample so the gauge tracks how
+        // many distinct schemas discovery would propose. Empty unless the
+        // observer's discovery sampler (--discover-schemas) is on; bounded (the
+        // sample is capped), so cheap enough to refresh on every scrape.
+        let clusters = rsigma_eval::mine_shapes(
+            &snapshot.unrecognized_shapes,
+            &rsigma_eval::DiscoveryConfig::default(),
+        )
+        .stats
+        .clusters;
+        self.unknown_schema_clusters.set(clusters as i64);
     }
 
     /// Refresh the per-schema logsource eligibility gauges from the router's

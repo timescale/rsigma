@@ -208,6 +208,10 @@ pub struct DaemonConfig {
     /// `rsigma_events_by_schema_total` / `rsigma_events_unknown_schema_total`
     /// counters can surface the schema mix and unknown rate. Off by default.
     pub observe_schemas: bool,
+    /// Enable the discovery sampler: record redacted shapes of unrecognized
+    /// (no-match or `generic_json`) events so `GET /api/v1/schemas/suggestions`
+    /// can mine them into candidate signatures. Implies `observe_schemas`.
+    pub discover_schemas: bool,
     /// Optional path to a YAML file of user-defined schema signatures (and,
     /// with `schema_routing`, the routing bindings), merged over the built-ins.
     pub schema_config: Option<PathBuf>,
@@ -702,7 +706,9 @@ pub async fn run_daemon(config: DaemonConfig) {
         None
     };
 
-    let schema_observer = if config.observe_schemas {
+    // `--discover-schemas` implies `--observe-schemas`: the discovery sampler
+    // rides on the same observer.
+    let schema_observer = if config.observe_schemas || config.discover_schemas {
         let classifier = match &config.schema_config {
             Some(path) => match load_schema_signatures(path) {
                 Ok(sigs) => SchemaClassifier::with_user_signatures(sigs),
@@ -713,9 +719,19 @@ pub async fn run_daemon(config: DaemonConfig) {
             },
             None => SchemaClassifier::builtin(),
         };
-        let observer = Arc::new(SchemaObserver::new(classifier));
+        let observer = Arc::new(SchemaObserver::new_with_discovery(
+            classifier,
+            config.discover_schemas,
+        ));
         processor.set_schema_observer(Some(observer.clone()));
-        tracing::info!("Schema observer enabled (GET /api/v1/schemas)");
+        if config.discover_schemas {
+            tracing::info!(
+                "Schema observer + discovery sampler enabled (GET /api/v1/schemas, \
+                 GET /api/v1/schemas/suggestions)"
+            );
+        } else {
+            tracing::info!("Schema observer enabled (GET /api/v1/schemas)");
+        }
         Some(observer)
     } else {
         None
@@ -882,6 +898,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/fields/missing", get(fields_missing))
         .route("/api/v1/fields/observer", delete(fields_observer_reset))
         .route("/api/v1/schemas", get(schemas_full))
+        .route("/api/v1/schemas/suggestions", get(schema_suggestions))
         .route("/api/v1/tap", get(tap_stream))
         .route("/api/v1/detections/stream", get(detections_stream));
 
@@ -2933,6 +2950,73 @@ async fn schemas_full(State(state): State<AppState>) -> Response {
         "by_schema": by_schema,
         "unknown_shapes": unknown_shapes,
         "routing_pruning": routing_pruning,
+    });
+
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// `GET /api/v1/schemas/suggestions`: mine the redacted unknown-shape sample
+/// into candidate schema signatures for review. The sample is keys-only, so
+/// proposals use presence predicates (`source: keys-only`); the offline
+/// `engine discover-schemas` command mines a raw corpus for value markers.
+/// Returns 503 when `--observe-schemas` is off.
+async fn schema_suggestions(State(state): State<AppState>) -> Response {
+    let Some(observer) = state.schema_observer.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "schema observation disabled",
+                "hint": "restart the daemon with --discover-schemas to enable \
+                         /api/v1/schemas/suggestions",
+            })),
+        )
+            .into_response();
+    };
+    if !observer.discovery_sampling() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "schema discovery sampling disabled",
+                "hint": "restart the daemon with --discover-schemas to sample unrecognized \
+                         event shapes for /api/v1/schemas/suggestions",
+            })),
+        )
+            .into_response();
+    }
+    let snapshot = observer.snapshot();
+    // Refreshes the per-schema counters and the unknown-cluster gauge.
+    state.metrics.update_schema_observer_metrics(&snapshot);
+
+    let report = rsigma_eval::mine_shapes(
+        &snapshot.unrecognized_shapes,
+        &rsigma_eval::DiscoveryConfig::default(),
+    );
+    let candidates: Vec<serde_json::Value> = report
+        .candidates
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "specificity": c.specificity,
+                "source": "keys-only",
+                "support": c.support,
+                "coverage_of_unknown": c.coverage_of_unknown,
+                "predicates": c.predicate_descriptions(),
+                "sample_field_sets": c.sample_field_sets,
+                "overlap_warnings": c.overlap_warnings,
+            })
+        })
+        .collect();
+
+    let body = serde_json::json!({
+        "summary": {
+            "events_mined": report.stats.events_mined,
+            "shapes": report.stats.shapes,
+            "clusters": report.stats.clusters,
+            "candidates": report.stats.candidates,
+        },
+        "candidates": candidates,
+        "signatures_yaml": report.to_signatures_yaml(),
     });
 
     (StatusCode::OK, Json(body)).into_response()
