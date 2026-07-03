@@ -897,7 +897,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/fields/unknown", get(fields_unknown))
         .route("/api/v1/fields/missing", get(fields_missing))
         .route("/api/v1/fields/observer", delete(fields_observer_reset))
-        .route("/api/v1/schemas", get(schemas_full))
+        .route("/api/v1/schemas", get(schemas_full).delete(schemas_reset))
         .route("/api/v1/schemas/suggestions", get(schema_suggestions))
         .route("/api/v1/tap", get(tap_stream))
         .route("/api/v1/detections/stream", get(detections_stream));
@@ -3020,6 +3020,35 @@ async fn schema_suggestions(State(state): State<AppState>) -> Response {
     });
 
     (StatusCode::OK, Json(body)).into_response()
+}
+
+/// `DELETE /api/v1/schemas`: reset the schema observer's counters and samples
+/// (per-schema counts, unknown shapes, and the discovery sample), so a
+/// long-running daemon can refresh a stale discovery sample without a restart.
+/// Returns 503 when `--observe-schemas` is off.
+async fn schemas_reset(State(state): State<AppState>) -> Response {
+    let Some(observer) = state.schema_observer.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "schema observation disabled",
+                "hint": "restart the daemon with --observe-schemas to enable /api/v1/schemas",
+            })),
+        )
+            .into_response();
+    };
+    let (previous_classified, previous_unknown) = observer.reset();
+    let snapshot = observer.snapshot();
+    state.metrics.update_schema_observer_metrics(&snapshot);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "reset",
+            "previous_classified": previous_classified,
+            "previous_unknown": previous_unknown,
+        })),
+    )
+        .into_response()
 }
 
 fn missing_field_payload(field: &str, origin: &rsigma_eval::FieldOrigin) -> serde_json::Value {

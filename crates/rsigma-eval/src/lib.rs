@@ -155,5 +155,5 @@ pub use schema::{
 };
 pub use schema_discovery::{
     CandidateSource, DiscoveryCandidate, DiscoveryConfig, DiscoveryReport, DiscoveryStats,
-    FieldProfile, mine_events, mine_shapes,
+    FieldProfile, cluster_count, mine_events, mine_shapes,
 };

@@ -1123,14 +1123,13 @@ impl Metrics {
         }
         // Cluster the current redacted discovery sample so the gauge tracks how
         // many distinct schemas discovery would propose. Empty unless the
-        // observer's discovery sampler (--discover-schemas) is on; bounded (the
-        // sample is capped), so cheap enough to refresh on every scrape.
-        let clusters = rsigma_eval::mine_shapes(
+        // observer's discovery sampler (--discover-schemas) is on; the
+        // clustering-only count skips candidate selection/validation, so this
+        // stays cheap to refresh on every scrape and every /api/v1/schemas call.
+        let clusters = rsigma_eval::cluster_count(
             &snapshot.unrecognized_shapes,
             &rsigma_eval::DiscoveryConfig::default(),
-        )
-        .stats
-        .clusters;
+        );
         self.unknown_schema_clusters.set(clusters as i64);
     }
 
