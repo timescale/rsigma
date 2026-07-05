@@ -21,11 +21,14 @@ cargo bench -p rsigma-eval --bench eval
 cargo bench -p rsigma-eval --bench eval --features daachorse-index   # includes the cross-rule AC suite
 cargo bench -p rsigma-eval --bench logsource
 cargo bench -p rsigma-eval --bench schema
+cargo bench -p rsigma-eval --bench routing
 cargo bench -p rsigma-eval --bench array
 cargo bench -p rsigma-eval --bench correlation
 cargo bench -p rsigma-eval --bench correlation_memory   # peak-heap stress (not Criterion)
 cargo bench -p rsigma-eval --bench result_serialize
 cargo bench -p rsigma-runtime --bench runtime_throughput
+cargo bench -p rsigma-runtime --bench input_formats --features logfmt,cef,evtx
+cargo bench -p rsigma-runtime --bench otlp --features otlp
 cargo bench -p rsigma-runtime --bench dynamic_pipelines
 cargo bench -p rsigma-runtime --bench enrichment
 cargo bench -p rsigma-runtime --bench alert_pipeline
@@ -216,6 +219,20 @@ Classification stays well under a microsecond per event even in the full-scan wo
 
 Run with `cargo bench -p rsigma-eval --bench schema`.
 
+### Schema-Routed Dispatch (`--schema-routing`)
+
+End-to-end routed evaluation over a mixed stream (one third ECS, one third flat Sysmon, one third unrecognized; 1,000 events, 100 non-matching rules), with `ecs` and `sysmon` bound to their builtin pipelines, against a single pipeline-less engine over the same stream.
+
+| Configuration | Time (median) | Throughput |
+|---------------|---------------|------------|
+| Single engine, no pipelines | 5.07 ms | 197 Kelem/s |
+| Routed, per-event `route()` | 9.34 ms | 107 Kelem/s |
+| Routed, `process_batch` | 9.45 ms | 106 Kelem/s |
+
+The ~4.3 us/event difference overstates the dispatch cost: classification itself is ~0.3 us (see above), and most of the rest is the routed engines doing real matching work, because their pipeline-mapped rules reference fields the events actually carry (`process.command_line`), while the unrouted baseline's unmapped rules miss ECS events on absent fields without ever scanning a value. That is the correctness gap routing exists to close: the baseline is faster partly because it silently cannot match two thirds of the stream.
+
+Run with `cargo bench -p rsigma-eval --bench routing`.
+
 ### Array Matching (`sigma-version: 3`)
 
 Per-event cost of the array evaluation paths. Events carry a `connections` array of objects; the flat baseline is the same engine evaluating a single scalar field (326 ns). Array-scope bodies are evaluated per member rather than through the batched flat-field matchers, so cost is linear in member count.
@@ -355,6 +372,47 @@ End-to-end processing: format parsing, detection, and result collection (100 rul
 | Plain | 10,000 | 1.05 ms | 9.52 Melem/s |
 | Auto-detect | 1,000 | 1.07 ms | 939 Kelem/s |
 | Auto-detect | 10,000 | 8.86 ms | 1.13 Melem/s |
+
+### Feature-Gated Input Formats (100 rules)
+
+logfmt and CEF run through the same `LogProcessor` pipeline as the table above; EVTX measures `EvtxFileReader` binary-record parsing over the checked-in 2 MiB `security.evtx` fixture (~2,260 records), the dominant cost of `engine eval -e @file.evtx`.
+
+| Format | Events | Time (median) | Throughput |
+|--------|-------:|---------------|------------|
+| logfmt | 1,000 | 1.83 ms | 546 Kelem/s |
+| logfmt | 10,000 | 15.8 ms | 631 Kelem/s |
+| CEF | 1,000 | 2.11 ms | 473 Kelem/s |
+| CEF | 10,000 | 19.0 ms | 527 Kelem/s |
+| EVTX (parse only) | ~2,260 records | 11.6 ms | 195 Kelem/s |
+
+Run with `cargo bench -p rsigma-runtime --bench input_formats --features logfmt,cef,evtx`.
+
+### OTLP Log Decode (`otlp` feature)
+
+`logs_request_to_raw_events`: flattening an OTLP `ExportLogsServiceRequest` (string body, eight log attributes, four resource attributes, scope metadata, trace context per record) into the JSON events the engine evaluates. This is the ingest-side cost of OTLP/HTTP and OTLP/gRPC downstream of transport and protobuf decoding.
+
+| Records | Time (median) | Throughput |
+|--------:|---------------|------------|
+| 100 | 225.4 us | 444 Kelem/s |
+| 1,000 | 2.27 ms | 441 Kelem/s |
+| 10,000 | 22.8 ms | 439 Kelem/s |
+
+Decode costs a flat ~2.3 us per record independent of batch size, comparable to the JSON-line parse-plus-detect cost, so OTLP ingestion roughly halves single-core throughput relative to NDJSON input.
+
+Run with `cargo bench -p rsigma-runtime --bench otlp --features otlp`.
+
+### Field Observability (`--observe-fields`)
+
+The same 10,000-event JSON workload as above (seven fields per event, 100 rules) with the field observer off vs on.
+
+| Mode | Time (median) | Throughput |
+|------|---------------|------------|
+| Off | 8.58 ms | 1.17 Melem/s |
+| On | 11.5 ms | 867 Kelem/s |
+
+The observer adds ~0.3 us per event on seven-key events (a mutex-guarded counter update per field key), about 25% of this workload's total pipeline cost. Cheap in absolute terms, but it is the most expensive of the opt-in per-event observability features and scales with the event's key count.
+
+Run with `cargo bench -p rsigma-runtime --bench runtime_throughput -- runtime_observe_fields`.
 
 ### Raw Engine vs LogProcessor (10,000 events, 100 rules)
 
@@ -504,6 +562,9 @@ Reload now includes the fail-closed dynamic-source re-resolution that `load_rule
 - **Window modes cost the same per event**: sliding, tumbling, and session all run at ~1.2-1.3 Melem/s on an identical workload. The window decision is O(1); choosing `session` over `sliding` is free at evaluation time.
 - **Correlation memory is bounded by entry count, not bytes**: the `max_state_entries` cap (default 100k) held 1M unique session keys to a 39.8 MiB peak via stalest-first eviction. Within the cap, per-group deques grow with timespan x event rate: ~10 B per in-window event for `event_count`, ~92 B for `value_count` with distinct string values.
 - **`value_count` distinct counting is the correlation bottleneck**: the distinct count is recomputed per event over the whole window (O(W) per event), so throughput drops from ~1.1 Melem/s to 57 Kelem/s at 1,800 distinct values per window; CPU collapses before memory does. Prefer shorter windows or `event_count` where distinctness is not required.
+- **Every wire format lands within one order of magnitude**: JSON 1.1M, logfmt 631K, CEF 527K, and OTLP decode 440K events/sec per core, with EVTX binary parsing at 195K records/sec. Format choice moves single-core ingest capacity by at most ~2.5x.
+- **`--observe-fields` is the priciest per-event observability opt-in**: ~0.3 us per event on seven-key events (~25% of the JSON pipeline cost on this workload), versus effectively free schema observation. It scales with event key count.
+- **Routed evaluation costs less than it looks**: the ~2x gap versus an unrouted engine is mostly the routed engines doing real matching on pipeline-mapped fields the unmapped baseline can never match. Pure dispatch (classify + route) is sub-microsecond.
 - **Post-engine layers cost about a microsecond per result**: template enrichment ~0.9 us, alert-pipeline dedup + grouping ~0.5 us, risk accumulation ~1.1 us at realistic entity cardinalities. At 10K detections/sec the full opt-in sink path consumes under 3% of a core.
 - **Result serialization is not worth hand-optimizing**: the derive-based serializer matches a hand-written impl within noise; even realistic correlation results serialize in under 2 us.
 - **Template expansion is negligible**: even with 20 vars, expansion adds < 10 us. Not a bottleneck.

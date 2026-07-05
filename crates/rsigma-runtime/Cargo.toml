@@ -96,3 +96,13 @@ harness = false
 [[bench]]
 name = "enrichment"
 harness = false
+
+[[bench]]
+name = "input_formats"
+harness = false
+required-features = ["logfmt", "cef", "evtx"]
+
+[[bench]]
+name = "otlp"
+harness = false
+required-features = ["otlp"]

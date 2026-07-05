@@ -53,6 +53,10 @@ name = "array"
 harness = false
 
 [[bench]]
+name = "routing"
+harness = false
+
+[[bench]]
 name = "correlation"
 harness = false
 
