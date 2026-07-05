@@ -455,7 +455,9 @@ level: high
     engine.set_source_resolver(resolver);
     engine.set_pipeline_paths(vec![pipeline_path]);
     rt.block_on(engine.resolve_dynamic_pipelines()).unwrap();
-    engine.load_rules().unwrap();
+    // `load_rules` re-resolves dynamic sources fail-closed and needs a tokio
+    // runtime context to do so (multi-threaded, for `block_in_place`).
+    rt.block_on(async { engine.load_rules() }).unwrap();
 
     let processor = LogProcessor::new(engine, Arc::new(NoopMetrics));
 
@@ -489,7 +491,7 @@ level: high
     // Also benchmark the reload path (resolve + rebuild)
     group.bench_function("reload_with_resolve", |b| {
         b.iter(|| {
-            let result = processor.reload_rules();
+            let result = rt.block_on(async { processor.reload_rules() });
             black_box(result.unwrap());
         });
     });

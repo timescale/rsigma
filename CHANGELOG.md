@@ -4,6 +4,19 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Benchmark refresh and two new suites (#291)
+
+Reran every benchmark suite on current main (Apple M4 Pro, 2026-07-05) and rewrote `BENCHMARKS.md` from the results, replacing the 0.9.0-era figures and their freshness disclaimer. The refreshed doc now also covers suites that existed but were never documented: the bloom prefilter rejection sweep, logsource pruning, and result serialization.
+
+* **New `schema` bench (`rsigma-eval`)** measures per-event `SchemaClassifier::classify` cost against the built-in signature set (early match, mid-list match, full-scan unknown, and the ambiguity-aware variant): 216-548 ns per event, so `--schema-routing` and `--observe-schemas` are effectively free at pipeline throughputs.
+* **New `enrichment` bench (`rsigma-runtime`)** measures the CPU-only floor of the post-evaluation enrichment pipeline with the `template` primitive over 1,000-result batches at one and four enrichers (~0.6-0.9 us per result per enricher).
+* **New `array` bench (`rsigma-eval`)** measures the `sigma-version: 3` array-matching paths against a flat-field baseline: implicit any-member matching, `[any]`/`[all]` object scopes at varying lengths and match positions, and positional indexing. Cost is linear in member count (~35-60 ns/member non-firing, ~110-250 ns/member firing, since the fan-out collects every matching member); positional indexing is O(1).
+* **New `routing` bench (`rsigma-eval`)** measures end-to-end `--schema-routing` dispatch (classify, route, evaluate on the per-schema engine) over a mixed ECS/Sysmon/unknown stream against a single unrouted engine, separating the sub-microsecond dispatch cost from the real matching work the pipeline-mapped engines do.
+* **New `input_formats` bench (`rsigma-runtime`, `--features logfmt,cef,evtx`)** completes the format matrix: logfmt (631K events/s), CEF (527K events/s) through the `LogProcessor` pipeline, and `EvtxFileReader` binary parsing over the `security.evtx` fixture (195K records/s).
+* **New `otlp` bench (`rsigma-runtime`, `--features otlp`)** measures `logs_request_to_raw_events`, the OTLP ingest-side flattening of an `ExportLogsServiceRequest` into engine events: a flat ~2.3 us per record independent of batch size.
+* **New `runtime_observe_fields` group** in the `runtime_throughput` bench measures the `--observe-fields` hot-path overhead: ~0.3 us per event on seven-key JSON events.
+* **Fixed the `dynamic_pipelines` bench**, which panicked since `load_rules` gained fail-closed dynamic-source re-resolution: the engine-build and reload benchmarks now run inside the tokio runtime context they require.
+
 ### MCP sigma-cli delegation: reach the pySigma backends from `convert_rules` (#290)
 
 Extends the native-first sigma-cli delegation that `rsigma backend convert` gained in #241 to the MCP server: when `rsigma mcp serve` runs with the new `--allow-sigma-cli` flag (config key `mcp.allow_sigma_cli`), the `convert_rules` tool delegates any target without a native backend to an installed [sigma-cli](https://github.com/SigmaHQ/sigma-cli), so an agent can convert to `splunk`, `elasticsearch`, `kusto`, `qradar`, `loki`, and the rest of the pySigma backend set. The `rsigma_convert` library API stays native-only by design.

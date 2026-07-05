@@ -110,7 +110,7 @@ The `rsigma.*` spelling wins if both appear. The engine reads the resolved value
 
 Window decisions follow arrival order, the same contract as the existing sliding window: the engine reasons about the events currently retained per group, not a global watermark. One asymmetry is deliberate: a tumbling window discards a late event that belongs to an earlier, already-passed bucket rather than letting it reset the active bucket, so out-of-order stragglers cannot wipe an accumulating count. Window bookkeeping is derived from the per-group timestamps already tracked, so persisted state (`--state-db`) stays compatible and survives upgrades.
 
-All three modes have the same per-event cost (the window decision is O(1)), so choosing `session` over `sliding` is free at evaluation time; what differs is how long state is retained per group. See [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) for the memory characteristics and the [Benchmarks](../benchmarks.md#window-mode-memory-stress-0150) page for measured numbers under high-cardinality and long-lived-session stress.
+All three modes have the same per-event cost (the window decision is O(1)), so choosing `session` over `sliding` is free at evaluation time; what differs is how long state is retained per group. See [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) for the memory characteristics and the [Benchmarks](../benchmarks.md#window-mode-memory-stress) page for measured numbers under high-cardinality and long-lived-session stress.
 
 ## Output sinks
 

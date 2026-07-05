@@ -318,6 +318,39 @@ fn bench_runtime_vs_raw_engine(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: --observe-fields overhead
+// ---------------------------------------------------------------------------
+
+fn bench_runtime_observe_fields(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime_observe_fields");
+    group.sample_size(20);
+
+    let n_events = 10_000;
+    let lines = gen_json_lines(n_events);
+    group.throughput(criterion::Throughput::Elements(n_events as u64));
+
+    let (processor, _) = make_processor(100);
+    group.bench_with_input(BenchmarkId::new("off", n_events), &lines, |b, lines| {
+        b.iter(|| {
+            let results =
+                processor.process_batch_with_format(black_box(lines), &InputFormat::Json, None);
+            black_box(results);
+        });
+    });
+
+    processor.set_field_observer(Some(Arc::new(rsigma_runtime::FieldObserver::new(10_000))));
+    group.bench_with_input(BenchmarkId::new("on", n_events), &lines, |b, lines| {
+        b.iter(|| {
+            let results =
+                processor.process_batch_with_format(black_box(lines), &InputFormat::Json, None);
+            black_box(results);
+        });
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Benchmark: scaling with rule count
 // ---------------------------------------------------------------------------
 
@@ -355,6 +388,7 @@ criterion_group!(
     bench_runtime_plain_throughput,
     bench_runtime_auto_throughput,
     bench_runtime_vs_raw_engine,
+    bench_runtime_observe_fields,
     bench_runtime_rule_scaling,
 );
 criterion_main!(benches);
