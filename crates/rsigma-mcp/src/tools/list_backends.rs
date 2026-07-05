@@ -160,13 +160,17 @@ mod tests {
         assert!(parse_targets("").is_empty());
     }
 
+    /// Safety-net timeout: generous because the first execution of a fresh
+    /// script can stall for seconds on loaded CI runners.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
     #[test]
     fn delegated_targets_lists_from_fake_sigma() {
         let dir = tempfile::tempdir().unwrap();
         let program = fake_sigma(dir.path(), "splunk", "", 0, 0);
         let cli = SigmaCli::from_program(&program, true);
         let handler = delegating_handler(None);
-        let targets = block_on(handler.delegated_targets(&cli, Duration::from_secs(10))).unwrap();
+        let targets = block_on(handler.delegated_targets(&cli, TEST_TIMEOUT)).unwrap();
         assert_eq!(targets, vec!["splunk"]);
     }
 
@@ -174,6 +178,6 @@ mod tests {
     fn delegated_targets_none_when_not_installed() {
         let cli = SigmaCli::from_program("/nonexistent/rsigma-test-sigma-cli", true);
         let handler = delegating_handler(None);
-        assert!(block_on(handler.delegated_targets(&cli, Duration::from_secs(5))).is_none());
+        assert!(block_on(handler.delegated_targets(&cli, TEST_TIMEOUT)).is_none());
     }
 }

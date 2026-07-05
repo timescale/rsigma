@@ -242,13 +242,21 @@ pub(crate) fn delegating_handler(root: Option<PathBuf>) -> RsigmaMcp {
 
 /// Run a future on a fresh current-thread runtime (the per-tool tests are
 /// plain `#[test]` functions).
+///
+/// The runtime is shut down in the background: on Windows, tokio reads child
+/// pipes through blocking-pool operations that only finish at pipe EOF, and a
+/// killed `cmd.exe` fake can leave an orphaned grandchild holding the pipe
+/// (there is no process-tree kill), so a synchronous runtime drop could block
+/// until the orphan exits.
 #[cfg(test)]
 pub(crate) fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap()
-        .block_on(future)
+        .unwrap();
+    let output = runtime.block_on(future);
+    runtime.shutdown_background();
+    output
 }
 
 /// Write a fake `sigma` executable into `dir` that prints `stdout_body`,
@@ -267,8 +275,16 @@ pub(crate) fn fake_sigma(
     {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("sigma");
+        // `exec` replaces the shell with the sleeper so kill_on_drop
+        // terminates the actual sleeping process; a plain `sleep` would be a
+        // grandchild that survives the shell's death.
+        let tail = if sleep_secs > 0 {
+            format!("exec sleep {sleep_secs}")
+        } else {
+            format!("exit {exit_code}")
+        };
         let script = format!(
-            "#!/bin/sh\nprintf '%s' '{stdout_body}'\nprintf '%s' '{stderr_body}' >&2\nsleep {sleep_secs}\nexit {exit_code}\n"
+            "#!/bin/sh\nprintf '%s' '{stdout_body}'\nprintf '%s' '{stderr_body}' >&2\n{tail}\n"
         );
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -285,7 +301,14 @@ pub(crate) fn fake_sigma(
             script.push_str(&format!("echo {stderr_body} 1>&2\r\n"));
         }
         if sleep_secs > 0 {
-            script.push_str(&format!("ping -n {} 127.0.0.1 > nul\r\n", sleep_secs + 1));
+            // Fully detach the sleeper from our stdio pipes: ping must not
+            // inherit them, or an orphaned ping (kill_on_drop only kills
+            // cmd.exe, not the tree) keeps the pipes open and blocks the
+            // reader until it exits.
+            script.push_str(&format!(
+                "ping -n {} 127.0.0.1 > nul 2>&1 < nul\r\n",
+                sleep_secs + 1
+            ));
         }
         script.push_str(&format!("exit /b {exit_code}\r\n"));
         std::fs::write(&path, script).unwrap();

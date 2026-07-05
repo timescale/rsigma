@@ -409,13 +409,20 @@ mod tests {
         assert!(msg.contains("--allow-sigma-cli"));
     }
 
+    /// Safety-net timeout for tests that expect the fake to run to
+    /// completion: generous because the first execution of a fresh script can
+    /// stall for seconds on loaded CI runners (Windows Defender scans new
+    /// executables) and the spawn happens synchronously on the future's first
+    /// poll, inside the timed section.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
     #[test]
     fn delegation_not_installed_returns_install_hint() {
         let cli = SigmaCli::from_program("/nonexistent/rsigma-test-sigma-cli", true);
         let v = block_on(delegating_handler(None).delegate_convert(
             &cli,
             convert_input("splunk"),
-            Duration::from_secs(5),
+            TEST_TIMEOUT,
         ))
         .unwrap();
         assert_eq!(v["ok"], false);
@@ -432,7 +439,7 @@ mod tests {
         let v = block_on(delegating_handler(None).delegate_convert(
             &cli,
             convert_input("splunk"),
-            Duration::from_secs(10),
+            TEST_TIMEOUT,
         ))
         .unwrap();
         assert_eq!(v["ok"], true, "envelope: {v}");
@@ -459,18 +466,21 @@ mod tests {
         let v = block_on(delegating_handler(None).delegate_convert(
             &cli,
             convert_input("splunk"),
-            Duration::from_secs(10),
+            TEST_TIMEOUT,
         ))
         .unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("exited with status"));
+        assert_eq!(v["ok"], false, "envelope: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("exited with status"),
+            "envelope: {v}"
+        );
         assert!(v["stderr"].as_str().unwrap().contains("bad pipeline"));
     }
 
     #[test]
     fn delegation_timeout_kills_subprocess() {
         let dir = tempfile::tempdir().unwrap();
-        let program = fake_sigma(dir.path(), "", "", 30, 0);
+        let program = fake_sigma(dir.path(), "", "", 300, 0);
         let cli = SigmaCli::from_program(&program, true);
         let started = std::time::Instant::now();
         let v = block_on(delegating_handler(None).delegate_convert(
@@ -479,11 +489,18 @@ mod tests {
             Duration::from_millis(300),
         ))
         .unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("timed out"));
-        // The call returns at the timeout, not after the fake's 30s sleep,
-        // which also demonstrates the child did not run to completion.
-        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(v["ok"], false, "envelope: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("timed out"),
+            "envelope: {v}"
+        );
+        // The call returns at the timeout, not after the fake's 300s sleep,
+        // which also demonstrates the child did not run to completion. The
+        // bound is very generous because spawning the fresh script can stall
+        // for many seconds on loaded CI runners (Windows Defender scans new
+        // executables), but it stays far under the sleep length, so a
+        // regression to waiting out the child still fails.
+        assert!(started.elapsed() < Duration::from_secs(60));
     }
 
     #[test]
@@ -498,8 +515,7 @@ mod tests {
         input.path = Some(outside.path().to_string_lossy().into_owned());
 
         let cli = SigmaCli::from_program("/nonexistent/never-spawned", true);
-        let err =
-            block_on(handler.delegate_convert(&cli, input, Duration::from_secs(5))).unwrap_err();
+        let err = block_on(handler.delegate_convert(&cli, input, TEST_TIMEOUT)).unwrap_err();
         assert!(format!("{err:?}").contains("escapes the configured --rules-dir"));
     }
 
@@ -513,9 +529,9 @@ mod tests {
         let v = block_on(delegating_handler(None).delegate_convert(
             &cli,
             convert_input("loki"),
-            Duration::from_secs(10),
+            TEST_TIMEOUT,
         ))
         .unwrap();
-        assert_eq!(v["ok"], true);
+        assert_eq!(v["ok"], true, "envelope: {v}");
     }
 }
