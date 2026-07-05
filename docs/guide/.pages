@@ -4,6 +4,7 @@ nav:
   - Rule Conversion: rule-conversion.md
   - Array Matching: array-matching.md
   - Linting Rules: linting-rules.md
+  - Drafting Rules from Logs: rule-drafting.md
   - Detection Strategy: detection-strategy.md
   - ATT&CK Coverage: attack-coverage.md
   - Detection Scorecard: detection-scorecard.md

@@ -1,0 +1,19 @@
+title: 'Draft: Microsoft-Windows-Sysmon/Operational (Channel)'
+id: <ID>
+status: experimental
+description: 'TODO: describe what this rule detects and why it matters.'
+author: 'TODO: your name'
+date: <DATE>
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Channel: 'Microsoft-Windows-Sysmon/Operational'
+        EventID: 1
+        CommandLine|startswith: whoami
+        Image|endswith: '\whoami.exe'
+    condition: selection
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium

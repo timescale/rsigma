@@ -348,6 +348,9 @@ rsigma rule fields -r rules/
 # Show fields after pipeline mapping
 rsigma rule fields -r rules/ -p ecs.yml --json
 
+# Draft a detection rule from exemplar events, contrasted against a baseline corpus
+rsigma rule draft -e @incident.ndjson --baseline @normal-day.ndjson
+
 # Backtest a corpus against per-rule expectations (CI fixture harness)
 rsigma rule backtest -r rules/ --corpus ci/corpus/ --expectations ci/expectations.yml
 

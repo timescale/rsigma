@@ -104,6 +104,7 @@ pub mod matcher;
 pub mod pipeline;
 pub mod result;
 pub mod router;
+pub mod rule_draft;
 pub mod rule_index;
 pub mod schema;
 pub mod schema_discovery;
@@ -145,6 +146,9 @@ pub use result::{
     ProcessResultExt, ResultBody, RuleHeader,
 };
 pub use router::{RouteOutcome, RouteResult, SchemaPruning, SchemaRouter};
+pub use rule_draft::{
+    DraftConfig, DraftError, DraftFieldReport, DraftReport, Stability, draft_rule,
+};
 pub use schema::{
     FieldValueConfig, OnUnknown, PredicateOutcome, RouteDecision, RoutingConfig, RoutingPlan,
     SchemaBinding, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaExplanation, SchemaMatch,

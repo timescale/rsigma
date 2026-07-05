@@ -15,9 +15,9 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
-    EvalArgs, ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts, ListFormatsArgs,
-    MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ScorecardArgs, StatusArgs, StdinArgs,
-    TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
+    DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts,
+    ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ScorecardArgs, StatusArgs,
+    StdinArgs, TailArgs, TapArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -244,6 +244,9 @@ enum RuleCommands {
 
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
+
+    /// Draft a detection rule from exemplar events (optionally vs a baseline)
+    Draft(DraftArgs),
 
     /// Report or scaffold the ADS detection-strategy document for rules
     Doc(DocArgs),
@@ -486,6 +489,7 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
         RuleCommands::Validate(args) => commands::cmd_validate(args),
         RuleCommands::Lint(args) => run_lint(args, ctx),
         RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
+        RuleCommands::Draft(args) => commands::cmd_draft(args, ctx),
         RuleCommands::Doc(args) => {
             let dm = matches
                 .subcommand_matches("rule")

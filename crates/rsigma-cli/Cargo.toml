@@ -59,6 +59,9 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
 humantime = "2"
 anyhow = "1"
+# Rule drafting: the deterministic core in rsigma-eval takes a caller-supplied
+# id; the CLI generates the UUIDv4 (already in the tree via rsigma-runtime).
+uuid = { version = "1", features = ["v4"] }
 arc-swap = "1"
 similar = "3.1.1"
 

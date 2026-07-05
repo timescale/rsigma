@@ -3960,6 +3960,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "uuid",
  "wiremock",
  "x509-parser",
  "yaml_serde",

@@ -114,6 +114,17 @@ Opt-in counter that records every observed field name and surfaces gap and broke
 | `FieldObservation::coverage(&RuleFieldSet)` | Partition a snapshot into `FieldCoverage { unknown, intersection_count, missing }` against a rule field set in one pass. Both the daemon HTTP handlers and the eval report consume this, so the partition semantics cannot drift |
 | `FieldObserver::reset()` | Clear counters; lifetime totals survive so Prometheus counter bridges stay monotonic |
 
+### Rule drafting (`rule_draft` module)
+
+Turns exemplar events into a complete draft Sigma rule, verified end-to-end through the real parse/compile/evaluate path. Backs `rsigma rule draft`.
+
+| Type / function | Description |
+|-----------------|-------------|
+| `draft_rule(exemplars, baseline, &DraftConfig)` | Profile the exemplars, drop volatile fields (timestamps, GUIDs, counters, high-entropy uniques), score by stability times baseline rarity, infer value forms and modifiers (equals, OR list, `endswith`/`startswith`/`contains` with Sigma wildcard escaping), infer the logsource via `SchemaClassifier`, and emit + verify the rule (every exemplar must match; bounded relaxation with a minimum-field floor) |
+| `DraftConfig` | Tunables: `max_fields`, `min_fields`, `min_prevalence`, `max_value_cardinality`, `min_token_len`, `max_baseline_token_prevalence`, include/exclude fields, title/logsource overrides, `rule_id` (caller-supplied; the core is deterministic and never generates one), `date`, `evaluate_baseline` |
+| `DraftReport` | `rule_yaml` (parse- and lint-checked), ranked `fields` (`DraftFieldReport` with score, `Stability` class, chosen modifier, values, baseline prevalence), `exemplar_matched`, `baseline_hits`/`baseline_hit_rate`, warnings |
+| `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped) |
+
 ## Detection Engine
 
 - **Compiled matchers**: optimized matching for all 30 modifier combinations — exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash expansion (5 replacement characters), field references, placeholder expansion, timestamp part extraction
