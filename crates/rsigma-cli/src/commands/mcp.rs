@@ -104,7 +104,9 @@ fn apply_mcp_config(args: &mut McpServeArgs) {
     }
     // A bool flag cannot distinguish "absent" from "false", so the config only
     // ever turns delegation on; an explicit --allow-sigma-cli already wins.
-    if !args.allow_sigma_cli && let Some(allow) = mcp.allow_sigma_cli {
+    if !args.allow_sigma_cli
+        && let Some(allow) = mcp.allow_sigma_cli
+    {
         args.allow_sigma_cli = allow;
     }
 }

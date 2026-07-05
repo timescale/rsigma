@@ -334,7 +334,9 @@ impl RsigmaMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::{GOLDEN_RULE, VALID_RULE, block_on, delegating_handler, fake_sigma, handler};
+    use crate::tools::{
+        GOLDEN_RULE, VALID_RULE, block_on, delegating_handler, fake_sigma, handler,
+    };
 
     fn convert_input(target: &str) -> ConvertInput {
         ConvertInput {
@@ -400,8 +402,8 @@ mod tests {
     fn delegation_off_unknown_target_error_mentions_allow_flag() {
         // The regression guard for the default posture: an unknown target is
         // still an invalid-params error, now carrying the enablement hint.
-        let err = block_on(handler().convert_rules(Parameters(convert_input("splunk"))))
-            .unwrap_err();
+        let err =
+            block_on(handler().convert_rules(Parameters(convert_input("splunk")))).unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("unknown target 'splunk'"));
         assert!(msg.contains("--allow-sigma-cli"));
@@ -496,8 +498,8 @@ mod tests {
         input.path = Some(outside.path().to_string_lossy().into_owned());
 
         let cli = SigmaCli::from_program("/nonexistent/never-spawned", true);
-        let err = block_on(handler.delegate_convert(&cli, input, Duration::from_secs(5)))
-            .unwrap_err();
+        let err =
+            block_on(handler.delegate_convert(&cli, input, Duration::from_secs(5))).unwrap_err();
         assert!(format!("{err:?}").contains("escapes the configured --rules-dir"));
     }
 

@@ -105,11 +105,7 @@ fn parse_targets(raw: &str) -> Vec<String> {
             }
             let cell = match line.strip_prefix('|') {
                 Some(rest) => rest.split('|').next().unwrap_or("").trim().to_string(),
-                None => line
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string(),
+                None => line.split_whitespace().next().unwrap_or("").to_string(),
             };
             if cell.is_empty() || cell.eq_ignore_ascii_case("identifier") {
                 return None;
@@ -170,8 +166,7 @@ mod tests {
         let program = fake_sigma(dir.path(), "splunk", "", 0, 0);
         let cli = SigmaCli::from_program(&program, true);
         let handler = delegating_handler(None);
-        let targets =
-            block_on(handler.delegated_targets(&cli, Duration::from_secs(10))).unwrap();
+        let targets = block_on(handler.delegated_targets(&cli, Duration::from_secs(10))).unwrap();
         assert_eq!(targets, vec!["splunk"]);
     }
 
