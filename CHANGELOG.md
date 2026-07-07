@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix Pattern Engine: canonical printer, Indicator wiring, and pattern semantics
+### rstix Pattern Engine: canonical printer, Indicator wiring, and pattern semantics (#296)
 
 Adds the remaining `pattern` feature pieces for STIX indicator patterns and closes §9.6.1 evaluation semantics:
 
