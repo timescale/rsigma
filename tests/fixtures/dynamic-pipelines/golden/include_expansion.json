@@ -1,14 +1,14 @@
 {
-  "pipeline": "dynamic-include",
-  "source_id": "transforms",
-  "status": "ok",
   "data": [
     {
-      "type": "field_name_mapping",
       "mapping": {
         "EventID": "event.code",
         "Provider_Name": "event.provider"
-      }
+      },
+      "type": "field_name_mapping"
     }
-  ]
+  ],
+  "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/include_expansion.yml",
+  "source_id": "transforms",
+  "status": "ok"
 }

@@ -1,0 +1,9 @@
+sources:
+  - id: field_map
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/field_mappings.json
+    format: json
+    extract: ".windows_sysmon"
+    refresh: once
+    on_error: fail
+    required: true

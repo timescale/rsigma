@@ -1,24 +1,24 @@
 [
   {
-    "pipeline": "dynamic-allowlist",
-    "source_id": "admin_emails",
-    "status": "ok",
     "data": [
       "admin@corp.example.com",
       "root@corp.example.com",
       "soc-team@corp.example.com"
-    ]
+    ],
+    "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/allowlist.yml",
+    "source_id": "admin_emails",
+    "status": "ok"
   },
   {
-    "pipeline": "dynamic-allowlist",
-    "source_id": "blocked_ips",
-    "status": "ok",
     "data": [
       "192.168.1.100",
       "10.0.0.50",
       "172.16.0.99",
       "203.0.113.42",
       "198.51.100.7"
-    ]
+    ],
+    "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/allowlist.yml",
+    "source_id": "blocked_ips",
+    "status": "ok"
   }
 ]

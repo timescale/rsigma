@@ -1,0 +1,29 @@
+sources:
+  - id: json_data
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/admin_emails.json
+    format: json
+    refresh: once
+    on_error: fail
+    required: true
+  - id: yaml_data
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/env_config.yml
+    format: yaml
+    refresh: once
+    on_error: fail
+    required: true
+  - id: csv_data
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/assets.csv
+    format: csv
+    refresh: once
+    on_error: fail
+    required: true
+  - id: lines_data
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/ip_blocklist.txt
+    format: lines
+    refresh: once
+    on_error: fail
+    required: true

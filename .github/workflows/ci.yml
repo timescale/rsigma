@@ -251,6 +251,7 @@ jobs:
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/multi_format.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/extract_languages.yml \
             --pipeline tests/fixtures/dynamic-pipelines/pipelines/include_expansion.yml \
+            --source tests/fixtures/dynamic-pipelines/source-files/ \
             --resolve-sources --verbose
       - name: Golden file comparison for rsigma pipeline resolve
         run: |
@@ -258,11 +259,12 @@ jobs:
           for pipeline in tests/fixtures/dynamic-pipelines/pipelines/*.yml; do
             name=$(basename "$pipeline" .yml)
             golden="tests/fixtures/dynamic-pipelines/golden/${name}.json"
+            source_file="tests/fixtures/dynamic-pipelines/source-files/${name}.yml"
             if [ ! -f "$golden" ]; then
               echo "SKIP: no golden file for ${name}"
               continue
             fi
-            actual=$(./target/release/rsigma pipeline resolve --pipeline "$pipeline" --pretty)
+            actual=$(./target/release/rsigma pipeline resolve --pipeline "$pipeline" --source-file "$source_file" --pretty)
             if ! diff -u "$golden" <(echo "$actual") > /tmp/diff_${name}.txt 2>&1; then
               echo "FAIL: ${name} resolve output differs from golden file"
               cat /tmp/diff_${name}.txt

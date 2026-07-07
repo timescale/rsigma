@@ -1,24 +1,24 @@
 [
   {
-    "pipeline": "dynamic-extract-languages",
-    "source_id": "jq_extract",
-    "status": "ok",
     "data": [
       "admin@corp.example.com",
       "root@corp.example.com",
       "soc-team@corp.example.com"
-    ]
+    ],
+    "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/extract_languages.yml",
+    "source_id": "jq_extract",
+    "status": "ok"
   },
   {
-    "pipeline": "dynamic-extract-languages",
+    "data": "process.command_line",
+    "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/extract_languages.yml",
     "source_id": "jsonpath_extract",
-    "status": "ok",
-    "data": "process.command_line"
+    "status": "ok"
   },
   {
-    "pipeline": "dynamic-extract-languages",
+    "data": 3,
+    "pipeline": "external:tests/fixtures/dynamic-pipelines/source-files/extract_languages.yml",
     "source_id": "cel_extract",
-    "status": "ok",
-    "data": 3
+    "status": "ok"
   }
 ]

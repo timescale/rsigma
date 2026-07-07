@@ -1,0 +1,8 @@
+sources:
+  - id: transforms
+    type: file
+    path: tests/fixtures/dynamic-pipelines/sources/transforms.json
+    format: json
+    refresh: once
+    on_error: fail
+    required: true
