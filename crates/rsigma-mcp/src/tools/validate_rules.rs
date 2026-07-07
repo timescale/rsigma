@@ -47,7 +47,7 @@ impl RsigmaMcp {
 
         let mut source_errors: Vec<String> = Vec::new();
         if input.resolve_sources {
-            pipelines = resolve_pipeline_sources(pipelines, &mut source_errors).await;
+            pipelines = resolve_pipeline_sources(pipelines, &mut source_errors);
         }
 
         let mut engine = Engine::new();
@@ -97,33 +97,21 @@ impl RsigmaMcp {
     }
 }
 
-/// Resolve dynamic sources for every dynamic pipeline, returning expanded
-/// pipelines and collecting any resolution errors.
-async fn resolve_pipeline_sources(
-    pipelines: Vec<Pipeline>,
-    source_errors: &mut Vec<String>,
-) -> Vec<Pipeline> {
-    let resolver = rsigma_runtime::DefaultSourceResolver::new();
-    let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
-    for pipeline in pipelines {
+/// Note any dynamic pipelines whose `${source.*}` references cannot be
+/// resolved: source declarations live in external `--source` files, which the
+/// MCP server does not accept. The pipelines pass through unexpanded.
+fn resolve_pipeline_sources(pipelines: Vec<Pipeline>, source_errors: &mut Vec<String>) -> Vec<Pipeline> {
+    for pipeline in &pipelines {
         if pipeline.is_dynamic() {
-            match rsigma_runtime::sources::resolve_all(&resolver, &pipeline.sources).await {
-                Ok(data) => {
-                    let expanded = rsigma_runtime::sources::template::TemplateExpander::expand(
-                        &pipeline, &data,
-                    );
-                    resolved_pipelines.push(expanded);
-                }
-                Err(e) => {
-                    source_errors.push(format!("pipeline '{}': {e}", pipeline.name));
-                    resolved_pipelines.push(pipeline);
-                }
-            }
-        } else {
-            resolved_pipelines.push(pipeline);
+            source_errors.push(format!(
+                "pipeline '{}' references dynamic sources declared in external `--source` files, \
+                 which the MCP server cannot resolve; validate it with `rsigma rule validate \
+                 --resolve-sources --source <file>`",
+                pipeline.name
+            ));
         }
     }
-    resolved_pipelines
+    pipelines
 }
 
 #[cfg(test)]

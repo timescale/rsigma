@@ -39,18 +39,27 @@ impl RsigmaMcp {
     ) -> Result<Value, McpError> {
         let pipeline = self.load_one_pipeline(&input.pipeline)?;
 
-        let mut resolved: Option<Value> = None;
-        if input.resolve_sources && pipeline.is_dynamic() {
-            let resolver = rsigma_runtime::DefaultSourceResolver::new();
-            match rsigma_runtime::sources::resolve_all(&resolver, &pipeline.sources).await {
-                Ok(map) => {
-                    let mut keys: Vec<&String> = map.keys().collect();
-                    keys.sort();
-                    resolved = Some(json!({ "ok": true, "source_ids": keys }));
-                }
-                Err(e) => resolved = Some(json!({ "ok": false, "error": e.to_string() })),
-            }
-        }
+        // Source declarations live in external `--source` files, which the MCP
+        // server does not accept, so there is nothing to resolve in-process.
+        // Report the referenced source IDs and, when resolution was requested
+        // for a dynamic pipeline, point the caller at the daemon / CLI.
+        let referenced_ids: Vec<&str> = pipeline
+            .dynamic_references()
+            .iter()
+            .map(|r| r.source_id.as_str())
+            .collect::<std::collections::BTreeSet<&str>>()
+            .into_iter()
+            .collect();
+
+        let resolved: Option<Value> = if input.resolve_sources && pipeline.is_dynamic() {
+            Some(json!({
+                "ok": false,
+                "error": "dynamic sources are declared in external `--source` files; \
+                          resolve them with `rsigma pipeline resolve` or `rsigma engine daemon`",
+            }))
+        } else {
+            None
+        };
 
         Ok(json!({
             "ok": true,
@@ -58,7 +67,7 @@ impl RsigmaMcp {
             "priority": pipeline.priority,
             "is_dynamic": pipeline.is_dynamic(),
             "transformation_count": pipeline.transformations.len(),
-            "source_ids": pipeline.sources.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            "source_ids": referenced_ids,
             "dynamic_reference_count": pipeline.dynamic_references().len(),
             "resolved": resolved,
         }))
