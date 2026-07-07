@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Removed the deprecated flat CLI aliases (#126)
+
+The twelve flat top-level subcommands (`eval`, `daemon`, `parse`, `validate`, `lint`, `fields`, `condition`, `stdin`, `convert`, `list-targets`, `list-formats`, `resolve`) are removed. They shipped as visible-deprecated forwarders in v0.12.0 (#124), were hidden from `rsigma --help` in v0.13.0 (#125), and reach end-of-life here. Invoking a removed alias now fails with clap's `unrecognized subcommand` error and lists the available command groups. Use the noun-led groups instead: `engine eval`, `engine daemon`, `rule parse`, `rule validate`, `rule lint`, `rule fields`, `rule condition`, `rule stdin`, `backend convert`, `backend targets`, `backend formats`, and `pipeline resolve`. The per-alias forwarding dispatch and the stderr deprecation warning are gone; the group enums remain the single source of truth for every argument.
+
 ### Benchmark refresh and two new suites (#291)
 
 Reran every benchmark suite on current main (Apple M4 Pro, 2026-07-05) and rewrote `BENCHMARKS.md` from the results, replacing the 0.9.0-era figures and their freshness disclaimer. The refreshed doc now also covers suites that existed but were never documented: the bloom prefilter rejection sweep, logsource pruning, and result serialization.

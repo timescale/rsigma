@@ -60,41 +60,6 @@ rsigma
     └── reload                 hot-reload a running daemon (POST /api/v1/reload)
 ```
 
-## Migration from flat subcommands
-
-Twelve flat top-level subcommands were moved into the four groups above. The flat aliases are hidden from `rsigma --help` but kept as functional forwarders: each call still runs and prints a stderr migration warning pointing at the new path. `rsigma <alias> --help` is still routable so scripts that introspect a subcommand keep working through the deprecation window.
-
-| Old | New | Will be removed in |
-|-----|-----|------------|
-| `rsigma eval` | `rsigma engine eval` | v1.0 ([#126](https://github.com/timescale/rsigma/issues/126)) |
-| `rsigma daemon` | `rsigma engine daemon` | v1.0 |
-| `rsigma parse` | `rsigma rule parse` | v1.0 |
-| `rsigma validate` | `rsigma rule validate` | v1.0 |
-| `rsigma lint` | `rsigma rule lint` | v1.0 |
-| `rsigma fields` | `rsigma rule fields` | v1.0 |
-| `rsigma condition` | `rsigma rule condition` | v1.0 |
-| `rsigma stdin` | `rsigma rule stdin` | v1.0 |
-| `rsigma convert` | `rsigma backend convert` | v1.0 |
-| `rsigma list-targets` | `rsigma backend targets` | v1.0 |
-| `rsigma list-formats` | `rsigma backend formats` | v1.0 |
-| `rsigma resolve` | `rsigma pipeline resolve` | v1.0 |
-
-A scripted migration is one `sed`:
-
-```bash
-# Replace every flat invocation in a tree of CI/shell scripts.
-git ls-files '*.sh' '*.yml' '*.yaml' Makefile | xargs sed -i.bak -E '
-    s/rsigma (eval|daemon)/rsigma engine \1/g
-    s/rsigma (parse|validate|lint|fields|condition|stdin)/rsigma rule \1/g
-    s/rsigma convert/rsigma backend convert/g
-    s/rsigma list-targets/rsigma backend targets/g
-    s/rsigma list-formats/rsigma backend formats/g
-    s/rsigma resolve/rsigma pipeline resolve/g
-'
-```
-
-Test the resulting changes locally before committing; the script preserves a `.bak` for each modified file.
-
 ## Exit codes
 
 Every subcommand uses the same four-code scheme. Full table and CI patterns are in the [CI/CD guide](../guide/ci-cd.md#exit-codes).

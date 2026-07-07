@@ -68,27 +68,6 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 
 Commands are grouped into four noun-led groups: `engine` (eval / daemon), `rule` (parse / validate / lint / fields / doc / backtest / coverage / scorecard / visibility / hygiene / condition / stdin), `backend` (convert / targets / formats), and `pipeline` (resolve).
 
-### Migrating from the old flat commands
-
-Every flat top-level command still works as a hidden, undocumented forwarder. Invoking the old form prints a stderr warning and dispatches to the same implementation; stdout, exit codes, and every flag are unchanged. The aliases no longer appear in `rsigma --help`, but `rsigma <alias> --help` is still routable so existing scripts that introspect a subcommand keep working.
-
-| Old (flat, deprecated) | New (grouped) |
-|------------------------|---------------|
-| `rsigma eval ...` | `rsigma engine eval ...` |
-| `rsigma daemon ...` | `rsigma engine daemon ...` |
-| `rsigma parse ...` | `rsigma rule parse ...` |
-| `rsigma validate ...` | `rsigma rule validate ...` |
-| `rsigma lint ...` | `rsigma rule lint ...` |
-| `rsigma fields ...` | `rsigma rule fields ...` |
-| `rsigma condition ...` | `rsigma rule condition ...` |
-| `rsigma stdin ...` | `rsigma rule stdin ...` |
-| `rsigma convert RULES ...` | `rsigma backend convert RULES ...` |
-| `rsigma list-targets` | `rsigma backend targets` |
-| `rsigma list-formats TARGET` | `rsigma backend formats TARGET` |
-| `rsigma resolve ...` | `rsigma pipeline resolve ...` |
-
-Deprecation timeline: flat aliases are **hidden** from `rsigma --help` but stay functional with a stderr migration warning, and will be **removed** in v1.0. Migrate at your convenience within that window.
-
 ### `config`: YAML configuration
 
 Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config).

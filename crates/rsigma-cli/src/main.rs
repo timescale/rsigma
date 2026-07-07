@@ -97,13 +97,9 @@ enum LogFormat {
     Text,
 }
 
-// The new noun-led command groups (`engine`, `rule`, `backend`, `pipeline`)
-// are the source of truth. The flat top-level variants that follow are
-// deprecated aliases kept around for one more release as undocumented
-// forwarders. Each is marked `#[command(hide = true)]` so it no longer
-// appears in `rsigma --help`, but the dispatch arms below still accept the
-// invocation and print a stderr warning before delegating to the same
-// `cmd_*` helper. These variants are removed entirely at v1.0 (issue #126).
+// The CLI is organized into noun-led command groups (`engine`, `rule`,
+// `backend`, `pipeline`). Each group owns its leaf subcommands; the group
+// enums below are the single source of truth for arguments and dispatch.
 //
 // We deliberately use a `//` comment (not `///`) so clap does not promote it
 // to the top-level `--help` `about` text and override the explicit
@@ -147,57 +143,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: config::commands::ConfigCommands,
     },
-
-    // ---- Deprecated flat aliases (hidden from `--help`, still functional) ----
-    /// \[deprecated\] Use `rsigma engine eval` instead
-    #[command(hide = true)]
-    Eval(EvalArgs),
-
-    /// \[deprecated\] Use `rsigma engine daemon` instead
-    #[cfg(feature = "daemon")]
-    #[command(hide = true)]
-    Daemon(DaemonArgs),
-
-    /// \[deprecated\] Use `rsigma rule parse` instead
-    #[command(hide = true)]
-    Parse(ParseArgs),
-
-    /// \[deprecated\] Use `rsigma rule validate` instead
-    #[command(hide = true)]
-    Validate(ValidateArgs),
-
-    /// \[deprecated\] Use `rsigma rule lint` instead
-    #[command(hide = true)]
-    Lint(LintArgs),
-
-    /// \[deprecated\] Use `rsigma rule fields` instead
-    #[command(hide = true)]
-    Fields(FieldsArgs),
-
-    /// \[deprecated\] Use `rsigma rule condition` instead
-    #[command(hide = true)]
-    Condition(ConditionArgs),
-
-    /// \[deprecated\] Use `rsigma rule stdin` instead
-    #[command(hide = true)]
-    Stdin(StdinArgs),
-
-    /// \[deprecated\] Use `rsigma backend convert` instead
-    #[command(hide = true)]
-    Convert(ConvertArgs),
-
-    /// \[deprecated\] Use `rsigma backend targets` instead
-    #[command(name = "list-targets", hide = true)]
-    ListTargets,
-
-    /// \[deprecated\] Use `rsigma backend formats` instead
-    #[command(name = "list-formats", hide = true)]
-    ListFormats(ListFormatsArgs),
-
-    /// \[deprecated\] Use `rsigma pipeline resolve` instead
-    #[cfg(feature = "daemon")]
-    #[command(hide = true)]
-    Resolve(ResolveArgs),
 }
 
 #[derive(Subcommand)]
@@ -316,7 +261,7 @@ fn main() {
         Commands::Engine {
             cmd: EngineCommands::Daemon(_),
             ..
-        } | Commands::Daemon(_)
+        }
     );
     #[cfg(not(feature = "daemon"))]
     let is_daemon = false;
@@ -376,19 +321,8 @@ fn parse_log_format(s: &str) -> Option<LogFormat> {
     }
 }
 
-/// Forward a deprecated flat invocation to its new home and print a stderr
-/// migration hint. The warning text follows a single template so operators
-/// see a consistent message regardless of which alias they hit.
-fn deprecation_warn(old: &str, new: &str) {
-    eprintln!(
-        "warning: `rsigma {old}` is deprecated; use `rsigma {new}` instead. \
-         This alias is hidden from `--help` and will be removed in v1.0."
-    );
-}
-
 fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
     match command {
-        // -- Grouped commands ------------------------------------------------
         Commands::Engine { cmd } => dispatch_engine(cmd, matches, ctx),
         Commands::Rule { cmd } => dispatch_rule(cmd, matches, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
@@ -396,64 +330,6 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
         #[cfg(feature = "mcp")]
         Commands::Mcp { cmd } => dispatch_mcp(cmd),
         Commands::Config { cmd } => config::commands::dispatch(cmd),
-
-        // -- Deprecated flat aliases ----------------------------------------
-        Commands::Eval(args) => {
-            deprecation_warn("eval", "engine eval");
-            let em = matches
-                .subcommand_matches("eval")
-                .expect("eval submatches present");
-            run_eval(args, em, ctx);
-        }
-        #[cfg(feature = "daemon")]
-        Commands::Daemon(args) => {
-            deprecation_warn("daemon", "engine daemon");
-            let dm = matches
-                .subcommand_matches("daemon")
-                .expect("daemon submatches present");
-            cmd_daemon(args, dm);
-        }
-        Commands::Parse(args) => {
-            deprecation_warn("parse", "rule parse");
-            commands::cmd_parse(args, ctx);
-        }
-        Commands::Validate(args) => {
-            deprecation_warn("validate", "rule validate");
-            commands::cmd_validate(args);
-        }
-        Commands::Lint(args) => {
-            deprecation_warn("lint", "rule lint");
-            run_lint(args, ctx);
-        }
-        Commands::Fields(args) => {
-            deprecation_warn("fields", "rule fields");
-            commands::cmd_fields(args, ctx);
-        }
-        Commands::Condition(args) => {
-            deprecation_warn("condition", "rule condition");
-            commands::cmd_condition(args, ctx);
-        }
-        Commands::Stdin(args) => {
-            deprecation_warn("stdin", "rule stdin");
-            commands::cmd_stdin(args, ctx);
-        }
-        Commands::Convert(args) => {
-            deprecation_warn("convert", "backend convert");
-            commands::cmd_convert(args, ctx);
-        }
-        Commands::ListTargets => {
-            deprecation_warn("list-targets", "backend targets");
-            commands::cmd_list_targets();
-        }
-        Commands::ListFormats(ListFormatsArgs { target }) => {
-            deprecation_warn("list-formats", "backend formats");
-            commands::cmd_list_formats(target);
-        }
-        #[cfg(feature = "daemon")]
-        Commands::Resolve(args) => {
-            deprecation_warn("resolve", "pipeline resolve");
-            commands::cmd_resolve(args);
-        }
     }
 }
 
@@ -554,9 +430,9 @@ fn dispatch_pipeline(cmd: PipelineCommands, ctx: output::OutputCtx) {
     }
 }
 
-/// Shared eval entry point used by both `engine eval` and the deprecated
-/// `eval` alias. Applies config (CLI flag > env > file > default) before
-/// reading `fail_on_detection`, then centralizes the exit-code handling.
+/// Entry point for `engine eval`. Applies config (CLI flag > env > file >
+/// default) before reading `fail_on_detection`, then centralizes the
+/// exit-code handling.
 fn run_eval(mut args: EvalArgs, matches: &ArgMatches, ctx: output::OutputCtx) {
     commands::apply_eval_config(&mut args, matches);
     let fail_on_detection = args.fail_on_detection;
@@ -624,8 +500,8 @@ fn run_hygiene(mut args: HygieneArgs, matches: &ArgMatches, ctx: output::OutputC
     process::exit(code);
 }
 
-/// Shared lint entry point used by both `rule lint` and the deprecated `lint`
-/// alias. Centralizes the `--fail-level` exit-code handling.
+/// Entry point for `rule lint`. Centralizes the `--fail-level` exit-code
+/// handling.
 fn run_lint(args: LintArgs, ctx: output::OutputCtx) {
     let fail_level = args.fail_level.clone();
     let LintCounts {

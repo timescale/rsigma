@@ -67,7 +67,6 @@ The 19 `cli_*.rs` files contain roughly 250 tests that invoke the freshly built 
 | `cli_daemon_nats.rs` | 8 | NATS input + sink over an in-process NATS server. |
 | `cli_daemon_otlp.rs` | 9 | OTLP HTTP and gRPC ingest, with the metric-label assertions added in PR #115. |
 | `cli_daemon_tls.rs` | 12 | `daemon-tls` flag surface, mTLS, SIGHUP-triggered cert hot-reload. |
-| `cli_deprecation.rs` | 17 | Every deprecated flat alias still works and prints the correct stderr migration warning. |
 | `cli_eval.rs` | 40 | `engine eval`: inline events, `@file`, stdin, `jq` / JSONPath, fail-on-detection, exit codes. |
 | `cli_fields.rs` | 16 | `rule fields` extraction across detection items, correlation, filters; `--no-filters`, `--json`. |
 | `cli_lint.rs` | 24 | `rule lint`, `.rsigma-lint.yml`, `# rsigma-disable` suppressions, `--fix`, `--output-format json/ndjson/csv/tsv`. |
