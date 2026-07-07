@@ -288,6 +288,14 @@ pub fn spawn_expect_failure(args: &[&str], deadline: Duration) -> String {
     }
     let _ = child.kill();
     let _ = child.wait();
+    // The child may exit before the reader thread forwards its final
+    // lines, so drain what is still in flight. `wait()` closed the
+    // pipe, so the reader thread hits EOF and drops the sender, which
+    // makes `recv_timeout` return `Disconnected` once the channel is
+    // empty. The timeout is only a safety net.
+    while let Ok(line) = rx.recv_timeout(Duration::from_secs(1)) {
+        collected.push(line);
+    }
     collected.join("\n")
 }
 
