@@ -1,8 +1,5 @@
 //! Integration tests for dynamic source resolution.
 
-use std::collections::HashMap;
-
-use rsigma_eval::Pipeline;
 use rsigma_eval::pipeline::sources::{
     DataFormat, DynamicSource, ErrorPolicy, ExtractExpr, RefreshPolicy, SourceType,
 };
@@ -439,18 +436,21 @@ async fn end_to_end_dynamic_pipeline_resolution() {
     )
     .unwrap();
 
-    // Build a dynamic pipeline
-    let mut vars = HashMap::new();
-    vars.insert(
-        "admin_emails".to_string(),
-        vec!["${source.admin_emails}".to_string()],
-    );
-    vars.insert(
-        "log_index".to_string(),
-        vec!["${source.env_config.index}".to_string()],
-    );
-    vars.insert("static_var".to_string(), vec!["unchanged".to_string()]);
+    // A dynamic pipeline that references the external sources by id.
+    let pipeline = rsigma_eval::parse_pipeline(
+        r#"
+name: dynamic-test
+priority: 10
+vars:
+  admin_emails: "${source.admin_emails}"
+  log_index: "${source.env_config.index}"
+  static_var: "unchanged"
+"#,
+    )
+    .unwrap();
+    assert!(pipeline.is_dynamic());
 
+    // External source declarations (loaded via `--source` in production).
     let sources = vec![
         DynamicSource {
             id: "admin_emails".to_string(),
@@ -479,18 +479,6 @@ async fn end_to_end_dynamic_pipeline_resolution() {
             default: None,
         },
     ];
-
-    let pipeline = Pipeline {
-        name: "dynamic-test".to_string(),
-        priority: 10,
-        vars,
-        transformations: vec![],
-        finalizers: vec![],
-        sources: sources.clone(),
-        source_refs: vec![],
-    };
-
-    assert!(pipeline.is_dynamic());
 
     // Resolve sources
     let resolver = DefaultSourceResolver::new();

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
+use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
@@ -22,6 +23,11 @@ pub struct RuntimeEngine {
     corr_config: CorrelationConfig,
     include_event: bool,
     source_resolver: Option<Arc<dyn SourceResolver>>,
+    /// External dynamic source declarations (loaded via `--source`). Pipelines
+    /// reference these with `${source.<id>}`; the declarations themselves no
+    /// longer live inside pipeline files. Resolved and expanded into the
+    /// pipelines on every `load_rules()`.
+    external_sources: Vec<DynamicSource>,
     allow_remote_include: bool,
     /// Opt-in bloom-filter pre-filtering of positive substring matchers.
     /// Forwarded to the inner detection engine on every rule reload.
@@ -94,6 +100,7 @@ impl RuntimeEngine {
             corr_config,
             include_event,
             source_resolver: None,
+            external_sources: Vec::new(),
             allow_remote_include: false,
             bloom_prefilter: false,
             bloom_max_bytes: None,
@@ -246,6 +253,19 @@ impl RuntimeEngine {
         self.source_resolver.as_ref()
     }
 
+    /// Set the external dynamic source declarations (loaded via `--source`).
+    /// The next `load_rules()` resolves them and expands `${source.*}`
+    /// references in the pipelines; hot-reload carries them forward.
+    pub fn set_external_sources(&mut self, sources: Vec<DynamicSource>) {
+        self.external_sources = sources;
+    }
+
+    /// The external dynamic source declarations. Used by hot-reload to carry
+    /// the configuration across a `RuntimeEngine` swap.
+    pub fn external_sources(&self) -> &[DynamicSource] {
+        &self.external_sources
+    }
+
     /// Allow `include` directives to reference HTTP/NATS sources.
     pub fn set_allow_remote_include(&mut self, allow: bool) {
         self.allow_remote_include = allow;
@@ -280,33 +300,21 @@ impl RuntimeEngine {
             return Ok(());
         };
 
-        let mut resolved_pipelines = Vec::with_capacity(self.pipelines.len());
-        for pipeline in &self.pipelines {
-            if pipeline.is_dynamic() {
-                match sources::resolve_all(resolver.as_ref(), &pipeline.sources).await {
-                    Ok(resolved_data) => {
-                        let mut expanded = TemplateExpander::expand(pipeline, &resolved_data);
-                        // Expand include directives
-                        sources::include::expand_includes(
-                            &mut expanded,
-                            &resolved_data,
-                            self.allow_remote_include,
-                        )?;
-                        resolved_pipelines.push(expanded);
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "Failed to resolve dynamic pipeline '{}': {e}",
-                            pipeline.name
-                        ));
-                    }
-                }
-            } else {
-                resolved_pipelines.push(pipeline.clone());
+        let pipelines = std::mem::take(&mut self.pipelines);
+        let external = self.external_sources.clone();
+        let resolved =
+            resolve_pipelines_async(resolver, &pipelines, &external, self.allow_remote_include)
+                .await;
+        match resolved {
+            Ok(p) => {
+                self.pipelines = p;
+                Ok(())
+            }
+            Err(e) => {
+                self.pipelines = pipelines;
+                Err(e)
             }
         }
-        self.pipelines = resolved_pipelines;
-        Ok(())
     }
 
     /// Load (or reload) rules from the configured path.
@@ -347,9 +355,10 @@ impl RuntimeEngine {
             let pipelines = std::mem::take(&mut self.pipelines);
             let resolver = self.source_resolver.clone().unwrap();
             let allow_remote = self.allow_remote_include;
+            let external = self.external_sources.clone();
             let resolved = tokio::task::block_in_place(|| {
                 handle.block_on(async {
-                    resolve_pipelines_async(&resolver, &pipelines, allow_remote).await
+                    resolve_pipelines_async(&resolver, &pipelines, &external, allow_remote).await
                 })
             });
             match resolved {
@@ -383,11 +392,13 @@ impl RuntimeEngine {
                             .to_string()
                     })?;
                     let allow_remote = self.allow_remote_include;
+                    let external = self.external_sources.clone();
                     let mut resolved_sets = Vec::with_capacity(spec.pipeline_sets.len());
                     for set in spec.pipeline_sets {
                         let resolved = tokio::task::block_in_place(|| {
                             handle.block_on(async {
-                                resolve_pipelines_async(&resolver, &set, allow_remote).await
+                                resolve_pipelines_async(&resolver, &set, &external, allow_remote)
+                                    .await
                             })
                         });
                         match resolved {
@@ -629,21 +640,15 @@ fn load_collection(path: &Path) -> Result<SigmaCollection, String> {
 
 /// Re-read and parse all pipeline files from disk, sorted by priority.
 ///
-/// Every pipeline file that still declares an inline `sources:` block
-/// triggers the [`warn_pipeline_inline_sources`](crate::warn_pipeline_inline_sources)
-/// deprecation notice. The helper deduplicates by canonical path across the
-/// whole process, so the warning surfaces on the first daemon hot-reload that
-/// observes a deprecated pipeline and is silent on subsequent reloads of the
-/// same file (every SIGHUP, file-watcher event, or `POST /api/v1/reload`
-/// thereafter is a noop for the dedup set).
+/// Pipeline files that still declare an inline `sources:` block are rejected
+/// by [`parse_pipeline_file`] with a hint pointing at `rsigma rule
+/// migrate-sources`, so a stale deprecated pipeline surfaces as a hard reload
+/// error rather than silently loading.
 fn reload_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, String> {
     let mut pipelines = Vec::with_capacity(paths.len());
     for path in paths {
         let pipeline = parse_pipeline_file(path)
             .map_err(|e| format!("Error reloading pipeline {}: {e}", path.display()))?;
-        if !pipeline.sources.is_empty() {
-            crate::warn_pipeline_inline_sources(path, &pipeline.name);
-        }
         pipelines.push(pipeline);
     }
     pipelines.sort_by_key(|p| p.priority);
@@ -651,24 +656,35 @@ fn reload_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, String> {
 }
 
 /// Resolve dynamic sources in pipelines asynchronously.
+///
+/// Source declarations come from external `--source` files (`external`);
+/// pipelines only carry `${source.*}` references. The external sources are
+/// resolved once into a shared data map, then every dynamic pipeline has its
+/// references and `include` directives expanded against it.
 async fn resolve_pipelines_async(
     resolver: &Arc<dyn SourceResolver>,
     pipelines: &[Pipeline],
+    external: &[DynamicSource],
     allow_remote_include: bool,
 ) -> Result<Vec<Pipeline>, String> {
+    if !pipelines.iter().any(|p| p.is_dynamic()) {
+        return Ok(pipelines.to_vec());
+    }
+
+    let resolved_data = sources::resolve_all(resolver.as_ref(), external)
+        .await
+        .map_err(|e| format!("Failed to resolve dynamic sources: {e}"))?;
+
     let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
     for pipeline in pipelines {
         if pipeline.is_dynamic() {
-            let resolved_data = sources::resolve_all(resolver.as_ref(), &pipeline.sources)
-                .await
-                .map_err(|e| {
-                    format!(
-                        "Failed to resolve dynamic pipeline '{}': {e}",
-                        pipeline.name
-                    )
-                })?;
             let mut expanded = TemplateExpander::expand(pipeline, &resolved_data);
-            sources::include::expand_includes(&mut expanded, &resolved_data, allow_remote_include)?;
+            sources::include::expand_includes(
+                &mut expanded,
+                &resolved_data,
+                external,
+                allow_remote_include,
+            )?;
             resolved_pipelines.push(expanded);
         } else {
             resolved_pipelines.push(pipeline.clone());
@@ -680,19 +696,9 @@ async fn resolve_pipelines_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline_deprecation::reset_inline_sources_dedup_for_tests;
-
-    // The pipeline-embedded `sources:` dedup set is process-wide, so tests
-    // that read it must serialize against every other test that touches it,
-    // including the unit tests in `pipeline_deprecation`. They share one lock
-    // (`DEDUP_TEST_LOCK`) so cargo's parallel test threads don't race on the
-    // global set. `serial_guard` recovers a poisoned lock so a failing test
-    // does not cascade into the others.
-    fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
-        crate::pipeline_deprecation::DEDUP_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
+    use rsigma_eval::pipeline::sources::{
+        DataFormat, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType,
+    };
 
     const RULE_YAML: &str = r#"
 title: TestRule
@@ -706,7 +712,31 @@ detection:
     condition: selection
 "#;
 
-    const PIPELINE_WITH_SOURCES: &str = r#"
+    /// A dynamic pipeline that references an external source but declares
+    /// none inline (the only form allowed since v1.0).
+    const DYNAMIC_PIPELINE: &str = r#"
+name: dynamic_pipeline
+priority: 10
+vars:
+  feed: "${source.feed}"
+transformations:
+  - type: value_placeholders
+"#;
+
+    #[test]
+    fn inline_sources_in_pipeline_file_fail_to_load() {
+        // A pipeline file that still declares an inline `sources:` block is
+        // rejected outright (the migration path is `rsigma rule
+        // migrate-sources`), so a stale pipeline surfaces as a load error
+        // rather than silently loading.
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rule.yml");
+        std::fs::write(&rule_path, RULE_YAML).unwrap();
+
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(
+            &pipeline_path,
+            r#"
 name: legacy_pipeline_with_inline_sources
 priority: 50
 sources:
@@ -716,161 +746,56 @@ sources:
     format: json
 transformations:
   - type: value_placeholders
-"#;
+"#,
+        )
+        .unwrap();
 
-    const PIPELINE_NO_SOURCES: &str = r#"
-name: simple_pipeline
-priority: 10
-transformations:
-  - id: rename
-    type: field_name_mapping
-    mapping:
-      EventID: event.id
-"#;
-
-    fn dedup_set_contains(path: &Path) -> bool {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        crate::pipeline_deprecation::tests_only_snapshot().contains(&canonical)
-    }
-
-    #[test]
-    fn load_rules_surfaces_inline_sources_deprecation_through_runtime() {
-        let _guard = serial_guard();
-        reset_inline_sources_dedup_for_tests();
-
-        let dir = tempfile::tempdir().unwrap();
-        let rule_path = dir.path().join("rule.yml");
-        std::fs::write(&rule_path, RULE_YAML).unwrap();
-
-        let pipeline_path = dir.path().join("pipeline.yml");
-        std::fs::write(&pipeline_path, PIPELINE_WITH_SOURCES).unwrap();
-        let pipeline = parse_pipeline_file(&pipeline_path).unwrap();
-
-        let mut engine = RuntimeEngine::new(
-            rule_path,
-            vec![pipeline],
-            CorrelationConfig::default(),
-            false,
-        );
-        engine.set_pipeline_paths(vec![pipeline_path.clone()]);
-        engine.load_rules().unwrap();
-
+        let mut engine =
+            RuntimeEngine::new(rule_path, Vec::new(), CorrelationConfig::default(), false);
+        engine.set_pipeline_paths(vec![pipeline_path]);
+        let err = engine
+            .load_rules()
+            .expect_err("inline sources must be rejected");
         assert!(
-            dedup_set_contains(&pipeline_path),
-            "RuntimeEngine::load_rules should route inline sources through \
-             warn_pipeline_inline_sources so the daemon hot-reload path \
-             covers the deprecation; the canonical pipeline path was not \
-             recorded in the dedup set."
+            err.contains("migrate-sources"),
+            "error should point at the migration tool; got: {err}"
         );
-    }
-
-    #[test]
-    fn load_rules_does_not_warn_when_pipeline_has_no_inline_sources() {
-        let _guard = serial_guard();
-        reset_inline_sources_dedup_for_tests();
-
-        let dir = tempfile::tempdir().unwrap();
-        let rule_path = dir.path().join("rule.yml");
-        std::fs::write(&rule_path, RULE_YAML).unwrap();
-
-        let pipeline_path = dir.path().join("clean.yml");
-        std::fs::write(&pipeline_path, PIPELINE_NO_SOURCES).unwrap();
-        let pipeline = parse_pipeline_file(&pipeline_path).unwrap();
-
-        let mut engine = RuntimeEngine::new(
-            rule_path,
-            vec![pipeline],
-            CorrelationConfig::default(),
-            false,
-        );
-        engine.set_pipeline_paths(vec![pipeline_path.clone()]);
-        engine.load_rules().unwrap();
-
-        assert!(
-            !dedup_set_contains(&pipeline_path),
-            "a pipeline without inline sources must not register in the \
-             deprecation dedup set."
-        );
-    }
-
-    #[test]
-    fn hot_reload_dedups_inline_sources_warning_for_same_pipeline_path() {
-        let _guard = serial_guard();
-        reset_inline_sources_dedup_for_tests();
-
-        let dir = tempfile::tempdir().unwrap();
-        let rule_path = dir.path().join("rule.yml");
-        std::fs::write(&rule_path, RULE_YAML).unwrap();
-
-        let pipeline_path = dir.path().join("pipeline.yml");
-        std::fs::write(&pipeline_path, PIPELINE_WITH_SOURCES).unwrap();
-        let pipeline = parse_pipeline_file(&pipeline_path).unwrap();
-
-        let mut engine = RuntimeEngine::new(
-            rule_path,
-            vec![pipeline],
-            CorrelationConfig::default(),
-            false,
-        );
-        engine.set_pipeline_paths(vec![pipeline_path.clone()]);
-
-        // Initial daemon startup loads the pipeline once.
-        engine.load_rules().unwrap();
-        assert!(dedup_set_contains(&pipeline_path));
-
-        // A hot-reload (SIGHUP, file-watcher event, POST /api/v1/reload)
-        // re-enters reload_pipelines; the dedup set must already contain
-        // the canonical path so the warning does not re-fire. The proof is
-        // that the set state is unchanged after the second reload.
-        let canonical = pipeline_path.canonicalize().unwrap();
-        let before = crate::pipeline_deprecation::tests_only_snapshot();
-        engine.load_rules().unwrap();
-        let after = crate::pipeline_deprecation::tests_only_snapshot();
-
-        assert_eq!(
-            before, after,
-            "second load_rules should not change the dedup set",
-        );
-        assert!(after.contains(&canonical));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn load_rules_fails_closed_when_dynamic_source_resolution_fails() {
-        // A dynamic pipeline whose source cannot resolve must surface the
-        // error so callers (LogProcessor::reload_rules in particular) can
-        // keep the previous engine active. The historical behavior logged
-        // a warning and loaded rules with unexpanded `${source.*}`
-        // placeholders, which silently produced detection rules with
-        // different semantics from what the operator wrote.
+        // A dynamic pipeline whose external source cannot resolve must surface
+        // the error so callers (LogProcessor::reload_rules in particular) can
+        // keep the previous engine active, rather than silently loading rules
+        // with unexpanded `${source.*}` placeholders.
         let dir = tempfile::tempdir().unwrap();
         let rule_path = dir.path().join("rule.yml");
         std::fs::write(&rule_path, RULE_YAML).unwrap();
 
-        // Pipeline declares a file dynamic source pointing at a path that
-        // does not exist; the resolver returns SourceError on first read.
-        let missing = dir.path().join("missing.json");
-        let pipeline_yaml = format!(
-            r#"
-name: dynamic_missing
-priority: 10
-sources:
-  - id: feed
-    type: file
-    path: {}
-    format: json
-    on_error: fail
-transformations:
-  - type: value_placeholders
-"#,
-            missing.display(),
-        );
         let pipeline_path = dir.path().join("pipeline.yml");
-        std::fs::write(&pipeline_path, pipeline_yaml).unwrap();
+        std::fs::write(&pipeline_path, DYNAMIC_PIPELINE).unwrap();
         let pipeline = parse_pipeline_file(&pipeline_path).unwrap();
         assert!(
             pipeline.is_dynamic(),
             "fixture should produce a dynamic pipeline"
         );
+
+        // The external source points at a path that does not exist; the
+        // resolver returns a SourceError on first read.
+        let missing = dir.path().join("missing.json");
+        let external = vec![DynamicSource {
+            id: "feed".to_string(),
+            source_type: SourceType::File {
+                path: missing,
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::Once,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }];
 
         let mut engine = RuntimeEngine::new(
             rule_path,
@@ -879,6 +804,7 @@ transformations:
             false,
         );
         engine.set_source_resolver(Arc::new(sources::DefaultSourceResolver::new()));
+        engine.set_external_sources(external);
 
         let err = engine
             .load_rules()

@@ -52,7 +52,6 @@ pub mod input;
 pub mod io;
 pub mod metrics;
 pub mod parse;
-pub mod pipeline_deprecation;
 pub mod processor;
 pub mod risk;
 pub mod scope;
@@ -105,7 +104,6 @@ pub use io::{
     UnixSocketGuard, UnixSocketSink, UnixSocketSource, bind_unix_listener, parse_unix_scheme,
 };
 pub use metrics::{MetricsHook, NoopMetrics};
-pub use pipeline_deprecation::warn_pipeline_inline_sources;
 pub use processor::{EventFilter, LogProcessor};
 pub use risk::{
     IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskFile,

@@ -404,6 +404,7 @@ impl LogProcessor {
         let corr_config = old.corr_config().clone();
         let include_event = old.include_event();
         let resolver = old.source_resolver().cloned();
+        let external_sources = old.external_sources().to_vec();
         let allow_remote_include = old.allow_remote_include();
         let bloom_prefilter = old.bloom_prefilter();
         let bloom_max_bytes = old.bloom_max_bytes();
@@ -428,6 +429,7 @@ impl LogProcessor {
         if let Some(resolver) = resolver {
             new_engine.set_source_resolver(resolver);
         }
+        new_engine.set_external_sources(external_sources);
         // Carry the schema-routing spec so hot-reload rebuilds the router
         // instead of silently dropping back to a single engine.
         new_engine.set_routing(routing);

@@ -163,7 +163,6 @@ mod tests {
             vars,
             transformations: vec![],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 
@@ -194,7 +193,6 @@ mod tests {
             vars,
             transformations: vec![],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 
@@ -225,7 +223,6 @@ mod tests {
             vars,
             transformations: vec![],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 
@@ -253,7 +250,6 @@ mod tests {
             vars,
             transformations: vec![],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 
@@ -279,7 +275,6 @@ mod tests {
             vars,
             transformations: vec![],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 

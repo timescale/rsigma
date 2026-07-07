@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use rsigma_eval::pipeline::sources::SourceType;
+use rsigma_eval::pipeline::sources::{DynamicSource, SourceType};
 use rsigma_eval::pipeline::transformations::Transformation;
 use rsigma_eval::{Pipeline, TransformationItem};
 
@@ -20,21 +20,24 @@ const MAX_INCLUDE_DEPTH: usize = 1;
 /// objects. These are parsed and spliced into the pipeline at the include position.
 ///
 /// Security: if `allow_remote_include` is false, includes referencing HTTP or NATS
-/// sources produce an error.
+/// sources produce an error. `sources` holds the external source declarations
+/// (loaded via `--source`) used to look up the referenced source's type.
 ///
 /// Recursive includes are not allowed (max depth 1). If an included fragment
 /// itself contains `Include` directives, expansion fails with an error.
 pub fn expand_includes(
     pipeline: &mut Pipeline,
     resolved: &HashMap<String, serde_json::Value>,
+    sources: &[DynamicSource],
     allow_remote_include: bool,
 ) -> Result<(), String> {
-    expand_includes_with_depth(pipeline, resolved, allow_remote_include, 0)
+    expand_includes_with_depth(pipeline, resolved, sources, allow_remote_include, 0)
 }
 
 fn expand_includes_with_depth(
     pipeline: &mut Pipeline,
     resolved: &HashMap<String, serde_json::Value>,
+    sources: &[DynamicSource],
     allow_remote_include: bool,
     depth: usize,
 ) -> Result<(), String> {
@@ -54,7 +57,7 @@ fn expand_includes_with_depth(
 
             // Security check: block remote includes if not allowed
             if !allow_remote_include
-                && let Some(source) = pipeline.sources.iter().find(|s| s.id == source_id)
+                && let Some(source) = sources.iter().find(|s| s.id == source_id)
             {
                 match &source.source_type {
                     SourceType::Http { .. } | SourceType::Nats { .. } => {
@@ -167,7 +170,6 @@ mod tests {
                 field_name_cond_not: false,
             }],
             finalizers: vec![],
-            sources: vec![],
             source_refs: vec![],
         };
 
@@ -178,7 +180,7 @@ mod tests {
         let mut resolved = HashMap::new();
         resolved.insert("transforms".to_string(), nested_yaml);
 
-        let result = expand_includes(&mut pipeline, &resolved, true);
+        let result = expand_includes(&mut pipeline, &resolved, &[], true);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

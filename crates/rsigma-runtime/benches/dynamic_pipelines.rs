@@ -94,7 +94,6 @@ fn make_pipeline_with_vars(n_vars: usize, _values_per_var: usize) -> Pipeline {
         vars,
         transformations: vec![],
         finalizers: vec![],
-        sources: vec![],
         source_refs: vec![],
     }
 }
@@ -401,26 +400,32 @@ fn bench_dynamic_detection_e2e(c: &mut Criterion) {
     let source_content = serde_json::to_string(&iocs).unwrap();
     let source_file = make_source_file(&source_content);
 
-    // Pipeline YAML with dynamic source + value_placeholders
-    let pipeline_yaml = format!(
-        r#"
+    // Pipeline YAML references the external source with value_placeholders.
+    let pipeline_yaml = r#"
 name: bench-dynamic
 priority: 10
 vars:
   malicious_commands:
-    - "${{source.iocs}}"
-sources:
-  - id: iocs
-    type: file
-    path: {}
-    format: json
-    refresh: once
-    on_error: fail
+    - "${source.iocs}"
 transformations:
   - type: value_placeholders
-"#,
-        source_file.path().to_str().unwrap()
-    );
+"#
+    .to_string();
+
+    // External source declaration (loaded via `--source` in production).
+    let iocs_source = rsigma_eval::pipeline::sources::DynamicSource {
+        id: "iocs".to_string(),
+        source_type: rsigma_eval::pipeline::sources::SourceType::File {
+            path: source_file.path().to_path_buf(),
+            format: rsigma_eval::pipeline::sources::DataFormat::Json,
+            extract: None,
+        },
+        refresh: rsigma_eval::pipeline::sources::RefreshPolicy::Once,
+        timeout: None,
+        on_error: rsigma_eval::pipeline::sources::ErrorPolicy::Fail,
+        required: true,
+        default: None,
+    };
 
     // Rule using the placeholder
     let rule_yaml = r#"
@@ -453,6 +458,7 @@ level: high
         false,
     );
     engine.set_source_resolver(resolver);
+    engine.set_external_sources(vec![iocs_source]);
     engine.set_pipeline_paths(vec![pipeline_path]);
     rt.block_on(engine.resolve_dynamic_pipelines()).unwrap();
     // `load_rules` re-resolves dynamic sources fail-closed and needs a tokio
