@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### De-flaked the TLS misconfiguration E2E tests on macOS
+
+`spawn_expect_failure` in the CLI test harness raced the daemon's exit against its stderr: the collection loop broke as soon as `try_wait()` saw the process gone, so when a misconfigured daemon failed fast (as `encrypted_key_password_is_rejected_with_guidance` does, the encrypted-key check being the first thing TLS init runs), the reader thread could still be holding the error line and the test asserted against empty stderr. The helper now drains the channel after reaping the child; closing the pipe ends the reader thread, so the drain terminates deterministically.
+
 ### Removed pipeline-embedded `sources:` blocks (#293)
 
 Dynamic source declarations no longer live inside pipeline files. A pipeline that still declares an inline `sources:` block is now rejected with a hard parse error that points at `rsigma rule migrate-sources`; source declarations come exclusively from standalone `--source` files, and a pipeline only references them with `${source.<id>}`. This completes the deprecation cycle started in v0.12.0 (#135, visible-deprecated) and continued in v0.13.0 (#136, hidden from docs).
