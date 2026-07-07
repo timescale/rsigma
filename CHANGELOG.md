@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### De-flaked the TLS misconfiguration E2E tests on macOS
+### De-flaked the TLS misconfiguration E2E tests on macOS (#295)
 
 `spawn_expect_failure` in the CLI test harness raced the daemon's exit against its stderr: the collection loop broke as soon as `try_wait()` saw the process gone, so when a misconfigured daemon failed fast (as `encrypted_key_password_is_rejected_with_guidance` does, the encrypted-key check being the first thing TLS init runs), the reader thread could still be holding the error line and the test asserted against empty stderr. The helper now drains the channel after reaping the child; closing the pipe ends the reader thread, so the drain terminates deterministically.
 
