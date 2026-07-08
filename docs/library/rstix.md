@@ -336,7 +336,7 @@ let partial = Validator::builder()
     .validate_bundle(&bundle);
 ```
 
-**Scaffold (this release):** profiles, diagnostic taxonomy, dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), and `ValidatorBuilder::with_allow_custom` / `with_parse_options`. Remaining check implementations and OASIS conformance tests follow in later releases.
+**Scaffold (this release):** profiles, diagnostic taxonomy, dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), `ValidatorBuilder::with_allow_custom` / `with_parse_options`, and `STIX-I0020` informational diagnostics for not-yet-implemented checks. Remaining check implementations and OASIS conformance tests follow in later releases.
 
 ## Feature flags
 

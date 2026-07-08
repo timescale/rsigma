@@ -46,4 +46,30 @@ impl ValidationPhase {
         Self::ExtensionResolution,
         Self::TlpMarkingComputation,
     ];
+
+    /// Checks that currently perform validation logic (see [`ValidationPhase::is_implemented`]).
+    pub const IMPLEMENTED: [Self; 2] = [Self::JsonWellFormedness, Self::TypeDiscrimination];
+
+    /// Whether this check performs validation logic today.
+    pub const fn is_implemented(self) -> bool {
+        matches!(self, Self::JsonWellFormedness | Self::TypeDiscrimination)
+    }
+
+    /// Human-readable check name for diagnostics and logging.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::JsonWellFormedness => "JSON well-formedness",
+            Self::TypeDiscrimination => "type discrimination",
+            Self::Schema => "schema",
+            Self::IdStructure => "ID structure",
+            Self::PropertyTypes => "property types",
+            Self::OpenVocabulary => "open vocabulary",
+            Self::PatternParse => "pattern parse",
+            Self::PatternSemantic => "pattern semantic",
+            Self::References => "references",
+            Self::CrossObjectSemantic => "cross-object semantic",
+            Self::ExtensionResolution => "extension resolution",
+            Self::TlpMarkingComputation => "TLP marking computation",
+        }
+    }
 }

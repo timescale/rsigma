@@ -2,6 +2,7 @@
 
 use crate::model::{Bundle, ParseOptions};
 
+use super::diagnostic::{Diagnostic, DiagnosticCode};
 use super::report::ValidationReport;
 use super::{Leniency, ValidationPhase};
 
@@ -62,18 +63,22 @@ pub(crate) fn run_checks(
 }
 
 fn run_check(check: ValidationPhase, ctx: &ValidationContext<'_>, report: &mut ValidationReport) {
+    if !check.is_implemented() {
+        emit_check_not_implemented(check, report);
+        return;
+    }
+
     match check {
         ValidationPhase::JsonWellFormedness => json_wellformedness::run(ctx, report),
         ValidationPhase::TypeDiscrimination => type_discrimination::run(ctx, report),
-        ValidationPhase::Schema => schema::run(ctx, report),
-        ValidationPhase::IdStructure => id_structure::run(ctx, report),
-        ValidationPhase::PropertyTypes => property_types::run(ctx, report),
-        ValidationPhase::OpenVocabulary => open_vocabulary::run(ctx, report),
-        ValidationPhase::PatternParse => pattern_parse::run(ctx, report),
-        ValidationPhase::PatternSemantic => pattern_semantic::run(ctx, report),
-        ValidationPhase::References => references::run(ctx, report),
-        ValidationPhase::CrossObjectSemantic => cross_object_semantic::run(ctx, report),
-        ValidationPhase::ExtensionResolution => extension_resolution::run(ctx, report),
-        ValidationPhase::TlpMarkingComputation => tlp_marking::run(ctx, report),
+        _ => emit_check_not_implemented(check, report),
     }
+}
+
+/// Records that a selected check is not yet implemented (scaffold).
+pub(crate) fn emit_check_not_implemented(check: ValidationPhase, report: &mut ValidationReport) {
+    report.push(Diagnostic::new(
+        DiagnosticCode::I0020,
+        format!("{} check not yet implemented", check.label()),
+    ));
 }

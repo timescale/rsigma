@@ -189,12 +189,12 @@ let custom = Validator::builder()
     .build();
 ```
 
-| Profile | Checks | Use case |
-| ------- | ------ | -------- |
-| `consumer_permissive` | JSON, type, schema, references | Mixed-trust ingest |
-| `consumer_strict` | all 12 | Untrusted external input |
-| `producer_strict` | all except references | Publishing/export |
-| `interop_strict` | all 12, zero leniency | OASIS interop tests |
+| Profile | Checks | Implemented today | Use case |
+| ------- | ------ | ----------------- | -------- |
+| `consumer_permissive` | JSON, type, schema, references | JSON + type | Mixed-trust ingest |
+| `consumer_strict` | all 12 | JSON + type (others emit `STIX-I0020`) | Untrusted external input |
+| `producer_strict` | all except references | JSON + type (others emit `STIX-I0020`) | Publishing/export |
+| `interop_strict` | all 12, zero leniency | JSON + type (others emit `STIX-I0020`) | OASIS interop tests |
 
 ### Validation Pipeline design decisions
 
@@ -211,9 +211,9 @@ Recorded engineering choices for the `validate` feature. Summaries also appear o
 | **`Bundle::validate()`** | Warning-only SHOULD findings; `model::ValidationReport` + `ValidationCode` enum |
 | **`validate::Validator`** | Profile-driven pipeline; Error/Warning/Info/Hint; OASIS-style string codes |
 
-**Decision.** Use `Validator` for untrusted JSON and named profiles. Overlapping rules migrate into the validation pipeline in follow-up work; `Bundle::validate()` remains until migration is complete.
+**Decision.** Use `Validator` for untrusted JSON and named profiles. Overlapping rules migrate into the validation pipeline in follow-up work; `Bundle::validate()` remains until migration is complete. Prefer [`PipelineValidationReport`](crate::PipelineValidationReport) at the crate root when both report types are in scope.
 
-**Scaffold status (current release).** Types, profiles, diagnostic taxonomy (`STIX-E/W/I/H` codes), check dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), and `ValidatorBuilder::with_allow_custom` / `with_parse_options` are implemented. Remaining check implementations follow in a later release.
+**Scaffold status (current release).** Types, profiles, diagnostic taxonomy (`STIX-E/W/I/H` codes), check dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), `ValidatorBuilder::with_allow_custom` / `with_parse_options`, and `STIX-I0020` informational diagnostics for not-yet-implemented checks are in place. Remaining check implementations follow in a later release.
 
 ### Pattern Engine design decisions
 

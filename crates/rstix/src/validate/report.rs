@@ -3,7 +3,13 @@
 use super::Leniency;
 use super::diagnostic::{Diagnostic, Severity};
 
-/// Validation pipeline output (distinct from [`crate::model::ValidationReport`]).
+/// Validation pipeline output (distinct from advisory [`crate::model::ValidationReport`]).
+///
+/// When both report types are in scope, prefer the crate-root alias
+/// [`crate::PipelineValidationReport`]. Migration of overlapping `Bundle::validate()`
+/// findings into this pipeline is tracked in follow-up validation work (see **DD-VP-001**
+/// in the crate README).
+#[doc(alias = "PipelineValidationReport")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidationReport {
     diagnostics: Vec<Diagnostic>,

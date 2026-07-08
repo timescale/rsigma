@@ -14,6 +14,7 @@ Adds the profile-based **Validation Pipeline** module behind the optional `valid
 * **Check dispatcher** — all twelve `ValidationPhase` variants wired; remaining check implementations follow in a later release.
 * **Leniency** — `ValidationReport::is_valid()` respects profile policy (`Standard` vs `Zero` for interop); `STIX-H0001` hint taxonomy wired.
 * **Type discrimination scaffold** — non-bundle JSON roots emit `STIX-E0002` with `property_path` / `fix_suggestion`; `ValidatorBuilder::with_allow_custom` and `with_parse_options` expose parse policy.
+* **Stub visibility** — not-yet-implemented checks emit informational `STIX-I0020`; profile rustdoc and [`Validator::implemented_phases`] document current coverage.
 * **DD-VP-001** — documents the boundary between advisory `Bundle::validate()` (`model::ValidationReport`) and `validate::Validator`.
 * **`fuzz_rstix_validate_json`** — libFuzzer target over `Validator::validate_json_str`; seeds in `fuzz/seeds/fuzz_rstix_validate_json/`.
 

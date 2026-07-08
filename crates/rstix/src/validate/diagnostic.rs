@@ -111,6 +111,8 @@ impl DiagnosticCode {
     pub const I0002: Self = Self("STIX-I0002");
     /// Custom type name does not start with `x-`.
     pub const I0010: Self = Self("STIX-I0010");
+    /// Validation check selected but not yet implemented (scaffold).
+    pub const I0020: Self = Self("STIX-I0020");
 
     // STIX-H0xxx — hints
     /// General style or remediation hint.

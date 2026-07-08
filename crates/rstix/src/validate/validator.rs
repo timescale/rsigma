@@ -79,7 +79,16 @@ pub struct Validator {
 }
 
 impl Validator {
+    /// Checks that currently perform validation logic (scaffold stubs emit `STIX-I0020`).
+    pub fn implemented_phases() -> &'static [ValidationPhase] {
+        &ValidationPhase::IMPLEMENTED
+    }
+
     /// JSON, type, schema, and reference checks — permissive ingest path for mixed-trust feeds.
+    ///
+    /// **Scaffold:** [`ValidationPhase::JsonWellFormedness`] and
+    /// [`ValidationPhase::TypeDiscrimination`] are implemented; [`ValidationPhase::Schema`] and
+    /// [`ValidationPhase::References`] emit informational `STIX-I0020` until their logic lands.
     pub fn consumer_permissive() -> Self {
         Self {
             phases: consumer_permissive_phases(),
@@ -88,7 +97,12 @@ impl Validator {
         }
     }
 
-    /// All twelve checks — strict validation for untrusted input.
+    /// Selects all twelve pipeline checks for untrusted input.
+    ///
+    /// **Scaffold:** only JSON well-formedness (via [`Self::validate_json_str`]) and type
+    /// discrimination are enforced today; the other selected checks emit informational
+    /// `STIX-I0020` diagnostics. Inspect [`Self::implemented_phases`] or
+    /// [`ValidationReport::infos`](super::ValidationReport::infos) for coverage gaps.
     pub fn consumer_strict() -> Self {
         Self {
             phases: consumer_strict_phases(),
@@ -98,6 +112,9 @@ impl Validator {
     }
 
     /// Output validation; skips reference resolution.
+    ///
+    /// **Scaffold:** nine of eleven selected checks emit informational `STIX-I0020`
+    /// diagnostics (all except JSON well-formedness and type discrimination).
     pub fn producer_strict() -> Self {
         Self {
             phases: producer_strict_phases(),
@@ -106,7 +123,10 @@ impl Validator {
         }
     }
 
-    /// All twelve checks with zero leniency — OASIS interoperability scenarios.
+    /// Selects all twelve pipeline checks with zero leniency — OASIS interoperability scenarios.
+    ///
+    /// **Scaffold:** same implementation coverage as [`Self::consumer_strict`]; warnings fail
+    /// `is_valid()` under [`Leniency::Zero`], but informational stub diagnostics do not.
     pub fn interop_strict() -> Self {
         Self {
             phases: interop_strict_phases(),
@@ -123,6 +143,22 @@ impl Validator {
     /// Configured validation checks (in execution order).
     pub fn phases(&self) -> &[ValidationPhase] {
         &self.phases
+    }
+
+    /// Subset of [`Self::phases`] that are implemented today.
+    pub fn implemented_phases_in_profile(&self) -> impl Iterator<Item = ValidationPhase> + '_ {
+        self.phases
+            .iter()
+            .copied()
+            .filter(|phase| phase.is_implemented())
+    }
+
+    /// Subset of [`Self::phases`] that emit `STIX-I0020` until their logic lands.
+    pub fn pending_phases_in_profile(&self) -> impl Iterator<Item = ValidationPhase> + '_ {
+        self.phases
+            .iter()
+            .copied()
+            .filter(|phase| !phase.is_implemented())
     }
 
     /// Profile leniency policy.
@@ -291,6 +327,24 @@ mod tests {
             r#"{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000000","objects":[]}"#;
         let report = Validator::consumer_strict().validate_json_str(json);
         assert!(report.is_valid());
+        assert_eq!(report.with_code(DiagnosticCode::I0020).count(), 10);
+    }
+
+    #[test]
+    fn consumer_strict_surfaces_pending_checks_as_info() {
+        let json =
+            r#"{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000000","objects":[]}"#;
+        let validator = Validator::consumer_strict();
+        assert_eq!(validator.implemented_phases_in_profile().count(), 2);
+        assert_eq!(validator.pending_phases_in_profile().count(), 10);
+        let report = validator.validate_json_str(json);
+        assert!(report.is_valid());
+        assert_eq!(report.infos().count(), 10);
+        assert!(
+            report
+                .infos()
+                .all(|diag| diag.code == DiagnosticCode::I0020)
+        );
     }
 
     #[test]
