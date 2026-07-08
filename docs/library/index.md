@@ -21,7 +21,7 @@ For the canonical, line-by-line API reference, follow [docs.rs/rsigma](https://d
 
 | You want to... | Reach for |
 |----------------|-----------|
-| Parse and validate a STIX 2.1 bundle (including ATT&CK-scale JSON) | `rstix` — [`Bundle::parse`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html) / [`parse_reader`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.parse_reader), then [`Bundle::validate`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.validate). |
+| Parse and validate a STIX 2.1 bundle (including ATT&CK-scale JSON) | `rstix` — [`Bundle::parse`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html) / [`parse_reader`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.parse_reader), then advisory [`Bundle::validate`](https://docs.rs/rstix/latest/rstix/model/struct.Bundle.html#method.validate). For untrusted ingest with named profiles and structured diagnostics, enable `validate` and use [`Validator::validate_json_str`](https://docs.rs/rstix/latest/rstix/struct.Validator.html#method.validate_json_str) (see [Validation Pipeline](rstix.md#validation-pipeline)). |
 | Lint or parse rules in a CI step | `rsigma-parser` only. |
 | Run a one-shot evaluation against an in-memory event | `rsigma-parser` + `rsigma-eval`. |
 | Generate SQL or SPL queries from rules | `rsigma-parser` + `rsigma-convert`. |

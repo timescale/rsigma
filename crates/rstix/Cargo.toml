@@ -14,6 +14,7 @@ default = ["serde"]
 
 serde = ["dep:serde"]
 pattern = ["dep:base64", "dep:ipnet", "dep:regex", "dep:unicode-normalization"]
+validate = ["serde", "pattern"]
 
 [dependencies]
 phf = { version = "0.13", features = ["macros"] }
@@ -60,3 +61,7 @@ required-features = ["pattern", "serde"]
 [[test]]
 name = "pattern_indicator"
 required-features = ["pattern", "serde"]
+
+[[test]]
+name = "validate_pipeline"
+required-features = ["validate"]

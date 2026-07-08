@@ -60,14 +60,15 @@ The Model Context Protocol server library. No Cargo features of its own; it is g
 
 ## `rstix`
 
-STIX 2.1 library crate. **Data Model + Serialization** is complete with `serde` (default): typed objects, bundle parse/stream, semantic validation. **Pattern Engine** is complete with `pattern`: parse, type-check, full Level 3 evaluation, canonical printer, Indicator AST wiring, and `fuzz_stix_pattern`. See [rstix Pattern Engine](../library/rstix.md#pattern-engine-stix-9).
+STIX 2.1 library crate. **Data Model + Serialization** is complete with `serde` (default): typed objects, bundle parse/stream, advisory `Bundle::validate`. **Pattern Engine** is complete with `pattern`. **Validation Pipeline** scaffold ships with `validate` (profiles, diagnostics, raw JSON entry; remaining check implementations next). See [rstix Pattern Engine](../library/rstix.md#pattern-engine-stix-9).
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
-| `serde` | yes | `serde`, `serde_json` | `Bundle::parse`, `parse_reader`, `serde` on all model types, `Bundle::validate`. |
+| `serde` | yes | `serde`, `serde_json` | `Bundle::parse`, `parse_reader`, `serde` on all model types, advisory `Bundle::validate`. |
 | `pattern` | no | `base64`, `ipnet`, `regex`, `unicode-normalization` | `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::matches_single_with_bundle`, `Pattern::evaluate_observed_data`, `Pattern::canonical`, `IndicatorPattern` STIX AST wiring at deserialize, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError` — STIX Specification §9 Levels 1–3. See [rstix Pattern Engine](../library/rstix.md#pattern-engine-stix-9). |
+| `validate` | no | `serde`, `pattern` | `Validator`, `ValidatorBuilder`, `ValidationPhase`, `ParseOptions` / `allow_custom`, structured `STIX-E/W/I/H` diagnostics, `validate_json_str` / `validate_json_value` / `validate_bundle` / `validate_object`. See [Validation Pipeline](../library/rstix.md#validation-pipeline). |
 
-Without `serde`, only `core`, `id`, and `vocab` modules are available (no bundle parsing). Enable `pattern` for STIX patterning (`cargo build -p rstix --features pattern`).
+Without `serde`, only `core`, `id`, and `vocab` modules are available (no bundle parsing). Enable `pattern` for STIX patterning and `validate` for the profile-based Validation Pipeline (`cargo build -p rstix --features validate`).
 
 ## Building with features
 

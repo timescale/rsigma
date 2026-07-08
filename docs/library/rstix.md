@@ -4,13 +4,14 @@
 
 Canonical API reference: [docs.rs/rstix](https://docs.rs/rstix). Contributor-facing detail: [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md).
 
-## Phase status
+## Feature status
 
-| Phase | Status |
+| Area | Status |
 | ----- | ------ |
 | **Core Foundation** (`core`, `id`, `vocab`) | Complete |
 | **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete |
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
+| **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, raw JSON entry, root type check) | **Scaffold** (remaining check logic next) |
 | **Graph + Marking + Store** | Planned |
 | **TAXII Client** | Planned |
 
@@ -319,16 +320,36 @@ Full table: [crate README — Model invariant decisions](https://github.com/time
 
 Pattern Engine engineering choices (separate from STIX spec invariants): [Pattern Engine design decisions](#pattern-engine-design-decisions).
 
+## Validation Pipeline
+
+Optional **`validate`** feature (implies `serde` + `pattern`). Distinct from advisory [`Bundle::validate()`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#validation-pipeline) — see **DD-VP-001** in the crate README.
+
+```rust
+use rstix::validate::{Validator, ValidationPhase};
+
+let report = Validator::consumer_strict().validate_json_str(untrusted_json);
+assert!(report.is_valid());
+
+let partial = Validator::builder()
+    .with_phase(ValidationPhase::Schema)
+    .build()
+    .validate_bundle(&bundle);
+```
+
+**Scaffold (this release):** profiles, diagnostic taxonomy, dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), and `ValidatorBuilder::with_allow_custom` / `with_parse_options`. Remaining check implementations and OASIS conformance tests follow in later releases.
+
 ## Feature flags
 
 | Feature | Purpose |
 | ------- | ------- |
-| `serde` (default) | Bundle parsing, serialization, validation. |
-| `pattern` | STIX pattern lexer, Level 1–3 parser, type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`). |
+| `serde` (default) | Bundle parsing, serialization, advisory validation. |
+| `pattern` | STIX pattern lexer, Level 1–3 parser, type-checker, and evaluator. |
+| `validate` | Profile-based Validation Pipeline (`Validator`, structured diagnostics). |
 
 ## Related docs
 
 - [Architecture — crate map](../reference/architecture.md#rstix)
 - [Feature flags — rstix](../reference/feature-flags.md#rstix)
 - [Fuzzing — `fuzz_rstix_parse_bundle`](../developers/fuzzing.md)
+- [Fuzzing — `fuzz_rstix_validate_json`](../developers/fuzzing.md)
 - [Crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)

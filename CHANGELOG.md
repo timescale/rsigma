@@ -4,6 +4,19 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix Validation Pipeline scaffold (`validate` feature)
+
+Adds the profile-based **Validation Pipeline** module behind the optional `validate` feature (implies `serde` + `pattern`):
+
+* **`Validator` / `ValidatorBuilder`** — four named profiles (`consumer_permissive`, `consumer_strict`, `producer_strict`, `interop_strict`) and custom check selection.
+* **`Diagnostic` / `DiagnosticCode` / `Severity`** — structured `STIX-E/W/I/H` taxonomy with `ValidationReport::is_valid()` (no Error-severity diagnostics).
+* **Raw JSON entry** — `validate_json_str` / `validate_json_value` emit `STIX-E0001` on malformed JSON (line/column span) instead of panicking or failing only at deserialize.
+* **Check dispatcher** — all twelve `ValidationPhase` variants wired; remaining check implementations follow in a later release.
+* **Leniency** — `ValidationReport::is_valid()` respects profile policy (`Standard` vs `Zero` for interop); `STIX-H0001` hint taxonomy wired.
+* **Type discrimination scaffold** — non-bundle JSON roots emit `STIX-E0002` with `property_path` / `fix_suggestion`; `ValidatorBuilder::with_allow_custom` and `with_parse_options` expose parse policy.
+* **DD-VP-001** — documents the boundary between advisory `Bundle::validate()` (`model::ValidationReport`) and `validate::Validator`.
+* **`fuzz_rstix_validate_json`** — libFuzzer target over `Validator::validate_json_str`; seeds in `fuzz/seeds/fuzz_rstix_validate_json/`.
+
 ### rstix Pattern Engine: canonical printer, Indicator wiring, and pattern semantics (#296)
 
 Adds the remaining `pattern` feature pieces for STIX indicator patterns and closes §9.6.1 evaluation semantics:

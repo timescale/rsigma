@@ -6,7 +6,7 @@
 **Core Foundation** is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
 
-**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and the semantic **validation pipeline** (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature (parse, type-check, full Level 3 evaluation, canonical printer, Indicator AST wiring). **Graph + Marking + Store** and **TAXII Client** follow in later work.
+**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and advisory semantic checks (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature. **Validation Pipeline** scaffold is **shipped** behind `validate` (profiles, `STIX-E/W/I/H` diagnostics, raw JSON entry, root type discrimination, parse-error bridging; remaining check implementations next). **Graph + Marking + Store** and **TAXII Client** follow later.
 
 This library is part of [rsigma].
 
@@ -40,18 +40,21 @@ This library is part of [rsigma].
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
 - `pattern` (`pattern` feature): `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::evaluate_observed_data`, `Pattern::canonical`, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError`; `IndicatorPattern::parsed_pattern`, `IndicatorPattern::evaluate` — STIX Specification §9 Levels 1–3 parse, type-check, evaluation, and canonical printing (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
+- `validate` (`validate` feature): `Validator`, `ValidatorBuilder` (`with_allow_custom`, `with_parse_options`, `with_phase`), `ValidationPhase`, `Leniency`, `Diagnostic`, `DiagnosticCode`, `Severity`, `SourceSpan`, `PipelineValidationReport` (re-export alias) — profile-based validation pipeline with `validate_json_str`, `validate_json_value`, `validate_bundle`, and `validate_object` (see [Validation Pipeline](#validation-pipeline)).
 - `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId`, timestamps, and `Confidence`; typed-ID serde is generated in the `define_typed_id!` macro.
 
 ## Feature flags
 
 - `serde` (default): enables serialization and deserialization support.
 - `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`).
+- `validate`: profile-based Validation Pipeline (`Validator`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry). Implies `serde` and `pattern`.
 
-## Current Phase Status
+## Current status
 
 - **Data Model + Serialization:** **complete**
 - **Pattern Engine:** **complete** (`--features pattern`)
-- **Next:** **Validation Pipeline**, then **Graph + Marking + Store**
+- **Validation Pipeline:** **scaffold** (`--features validate`) — profiles and dispatcher wired; remaining check implementations next
+- **Next after Validation Pipeline:** **Graph + Marking + Store**
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
 ## Usage
@@ -165,6 +168,45 @@ Evaluation notes (STIX §9):
 - **Custom SCO types** (`x-usb-device`, …): parsed and type-checked permissively (leaf properties as string).
 
 Fixtures: `tests/fixtures/pattern/` (§9.8 examples) and `tests/fixtures/pattern/sco-fields/` (manifest-driven SCO field paths). Acceptance tests: `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::security`, `pattern::eval`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`.
+
+## Validation Pipeline
+
+The optional **`validate`** feature adds a profile-based validator distinct from advisory [`Bundle::validate()`](model::Bundle::validate) (see **DD-VP-001** below).
+
+```rust
+use rstix::validate::{Validator, ValidationPhase, DiagnosticCode};
+
+let report = Validator::consumer_strict().validate_json_str(untrusted_json);
+if !report.is_valid() {
+    for diag in report.errors() {
+        eprintln!("{}: {}", diag.code, diag.message);
+    }
+}
+
+let custom = Validator::builder()
+    .with_phase(ValidationPhase::Schema)
+    .with_phase(ValidationPhase::References)
+    .build();
+```
+
+| Profile | Checks | Use case |
+| ------- | ------ | -------- |
+| `consumer_permissive` | JSON, type, schema, references | Mixed-trust ingest |
+| `consumer_strict` | all 12 | Untrusted external input |
+| `producer_strict` | all except references | Publishing/export |
+| `interop_strict` | all 12, zero leniency | OASIS interop tests |
+
+**Scaffold status:** types, profiles, diagnostic taxonomy (`STIX-E/W/I/H` codes), check dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), and `ValidatorBuilder::with_allow_custom` / `with_parse_options` are implemented. Remaining check implementations follow in a later release.
+
+#### DD-VP-001 — `Bundle::validate()` vs `validate::Validator`
+
+| | |
+| --- | --- |
+| **Status** | Accepted (Validation Pipeline scaffold) |
+| **`Bundle::validate()`** | Warning-only SHOULD findings; `model::ValidationReport` + `ValidationCode` enum |
+| **`validate::Validator`** | Profile-driven pipeline; Error/Warning/Info/Hint; OASIS-style string codes |
+
+Use `Validator` for untrusted JSON and named profiles. Overlapping rules migrate into the validation pipeline in follow-up work; `Bundle::validate()` remains until migration is complete.
 
 ### Pattern Engine design decisions
 
