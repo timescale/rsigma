@@ -17,7 +17,7 @@ pattern = ["dep:base64", "dep:ipnet", "dep:regex", "dep:unicode-normalization"]
 validate = ["serde", "pattern"]
 
 [dependencies]
-phf = { version = "0.13", features = ["macros"] }
+phf = { version = "0.14", features = ["macros"] }
 serde_jcs = "0.2"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing"] }
