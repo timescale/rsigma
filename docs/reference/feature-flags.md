@@ -60,7 +60,7 @@ The Model Context Protocol server library. No Cargo features of its own; it is g
 
 ## `rstix`
 
-STIX 2.1 library crate. **Data Model + Serialization** is complete with `serde` (default): typed objects, bundle parse/stream, advisory `Bundle::validate`. **Pattern Engine** is complete with `pattern`. **Validation Pipeline** scaffold ships with `validate` (profiles, diagnostics, raw JSON entry; remaining check implementations next). See [rstix Pattern Engine](../library/rstix.md#pattern-engine-stix-9).
+STIX 2.1 library crate. **Data Model + Serialization** is complete with `serde` (default): typed objects, bundle parse/stream, advisory `Bundle::validate`. **Pattern Engine** is complete with `pattern`. **Validation Pipeline** has all twelve checks implemented with `validate` (profiles + structured diagnostics); conformance corpus completion remains part of Validation Pipeline follow-up. See [Validation Pipeline](../library/rstix.md#validation-pipeline).
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|

@@ -122,6 +122,7 @@ impl SdoObject {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::SdoSroCommonProps {
         match self {
             Self::AttackPattern(inner) => &mut inner.common,

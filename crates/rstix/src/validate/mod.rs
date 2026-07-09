@@ -10,17 +10,25 @@
 //!
 //! - Use [`Validator`] for untrusted ingest, named profiles, and structured diagnostics.
 //! - Use [`Bundle::validate`](crate::model::Bundle::validate) for advisory checks on
-//!   already-parsed bundles until overlapping rules migrate into the pipeline.
+//!   already-parsed bundles; when the `validate` feature is enabled it delegates to
+//!   the same semantic helpers as phases 10 and 12.
 //!
-//! All checks except JSON well-formedness are wired through the dispatcher; remaining logic is follow-up work.
+//! All checks are wired through the dispatcher and share helpers under
+//! [`model_bridge`](model_bridge), [`object_validate`](object_validate),
+//! [`semantic`](semantic), and [`wire`](wire).
 
 mod checks;
 mod diagnostic;
+pub(crate) mod legacy;
+mod model_bridge;
+mod object_validate;
 mod parse_bridge;
 mod phase;
 mod profiles;
 mod report;
+mod semantic;
 mod validator;
+mod wire;
 
 pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 pub use phase::ValidationPhase;

@@ -1,0 +1,44 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000102",
+  "objects": [
+    {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--11111111-1111-4111-8111-111111111111",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2020-01-01T00:00:00.000Z",
+      "name": "owner",
+      "identity_class": "organization"
+    },
+    {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--22222222-2222-4222-8222-222222222222",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2020-01-01T00:00:00.000Z",
+      "name": "other",
+      "identity_class": "organization"
+    },
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "created_by_ref": "identity--11111111-1111-4111-8111-111111111111",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2020-01-01T00:00:00.000Z",
+      "name": "sample-family",
+      "is_family": true
+    },
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "created_by_ref": "identity--22222222-2222-4222-8222-222222222222",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2020-01-02T00:00:00.000Z",
+      "name": "sample-family",
+      "is_family": true
+    }
+  ]
+}

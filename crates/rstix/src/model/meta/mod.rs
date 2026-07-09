@@ -26,6 +26,7 @@ pub enum MetaObject {
 }
 
 impl MetaObject {
+    #[cfg(feature = "serde")]
     pub(crate) fn drain_extra(&mut self) -> std::collections::BTreeMap<String, serde_json::Value> {
         match self {
             Self::MarkingDefinition(inner) => std::mem::take(&mut inner.extra),

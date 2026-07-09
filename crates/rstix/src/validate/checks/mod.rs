@@ -2,7 +2,6 @@
 
 use crate::model::{Bundle, ParseOptions};
 
-use super::diagnostic::{Diagnostic, DiagnosticCode};
 use super::report::ValidationReport;
 use super::{Leniency, ValidationPhase};
 
@@ -24,7 +23,6 @@ pub(crate) use type_discrimination::document_root_type;
 /// Input to a validation check.
 pub struct ValidationContext<'a> {
     /// Parsed bundle when typed deserialization succeeded.
-    #[allow(dead_code)]
     pub bundle: Option<&'a Bundle>,
     /// Raw JSON value (always present for `validate_json_*` after JSON parse).
     pub value: Option<&'a serde_json::Value>,
@@ -63,22 +61,18 @@ pub(crate) fn run_checks(
 }
 
 fn run_check(check: ValidationPhase, ctx: &ValidationContext<'_>, report: &mut ValidationReport) {
-    if !check.is_implemented() {
-        emit_check_not_implemented(check, report);
-        return;
-    }
-
     match check {
         ValidationPhase::JsonWellFormedness => json_wellformedness::run(ctx, report),
         ValidationPhase::TypeDiscrimination => type_discrimination::run(ctx, report),
-        _ => emit_check_not_implemented(check, report),
+        ValidationPhase::Schema => schema::run(ctx, report),
+        ValidationPhase::IdStructure => id_structure::run(ctx, report),
+        ValidationPhase::PropertyTypes => property_types::run(ctx, report),
+        ValidationPhase::OpenVocabulary => open_vocabulary::run(ctx, report),
+        ValidationPhase::PatternParse => pattern_parse::run(ctx, report),
+        ValidationPhase::PatternSemantic => pattern_semantic::run(ctx, report),
+        ValidationPhase::References => references::run(ctx, report),
+        ValidationPhase::CrossObjectSemantic => cross_object_semantic::run(ctx, report),
+        ValidationPhase::ExtensionResolution => extension_resolution::run(ctx, report),
+        ValidationPhase::TlpMarkingComputation => tlp_marking::run(ctx, report),
     }
-}
-
-/// Records that a selected check is not yet implemented (scaffold).
-pub(crate) fn emit_check_not_implemented(check: ValidationPhase, report: &mut ValidationReport) {
-    report.push(Diagnostic::new(
-        DiagnosticCode::I0020,
-        format!("{} check not yet implemented", check.label()),
-    ));
 }

@@ -6,7 +6,7 @@
 **Core Foundation** is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
 
-**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and advisory semantic checks (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature. **Validation Pipeline** scaffold is **shipped** behind `validate` (profiles, `STIX-E/W/I/H` diagnostics, raw JSON entry, root type discrimination, parse-error bridging; remaining check implementations next). **Graph + Marking + Store** and **TAXII Client** follow later.
+**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and advisory semantic checks (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature. **Validation Pipeline** is **shipped** behind `validate` (profiles, all twelve checks, `STIX-E/W/I/H` diagnostics, raw JSON entry, pattern parse/semantic split). **Graph + Marking + Store** and **TAXII Client** follow later.
 
 This library is part of [rsigma].
 
@@ -53,7 +53,7 @@ This library is part of [rsigma].
 
 - **Data Model + Serialization:** **complete**
 - **Pattern Engine:** **complete** (`--features pattern`)
-- **Validation Pipeline:** **scaffold** (`--features validate`) — profiles and dispatcher wired; remaining check implementations next
+- **Validation Pipeline:** all twelve checks implemented (`--features validate`) — profiles + structured diagnostics; conformance completion tracked separately
 - **Next after Validation Pipeline:** **Graph + Marking + Store**
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
@@ -192,9 +192,9 @@ let custom = Validator::builder()
 | Profile | Checks | Implemented today | Use case |
 | ------- | ------ | ----------------- | -------- |
 | `consumer_permissive` | JSON, type, schema, references | JSON + type | Mixed-trust ingest |
-| `consumer_strict` | all 12 | JSON + type (others emit `STIX-I0020`) | Untrusted external input |
-| `producer_strict` | all except references | JSON + type (others emit `STIX-I0020`) | Publishing/export |
-| `interop_strict` | all 12, zero leniency | JSON + type (others emit `STIX-I0020`) | OASIS interop tests |
+| `consumer_strict` | all 12 | Full pipeline | Untrusted external input |
+| `producer_strict` | all except references | Full pipeline minus reference resolution | Publishing/export |
+| `interop_strict` | all 12, zero leniency | Full pipeline; warnings fail `is_valid()` | OASIS interop tests |
 
 ### Validation Pipeline design decisions
 
@@ -211,9 +211,9 @@ Recorded engineering choices for the `validate` feature. Summaries also appear o
 | **`Bundle::validate()`** | Warning-only SHOULD findings; `model::ValidationReport` + `ValidationCode` enum |
 | **`validate::Validator`** | Profile-driven pipeline; Error/Warning/Info/Hint; OASIS-style string codes |
 
-**Decision.** Use `Validator` for untrusted JSON and named profiles. Overlapping rules migrate into the validation pipeline in follow-up work; `Bundle::validate()` remains until migration is complete. Prefer [`PipelineValidationReport`](crate::PipelineValidationReport) at the crate root when both report types are in scope.
+**Decision.** Use `Validator` for untrusted JSON and named profiles. With `validate` enabled, `Bundle::validate()` delegates to shared pipeline semantics to keep advisory and pipeline behavior aligned. Prefer [`PipelineValidationReport`](crate::PipelineValidationReport) at the crate root when both report types are in scope.
 
-**Scaffold status (current release).** Types, profiles, diagnostic taxonomy (`STIX-E/W/I/H` codes), check dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), `ValidatorBuilder::with_allow_custom` / `with_parse_options`, and `STIX-I0020` informational diagnostics for not-yet-implemented checks are in place. Remaining check implementations follow in a later release.
+**Current status.** All twelve checks are implemented and active; conformance completion is tracked as a separate follow-up slice.
 
 ### Pattern Engine design decisions
 

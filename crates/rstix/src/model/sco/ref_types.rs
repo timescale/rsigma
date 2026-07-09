@@ -3,6 +3,7 @@
 use crate::core::{
     ArtifactId, DirectoryId, DomainNameId, FileId, Ipv4AddrId, Ipv6AddrId, MacAddrId, StixId,
 };
+#[cfg(feature = "serde")]
 use crate::model::ModelError;
 
 /// Domain-name `resolves_to_refs` target (STIX §6.4.1).

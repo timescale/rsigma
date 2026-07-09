@@ -1,9 +1,11 @@
 //! Typed views of [`StixObject`] for bundle navigation (`get`, `objects_of_type`).
 
+#[cfg(feature = "serde")]
 use crate::model::stix_object::StixObject;
 
 /// Extract a concrete STIX object type from a [`StixObject`] reference.
 pub trait BundleObjectCast: 'static {
+    #[cfg(feature = "serde")]
     /// Returns `Some` when `object` is the requested concrete type.
     fn cast_from(object: &StixObject) -> Option<&Self>;
 }
@@ -13,6 +15,7 @@ pub trait BundleObjectCast: 'static {
 macro_rules! impl_bundle_object_cast {
     (Sdo, $ty:ty, $variant:ident) => {
         impl $crate::model::BundleObjectCast for $ty {
+            #[cfg(feature = "serde")]
             fn cast_from(object: &$crate::model::StixObject) -> Option<&Self> {
                 match object {
                     $crate::model::StixObject::Sdo($crate::model::SdoObject::$variant(inner)) => {
@@ -25,6 +28,7 @@ macro_rules! impl_bundle_object_cast {
     };
     (Sco, $ty:ty, $variant:ident) => {
         impl $crate::model::BundleObjectCast for $ty {
+            #[cfg(feature = "serde")]
             fn cast_from(object: &$crate::model::StixObject) -> Option<&Self> {
                 match object {
                     $crate::model::StixObject::Sco($crate::model::ScoObject::$variant(inner)) => {
@@ -37,6 +41,7 @@ macro_rules! impl_bundle_object_cast {
     };
     (Sro, $ty:ty, $variant:ident) => {
         impl $crate::model::BundleObjectCast for $ty {
+            #[cfg(feature = "serde")]
             fn cast_from(object: &$crate::model::StixObject) -> Option<&Self> {
                 match object {
                     $crate::model::StixObject::Sro($crate::model::SroObject::$variant(inner)) => {
@@ -49,6 +54,7 @@ macro_rules! impl_bundle_object_cast {
     };
     (Meta, $ty:ty, $variant:ident) => {
         impl $crate::model::BundleObjectCast for $ty {
+            #[cfg(feature = "serde")]
             fn cast_from(object: &$crate::model::StixObject) -> Option<&Self> {
                 match object {
                     $crate::model::StixObject::Meta($crate::model::MetaObject::$variant(inner)) => {

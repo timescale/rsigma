@@ -3,6 +3,8 @@
 use super::{ValidationContext, ValidationReport};
 use crate::validate::diagnostic::{Diagnostic, DiagnosticCode};
 
+use super::super::wire::collect_custom_type_issues;
+
 /// Returns the root document `type` string when present.
 pub(crate) fn document_root_type(value: &serde_json::Value) -> Option<&str> {
     value.as_object()?.get("type")?.as_str()
@@ -22,6 +24,7 @@ pub fn run(ctx: &ValidationContext<'_>, report: &mut ValidationReport) {
             .with_property_path("$")
             .with_fix_suggestion("Wrap the payload in a JSON object with `type`: `bundle`."),
         );
+        emit_type_hint(report, "Set the document root `type` to `bundle`.");
         return;
     }
 
@@ -36,6 +39,7 @@ pub fn run(ctx: &ValidationContext<'_>, report: &mut ValidationReport) {
                 .with_property_path("type")
                 .with_fix_suggestion("Set the document root `type` to `bundle`."),
             );
+            emit_type_hint(report, "Set the document root `type` to `bundle`.");
         }
         None => {
             report.push(
@@ -46,8 +50,29 @@ pub fn run(ctx: &ValidationContext<'_>, report: &mut ValidationReport) {
                 .with_property_path("type")
                 .with_fix_suggestion("Add `\"type\": \"bundle\"` at the document root."),
             );
+            emit_type_hint(report, "Add `\"type\": \"bundle\"` at the document root.");
         }
     }
+
+    for (path, type_name, code) in collect_custom_type_issues(value) {
+        report.push(
+            Diagnostic::new(
+                code,
+                format!("custom STIX type name `{type_name}` is invalid"),
+            )
+            .with_property_path(path),
+        );
+        if code == DiagnosticCode::I0010 {
+            emit_type_hint(
+                report,
+                "Custom STIX type names SHOULD start with the `x-` prefix.",
+            );
+        }
+    }
+}
+
+fn emit_type_hint(report: &mut ValidationReport, message: &str) {
+    report.push(Diagnostic::new(DiagnosticCode::H0001, message));
 }
 
 #[cfg(test)]
