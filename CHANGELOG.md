@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix Validation Pipeline: all twelve checks (`validate` feature)
+### rstix Validation Pipeline: all twelve checks (`validate` feature) (#298)
 
 Implements the full validation check set behind `validate`:
 
