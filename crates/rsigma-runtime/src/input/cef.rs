@@ -17,9 +17,9 @@ use super::EventInputDecoded;
 /// Parse a CEF line into a KvEvent. Returns `None` if the line is not valid CEF.
 pub fn parse_cef(line: &str) -> Option<EventInputDecoded> {
     // Handle CEF-over-syslog: find where CEF: starts.
-    let cef_input = match crate::parse::cef::find_cef_start(line) {
-        Some(offset) => &line[offset..],
-        None => return None,
+    let cef_input = {
+        let offset = crate::parse::cef::find_cef_start(line)?;
+        &line[offset..]
     };
 
     let record = crate::parse::cef::parse(cef_input).ok()?;

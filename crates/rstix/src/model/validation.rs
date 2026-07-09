@@ -1,25 +1,36 @@
 //! Bundle-level semantic validation (STIX SHOULD rules and advisory codes).
 
+#[cfg(not(feature = "validate"))]
 use std::collections::HashSet;
 
+#[cfg(not(feature = "validate"))]
 use crate::core::{QueryableStixObject, StixId};
+use crate::model::Bundle;
+#[cfg(not(feature = "validate"))]
+use crate::model::StixObject;
+#[cfg(not(feature = "validate"))]
 use crate::model::common::{GranularMarking, SdoSroCommonProps};
+#[cfg(not(feature = "validate"))]
 use crate::model::meta::{
     LanguageContent, MarkingDefinition, MetaObject, TLP1_AMBER_ID, TLP1_GREEN_ID, TLP1_RED_ID,
     TLP1_WHITE_ID,
 };
+#[cfg(not(feature = "validate"))]
 use crate::model::sco::{Artifact, ScoObject};
+#[cfg(not(feature = "validate"))]
 use crate::model::sdo::{
     AttackPattern, Location, ObservedData, ObservedDataEmbeddedObject, ObservedDataForm, SdoObject,
     Vulnerability,
 };
+#[cfg(not(feature = "validate"))]
 use crate::model::sro::SroObject;
+#[cfg(not(feature = "validate"))]
 use crate::model::validate::{
     language_content_translation_matches_target, resolve_selector_value,
     validate_capec_external_refs, validate_cve_external_refs, validate_encryption_algorithm,
     validate_relationship_endpoints, validate_sco_deterministic_id,
 };
-use crate::model::{Bundle, StixObject};
+#[cfg(not(feature = "validate"))]
 use crate::vocab::{REGION_OV, is_iso3166_alpha2};
 
 /// Machine-readable validation code (STIX advisory ids where applicable).
@@ -66,6 +77,7 @@ pub struct ValidationFinding {
 }
 
 impl ValidationFinding {
+    #[cfg(not(feature = "validate"))]
     fn warning(
         code: ValidationCode,
         object_id: Option<&StixId>,
@@ -79,6 +91,7 @@ impl ValidationFinding {
         }
     }
 
+    #[cfg(not(feature = "validate"))]
     fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
@@ -120,7 +133,23 @@ impl Bundle {
     /// Parse-time checks enforce STIX MUST rules; this method collects advisory
     /// findings (for example STIX-W0031, SCO deterministic id mismatches, and
     /// relationship matrix violations) without rejecting the bundle.
+    #[cfg(feature = "validate")]
     pub fn validate(&self) -> ValidationReport {
+        crate::validate::legacy::bundle_validate(self)
+    }
+
+    /// Parse-time checks enforce STIX MUST rules; this method collects advisory
+    /// findings (for example STIX-W0031, SCO deterministic id mismatches, and
+    /// relationship matrix violations) without rejecting the bundle.
+    #[cfg(not(feature = "validate"))]
+    pub fn validate(&self) -> ValidationReport {
+        self.validate_advisory()
+    }
+}
+
+#[cfg(not(feature = "validate"))]
+impl Bundle {
+    fn validate_advisory(&self) -> ValidationReport {
         let mut report = ValidationReport::default();
         let tlp1_ids: HashSet<&str> =
             HashSet::from([TLP1_WHITE_ID, TLP1_GREEN_ID, TLP1_AMBER_ID, TLP1_RED_ID]);
@@ -257,6 +286,7 @@ impl Bundle {
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn check_sco_deterministic_id(
     sco: &ScoObject,
     wire: &serde_json::Value,
@@ -275,6 +305,7 @@ fn check_sco_deterministic_id(
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn check_tlp_v1_usage(
     object: &StixObject,
     object_id: &StixId,
@@ -294,6 +325,7 @@ fn check_tlp_v1_usage(
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn check_marking_definition_tlp_v1(
     marking: &MarkingDefinition,
     object_id: &StixId,
@@ -308,6 +340,7 @@ fn check_marking_definition_tlp_v1(
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn common_marking_refs(object: &StixObject) -> Vec<&StixId> {
     let mut refs = Vec::new();
     match object {
@@ -341,6 +374,7 @@ fn common_marking_refs(object: &StixObject) -> Vec<&StixId> {
     refs
 }
 
+#[cfg(not(feature = "validate"))]
 fn push_sdo_sro_marking_refs<'a>(common: &'a SdoSroCommonProps, refs: &mut Vec<&'a StixId>) {
     for marking in &common.object_marking_refs {
         refs.push(marking.as_stix_id());
@@ -350,12 +384,14 @@ fn push_sdo_sro_marking_refs<'a>(common: &'a SdoSroCommonProps, refs: &mut Vec<&
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn push_granular_marking_ref<'a>(granular: &'a GranularMarking, refs: &mut Vec<&'a StixId>) {
     if let Some(marking_ref) = &granular.marking_ref {
         refs.push(marking_ref.as_stix_id());
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn check_granular_selectors(
     object: &StixObject,
     wire: &serde_json::Value,
@@ -392,6 +428,7 @@ fn check_granular_selectors(
     }
 }
 
+#[cfg(not(feature = "validate"))]
 fn selector_resolves(value: &serde_json::Value, selector: &str) -> bool {
     resolve_selector_value(value, selector).is_some()
 }
@@ -403,6 +440,7 @@ fn selector_resolves(value: &serde_json::Value, selector: &str) -> bool {
 /// during parse. [`Bundle::validate()`] emits
 /// [`ValidationCode::LanguageContentObjectModifiedMismatch`] when the target is in the
 /// bundle and the timestamps differ.
+#[cfg(not(feature = "validate"))]
 fn check_language_content(
     bundle: &Bundle,
     content: &LanguageContent,

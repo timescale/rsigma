@@ -1,6 +1,8 @@
 //! Shared helpers for parsing SCO extensions from [`ExtensionMap`] entries.
 
+#[cfg(feature = "serde")]
 use crate::model::ModelError;
+#[cfg(feature = "serde")]
 use crate::model::common::ExtensionEntry;
 
 /// Deserialize an extension body from a map entry, preserving the serde error detail.
@@ -24,6 +26,17 @@ pub(crate) fn deserialize_from_entry<T: serde::de::DeserializeOwned>(
             key,
             detail: err.to_string(),
         }
+    })
+}
+
+#[cfg(not(feature = "serde"))]
+pub(crate) fn deserialize_from_entry<T>(
+    key: &'static str,
+    _entry: &crate::model::common::ExtensionEntry,
+) -> Result<T, crate::model::ModelError> {
+    Err(crate::model::ModelError::ExtensionDeserializeFailed {
+        key,
+        detail: "serde feature is required for extension deserialization".into(),
     })
 }
 

@@ -11,7 +11,7 @@ Canonical API reference: [docs.rs/rstix](https://docs.rs/rstix). Contributor-fac
 | **Core Foundation** (`core`, `id`, `vocab`) | Complete |
 | **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete |
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
-| **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, raw JSON entry, root type check) | **Scaffold** (remaining check logic next) |
+| **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** | Planned |
 | **TAXII Client** | Planned |
 
@@ -336,7 +336,7 @@ let partial = Validator::builder()
     .validate_bundle(&bundle);
 ```
 
-**Scaffold (this release):** profiles, diagnostic taxonomy, dispatcher, raw JSON entry (`STIX-E0001` with span metadata), root type discrimination (`STIX-E0002`), parse-error bridging (`STIX-E0003` for missing ids), `ValidatorBuilder::with_allow_custom` / `with_parse_options`, and `STIX-I0020` informational diagnostics for not-yet-implemented checks. Remaining check implementations and OASIS conformance tests follow in later releases.
+**Current status:** all twelve checks are implemented. The conformance harness runs against bundled in-repo fixtures for deterministic CI.
 
 ## Feature flags
 

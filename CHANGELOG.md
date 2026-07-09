@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix Validation Pipeline: all twelve checks (`validate` feature) (#298)
+
+Implements the full validation check set behind `validate`:
+
+* **All twelve checks** — schema, ID structure, property types, open vocabulary, pattern parse/semantic, references, cross-object semantics, extension resolution, and TLP marking computation are wired through the dispatcher (no `STIX-I0020` stubs).
+* **Shared helpers** — `model_bridge`, `object_validate`, `semantic`, and `wire` modules map `ModelError` / wire JSON to pipeline diagnostics; overlapping `Bundle::validate()` findings migrate to `STIX-E/W/I` codes per DD-VP-001.
+* **Pattern split** — `Pattern::parse_ast` and `Pattern::type_check_ast` expose parse-only vs type-check phases for `STIX-E0010` / `STIX-E0011`.
+* **Integration tests** — validation fixtures assert `STIX-W0031`, `STIX-E0024`, `STIX-I0002`, and `STIX-W0010` through `Validator::consumer_strict()`.
+* **Conformance harness hardening** — conformance tests are locked to bundled in-repo fixtures for deterministic CI (no external env override path).
+
 ### rstix Validation Pipeline scaffold (`validate` feature) (#297)
 
 Adds the profile-based **Validation Pipeline** module behind the optional `validate` feature (implies `serde` + `pattern`):

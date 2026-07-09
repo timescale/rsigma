@@ -115,6 +115,16 @@ impl Pattern {
     }
 }
 
+/// Parse a STIX pattern AST without running the type-checker (validation pipeline phase 7).
+pub fn parse_ast(source: &str) -> Result<PatternAst, PatternError> {
+    parser::parse(source)
+}
+
+/// Type-check a parsed STIX pattern AST (validation pipeline phase 8).
+pub fn type_check_ast(ast: &PatternAst) -> Result<(), PatternError> {
+    typeck::type_check(ast)
+}
+
 impl std::fmt::Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&print::print(&self.ast))

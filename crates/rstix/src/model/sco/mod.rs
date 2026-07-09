@@ -116,6 +116,7 @@ impl ScoObject {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::ScoCommonProps {
         match self {
             Self::Artifact(inner) => &mut inner.common,

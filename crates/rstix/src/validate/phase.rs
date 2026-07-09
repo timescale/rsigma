@@ -47,12 +47,12 @@ impl ValidationPhase {
         Self::TlpMarkingComputation,
     ];
 
-    /// Checks that currently perform validation logic (see [`ValidationPhase::is_implemented`]).
-    pub const IMPLEMENTED: [Self; 2] = [Self::JsonWellFormedness, Self::TypeDiscrimination];
+    /// Checks that currently perform validation logic.
+    pub const IMPLEMENTED: [Self; 12] = Self::ALL;
 
     /// Whether this check performs validation logic today.
     pub const fn is_implemented(self) -> bool {
-        matches!(self, Self::JsonWellFormedness | Self::TypeDiscrimination)
+        true
     }
 
     /// Human-readable check name for diagnostics and logging.

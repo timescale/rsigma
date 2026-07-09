@@ -27,6 +27,7 @@ impl SroObject {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::SdoSroCommonProps {
         match self {
             Self::Relationship(inner) => &mut inner.common,

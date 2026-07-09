@@ -60,8 +60,9 @@ impl GranularMarking {
     /// Construct from raw optional parts, enforcing the `marking_ref` XOR `lang`
     /// invariant.
     ///
-    /// Returns [`ModelError::GranularMarkingExclusivity`] when both or neither
-    /// are present, or [`ModelError::GranularMarkingEmptySelectors`] when
+    /// Returns [`ModelError::GranularMarkingMissingRefAndLang`] or
+    /// [`ModelError::GranularMarkingBothRefAndLang`] when the XOR invariant
+    /// fails, or [`ModelError::GranularMarkingEmptySelectors`] when
     /// `selectors` is empty.
     pub fn new(
         selectors: Vec<String>,
@@ -87,7 +88,8 @@ impl GranularMarking {
         }
         match (self.marking_ref.is_some(), self.lang.is_some()) {
             (true, false) | (false, true) => Ok(()),
-            _ => Err(ModelError::GranularMarkingExclusivity),
+            (false, false) => Err(ModelError::GranularMarkingMissingRefAndLang),
+            (true, true) => Err(ModelError::GranularMarkingBothRefAndLang),
         }
     }
 }

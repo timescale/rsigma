@@ -20,6 +20,49 @@ pub enum Severity {
 pub struct DiagnosticCode(&'static str);
 
 impl DiagnosticCode {
+    /// All diagnostic codes currently emitted by the validation pipeline.
+    pub const ALL: [Self; 39] = [
+        Self::E0001,
+        Self::E0002,
+        Self::E0003,
+        Self::E0004,
+        Self::E0005,
+        Self::E0006,
+        Self::E0007,
+        Self::E0008,
+        Self::E0009,
+        Self::E0010,
+        Self::E0011,
+        Self::E0012,
+        Self::E0013,
+        Self::E0014,
+        Self::E0015,
+        Self::E0020,
+        Self::E0021,
+        Self::E0022,
+        Self::E0023,
+        Self::E0024,
+        Self::E0030,
+        Self::E0031,
+        Self::E0040,
+        Self::E0041,
+        Self::E0050,
+        Self::E0051,
+        Self::E0052,
+        Self::W0002,
+        Self::W0003,
+        Self::W0004,
+        Self::W0010,
+        Self::W0020,
+        Self::W0030,
+        Self::W0031,
+        Self::W0040,
+        Self::I0001,
+        Self::I0002,
+        Self::I0010,
+        Self::H0001,
+    ];
+
     // STIX-E0xxx — JSON/schema structural errors
     /// JSON parse failure.
     pub const E0001: Self = Self("STIX-E0001");
@@ -111,9 +154,6 @@ impl DiagnosticCode {
     pub const I0002: Self = Self("STIX-I0002");
     /// Custom type name does not start with `x-`.
     pub const I0010: Self = Self("STIX-I0010");
-    /// Validation check selected but not yet implemented (scaffold).
-    pub const I0020: Self = Self("STIX-I0020");
-
     // STIX-H0xxx — hints
     /// General style or remediation hint.
     pub const H0001: Self = Self("STIX-H0001");
@@ -280,9 +320,24 @@ mod tests {
 
     #[test]
     fn code_strings_follow_taxonomy_prefix() {
-        assert!(DiagnosticCode::E0001.as_str().starts_with("STIX-E"));
-        assert!(DiagnosticCode::W0010.as_str().starts_with("STIX-W"));
-        assert!(DiagnosticCode::I0010.as_str().starts_with("STIX-I"));
-        assert!(DiagnosticCode::H0001.as_str().starts_with("STIX-H"));
+        for code in DiagnosticCode::ALL {
+            let s = code.as_str();
+            assert!(s.starts_with("STIX-"));
+            assert_eq!(s.len(), 10);
+        }
+    }
+
+    #[test]
+    fn every_code_has_expected_default_severity() {
+        for code in DiagnosticCode::ALL {
+            let expected = match code.as_str().as_bytes()[5] {
+                b'E' => Severity::Error,
+                b'W' => Severity::Warning,
+                b'I' => Severity::Info,
+                b'H' => Severity::Hint,
+                _ => unreachable!("unexpected code prefix"),
+            };
+            assert_eq!(code.default_severity(), expected, "{}", code.as_str());
+        }
     }
 }

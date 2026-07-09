@@ -4,6 +4,7 @@ use crate::ParseError;
 use crate::model::ParseOptions;
 
 use super::diagnostic::{Diagnostic, DiagnosticCode};
+use super::model_bridge::diagnostic_from_model_error;
 
 /// Convert a bundle parse failure into one or more structured diagnostics.
 pub(crate) fn diagnostics_from_parse_error(
@@ -47,6 +48,8 @@ pub(crate) fn diagnostics_from_parse_error(
             .with_property_path("objects[].id")
             .with_fix_suggestion("Ensure every object in the bundle has a unique id."),
         ],
+        ParseError::Model(model_err) => vec![diagnostic_from_model_error(model_err, None, None)],
+        ParseError::Json(err) => vec![Diagnostic::new(DiagnosticCode::E0001, err.to_string())],
         _ => Vec::new(),
     }
 }

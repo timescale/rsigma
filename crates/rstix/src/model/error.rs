@@ -12,9 +12,12 @@ pub enum ModelError {
     /// or `external_id` (STIX §2.5.2).
     #[error("external reference requires at least one of description, url, or external_id")]
     ExternalReferenceMissingDetail,
-    /// A `granular-marking` must set exactly one of `marking_ref` or `lang`.
-    #[error("granular marking must set exactly one of marking_ref or lang")]
-    GranularMarkingExclusivity,
+    /// A `granular-marking` must set exactly one of `marking_ref` or `lang` (both absent).
+    #[error("granular marking must set marking_ref or lang")]
+    GranularMarkingMissingRefAndLang,
+    /// A `granular-marking` must set exactly one of `marking_ref` or `lang` (both present).
+    #[error("granular marking must not set both marking_ref and lang")]
+    GranularMarkingBothRefAndLang,
     /// A `granular-marking` must name at least one selector.
     #[error("granular marking requires at least one selector")]
     GranularMarkingEmptySelectors,
