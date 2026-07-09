@@ -25,6 +25,9 @@ use crate::vocab::{REGION_OV, is_iso3166_alpha2};
 
 use super::ValidationReport;
 use super::diagnostic::{Diagnostic, DiagnosticCode};
+use super::legacy_paths::{
+    self, EXTERNAL_REF_CAPEC, EXTERNAL_REF_CVE, language_content_mismatch, language_content_unknown,
+};
 
 /// Cross-object semantic checks (relationship matrix, granular selectors, language-content).
 pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut ValidationReport) {
@@ -84,7 +87,7 @@ pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut Validatio
                                 "CAPEC external reference should use source_name `capec` with external_id prefixed `CAPEC-`",
                             )
                             .with_object_id(object_id.clone())
-                            .with_property_path("external_references"),
+                            .with_property_path(EXTERNAL_REF_CAPEC),
                         );
                     }
                 }
@@ -96,7 +99,7 @@ pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut Validatio
                                 "CVE external reference should use source_name `cve` with external_id prefixed `CVE-`",
                             )
                             .with_object_id(object_id.clone())
-                            .with_property_path("external_references"),
+                            .with_property_path(EXTERNAL_REF_CVE),
                         );
                     }
                 }
@@ -349,7 +352,7 @@ fn check_granular_selectors(
                         format!("granular-marking selector `{selector}` has invalid syntax"),
                     )
                     .with_object_id(object_id.clone())
-                    .with_property_path(format!("selectors[{selector}]")),
+                    .with_property_path(legacy_paths::granular_selector_syntax(selector)),
                 );
             } else if !selector_resolves(wire, selector) {
                 report.push(
@@ -360,7 +363,7 @@ fn check_granular_selectors(
                         ),
                     )
                     .with_object_id(object_id.clone())
-                    .with_property_path(format!("selectors[{selector}]")),
+                    .with_property_path(legacy_paths::granular_selector_unresolved(selector)),
                 );
             }
         }
@@ -423,7 +426,7 @@ fn check_language_content(
                         ),
                     )
                     .with_object_id(object_id.clone())
-                    .with_property_path(format!("contents.{lang}.{field}")),
+                    .with_property_path(language_content_unknown(lang, field)),
                 );
                 continue;
             };
@@ -436,7 +439,7 @@ fn check_language_content(
                         ),
                     )
                     .with_object_id(object_id.clone())
-                    .with_property_path(format!("contents.{lang}.{field}")),
+                    .with_property_path(language_content_mismatch(lang, field)),
                 );
             }
         }

@@ -20,6 +20,7 @@
 mod checks;
 mod diagnostic;
 pub(crate) mod legacy;
+mod legacy_paths;
 mod model_bridge;
 mod object_validate;
 mod parse_bridge;
