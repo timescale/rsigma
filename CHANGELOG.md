@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Request body for `http` dynamic sources
+
+The `http` dynamic-source type gains an optional `body` field, sent verbatim after `${VAR}` environment expansion, so a source can poll a query API that requires a request body (GraphQL, an Elasticsearch/OpenSearch `_search`, TheHive 5's `/api/v1/query`). A source with a `body` and no explicit `method` defaults to `POST`; an explicit `method` still wins. `Content-Type` is not inferred and should be set in `headers`. The reference documentation for `headers` is also corrected: `${VAR}` references have always been expanded from the environment at fetch time, which the field table previously said was unimplemented.
+
 ### Dependency bumps (#308)
 
 Rolls up five open Dependabot PRs into a single merge. Rust (workspace `Cargo.lock`): `tower-http` 0.6.11 to 0.7.0 (#299), `cel` 0.13.0 to 0.14.0 (#300), `rmcp` 1.8.0 to 2.1.0 (#301), and `phf` 0.13.1 to 0.14.0 (#303); `rsigma-mcp` is migrated to the rmcp 2.x API (`Resource`, `ContentBlock`). CI (all repinned by commit SHA, batched via the `actions-updates` group, #302): `taiki-e/install-action` v2.82.4 to v2.82.7, `docker/setup-buildx-action` v4.1.0 to v4.2.0, `docker/login-action` v4.2.0 to v4.3.0, `docker/build-push-action` v7.2.0 to v7.3.0, `github/codeql-action/upload-sarif` v4.36.2 to v4.36.3, `docker/metadata-action` v6.1.0 to v6.2.0, and `actions/attest-build-provenance` v4.1.0 to v4.1.1. The `rusqlite` 0.39 to 0.40.1 bump (#234) stays held back on MSRV 1.88.

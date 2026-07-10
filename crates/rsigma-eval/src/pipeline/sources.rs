@@ -42,6 +42,11 @@ pub enum SourceType {
         url: String,
         method: Option<String>,
         headers: HashMap<String, String>,
+        /// Optional request body sent verbatim after `${VAR}` expansion. When
+        /// set and `method` is unset, the request defaults to `POST`. Pairs
+        /// with query APIs that require a body (GraphQL, `_search`, TheHive 5's
+        /// `/api/v1/query`).
+        body: Option<String>,
         format: DataFormat,
         extract: Option<ExtractExpr>,
     },

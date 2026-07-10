@@ -908,10 +908,15 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let headers = parse_string_headers(obj.get(ykey("headers")));
+            let body = obj
+                .get(ykey("body"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
             SourceType::Http {
                 url,
                 method,
                 headers,
+                body,
                 format,
                 extract,
             }

@@ -1739,6 +1739,37 @@ transformations:
 }
 
 #[test]
+fn test_source_with_http_body() {
+    let yaml = r#"
+name: Query Source
+sources:
+  - id: query_source
+    type: http
+    url: https://api.internal/api/v1/query
+    headers:
+      Content-Type: application/json
+    body: |
+      {"query": [{"_name": "listCase"}]}
+    format: json
+transformations:
+  - type: value_placeholders
+"#;
+    let src_list = parse_source_list(yaml).unwrap();
+    match &src_list[0].source_type {
+        sources::SourceType::Http { method, body, .. } => {
+            // The method stays unset in the parse; the POST default is applied
+            // by the resolver when a body is present.
+            assert_eq!(method.as_deref(), None);
+            assert_eq!(
+                body.as_deref(),
+                Some("{\"query\": [{\"_name\": \"listCase\"}]}\n")
+            );
+        }
+        _ => panic!("expected Http"),
+    }
+}
+
+#[test]
 fn test_source_with_default_value() {
     let yaml = r#"
 name: Default Value

@@ -157,6 +157,7 @@ impl SourceResolver for DefaultSourceResolver {
                 url,
                 method,
                 headers,
+                body,
                 format,
                 extract,
             } => {
@@ -164,6 +165,7 @@ impl SourceResolver for DefaultSourceResolver {
                     url,
                     method.as_deref(),
                     headers,
+                    body.as_deref(),
                     *format,
                     extract.as_ref(),
                     source.timeout,

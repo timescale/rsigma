@@ -55,6 +55,7 @@ pub async fn resolve_http(
     url: &str,
     method: Option<&str>,
     headers: &HashMap<String, String>,
+    body: Option<&str>,
     format: DataFormat,
     extract_expr: Option<&ExtractExpr>,
     timeout: Option<Duration>,
@@ -63,6 +64,7 @@ pub async fn resolve_http(
         url,
         method,
         headers,
+        body,
         format,
         extract_expr,
         timeout,
@@ -72,10 +74,12 @@ pub async fn resolve_http(
 }
 
 /// Inner implementation with a configurable size limit (for testing).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resolve_http_with_limit(
     url: &str,
     method: Option<&str>,
     headers: &HashMap<String, String>,
+    body: Option<&str>,
     format: DataFormat,
     extract_expr: Option<&ExtractExpr>,
     timeout: Option<Duration>,
@@ -83,7 +87,9 @@ pub(crate) async fn resolve_http_with_limit(
 ) -> Result<ResolvedValue, SourceError> {
     let client = shared_http_source_client()?;
 
-    let method_str = method.unwrap_or("GET");
+    // A request carrying a body defaults to POST when no method is given; a
+    // bodyless request defaults to GET. An explicit method always wins.
+    let method_str = method.unwrap_or(if body.is_some() { "POST" } else { "GET" });
     let reqwest_method = method_str
         .parse::<reqwest::Method>()
         .map_err(|e| SourceError {
@@ -98,6 +104,10 @@ pub(crate) async fn resolve_http_with_limit(
     for (key, value) in headers {
         let expanded_value = expand_env_vars(value);
         request = request.header(key.as_str(), expanded_value);
+    }
+
+    if let Some(body) = body {
+        request = request.body(expand_env_vars(body));
     }
 
     let response = request.send().await.map_err(|e| {
@@ -192,6 +202,8 @@ fn expand_env_vars(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{body_string, method as method_matcher, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn shared_http_source_client_is_arc_stable() {
@@ -203,5 +215,88 @@ mod tests {
             Arc::ptr_eq(&a, &b),
             "shared HTTP source client must be process-wide stable"
         );
+    }
+
+    #[tokio::test]
+    async fn body_is_sent_and_method_defaults_to_post() {
+        let server = MockServer::start().await;
+        // The mock only answers a POST carrying the exact body, so a passing
+        // request proves both the body was sent and the unset method defaulted
+        // to POST.
+        Mock::given(method_matcher("POST"))
+            .and(path("/query"))
+            .and(body_string(r#"{"query":"listCase"}"#))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"cases":3}"#))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = resolve_http(
+            &format!("{}/query", server.uri()),
+            None,
+            &HashMap::new(),
+            Some(r#"{"query":"listCase"}"#),
+            DataFormat::Json,
+            None,
+            None,
+        )
+        .await
+        .expect("request should succeed");
+
+        assert_eq!(result.data, serde_json::json!({"cases": 3}));
+    }
+
+    #[tokio::test]
+    async fn body_expands_env_vars() {
+        // SAFETY: a uniquely named variable avoids racing other tests' env use.
+        unsafe { std::env::set_var("RSIGMA_TEST_HTTP_BODY_TOKEN", "s3cret") };
+
+        let server = MockServer::start().await;
+        Mock::given(method_matcher("POST"))
+            .and(path("/query"))
+            .and(body_string(r#"{"token":"s3cret"}"#))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = resolve_http(
+            &format!("{}/query", server.uri()),
+            None,
+            &HashMap::new(),
+            Some(r#"{"token":"${RSIGMA_TEST_HTTP_BODY_TOKEN}"}"#),
+            DataFormat::Json,
+            None,
+            None,
+        )
+        .await
+        .expect("request should succeed");
+
+        assert_eq!(result.data, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn bodyless_request_defaults_to_get() {
+        let server = MockServer::start().await;
+        Mock::given(method_matcher("GET"))
+            .and(path("/feed"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true}"#))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = resolve_http(
+            &format!("{}/feed", server.uri()),
+            None,
+            &HashMap::new(),
+            None,
+            DataFormat::Json,
+            None,
+            None,
+        )
+        .await
+        .expect("request should succeed");
+
+        assert_eq!(result.data, serde_json::json!({"ok": true}));
     }
 }
