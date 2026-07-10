@@ -141,7 +141,7 @@ pub fn required_access(method: &Method, path: &str) -> Access {
         (&Method::GET, "/api/v1/dispositions") => req("dispositions", "read"),
         (&Method::POST, "/api/v1/dispositions") => req("dispositions", "write"),
         (&Method::POST, "/api/v1/reload") => req("reload", "execute"),
-        (&Method::POST, "/api/v1/events") => req("events", "ingest"),
+        (&Method::POST, "/api/v1/events" | "/v1/logs") => Require(EVENTS_INGEST),
         (&Method::GET, "/api/v1/sources") => req("sources", "read"),
         (&Method::POST, "/api/v1/sources/resolve" | "/api/v1/sources/resolve/{source_id}") => {
             req("sources", "write")
@@ -155,7 +155,6 @@ pub fn required_access(method: &Method, path: &str) -> Access {
         (&Method::DELETE, "/api/v1/schemas") => req("schemas", "write"),
         (&Method::GET, "/api/v1/tap") => req("tap", "read"),
         (&Method::GET, "/api/v1/detections/stream") => req("detections", "read"),
-        (&Method::POST, "/v1/logs") => req("events", "ingest"),
         _ => req("*", "*"),
     }
 }

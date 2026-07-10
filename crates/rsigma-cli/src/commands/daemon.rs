@@ -909,7 +909,8 @@ fn resolve_auth_settings(
             }],
             Vec::new(),
         )
-    } else if let Some(auth) = block {
+    } else {
+        let auth = block?;
         let roles: Vec<(String, Vec<String>)> =
             auth.roles.clone().unwrap_or_default().into_iter().collect();
         let tokens: Vec<TokenSpec> = auth
@@ -943,8 +944,6 @@ fn resolve_auth_settings(
             process::exit(exit_code::CONFIG_ERROR);
         }
         (roles, tokens, anonymous)
-    } else {
-        return None;
     };
 
     match ApiAuth::build(&roles, &tokens, &anonymous, |key| std::env::var(key).ok()) {
