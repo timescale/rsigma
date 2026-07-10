@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### De-flaked the daemon schema-observer E2E test on Windows
+### De-flaked the daemon schema-observer E2E test on Windows (#305)
 
 `SchemaObserver::observe` bumped its `events_observed` counter before recording the classification result, so the `/api/v1/schemas` snapshot (served on a different thread than event ingestion) could report `events_observed == N` while the Nth event's `classified`/`unknown` increment had not yet landed. A reader that waited on `events_observed` then read a torn snapshot with `unknown` short by one, which surfaced as a Windows CI failure in `schemas_endpoint_reports_per_schema_and_unknown_counts`. `events_observed` is now derived as `classified + unknown` inside the snapshot, so every snapshot is internally consistent regardless of thread interleaving.
 
