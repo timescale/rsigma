@@ -1335,7 +1335,6 @@ pub struct SchemaObserver {
     /// Redacted field-key shapes of discovery-unrecognized events (no-match or
     /// `generic_json`), populated only when `discovery_sampling` is set.
     unrecognized_shapes: Mutex<HashMap<Vec<String>, u64>>,
-    events_observed: AtomicU64,
     lifetime_classified: AtomicU64,
     lifetime_unknown: AtomicU64,
     lifetime_ambiguous: AtomicU64,
@@ -1361,7 +1360,6 @@ impl SchemaObserver {
             unknown_shapes: Mutex::new(HashMap::new()),
             discovery_sampling,
             unrecognized_shapes: Mutex::new(HashMap::new()),
-            events_observed: AtomicU64::new(0),
             lifetime_classified: AtomicU64::new(0),
             lifetime_unknown: AtomicU64::new(0),
             lifetime_ambiguous: AtomicU64::new(0),
@@ -1383,7 +1381,6 @@ impl SchemaObserver {
     /// Classify an event and update the counters. Takes `&self` so the
     /// observer can be shared behind an `Arc`.
     pub fn observe<E: Event + ?Sized>(&self, event: &E) {
-        self.events_observed.fetch_add(1, Ordering::Relaxed);
         let (matched, ambiguous) = self.classifier.classify_with_ambiguity(event);
         if ambiguous {
             self.ambiguous.fetch_add(1, Ordering::Relaxed);
@@ -1501,7 +1498,11 @@ impl SchemaObserver {
             ambiguous: self.ambiguous.load(Ordering::Relaxed),
             unknown_shapes,
             unrecognized_shapes,
-            events_observed: self.events_observed.load(Ordering::Relaxed),
+            // Derived (not a separate counter) so every snapshot is internally
+            // consistent: a reader that sees `events_observed == N` also sees
+            // the `classified`/`unknown` reads that sum to N, since each
+            // observed event increments exactly one of the two.
+            events_observed: classified + unknown,
             lifetime_classified: self.lifetime_classified.load(Ordering::Relaxed),
             lifetime_unknown: self.lifetime_unknown.load(Ordering::Relaxed),
             lifetime_ambiguous: self.lifetime_ambiguous.load(Ordering::Relaxed),
@@ -1531,7 +1532,6 @@ impl SchemaObserver {
             .clear();
         let previous_unknown = self.unknown.swap(0, Ordering::Relaxed);
         self.ambiguous.store(0, Ordering::Relaxed);
-        self.events_observed.store(0, Ordering::Relaxed);
         *self
             .start
             .lock()
