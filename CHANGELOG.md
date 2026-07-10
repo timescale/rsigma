@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Dependency bumps (#308)
+
+Rolls up five open Dependabot PRs into a single merge. Rust (workspace `Cargo.lock`): `tower-http` 0.6.11 to 0.7.0 (#299), `cel` 0.13.0 to 0.14.0 (#300), `rmcp` 1.8.0 to 2.1.0 (#301), and `phf` 0.13.1 to 0.14.0 (#303); `rsigma-mcp` is migrated to the rmcp 2.x API (`Resource`, `ContentBlock`). CI (all repinned by commit SHA, batched via the `actions-updates` group, #302): `taiki-e/install-action` v2.82.4 to v2.82.7, `docker/setup-buildx-action` v4.1.0 to v4.2.0, `docker/login-action` v4.2.0 to v4.3.0, `docker/build-push-action` v7.2.0 to v7.3.0, `github/codeql-action/upload-sarif` v4.36.2 to v4.36.3, `docker/metadata-action` v6.1.0 to v6.2.0, and `actions/attest-build-provenance` v4.1.0 to v4.1.1. The `rusqlite` 0.39 to 0.40.1 bump (#234) stays held back on MSRV 1.88.
+
 ### Control-plane API audit trail (#307)
 
 Adds an append-only audit log for control-plane mutating daemon API calls (who, what, when, outcome), persisted in the existing SQLite state database when `--state-db` is configured. Auto-enabled with a state database; optional `daemon.api.audit` config tunes retention, optional sink emission, or disables the trail. Each record stores method, matched route pattern, token name, HTTP status, timestamp, and a SHA-256 hex digest of the request body (never the body itself). Data-plane ingest and OTLP are excluded. `GET /api/v1/audit` (`audit:read`) serves paginated entries; bodies over `max_body_bytes` (default 64 KiB) get `413` and the rejected attempt is recorded. New metrics: `rsigma_audit_records_total`, `rsigma_audit_write_errors_total`.
