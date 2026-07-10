@@ -21,7 +21,7 @@ use rsigma_runtime::{
     StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
     load_schema_signatures, spawn_source,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::trace::TraceLayer;
 #[cfg(feature = "daemon-otlp")]
@@ -152,6 +152,9 @@ struct AppState {
     /// `daemon.dispositions.enabled`) is set; the `/api/v1/dispositions`
     /// handlers ingest verdicts and serve the per-rule ratio view.
     disposition_state: Option<super::dispositions::DispositionState>,
+    /// Control-plane API audit trail. `Some` when `--state-db` is configured
+    /// and audit is not disabled; the `/api/v1/audit` handler reads from it.
+    audit: Option<Arc<super::audit::AuditLog>>,
 }
 
 #[derive(Clone)]
@@ -270,6 +273,9 @@ pub struct DaemonConfig {
     /// Optional API authentication table (`daemon.api.auth` +
     /// `--api-token-env`). `None` mounts the routes without auth, as before.
     pub api_auth: Option<super::auth::ApiAuth>,
+    /// Control-plane API audit trail settings (`daemon.api.audit` +
+    /// `--state-db`). Auto-enabled when a state database is configured.
+    pub audit: super::audit::AuditSettings,
     /// Optional server-side TLS state. `Some` when the operator passed
     /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
     /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
@@ -856,6 +862,35 @@ pub async fn run_daemon(config: DaemonConfig) {
     // moved into `AppState` below).
     let disposition_state_for_save = disposition_state.clone();
 
+    let audit_log: Option<Arc<super::audit::AuditLog>> = if config.audit.enabled {
+        let store = state_store
+            .as_ref()
+            .expect("audit enabled without state db");
+        let sink = if let Some(ref spec) = config.audit.sink {
+            let spec = super::audit::audit_sink_spec(spec);
+            let (sink, _on_full) = build_sink(&spec, config.pretty, &config).await;
+            Some(Arc::new(tokio::sync::Mutex::new(sink)))
+        } else {
+            None
+        };
+        let log = Arc::new(super::audit::AuditLog::new(
+            store.clone(),
+            super::audit::AuditConfig {
+                max_entries: config.audit.max_entries,
+                max_age: config.audit.max_age,
+                max_body_bytes: config.audit.max_body_bytes,
+            },
+            metrics.clone(),
+            sink,
+        ));
+        log.prune().await;
+        tracing::info!("API audit trail enabled");
+        Some(log)
+    } else {
+        None
+    };
+    let audit_for_save = audit_log.clone();
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -877,6 +912,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         risk_swap: risk_swap.clone(),
         risk_state: risk_state.clone(),
         disposition_state,
+        audit: audit_log,
     };
 
     let app = Router::new()
@@ -914,10 +950,21 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/schemas", get(schemas_full).delete(schemas_reset))
         .route("/api/v1/schemas/suggestions", get(schema_suggestions))
         .route("/api/v1/tap", get(tap_stream))
-        .route("/api/v1/detections/stream", get(detections_stream));
+        .route("/api/v1/detections/stream", get(detections_stream))
+        .route("/api/v1/audit", get(list_audit));
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
+
+    // Control-plane audit trail (opt-in via `--state-db`). Mounted before auth
+    // so auth stays outermost and can reject before body buffering.
+    let app = match audit_for_save.as_ref() {
+        Some(audit) => app.route_layer(axum::middleware::from_fn_with_state(
+            audit.clone(),
+            super::audit::audit_middleware,
+        )),
+        None => app,
+    };
 
     // Bearer-token auth (opt-in). Mounted with `Router::route_layer` so it
     // runs only for matched routes (a 404 needs no credentials) and after
@@ -1244,6 +1291,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         let save_risk_swap = risk_swap.clone();
         let save_risk_state = risk_state.clone();
         let save_dispositions = disposition_state_for_save.clone();
+        let save_audit = audit_for_save.clone();
         tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(tokio::time::Duration::from_secs(save_interval_secs));
@@ -1297,6 +1345,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                     && let Err(e) = save_store.save_dispositions(&snap).await
                 {
                     tracing::warn!(error = %e, "Failed to save disposition snapshot");
+                }
+                if let Some(audit) = save_audit.as_ref() {
+                    audit.prune().await;
                 }
             }
         });
@@ -2558,6 +2609,51 @@ fn dispositions_disabled() -> Response {
         })),
     )
         .into_response()
+}
+
+/// Build the `503` body returned by `GET /api/v1/audit` when the audit trail
+/// is disabled (no `--state-db`, or explicitly turned off in config).
+fn audit_disabled() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "audit trail disabled",
+            "hint": "restart the daemon with --state-db (audit auto-enables; disable with daemon.api.audit.enabled: false)"
+        })),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditQuery {
+    limit: Option<u64>,
+    offset: Option<u64>,
+    since: Option<i64>,
+    until: Option<i64>,
+}
+
+/// `GET /api/v1/audit` — paginated control-plane mutation audit log.
+async fn list_audit(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AuditQuery>,
+) -> Response {
+    let Some(audit) = state.audit.as_ref() else {
+        return audit_disabled();
+    };
+    let limit = query.limit.unwrap_or(100).min(1000);
+    let offset = query.offset.unwrap_or(0);
+    match audit.query(limit, offset, query.since, query.until).await {
+        Ok((count, entries)) => Json(serde_json::json!({
+            "count": count,
+            "entries": entries,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 /// `POST /api/v1/dispositions` — ingest one or more analyst dispositions (a

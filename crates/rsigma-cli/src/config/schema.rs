@@ -203,6 +203,10 @@ pub(crate) struct ApiPartial {
     /// Absent = no authentication (all routes open, as before).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthPartial>,
+    /// Control-plane API audit trail (requires `--state-db`). Auto-enabled
+    /// when a state database is configured; tune retention or disable here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<AuditPartial>,
 }
 
 impl Merge for ApiPartial {
@@ -215,8 +219,31 @@ impl Merge for ApiPartial {
             // config (a token granted in /etc could survive an override in
             // ./rsigma.yaml).
             auth: over.auth.or(self.auth),
+            audit: over.audit.or(self.audit),
         }
     }
+}
+
+/// Control-plane API audit trail settings (`daemon.api.audit`). Requires
+/// `--state-db`; auto-enabled when a state database is configured.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct AuditPartial {
+    /// Explicit enable/disable. Default: enabled when `--state-db` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Maximum rows retained after pruning (newest kept). Default: 10000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_entries: Option<u64>,
+    /// Maximum age of retained rows (e.g. `720h`, `30d`). Default: 720h.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age: Option<String>,
+    /// Maximum request body bytes buffered for SHA-256 digest. Default: 65536.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_body_bytes: Option<u64>,
+    /// Optional sink spec for audit JSON lines (`on_full=drop` appended when
+    /// absent). The SQLite table is always written when audit is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sink: Option<String>,
 }
 
 /// Bearer-token authentication for the daemon API. Token secrets never live
@@ -1031,6 +1058,7 @@ mod tests {
                     addr: Some("0.0.0.0:9090".into()),
                     tls: None,
                     auth: None,
+                    audit: None,
                 }),
                 ..Default::default()
             }),
@@ -1043,6 +1071,7 @@ mod tests {
                     addr: Some("127.0.0.1:8080".into()),
                     tls: None,
                     auth: None,
+                    audit: None,
                 }),
                 ..Default::default()
             }),

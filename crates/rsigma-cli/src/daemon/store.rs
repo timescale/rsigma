@@ -56,6 +56,16 @@ impl SqliteStateStore {
                 snapshot TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS rsigma_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                method TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                token TEXT,
+                payload_digest TEXT,
+                status INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_rsigma_audit_ts ON rsigma_audit_log(ts);
             "#,
         )
         .map_err(|e| format!("init sqlite schema: {e}"))?;
@@ -300,6 +310,136 @@ impl SqliteStateStore {
         .map_err(|e| format!("spawn_blocking: {e}"))?
     }
 
+    /// Append one control-plane API audit record.
+    pub async fn insert_audit(&self, rec: &super::audit::AuditRecord) -> Result<(), String> {
+        let conn = self.conn.clone();
+        let method = rec.method.clone();
+        let endpoint = rec.endpoint.clone();
+        let token = rec.token.clone();
+        let payload_digest = rec.payload_digest.clone();
+        let ts = rec.ts;
+        let status = i64::from(rec.status);
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            c.execute(
+                "INSERT INTO rsigma_audit_log
+                    (ts, method, endpoint, token, payload_digest, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![ts, method, endpoint, token, payload_digest, status],
+            )
+            .map_err(|e| format!("insert audit record: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
+
+    /// Query audit records newest-first. Returns `(total_matching, page)`.
+    pub async fn query_audit(
+        &self,
+        limit: u64,
+        offset: u64,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<(u64, Vec<super::audit::AuditRecord>), String> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            let mut clauses = Vec::new();
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(s) = since {
+                clauses.push("ts >= ?");
+                params.push(Box::new(s));
+            }
+            if let Some(u) = until {
+                clauses.push("ts <= ?");
+                params.push(Box::new(u));
+            }
+            let where_sql = if clauses.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", clauses.join(" AND "))
+            };
+            let count_sql = format!("SELECT COUNT(*) FROM rsigma_audit_log{where_sql}");
+            let count: i64 = {
+                let mut stmt = c
+                    .prepare(&count_sql)
+                    .map_err(|e| format!("prepare audit count: {e}"))?;
+                let params_ref: Vec<&dyn rusqlite::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                stmt.query_row(params_ref.as_slice(), |row| row.get(0))
+                    .map_err(|e| format!("query audit count: {e}"))?
+            };
+            let count = count as u64;
+            let select_sql = format!(
+                "SELECT id, ts, method, endpoint, token, payload_digest, status
+                 FROM rsigma_audit_log{where_sql}
+                 ORDER BY id DESC
+                 LIMIT ? OFFSET ?"
+            );
+            let mut stmt = c
+                .prepare(&select_sql)
+                .map_err(|e| format!("prepare audit query: {e}"))?;
+            let mut select_params: Vec<Box<dyn rusqlite::ToSql>> = params;
+            select_params.push(Box::new(limit as i64));
+            select_params.push(Box::new(offset as i64));
+            let select_ref: Vec<&dyn rusqlite::ToSql> =
+                select_params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt
+                .query_map(select_ref.as_slice(), |row| {
+                    Ok(super::audit::AuditRecord {
+                        id: Some(row.get(0)?),
+                        ts: row.get(1)?,
+                        method: row.get(2)?,
+                        endpoint: row.get(3)?,
+                        token: row.get(4)?,
+                        payload_digest: row.get(5)?,
+                        status: row.get::<_, i64>(6)? as u16,
+                    })
+                })
+                .map_err(|e| format!("query audit rows: {e}"))?;
+            let mut entries = Vec::new();
+            for row in rows {
+                entries.push(row.map_err(|e| format!("read audit row: {e}"))?);
+            }
+            Ok((count, entries))
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
+
+    /// Drop records older than `age_cutoff_ts`, then trim to the newest
+    /// `max_entries` rows by id.
+    pub async fn prune_audit(&self, max_entries: u64, age_cutoff_ts: i64) -> Result<(), String> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|_| "state store lock poisoned")?;
+            c.execute(
+                "DELETE FROM rsigma_audit_log WHERE ts < ?1",
+                rusqlite::params![age_cutoff_ts],
+            )
+            .map_err(|e| format!("prune audit by age: {e}"))?;
+            let count: i64 = c
+                .query_row("SELECT COUNT(*) FROM rsigma_audit_log", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| format!("count audit rows: {e}"))?;
+            let excess = count - max_entries as i64;
+            if excess > 0 {
+                c.execute(
+                    "DELETE FROM rsigma_audit_log WHERE id IN (
+                        SELECT id FROM rsigma_audit_log ORDER BY id ASC LIMIT ?1
+                     )",
+                    rusqlite::params![excess],
+                )
+                .map_err(|e| format!("prune audit by count: {e}"))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?
+    }
+
     /// Load the most recent risk-accumulator snapshot, if any.
     pub async fn load_risk(&self) -> Result<Option<RiskStateSnapshot>, String> {
         let conn = self.conn.clone();
@@ -515,5 +655,48 @@ mod tests {
 
         let loaded = store.load_risk().await.unwrap().unwrap();
         assert_eq!(loaded.version, rsigma_runtime::RISK_SNAPSHOT_VERSION);
+    }
+
+    #[tokio::test]
+    async fn audit_insert_query_and_prune() {
+        use super::super::audit::AuditRecord;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = SqliteStateStore::open(&db).unwrap();
+
+        let rec = AuditRecord {
+            id: None,
+            ts: 1000,
+            method: "POST".into(),
+            endpoint: "/api/v1/silences".into(),
+            token: Some("op".into()),
+            payload_digest: Some("abc123".into()),
+            status: 201,
+        };
+        store.insert_audit(&rec).await.unwrap();
+
+        let (count, entries) = store.query_audit(10, 0, None, None).await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].method, "POST");
+        assert_eq!(entries[0].token.as_deref(), Some("op"));
+        assert_eq!(entries[0].status, 201);
+
+        let old = AuditRecord {
+            id: None,
+            ts: 1,
+            method: "POST".into(),
+            endpoint: "/api/v1/reload".into(),
+            token: None,
+            payload_digest: None,
+            status: 200,
+        };
+        store.insert_audit(&old).await.unwrap();
+        store.prune_audit(1, 500).await.unwrap();
+
+        let (count, entries) = store.query_audit(10, 0, None, None).await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(entries[0].endpoint, "/api/v1/silences");
     }
 }
