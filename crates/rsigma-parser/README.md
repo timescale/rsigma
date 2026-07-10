@@ -63,6 +63,8 @@ The `lint::fix` module turns these into concrete edits on a YAML source string w
 
 The CLI (`rule lint --fix`), the LSP, and the MCP server's `fix_rules` tool all share this one implementation.
 
+The auto-fix implementation is enabled by the default `fix` feature. Disable default features when only parsing and lint diagnostics are needed, including for `wasm32-unknown-unknown` builds; this omits the tree-sitter-based `yamlpath`/`yamlpatch` dependencies and the `lint::fix` module.
+
 ### Lint Catalogue
 
 `lint::catalogue::catalogue() -> Vec<LintRuleInfo>` returns programmatic metadata for every lint rule (stable id, default severity, fix disposition, one-line description). It is generated from a single list whose exhaustive match makes adding a `LintRule` variant without a catalogue entry a compile error.

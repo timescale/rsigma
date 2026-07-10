@@ -13,4 +13,5 @@ nav:
   - Builtin Pipelines: builtin-pipelines.md
   - Dynamic Pipeline Sources: dynamic-sources.md
   - Security Hardening: security.md
+  - WASM ABI: wasm-abi.md
   - Architecture: architecture.md

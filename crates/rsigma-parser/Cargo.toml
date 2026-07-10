@@ -9,6 +9,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+default = ["fix"]
+fix = ["dep:yamlpatch", "dep:yamlpath"]
+
 [dependencies]
 globset = "0.4"
 log = "0.4"
@@ -16,8 +20,8 @@ pest = "2"
 pest_derive = "2"
 serde = { version = "1", features = ["derive"] }
 yaml_serde = "0.10"
-yamlpath = "1.25"
-yamlpatch = "1.25"
+yamlpath = { version = "1.25", optional = true }
+yamlpatch = { version = "1.25", optional = true }
 serde_json = "1"
 thiserror = "2"
 

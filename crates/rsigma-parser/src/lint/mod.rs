@@ -20,6 +20,7 @@
 //! ```
 
 pub mod catalogue;
+#[cfg(feature = "fix")]
 pub mod fix;
 mod rules;
 

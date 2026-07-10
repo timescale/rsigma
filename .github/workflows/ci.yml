@@ -53,6 +53,43 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --all-features --locked
 
+  wasm:
+    name: WASM build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read repo
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust stable with WASM target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
+          rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Compile the embeddable crates for wasm without default features. This
+      # catches any dependency (tokio, rayon, a C-building crate, ...) that
+      # would break the WASM build before it ships.
+      - run: cargo build --release --target wasm32-unknown-unknown -p rsigma-parser -p rsigma-eval --no-default-features --locked
+      # Prove the crates actually run under a JavaScript-free host. The fixture
+      # links parser + eval into a cdylib and self-tests parse/compile/evaluate;
+      # a transitive `wasm-bindgen` import would fail instantiation here, and a
+      # semantic regression would trap the module.
+      - name: Install Wasmtime
+        uses: taiki-e/install-action@682e7d9e49c5e653d371fc6adbda67653461378a # v2.82.4
+        with:
+          tool: wasmtime
+      - name: Instantiate the WASM module in a host-neutral runtime
+        run: |
+          cargo build --release --target wasm32-unknown-unknown \
+            --manifest-path ci/wasm-smoke/Cargo.toml \
+            --target-dir "${RUNNER_TEMP}/wasm-smoke-target" --locked
+          wasmtime run --invoke run_selftest \
+            "${RUNNER_TEMP}/wasm-smoke-target/wasm32-unknown-unknown/release/rsigma_wasm_smoke.wasm"
+
   msrv:
     name: MSRV (1.88.0)
     runs-on: ubuntu-latest

@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### WASM ABI contract and build compatibility (#306)
+
+Documents ABI version 1 for future direct `wasm32-unknown-unknown` hosts, including the linear-memory ownership model, packed status/result values, result descriptors, stable JSON error envelopes, and compatibility rules. CI builds `rsigma-parser` and `rsigma-eval` for `wasm32-unknown-unknown` with default features disabled, then instantiates a module linking them in a JavaScript-free runtime (Wasmtime) to prove it runs and carries no JavaScript imports.
+
+- `rsigma-parser` gains a default-on `fix` feature around the source-preserving `yamlpath`/`yamlpatch` auto-fix implementation. Parsing, validation, lint diagnostics, and fix metadata remain available without it.
+- `rsigma-eval` disables `rsigma-parser` default features because evaluation does not use the auto-fix implementation, uses compile-time AHash seeding only on `wasm32-unknown-unknown`, and drops `chrono`'s `wasmbind` feature on that target so the module stays host-neutral (no `wasm-bindgen`/`js-sys` imports). Native targets retain runtime-randomized hashing and the default `chrono` behavior.
+- The first-party `rsigma-wasm` guest crate and published `.wasm` artifact do not ship in this change.
+
 ### De-flaked the daemon schema-observer E2E test on Windows (#305)
 
 `SchemaObserver::observe` bumped its `events_observed` counter before recording the classification result, so the `/api/v1/schemas` snapshot (served on a different thread than event ingestion) could report `events_observed == N` while the Nth event's `classified`/`unknown` increment had not yet landed. A reader that waited on `events_observed` then read a torn snapshot with `unknown` short by one, which surfaced as a Windows CI failure in `schemas_endpoint_reports_per_schema_and_unknown_counts`. `events_observed` is now derived as `classified + unknown` inside the snapshot, so every snapshot is internally consistent regardless of thread interleaving.

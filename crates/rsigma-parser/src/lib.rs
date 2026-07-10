@@ -78,6 +78,7 @@ pub use ast::{
 pub use condition::parse_condition;
 pub use error::{Result, SigmaParserError, SourceLocation};
 pub use lint::catalogue::{LintRuleInfo, catalogue};
+#[cfg(feature = "fix")]
 pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};
 pub use lint::{
     AdsConfig, FileLintResult, Fix, FixDisposition, FixPatch, InlineSuppressions, LintConfig,

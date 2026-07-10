@@ -10,7 +10,7 @@ members = [
     "crates/rsigma-lsp",
     "crates/rstix",
 ]
-exclude = ["fuzz"]
+exclude = ["fuzz", "ci/wasm-smoke"]
 
 [workspace.package]
 version = "0.18.0"

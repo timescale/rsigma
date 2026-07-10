@@ -100,6 +100,7 @@ Full inventory: [Feature flags reference](../reference/feature-flags.md).
 
 ## See also
 
+- [WASM ABI](../reference/wasm-abi.md) for the stable `wasm32-unknown-unknown` host/guest contract and current build-compatibility guarantee.
 - [Architecture](../reference/architecture.md) for how the crates fit together at runtime.
 - [Benchmarks](../benchmarks.md) for the per-crate Criterion results.
 - [Per-crate READMEs](https://github.com/timescale/rsigma/tree/main/crates) for the source-tracked, contributor-facing reference.
