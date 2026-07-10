@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Daemon API authentication (bearer tokens + granular RBAC)
+### Daemon API authentication (bearer tokens + granular RBAC) (#304)
 
 Adds opt-in bearer-token authentication with `resource:action` permissions to the daemon API. Off by default: without configuration the routes stay open as before, and `GET /healthz` / `GET /readyz` are always unauthenticated so liveness probes never need secrets.
 
