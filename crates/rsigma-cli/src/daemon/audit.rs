@@ -90,13 +90,13 @@ impl AuditLog {
             match store.insert_audit(&rec).await {
                 Ok(()) => {
                     metrics.audit_records_total.inc();
-                    if let Some(sink) = sink {
-                        if let Ok(json) = serde_json::to_string(&rec) {
-                            let mut s = sink.lock().await;
-                            if let Err(e) = s.send_raw(&json).await {
-                                tracing::warn!(error = %e, "audit sink emission failed");
-                                metrics.audit_write_errors_total.inc();
-                            }
+                    if let Some(sink) = sink
+                        && let Ok(json) = serde_json::to_string(&rec)
+                    {
+                        let mut s = sink.lock().await;
+                        if let Err(e) = s.send_raw(&json).await {
+                            tracing::warn!(error = %e, "audit sink emission failed");
+                            metrics.audit_write_errors_total.inc();
                         }
                     }
                 }
