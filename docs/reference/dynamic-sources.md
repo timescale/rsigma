@@ -107,7 +107,7 @@ Reads a local file, parses it according to `format`, applies `extract` if set, a
 
 ### `http`
 
-GET (or other method) request, response body parsed and optionally extracted. Uses `reqwest`.
+GET (or other method) request, response body parsed and optionally extracted. Uses `reqwest`. A request may carry a `body` for query APIs that require one (GraphQL, `_search`, TheHive 5's `/api/v1/query`).
 
 ```yaml
 - id: ip_blocklist
@@ -115,19 +115,36 @@ GET (or other method) request, response body parsed and optionally extracted. Us
   url: https://feeds.example.com/blocklist.json
   format: json
   extract: ".ips"
-  method: GET                  # default
+  method: GET                  # default (POST when a body is set)
   headers:                     # optional
-    Authorization: "Bearer ${env:FEED_TOKEN}"
+    Authorization: "Bearer ${FEED_TOKEN}"
   timeout: 10s                 # default 30s
   refresh: 300s
   on_error: use_cached
 ```
 
+A POST query with a request body:
+
+```yaml
+- id: thehive_cases
+  type: http
+  url: https://thehive.example.com/api/v1/query
+  headers:
+    Authorization: "Bearer ${THEHIVE_API_KEY}"
+    Content-Type: application/json
+  body: |
+    {"query": [{"_name": "listCase"}, {"_name": "filter", "_field": "status", "_value": "Resolved"}]}
+  format: json
+  extract: ".[]"
+  refresh: 300s
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `url` | string | yes | Full HTTP(S) URL. |
-| `method` | string | no | `GET` (default), `POST`, `PUT`, etc. |
-| `headers` | mapping | no | Request headers. Static values only; env-variable interpolation is not implemented. |
+| `method` | string | no | `GET` (default), `POST`, `PUT`, etc. Defaults to `POST` when `body` is set. |
+| `headers` | mapping | no | Request headers. `${VAR}` references are expanded from the environment at fetch time, so tokens stay out of the committed YAML. |
+| `body` | string | no | Request body sent verbatim after `${VAR}` expansion. Set `Content-Type` in `headers`; the engine does not infer it. |
 | `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
 | `extract` | string or object | no | Filter applied after parsing. |
 | `timeout` | duration | no | Request timeout. Default `30s`. |
