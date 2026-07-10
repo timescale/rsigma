@@ -35,10 +35,6 @@ error_cases! {
         path: "process:image_ref._ref.name".into(),
         msg: "object `identity--00000000-0000-0000-0000-000000000001` is not an SCO".into(),
     },
-    "ref-resolution-property-absent" => PatternMatchError::RefResolution {
-        path: "process:image_ref._ref.name".into(),
-        msg: "property `image_ref` is absent or not a reference".into(),
-    },
     "not-single-observation" => PatternMatchError::NotSingleObservation,
     "too-many-observations" => PatternMatchError::TooManyObservations {
         count: 257,

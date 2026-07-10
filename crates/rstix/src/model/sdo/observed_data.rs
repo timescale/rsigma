@@ -5,9 +5,13 @@ use std::collections::BTreeMap;
 use crate::core::{QueryValue, QueryableStixObject, SpecVersion, StixId, StixTimestamp};
 use crate::model::ModelError;
 use crate::model::common::SdoSroCommonProps;
-use crate::model::sco::{ScoObject, deserialize_sco_object_from_value};
+use crate::model::sco::ScoObject;
+#[cfg(feature = "serde")]
+use crate::model::sco::deserialize_sco_object_from_value;
 use crate::model::sdo::validate_number_observed;
-use crate::model::sro::{SroObject, deserialize_sro_object_from_value};
+use crate::model::sro::SroObject;
+#[cfg(feature = "serde")]
+use crate::model::sro::deserialize_sro_object_from_value;
 use crate::model::validate::validate_sco_or_sro_ref;
 
 /// Embedded object in the deprecated observed-data `objects` map (STIX §4.14.1).
@@ -35,6 +39,7 @@ impl ObservedDataEmbeddedObject {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn collect_internal_refs(&self, refs: &mut Vec<StixId>) {
         use crate::model::stix_object::StixObject;
         match self {

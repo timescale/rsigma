@@ -1,0 +1,8 @@
+{
+  "type": "network-traffic",
+  "spec_version": "2.1",
+  "id": "network-traffic--00000000-0000-0000-0000-000000000513",
+  "protocols": ["tcp"],
+  "src_ref": "ipv4-addr--00000000-0000-0000-0000-000000000521",
+  "dst_ref": "ipv4-addr--00000000-0000-0000-0000-000000000522"
+}

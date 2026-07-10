@@ -1,6 +1,7 @@
 //! Typed reference enums for SDO embedded relationships.
 
 use crate::core::{ArtifactId, FileId, NetworkTrafficId, StixId};
+#[cfg(feature = "serde")]
 use crate::model::ModelError;
 
 /// Malware `sample_refs` target (STIX §4.11.1 — file or artifact).

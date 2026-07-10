@@ -5,8 +5,10 @@ mod context;
 mod error;
 mod eval;
 mod lexer;
+mod normalize;
 mod parser;
 mod path;
+mod print;
 mod security;
 mod typeck;
 
@@ -85,7 +87,8 @@ impl Pattern {
     ///
     /// Returns [`PatternMatchError::NotSingleObservation`] when the pattern contains
     /// temporal or multi-observation operators. Returns [`PatternMatchError::RefResolution`]
-    /// when a `_ref` chain cannot be resolved.
+    /// when a present `_ref` cannot be resolved in the bundle (missing target, non-SCO).
+    /// Absent optional `_ref` properties yield no match for comparisons and `false` for `EXISTS`.
     pub fn matches_single_with_bundle(
         &self,
         sco: &ScoObject,
@@ -104,6 +107,27 @@ impl Pattern {
         bundle: &Bundle,
     ) -> Result<bool, PatternMatchError> {
         eval::evaluate_observed_data(&self.ast, observed_data, bundle)
+    }
+
+    /// Render this pattern as a canonical STIX pattern string.
+    pub fn canonical(&self) -> String {
+        print::print(&self.ast)
+    }
+}
+
+/// Parse a STIX pattern AST without running the type-checker (validation pipeline phase 7).
+pub fn parse_ast(source: &str) -> Result<PatternAst, PatternError> {
+    parser::parse(source)
+}
+
+/// Type-check a parsed STIX pattern AST (validation pipeline phase 8).
+pub fn type_check_ast(ast: &PatternAst) -> Result<(), PatternError> {
+    typeck::type_check(ast)
+}
+
+impl std::fmt::Display for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&print::print(&self.ast))
     }
 }
 

@@ -244,11 +244,19 @@ fn ref_resolution_property_absent() {
     )
     .expect("bundle");
     let pattern = Pattern::parse("[process:image_ref.name = 'proc.exe']").expect("pattern");
-    let err = pattern
-        .matches_single_with_bundle(&process, Some(&bundle))
-        .unwrap_err();
-    assert!(matches!(err, PatternMatchError::RefResolution { .. }));
-    assert!(err.to_string().contains("absent or not a reference"));
+    assert!(
+        !pattern
+            .matches_single_with_bundle(&process, Some(&bundle))
+            .expect("eval"),
+        "absent optional _ref must not match comparison"
+    );
+    let exists = Pattern::parse("[EXISTS process:image_ref]").expect("parse");
+    assert!(
+        !exists
+            .matches_single_with_bundle(&process, Some(&bundle))
+            .expect("eval"),
+        "EXISTS on absent optional _ref is false"
+    );
 }
 
 #[test]

@@ -15,6 +15,44 @@ Adds opt-in bearer-token authentication with `resource:action` permissions to th
 - **Failure semantics.** Missing or invalid credentials get `401` with `WWW-Authenticate: Bearer`; a recognized token without the required permission gets `403` naming the missing permission. OTLP/gRPC clients authenticate with the same `authorization` metadata and receive `UNAUTHENTICATED`/`PERMISSION_DENIED` status codes. Rejections increment the new `rsigma_api_auth_failures_total{reason}` counter and log at warn with the token name, never the secret. The established identity is attached to the request for handlers to attribute the call.
 - **Docs.** New Authentication sections in the HTTP API reference (per-endpoint permission table), the security reference, and the `engine daemon` CLI page; the config template and configuration reference cover the `daemon.api.auth` block.
 
+### rstix Validation Pipeline: all twelve checks (`validate` feature) (#298)
+
+Implements the full validation check set behind `validate`:
+
+* **All twelve checks** — schema, ID structure, property types, open vocabulary, pattern parse/semantic, references, cross-object semantics, extension resolution, and TLP marking computation are wired through the dispatcher (no `STIX-I0020` stubs).
+* **Shared helpers** — `model_bridge`, `object_validate`, `semantic`, and `wire` modules map `ModelError` / wire JSON to pipeline diagnostics; overlapping `Bundle::validate()` findings migrate to `STIX-E/W/I` codes per DD-VP-001.
+* **Pattern split** — `Pattern::parse_ast` and `Pattern::type_check_ast` expose parse-only vs type-check phases for `STIX-E0010` / `STIX-E0011`.
+* **Integration tests** — validation fixtures assert `STIX-W0031`, `STIX-E0024`, `STIX-I0002`, and `STIX-W0010` through `Validator::consumer_strict()`.
+* **Conformance harness hardening** — conformance tests are locked to bundled in-repo fixtures for deterministic CI (no external env override path).
+
+### rstix Validation Pipeline scaffold (`validate` feature) (#297)
+
+Adds the profile-based **Validation Pipeline** module behind the optional `validate` feature (implies `serde` + `pattern`):
+
+* **`Validator` / `ValidatorBuilder`** — four named profiles (`consumer_permissive`, `consumer_strict`, `producer_strict`, `interop_strict`) and custom check selection.
+* **`Diagnostic` / `DiagnosticCode` / `Severity`** — structured `STIX-E/W/I/H` taxonomy with `ValidationReport::is_valid()` (no Error-severity diagnostics).
+* **Raw JSON entry** — `validate_json_str` / `validate_json_value` emit `STIX-E0001` on malformed JSON (line/column span) instead of panicking or failing only at deserialize.
+* **Check dispatcher** — all twelve `ValidationPhase` variants wired; remaining check implementations follow in a later release.
+* **Leniency** — `ValidationReport::is_valid()` respects profile policy (`Standard` vs `Zero` for interop); `STIX-H0001` hint taxonomy wired.
+* **Type discrimination scaffold** — non-bundle JSON roots emit `STIX-E0002` with `property_path` / `fix_suggestion`; `ValidatorBuilder::with_allow_custom` and `with_parse_options` expose parse policy.
+* **Stub visibility** — not-yet-implemented checks emit informational `STIX-I0020`; profile rustdoc and [`Validator::implemented_phases`] document current coverage.
+* **DD-VP-001** — documents the boundary between advisory `Bundle::validate()` (`model::ValidationReport`) and `validate::Validator`.
+* **`fuzz_rstix_validate_json`** — libFuzzer target over `Validator::validate_json_str`; seeds in `fuzz/seeds/fuzz_rstix_validate_json/`.
+
+### rstix Pattern Engine: canonical printer, Indicator wiring, and pattern semantics (#296)
+
+Adds the remaining `pattern` feature pieces for STIX indicator patterns and closes §9.6.1 evaluation semantics:
+
+* **`Pattern::canonical` / `Display`** — AST → canonical STIX pattern string; parse → print → parse preserves semantics (§9.8 fixture round-trips).
+* **`IndicatorPattern::Stix { parsed }`** — STIX indicators deserialize with `Pattern::parse(raw)` when `pattern` is enabled; invalid patterns fail at deserialize time.
+* **`IndicatorPattern::evaluate` / `evaluate_observed_data`** — delegate to the parsed pattern for STIX indicators; `NonStixPattern` for YARA/Snort/etc.
+* **`IndicatorBuilder`** — fluent programmatic construction of indicators (`stix_pattern`, `external_pattern`, `valid_from`, kill-chain phases); STIX patterns parse and type-check at `build()` when `pattern` is enabled; runs [`Indicator::validate`]. Design decision [DD-PE-001](docs/library/rstix.md#dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters) documents why validation runs at `build()` rather than in setters.
+* **`fuzz_stix_pattern`** — libFuzzer target over parse + canonical print; seeds in `fuzz/seeds/fuzz_stix_pattern/` (§9.8 fixture lines).
+* **`LIKE` / `MATCHES` NFC normalization** — pattern constants and string property haystacks NFC-normalized before comparison.
+* **`MATCHES` PCRE DOTALL** — regex compilation enables `.` across newlines per §9.6.1.
+* **`evaluate()` with `at: None`** — non-temporal patterns accept observations without timestamps; temporal patterns still return `MissingTimestamp`.
+* **Absent optional `_ref` properties** — comparisons do not match; `EXISTS` is false; dangling or non-SCO targets still return `RefResolution`.
+
 ### De-flaked the TLS misconfiguration E2E tests on macOS (#295)
 
 `spawn_expect_failure` in the CLI test harness raced the daemon's exit against its stderr: the collection loop broke as soon as `try_wait()` saw the process gone, so when a misconfigured daemon failed fast (as `encrypted_key_password_is_rejected_with_guidance` does, the encrypted-key check being the first thing TLS init runs), the reader thread could still be holding the error line and the test asserted against empty stderr. The helper now drains the channel after reaping the child; closing the pipe ends the reader thread, so the drain terminates deterministically.

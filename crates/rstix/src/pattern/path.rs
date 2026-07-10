@@ -886,10 +886,10 @@ fn resolve_ref_property<'a>(
             .collect::<Result<Vec<_>, _>>();
     }
 
-    let id = ref_id_for_property(sco, name).ok_or_else(|| PatternMatchError::RefResolution {
-        path: path_str.to_owned(),
-        msg: format!("property `{name}` is absent or not a reference"),
-    })?;
+    let id = match ref_id_for_property(sco, name) {
+        Some(id) => id,
+        None => return Ok(Vec::new()),
+    };
     Ok(vec![resolve_id(bundle, id, path_str)?])
 }
 

@@ -19,6 +19,10 @@ pub mod pattern;
 /// STIX 2.1 data model: typed objects and common properties.
 pub mod model;
 
+/// Profile-based STIX 2.1 validation pipeline.
+#[cfg(feature = "validate")]
+pub mod validate;
+
 #[cfg(feature = "serde")]
 mod serde_impls;
 
@@ -82,6 +86,12 @@ pub enum ParseError {
 
 #[cfg(feature = "pattern")]
 pub use pattern::{Pattern, PatternAst, PatternError, PatternMatchError, PatternScoType};
+
+#[cfg(feature = "validate")]
+pub use validate::{
+    Diagnostic, DiagnosticCode, Leniency, Severity, SourceSpan, ValidationPhase,
+    ValidationReport as PipelineValidationReport, Validator, ValidatorBuilder,
+};
 
 #[cfg(feature = "serde")]
 pub use model::{

@@ -26,7 +26,7 @@ impl TemplateExpander {
         let mut expanded = pipeline.clone();
 
         // Expand vars
-        for (_var_name, values) in expanded.vars.iter_mut() {
+        for values in expanded.vars.values_mut() {
             let mut new_values = Vec::new();
             for val in values.iter() {
                 if let Some(expanded_vals) = Self::expand_string_value(val, resolved) {

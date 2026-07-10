@@ -6,7 +6,7 @@
 **Core Foundation** is complete: core primitive types, deterministic SCO ID helpers,
 and vocabulary tables are available for downstream model/validation phases.
 
-**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and the semantic **validation pipeline** (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** parse, type-check, and evaluation are **complete** behind the optional `pattern` feature; canonical printer, graph/store, and TAXII runtime behaviors follow in later work.
+**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and advisory semantic checks (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature. **Validation Pipeline** is **shipped** behind `validate` (profiles, all twelve checks, `STIX-E/W/I/H` diagnostics, raw JSON entry, pattern parse/semantic split). **Graph + Marking + Store** and **TAXII Client** follow later.
 
 This library is part of [rsigma].
 
@@ -36,21 +36,25 @@ This library is part of [rsigma].
 ### Module surface
 
 - `core` (always): `StixId`, typed IDs (42 wrappers), `StixObjectKind` + SDO/SCO/SRO/Meta discriminants, `StixTimestamp`, `TaxiiTimestamp`, `Confidence` and built-in scales, `SpecVersion`, `LanguageTag`, `QueryableStixObject`, `QueryValue`.
-- `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase`, and related types; `model::meta` — `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`, and TLP UUID constants; `model::sdo` — all 19 STIX domain objects, `SdoObject`, `IndicatorPattern`, `ObservedDataForm`, `ObservedDataEmbeddedObject`, and typed ref unions; `model::sro` — `Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`, and typed ref unions; `model::sco` — all 18 STIX cyber-observable types, `ScoObject`, typed ref unions, and 12 predefined SCO extensions; `model::StixObject` — top-level enum dispatching SDO/SCO/SRO/Meta plus `CustomStixObject`; `model::Bundle` — bundle container with ref validation, `x_*` property capture, and `validate()` semantic warnings; `model::ValidationReport` / `ValidationCode` / `ValidationFinding` — SHOULD-level advisory findings; `model::ParseOptions` / `TypeRegistry` — parse-time limits and optional custom type registration.
+- `model` (always): `ModelError`; `model::common` — `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase`, and related types; `model::meta` — `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, `MetaObject`, and TLP UUID constants; `model::sdo` — all 19 STIX domain objects, `SdoObject`, `IndicatorPattern`, `IndicatorBuilder`, `ObservedDataForm`, `ObservedDataEmbeddedObject`, and typed ref unions; `model::sro` — `Relationship`, `Sighting`, `WhereSightedRef`, `SroObject`, and typed ref unions; `model::sco` — all 18 STIX cyber-observable types, `ScoObject`, typed ref unions, and 12 predefined SCO extensions; `model::StixObject` — top-level enum dispatching SDO/SCO/SRO/Meta plus `CustomStixObject`; `model::Bundle` — bundle container with ref validation, `x_*` property capture, and `validate()` semantic warnings; `model::ValidationReport` / `ValidationCode` / `ValidationFinding` — SHOULD-level advisory findings; `model::ParseOptions` / `TypeRegistry` — parse-time limits and optional custom type registration.
 - `id` (always): deterministic SCO ID derivation (`select_id_contributing_properties`, canonicalization, UUIDv5 generation).
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
-- `pattern` (`pattern` feature): `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::evaluate_observed_data`, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError` — STIX Specification §9 Levels 1–3 parse, type-check, and evaluation (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
+- `pattern` (`pattern` feature): `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::evaluate_observed_data`, `Pattern::canonical`, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError`; `IndicatorPattern::parsed_pattern`, `IndicatorPattern::evaluate` — STIX Specification §9 Levels 1–3 parse, type-check, evaluation, and canonical printing (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
+- `validate` (`validate` feature): `Validator`, `ValidatorBuilder` (`with_allow_custom`, `with_parse_options`, `with_phase`), `ValidationPhase`, `Leniency`, `Diagnostic`, `DiagnosticCode`, `Severity`, `SourceSpan`, `PipelineValidationReport` (re-export alias) — profile-based validation pipeline with `validate_json_str`, `validate_json_value`, `validate_bundle`, and `validate_object` (see [Validation Pipeline](#validation-pipeline)).
 - `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId`, timestamps, and `Confidence`; typed-ID serde is generated in the `define_typed_id!` macro.
 
 ## Feature flags
 
 - `serde` (default): enables serialization and deserialization support.
 - `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`).
+- `validate`: profile-based Validation Pipeline (`Validator`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry). Implies `serde` and `pattern`.
 
-## Current Phase Status
+## Current status
 
 - **Data Model + Serialization:** **complete**
-- **Pattern Engine:** **parse + type-check + evaluation complete** (`--features pattern`); canonical printer and Indicator wiring in later Pattern Engine work
+- **Pattern Engine:** **complete** (`--features pattern`)
+- **Validation Pipeline:** all twelve checks implemented (`--features validate`) — profiles + structured diagnostics; conformance completion tracked separately
+- **Next after Validation Pipeline:** **Graph + Marking + Store**
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
 ## Usage
@@ -78,7 +82,7 @@ assert!(json.contains("\"spec_version\":\"2.1\""));
 
 ## Pattern Engine (STIX §9)
 
-The optional **`pattern`** feature adds STIX patterning: parse, type-check, and evaluate Levels 1–3; canonical printer and Indicator AST wiring follow in later Pattern Engine work.
+The optional **`pattern`** feature adds the full STIX patterning engine: parse, type-check, evaluate Levels 1–3, canonical printing, and Indicator AST wiring at deserialize time.
 
 ```mermaid
 flowchart LR
@@ -90,9 +94,8 @@ flowchart LR
     AST --> EVAL["eval.rs<br/>Levels 1–3"]
     CTX["context.rs<br/>ObservationContext"] --> EVAL
     EVAL --> OUT["bool match"]
-
-    PAT -.->|"deferred"| PRINT["print.rs"]
-    IND["IndicatorPattern::Stix"] -.->|"deferred"| PAT
+    AST --> PRINT["print.rs<br/>canonical string"]
+    IND["IndicatorPattern::Stix"] --> PAT
 ```
 
 | Module | Role | Status |
@@ -103,15 +106,17 @@ flowchart LR
 | `pattern/eval.rs` | Level 1–3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Done |
 | `pattern/context.rs` | `ObservationContext`, `TimestampedObservation` (`at: Option<_>`), observed-data builder | Done |
 | `pattern/path.rs` | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle | Done |
-| `pattern/security.rs` | Regex compile size limit for `MATCHES` | Done |
-| `pattern/print.rs` | Canonical pattern printer | Planned |
+| `pattern/security.rs` | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
+| `pattern/print.rs` | Canonical pattern printer (`Pattern::canonical`, `Display`) | Done |
 
 ```rust
 use rstix::Pattern;
+use rstix::model::sdo::Indicator;
 use rstix::pattern::{ObservationContext, TimestampedObservation};
 
 let pattern = Pattern::parse("[ipv4-addr:value = '198.51.100.1/32']")?;
 assert_eq!(pattern.observed_types().len(), 1);
+assert_eq!(pattern.canonical(), "[ipv4-addr:value = '198.51.100.1/32']");
 
 // Level 1: single SCO
 let sco = /* ... */;
@@ -121,27 +126,39 @@ assert!(pattern.matches_single(&sco)?);
 let ctx = ObservationContext::from_scos(&observations);
 assert!(pattern.evaluate(&ctx)?);
 
-// Custom SCO types (STIX §9.8) appear in observed_type_names(), not observed_types().
-let custom = Pattern::parse("[x-usb-device:usbdrive.serial_number = '1']")?;
-assert_eq!(custom.observed_type_names(), vec!["x-usb-device"]);
+// Indicator: STIX patterns carry parsed AST at deserialize time (pattern + serde)
+let indicator: Indicator = serde_json::from_str(json)?;
+indicator.pattern.parsed_pattern()?.evaluate(&ctx)?;
+
+// Programmatic construction (always available; STIX patterns parse at build when `pattern` is on)
+use rstix::model::sdo::IndicatorBuilder;
+let indicator = IndicatorBuilder::with_timestamps(created, modified)
+    .stix_pattern("[ipv4-addr:value = '198.51.100.3']", None)
+    .valid_from(valid_from)
+    .build()?;
 ```
 
-### Scope (parse + type-check + evaluation)
+### Scope (Pattern Engine — complete)
 
-| Shipped in the `pattern` feature | Remaining Pattern Engine work (next slice) |
-| ---------------------------------- | ------------------------------------------ |
-| Lexer, Level 1–3 parser, `PatternAst`, type-checker | Canonical printer (`print.rs`, round-trip AST) |
-| `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | `IndicatorPattern::Stix { ast }` serde wiring |
-| Full §9 evaluation: comparisons (including `MATCHES`, hex/binary), temporal qualifiers, `_ref` paths, custom SCO types | `fuzz_stix_pattern` |
-| `ObservationContext`, observed-data context builder (embedded SRO skipped) | |
-| Spec §9.8 fixture-backed parse + eval tests (`tests/pattern_spec_eval.rs`) | |
+| Shipped in the `pattern` feature |
+| ---------------------------------- |
+| Lexer, Level 1–3 parser, `PatternAst`, type-checker |
+| `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` |
+| Full §9 evaluation: comparisons (including `MATCHES`, hex/binary), temporal qualifiers, `_ref` paths, custom SCO types |
+| `ObservationContext`, observed-data context builder (embedded SRO skipped) |
+| Canonical printer + §9.8 parse/print round-trip tests |
+| `IndicatorPattern::Stix { parsed }` at deserialize; `IndicatorPattern::evaluate` |
+| `IndicatorBuilder` — fluent STIX/external pattern construction; setters store config, validation (parse + [`Indicator::validate`]) at `build()` — same materialization boundary as deserialize |
+| `fuzz_stix_pattern` fuzz target |
+| Spec §9.8 fixture-backed parse + eval tests (`tests/pattern_spec_eval.rs`) |
 
 Authoritative grammar: **STIX Specification §9** (not §8). The `Pattern` struct holds a validated `PatternAst` after parse and type-check.
 
 Evaluation notes (STIX §9):
 
-- **`TimestampedObservation::at`**: `Option<StixTimestamp>`; temporal patterns return `MissingTimestamp` when any observation lacks a timestamp.
-- **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths.
+- **`TimestampedObservation::at`**: `Option<StixTimestamp>`; patterns with `WITHIN`, `FOLLOWEDBY`, `REPEATS`, or `START`/`STOP` return `MissingTimestamp` when any observation lacks a timestamp. Plain observation expressions accept `at: None`.
+- **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths. Absent optional `_ref` properties yield no match for comparisons and `false` for `EXISTS`; present refs that cannot be resolved in the bundle still return `RefResolution`.
+- **`LIKE` / `MATCHES` (§9.6.1)**: pattern constants and string property values are NFC-normalized before comparison; `MATCHES` compiles with PCRE DOTALL (`.` matches newlines) and a 1 MiB compile-size cap (`pattern::security`).
 - **Custom SCO types**: vendor types (e.g. `x-usb-device`) deserialize as `CustomSco` and evaluate nested property paths.
 - **`file:created`**: alias for `ctime`.
 - **`network-traffic:dst_ref.type`**: `_ref` dereference then `type` property on the target SCO.
@@ -151,6 +168,96 @@ Evaluation notes (STIX §9):
 - **Custom SCO types** (`x-usb-device`, …): parsed and type-checked permissively (leaf properties as string).
 
 Fixtures: `tests/fixtures/pattern/` (§9.8 examples) and `tests/fixtures/pattern/sco-fields/` (manifest-driven SCO field paths). Acceptance tests: `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::security`, `pattern::eval`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`.
+
+## Validation Pipeline
+
+The optional **`validate`** feature adds a profile-based validator distinct from advisory [`Bundle::validate()`](model::Bundle::validate) (see **DD-VP-001** below).
+
+```rust
+use rstix::validate::{Validator, ValidationPhase, DiagnosticCode};
+
+let report = Validator::consumer_strict().validate_json_str(untrusted_json);
+if !report.is_valid() {
+    for diag in report.errors() {
+        eprintln!("{}: {}", diag.code, diag.message);
+    }
+}
+
+let custom = Validator::builder()
+    .with_phase(ValidationPhase::Schema)
+    .with_phase(ValidationPhase::References)
+    .build();
+```
+
+| Profile | Checks | Implemented today | Use case |
+| ------- | ------ | ----------------- | -------- |
+| `consumer_permissive` | JSON, type, schema, references | JSON + type | Mixed-trust ingest |
+| `consumer_strict` | all 12 | Full pipeline | Untrusted external input |
+| `producer_strict` | all except references | Full pipeline minus reference resolution | Publishing/export |
+| `interop_strict` | all 12, zero leniency | Full pipeline; warnings fail `is_valid()` | OASIS interop tests |
+
+### Validation Pipeline design decisions
+
+Recorded engineering choices for the `validate` feature. Summaries also appear on the [rstix library page](../../docs/library/rstix.md#validation-pipeline).
+
+<a id="dd-vp-001--bundlevalidate-vs-validatevalidator"></a>
+
+#### DD-VP-001 — `Bundle::validate()` vs `validate::Validator`
+
+| | |
+| --- | --- |
+| **Status** | Accepted |
+| **Applies to** | `validate` feature, `model::Bundle::validate` |
+| **`Bundle::validate()`** | Warning-only SHOULD findings; `model::ValidationReport` + `ValidationCode` enum |
+| **`validate::Validator`** | Profile-driven pipeline; Error/Warning/Info/Hint; OASIS-style string codes |
+
+**Decision.** Use `Validator` for untrusted JSON and named profiles. With `validate` enabled, `Bundle::validate()` delegates to shared pipeline semantics to keep advisory and pipeline behavior aligned. Prefer [`PipelineValidationReport`](crate::PipelineValidationReport) at the crate root when both report types are in scope.
+
+**Current status.** All twelve checks are implemented and active; conformance completion is tracked as a separate follow-up slice.
+
+### Pattern Engine design decisions
+
+Recorded engineering choices for the `pattern` feature and Indicator integration. Summaries also appear on the [rstix library page](../../docs/library/rstix.md#pattern-engine-design-decisions).
+
+<a id="dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters"></a>
+
+#### DD-PE-001 — `IndicatorBuilder` validates at `build()`, not in setters
+
+| | |
+| --- | --- |
+| **Status** | Accepted (Pattern Engine PR 3.6) |
+| **Applies to** | `model::sdo::IndicatorBuilder`, `IndicatorBuilderError` |
+| **Feature** | `pattern` optional for STIX parse; builder API always available |
+
+**Context.** Indicators carry a detection pattern (`pattern` / `pattern_type` / `pattern_version` on the wire). STIX patterns (`pattern_type = stix`) must parse and type-check when the Pattern Engine is enabled. Callers can construct indicators from JSON (deserialize) or programmatically (`IndicatorBuilder`).
+
+**Decision.** `IndicatorBuilder` setters (`stix_pattern`, `name`, `valid_from`, …) only store configuration and return `Self`. All validation runs in `build()`:
+
+1. Required fields present (`common`, `pattern`, `valid_from`).
+2. STIX pattern parse and type-check (`Pattern::parse`) when the `pattern` feature is enabled.
+3. `Indicator::validate()` (time window, kill-chain phases, SDO common props).
+
+`stix_pattern()` stores the raw string; it does **not** parse or return `Result`.
+
+**Rationale.**
+
+- **Same materialization boundary as deserialize.** JSON deserialization parses STIX patterns in `indicator_pattern_from_wire` when the full `Indicator` is constructed, not when individual fields are read. `build()` is the programmatic equivalent of that boundary.
+- **Single validation choke point.** One `IndicatorBuilderError` surface for missing fields, pattern errors, and model invariants — consistent with fluent builders elsewhere (`http::Request::builder`, client builders).
+- **Fluent chain.** Setters return `Self`, so callers use one `?` at the end of the chain instead of after every setter.
+
+**Alternatives considered.**
+
+| Alternative | Why not chosen |
+| ----------- | -------------- |
+| Parse in `stix_pattern() -> Result<Self, _>` | Fail-fast at the call site, but breaks the infallible setter chain (`?` after every step). |
+| Error accumulation (parse in `stix_pattern`, store `Err`, return at `build()`) | Same user-visible outcome as `build()`-time parse with more internal state; no clear benefit for rstix. |
+| Type-state builder (`MissingPattern` → `HasPattern` → `Ready`) | Strongest compile-time guarantees; rejected as disproportionate for Phase 3 scope. |
+
+**Consequences.**
+
+- Invalid STIX patterns surface as `IndicatorBuilderError::Pattern` from `build()`, not from `stix_pattern()`.
+- With `pattern` disabled, `build()` stores `IndicatorPattern::Stix { raw, pattern_version }` without an AST (same as serde-only deserialize).
+- Pre-parsed patterns can be supplied via `.pattern(IndicatorPattern::stix(...)?)` or `.pattern(...)` after calling `Pattern::parse` / `IndicatorPattern::stix` directly.
 
 User-facing docs: [rstix library page](../../docs/library/rstix.md#pattern-engine-stix-9).
 

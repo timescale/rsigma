@@ -4,13 +4,14 @@
 
 Canonical API reference: [docs.rs/rstix](https://docs.rs/rstix). Contributor-facing detail: [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md).
 
-## Phase status
+## Feature status
 
-| Phase | Status |
+| Area | Status |
 | ----- | ------ |
 | **Core Foundation** (`core`, `id`, `vocab`) | Complete |
 | **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete |
-| **Pattern Engine** (`pattern` — `Pattern::parse`, Levels 1–3 parse + type-check + evaluation) | Parse, type-check, and evaluation complete; printer and indicator wiring deferred |
+| **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
+| **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** | Planned |
 | **TAXII Client** | Planned |
 
@@ -42,74 +43,57 @@ let out = serde_json::to_string(&bundle)?;
 
 ## Pattern Engine (STIX §9)
 
-The optional **`pattern`** feature adds STIX patterning: parse, type-check, and evaluate Levels 1–3; canonical printer and Indicator AST wiring follow in later Pattern Engine work.
+The optional **`pattern`** feature adds the full STIX patterning engine.
 
 ```mermaid
 flowchart LR
     SRC["Pattern string"] --> LEX["lexer.rs"]
-    LEX --> PAR["parser.rs<br/>Levels 1–3 AST"]
-    PAR --> TCK["typeck.rs<br/>SCO schema + extensions"]
+    LEX --> PAR["parser.rs"]
+    PAR --> TCK["typeck.rs"]
     TCK --> PAT["Pattern::parse"]
     PAT --> AST["PatternAst"]
-    AST --> EVAL["eval.rs<br/>Levels 1–3"]
-    CTX["context.rs<br/>ObservationContext"] --> EVAL
+    AST --> EVAL["eval.rs"]
+    CTX["ObservationContext"] --> EVAL
     EVAL --> OUT["bool match"]
-
-    PAT -.->|"deferred"| PRINT["print.rs"]
-    IND["IndicatorPattern::Stix"] -.->|"deferred"| PAT
+    AST --> PRINT["print.rs"]
+    IND["IndicatorPattern::Stix"] --> PAT
 ```
 
 | Module | Role | Status |
 | ------ | ---- | ------ |
 | `pattern/lexer.rs` | Tokenizer; 64 KiB input cap | Done |
-| `pattern/parser.rs` | Recursive-descent parser; dict keys, ref-list `[*]`, custom SCO types | Done |
-| `pattern/typeck.rs` | Property paths, `extensions.'…'`, `_ref.type`, ISSUBSET on CIDR strings | Done |
-| `pattern/eval.rs` | Level 1–3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Done |
-| `pattern/context.rs` | `ObservationContext`, `TimestampedObservation`, observed-data context builder | Done |
-| `pattern/security.rs` | Regex compile size limit for `MATCHES` | Done |
-| `pattern/path.rs` | Object-path resolution, CIDR helpers, `_ref` via bundle | Done |
-| `pattern/print.rs` | Canonical pattern printer | Planned |
+| `pattern/parser.rs` | Recursive-descent parser | Done |
+| `pattern/typeck.rs` | SCO schema type-checker | Done |
+| `pattern/eval.rs` | Level 1–3 evaluation | Done |
+| `pattern/context.rs` | `ObservationContext`, observed-data builder | Done |
+| `pattern/security.rs` | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
+| `pattern/path.rs` | Object-path resolution, CIDR, `_ref` via bundle | Done |
+| `pattern/print.rs` | Canonical pattern printer | Done |
 
 ```rust
 use rstix::Pattern;
 use rstix::pattern::{ObservationContext, TimestampedObservation};
 
 let pattern = Pattern::parse("[ipv4-addr:value = '198.51.100.1/32']")?;
-assert_eq!(pattern.observed_types().len(), 1);
+assert_eq!(pattern.canonical(), "[ipv4-addr:value = '198.51.100.1/32']");
 
-// Level 1: single SCO
-let sco = /* ... */;
-assert!(pattern.matches_single(&sco)?);
-
-// Levels 2–3: timestamped observations
 let ctx = ObservationContext::from_scos(&observations);
 assert!(pattern.evaluate(&ctx)?);
-
-// Custom SCO types (STIX §9.8) appear in observed_type_names(), not observed_types().
-let custom = Pattern::parse("[x-usb-device:usbdrive.serial_number = '1']")?;
-assert_eq!(custom.observed_type_names(), vec!["x-usb-device"]);
 ```
 
 Build with `cargo build -p rstix --features pattern`.
 
-### In scope (parse + type-check + evaluation)
+### In scope (Pattern Engine — complete)
 
-Lexer, Level 1–3 parser, SCO schema type-checker (18 built-in + custom types), `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data`, `ObservationContext`, full §9 comparison and temporal semantics (including `MATCHES`, hex/binary constants), manifest-driven SCO field tests (`tests/pattern_eval_sco_fields.rs`, 276 cases), per-operator and error-path integration tests, spec §9.8 fixture tests under `tests/fixtures/pattern/`.
-
-### Remaining Pattern Engine work (next slice)
-
-| Item | Notes |
-| ---- | ----- |
-| Canonical printer + AST round-trip | `print.rs` |
-| `IndicatorPattern::Stix { ast }` serde | Indicator integration |
-| `fuzz_stix_pattern` | Fuzz target |
+Lexer, Level 1–3 parser, SCO schema type-checker (18 built-in + custom types), `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data`, `Pattern::canonical`, `IndicatorPattern` STIX AST wiring at deserialize, `IndicatorPattern::evaluate`, `IndicatorBuilder`, `ObservationContext`, full §9 comparison and temporal semantics, manifest-driven SCO field tests (`tests/pattern_eval_sco_fields.rs`, 276 cases), spec §9.8 parse/print round-trip tests, `fuzz_stix_pattern`.
 
 Grammar authority: **STIX Specification §9**. Internal storage uses `PatternAst` after type-check.
 
 Evaluation notes (STIX §9):
 
-- **`TimestampedObservation::at`**: `Option<StixTimestamp>`; temporal patterns return `MissingTimestamp` when any observation lacks a timestamp.
-- **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths.
+- **`TimestampedObservation::at`**: `Option<StixTimestamp>`; patterns with `WITHIN`, `FOLLOWEDBY`, `REPEATS`, or `START`/`STOP` return `MissingTimestamp` when any observation lacks a timestamp. Plain observation expressions accept `at: None`.
+- **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths. Absent optional `_ref` properties yield no match for comparisons and `false` for `EXISTS`; present refs that cannot be resolved in the bundle still return `RefResolution`.
+- **`LIKE` / `MATCHES` (§9.6.1)**: pattern constants and string property values are NFC-normalized before comparison; `MATCHES` compiles with PCRE DOTALL (`.` matches newlines) and a 1 MiB compile-size cap (`pattern::security`).
 - **Custom SCO types**: vendor types (e.g. `x-usb-device`) deserialize as `CustomSco` and evaluate nested property paths.
 - **`process:name`**: resolved from `image_ref` → file name when a bundle is present, otherwise from the executable token in `command_line`.
 - **`file:created`**: alias for `ctime`.
@@ -122,6 +106,33 @@ Evaluation notes (STIX §9):
 Tests: `tests/fixtures/pattern/` (STIX §9.8), `tests/fixtures/pattern/sco-fields/` (SCO field manifest), `tests/pattern_parse.rs`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, unit modules `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::eval`, `pattern::security`.
 
 Later workspace phases (Graph + Marking + Store, TAXII Client) may index indicators by `Pattern::observed_types()` but do not reimplement pattern grammar.
+
+### Pattern Engine design decisions
+
+Formal record of engineering choices for the Pattern Engine. Full text: [crate README — Pattern Engine design decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#pattern-engine-design-decisions).
+
+<a id="dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters"></a>
+
+#### DD-PE-001 — `IndicatorBuilder` validates at `build()`, not in setters
+
+| | |
+| --- | --- |
+| **Status** | Accepted (Pattern Engine PR 3.6) |
+| **Applies to** | `IndicatorBuilder`, `IndicatorBuilderError` |
+
+**Context.** Indicators need STIX pattern parse/type-check (when `pattern` is enabled) plus `Indicator::validate()`. Construction paths are JSON deserialize and `IndicatorBuilder`.
+
+**Decision.** Setters store configuration only. `build()` is the materialization boundary: required fields, `Pattern::parse` for STIX patterns, then `Indicator::validate()`. `stix_pattern()` does not parse.
+
+**Rationale.**
+
+1. **Parity with deserialize** — wire JSON parses the pattern when the `Indicator` is materialized, not per-field during tokenization.
+2. **One error surface** — missing `valid_from`, bad pattern, and model invariants all return from `build()` as `IndicatorBuilderError`.
+3. **Fluent API** — setters return `Self`; callers use a single `?` at the end of the chain.
+
+**Alternatives not chosen:** parse in `stix_pattern() -> Result<Self, _>` (fail-fast but breaks fluent chain); error accumulation in the builder (same outcome, more state); type-state builder (compile-time safety, out of scope for Phase 3).
+
+**Consequences.** Pattern errors appear at `build()`. With `pattern` off, only the raw string is stored. Callers who want eager parse can use `IndicatorPattern::stix(...)?` and `.pattern(...)`.
 
 ## Public API surface
 
@@ -147,7 +158,7 @@ Later workspace phases (Graph + Marking + Store, TAXII Client) may index indicat
 | --------- | -------- |
 | `common` | `SdoSroCommonProps`, `ScoCommonProps`, `ExternalReference`, `GranularMarking`, `ExtensionMap`, `KillChainPhase` |
 | `meta` | `MarkingDefinition`, `ExtensionDefinition`, `LanguageContent`, TLP UUID constants |
-| `sdo` | All 19 SDOs, `SdoObject`, `IndicatorPattern`, `ObservedDataForm`, `ObservedDataEmbeddedObject` |
+| `sdo` | All 19 SDOs, `SdoObject`, `IndicatorPattern`, `IndicatorBuilder`, `ObservedDataForm`, `ObservedDataEmbeddedObject` |
 | `sro` | `Relationship`, `Sighting`, `SroObject` |
 | `sco` | All 18 SCOs, `ScoObject`, typed ref unions, 12 predefined extensions under `sco::extensions` |
 | `validate` | Shared MUST validators (used at deserialize and bundle ref checks) |
@@ -275,9 +286,9 @@ cargo test -p rstix --features serde
 cargo test -p rstix --features pattern   # Pattern Engine
 ```
 
-### Local MITRE ATT&CK corpus (not in git)
+### Local MITRE ATT&CK corpus
 
-The full ATT&CK STIX bundle (~50 MiB) is **not committed**. CI uses a synthetic 5 000-object streaming test. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
+The full MITRE ATT&CK STIX bundle (~50 MiB) is available for download and parsing. CI uses a synthetic 5000-object streaming test. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
 
 ```bash
 RSTIX_ATTCK_BUNDLE=/path/to/enterprise-attack-19.1.json \
@@ -307,16 +318,38 @@ Full table: [crate README — Model invariant decisions](https://github.com/time
 - **MUST at parse:** id/type match, ref resolution in bundle, extension routing, SCO forbidden common props, SDO/SRO time ordering, and type-specific MUST rules documented in `ModelError`.
 - **SHOULD via `validate()`:** relationship matrix, CAPEC/CVE, encryption algorithm, TLP v1 warnings, granular selector semantics, language-content rules, location country/region vocabularies, SCO deterministic id.
 
+Pattern Engine engineering choices (separate from STIX spec invariants): [Pattern Engine design decisions](#pattern-engine-design-decisions).
+
+## Validation Pipeline
+
+Optional **`validate`** feature (implies `serde` + `pattern`). Distinct from advisory [`Bundle::validate()`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#validation-pipeline) — see **DD-VP-001** in the crate README.
+
+```rust
+use rstix::validate::{Validator, ValidationPhase};
+
+let report = Validator::consumer_strict().validate_json_str(untrusted_json);
+assert!(report.is_valid());
+
+let partial = Validator::builder()
+    .with_phase(ValidationPhase::Schema)
+    .build()
+    .validate_bundle(&bundle);
+```
+
+**Current status:** all twelve checks are implemented. The conformance harness runs against bundled in-repo fixtures for deterministic CI.
+
 ## Feature flags
 
 | Feature | Purpose |
 | ------- | ------- |
-| `serde` (default) | Bundle parsing, serialization, validation. |
-| `pattern` | STIX pattern lexer, Level 1–3 parser, type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`). |
+| `serde` (default) | Bundle parsing, serialization, advisory validation. |
+| `pattern` | STIX pattern lexer, Level 1–3 parser, type-checker, and evaluator. |
+| `validate` | Profile-based Validation Pipeline (`Validator`, structured diagnostics). |
 
 ## Related docs
 
 - [Architecture — crate map](../reference/architecture.md#rstix)
 - [Feature flags — rstix](../reference/feature-flags.md#rstix)
 - [Fuzzing — `fuzz_rstix_parse_bundle`](../developers/fuzzing.md)
+- [Fuzzing — `fuzz_rstix_validate_json`](../developers/fuzzing.md)
 - [Crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)

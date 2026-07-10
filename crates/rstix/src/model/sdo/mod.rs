@@ -14,6 +14,7 @@ mod grouping;
 mod identity;
 mod incident;
 mod indicator;
+mod indicator_builder;
 mod infrastructure;
 mod intrusion_set;
 mod location;
@@ -34,6 +35,7 @@ pub use grouping::Grouping;
 pub use identity::Identity;
 pub use incident::Incident;
 pub use indicator::{Indicator, IndicatorPattern};
+pub use indicator_builder::{IndicatorBuilder, IndicatorBuilderError};
 pub use infrastructure::Infrastructure;
 pub use intrusion_set::IntrusionSet;
 pub use location::Location;
@@ -120,6 +122,7 @@ impl SdoObject {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn common_props_mut(&mut self) -> &mut crate::model::common::SdoSroCommonProps {
         match self {
             Self::AttackPattern(inner) => &mut inner.common,

@@ -5,6 +5,13 @@ use crate::model::ModelError;
 use crate::model::common::{KillChainPhase, SdoSroCommonProps};
 use crate::model::sdo::validate_kill_chain_phases;
 
+#[cfg(feature = "pattern")]
+use crate::model::Bundle;
+#[cfg(feature = "pattern")]
+use crate::model::sdo::ObservedData;
+#[cfg(feature = "pattern")]
+use crate::pattern::{ObservationContext, Pattern, PatternError, PatternMatchError};
+
 /// Detection pattern representation for an [`Indicator`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum IndicatorPattern {
@@ -13,7 +20,10 @@ pub enum IndicatorPattern {
         /// Raw STIX pattern string.
         raw: String,
         /// STIX patterning version (wire field `pattern_version`).
-        version: Option<String>,
+        pattern_version: Option<String>,
+        /// Parsed and type-checked pattern (`pattern` feature).
+        #[cfg(feature = "pattern")]
+        parsed: Pattern,
     },
     /// Non-STIX pattern language (YARA, Snort, etc.).
     Other {
@@ -45,11 +55,56 @@ impl IndicatorPattern {
     /// Pattern language version from the wire `pattern_version` field.
     pub fn pattern_version(&self) -> Option<&str> {
         match self {
-            Self::Stix { version, .. } => version.as_deref(),
+            Self::Stix {
+                pattern_version, ..
+            } => pattern_version.as_deref(),
             Self::Other {
                 pattern_version, ..
             } => pattern_version.as_deref(),
         }
+    }
+
+    /// Parse and construct a STIX indicator pattern (`pattern` feature).
+    #[cfg(feature = "pattern")]
+    pub fn stix(
+        raw: impl Into<String>,
+        pattern_version: Option<String>,
+    ) -> Result<Self, PatternError> {
+        let raw = raw.into();
+        let parsed = Pattern::parse(&raw)?;
+        Ok(Self::Stix {
+            raw,
+            pattern_version,
+            parsed,
+        })
+    }
+
+    /// Parsed STIX pattern when `pattern_type` is `stix` (`pattern` feature).
+    #[cfg(feature = "pattern")]
+    pub fn parsed_pattern(&self) -> Result<&Pattern, PatternMatchError> {
+        match self {
+            Self::Stix { parsed, .. } => Ok(parsed),
+            Self::Other { pattern_type, .. } => {
+                Err(PatternMatchError::NonStixPattern(pattern_type.clone()))
+            }
+        }
+    }
+
+    /// Evaluate a STIX pattern against timestamped observations (`pattern` feature).
+    #[cfg(feature = "pattern")]
+    pub fn evaluate(&self, ctx: &ObservationContext<'_>) -> Result<bool, PatternMatchError> {
+        self.parsed_pattern()?.evaluate(ctx)
+    }
+
+    /// Evaluate against observed-data and a bundle (`pattern` feature).
+    #[cfg(feature = "pattern")]
+    pub fn evaluate_observed_data(
+        &self,
+        observed_data: &ObservedData,
+        bundle: &Bundle,
+    ) -> Result<bool, PatternMatchError> {
+        self.parsed_pattern()?
+            .evaluate_observed_data(observed_data, bundle)
     }
 }
 
@@ -80,6 +135,30 @@ impl Indicator {
     /// STIX type name for indicators.
     pub const TYPE_NAME: &'static str = "indicator";
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        common: SdoSroCommonProps,
+        name: Option<String>,
+        description: Option<String>,
+        indicator_types: Vec<String>,
+        pattern: IndicatorPattern,
+        valid_from: StixTimestamp,
+        valid_until: Option<StixTimestamp>,
+        kill_chain_phases: Vec<KillChainPhase>,
+    ) -> Self {
+        Self {
+            object_type: Self::TYPE_NAME.to_string(),
+            common,
+            name,
+            description,
+            indicator_types,
+            pattern,
+            valid_from,
+            valid_until,
+            kill_chain_phases,
+        }
+    }
+
     /// Check indicator-specific invariants.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
@@ -101,7 +180,29 @@ where
     crate::model::type_check::deserialize_stix_type_field(deserializer, Indicator::TYPE_NAME)
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", feature = "pattern"))]
+fn indicator_pattern_from_wire(
+    pattern: String,
+    pattern_type: String,
+    pattern_version: Option<String>,
+) -> Result<IndicatorPattern, PatternError> {
+    if pattern_type == "stix" {
+        let parsed = Pattern::parse(&pattern)?;
+        Ok(IndicatorPattern::Stix {
+            raw: pattern,
+            pattern_version,
+            parsed,
+        })
+    } else {
+        Ok(IndicatorPattern::Other {
+            pattern_type,
+            pattern_version,
+            raw: pattern,
+        })
+    }
+}
+
+#[cfg(all(feature = "serde", not(feature = "pattern")))]
 fn indicator_pattern_from_wire(
     pattern: String,
     pattern_type: String,
@@ -110,7 +211,7 @@ fn indicator_pattern_from_wire(
     if pattern_type == "stix" {
         IndicatorPattern::Stix {
             raw: pattern,
-            version: pattern_version,
+            pattern_version,
         }
     } else {
         IndicatorPattern::Other {
@@ -128,7 +229,11 @@ impl serde::Serialize for Indicator {
         S: serde::Serializer,
     {
         let (pattern, pattern_type, pattern_version) = match &self.pattern {
-            IndicatorPattern::Stix { raw, version } => (raw.as_str(), "stix", version.as_deref()),
+            IndicatorPattern::Stix {
+                raw,
+                pattern_version,
+                ..
+            } => (raw.as_str(), "stix", pattern_version.as_deref()),
             IndicatorPattern::Other {
                 pattern_type,
                 pattern_version,
@@ -210,17 +315,23 @@ impl<'de> serde::Deserialize<'de> for Indicator {
         }
 
         let raw = Raw::deserialize(deserializer)?;
+        #[cfg(feature = "pattern")]
+        let pattern = indicator_pattern_from_wire(
+            raw.pattern.clone(),
+            raw.pattern_type.clone(),
+            raw.pattern_version.clone(),
+        )
+        .map_err(serde::de::Error::custom)?;
+        #[cfg(not(feature = "pattern"))]
+        let pattern =
+            indicator_pattern_from_wire(raw.pattern, raw.pattern_type, raw.pattern_version);
         let indicator = Self {
             object_type: raw.object_type,
             common: raw.common,
             name: raw.name,
             description: raw.description,
             indicator_types: raw.indicator_types,
-            pattern: indicator_pattern_from_wire(
-                raw.pattern,
-                raw.pattern_type,
-                raw.pattern_version,
-            ),
+            pattern,
             valid_from: raw.valid_from,
             valid_until: raw.valid_until,
             kill_chain_phases: raw.kill_chain_phases,
@@ -303,9 +414,19 @@ mod tests {
             name: None,
             description: None,
             indicator_types: Vec::new(),
-            pattern: IndicatorPattern::Stix {
-                raw: "[ipv4-addr:value = '198.51.100.3']".into(),
-                version: None,
+            pattern: {
+                #[cfg(feature = "pattern")]
+                {
+                    IndicatorPattern::stix("[ipv4-addr:value = '198.51.100.3']", None)
+                        .expect("valid pattern")
+                }
+                #[cfg(not(feature = "pattern"))]
+                {
+                    IndicatorPattern::Stix {
+                        raw: "[ipv4-addr:value = '198.51.100.3']".into(),
+                        pattern_version: None,
+                    }
+                }
             },
             valid_from,
             valid_until: Some(valid_until),

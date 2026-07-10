@@ -3,8 +3,11 @@
 use std::any::Any;
 use std::collections::HashMap;
 
+#[cfg(feature = "serde")]
 type CustomDeserializeFn =
     fn(serde_json::Value) -> Result<Box<dyn Any + Send + Sync>, crate::ParseError>;
+#[cfg(not(feature = "serde"))]
+type CustomDeserializeFn = fn() -> Result<Box<dyn Any + Send + Sync>, crate::ParseError>;
 
 /// Registry of custom STIX object type names and their deserializers.
 ///
@@ -24,6 +27,7 @@ impl TypeRegistry {
     ///
     /// `T` must implement [`serde::Deserialize`] and be `'static` so the bundle
     /// can downcast via [`crate::model::BundleObjectCast`].
+    #[cfg(feature = "serde")]
     pub fn register_custom_type<T>(&mut self, type_name: impl Into<String>)
     where
         T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,
@@ -46,6 +50,7 @@ impl TypeRegistry {
         self.entries.contains_key(type_name)
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn deserialize(
         &self,
         type_name: &str,
@@ -100,6 +105,7 @@ impl ParseOptions {
     }
 
     /// Register a custom type on the embedded registry (builder convenience).
+    #[cfg(feature = "serde")]
     pub fn register_custom_type<T>(mut self, type_name: impl Into<String>) -> Self
     where
         T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,
@@ -109,6 +115,7 @@ impl ParseOptions {
     }
 
     /// Register a custom type on the embedded registry (mutable convenience).
+    #[cfg(feature = "serde")]
     pub fn register_custom_type_mut<T>(&mut self, type_name: impl Into<String>)
     where
         T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,

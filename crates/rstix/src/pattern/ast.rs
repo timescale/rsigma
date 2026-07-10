@@ -328,4 +328,171 @@ impl ComparisonTree {
             Self::Not { inner, .. } => inner.comparison_count(),
         }
     }
+
+    /// Compare AST shape and values, ignoring source spans.
+    pub fn semantic_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Cmp(a), Self::Cmp(b)) => a.semantic_eq(b),
+            (
+                Self::And {
+                    left: l1,
+                    right: r1,
+                    ..
+                },
+                Self::And {
+                    left: l2,
+                    right: r2,
+                    ..
+                },
+            ) => l1.semantic_eq(l2) && r1.semantic_eq(r2),
+            (
+                Self::Or {
+                    left: l1,
+                    right: r1,
+                    ..
+                },
+                Self::Or {
+                    left: l2,
+                    right: r2,
+                    ..
+                },
+            ) => l1.semantic_eq(l2) && r1.semantic_eq(r2),
+            (Self::Not { inner: i1, .. }, Self::Not { inner: i2, .. }) => i1.semantic_eq(i2),
+            _ => false,
+        }
+    }
+}
+
+impl PatternAst {
+    /// Compare AST shape and values, ignoring source spans.
+    pub fn semantic_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Observation(a), Self::Observation(b)) => a.semantic_eq(b),
+            (
+                Self::And {
+                    left: l1,
+                    right: r1,
+                    ..
+                },
+                Self::And {
+                    left: l2,
+                    right: r2,
+                    ..
+                },
+            ) => l1.semantic_eq(l2) && r1.semantic_eq(r2),
+            (
+                Self::Or {
+                    left: l1,
+                    right: r1,
+                    ..
+                },
+                Self::Or {
+                    left: l2,
+                    right: r2,
+                    ..
+                },
+            ) => l1.semantic_eq(l2) && r1.semantic_eq(r2),
+            (
+                Self::FollowedBy {
+                    left: l1,
+                    right: r1,
+                    ..
+                },
+                Self::FollowedBy {
+                    left: l2,
+                    right: r2,
+                    ..
+                },
+            ) => l1.semantic_eq(l2) && r1.semantic_eq(r2),
+            (
+                Self::Within {
+                    inner: i1,
+                    duration: d1,
+                    ..
+                },
+                Self::Within {
+                    inner: i2,
+                    duration: d2,
+                    ..
+                },
+            ) => i1.semantic_eq(i2) && d1 == d2,
+            (
+                Self::Repeats {
+                    inner: i1,
+                    count: c1,
+                    ..
+                },
+                Self::Repeats {
+                    inner: i2,
+                    count: c2,
+                    ..
+                },
+            ) => i1.semantic_eq(i2) && c1 == c2,
+            (
+                Self::StartStop {
+                    inner: i1,
+                    start: s1,
+                    stop: e1,
+                    ..
+                },
+                Self::StartStop {
+                    inner: i2,
+                    start: s2,
+                    stop: e2,
+                    ..
+                },
+            ) => i1.semantic_eq(i2) && s1 == s2 && e1 == e2,
+            _ => false,
+        }
+    }
+}
+
+impl ObservationExpr {
+    /// Compare AST shape and values, ignoring source spans.
+    pub fn semantic_eq(&self, other: &Self) -> bool {
+        self.object_type == other.object_type && self.root.semantic_eq(&other.root)
+    }
+}
+
+impl Comparison {
+    fn semantic_eq(&self, other: &Self) -> bool {
+        self.path.semantic_eq(&other.path)
+            && self.op == other.op
+            && self.negated == other.negated
+            && option_constant_semantic_eq(&self.value, &other.value)
+    }
+}
+
+fn option_constant_semantic_eq(a: &Option<PatternConstant>, b: &Option<PatternConstant>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(left), Some(right)) => left.semantic_eq_value(right),
+        _ => false,
+    }
+}
+
+impl ObjectPath {
+    fn semantic_eq(&self, other: &Self) -> bool {
+        self.object_type == other.object_type && self.steps == other.steps
+    }
+}
+
+impl PatternConstant {
+    fn semantic_eq_value(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Float(a), Self::Int(b)) => (a - *b as f64).abs() < f64::EPSILON,
+            (Self::Int(a), Self::Float(b)) => (*a as f64 - b).abs() < f64::EPSILON,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Timestamp(a), Self::Timestamp(b)) => a == b,
+            (Self::Hex(a), Self::Hex(b)) => a == b,
+            (Self::Binary(a), Self::Binary(b)) => a == b,
+            (Self::List(a), Self::List(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.semantic_eq_value(y))
+            }
+            _ => false,
+        }
+    }
 }
