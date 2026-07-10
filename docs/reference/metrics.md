@@ -1,10 +1,10 @@
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 44 metric names across nine concerns: 39 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is 45 metric names across nine concerns: 40 are always registered, and the OTLP (3) and TLS (2) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
-## Engine core (17 metrics)
+## Engine core (18 metrics)
 
 These always show up. They cover ingest, matches, queue depth, back-pressure, reloads, and resource usage.
 
@@ -19,6 +19,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_correlation_state_entries` | gauge | — | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
 | `rsigma_reloads_total` | counter | — | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | — | Reload attempts that produced parse or compile errors. |
+| `rsigma_api_auth_failures_total` | counter | `reason` (`unauthorized`, `forbidden`) | API requests rejected by [bearer-token authentication](http-api.md#authentication): `unauthorized` is a missing or unrecognized token, `forbidden` a recognized token without the required permission. Each label value surfaces after its first rejection. Stays absent while authentication is disabled. |
 | `rsigma_uptime_seconds` | gauge | — | Daemon uptime in seconds. |
 | `rsigma_input_queue_depth` | gauge | — | Events currently buffered in the source→engine channel. Tracked for every input, including the HTTP and OTLP push receivers. |
 | `rsigma_output_queue_depth` | gauge | — | Results currently buffered in the engine→sink channel. |
@@ -237,6 +238,12 @@ groups:
         expr: rate(rsigma_reloads_failed_total[5m]) > 0
         for: 10m
         labels: {severity: critical}
+
+      # Sustained API auth failures: a misconfigured client or a probe.
+      - alert: RsigmaApiAuthFailures
+        expr: sum(rate(rsigma_api_auth_failures_total[5m])) > 1
+        for: 10m
+        labels: {severity: warning}
 
       # Dynamic source went stale (no successful resolve in 10 minutes).
       - alert: RsigmaSourceStale

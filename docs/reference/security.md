@@ -142,7 +142,22 @@ Observability: `/metrics` exposes `rsigma_tls_certificate_expiry_seconds` (signe
 
 Out of scope for this feature today: ACME / Let's Encrypt automation. Operators point `--tls-cert` and `--tls-key` at renewed files (cert-manager, certbot, Vault PKI, ...) and send SIGHUP. Encrypted private keys are also out of scope; the flag (`--tls-key-password` / `RSIGMA_TLS_KEY_PASSWORD`) is reserved for a future release and currently rejects with a clear `openssl rsa` hint.
 
-OTLP receiver authentication is the upstream agent's responsibility. The recommended pattern is mTLS (`--tls-client-ca`) so every OpenTelemetry agent pins to a known CA without rsigma needing a bearer-token authn layer.
+OTLP receiver authentication has two options: mTLS (`--tls-client-ca`) so every OpenTelemetry agent pins to a known CA, or a bearer token with the `events:ingest` permission (see [Daemon API authentication](#daemon-api-authentication)); the OTLP/gRPC service reads the same `authorization` metadata OpenTelemetry Collector exporters send via the `headers` setting.
+
+## Daemon API authentication
+
+Bearer-token authentication with `resource:action` permissions gates the daemon API at the application layer. It is opt-in and off by default: without a `daemon.api.auth` config block or the `--api-token-env` flag, every route is open and the network-level protections above are the only guard. When enabled, every route except the liveness probes (`GET /healthz`, `GET /readyz`) requires a token whose permission set covers the route's permission; the per-route mapping is in the [HTTP API endpoint summary](http-api.md#endpoint-summary).
+
+Design properties:
+
+- **Secrets are env-only.** The config names an environment variable per token (`token_env`, the same posture as webhook `signing.secret_env`); the value never lives in YAML or on the command line, and a missing or empty variable fails startup before the listener binds.
+- **Constant-time comparison.** Every presented token is compared against every configured secret in constant time, so timing cannot leak a matched prefix.
+- **Least privilege by role.** Built-in roles `reader`/`operator`/`ingest`/`admin` plus custom roles as permission lists with `*` wildcards. A log shipper's `ingest` token carries only `events:ingest` and cannot create silences or trigger reloads; `reload:execute` is deliberately excluded from `operator` so config-changing control stays with `admin` tokens.
+- **Fail-closed route table.** A route added without a permission mapping requires the full `*` grant rather than defaulting open.
+- **No anonymous fallback for bad tokens.** `anonymous_permissions` applies only to requests with no `Authorization` header; a presented-but-unrecognized token is always rejected with 401.
+- **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged.
+
+Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
 ## Live event tap
 
@@ -182,7 +197,7 @@ See [`.github/workflows/docker.yml`](https://github.com/timescale/rsigma/blob/ma
 
 ## Threat model summary
 
-In one paragraph: rsigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. Daemon HTTP and OTLP listeners can be hardened in-process by building with the `daemon-tls` feature and pairing `--tls-cert`/`--tls-key` with `--tls-client-ca` for mTLS; without that, deploy behind a reverse proxy. NATS connections (source, sink, DLQ) support five auth methods plus TLS-required mode.
+In one paragraph: rsigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. Daemon HTTP and OTLP listeners can be hardened in-process by building with the `daemon-tls` feature and pairing `--tls-cert`/`--tls-key` with `--tls-client-ca` for mTLS, plus opt-in bearer-token authentication with per-token `resource:action` permissions; without TLS, deploy behind a reverse proxy. NATS connections (source, sink, DLQ) support five auth methods plus TLS-required mode.
 
 ## See also
 

@@ -163,6 +163,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
+| `daemon.api.auth` | `engine daemon` | Bearer-token authentication with `resource:action` permissions (`anonymous_permissions`, `roles`, `tokens`). Absent = no authentication. Token secrets stay env-only via each token's `token_env`. Mutually exclusive with `--api-token-env`. See [HTTP API: Authentication](http-api.md#authentication). |
 | `daemon.nats` | `engine daemon` | Non-secret NATS knobs (e.g. `consumer_group`). Secrets stay env-only. Inert unless built with `daemon-nats`. |
 | `daemon.tap` | `engine daemon` | Live event-tap limits (`enabled`, `buffer_events`, `max_sessions`, `max_duration`). Disabled by default; enable with `enabled: true` or `--enable-tap`. The rest are config-file-only. See [HTTP API: Live event tap](http-api.md#live-event-tap). |
 | `daemon.tail` | `engine daemon` | Live detection-tail limits (`enabled`, `buffer_events`, `max_sessions`). Disabled by default; enable with `enabled: true` or `--enable-tail`. The rest are config-file-only. See [HTTP API: Live detection tail](http-api.md#live-detection-tail). |

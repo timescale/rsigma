@@ -6,39 +6,68 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 
 ## Endpoint summary
 
-| Path | Method | Auth | Description |
-|------|--------|------|-------------|
-| `/healthz` | GET | none | Liveness probe. Always 200 once the listener is up. |
-| `/readyz` | GET | none | Readiness probe. 200 when rules and pipelines are loaded; 503 during startup or after a failed reload. |
-| `/metrics` | GET | none | Prometheus text format. See [Prometheus metrics](metrics.md). |
-| `/api/v1/status` | GET | none | Counters, state-entry counts, uptime, and (when configured) dynamic-source summary. |
-| `/api/v1/correlations` | GET | none | Compiled correlation list with per-group counts. Empty when the engine has no correlation rules. |
-| `/api/v1/correlations/state` | GET | none | Live per-group correlation window snapshot (current aggregate vs threshold, window entries, last alert, seconds to eviction). Filter with `?id=` and `?group=`. |
-| `/api/v1/incidents` | GET | none | Open incidents from the alert-pipeline grouping stage. |
-| `/api/v1/risk` | GET | none | Open entities tracked by the risk accumulator, with their window score, tactic count, source count, and window bounds. |
-| `/api/v1/silences` | GET, POST | none | List silences, or create one (returns its id). |
-| `/api/v1/silences/{id}` | DELETE | none | Remove a silence by id. |
-| `/api/v1/dispositions` | GET, POST | none | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. |
-| `/api/v1/rules` | GET | none | Rule counts and rules-directory path. |
-| `/api/v1/reload` | POST | none | Trigger an immediate rules + pipelines reload. |
-| `/api/v1/events` | POST | none | NDJSON event ingest. Only enabled with `--input http`. |
-| `/api/v1/sources` | GET | none | Dynamic pipeline sources currently registered. |
-| `/api/v1/sources/resolve` | POST | none | Force re-resolution of all dynamic sources (with no body) or one specific source (with `{"source_id":"..."}`). |
-| `/api/v1/sources/resolve/{source_id}` | POST | none | Force re-resolution of a single source by path parameter (no body). Equivalent to the body variant above; useful when the caller has to fit inside an HTTP client that does not send a JSON body on `POST`. |
-| `/api/v1/sources/cache/{source_id}` | DELETE | none | Invalidate one source's cache so the next read fetches fresh. |
-| `/api/v1/fields` | GET | none | Combined gap + broken-coverage report. Requires `--observe-fields`. |
-| `/api/v1/fields/unknown` | GET | none | Fields seen in events that no rule references. Requires `--observe-fields`. |
-| `/api/v1/fields/missing` | GET | none | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
-| `/api/v1/fields/observer` | DELETE | none | Reset the field observer's counters. Requires `--observe-fields`. |
-| `/api/v1/schemas` | GET | none | Per-schema event breakdown and unknown rate. Requires `--observe-schemas`. |
-| `/api/v1/schemas` | DELETE | none | Reset the schema observer's counters and samples (including the discovery sample). Requires `--observe-schemas`. |
-| `/api/v1/schemas/suggestions` | GET | none | Candidate schema signatures mined from the unrecognized-event sample. Requires `--discover-schemas`. |
-| `/api/v1/tap` | GET | none | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
-| `/api/v1/detections/stream` | GET | none | Stream live detections as chunked NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. |
-| `/v1/logs` | POST | none | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
-| OTLP/gRPC `LogsService/Export` | gRPC | none | OTLP over gRPC on the same `--api-addr`. Requires `daemon-otlp`. |
+| Path | Method | Permission | Description |
+|------|--------|------------|-------------|
+| `/healthz` | GET | always open | Liveness probe. Always 200 once the listener is up. |
+| `/readyz` | GET | always open | Readiness probe. 200 when rules and pipelines are loaded; 503 during startup or after a failed reload. |
+| `/metrics` | GET | `metrics:read` | Prometheus text format. See [Prometheus metrics](metrics.md). |
+| `/api/v1/status` | GET | `status:read` | Counters, state-entry counts, uptime, and (when configured) dynamic-source summary. |
+| `/api/v1/correlations` | GET | `correlations:read` | Compiled correlation list with per-group counts. Empty when the engine has no correlation rules. |
+| `/api/v1/correlations/state` | GET | `correlations:read` | Live per-group correlation window snapshot (current aggregate vs threshold, window entries, last alert, seconds to eviction). Filter with `?id=` and `?group=`. |
+| `/api/v1/incidents` | GET | `incidents:read` | Open incidents from the alert-pipeline grouping stage. |
+| `/api/v1/risk` | GET | `risk:read` | Open entities tracked by the risk accumulator, with their window score, tactic count, source count, and window bounds. |
+| `/api/v1/silences` | GET, POST | `silences:read`, `silences:write` | List silences, or create one (returns its id). |
+| `/api/v1/silences/{id}` | DELETE | `silences:write` | Remove a silence by id. |
+| `/api/v1/dispositions` | GET, POST | `dispositions:read`, `dispositions:write` | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. |
+| `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path. |
+| `/api/v1/reload` | POST | `reload:execute` | Trigger an immediate rules + pipelines reload. |
+| `/api/v1/events` | POST | `events:ingest` | NDJSON event ingest. Only enabled with `--input http`. |
+| `/api/v1/sources` | GET | `sources:read` | Dynamic pipeline sources currently registered. |
+| `/api/v1/sources/resolve` | POST | `sources:write` | Force re-resolution of all dynamic sources (with no body) or one specific source (with `{"source_id":"..."}`). |
+| `/api/v1/sources/resolve/{source_id}` | POST | `sources:write` | Force re-resolution of a single source by path parameter (no body). Equivalent to the body variant above; useful when the caller has to fit inside an HTTP client that does not send a JSON body on `POST`. |
+| `/api/v1/sources/cache/{source_id}` | DELETE | `sources:write` | Invalidate one source's cache so the next read fetches fresh. |
+| `/api/v1/fields` | GET | `fields:read` | Combined gap + broken-coverage report. Requires `--observe-fields`. |
+| `/api/v1/fields/unknown` | GET | `fields:read` | Fields seen in events that no rule references. Requires `--observe-fields`. |
+| `/api/v1/fields/missing` | GET | `fields:read` | Fields referenced by rules that have never appeared in an event. Requires `--observe-fields`. |
+| `/api/v1/fields/observer` | DELETE | `fields:write` | Reset the field observer's counters. Requires `--observe-fields`. |
+| `/api/v1/schemas` | GET | `schemas:read` | Per-schema event breakdown and unknown rate. Requires `--observe-schemas`. |
+| `/api/v1/schemas` | DELETE | `schemas:write` | Reset the schema observer's counters and samples (including the discovery sample). Requires `--observe-schemas`. |
+| `/api/v1/schemas/suggestions` | GET | `schemas:read` | Candidate schema signatures mined from the unrecognized-event sample. Requires `--discover-schemas`. |
+| `/api/v1/tap` | GET | `tap:read` | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
+| `/api/v1/detections/stream` | GET | `detections:read` | Stream live detections as chunked NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. |
+| `/v1/logs` | POST | `events:ingest` | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
+| OTLP/gRPC `LogsService/Export` | gRPC | `events:ingest` | OTLP over gRPC on the same `--api-addr`. Requires `daemon-otlp`. |
 
-The daemon does not implement authentication today; deploy it behind a reverse proxy or restrict the bind address to a trusted network. In-process TLS termination is available via the optional `daemon-tls` build feature: pass `--tls-cert` / `--tls-key` to terminate TLS for the HTTP REST, OTLP/HTTP, and OTLP/gRPC surfaces on the same `--api-addr`, and `--tls-client-ca` to require mTLS. See [TLS termination for the API listener](security.md#tls-termination-for-the-api-listener) for the full flag set.
+The Permission column applies only when authentication is enabled; by default the daemon runs without authentication and every route is open. In-process TLS termination is available via the optional `daemon-tls` build feature: pass `--tls-cert` / `--tls-key` to terminate TLS for the HTTP REST, OTLP/HTTP, and OTLP/gRPC surfaces on the same `--api-addr`, and `--tls-client-ca` to require mTLS. See [TLS termination for the API listener](security.md#tls-termination-for-the-api-listener) for the full flag set.
+
+## Authentication
+
+Bearer-token authentication is opt-in and off by default, so loopback and trusted-network deployments are untouched. Enable it either with the `--api-token-env <ENV_VAR>` flag (a single token with full `admin` permissions, read from the named environment variable) or with the `daemon.api.auth` config block for per-token roles:
+
+```yaml
+daemon:
+  api:
+    auth:
+      anonymous_permissions: ["metrics:read"]
+      roles:
+        triage-bot: ["*:read", "silences:write", "dispositions:write"]
+      tokens:
+        - name: grafana
+          role: reader
+          token_env: RSIGMA_API_TOKEN_GRAFANA
+        - name: shipper
+          role: ingest
+          token_env: RSIGMA_API_TOKEN_SHIPPER
+        - name: ci
+          role: triage-bot
+          token_env: RSIGMA_API_TOKEN_CI
+```
+
+Clients send `Authorization: Bearer <token>`. Each route requires the `resource:action` permission in the summary table above; a token's permission set comes from its role. The built-in roles are `reader` (`*:read`), `operator` (`*:read` plus every control-plane write except reload), `ingest` (`events:ingest` only, so a log shipper's token cannot create silences), and `admin` (`*`). Custom roles are permission lists with `*` wildcards (`"*:read"`, `"silences:*"`); a token can also carry an inline `permissions` list instead of a `role`.
+
+Token secrets never live in YAML: `token_env` names an environment variable, resolved once at startup, and a missing or empty variable fails startup. Token comparison is constant time. `GET /healthz` and `GET /readyz` are always unauthenticated so liveness probes need no secrets; `anonymous_permissions` grants a permission set to requests without an `Authorization` header (for example `["metrics:read"]` keeps Prometheus scraping token-free, and `["*:read"]` protects only the mutating endpoints).
+
+Failure semantics: a missing or unrecognized token gets `401 Unauthorized` (with a `WWW-Authenticate: Bearer` header); a recognized token without the required permission gets `403 Forbidden` naming the missing permission. A presented-but-invalid token is always 401, never a fallback to the anonymous grants. OTLP/gRPC clients pass the same `authorization` metadata and receive `UNAUTHENTICATED` / `PERMISSION_DENIED` gRPC status codes. Rejections are counted in `rsigma_api_auth_failures_total{reason}` and logged at warn level with the token name (never the secret). See [Security](security.md#daemon-api-authentication) for the threat-model discussion.
 
 ## Probes
 
