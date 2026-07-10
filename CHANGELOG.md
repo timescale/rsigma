@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Daemon API authentication (bearer tokens + granular RBAC) (#304)
+
+Adds opt-in bearer-token authentication with `resource:action` permissions to the daemon API. Off by default: without configuration the routes stay open as before, and `GET /healthz` / `GET /readyz` are always unauthenticated so liveness probes never need secrets.
+
+- **Two ways to enable.** `--api-token-env <ENV_VAR>` names an environment variable holding a single full-`admin` token (the secret never appears on the command line or in YAML), or the `daemon.api.auth` config block declares named roles and per-token role assignment. The flag and the block are mutually exclusive.
+- **Granular RBAC.** Every route maps to a `resource:action` permission (`silences:write`, `reload:execute`, `tap:read`, `events:ingest`, ...); the mapping fails closed, so an unmapped route requires the full `*` grant. Roles are permission sets with `*` wildcards: built-in `reader` (`*:read`), `operator` (`*:read` plus control-plane writes except reload), `ingest` (`events:ingest` only, so a log shipper's token cannot create silences), and `admin` (`*`), plus operator-defined roles (or inline per-token `permissions`).
+- **Anonymous permissions.** `anonymous_permissions` grants a permission set to requests without an `Authorization` header: `["metrics:read"]` keeps Prometheus scraping token-free, `["*:read"]` protects only the mutating endpoints. A presented-but-unrecognized token is always rejected, never downgraded to the anonymous grants.
+- **Secret posture.** Each token's `token_env` names an environment variable resolved once at startup (the webhook `secret_env` posture); a missing or empty variable, a duplicate token name or secret, an unknown or redefined built-in role, or a malformed permission string fails startup with a clear message. Comparison is constant-time per candidate token.
+- **Failure semantics.** Missing or invalid credentials get `401` with `WWW-Authenticate: Bearer`; a recognized token without the required permission gets `403` naming the missing permission. OTLP/gRPC clients authenticate with the same `authorization` metadata and receive `UNAUTHENTICATED`/`PERMISSION_DENIED` status codes. Rejections increment the new `rsigma_api_auth_failures_total{reason}` counter and log at warn with the token name, never the secret. The established identity is attached to the request for handlers to attribute the call.
+- **Docs.** New Authentication sections in the HTTP API reference (per-endpoint permission table), the security reference, and the `engine daemon` CLI page; the config template and configuration reference cover the `daemon.api.auth` block.
+
 ### rstix Validation Pipeline: all twelve checks (`validate` feature) (#298)
 
 Implements the full validation check set behind `validate`:

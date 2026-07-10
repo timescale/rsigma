@@ -199,6 +199,10 @@ pub(crate) struct ApiPartial {
     /// TLS settings. Ignored unless built with `daemon-tls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsPartial>,
+    /// Bearer-token authentication with `resource:action` permissions.
+    /// Absent = no authentication (all routes open, as before).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthPartial>,
 }
 
 impl Merge for ApiPartial {
@@ -206,8 +210,53 @@ impl Merge for ApiPartial {
         Self {
             addr: over.addr.or(self.addr),
             tls: merge_opt(self.tls, over.tls),
+            // An auth block replaces a lower-precedence one wholesale: deep
+            // list merges across layers would be surprising for a security
+            // config (a token granted in /etc could survive an override in
+            // ./rsigma.yaml).
+            auth: over.auth.or(self.auth),
         }
     }
+}
+
+/// Bearer-token authentication for the daemon API. Token secrets never live
+/// in YAML: each token names an environment variable resolved at startup.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct AuthPartial {
+    /// Permissions granted to requests with no `Authorization` header
+    /// (e.g. `["metrics:read"]` keeps Prometheus scraping token-free, or
+    /// `["*:read"]` protects only mutating endpoints). Default: none.
+    /// `GET /healthz` and `GET /readyz` are always open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anonymous_permissions: Option<Vec<String>>,
+    /// Operator-defined roles: role name to `resource:action` permission
+    /// list (`*` wildcards allowed, e.g. `"*:read"`, `"silences:*"`).
+    /// Merged over the built-in roles (reader, operator, ingest, admin),
+    /// which cannot be redefined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// The accepted bearer tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<Vec<AuthTokenPartial>>,
+}
+
+/// One bearer token: a name (for logs and metrics), exactly one of `role` /
+/// `permissions`, and the environment variable holding the secret.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct AuthTokenPartial {
+    /// Token name, used in audit logs; never the secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// A built-in (reader, operator, ingest, admin) or operator-defined role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Inline permission list, as an alternative to `role`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<String>>,
+    /// Environment variable holding the token secret. Required; the daemon
+    /// refuses to start when it is unset or empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
 }
 
 /// Server-side TLS settings (no key password; that stays env-only).
@@ -981,6 +1030,7 @@ mod tests {
                 api: Some(ApiPartial {
                     addr: Some("0.0.0.0:9090".into()),
                     tls: None,
+                    auth: None,
                 }),
                 ..Default::default()
             }),
@@ -992,6 +1042,7 @@ mod tests {
                 api: Some(ApiPartial {
                     addr: Some("127.0.0.1:8080".into()),
                     tls: None,
+                    auth: None,
                 }),
                 ..Default::default()
             }),

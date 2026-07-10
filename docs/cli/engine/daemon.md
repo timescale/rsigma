@@ -88,6 +88,29 @@ The webhooks file (also settable as the `daemon.output.webhooks` path list) decl
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--api-addr <ADDR>` | `0.0.0.0:9090` | Bind address for `/healthz`, `/readyz`, `/metrics`, `/api/v1/*`, and (with the `daemon-otlp` feature) `/v1/logs`. A TCP `host:port`, or on Unix `unix:///path/to.sock` for a permission-gated local socket. A `unix://` address cannot be combined with TLS (the socket file is the trust boundary) and is exempt from the plaintext-bind refusal. |
+| `--api-token-env <ENV_VAR>` | unset | Require bearer-token authentication on the API, with the named environment variable holding the single accepted token (full `admin` permissions). The flag names the variable, so the secret never appears on the command line; an unset or empty variable fails startup. `GET /healthz` and `GET /readyz` stay open. Mutually exclusive with the `daemon.api.auth` config block, which adds per-token roles and granular `resource:action` permissions; see [HTTP API: Authentication](../../reference/http-api.md#authentication). |
+
+### Authentication
+
+Off by default: without `--api-token-env` or a `daemon.api.auth` config block, every route is open and network position (TLS/mTLS, reverse proxy, loopback, or a `unix://` socket) is the only guard.
+
+For anything beyond the single admin token, configure the `daemon.api.auth` block (config-file-only, like the tap and tail tuning keys): named roles as `resource:action` permission lists, per-token role assignment with env-resolved secrets, and `anonymous_permissions` for requests without a token (for example `["metrics:read"]` keeps Prometheus scraping token-free). Built-in roles: `reader`, `operator`, `ingest`, `admin`. The per-route permission table, role definitions, and failure semantics (401 vs 403, the `rsigma_api_auth_failures_total` counter) are documented in [HTTP API: Authentication](../../reference/http-api.md#authentication); the threat-model discussion is in [Security: Daemon API authentication](../../reference/security.md#daemon-api-authentication).
+
+```yaml
+daemon:
+  api:
+    auth:
+      anonymous_permissions: ["metrics:read"]
+      tokens:
+        - name: grafana
+          role: reader
+          token_env: RSIGMA_API_TOKEN_GRAFANA
+        - name: shipper
+          role: ingest
+          token_env: RSIGMA_API_TOKEN_SHIPPER
+```
+
+On a non-loopback TCP listener, pair authentication with TLS (below) or a TLS-terminating proxy so tokens are never sent in cleartext.
 
 ### TLS (requires the `daemon-tls` build feature)
 

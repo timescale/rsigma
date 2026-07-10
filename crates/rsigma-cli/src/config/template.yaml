@@ -44,6 +44,31 @@ daemon:
     #   client_ca: /etc/rsigma/tls/ca.pem
     #   min_version: "1.3"
     #   allow_plaintext: false
+    # Bearer-token authentication with resource:action permissions. Absent =
+    # no authentication (all routes open). Token secrets never live in YAML:
+    # token_env names an environment variable resolved at startup. Built-in
+    # roles: reader (*:read), operator (*:read + control-plane writes except
+    # reload), ingest (events:ingest), admin (*). GET /healthz and
+    # GET /readyz always stay open. For a single admin token, the
+    # --api-token-env flag is the shortcut (mutually exclusive with this
+    # block).
+    # auth:
+    #   # Permissions granted without a token, e.g. keep Prometheus scraping
+    #   # token-free ("metrics:read") or protect only mutations ("*:read").
+    #   anonymous_permissions: ["metrics:read"]
+    #   # Operator-defined roles (may not redefine the built-ins).
+    #   roles:
+    #     triage-bot: ["*:read", "silences:write", "dispositions:write"]
+    #   tokens:
+    #     - name: grafana
+    #       role: reader
+    #       token_env: RSIGMA_API_TOKEN_GRAFANA
+    #     - name: shipper
+    #       role: ingest
+    #       token_env: RSIGMA_API_TOKEN_SHIPPER
+    #     - name: ci
+    #       role: triage-bot
+    #       token_env: RSIGMA_API_TOKEN_CI
 
   input:
     # Event source: stdin | http | nats://host:port/subject

@@ -267,6 +267,9 @@ pub struct DaemonConfig {
     /// Effective triage-feedback settings (`daemon.dispositions.*` +
     /// `--enable-dispositions`).
     pub dispositions: DispositionSettings,
+    /// Optional API authentication table (`daemon.api.auth` +
+    /// `--api-token-env`). `None` mounts the routes without auth, as before.
+    pub api_auth: Option<super::auth::ApiAuth>,
     /// Optional server-side TLS state. `Some` when the operator passed
     /// `--tls-cert`/`--tls-key`; the daemon then terminates TLS on the
     /// API listener for HTTP REST, OTLP/HTTP, and OTLP/gRPC.
@@ -916,6 +919,28 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
 
+    // Bearer-token auth (opt-in). Mounted with `Router::route_layer` so it
+    // runs only for matched routes (a 404 needs no credentials) and after
+    // routing, where `MatchedPath` carries the route pattern into the
+    // permission lookup. The TraceLayer added below wraps it, so rejected
+    // requests are traced too. OTLP/gRPC does not pass through this layer;
+    // the gRPC service checks its own request metadata (see
+    // `OtlpLogsGrpcService::export`).
+    let app = match config.api_auth.as_ref() {
+        Some(auth) => {
+            tracing::info!("API authentication enabled");
+            let state = Arc::new(super::auth::AuthLayerState {
+                auth: auth.clone(),
+                metrics: metrics.clone(),
+            });
+            app.route_layer(axum::middleware::from_fn_with_state(
+                state,
+                super::auth::api_auth_middleware,
+            ))
+        }
+        None => app,
+    };
+
     let app = app.layer(TraceLayer::new_for_http()).with_state(app_state);
 
     // The UDS guard unlinks the socket file when `run_daemon` returns (after
@@ -982,6 +1007,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         let grpc_service = rsigma_runtime::LogsServiceServer::new(OtlpLogsGrpcService {
             event_tx: event_tx.clone(),
             metrics: metrics.clone(),
+            auth: config.api_auth.clone(),
         })
         .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
         .send_compressed(tonic::codec::CompressionEncoding::Gzip);
@@ -3584,6 +3610,11 @@ fn otlp_maybe_decompress(
 struct OtlpLogsGrpcService {
     event_tx: mpsc::Sender<RawEvent>,
     metrics: Arc<Metrics>,
+    /// API auth table shared with the HTTP layer. The gRPC service is folded
+    /// into the router after the axum auth middleware is applied, so it
+    /// authenticates its own request metadata and answers with proper gRPC
+    /// status codes instead of bare HTTP 401/403.
+    auth: Option<super::auth::ApiAuth>,
 }
 
 #[cfg(feature = "daemon-otlp")]
@@ -3593,6 +3624,37 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
         &self,
         request: tonic::Request<rsigma_runtime::ExportLogsServiceRequest>,
     ) -> Result<tonic::Response<rsigma_runtime::ExportLogsServiceResponse>, tonic::Status> {
+        if let Some(auth) = &self.auth {
+            let authorization = request
+                .metadata()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok());
+            match auth.check(authorization, super::auth::EVENTS_INGEST) {
+                super::auth::Decision::Allowed(_) => {}
+                super::auth::Decision::Unauthorized => {
+                    self.metrics
+                        .api_auth_failures
+                        .with_label_values(&["unauthorized"])
+                        .inc();
+                    return Err(tonic::Status::unauthenticated(
+                        "missing or invalid bearer token",
+                    ));
+                }
+                super::auth::Decision::Forbidden { token } => {
+                    self.metrics
+                        .api_auth_failures
+                        .with_label_values(&["forbidden"])
+                        .inc();
+                    tracing::warn!(
+                        token = %token,
+                        "OTLP gRPC auth failure: token lacks events:ingest"
+                    );
+                    return Err(tonic::Status::permission_denied(
+                        "token lacks required permission 'events:ingest'",
+                    ));
+                }
+            }
+        }
         let span = tracing::debug_span!("otlp_ingest", transport = "grpc", encoding = "protobuf");
         async move {
             self.metrics
@@ -3628,6 +3690,96 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "daemon-otlp")]
+    mod otlp_grpc_auth {
+        use super::super::OtlpLogsGrpcService;
+        use super::*;
+        use crate::daemon::auth::{ApiAuth, TokenSpec};
+
+        fn auth_table() -> ApiAuth {
+            let tokens = [
+                TokenSpec {
+                    name: "shipper".into(),
+                    role: Some("ingest".into()),
+                    permissions: None,
+                    token_env: "SHIPPER".into(),
+                },
+                TokenSpec {
+                    name: "viewer".into(),
+                    role: Some("reader".into()),
+                    permissions: None,
+                    token_env: "VIEWER".into(),
+                },
+            ];
+            ApiAuth::build(&[], &tokens, &[], |key| match key {
+                "SHIPPER" => Some("ship-secret".into()),
+                "VIEWER" => Some("view-secret".into()),
+                _ => None,
+            })
+            .unwrap()
+        }
+
+        fn service(auth: Option<ApiAuth>) -> (OtlpLogsGrpcService, mpsc::Receiver<RawEvent>) {
+            let (event_tx, event_rx) = mpsc::channel(8);
+            (
+                OtlpLogsGrpcService {
+                    event_tx,
+                    metrics: Arc::new(Metrics::new()),
+                    auth,
+                },
+                event_rx,
+            )
+        }
+
+        fn request_with_token(
+            token: Option<&str>,
+        ) -> tonic::Request<rsigma_runtime::ExportLogsServiceRequest> {
+            let mut request =
+                tonic::Request::new(rsigma_runtime::ExportLogsServiceRequest::default());
+            if let Some(token) = token {
+                request
+                    .metadata_mut()
+                    .insert("authorization", format!("Bearer {token}").parse().unwrap());
+            }
+            request
+        }
+
+        #[tokio::test]
+        async fn grpc_export_rejects_missing_token_as_unauthenticated() {
+            use rsigma_runtime::LogsService;
+            let (svc, _rx) = service(Some(auth_table()));
+            let status = svc.export(request_with_token(None)).await.unwrap_err();
+            assert_eq!(status.code(), tonic::Code::Unauthenticated);
+        }
+
+        #[tokio::test]
+        async fn grpc_export_rejects_read_token_as_permission_denied() {
+            use rsigma_runtime::LogsService;
+            let (svc, _rx) = service(Some(auth_table()));
+            let status = svc
+                .export(request_with_token(Some("view-secret")))
+                .await
+                .unwrap_err();
+            assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        }
+
+        #[tokio::test]
+        async fn grpc_export_accepts_ingest_token() {
+            use rsigma_runtime::LogsService;
+            let (svc, _rx) = service(Some(auth_table()));
+            let response = svc.export(request_with_token(Some("ship-secret"))).await;
+            assert!(response.is_ok(), "{response:?}");
+        }
+
+        #[tokio::test]
+        async fn grpc_export_open_without_auth_table() {
+            use rsigma_runtime::LogsService;
+            let (svc, _rx) = service(None);
+            let response = svc.export(request_with_token(None)).await;
+            assert!(response.is_ok(), "{response:?}");
+        }
+    }
 
     #[test]
     fn force_clear_always_skips() {

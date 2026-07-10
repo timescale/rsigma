@@ -16,6 +16,7 @@ pub struct Metrics {
     pub correlation_state_entries: IntGauge,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
+    pub api_auth_failures: IntCounterVec,
     pub processing_latency: Histogram,
     pub uptime_seconds: Gauge,
     pub input_queue_depth: IntGauge,
@@ -146,6 +147,15 @@ impl Metrics {
             "rsigma_reloads_failed_total",
             "Failed rule reload attempts",
         ))
+        .unwrap();
+        let api_auth_failures = IntCounterVec::new(
+            Opts::new(
+                "rsigma_api_auth_failures_total",
+                "API requests rejected by authentication, by reason \
+                 (unauthorized, forbidden)",
+            ),
+            &["reason"],
+        )
         .unwrap();
         let processing_latency = Histogram::with_opts(
             HistogramOpts::new(
@@ -290,6 +300,9 @@ impl Metrics {
             .unwrap();
         registry.register(Box::new(reloads_total.clone())).unwrap();
         registry.register(Box::new(reloads_failed.clone())).unwrap();
+        registry
+            .register(Box::new(api_auth_failures.clone()))
+            .unwrap();
         registry
             .register(Box::new(processing_latency.clone()))
             .unwrap();
@@ -982,6 +995,7 @@ impl Metrics {
             correlation_state_entries,
             reloads_total,
             reloads_failed,
+            api_auth_failures,
             processing_latency,
             uptime_seconds,
             input_queue_depth,

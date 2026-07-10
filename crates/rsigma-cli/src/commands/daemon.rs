@@ -59,6 +59,16 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "api-addr", default_value = config::defaults::API_ADDR)]
     pub api_addr: String,
 
+    /// Require bearer-token authentication on the API, with the named
+    /// environment variable holding the single accepted token (full admin
+    /// permissions). The flag names the variable; the secret itself stays
+    /// out of the command line and config files. For per-token roles and
+    /// granular permissions use the `daemon.api.auth` config block instead
+    /// (the flag and the block are mutually exclusive). `GET /healthz` and
+    /// `GET /readyz` always stay open.
+    #[arg(long = "api-token-env", value_name = "ENV_VAR")]
+    pub api_token_env: Option<String>,
+
     /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
     #[arg(long = "suppress")]
     pub suppress: Option<String>,
@@ -629,6 +639,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         args.enable_dispositions,
         args.disposition_source.clone(),
     );
+    let api_auth = resolve_auth_settings(&base, args.api_token_env.clone());
     apply_daemon_config(&mut args, matches, base);
 
     let DaemonArgs {
@@ -641,6 +652,7 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         include_event,
         pretty,
         api_addr,
+        api_token_env: _,
         suppress,
         action,
         no_detections,
@@ -856,9 +868,91 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         tap,
         tail,
         dispositions,
+        api_auth,
         #[cfg(feature = "daemon-tls")]
         tls_args,
     );
+}
+
+/// Resolve the effective API authentication table from the merged config
+/// plus the `--api-token-env` convenience flag (a single admin token). Env
+/// variables named by `token_env` are resolved here, once, so a missing
+/// secret fails startup with a clear message. Returns `None` when neither
+/// the flag nor a `daemon.api.auth` block is present (no authentication).
+fn resolve_auth_settings(
+    base: &config::RsigmaConfigPartial,
+    api_token_env: Option<String>,
+) -> Option<daemon::auth::ApiAuth> {
+    use daemon::auth::{ApiAuth, TokenSpec};
+
+    let block = base
+        .daemon
+        .as_ref()
+        .and_then(|d| d.api.as_ref())
+        .and_then(|a| a.auth.as_ref());
+    if api_token_env.is_some() && block.is_some() {
+        eprintln!(
+            "--api-token-env cannot be combined with a daemon.api.auth config block; \
+             configure tokens in one place"
+        );
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+
+    let (roles, tokens, anonymous) = if let Some(var) = api_token_env {
+        (
+            Vec::new(),
+            vec![TokenSpec {
+                name: "default".into(),
+                role: Some("admin".into()),
+                permissions: None,
+                token_env: var,
+            }],
+            Vec::new(),
+        )
+    } else {
+        let auth = block?;
+        let roles: Vec<(String, Vec<String>)> =
+            auth.roles.clone().unwrap_or_default().into_iter().collect();
+        let tokens: Vec<TokenSpec> = auth
+            .tokens
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| {
+                let name = t.name.unwrap_or_else(|| {
+                    eprintln!("daemon.api.auth: token missing 'name'");
+                    process::exit(exit_code::CONFIG_ERROR);
+                });
+                let token_env = t.token_env.unwrap_or_else(|| {
+                    eprintln!("daemon.api.auth: token '{name}' missing 'token_env'");
+                    process::exit(exit_code::CONFIG_ERROR);
+                });
+                TokenSpec {
+                    name,
+                    role: t.role,
+                    permissions: t.permissions,
+                    token_env,
+                }
+            })
+            .collect();
+        let anonymous = auth.anonymous_permissions.clone().unwrap_or_default();
+        if tokens.is_empty() && anonymous.is_empty() {
+            eprintln!(
+                "daemon.api.auth declares no tokens and no anonymous_permissions; every \
+                 endpoint except /healthz and /readyz would be unreachable"
+            );
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        (roles, tokens, anonymous)
+    };
+
+    match ApiAuth::build(&roles, &tokens, &anonymous, |key| std::env::var(key).ok()) {
+        Ok(auth) => Some(auth),
+        Err(e) => {
+            eprintln!("daemon.api.auth: {e}");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    }
 }
 
 /// Resolve the effective tail settings from the merged config plus the
@@ -1403,6 +1497,7 @@ fn run_daemon(
     tap: daemon::server::TapSettings,
     tail: daemon::server::TailSettings,
     dispositions: daemon::server::DispositionSettings,
+    api_auth: Option<daemon::auth::ApiAuth>,
     #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
@@ -1550,6 +1645,7 @@ fn run_daemon(
         tap,
         tail,
         dispositions,
+        api_auth,
         #[cfg(feature = "daemon-tls")]
         tls_state,
     };

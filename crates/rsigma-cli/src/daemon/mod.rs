@@ -1,3 +1,4 @@
+pub(crate) mod auth;
 pub(crate) mod dispositions;
 pub(crate) mod enrichment;
 mod health;

@@ -213,6 +213,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--include-event` | flag | `false` | Include full event JSON in each detection match |
 | `--pretty` | flag | `false` | Pretty-print JSON output |
 | `--api-addr` | string | `0.0.0.0:9090` | Address for health, metrics, and management API server |
+| `--api-token-env` | string | none | Require bearer-token auth on the API; the named environment variable holds the single accepted token (full admin permissions). For per-token roles and granular `resource:action` permissions use the `daemon.api.auth` config block instead (mutually exclusive). `GET /healthz` and `GET /readyz` stay open. |
 | `--suppress` | string | none | Suppression window for correlation alerts (e.g. `5m`, `1h`) |
 | `--action` | string | none | `alert` or `reset`, the action taken after correlation fires |
 | `--no-detections` | flag | `false` | Suppress detection-level output (only show correlation alerts) |
