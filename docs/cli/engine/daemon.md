@@ -256,7 +256,7 @@ The daemon serves [`POST`/`GET /api/v1/dispositions`](../../reference/http-api.m
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--enable-dispositions` | off | Enable the loop for this run; the disposition endpoints then accept requests. Equivalent to `daemon.dispositions.enabled: true`. |
-| `--disposition-source <PATH>` | none | Pull dispositions from a dynamic-source file (file, HTTP, or NATS), the same format as `--source`, whose payload is the disposition records (NDJSON or a JSON array). Refreshed per the source's policy; redelivery is idempotent. Implies the loop is enabled. Overrides `daemon.dispositions.source`. |
+| `--disposition-source <PATH>` | none | Pull dispositions from a dynamic-source file (file, HTTP, or NATS), the same format as `--source`, whose payload is the disposition records (NDJSON or a JSON array). Refreshed per the source's policy; redelivery is idempotent. Implies the loop is enabled. Overrides `daemon.dispositions.source`. See [Disposition Source Recipes](../../guide/disposition-recipes.md) for tested TheHive/Jira/GitHub Issues configs. |
 
 The tuning keys are config-file-only under `daemon.dispositions`:
 

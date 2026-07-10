@@ -363,6 +363,7 @@ Exceeding any limit produces a `SourceErrorKind::ResourceLimit` failure with a d
 ## See also
 
 - [Processing Pipelines: dynamic pipelines](../guide/processing-pipelines.md#dynamic-pipelines) for the narrative version.
+- [Disposition Source Recipes](../guide/disposition-recipes.md) for worked HTTP sources (env-header auth, POST `body`, jq `extract`) that pull case-system verdicts into the triage loop.
 - [`pipeline resolve`](../cli/pipeline/resolve.md) for offline source testing.
 - [`rule validate --resolve-sources`](../cli/rule/validate.md) for the strict CI gate.
 - [Prometheus metrics: dynamic pipeline sources](metrics.md#dynamic-pipeline-sources-5-metrics) for what every successful and failing resolve exposes.

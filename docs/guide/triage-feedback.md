@@ -49,7 +49,7 @@ curl -sS http://127.0.0.1:9090/api/v1/dispositions
 There are two ways in, and both are idempotent:
 
 - **The endpoint.** `POST /api/v1/dispositions` for push-style ingest from whatever delivered the alert.
-- **A pull source.** `--disposition-source <PATH>` (or `daemon.dispositions.source`) points at a dynamic-source file (the same format as `--source`) whose payload is the disposition records. File, HTTP, and NATS transports are supported, refreshed per the source's policy.
+- **A pull source.** `--disposition-source <PATH>` (or `daemon.dispositions.source`) points at a dynamic-source file (the same format as `--source`) whose payload is the disposition records. File, HTTP, and NATS transports are supported, refreshed per the source's policy. See [Disposition Source Recipes](disposition-recipes.md) for copy-paste, tested configs that pull verdicts from TheHive, Jira, and GitHub Issues.
 
 Redelivery is safe: dispositions deduplicate on `(fingerprint or incident_id, verdict)`, falling back to `(rule_id, timestamp, analyst)` when no alert identity is carried, so a file re-read, a NATS redelivery, or an HTTP re-poll never double counts.
 
@@ -94,6 +94,7 @@ See [Triage feedback loop](../reference/metrics.md#triage-feedback-loop-4-metric
 
 ## See also
 
+- [Disposition Source Recipes](disposition-recipes.md)
 - [HTTP API: Dispositions](../reference/http-api.md#dispositions)
 - [Detection Scorecard](detection-scorecard.md)
 - [Alert Pipeline](alert-pipeline.md)
