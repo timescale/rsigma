@@ -377,6 +377,60 @@ pub fn http_delete(url: &str) -> (u16, String) {
     (status, body)
 }
 
+/// GET `url` with a bearer token. Returns (status, body) for any HTTP
+/// response code; panics on transport errors only.
+#[allow(dead_code)]
+pub fn http_get_bearer(url: &str, token: &str) -> (u16, String) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent
+        .get(url)
+        .header("authorization", format!("Bearer {token}"))
+        .call()
+        .expect("HTTP GET failed");
+    let status = resp.status().as_u16();
+    let body = resp.into_body().read_to_string().unwrap();
+    (status, body)
+}
+
+/// POST `body` to `url` with a bearer token. Returns (status, body) for any
+/// HTTP response code; panics on transport errors only.
+#[allow(dead_code)]
+pub fn http_post_bearer(url: &str, token: &str, body: &str) -> (u16, String) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent
+        .post(url)
+        .header("authorization", format!("Bearer {token}"))
+        .send(body)
+        .expect("HTTP POST failed");
+    let status = resp.status().as_u16();
+    let body = resp.into_body().read_to_string().unwrap();
+    (status, body)
+}
+
+/// DELETE `url` with a bearer token. Returns (status, body) for any HTTP
+/// response code; panics on transport errors only.
+#[allow(dead_code)]
+pub fn http_delete_bearer(url: &str, token: &str) -> (u16, String) {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent
+        .delete(url)
+        .header("authorization", format!("Bearer {token}"))
+        .call()
+        .expect("HTTP DELETE failed");
+    let status = resp.status().as_u16();
+    let body = resp.into_body().read_to_string().unwrap();
+    (status, body)
+}
+
 /// Poll `check` every 50ms until it returns `Some(value)` or `deadline`
 /// elapses. Use this in place of fixed sleeps when you want to wait for a
 /// specific observable condition.
