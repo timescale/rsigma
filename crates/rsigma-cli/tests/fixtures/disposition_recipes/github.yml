@@ -1,0 +1,34 @@
+# Pull analyst verdicts from closed GitHub issues labeled `alert`.
+#
+# Label convention (defined by this recipe; GitHub has no resolution field):
+#   verdict:true-positive | verdict:false-positive | verdict:benign-true-positive
+#   rule:<rule_id>      the rule the alert came from
+#   incident:<id>       the rsigma incident_id stamped into the issue at creation
+#
+# Auth: a read-only token in $GITHUB_TOKEN (fine-grained "Issues: read").
+# API: https://docs.github.com/en/rest/issues/issues#list-repository-issues
+# `since` filters on updated_at (not close time); the issues endpoint also
+# returns pull requests, so the extract drops anything with a `pull_request` key.
+sources:
+  - id: github_dispositions
+    type: http
+    url: "https://api.github.com/repos/acme/detections/issues?state=closed&labels=alert&since=2026-07-01T00:00:00Z&per_page=100"
+    headers:
+      Authorization: "Bearer ${GITHUB_TOKEN}"
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+    format: json
+    refresh: 5m
+    extract: |
+      [ .[]
+        | select(has("pull_request") | not)
+        | { l: [.labels[].name], closed: .closed_at, who: (.assignee.login? // null) }
+        | select([.l[] | select(startswith("verdict:"))] | length > 0)
+        | {
+            rule_id: ([.l[] | select(startswith("rule:")) | ltrimstr("rule:")][0]),
+            verdict: ([.l[] | select(startswith("verdict:")) | ltrimstr("verdict:")][0] | gsub("-"; "_")),
+            incident_id: ([.l[] | select(startswith("incident:")) | ltrimstr("incident:")][0]),
+            timestamp: .closed,
+            analyst: .who
+          }
+      ]

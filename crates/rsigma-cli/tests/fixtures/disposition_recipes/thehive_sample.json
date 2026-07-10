@@ -1,0 +1,29 @@
+[
+  {
+    "_id": "~40968",
+    "title": "proc-injection on WKSTN-7",
+    "status": "Resolved",
+    "resolutionStatus": "FalsePositive",
+    "tags": ["rsigma-rule:proc-injection", "rsigma-incident:7f3c9a2b"],
+    "assignee": "alice",
+    "_updatedAt": 1783000800000
+  },
+  {
+    "_id": "~40972",
+    "title": "susp-powershell on SRV-3",
+    "status": "Resolved",
+    "resolutionStatus": "TruePositive",
+    "tags": ["rsigma-rule:susp-powershell", "rsigma-incident:a1b2c3d4"],
+    "assignee": "bob",
+    "_updatedAt": 1783006000000
+  },
+  {
+    "_id": "~40990",
+    "title": "dns anomaly on GW-1",
+    "status": "Resolved",
+    "resolutionStatus": "Indeterminate",
+    "tags": ["rsigma-rule:dns-tunnel", "rsigma-incident:ffff0000"],
+    "assignee": "carol",
+    "_updatedAt": 1783010000000
+  }
+]

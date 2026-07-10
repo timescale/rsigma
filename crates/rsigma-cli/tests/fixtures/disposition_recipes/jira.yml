@@ -1,0 +1,39 @@
+# Pull analyst verdicts from resolved Jira Cloud issues.
+#
+# Convention:
+#   resolution name "False Positive" / "True Positive" (add a "False Positive"
+#     resolution to your workflow scheme if the default one lacks it)
+#   label rsigma-rule-<rule_id>     the rule the alert came from
+#   label rsigma-incident-<id>      the rsigma incident_id stamped in at creation
+#
+# Auth: HTTP Basic; $JIRA_BASIC_AUTH is base64("email:api_token") for a
+# read-only token. API token docs:
+# https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/
+# Endpoint: the legacy /rest/api/3/search returns 410 Gone; use search/jql, which
+# needs an explicit `fields` list and paginates with nextPageToken (not startAt):
+# https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-get
+# `resolutiondate` is not RFC 3339 (offset is +0000, no colon), so the extract
+# omits `timestamp` and lets ingest default it; the incident_id keys the record.
+sources:
+  - id: jira_dispositions
+    type: http
+    url: "https://your-domain.atlassian.net/rest/api/3/search/jql?jql=resolution%20in%20(%22False%20Positive%22%2C%22True%20Positive%22)%20AND%20updated%20%3E%3D%20-1d&fields=resolution,resolutiondate,labels,assignee&maxResults=100"
+    headers:
+      Authorization: "Basic ${JIRA_BASIC_AUTH}"
+      Accept: "application/json"
+    format: json
+    refresh: 5m
+    extract: |
+      [ .issues[]
+        | .fields as $f
+        | select($f.resolution != null
+                 and ($f.resolution.name == "False Positive"
+                      or $f.resolution.name == "True Positive"))
+        | {
+            rule_id: ([$f.labels[] | select(startswith("rsigma-rule-")) | ltrimstr("rsigma-rule-")][0]),
+            verdict: (if $f.resolution.name == "False Positive"
+                      then "false_positive" else "true_positive" end),
+            incident_id: ([$f.labels[] | select(startswith("rsigma-incident-")) | ltrimstr("rsigma-incident-")][0]),
+            analyst: ($f.assignee.displayName? // null)
+          }
+      ]

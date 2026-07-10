@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Disposition source recipes (docs) (#311)
+
+A new [Disposition Source Recipes](https://timescale.github.io/rsigma/guide/disposition-recipes/) guide with copy-paste `--disposition-source` configs that pull analyst verdicts from TheHive, Jira, and GitHub Issues into the triage feedback loop. Each recipe is one HTTP dynamic source with a jq `extract` that reshapes the case system's API response into disposition records, plus its verdict mapping, `${ENV_VAR}` auth, and the identity round-trip and idempotency reasoning. The three sources files are committed as test fixtures and their extracts run against canned API responses in CI, so the documented recipes cannot silently drift from what the ingest path accepts. Docs-only beyond the fixture test; no engine or daemon change.
+
 ### Request body for `http` dynamic sources (#310)
 
 The `http` dynamic-source type gains an optional `body` field, sent verbatim after `${VAR}` environment expansion, so a source can poll a query API that requires a request body (GraphQL, an Elasticsearch/OpenSearch `_search`, TheHive 5's `/api/v1/query`). A source with a `body` and no explicit `method` defaults to `POST`; an explicit `method` still wins. `Content-Type` is not inferred and should be set in `headers`. The reference documentation for `headers` is also corrected: `${VAR}` references have always been expanded from the environment at fetch time, which the field table previously said was unimplemented.

@@ -1,0 +1,49 @@
+[
+  {
+    "number": 412,
+    "title": "Alert: proc-injection on WKSTN-7",
+    "state": "closed",
+    "labels": [
+      { "name": "alert" },
+      { "name": "rule:proc-injection" },
+      { "name": "incident:7f3c9a2b" },
+      { "name": "verdict:false-positive" }
+    ],
+    "assignee": { "login": "alice" },
+    "closed_at": "2026-07-09T14:20:00Z",
+    "updated_at": "2026-07-09T14:20:05Z"
+  },
+  {
+    "number": 415,
+    "title": "Alert: susp-powershell on SRV-3",
+    "state": "closed",
+    "labels": [
+      { "name": "alert" },
+      { "name": "rule:susp-powershell" },
+      { "name": "incident:a1b2c3d4" },
+      { "name": "verdict:true-positive" }
+    ],
+    "assignee": { "login": "bob" },
+    "closed_at": "2026-07-09T16:05:00Z",
+    "updated_at": "2026-07-09T16:05:10Z"
+  },
+  {
+    "number": 418,
+    "title": "Refactor detection loader",
+    "state": "closed",
+    "labels": [{ "name": "alert" }],
+    "pull_request": { "url": "https://api.github.com/repos/acme/detections/pulls/418" },
+    "assignee": null,
+    "closed_at": "2026-07-09T17:00:00Z",
+    "updated_at": "2026-07-09T17:00:00Z"
+  },
+  {
+    "number": 420,
+    "title": "Alert: triage still pending",
+    "state": "closed",
+    "labels": [{ "name": "alert" }, { "name": "rule:dns-tunnel" }],
+    "assignee": null,
+    "closed_at": "2026-07-09T18:00:00Z",
+    "updated_at": "2026-07-09T18:00:00Z"
+  }
+]
