@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### WASM ABI contract and build compatibility
+### WASM ABI contract and build compatibility (#306)
 
 Documents ABI version 1 for future direct `wasm32-unknown-unknown` hosts, including the linear-memory ownership model, packed status/result values, result descriptors, stable JSON error envelopes, and compatibility rules. CI builds `rsigma-parser` and `rsigma-eval` for `wasm32-unknown-unknown` with default features disabled, then instantiates a module linking them in a JavaScript-free runtime (Wasmtime) to prove it runs and carries no JavaScript imports.
 
