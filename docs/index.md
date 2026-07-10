@@ -144,6 +144,7 @@ An article series on building RSigma and using it in production:
 | 6 | [Cloud Detection at Scale on a Laptop](https://mostafa.dev/cloud-detection-at-scale-on-a-laptop-e46540322856) | Running cloud-scale detection locally with RSigma. |
 | 7 | [The State of RSigma](https://mostafa.dev/the-state-of-rsigma-7ba0a99020d9) | A tour of everything RSigma does today and where it is headed. |
 | 8 | [Detection-as-Code in One GitHub Action with RSigma](https://mostafa.dev/detection-as-code-in-one-github-action-with-rsigma-0ebfb4c857fa) | Gating a Sigma rule repository in CI with lint, validate, fields-drift, backtest, and ATT&CK coverage. |
+| 9 | [The State of RSigma, Part Two: The Loop](https://mostafa.dev/the-state-of-rsigma-part-two-the-loop-c114f379dd78) | One detection through the full lifecycle: author, test, deploy, detect, alert and triage, measure, and hunt. |
 
 ## At a glance
 
