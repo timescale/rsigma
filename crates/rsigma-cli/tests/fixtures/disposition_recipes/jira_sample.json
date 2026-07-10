@@ -1,0 +1,40 @@
+{
+  "issues": [
+    {
+      "key": "SOC-101",
+      "fields": {
+        "resolution": { "name": "False Positive" },
+        "resolutiondate": "2026-07-09T14:20:00.000+0000",
+        "labels": ["rsigma-rule-proc-injection", "rsigma-incident-7f3c9a2b"],
+        "assignee": { "displayName": "Alice Ng" }
+      }
+    },
+    {
+      "key": "SOC-102",
+      "fields": {
+        "resolution": { "name": "True Positive" },
+        "resolutiondate": "2026-07-09T16:05:00.000+0000",
+        "labels": ["rsigma-rule-susp-powershell", "rsigma-incident-a1b2c3d4"],
+        "assignee": null
+      }
+    },
+    {
+      "key": "SOC-103",
+      "fields": {
+        "resolution": null,
+        "resolutiondate": null,
+        "labels": ["rsigma-rule-dns-tunnel"],
+        "assignee": null
+      }
+    },
+    {
+      "key": "SOC-104",
+      "fields": {
+        "resolution": { "name": "Done" },
+        "resolutiondate": "2026-07-09T17:00:00.000+0000",
+        "labels": ["rsigma-rule-other"],
+        "assignee": { "displayName": "Bob Lee" }
+      }
+    }
+  ]
+}

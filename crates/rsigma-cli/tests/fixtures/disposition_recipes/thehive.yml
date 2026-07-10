@@ -1,0 +1,45 @@
+# Pull analyst verdicts from resolved TheHive 5 (StrangeBee) cases.
+#
+# Convention:
+#   resolutionStatus  TruePositive | FalsePositive
+#     (Indeterminate / Duplicated / Other are skipped in the extract; TheHive
+#      has no native benign-true-positive status, so teams that track BTP add a
+#      case tag and map it here.)
+#   tag rsigma-rule:<rule_id>       the rule the alert came from
+#   tag rsigma-incident:<id>        the rsigma incident_id stamped in at creation
+#
+# Auth: a read-only API key in $THEHIVE_API_KEY.
+# API: TheHive 5 case search is POST /api/v1/query with a JSON body (there is no
+# GET-with-filters equivalent), so this recipe uses the http-source `body` field.
+# https://docs.strangebee.com/thehive/api-docs/
+# `_updatedAt` is epoch milliseconds, not RFC 3339, so the extract omits
+# `timestamp` and lets ingest default it; the incident_id keys the record.
+sources:
+  - id: thehive_dispositions
+    type: http
+    url: "https://thehive.example.com/api/v1/query?name=rsigma-dispositions"
+    method: POST
+    headers:
+      Authorization: "Bearer ${THEHIVE_API_KEY}"
+      Content-Type: "application/json"
+    body: |
+      {"query":[
+        {"_name":"listCase"},
+        {"_name":"filter","_eq":{"_field":"status","_value":"Resolved"}},
+        {"_name":"sort","_fields":[{"_updatedAt":"desc"}]},
+        {"_name":"page","from":0,"to":100}
+      ]}
+    format: json
+    refresh: 5m
+    extract: |
+      [ .[]
+        | select(.resolutionStatus == "TruePositive"
+                 or .resolutionStatus == "FalsePositive")
+        | { tags: (.tags // []), rs: .resolutionStatus, who: (.assignee? // null) }
+        | {
+            rule_id: ([.tags[] | select(startswith("rsigma-rule:")) | ltrimstr("rsigma-rule:")][0]),
+            verdict: (if .rs == "TruePositive" then "true_positive" else "false_positive" end),
+            incident_id: ([.tags[] | select(startswith("rsigma-incident:")) | ltrimstr("rsigma-incident:")][0]),
+            analyst: .who
+          }
+      ]
