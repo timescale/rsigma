@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Request body for `http` dynamic sources
+### Request body for `http` dynamic sources (#310)
 
 The `http` dynamic-source type gains an optional `body` field, sent verbatim after `${VAR}` environment expansion, so a source can poll a query API that requires a request body (GraphQL, an Elasticsearch/OpenSearch `_search`, TheHive 5's `/api/v1/query`). A source with a `body` and no explicit `method` defaults to `POST`; an explicit `method` still wins. `Content-Type` is not inferred and should be set in `headers`. The reference documentation for `headers` is also corrected: `${VAR}` references have always been expanded from the environment at fetch time, which the field table previously said was unimplemented.
 
