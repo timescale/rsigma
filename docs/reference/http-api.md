@@ -296,7 +296,7 @@ curl -sS -X DELETE http://127.0.0.1:9090/api/v1/silences/0b6c...
 
 ## Audit trail
 
-Append-only log of control-plane mutations (silences, dispositions, reload, source cache invalidation, field/schema observer resets). Enabled automatically when the daemon is started with `--state-db`; disable or tune retention with the `daemon.api.audit` config block. Data-plane ingest (`POST /api/v1/events`, OTLP) is never recorded. Each entry stores the HTTP method, matched route pattern, bearer token name (when authentication is enabled), response status, Unix timestamp, and an optional SHA-256 hex digest of the request body. The body itself is never stored. Bodies larger than `max_body_bytes` (default 64 KiB) are rejected with `413` before the handler runs.
+Append-only log of control-plane mutations (silences, dispositions, reload, source cache invalidation, field/schema observer resets). Enabled automatically when the daemon is started with `--state-db`; disable or tune retention with the `daemon.api.audit` config block. Data-plane ingest (`POST /api/v1/events`, OTLP) is never recorded. Each entry stores the HTTP method, matched route pattern, bearer token name (when authentication is enabled), response status, Unix timestamp, and an optional SHA-256 hex digest of the request body. The body itself is never stored. A request whose body exceeds `max_body_bytes` (default 64 KiB), whether declared via `Content-Length` or streamed, is rejected with `413` before the handler runs, and the rejected attempt is itself recorded (with a `null` digest).
 
 Auth denials (`401`/`403`) are tracked separately via `rsigma_api_auth_failures_total`, not in this log.
 

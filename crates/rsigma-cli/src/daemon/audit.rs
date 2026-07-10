@@ -78,7 +78,10 @@ impl AuditLog {
         self.config.max_body_bytes
     }
 
-    /// Persist (and optionally emit) an audit record without blocking the caller.
+    /// Persist (and optionally emit) an audit record without blocking the
+    /// caller. Each call spawns its own task, so concurrent mutations may reach
+    /// the optional sink out of timestamp order; the SQLite table remains the
+    /// authoritative, id-ordered record.
     pub fn record(&self, rec: AuditRecord) {
         let store = self.store.clone();
         let metrics = self.metrics.clone();
@@ -131,26 +134,13 @@ impl AuditLog {
 /// Append `on_full=drop` to a sink spec when absent so audit emission never
 /// blocks on a slow downstream.
 pub fn audit_sink_spec(spec: &str) -> String {
-    let (_, params) = split_query(spec);
+    let (_, params) = super::server::split_query(spec);
     if params.iter().any(|(k, _)| *k == "on_full") {
         spec.to_string()
     } else if spec.contains('?') {
         format!("{spec}&on_full=drop")
     } else {
         format!("{spec}?on_full=drop")
-    }
-}
-
-fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
-    match spec.split_once('?') {
-        Some((base, query)) => {
-            let params = query
-                .split('&')
-                .filter_map(|kv| kv.split_once('='))
-                .collect();
-            (base, params)
-        }
-        None => (spec, Vec::new()),
     }
 }
 
@@ -201,6 +191,25 @@ fn skip_body_buffer(method: &Method, headers: &HeaderMap) -> bool {
     }
 }
 
+/// Read the declared body length from `Content-Length`, if present and valid.
+fn declared_len(headers: &HeaderMap) -> Option<usize> {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+}
+
+fn payload_too_large(max: usize) -> Response {
+    (
+        StatusCode::PAYLOAD_TOO_LARGE,
+        axum::Json(serde_json::json!({
+            "error": "request body exceeds audit max_body_bytes",
+            "max_body_bytes": max
+        })),
+    )
+        .into_response()
+}
+
 pub async fn audit_middleware(
     State(log): State<Arc<AuditLog>>,
     request: Request<Body>,
@@ -225,29 +234,40 @@ pub async fn audit_middleware(
         .map(|id| id.token.clone())
         .unwrap_or(None);
 
+    // Records the outcome once we know the status. Digest is `None` for
+    // bodyless or rejected requests.
+    let emit = |log: &AuditLog, status: u16, payload_digest: Option<String>| {
+        log.record(AuditRecord {
+            id: None,
+            ts: now_ts(),
+            method: method.to_string(),
+            endpoint: path.clone(),
+            token: token.clone(),
+            payload_digest,
+            status,
+        });
+    };
+
+    let max = log.max_body_bytes();
     let (parts, body) = request.into_parts();
     let body_bytes = if skip_body_buffer(&method, &parts.headers) {
         Bytes::new()
     } else {
-        let max = log.max_body_bytes();
-        match axum::body::to_bytes(body, max.saturating_add(1)).await {
-            Ok(bytes) if bytes.len() > max => {
-                return (
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    axum::Json(serde_json::json!({
-                        "error": "request body exceeds audit max_body_bytes",
-                        "max_body_bytes": max
-                    })),
-                )
-                    .into_response();
-            }
+        // A declared `Content-Length` over the cap is a definitive reject
+        // before reading the stream.
+        if declared_len(&parts.headers).is_some_and(|len| len > max) {
+            emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None);
+            return payload_too_large(max);
+        }
+        // `to_bytes` errors when the streamed body exceeds the limit; past the
+        // `Content-Length` precheck the dominant cause of a limit hit is an
+        // oversized chunked body, so we treat the error as too-large. A rare
+        // mid-stream read error maps here too, which is acceptable.
+        match axum::body::to_bytes(body, max).await {
             Ok(bytes) => bytes,
             Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(serde_json::json!({ "error": "failed to read request body" })),
-                )
-                    .into_response();
+                emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None);
+                return payload_too_large(max);
             }
         }
     };
@@ -257,15 +277,7 @@ pub async fn audit_middleware(
     let response = next.run(request).await;
     let status = response.status().as_u16();
 
-    log.record(AuditRecord {
-        id: None,
-        ts: now_ts(),
-        method: method.to_string(),
-        endpoint: path,
-        token,
-        payload_digest,
-        status,
-    });
+    emit(&log, status, payload_digest);
 
     response
 }

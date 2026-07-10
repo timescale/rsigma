@@ -84,3 +84,61 @@ fn audit_endpoint_disabled_without_state_db() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["error"], "audit trail disabled");
 }
+
+const SMALL_BODY_CONFIG: &str = r#"
+daemon:
+  api:
+    audit:
+      max_body_bytes: 16
+    auth:
+      tokens:
+        - name: op
+          role: operator
+          token_env: TEST_TOKEN_OPERATOR
+        - name: reader
+          role: reader
+          token_env: TEST_TOKEN_READER
+"#;
+
+#[test]
+fn oversized_body_is_rejected_and_recorded() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("state.db");
+    let config = temp_file(".yaml", SMALL_BODY_CONFIG);
+
+    let daemon = DaemonProcess::spawn_http_with_args_env(
+        rule.path().to_str().unwrap(),
+        &[
+            "--config",
+            config.path().to_str().unwrap(),
+            "--state-db",
+            db.to_str().unwrap(),
+        ],
+        &[
+            ("TEST_TOKEN_OPERATOR", "tok-operator"),
+            ("TEST_TOKEN_READER", "tok-reader"),
+        ],
+    );
+
+    // The silence body is well over the 16-byte cap, so the audit middleware
+    // rejects it with 413 before the handler runs.
+    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", SILENCE);
+    assert_eq!(status, 413, "{body}");
+
+    std::thread::sleep(Duration::from_millis(200));
+
+    let (status, body) = http_get_bearer(&daemon.url("/api/v1/audit"), "tok-reader");
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v["count"], 1,
+        "the rejected attempt should be recorded: {body}"
+    );
+    let entry = &v["entries"][0];
+    assert_eq!(entry["status"], 413);
+    assert!(
+        entry["payload_digest"].is_null(),
+        "no digest for a rejected body: {body}"
+    );
+}

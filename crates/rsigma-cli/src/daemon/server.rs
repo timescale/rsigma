@@ -2112,7 +2112,7 @@ async fn shutdown_signal() {
 
 /// Split an output spec into its base (scheme + target) and `key=value` query
 /// parameters: `file:///p?on_full=drop`, `otlp://host:4317?compression=gzip`.
-fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
+pub(super) fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
     match spec.split_once('?') {
         Some((base, query)) => {
             let params = query

@@ -164,7 +164,7 @@ Authentication complements TLS rather than replacing it: tokens authenticate *wh
 When the daemon runs with `--state-db`, an append-only audit log records every control-plane mutation: who called which endpoint, when, with what outcome, and a SHA-256 digest of the request body (never the body itself). Read the log with `GET /api/v1/audit` (`audit:read` when authentication is enabled). Event ingest and OTLP surfaces are excluded so the log stays small.
 
 - **Auto-enable.** No extra flag: configuring `--state-db` turns the trail on. Set `daemon.api.audit.enabled: false` to disable while keeping correlation state persistence.
-- **Bounded digest buffering.** Audited routes buffer at most `max_body_bytes` (default 65536) to compute the digest; larger bodies get `413 Payload Too Large`.
+- **Bounded digest buffering.** Audited routes buffer at most `max_body_bytes` (default 65536) to compute the digest; larger bodies get `413 Payload Too Large` (before the handler runs) and the rejected attempt is recorded with a `null` digest.
 - **Retention.** `max_age` (default 720h) and `max_entries` (default 10000) prune the SQLite table on startup and on each state-save tick.
 - **Optional sink.** `daemon.api.audit.sink` mirrors each record as a JSON line; the sink is built with `on_full=drop` so slow downstreams cannot backlog the daemon.
 - **Auth denials stay separate.** Failed authentication increments `rsigma_api_auth_failures_total` and is logged at warn; it is not duplicated in the audit table.
