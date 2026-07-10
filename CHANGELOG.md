@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Disposition source recipes (docs)
+### Disposition source recipes (docs) (#311)
 
 A new [Disposition Source Recipes](https://timescale.github.io/rsigma/guide/disposition-recipes/) guide with copy-paste `--disposition-source` configs that pull analyst verdicts from TheHive, Jira, and GitHub Issues into the triage feedback loop. Each recipe is one HTTP dynamic source with a jq `extract` that reshapes the case system's API response into disposition records, plus its verdict mapping, `${ENV_VAR}` auth, and the identity round-trip and idempotency reasoning. The three sources files are committed as test fixtures and their extracts run against canned API responses in CI, so the documented recipes cannot silently drift from what the ingest path accepts. Docs-only beyond the fixture test; no engine or daemon change.
 
