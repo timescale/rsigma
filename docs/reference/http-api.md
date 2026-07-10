@@ -35,6 +35,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/schemas/suggestions` | GET | `schemas:read` | Candidate schema signatures mined from the unrecognized-event sample. Requires `--discover-schemas`. |
 | `/api/v1/tap` | GET | `tap:read` | Stream a bounded, optionally-redacted window of the live event stream as chunked NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. |
 | `/api/v1/detections/stream` | GET | `detections:read` | Stream live detections as chunked NDJSON, with optional `level` / `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. |
+| `/api/v1/audit` | GET | `audit:read` | Paginated control-plane mutation audit log (who, what, when, outcome). Requires `--state-db`; auto-enabled when a state database is configured. |
 | `/v1/logs` | POST | `events:ingest` | OTLP/HTTP log ingestion (`application/x-protobuf` or `application/json`, optionally gzip-encoded). Requires `daemon-otlp`. |
 | OTLP/gRPC `LogsService/Export` | gRPC | `events:ingest` | OTLP over gRPC on the same `--api-addr`. Requires `daemon-otlp`. |
 
@@ -292,6 +293,39 @@ Remove a silence by id. Returns `200` when removed, `404` when no such silence e
 ```bash
 curl -sS -X DELETE http://127.0.0.1:9090/api/v1/silences/0b6c...
 ```
+
+## Audit trail
+
+Append-only log of control-plane mutations (silences, dispositions, reload, source cache invalidation, field/schema observer resets). Enabled automatically when the daemon is started with `--state-db`; disable or tune retention with the `daemon.api.audit` config block. Data-plane ingest (`POST /api/v1/events`, OTLP) is never recorded. Each entry stores the HTTP method, matched route pattern, bearer token name (when authentication is enabled), response status, Unix timestamp, and an optional SHA-256 hex digest of the request body. The body itself is never stored. A request whose body exceeds `max_body_bytes` (default 64 KiB), whether declared via `Content-Length` or streamed, is rejected with `413` before the handler runs, and the rejected attempt is itself recorded (with a `null` digest).
+
+Auth denials (`401`/`403`) are tracked separately via `rsigma_api_auth_failures_total`, not in this log.
+
+### `GET /api/v1/audit`
+
+Paginated read of the audit log, newest first. Query parameters: `limit` (default 100, max 1000), `offset`, `since` and `until` (Unix seconds, inclusive bounds on `ts`). Returns `503` when audit is disabled (no state database). Requires `audit:read` when authentication is enabled.
+
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/audit?limit=50'
+```
+
+```json
+{
+  "count": 1,
+  "entries": [
+    {
+      "id": 42,
+      "ts": 1714500000,
+      "method": "POST",
+      "endpoint": "/api/v1/silences",
+      "token": "op",
+      "payload_digest": "a1b2...",
+      "status": 201
+    }
+  ]
+}
+```
+
+Retention pruning runs on daemon startup and on every state-save interval (default 30s): rows older than `max_age` (default 720h) are deleted, then the table is trimmed to the newest `max_entries` (default 10000). An optional `sink` emits each record as a JSON line with `on_full=drop` backpressure.
 
 ## Dispositions
 

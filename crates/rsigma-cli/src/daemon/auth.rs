@@ -155,6 +155,7 @@ pub fn required_access(method: &Method, path: &str) -> Access {
         (&Method::DELETE, "/api/v1/schemas") => req("schemas", "write"),
         (&Method::GET, "/api/v1/tap") => req("tap", "read"),
         (&Method::GET, "/api/v1/detections/stream") => req("detections", "read"),
+        (&Method::GET, "/api/v1/audit") => req("audit", "read"),
         _ => req("*", "*"),
     }
 }
@@ -565,6 +566,7 @@ mod tests {
             (Method::DELETE, "/api/v1/schemas"),
             (Method::GET, "/api/v1/tap"),
             (Method::GET, "/api/v1/detections/stream"),
+            (Method::GET, "/api/v1/audit"),
             (Method::POST, "/v1/logs"),
         ];
         let catch_all = Access::Require(Permission::required("*", "*"));

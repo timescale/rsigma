@@ -97,6 +97,8 @@ pub struct Metrics {
     pub risk_evictions_total: IntCounter,
     pub risk_incidents_emitted_total: IntCounterVec,
     pub risk_incident_results_total: IntCounter,
+    pub audit_records_total: IntCounter,
+    pub audit_write_errors_total: IntCounter,
 }
 
 impl Metrics {
@@ -942,6 +944,16 @@ impl Metrics {
             "Total risk incident records emitted",
         ))
         .unwrap();
+        let audit_records_total = IntCounter::with_opts(Opts::new(
+            "rsigma_audit_records_total",
+            "Control-plane API calls recorded in the audit trail",
+        ))
+        .unwrap();
+        let audit_write_errors_total = IntCounter::with_opts(Opts::new(
+            "rsigma_audit_write_errors_total",
+            "Audit trail SQLite or sink write failures",
+        ))
+        .unwrap();
         // Pre-materialise the fixed label sets and zero the gauges so the
         // `# HELP` / `# TYPE` lines and zero series render on the first scrape.
         for action in ["scored", "no_entity", "skipped"] {
@@ -982,6 +994,12 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(risk_incident_results_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(audit_records_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(audit_write_errors_total.clone()))
             .unwrap();
 
         Metrics {
@@ -1076,6 +1094,8 @@ impl Metrics {
             risk_evictions_total,
             risk_incidents_emitted_total,
             risk_incident_results_total,
+            audit_records_total,
+            audit_write_errors_total,
         }
     }
 

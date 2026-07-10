@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Control-plane API audit trail (#307)
+
+Adds an append-only audit log for control-plane mutating daemon API calls (who, what, when, outcome), persisted in the existing SQLite state database when `--state-db` is configured. Auto-enabled with a state database; optional `daemon.api.audit` config tunes retention, optional sink emission, or disables the trail. Each record stores method, matched route pattern, token name, HTTP status, timestamp, and a SHA-256 hex digest of the request body (never the body itself). Data-plane ingest and OTLP are excluded. `GET /api/v1/audit` (`audit:read`) serves paginated entries; bodies over `max_body_bytes` (default 64 KiB) get `413` and the rejected attempt is recorded. New metrics: `rsigma_audit_records_total`, `rsigma_audit_write_errors_total`.
+
 ### WASM ABI contract and build compatibility (#306)
 
 Documents ABI version 1 for future direct `wasm32-unknown-unknown` hosts, including the linear-memory ownership model, packed status/result values, result descriptors, stable JSON error envelopes, and compatibility rules. CI builds `rsigma-parser` and `rsigma-eval` for `wasm32-unknown-unknown` with default features disabled, then instantiates a module linking them in a JavaScript-free runtime (Wasmtime) to prove it runs and carries no JavaScript imports.

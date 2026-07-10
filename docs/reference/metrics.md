@@ -20,6 +20,8 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_reloads_total` | counter | — | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | — | Reload attempts that produced parse or compile errors. |
 | `rsigma_api_auth_failures_total` | counter | `reason` (`unauthorized`, `forbidden`) | API requests rejected by [bearer-token authentication](http-api.md#authentication): `unauthorized` is a missing or unrecognized token, `forbidden` a recognized token without the required permission. Each label value surfaces after its first rejection. Stays absent while authentication is disabled. |
+| `rsigma_audit_records_total` | counter | — | Control-plane API calls recorded in the [audit trail](http-api.md#audit-trail). Stays absent when audit is disabled (no `--state-db`). |
+| `rsigma_audit_write_errors_total` | counter | — | Audit trail SQLite insert or optional sink emission failures. |
 | `rsigma_uptime_seconds` | gauge | — | Daemon uptime in seconds. |
 | `rsigma_input_queue_depth` | gauge | — | Events currently buffered in the source→engine channel. Tracked for every input, including the HTTP and OTLP push receivers. |
 | `rsigma_output_queue_depth` | gauge | — | Results currently buffered in the engine→sink channel. |

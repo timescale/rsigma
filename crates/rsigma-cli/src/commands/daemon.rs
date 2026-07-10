@@ -640,6 +640,13 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         args.disposition_source.clone(),
     );
     let api_auth = resolve_auth_settings(&base, args.api_token_env.clone());
+    let state_db_from_config = base
+        .daemon
+        .as_ref()
+        .and_then(|d| d.state.as_ref())
+        .and_then(|s| s.db.as_ref());
+    let has_state_db = args.state_db.is_some() || state_db_from_config.is_some();
+    let audit = resolve_audit_settings(&base, has_state_db);
     apply_daemon_config(&mut args, matches, base);
 
     let DaemonArgs {
@@ -869,9 +876,58 @@ pub(crate) fn cmd_daemon(mut args: DaemonArgs, matches: &ArgMatches) {
         tail,
         dispositions,
         api_auth,
+        audit,
         #[cfg(feature = "daemon-tls")]
         tls_args,
     );
+}
+
+/// Resolve the effective API audit-trail settings from the merged config.
+/// Auto-enabled when a state database is configured; fails startup when
+/// audit is explicitly enabled without `--state-db`.
+fn resolve_audit_settings(
+    base: &config::RsigmaConfigPartial,
+    has_state_db: bool,
+) -> daemon::audit::AuditSettings {
+    use daemon::audit::{
+        AuditSettings, DEFAULT_MAX_AGE, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_ENTRIES,
+    };
+
+    let partial = base
+        .daemon
+        .as_ref()
+        .and_then(|d| d.api.as_ref())
+        .and_then(|a| a.audit.as_ref());
+
+    let explicitly_enabled = partial.and_then(|a| a.enabled).unwrap_or(false);
+    if explicitly_enabled && !has_state_db {
+        eprintln!("daemon.api.audit requires --state-db (or daemon.state.db in the config file)");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+
+    let enabled = has_state_db && partial.and_then(|a| a.enabled).unwrap_or(true);
+    let max_entries = partial
+        .and_then(|a| a.max_entries)
+        .unwrap_or(DEFAULT_MAX_ENTRIES);
+    let max_age_str = partial
+        .and_then(|a| a.max_age.clone())
+        .unwrap_or_else(|| DEFAULT_MAX_AGE.to_string());
+    let max_age = humantime::parse_duration(&max_age_str).unwrap_or_else(|e| {
+        eprintln!("Invalid daemon.api.audit.max_age '{max_age_str}': {e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
+    let max_body_bytes = partial
+        .and_then(|a| a.max_body_bytes)
+        .unwrap_or(DEFAULT_MAX_BODY_BYTES as u64) as usize;
+    let sink = partial.and_then(|a| a.sink.clone());
+
+    AuditSettings {
+        enabled,
+        max_entries,
+        max_age,
+        max_body_bytes,
+        sink,
+    }
 }
 
 /// Resolve the effective API authentication table from the merged config
@@ -1498,6 +1554,7 @@ fn run_daemon(
     tail: daemon::server::TailSettings,
     dispositions: daemon::server::DispositionSettings,
     api_auth: Option<daemon::auth::ApiAuth>,
+    audit: daemon::audit::AuditSettings,
     #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
 ) {
     use rsigma_eval::resolve_builtin_pipeline;
@@ -1646,6 +1703,7 @@ fn run_daemon(
         tail,
         dispositions,
         api_auth,
+        audit,
         #[cfg(feature = "daemon-tls")]
         tls_state,
     };

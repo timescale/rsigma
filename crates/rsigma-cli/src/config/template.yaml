@@ -69,6 +69,15 @@ daemon:
     #     - name: ci
     #       role: triage-bot
     #       token_env: RSIGMA_API_TOKEN_CI
+    # Control-plane API audit trail (requires --state-db). Auto-enabled when a
+    # state database is configured; stores who changed what (SHA-256 digest of
+    # the body, not the body itself). Optional sink for JSON lines.
+    # audit:
+    #   enabled: true
+    #   max_entries: 10000
+    #   max_age: 720h
+    #   max_body_bytes: 65536
+    #   sink: file:///var/log/rsigma/audit.jsonl
 
   input:
     # Event source: stdin | http | nats://host:port/subject

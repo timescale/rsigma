@@ -159,6 +159,18 @@ Design properties:
 
 Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
+## Control-plane API audit trail
+
+When the daemon runs with `--state-db`, an append-only audit log records every control-plane mutation: who called which endpoint, when, with what outcome, and a SHA-256 digest of the request body (never the body itself). Read the log with `GET /api/v1/audit` (`audit:read` when authentication is enabled). Event ingest and OTLP surfaces are excluded so the log stays small.
+
+- **Auto-enable.** No extra flag: configuring `--state-db` turns the trail on. Set `daemon.api.audit.enabled: false` to disable while keeping correlation state persistence.
+- **Bounded digest buffering.** Audited routes buffer at most `max_body_bytes` (default 65536) to compute the digest; larger bodies get `413 Payload Too Large` (before the handler runs) and the rejected attempt is recorded with a `null` digest.
+- **Retention.** `max_age` (default 720h) and `max_entries` (default 10000) prune the SQLite table on startup and on each state-save tick.
+- **Optional sink.** `daemon.api.audit.sink` mirrors each record as a JSON line; the sink is built with `on_full=drop` so slow downstreams cannot backlog the daemon.
+- **Auth denials stay separate.** Failed authentication increments `rsigma_api_auth_failures_total` and is logged at warn; it is not duplicated in the audit table.
+
+See [HTTP API: Audit trail](http-api.md#audit-trail) for the audited route list and query parameters.
+
 ## Live event tap
 
 The live event tap ([`GET /api/v1/tap`](http-api.md#live-event-tap), [`rsigma engine tap`](../cli/engine/tap.md)) streams a bounded window of the raw event traffic flowing through the engine. Anyone who can reach the admin API can already inject events and read loaded rules; the tap raises the stakes to **reading live production traffic**, so treat it as an exfiltration surface:
@@ -173,7 +185,7 @@ The tap can never apply backpressure to detection: each session owns a bounded b
 
 The daemon never writes outside the paths it is explicitly given:
 
-- `--state-db <PATH>`: SQLite file written periodically and on shutdown.
+- `--state-db <PATH>`: SQLite file written periodically and on shutdown (correlation state, alert pipeline, dispositions, risk, and the control-plane audit log when enabled).
 - `--dlq file://<PATH>`: append-only NDJSON.
 - `--output file://<PATH>`: append-only NDJSON of detections.
 
