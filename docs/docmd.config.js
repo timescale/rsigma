@@ -9,6 +9,14 @@ export default {
   src: "content",
   out: "site",
   base,
+  logo: {
+    light: "/assets/images/logo.png",
+    dark: "/assets/images/logo.png",
+    alt: "RSigma",
+    text: "RSigma",
+    height: "3rem",
+  },
+  favicon: "/assets/images/favicon.png",
   theme: {
     appearance: "dark",
     customCss: ["/assets/css/extra.css"],
