@@ -2,3 +2,27 @@
 .md-typeset table:not([class]) {
   font-size: 0.78rem;
 }
+
+.sidebar-header .logo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  text-decoration: none;
+}
+
+.sidebar-header .logo-link img {
+  margin: 0;
+}
+
+.sidebar-header .logo-text {
+  font-size: 2rem;
+  font-weight: 800;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #000;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+html[data-theme="dark"] .sidebar-header .logo-text {
+  color: #fff;
+}

@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docmd site branding (#314)
+
+The docmd plugin copies `assets/rsigma-logo.png` into the published site at build time, trims transparent padding with sharp, and writes a square favicon PNG. The sidebar shows the trimmed mark with an RSigma text label styled for light and dark themes.
+
 ### Docs site search on rsigma.io (#313)
 
 Build the docmd site with base `/` and canonical URL `https://rsigma.io/` so the search client loads `search-index.json` from the site root. The previous `/rsigma/` base matched the old GitHub Pages project path but broke search after the custom domain went live.

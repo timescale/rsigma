@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import { parse as parseYaml } from "yaml";
 
 /** @type {Record<string, unknown> | null} */
@@ -183,6 +184,92 @@ function linkifyIssueRefs(md, repoUrl) {
 }
 
 /**
+ * @param {string} text
+ * @returns {string}
+ */
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Append a plain-text site label beside the sidebar logo image.
+ *
+ * @param {string} html
+ * @param {string | undefined} text
+ * @returns {string}
+ */
+function injectSidebarLogoText(html, text) {
+  if (!text || html.includes('class="logo-text"')) {
+    return html;
+  }
+  const label = `<span class="logo-text">${escapeHtml(text)}</span>`;
+  return html.replace(
+    /(<div class="sidebar-header">\s*<a\b[^>]*\bclass="logo-link"[^>]*>)([\s\S]*?)(<\/a>)/,
+    (_match, open, inner, close) => `${open}${inner}${label}${close}`,
+  );
+}
+
+/** Legacy generated/copied brand files to remove when refreshing assets. */
+const STALE_BRAND_FILES = [
+  "sidebar-logo.svg",
+  "favicon.svg",
+  "rsigma-logotype.svg",
+  "rsigma-logo.svg",
+  "rsigma-logotype.png",
+];
+
+/**
+ * @param {string} destDir
+ * @param {string} logoPng
+ */
+async function writeBrandImages(destDir, logoPng) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const trimmed = sharp(logoPng).trim();
+  await trimmed.clone().png().toFile(path.join(destDir, "logo.png"));
+  const { data, info } = await trimmed
+    .clone()
+    .toBuffer({ resolveWithObject: true });
+  const square = Math.max(info.width, info.height);
+  await sharp(data)
+    .extend({
+      top: Math.floor((square - info.height) / 2),
+      bottom: Math.ceil((square - info.height) / 2),
+      left: Math.floor((square - info.width) / 2),
+      right: Math.ceil((square - info.width) / 2),
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toFile(path.join(destDir, "favicon.png"));
+  for (const stale of STALE_BRAND_FILES) {
+    const stalePath = path.join(destDir, stale);
+    if (fs.existsSync(stalePath)) {
+      fs.unlinkSync(stalePath);
+    }
+  }
+}
+
+/**
+ * Copy canonical brand assets from `{repoRoot}/assets/` into
+ * `{docsRoot}/assets/images/`. Keeps a single source of truth at the repo root
+ * without git symlinks (which break on many Windows clones and are unreliable
+ * on static hosts).
+ *
+ * @param {string} repoRoot
+ * @param {string} docsRoot
+ */
+async function syncBrandAssets(repoRoot, docsRoot) {
+  const logoPng = path.join(repoRoot, "assets", "rsigma-logo.png");
+  if (!fs.existsSync(logoPng)) {
+    throw new Error(`docmd-plugin-rsigma: missing brand asset ${logoPng}`);
+  }
+  await writeBrandImages(path.join(docsRoot, "assets", "images"), logoPng);
+}
+
+/**
  * Recursively collect every .html file under a directory.
  *
  * @param {string} dir
@@ -209,9 +296,11 @@ export default {
     capabilities: ["init", "build", "post-build"],
   },
 
-  onConfigResolved(config) {
-    repoRoot = findRepoRoot(config._projectRoot ?? process.cwd());
+  async onConfigResolved(config) {
+    const docsRoot = process.cwd();
+    repoRoot = findRepoRoot(docsRoot);
     rsigmaVars = loadRsigmaVars(repoRoot);
+    await syncBrandAssets(repoRoot, docsRoot);
   },
 
   onBeforeParse(src, _frontmatter, filePath) {
@@ -239,18 +328,40 @@ export default {
   // URLs at the site root, which breaks deep pages when combined with how the
   // client resolves paths. The client JS reads `window.DOCMD_BASE`, not the tag,
   // so removing the tag lets relative URLs resolve against the real document URL.
-  onPostBuild(ctx) {
+  async onPostBuild(ctx) {
     const outputDir = ctx?.outputDir ?? path.join(process.cwd(), "site");
     const log = typeof ctx?.log === "function" ? ctx.log : () => {};
+    const docsRoot = process.cwd();
+    const root = repoRoot ?? findRepoRoot(docsRoot);
+    const logoPng = path.join(root, "assets", "rsigma-logo.png");
+    await writeBrandImages(path.join(outputDir, "assets", "images"), logoPng);
+    await writeBrandImages(path.join(docsRoot, "assets", "images"), logoPng);
     let stripped = 0;
+    let logoTextInjected = 0;
+    const logoText =
+      typeof ctx?.config?.logo === "object" && ctx.config.logo.text
+        ? String(ctx.config.logo.text)
+        : undefined;
     for (const file of collectHtmlFiles(outputDir)) {
       const html = fs.readFileSync(file, "utf8");
-      const next = html.replace(/[ \t]*<base\b[^>]*>\n?/i, "");
+      let next = html.replace(/[ \t]*<base\b[^>]*>\n?/i, "");
       if (next !== html) {
-        fs.writeFileSync(file, next);
         stripped += 1;
       }
+      if (logoText) {
+        const withLogoText = injectSidebarLogoText(next, logoText);
+        if (withLogoText !== next) {
+          logoTextInjected += 1;
+          next = withLogoText;
+        }
+      }
+      if (next !== html) {
+        fs.writeFileSync(file, next);
+      }
     }
-    log(`docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages`);
+    log(
+      `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages` +
+        (logoText ? `, added logo text to ${logoTextInjected} pages` : ""),
+    );
   },
 };

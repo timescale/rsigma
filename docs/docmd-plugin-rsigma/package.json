@@ -17,6 +17,7 @@
     "capabilities": ["init", "build", "post-build"]
   },
   "dependencies": {
+    "sharp": "^0.34.3",
     "yaml": "^2.8.1"
   }
 }

@@ -9,6 +9,7 @@ editors/vscode/*.vsix
 
 # docmd build output and Node toolchain (docs project lives under docs/)
 /docs/site/
+/docs/assets/images/
 /docs/node_modules/
 /docs/.venv/
 /docs/__pycache__/
