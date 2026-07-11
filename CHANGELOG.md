@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Documentation site migrated to docmd
+### Documentation site migrated to docmd (#312)
 
 Replaces MkDocs Material with [docmd](https://docs.docmd.io/) for the published docs at `https://timescale.github.io/rsigma/`. The whole docmd project is self-contained under `docs/` (config, `package.json`, local plugin, assets, and Markdown under `docs/content/`). `docs/docmd.config.js` carries the reorganized navigation (User Guide grouped into Author/Test, Deploy/Detect, Alert/Respond, Measure/Hunt, Operate, and Integrate sub-categories; Benchmarks under Reference; Editors/Ecosystem under Integrations; Release Notes/Contributing/Security under Project) and defaults to dark mode. A local `docmd-plugin-rsigma` plugin preserves Cargo.toml-synced version, MSRV, and lint-count macros and the inlining of root CHANGELOG/CONTRIBUTING/BENCHMARKS/SECURITY, and strips docmd's site-root `<base>` tag so the project subpath resolves correctly. MkDocs-specific syntax (`!!!` admonitions, Material grid cards) is converted to docmd callouts and card grids. CI builds from `docs/` with `npm run docs:build` and `npm run docs:validate` via SHA-pinned first-party GitHub Actions.
 
