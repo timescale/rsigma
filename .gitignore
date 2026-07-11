@@ -7,8 +7,9 @@ editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/*.vsix
 
-# MkDocs build output
-/site/
+# docmd build output and Node toolchain (docs project lives under docs/)
+/docs/site/
+/docs/node_modules/
 /docs/.venv/
 /docs/__pycache__/
 

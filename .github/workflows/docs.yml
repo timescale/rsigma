@@ -5,25 +5,21 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "mkdocs.yml"
-      - "docs/requirements.txt"
-      - "README.md"
       - "CHANGELOG.md"
       - "CONTRIBUTING.md"
       - "SECURITY.md"
       - "BENCHMARKS.md"
+      - "Cargo.toml"
       - ".github/workflows/docs.yml"
   pull_request:
     branches: [main]
     paths:
       - "docs/**"
-      - "mkdocs.yml"
-      - "docs/requirements.txt"
-      - "README.md"
       - "CHANGELOG.md"
       - "CONTRIBUTING.md"
       - "SECURITY.md"
       - "BENCHMARKS.md"
+      - "Cargo.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -34,40 +30,48 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
 
 jobs:
   # Verify the docs build on every PR and push, without deploying. Catches
-  # broken links, undefined macros, and missing-page references that
-  # `mkdocs build --strict` would fail on.
+  # broken links, unresolved macros, and missing-page references that
+  # `docmd validate` would fail on.
   build:
     name: Build docs
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repo (and read CHANGELOG/SECURITY/CONTRIBUTING for include-markdown)
+    defaults:
+      run:
+        working-directory: docs # the docmd project (config, package.json, plugin) lives here
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-          fetch-depth: 0 # git-revision-date-localized needs full history
+          fetch-depth: 0 # git plugin needs full history for last-updated timestamps
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-node@49933ea5286ca864773da0eb629e002a408068e8 # v4.4.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: docs/requirements.txt
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
 
       - name: Install docs deps
-        run: pip install -r docs/requirements.txt
+        run: npm ci
 
       - name: Build site
-        run: mkdocs build --strict --site-dir site/
+        run: npm run docs:build
+        env:
+          DOCMD_BASE: /rsigma/ # GitHub Pages project site is served under /rsigma/
+
+      - name: Validate links
+        run: npm run docs:validate
 
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: site/
+          path: docs/site/
 
   # Deploy the artifact uploaded by the build job. Only runs on main, and only
   # when the build job actually uploaded an artifact.
