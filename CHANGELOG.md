@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Documentation site migrated to docmd
+
+Replaces MkDocs Material with [docmd](https://docs.docmd.io/) for the published docs at `https://timescale.github.io/rsigma/`. The whole docmd project is self-contained under `docs/` (config, `package.json`, local plugin, assets, and Markdown under `docs/content/`). `docs/docmd.config.js` carries the reorganized navigation (User Guide grouped into Author/Test, Deploy/Detect, Alert/Respond, Measure/Hunt, Operate, and Integrate sub-categories; Benchmarks under Reference; Editors/Ecosystem under Integrations; Release Notes/Contributing/Security under Project) and defaults to dark mode. A local `docmd-plugin-rsigma` plugin preserves Cargo.toml-synced version, MSRV, and lint-count macros and the inlining of root CHANGELOG/CONTRIBUTING/BENCHMARKS/SECURITY, and strips docmd's site-root `<base>` tag so the project subpath resolves correctly. MkDocs-specific syntax (`!!!` admonitions, Material grid cards) is converted to docmd callouts and card grids. CI builds from `docs/` with `npm run docs:build` and `npm run docs:validate` via SHA-pinned first-party GitHub Actions.
+
 ### Disposition source recipes (docs) (#311)
 
 A new [Disposition Source Recipes](https://timescale.github.io/rsigma/guide/disposition-recipes/) guide with copy-paste `--disposition-source` configs that pull analyst verdicts from TheHive, Jira, and GitHub Issues into the triage feedback loop. Each recipe is one HTTP dynamic source with a jq `extract` that reshapes the case system's API response into disposition records, plus its verdict mapping, `${ENV_VAR}` auth, and the identity round-trip and idempotency reasoning. The three sources files are committed as test fixtures and their extracts run against canned API responses in CI, so the documented recipes cannot silently drift from what the ingest path accepts. Docs-only beyond the fixture test; no engine or daemon change.
