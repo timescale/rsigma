@@ -1,7 +1,0 @@
-nav:
-  - init: init.md
-  - validate: validate.md
-  - show: show.md
-  - schema: schema.md
-  - path: path.md
-  - reload: reload.md

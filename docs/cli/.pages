@@ -1,8 +1,0 @@
-nav:
-  - Overview: index.md
-  - engine
-  - rule
-  - backend
-  - pipeline
-  - mcp
-  - config
