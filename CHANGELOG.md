@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Publish rstix to crates.io
+
+The `rstix` STIX 2.1 library now ships as part of the release. `publish.yml` publishes it to crates.io alongside the other workspace crates (it has no workspace dependencies, so it needs no index-wait), `docs.rs` builds it with all features so the `pattern` and `validate` surfaces are documented, and the weekly fuzz workflow schedules the `fuzz_stix_pattern` target next to the existing rstix parse and validate fuzzers. The crate README and the library docs page are refreshed for the crates.io landing page and link to `docs.rs/rstix`.
+
 ### rstix Validation Pipeline: conformance corpus and diagnostic coverage (`validate` feature) (#315)
 
 Closes Validation Pipeline conformance work for phases 1–4:
