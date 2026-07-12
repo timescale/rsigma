@@ -64,6 +64,8 @@ jobs:
             max_len: 65536
           - target: fuzz_rstix_validate_json
             max_len: 65536
+          - target: fuzz_stix_pattern
+            max_len: 4096
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

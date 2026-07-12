@@ -2,11 +2,21 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rstix` is a Rust library crate for STIX 2.1 and TAXII 2.1 in the rsigma workspace.
-**Core Foundation** is complete: core primitive types, deterministic SCO ID helpers,
-and vocabulary tables are available for downstream model/validation phases.
+`rstix` is a Rust library crate for STIX 2.1 in the rsigma workspace. It provides a typed object model for all built-in STIX types (meta objects, all 19 SDOs, SROs, 18 SCOs, and extensions), `StixObject` dispatch, `Bundle` parsing with streaming support (`parse_reader`) for ATT&CK-scale corpora, deterministic SCO ID derivation, and advisory semantic checks (`Bundle::validate()`), all with fixture-backed tests.
 
-**Data Model + Serialization** is **complete**. The typed object model (meta, all 19 SDOs, SROs, 18 SCOs + extensions), `StixObject` dispatch, `Bundle` parsing (including streaming via `parse_reader`), and advisory semantic checks (`Bundle::validate()`) are in place with fixture-backed tests. **Pattern Engine** is **complete** behind the optional `pattern` feature. **Validation Pipeline** is **shipped** behind `validate` (profiles, all twelve checks, `STIX-E/W/I/H` diagnostics, raw JSON entry, pattern parse/semantic split). **Graph + Marking + Store** and **TAXII Client** follow later.
+Two optional features extend the core model:
+
+- `pattern` — the STIX patterning engine: parse, type-check, and Level 1-3 evaluation against observations, a canonical printer, and `Indicator` wiring via `IndicatorBuilder`.
+- `validate` — a profile-based validation pipeline with all twelve checks, `STIX-E/W/I/H` diagnostics, raw-JSON entry points, and a pattern parse/semantic split.
+
+## Install
+
+```toml
+[dependencies]
+rstix = "0.18"
+# For the pattern engine and validation pipeline:
+# rstix = { version = "0.18", features = ["pattern", "validate"] }
+```
 
 This library is part of [rsigma].
 

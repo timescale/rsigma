@@ -1,8 +1,16 @@
 # rstix
 
-`rstix` is the rsigma workspace crate for **STIX 2.1** (and future **TAXII 2.1** client work). It provides typed Rust objects for all 42 built-in STIX types, bundle ingestion, extension round-trip, and a semantic validation pipeline.
+`rstix` is the rsigma workspace crate for **STIX 2.1**. It provides typed Rust objects for all 42 built-in STIX types, bundle ingestion, extension round-trip, and a semantic validation pipeline.
 
-API reference: the [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md) and [crate source](https://github.com/timescale/rsigma/tree/main/crates/rstix).
+API reference: [docs.rs/rstix](https://docs.rs/rstix), the [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md), and the [crate source](https://github.com/timescale/rsigma/tree/main/crates/rstix).
+
+```toml
+# Cargo.toml
+[dependencies]
+rstix = "{{ rsigma.version }}"
+# For the pattern engine and validation pipeline:
+# rstix = { version = "{{ rsigma.version }}", features = ["pattern", "validate"] }
+```
 
 ## Feature status
 
@@ -12,8 +20,6 @@ API reference: the [crate README](https://github.com/timescale/rsigma/blob/main/
 | **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete |
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
-| **Graph + Marking + Store** | Planned |
-| **TAXII Client** | Planned |
 
 ## Quick start
 
