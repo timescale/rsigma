@@ -423,8 +423,24 @@ fn is_valid_domain_label(label: &str) -> bool {
         && !label.ends_with('-')
 }
 
-/// Basic domain-name format check (RFC 1034 / RFC 5890 with IDNA UTS #46).
+/// Basic domain-name format check (non-empty ASCII label structure).
 pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::DomainNameValueEmpty);
+    }
+    if value.starts_with('.') || value.ends_with('.') || value.contains("..") {
+        return Err(ModelError::DomainNameFormatInvalid);
+    }
+    if value.split('.').all(is_valid_domain_label) {
+        Ok(())
+    } else {
+        Err(ModelError::DomainNameFormatInvalid)
+    }
+}
+
+/// Strict domain-name format check (IDNA UTS #46) for the Validation Pipeline.
+#[cfg(feature = "validate")]
+pub fn validate_domain_name_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::DomainNameValueEmpty);
     }
@@ -442,8 +458,26 @@ pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
     Ok(())
 }
 
-/// Email address format check (RFC 5322 addr-spec via `email_address`).
+/// Basic email address format check at the Data Model parse boundary.
 pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::EmailAddrValueEmpty);
+    }
+    let Some((local, domain)) = value.split_once('@') else {
+        return Err(ModelError::EmailAddrFormatInvalid);
+    };
+    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
+        return Err(ModelError::EmailAddrFormatInvalid);
+    }
+    if local.contains(char::is_whitespace) || domain.contains(char::is_whitespace) {
+        return Err(ModelError::EmailAddrFormatInvalid);
+    }
+    Ok(())
+}
+
+/// Strict RFC 5322 addr-spec check for the Validation Pipeline.
+#[cfg(feature = "validate")]
+pub fn validate_email_addr_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::EmailAddrValueEmpty);
     }
@@ -454,8 +488,22 @@ pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
     }
 }
 
-/// URL format check (WHATWG URL parser; STIX allows http, https, and ftp schemes).
+/// Basic URL format check at the Data Model parse boundary.
 pub fn validate_url_format(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::UrlValueEmpty);
+    }
+    if value.starts_with("http://") || value.starts_with("https://") || value.starts_with("ftp://")
+    {
+        Ok(())
+    } else {
+        Err(ModelError::UrlFormatInvalid)
+    }
+}
+
+/// Strict WHATWG URL check for the Validation Pipeline (`http`, `https`, `ftp` only).
+#[cfg(feature = "validate")]
+pub fn validate_url_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::UrlValueEmpty);
     }

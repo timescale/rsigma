@@ -327,13 +327,13 @@ for w in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
 
 ### Wire-format validation (pragmatic vs full spec)
 
-STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at parse time — enough to reject obvious garbage without pulling in full IDNA/email parsers.
+STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at the Data Model parse boundary and runs **full wire-format validators** only in the Validation Pipeline (`validate` feature), emitting `STIX-I0002` for SHOULD-level format issues.
 
-| Field | STIX reference | rstix today |
-| ----- | -------------- | ----------- |
-| `domain-name.value` | RFC 1034 / 5890 | ASCII label rules plus **IDNA** (UTS #46) for internationalized domains via the `idna` crate |
-| `email-addr.value` | RFC 5322 | **RFC 5322 addr-spec** validation via the `email_address` crate |
-| `url.value` | Valid URL | **WHATWG URL** parsing via the `url` crate; `http`, `https`, and `ftp` schemes only |
+| Field | STIX reference | Parse boundary (`serde`) | Validation Pipeline (`validate`) |
+| ----- | -------------- | ------------------------ | -------------------------------- |
+| `domain-name.value` | RFC 1034 / 5890 | ASCII label rules | **IDNA** (UTS #46) via optional `idna` dep |
+| `email-addr.value` | RFC 5322 | Basic `@` / label structure | **RFC 5322 addr-spec** via optional `email_address` |
+| `url.value` | Valid URL | `http`/`https`/`ftp` prefix | **WHATWG URL** via optional `url` crate |
 
 ### Local MITRE ATT&CK corpus test
 

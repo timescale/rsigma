@@ -573,17 +573,18 @@ impl From<ModelErrorWire> for ModelError {
 
 /// Encode a model error for embedding in a serde custom message.
 ///
-/// The human-readable [`Display`](std::fmt::Display) text is preserved at the start so
-/// serde error strings remain readable; the tagged JSON payload follows for round-trip.
+/// Wire format is `{TAG}{payload}{TAG}{display}` so decode never scans attacker-controlled
+/// display text for the delimiter (see `decode_from_serde`).
 pub(crate) fn encode_for_serde(err: &ModelError) -> String {
     let payload = serde_json::to_string(&ModelErrorWire::from(err)).expect("model error wire json");
-    format!("{err}{TAG}{payload}")
+    format!("{TAG}{payload}{TAG}{err}")
 }
 
 /// Decode a model error from a serde custom message, if tagged.
 pub(crate) fn decode_from_serde(message: &str) -> Option<ModelError> {
-    let tag_pos = message.find(TAG)?;
-    let json = &message[tag_pos + TAG.len()..];
+    let rest = message.strip_prefix(TAG)?;
+    let json_end = rest.find(TAG)?;
+    let json = &rest[..json_end];
     serde_json::from_str::<ModelErrorWire>(json)
         .ok()
         .map(Into::into)
@@ -606,15 +607,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tagged_roundtrip_preserves_human_readable_prefix() {
+    fn tagged_roundtrip_preserves_human_readable_display_suffix() {
         let err = ModelError::UnexpectedObjectType {
             expected: "indicator",
             actual: "malware".into(),
         };
         let message = encode_for_serde(&err);
-        assert!(message.starts_with("expected STIX type `indicator`, got `malware`"));
+        assert!(message.contains("expected STIX type `indicator`, got `malware`"));
         let recovered = decode_from_serde(&message).expect("decode");
         assert_eq!(recovered, err);
+    }
+
+    #[test]
+    fn decode_ignores_tag_sequence_embedded_in_display_fields() {
+        let forged_payload =
+            serde_json::to_string(&ModelErrorWire::OpinionValueInvalid).expect("wire json");
+        let malicious_err = ModelError::ExtensionDeserializeFailed {
+            key: "test-ext",
+            detail: format!("detail{TAG}{forged_payload}"),
+        };
+        let message = encode_for_serde(&malicious_err);
+        let recovered = decode_from_serde(&message).expect("decode");
+        assert_eq!(recovered, malicious_err);
+        assert!(!matches!(recovered, ModelError::OpinionValueInvalid));
     }
 
     #[test]
