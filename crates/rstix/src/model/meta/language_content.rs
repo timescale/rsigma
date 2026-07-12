@@ -86,7 +86,9 @@ impl<'de> serde::Deserialize<'de> for LanguageContent {
             object_modified: raw.object_modified,
             contents: raw.contents,
         };
-        content.validate().map_err(serde::de::Error::custom)?;
+        content
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(content)
     }
 }

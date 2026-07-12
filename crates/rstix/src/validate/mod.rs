@@ -21,6 +21,7 @@ mod diagnostic;
 pub(crate) mod legacy;
 mod legacy_paths;
 mod model_bridge;
+mod model_mapping;
 mod object_validate;
 mod parse_bridge;
 mod phase;

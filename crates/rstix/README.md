@@ -53,7 +53,7 @@ This library is part of [rsigma].
 
 - **Data Model + Serialization:** **complete**
 - **Pattern Engine:** **complete** (`--features pattern`)
-- **Validation Pipeline:** all twelve checks implemented (`--features validate`) — profiles + structured diagnostics; conformance completion tracked separately
+- **Validation Pipeline:** **complete** (`--features validate`) — all twelve checks, 39 structured diagnostics, conformance corpus + per-code coverage tests
 - **Next after Validation Pipeline:** **Graph + Marking + Store**
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
@@ -213,7 +213,7 @@ Recorded engineering choices for the `validate` feature. Summaries also appear o
 
 **Decision.** Use `Validator` for untrusted JSON and named profiles. With `validate` enabled, `Bundle::validate()` delegates to shared pipeline semantics to keep advisory and pipeline behavior aligned. Prefer [`PipelineValidationReport`](crate::PipelineValidationReport) at the crate root when both report types are in scope.
 
-**Current status.** All twelve checks are implemented and active; conformance completion is tracked as a separate follow-up slice.
+**Current status.** All twelve checks are implemented and active. The in-repo conformance corpus (`tests/fixtures/conformance/`) and `validate_diagnostic_coverage` integration test assert one pipeline case per `DiagnosticCode::ALL` entry (39 codes).
 
 ### Pattern Engine design decisions
 
@@ -327,15 +327,13 @@ for w in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
 
 ### Wire-format validation (pragmatic vs full spec)
 
-STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at parse time — enough to reject obvious garbage without pulling in full IDNA/email parsers.
+STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at the Data Model parse boundary and runs **full wire-format validators** only in the Validation Pipeline (`validate` feature), emitting `STIX-I0002` for SHOULD-level format issues.
 
-| Field | STIX reference | rstix today | Full standard (not implemented) |
-| ----- | -------------- | ----------- | -------------------------------- |
-| `domain-name.value` | RFC 1034 / 5890 | Label structure, no empty labels, no `..` | **IDNA** (Internationalized Domain Names): Unicode labels → Punycode (`xn--…`), full UTS #46 processing |
-| `email-addr.value` | RFC 5322 | Non-empty `local@domain` with dot in domain, no whitespace | **RFC 5322**: full addr-spec grammar (quoted strings, comments, IP literals) |
-| `url.value` | Valid URL | `http://`, `https://`, or `ftp://` prefix | WHATWG URL parser, IDNA in host, normalization |
-
-**Why full IDNA / RFC 5322 are not in Data Model + Serialization:** they are large, locale-sensitive parsers unrelated to STIX object typing. Basic checks catch malformed CTI early; strict compliance belongs in an optional validation profile or dedicated dependencies (`idna`, `mail-parser`, etc.) if a downstream consumer requires it.
+| Field | STIX reference | Parse boundary (`serde`) | Validation Pipeline (`validate`) |
+| ----- | -------------- | ------------------------ | -------------------------------- |
+| `domain-name.value` | RFC 1034 / 5890 | ASCII label rules | **IDNA** (UTS #46) via optional `idna` dep |
+| `email-addr.value` | RFC 5322 | Basic `@` / label structure | **RFC 5322 addr-spec** via optional `email_address` |
+| `url.value` | Valid URL | `http`/`https`/`ftp` prefix | **WHATWG URL** via optional `url` crate |
 
 ### Local MITRE ATT&CK corpus test
 

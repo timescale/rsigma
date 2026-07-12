@@ -336,7 +336,9 @@ impl<'de> serde::Deserialize<'de> for Indicator {
             valid_until: raw.valid_until,
             kill_chain_phases: raw.kill_chain_phases,
         };
-        indicator.validate().map_err(serde::de::Error::custom)?;
+        indicator
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(indicator)
     }
 }

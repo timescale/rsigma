@@ -207,7 +207,8 @@ impl<'de> serde::Deserialize<'de> for UserAccount {
             account_first_login: raw.account_first_login,
             account_last_login: raw.account_last_login,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

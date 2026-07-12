@@ -105,7 +105,9 @@ impl<'de> serde::Deserialize<'de> for Grouping {
             context: raw.context,
             object_refs: raw.object_refs,
         };
-        grouping.validate().map_err(serde::de::Error::custom)?;
+        grouping
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(grouping)
     }
 }

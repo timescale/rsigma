@@ -162,7 +162,8 @@ impl<'de> serde::Deserialize<'de> for WindowsRegistryKey {
             creator_user_ref: raw.creator_user_ref,
             number_of_subkeys: raw.number_of_subkeys,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

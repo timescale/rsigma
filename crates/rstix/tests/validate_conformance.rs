@@ -14,6 +14,13 @@ fn corpus_root() -> PathBuf {
         .join("conformance")
 }
 
+fn validation_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("validation")
+}
+
 fn read_json(path: &Path) -> String {
     fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("failed to read fixture {}: {err}", path.display()))
@@ -36,8 +43,31 @@ fn collect_json_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn collect_invalid_conformance_files() -> Vec<PathBuf> {
+    const INFO_ONLY_VALIDATION_FIXTURES: &[&str] = &[
+        "bundle-location-bad-region.json",
+        "bundle-relationship-matrix-invalid.json",
+    ];
+
+    let mut files = collect_json_files(&corpus_root().join("invalid"));
+    for file in collect_json_files(&validation_root()) {
+        let Some(name) = file.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if name.starts_with("bundle-")
+            && name.ends_with(".json")
+            && !INFO_ONLY_VALIDATION_FIXTURES.contains(&name)
+        {
+            files.push(file);
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
 #[test]
-fn conformance_valid_corpus_has_no_errors() {
+fn conformance_valid_corpus_is_valid_under_interop_strict() {
     let validator = Validator::interop_strict();
     let valid_dir = corpus_root().join("valid");
     let files = collect_json_files(&valid_dir);
@@ -50,29 +80,42 @@ fn conformance_valid_corpus_has_no_errors() {
         let json = read_json(&file);
         let report = validator.validate_json_str(&json);
         assert!(
-            report.errors().next().is_none(),
-            "expected no errors for {}",
+            report.is_valid(),
+            "expected interop_strict validity for {}",
             file.display()
         );
     }
 }
 
 #[test]
-fn conformance_invalid_corpus_has_errors() {
-    let validator = Validator::consumer_strict();
-    let invalid_dir = corpus_root().join("invalid");
-    let files = collect_json_files(&invalid_dir);
+fn conformance_invalid_corpus_fails_interop_strict() {
+    let validator = Validator::interop_strict();
+    let files = collect_invalid_conformance_files();
     assert!(
-        !files.is_empty(),
-        "no invalid conformance fixtures found in {}",
-        invalid_dir.display()
+        files.len() >= 10,
+        "expected at least 10 invalid conformance fixtures, found {}",
+        files.len()
     );
     for file in files {
         let json = read_json(&file);
         let report = validator.validate_json_str(&json);
         assert!(
-            report.errors().next().is_some(),
-            "expected errors for {}",
+            !report.is_valid(),
+            "expected validation failure for {}",
+            file.display()
+        );
+    }
+}
+
+#[test]
+fn conformance_invalid_corpus_never_emits_false_e0001() {
+    let validator = Validator::interop_strict();
+    for file in collect_invalid_conformance_files() {
+        let json = read_json(&file);
+        let report = validator.validate_json_str(&json);
+        assert!(
+            report.with_code(DiagnosticCode::E0001).next().is_none(),
+            "semantic invalid fixture {} must not emit STIX-E0001",
             file.display()
         );
     }

@@ -110,7 +110,7 @@ impl<'de> serde::Deserialize<'de> for CourseOfAction {
         };
         course_of_action
             .validate()
-            .map_err(serde::de::Error::custom)?;
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(course_of_action)
     }
 }

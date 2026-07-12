@@ -103,7 +103,8 @@ impl<'de> serde::Deserialize<'de> for Ipv4Addr {
             resolves_to_refs: raw.resolves_to_refs,
             belongs_to_refs: raw.belongs_to_refs,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

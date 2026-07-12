@@ -130,7 +130,9 @@ impl<'de> serde::Deserialize<'de> for Identity {
             sectors: raw.sectors,
             contact_information: raw.contact_information,
         };
-        identity.validate().map_err(serde::de::Error::custom)?;
+        identity
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(identity)
     }
 }

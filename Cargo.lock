@@ -4174,6 +4174,8 @@ name = "rstix"
 version = "0.18.0"
 dependencies = [
  "base64",
+ "email_address",
+ "idna",
  "ipnet",
  "phf 0.14.0",
  "regex",
@@ -4183,6 +4185,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "unicode-normalization",
+ "url",
  "uuid",
 ]
 

@@ -78,7 +78,8 @@ impl<'de> serde::Deserialize<'de> for EmailMimePart {
             content_type: raw.content_type,
             content_disposition: raw.content_disposition,
         };
-        part.validate().map_err(serde::de::Error::custom)?;
+        part.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(part)
     }
 }
@@ -300,7 +301,8 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             body_multipart: raw.body_multipart,
             raw_email_ref: raw.raw_email_ref,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

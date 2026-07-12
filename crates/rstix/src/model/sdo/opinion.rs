@@ -83,7 +83,9 @@ impl<'de> serde::Deserialize<'de> for Opinion {
             opinion: raw.opinion,
             object_refs: raw.object_refs,
         };
-        opinion.validate().map_err(serde::de::Error::custom)?;
+        opinion
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(opinion)
     }
 }

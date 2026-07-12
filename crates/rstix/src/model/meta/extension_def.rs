@@ -170,7 +170,9 @@ impl<'de> serde::Deserialize<'de> for ExtensionDefinition {
             extension_types: raw.extension_types,
             extension_properties: raw.extension_properties,
         };
-        definition.validate().map_err(serde::de::Error::custom)?;
+        definition
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(definition)
     }
 }

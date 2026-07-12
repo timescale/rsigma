@@ -139,7 +139,8 @@ impl<'de> serde::Deserialize<'de> for Artifact {
             encryption_algorithm: raw.encryption_algorithm,
             decryption_key: raw.decryption_key,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

@@ -57,8 +57,18 @@ fn validate_sco(sco: &ScoObject) -> Result<(), ModelError> {
         ScoObject::Artifact(v) => v.validate(),
         ScoObject::AutonomousSystem(v) => v.validate(),
         ScoObject::Directory(v) => v.validate(),
-        ScoObject::DomainName(v) => v.validate(),
-        ScoObject::EmailAddr(v) => v.validate(),
+        ScoObject::DomainName(v) => {
+            v.validate()?;
+            #[cfg(feature = "validate")]
+            crate::model::validate::validate_domain_name_format_strict(&v.value)?;
+            Ok(())
+        }
+        ScoObject::EmailAddr(v) => {
+            v.validate()?;
+            #[cfg(feature = "validate")]
+            crate::model::validate::validate_email_addr_format_strict(&v.value)?;
+            Ok(())
+        }
         ScoObject::EmailMessage(v) => v.validate(),
         ScoObject::File(v) => v.validate(),
         ScoObject::Ipv4Addr(v) => v.validate(),
@@ -68,7 +78,12 @@ fn validate_sco(sco: &ScoObject) -> Result<(), ModelError> {
         ScoObject::NetworkTraffic(v) => v.validate(),
         ScoObject::Process(v) => v.validate(),
         ScoObject::Software(v) => v.validate(),
-        ScoObject::Url(v) => v.validate(),
+        ScoObject::Url(v) => {
+            v.validate()?;
+            #[cfg(feature = "validate")]
+            crate::model::validate::validate_url_format_strict(&v.value)?;
+            Ok(())
+        }
         ScoObject::UserAccount(v) => v.validate(),
         ScoObject::WindowsRegistryKey(v) => v.validate(),
         ScoObject::X509Certificate(v) => v.validate(),

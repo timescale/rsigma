@@ -132,7 +132,8 @@ impl<'de> serde::Deserialize<'de> for Tool {
             kill_chain_phases: raw.kill_chain_phases,
             tool_version: raw.tool_version,
         };
-        tool.validate().map_err(serde::de::Error::custom)?;
+        tool.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(tool)
     }
 }

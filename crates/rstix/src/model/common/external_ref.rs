@@ -116,7 +116,9 @@ impl<'de> serde::Deserialize<'de> for ExternalReference {
             hashes: raw.hashes,
             external_id: raw.external_id,
         };
-        reference.validate().map_err(serde::de::Error::custom)?;
+        reference
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(reference)
     }
 }

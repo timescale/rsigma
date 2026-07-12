@@ -111,6 +111,6 @@ impl<'de> serde::Deserialize<'de> for GranularMarking {
 
         let raw = Raw::deserialize(deserializer)?;
         GranularMarking::new(raw.selectors, raw.marking_ref, raw.lang)
-            .map_err(serde::de::Error::custom)
+            .map_err(ModelError::into_de_custom)
     }
 }

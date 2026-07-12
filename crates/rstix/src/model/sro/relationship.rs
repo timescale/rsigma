@@ -140,7 +140,9 @@ impl<'de> serde::Deserialize<'de> for Relationship {
             start_time: raw.start_time,
             stop_time: raw.stop_time,
         };
-        relationship.validate().map_err(serde::de::Error::custom)?;
+        relationship
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(relationship)
     }
 }

@@ -185,7 +185,8 @@ impl<'de> serde::Deserialize<'de> for File {
             contains_refs: raw.contains_refs,
             content_ref: raw.content_ref,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

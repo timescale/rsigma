@@ -423,7 +423,7 @@ fn is_valid_domain_label(label: &str) -> bool {
         && !label.ends_with('-')
 }
 
-/// Basic domain-name format check (non-empty label structure).
+/// Basic domain-name format check (non-empty ASCII label structure).
 pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::DomainNameValueEmpty);
@@ -438,7 +438,27 @@ pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
     }
 }
 
-/// Basic email address format check.
+/// Strict domain-name format check (IDNA UTS #46) for the Validation Pipeline.
+#[cfg(feature = "validate")]
+pub fn validate_domain_name_format_strict(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::DomainNameValueEmpty);
+    }
+    if value.starts_with('.') || value.ends_with('.') || value.contains("..") {
+        return Err(ModelError::DomainNameFormatInvalid);
+    }
+    let ascii = if value.is_ascii() {
+        value.to_owned()
+    } else {
+        idna::domain_to_ascii(value).map_err(|_| ModelError::DomainNameFormatInvalid)?
+    };
+    if !ascii.split('.').all(is_valid_domain_label) {
+        return Err(ModelError::DomainNameFormatInvalid);
+    }
+    Ok(())
+}
+
+/// Basic email address format check at the Data Model parse boundary.
 pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::EmailAddrValueEmpty);
@@ -455,7 +475,20 @@ pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
     Ok(())
 }
 
-/// Basic URL format check.
+/// Strict RFC 5322 addr-spec check for the Validation Pipeline.
+#[cfg(feature = "validate")]
+pub fn validate_email_addr_format_strict(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::EmailAddrValueEmpty);
+    }
+    if email_address::EmailAddress::is_valid(value) {
+        Ok(())
+    } else {
+        Err(ModelError::EmailAddrFormatInvalid)
+    }
+}
+
+/// Basic URL format check at the Data Model parse boundary.
 pub fn validate_url_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::UrlValueEmpty);
@@ -465,6 +498,19 @@ pub fn validate_url_format(value: &str) -> Result<(), ModelError> {
         Ok(())
     } else {
         Err(ModelError::UrlFormatInvalid)
+    }
+}
+
+/// Strict WHATWG URL check for the Validation Pipeline (`http`, `https`, `ftp` only).
+#[cfg(feature = "validate")]
+pub fn validate_url_format_strict(value: &str) -> Result<(), ModelError> {
+    if value.is_empty() {
+        return Err(ModelError::UrlValueEmpty);
+    }
+    let parsed = url::Url::parse(value).map_err(|_| ModelError::UrlFormatInvalid)?;
+    match parsed.scheme() {
+        "http" | "https" | "ftp" => Ok(()),
+        _ => Err(ModelError::UrlFormatInvalid),
     }
 }
 

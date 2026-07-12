@@ -107,7 +107,8 @@ impl<'de> serde::Deserialize<'de> for AutonomousSystem {
             name: raw.name,
             rir: raw.rir,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

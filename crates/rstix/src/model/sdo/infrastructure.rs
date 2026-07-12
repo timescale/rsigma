@@ -118,7 +118,9 @@ impl<'de> serde::Deserialize<'de> for Infrastructure {
             first_seen: raw.first_seen,
             last_seen: raw.last_seen,
         };
-        value.validate().map_err(serde::de::Error::custom)?;
+        value
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(value)
     }
 }

@@ -246,7 +246,8 @@ impl<'de> serde::Deserialize<'de> for NetworkTraffic {
             encapsulates_refs: raw.encapsulates_refs,
             encapsulated_by_ref: raw.encapsulated_by_ref,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

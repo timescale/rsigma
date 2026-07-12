@@ -26,6 +26,6 @@ where
     D: serde::Deserializer<'de>,
 {
     let actual = String::deserialize(deserializer)?;
-    check_stix_type(&actual, expected).map_err(serde::de::Error::custom)?;
+    check_stix_type(&actual, expected).map_err(ModelError::into_de_custom)?;
     Ok(actual)
 }

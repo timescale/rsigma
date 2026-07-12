@@ -92,7 +92,9 @@ impl<'de> serde::Deserialize<'de> for Incident {
             name: raw.name,
             description: raw.description,
         };
-        incident.validate().map_err(serde::de::Error::custom)?;
+        incident
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(incident)
     }
 }

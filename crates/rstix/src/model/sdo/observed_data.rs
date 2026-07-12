@@ -237,7 +237,7 @@ impl<'de> serde::Deserialize<'de> for ObservedData {
 
         let raw = Raw::deserialize(deserializer)?;
         let form = observed_data_form_from_wire(raw.objects, raw.object_refs)
-            .map_err(serde::de::Error::custom)?;
+            .map_err(ModelError::into_de_custom)?;
         let observed_data = Self {
             object_type: raw.object_type,
             common: raw.common,
@@ -246,7 +246,9 @@ impl<'de> serde::Deserialize<'de> for ObservedData {
             number_observed: raw.number_observed,
             form,
         };
-        observed_data.validate().map_err(serde::de::Error::custom)?;
+        observed_data
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(observed_data)
     }
 }

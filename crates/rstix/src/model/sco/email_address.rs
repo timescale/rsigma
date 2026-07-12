@@ -104,7 +104,8 @@ impl<'de> serde::Deserialize<'de> for EmailAddr {
             display_name: raw.display_name,
             belongs_to_ref: raw.belongs_to_ref,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

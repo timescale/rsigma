@@ -113,7 +113,9 @@ impl<'de> serde::Deserialize<'de> for Report {
             published: raw.published,
             object_refs: raw.object_refs,
         };
-        value.validate().map_err(serde::de::Error::custom)?;
+        value
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(value)
     }
 }
