@@ -398,3 +398,231 @@ pub enum ModelError {
         selector: String,
     },
 }
+
+#[cfg(feature = "serde")]
+impl ModelError {
+    /// Reverse-map a [`thiserror`] display message produced at serde boundaries.
+    pub(crate) fn from_display_message(message: &str) -> Option<Self> {
+        if let Some(stripped) = message.strip_prefix("STIX id `")
+            && let Some((id, rest)) = stripped.split_once("` type prefix `")
+            && let Some((actual_type, expected)) = rest.split_once("` does not match object type `")
+            && let Some(expected_type) = expected.strip_suffix('`')
+        {
+            return Some(Self::IdTypeMismatch {
+                id: id.to_owned(),
+                actual_type: actual_type.to_owned(),
+                expected_type: expected_type.to_owned(),
+            });
+        }
+        if let Some(stripped) = message.strip_prefix("object `")
+            && let Some(object_id) = stripped.strip_prefix(
+                "` must not reference itself in object_marking_refs or granular_markings",
+            )
+        {
+            return Some(Self::MarkingDefinitionCircularRef {
+                object_id: object_id.to_owned(),
+            });
+        }
+        if let Some(stripped) = message.strip_prefix("relationship `")
+            && let Some((relationship_type, rest)) = stripped.split_once("` from `")
+            && let Some((source_type, target)) = rest.split_once("` to `")
+            && let Some(target_type) = target.strip_suffix("` is not allowed")
+        {
+            return Some(Self::RelationshipEndpointMatrixInvalid {
+                relationship_type: relationship_type.to_owned(),
+                source_type: source_type.to_owned(),
+                target_type: target_type.to_owned(),
+            });
+        }
+        if let Some(stripped) = message.strip_prefix("bundle reference `")
+            && let Some(ref_id) = stripped.strip_suffix("` not found in bundle")
+        {
+            return Some(Self::BundleReferenceMissing {
+                ref_id: ref_id.to_owned(),
+            });
+        }
+        if let Some(stripped) = message.strip_prefix("extension-definition must not set ") {
+            return Some(Self::ExtensionDefinitionForbiddenCommonProperty {
+                property: stripped.to_owned(),
+            });
+        }
+        if let Some(stripped) = message.strip_prefix("predefined extension `")
+            && let Some(key) = stripped.strip_suffix("` must not include extension_type")
+        {
+            return Some(Self::ExtensionTypeOnPredefinedExtension {
+                key: key.to_owned(),
+            });
+        }
+        if message
+            == "network-traffic endpoint ref must reference ipv4-addr, ipv6-addr, mac-addr, or domain-name"
+        {
+            return Some(Self::NetworkTrafficEndpointRefInvalid);
+        }
+        if message == "where_sighted_refs must reference identity or location objects" {
+            return Some(Self::SightingWhereSightedRefInvalid);
+        }
+        if message
+            == "relationship type must contain only lowercase ASCII letters, digits, and hyphens"
+        {
+            return Some(Self::RelationshipTypeInvalid);
+        }
+        if let Some(stripped) = message.strip_prefix("reference `")
+            && let Some((ref_id, expected)) = stripped.split_once("` has invalid kind; expected ")
+        {
+            return Some(Self::InvalidReferenceKind {
+                ref_id: ref_id.to_owned(),
+                expected: expected.to_owned(),
+            });
+        }
+        if let Some(selector) =
+            message.strip_prefix("granular marking selector syntax is invalid: `")
+            && let Some(selector) = selector.strip_suffix('`')
+        {
+            return Some(Self::GranularSelectorSyntaxInvalid {
+                selector: selector.to_owned(),
+            });
+        }
+        if let Some(property) = message.strip_prefix("SCO must not include SDO common property `")
+            && let Some(property) = property.strip_suffix('`')
+        {
+            return Some(Self::ScoForbiddenCommonProperty {
+                property: property.to_owned(),
+            });
+        }
+        if let Some(extension_id) =
+            message.strip_prefix("property-extension references missing extension-definition `")
+            && let Some(extension_id) = extension_id.strip_suffix('`')
+        {
+            return Some(Self::PropertyExtensionDefinitionMissing {
+                extension_id: extension_id.to_owned(),
+            });
+        }
+
+        match message {
+            "external reference requires a non-empty source_name" => {
+                Some(Self::ExternalReferenceMissingSourceName)
+            }
+            "external reference requires at least one of description, url, or external_id" => {
+                Some(Self::ExternalReferenceMissingDetail)
+            }
+            "granular marking must set marking_ref or lang" => {
+                Some(Self::GranularMarkingMissingRefAndLang)
+            }
+            "granular marking must not set both marking_ref and lang" => {
+                Some(Self::GranularMarkingBothRefAndLang)
+            }
+            "granular marking requires at least one selector" => {
+                Some(Self::GranularMarkingEmptySelectors)
+            }
+            "extension definition requires created_by_ref" => {
+                Some(Self::ExtensionDefinitionMissingCreatedByRef)
+            }
+            "kill chain phase kill_chain_name must be non-empty" => {
+                Some(Self::KillChainPhaseEmptyKillChainName)
+            }
+            "kill chain phase phase_name must be non-empty" => {
+                Some(Self::KillChainPhaseEmptyPhaseName)
+            }
+            "modified must be greater than or equal to created" => {
+                Some(Self::ModifiedBeforeCreated)
+            }
+            "SDO last_seen must be greater than or equal to first_seen" => {
+                Some(Self::SdoLastSeenBeforeFirstSeen)
+            }
+            "malware sample_refs must reference file or artifact" => {
+                Some(Self::MalwareSampleRefInvalid)
+            }
+            "malware-analysis sample_ref must reference file, network-traffic, or artifact" => {
+                Some(Self::MalwareAnalysisSampleRefInvalid)
+            }
+            "relationship stop_time must be later than start_time" => {
+                Some(Self::RelationshipStopTimeBeforeStartTime)
+            }
+            "sighting last_seen must be greater than or equal to first_seen" => {
+                Some(Self::SightingLastSeenBeforeFirstSeen)
+            }
+            "domain-name resolves_to_refs must reference ipv4-addr, ipv6-addr, or domain-name" => {
+                Some(Self::DomainNameResolvesToRefInvalid)
+            }
+            "directory contains_refs must reference file or directory" => {
+                Some(Self::DirectoryContainsRefInvalid)
+            }
+            "email MIME body_raw_ref must reference artifact or file" => {
+                Some(Self::EmailMimeBodyRawRefInvalid)
+            }
+            "email-message body must not be set when is_multipart is true" => {
+                Some(Self::EmailMessageBodyWithMultipart)
+            }
+            "email-message is_multipart true requires body_multipart" => {
+                Some(Self::EmailMessageMultipartMissing)
+            }
+            "email-message is_multipart false must not set body_multipart" => {
+                Some(Self::EmailMessageMultipartWhenSinglePart)
+            }
+            "network-traffic end must be greater than or equal to start" => {
+                Some(Self::NetworkTrafficEndBeforeStart)
+            }
+            "malware family requires name" => Some(Self::MalwareFamilyMissingName),
+            "indicator valid_until must be later than valid_from" => {
+                Some(Self::IndicatorValidUntilBeforeValidFrom)
+            }
+            "observed-data requires exactly one of objects or object_refs" => {
+                Some(Self::ObservedDataObjectsXorObjectRefs)
+            }
+            "observed-data requires objects or object_refs" => {
+                Some(Self::ObservedDataMissingScoContent)
+            }
+            "observed-data last_observed must be greater than or equal to first_observed" => {
+                Some(Self::ObservedDataLastObservedBeforeFirstObserved)
+            }
+            "relationship source_ref and target_ref must reference SDO or SCO objects" => {
+                Some(Self::RelationshipEndpointKindInvalid)
+            }
+            "sighting_of_ref must reference an SDO object" => Some(Self::SightingOfRefKindInvalid),
+            "attack-pattern CAPEC external reference requires external_id prefixed with CAPEC-" => {
+                Some(Self::InvalidCapecExternalReference)
+            }
+            "vulnerability CVE external reference requires external_id prefixed with CVE-" => {
+                Some(Self::InvalidCveExternalReference)
+            }
+            "bundle id must use the bundle type prefix" => Some(Self::BundleIdPrefixInvalid),
+            "bundle must not include spec_version" => Some(Self::BundleSpecVersionNotAllowed),
+            "artifact encryption_algorithm is not in the STIX closed vocabulary" => {
+                Some(Self::EncryptionAlgorithmInvalid)
+            }
+            "SCO id does not match deterministic id from contributing properties" => {
+                Some(Self::ScoDeterministicIdMismatch)
+            }
+            "unknown opinion value" => Some(Self::OpinionValueInvalid),
+            "domain-name value has invalid format" => Some(Self::DomainNameFormatInvalid),
+            "email-addr value has invalid format" => Some(Self::EmailAddrFormatInvalid),
+            "url value has invalid format" => Some(Self::UrlFormatInvalid),
+            "domain-name value must be non-empty" => Some(Self::DomainNameValueEmpty),
+            "email-addr value must be non-empty" => Some(Self::EmailAddrValueEmpty),
+            "url value must be non-empty" => Some(Self::UrlValueEmpty),
+            "language-content must not set lang" => Some(Self::LanguageContentLangNotAllowed),
+            "language-content object_modified does not match target object modified time" => {
+                Some(Self::LanguageContentObjectModifiedMismatch)
+            }
+            "language-content contents key is not a valid RFC 5646 language tag" => {
+                Some(Self::LanguageContentInvalidLanguageCode)
+            }
+            "marking-definition requires spec_version" => {
+                Some(Self::MarkingDefinitionSpecVersionRequired)
+            }
+            "marking-definition requires definition_type and definition when extensions are empty" => {
+                Some(Self::MarkingDefinitionLegacyPayloadRequired)
+            }
+            "malware sample_refs must reference the same binary when is_family is false" => {
+                Some(Self::MalwareSampleRefsNotSameBinary)
+            }
+            _ => None,
+        }
+    }
+
+    /// Recover a model error from a serde custom message (tagged wire or legacy display).
+    pub(crate) fn from_serde_message(message: &str) -> Option<Self> {
+        super::serde_error::decode_from_serde(message)
+            .or_else(|| Self::from_display_message(message))
+    }
+}

@@ -83,7 +83,8 @@ impl<'de> serde::Deserialize<'de> for Mutex {
             common: raw.common,
             name: raw.name,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

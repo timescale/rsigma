@@ -196,7 +196,9 @@ impl<'de> serde::Deserialize<'de> for ThreatActor {
             secondary_motivations: raw.secondary_motivations,
             personal_motivations: raw.personal_motivations,
         };
-        threat_actor.validate().map_err(serde::de::Error::custom)?;
+        threat_actor
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(threat_actor)
     }
 }

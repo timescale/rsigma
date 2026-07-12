@@ -202,7 +202,9 @@ impl<'de> serde::Deserialize<'de> for Location {
             street_address: raw.street_address,
             postal_code: raw.postal_code,
         };
-        value.validate().map_err(serde::de::Error::custom)?;
+        value
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(value)
     }
 }

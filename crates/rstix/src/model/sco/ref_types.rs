@@ -55,9 +55,7 @@ impl<'de> serde::Deserialize<'de> for DomainNameResolvesToRef {
             "domain-name" => DomainNameId::from_stix_id(id)
                 .map(Self::DomainName)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::DomainNameResolvesToRefInvalid,
-            )),
+            _ => Err(ModelError::DomainNameResolvesToRefInvalid.into_de_custom()),
         }
     }
 }
@@ -105,9 +103,7 @@ impl<'de> serde::Deserialize<'de> for DirectoryContainsRef {
             "directory" => DirectoryId::from_stix_id(id)
                 .map(Self::Directory)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::DirectoryContainsRefInvalid,
-            )),
+            _ => Err(ModelError::DirectoryContainsRefInvalid.into_de_custom()),
         }
     }
 }
@@ -167,9 +163,7 @@ impl<'de> serde::Deserialize<'de> for NetworkTrafficEndpointRef {
             "domain-name" => DomainNameId::from_stix_id(id)
                 .map(Self::DomainName)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::NetworkTrafficEndpointRefInvalid,
-            )),
+            _ => Err(ModelError::NetworkTrafficEndpointRefInvalid.into_de_custom()),
         }
     }
 }
@@ -217,9 +211,7 @@ impl<'de> serde::Deserialize<'de> for EmailMimeBodyRawRef {
             "file" => FileId::from_stix_id(id)
                 .map(Self::File)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::EmailMimeBodyRawRefInvalid,
-            )),
+            _ => Err(ModelError::EmailMimeBodyRawRefInvalid.into_de_custom()),
         }
     }
 }

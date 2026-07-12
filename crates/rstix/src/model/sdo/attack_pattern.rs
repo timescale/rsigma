@@ -118,7 +118,7 @@ impl<'de> serde::Deserialize<'de> for AttackPattern {
         };
         attack_pattern
             .validate()
-            .map_err(serde::de::Error::custom)?;
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(attack_pattern)
     }
 }

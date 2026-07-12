@@ -17,6 +17,8 @@ pub mod meta;
 pub mod parse_options;
 pub mod sco;
 pub mod sdo;
+#[cfg(feature = "serde")]
+mod serde_error;
 pub mod sro;
 #[cfg(feature = "serde")]
 pub mod stix_object;

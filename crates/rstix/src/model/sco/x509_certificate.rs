@@ -334,7 +334,8 @@ impl<'de> serde::Deserialize<'de> for X509Certificate {
             subject_public_key_exponent: raw.subject_public_key_exponent,
             x509_v3_extensions: raw.x509_v3_extensions,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

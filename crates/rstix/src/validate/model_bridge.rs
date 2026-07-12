@@ -36,93 +36,53 @@ fn map_model_error(
     err: &ModelError,
     property_path: Option<&str>,
 ) -> (DiagnosticCode, Option<String>) {
+    let (code, default_path) = super::model_mapping::model_error_pipeline_mapping(err);
+    let path = property_path
+        .map(String::from)
+        .or_else(|| default_path.map(String::from))
+        .or_else(|| granular_selector_path(err))
+        .or_else(|| extension_path(err))
+        .or_else(|| sco_forbidden_property_path(err))
+        .or_else(|| bundle_reference_path(err));
+    (code, path)
+}
+
+fn granular_selector_path(err: &ModelError) -> Option<String> {
     match err {
-        ModelError::ExtensionDefinitionMissingCreatedByRef => {
-            (DiagnosticCode::E0005, Some("created_by_ref".into()))
+        ModelError::GranularSelectorSyntaxInvalid { selector } => {
+            Some(format!("selectors[{selector}]"))
         }
-        ModelError::ObservedDataObjectsXorObjectRefs => {
-            (DiagnosticCode::E0007, Some("objects".into()))
+        _ => None,
+    }
+}
+
+fn extension_path(err: &ModelError) -> Option<String> {
+    match err {
+        ModelError::PropertyExtensionDefinitionMissing { extension_id } => {
+            Some(format!("extensions.{extension_id}"))
         }
-        ModelError::ObservedDataMissingScoContent => {
-            (DiagnosticCode::E0008, Some("object_refs".into()))
+        ModelError::ExtensionDeserializeFailed { key, .. } => Some(format!("extensions.{key}")),
+        ModelError::ExtensionDefinitionForbiddenCommonProperty { property } => {
+            Some(property.clone())
         }
-        ModelError::EmailMessageBodyWithMultipart
-        | ModelError::EmailMessageMultipartMissing
-        | ModelError::EmailMessageMultipartWhenSinglePart => {
-            (DiagnosticCode::E0009, Some("body".into()))
-        }
-        ModelError::MalwareFamilyMissingName => (DiagnosticCode::E0004, Some("name".into())),
-        ModelError::GranularMarkingMissingRefAndLang => {
-            (DiagnosticCode::E0040, property_path.map(String::from))
-        }
-        ModelError::GranularMarkingBothRefAndLang => {
-            (DiagnosticCode::E0041, property_path.map(String::from))
-        }
-        ModelError::GranularMarkingEmptySelectors => {
-            (DiagnosticCode::E0024, Some("selectors".into()))
-        }
-        ModelError::GranularSelectorSyntaxInvalid { selector } => (
-            DiagnosticCode::E0024,
-            Some(format!("selectors[{selector}]")),
-        ),
-        ModelError::IdTypeMismatch { .. } | ModelError::BundleIdPrefixInvalid => {
-            (DiagnosticCode::E0003, Some("id".into()))
-        }
-        ModelError::ModifiedBeforeCreated
-        | ModelError::SdoLastSeenBeforeFirstSeen
-        | ModelError::SightingLastSeenBeforeFirstSeen
-        | ModelError::ObservedDataLastObservedBeforeFirstObserved
-        | ModelError::RelationshipStopTimeBeforeStartTime
-        | ModelError::NetworkTrafficEndBeforeStart
-        | ModelError::IndicatorValidUntilBeforeValidFrom => {
-            (DiagnosticCode::E0015, property_path.map(String::from))
-        }
-        ModelError::OpinionValueInvalid | ModelError::EncryptionAlgorithmInvalid => {
-            (DiagnosticCode::E0013, property_path.map(String::from))
-        }
-        ModelError::SightingOfRefKindInvalid => {
-            (DiagnosticCode::E0020, Some("sighting_of_ref".into()))
-        }
-        ModelError::InvalidReferenceKind { .. }
-        | ModelError::RelationshipEndpointKindInvalid
-        | ModelError::MalwareSampleRefInvalid
-        | ModelError::MalwareAnalysisSampleRefInvalid
-        | ModelError::DomainNameResolvesToRefInvalid
-        | ModelError::DirectoryContainsRefInvalid
-        | ModelError::NetworkTrafficEndpointRefInvalid
-        | ModelError::EmailMimeBodyRawRefInvalid
-        | ModelError::SightingWhereSightedRefInvalid => {
-            (DiagnosticCode::E0021, property_path.map(String::from))
-        }
-        ModelError::MarkingDefinitionCircularRef { .. } => {
-            (DiagnosticCode::E0022, Some("object_marking_refs".into()))
-        }
-        ModelError::BundleReferenceMissing { ref_id } => {
-            (DiagnosticCode::W0010, Some(format!("references[{ref_id}]")))
-        }
-        ModelError::PropertyExtensionDefinitionMissing { extension_id } => (
-            DiagnosticCode::E0030,
-            Some(format!("extensions.{extension_id}")),
-        ),
-        ModelError::ExtensionDeserializeFailed { key, .. } => {
-            (DiagnosticCode::E0030, Some(format!("extensions.{key}")))
-        }
-        ModelError::ScoDeterministicIdMismatch => (DiagnosticCode::W0002, Some("id".into())),
-        ModelError::ScoForbiddenCommonProperty { property } => {
-            (DiagnosticCode::W0040, Some(property.clone()))
-        }
+        ModelError::ExtensionTypeOnPredefinedExtension { key } => Some(format!("extensions.{key}")),
+        _ => None,
+    }
+}
+
+fn sco_forbidden_property_path(err: &ModelError) -> Option<String> {
+    match err {
+        ModelError::ScoForbiddenCommonProperty { property } => Some(property.clone()),
+        _ => None,
+    }
+}
+
+fn bundle_reference_path(err: &ModelError) -> Option<String> {
+    match err {
+        ModelError::BundleReferenceMissing { ref_id } => Some(format!("references[{ref_id}]")),
         ModelError::RelationshipEndpointMatrixInvalid {
             relationship_type, ..
-        } => (
-            DiagnosticCode::I0002,
-            Some(format!("relationship_type[{relationship_type}]")),
-        ),
-        ModelError::RelationshipTypeInvalid => {
-            (DiagnosticCode::I0002, Some("relationship_type".into()))
-        }
-        ModelError::InvalidCapecExternalReference | ModelError::InvalidCveExternalReference => {
-            (DiagnosticCode::W0010, Some("external_references".into()))
-        }
-        _ => (DiagnosticCode::E0003, property_path.map(String::from)),
+        } => Some(format!("relationship_type[{relationship_type}]")),
+        _ => None,
     }
 }

@@ -132,7 +132,8 @@ impl<'de> serde::Deserialize<'de> for Software {
             vendor: raw.vendor,
             version: raw.version,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

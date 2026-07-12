@@ -94,7 +94,8 @@ impl<'de> serde::Deserialize<'de> for DomainName {
             value: raw.value,
             resolves_to_refs: raw.resolves_to_refs,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

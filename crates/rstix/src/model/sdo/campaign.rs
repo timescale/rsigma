@@ -131,7 +131,9 @@ impl<'de> serde::Deserialize<'de> for Campaign {
             last_seen: raw.last_seen,
             objective: raw.objective,
         };
-        campaign.validate().map_err(serde::de::Error::custom)?;
+        campaign
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(campaign)
     }
 }

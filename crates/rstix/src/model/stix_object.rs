@@ -516,6 +516,16 @@ fn capture_unmodeled_properties(
 }
 
 #[cfg(feature = "serde")]
+fn serde_json_error_to_parse_error(err: serde_json::Error) -> crate::ParseError {
+    let message = err.to_string();
+    if let Some(model_err) = crate::model::ModelError::from_serde_message(&message) {
+        crate::ParseError::Model(model_err)
+    } else {
+        crate::ParseError::Json(err)
+    }
+}
+
+#[cfg(feature = "serde")]
 pub(crate) fn deserialize_stix_object_from_value(
     value: serde_json::Value,
     opts: &ParseOptions,
@@ -547,22 +557,22 @@ pub(crate) fn deserialize_stix_object_from_value(
             crate::core::StixObjectKind::Sdo(_) => {
                 super::sdo::deserialize_sdo_object_from_value(typed_value)
                     .map(StixObject::Sdo)
-                    .map_err(crate::ParseError::Json)?
+                    .map_err(serde_json_error_to_parse_error)?
             }
             crate::core::StixObjectKind::Sco(_) => {
                 super::sco::deserialize_sco_object_from_value(typed_value)
                     .map(StixObject::Sco)
-                    .map_err(crate::ParseError::Json)?
+                    .map_err(serde_json_error_to_parse_error)?
             }
             crate::core::StixObjectKind::Sro(_) => {
                 super::sro::deserialize_sro_object_from_value(typed_value)
                     .map(StixObject::Sro)
-                    .map_err(crate::ParseError::Json)?
+                    .map_err(serde_json_error_to_parse_error)?
             }
             crate::core::StixObjectKind::Meta(_) => {
                 super::meta::deserialize_meta_object_from_value(typed_value)
                     .map(StixObject::Meta)
-                    .map_err(crate::ParseError::Json)?
+                    .map_err(serde_json_error_to_parse_error)?
             }
         }
     } else if let Some(result) = opts

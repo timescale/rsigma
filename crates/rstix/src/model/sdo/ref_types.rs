@@ -47,9 +47,7 @@ impl<'de> serde::Deserialize<'de> for MalwareSampleRef {
             "artifact" => ArtifactId::from_stix_id(id)
                 .map(Self::Artifact)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::MalwareSampleRefInvalid,
-            )),
+            _ => Err(ModelError::MalwareSampleRefInvalid.into_de_custom()),
         }
     }
 }
@@ -103,9 +101,7 @@ impl<'de> serde::Deserialize<'de> for MalwareAnalysisSampleRef {
             "artifact" => ArtifactId::from_stix_id(id)
                 .map(Self::Artifact)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::MalwareAnalysisSampleRefInvalid,
-            )),
+            _ => Err(ModelError::MalwareAnalysisSampleRefInvalid.into_de_custom()),
         }
     }
 }

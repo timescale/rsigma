@@ -155,7 +155,9 @@ impl<'de> serde::Deserialize<'de> for IntrusionSet {
             primary_motivation: raw.primary_motivation,
             secondary_motivations: raw.secondary_motivations,
         };
-        value.validate().map_err(serde::de::Error::custom)?;
+        value
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(value)
     }
 }

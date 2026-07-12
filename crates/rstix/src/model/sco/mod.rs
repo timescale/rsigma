@@ -291,7 +291,7 @@ pub(crate) fn deserialize_sco_object_from_value(
 ) -> Result<ScoObject, serde_json::Error> {
     if let Some(map) = value.as_object() {
         crate::model::validate::validate_sco_forbidden_common_keys(map)
-            .map_err(serde::de::Error::custom)?;
+            .map_err(crate::model::ModelError::into_de_custom)?;
     }
 
     let type_name = value

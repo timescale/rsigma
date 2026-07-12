@@ -129,7 +129,8 @@ impl<'de> serde::Deserialize<'de> for Directory {
             atime: raw.atime,
             contains_refs: raw.contains_refs,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

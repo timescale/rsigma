@@ -53,9 +53,7 @@ impl<'de> serde::Deserialize<'de> for WhereSightedRef {
             "location" => LocationId::from_stix_id(id)
                 .map(Self::Location)
                 .map_err(serde::de::Error::custom),
-            _ => Err(serde::de::Error::custom(
-                ModelError::SightingWhereSightedRefInvalid,
-            )),
+            _ => Err(ModelError::SightingWhereSightedRefInvalid.into_de_custom()),
         }
     }
 }
@@ -263,7 +261,9 @@ impl<'de> serde::Deserialize<'de> for Sighting {
             observed_data_refs: raw.observed_data_refs,
             where_sighted_refs: raw.where_sighted_refs,
         };
-        sighting.validate().map_err(serde::de::Error::custom)?;
+        sighting
+            .validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(sighting)
     }
 }

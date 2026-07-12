@@ -82,7 +82,8 @@ impl<'de> serde::Deserialize<'de> for Note {
             authors: raw.authors,
             object_refs: raw.object_refs,
         };
-        note.validate().map_err(serde::de::Error::custom)?;
+        note.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(note)
     }
 }

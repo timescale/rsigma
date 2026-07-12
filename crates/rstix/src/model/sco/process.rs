@@ -198,7 +198,8 @@ impl<'de> serde::Deserialize<'de> for Process {
             parent_ref: raw.parent_ref,
             child_refs: raw.child_refs,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }

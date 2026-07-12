@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix Validation Pipeline: conformance corpus and diagnostic coverage (`validate` feature) (#315)
+
+Closes Validation Pipeline conformance work for phases 1–4:
+
+* **Per-code coverage** — `tests/validate_diagnostic_coverage.rs` asserts one integration case per `DiagnosticCode::ALL` entry (39 codes).
+* **Conformance corpus** — `validate_conformance.rs` gates `conformance/` plus `validation/bundle-*.json` negatives under `interop_strict`.
+* **Parse bridge** — all `ParseError` variants and mapped `ModelError` messages emit structured diagnostics; model invariants use tagged serde payloads (`model/serde_error.rs`) so validation never downgrades to `STIX-E0001` (reserved for JSON syntax/EOF).
+* **Wire-format validators** — domain (IDNA), email (RFC 5322 via `email_address`), URL (WHATWG via `url`).
+* **Model mapping** — exhaustive `ModelError` → `STIX-E/W/I/H` code mapping in `validate/model_mapping.rs`.
+
 ### Docmd site branding (#314)
 
 The docmd plugin copies `assets/rsigma-logo.png` into the published site at build time, trims transparent padding with sharp, and writes a square favicon PNG. The sidebar shows the trimmed mark with an RSigma text label styled for light and dark themes.

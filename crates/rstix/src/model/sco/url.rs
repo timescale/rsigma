@@ -7,8 +7,7 @@ use crate::model::validate::validate_url_format;
 
 /// A STIX URL cyber-observable representing a uniform resource locator.
 ///
-/// Per STIX §6.15, the required `value` holds the URL string. Address format
-/// validation is deferred; only non-empty `value` is enforced at the boundary.
+/// Per STIX §6.15, the required `value` holds the URL string validated with the WHATWG URL parser.
 ///
 /// # Examples
 ///
@@ -81,7 +80,8 @@ impl<'de> serde::Deserialize<'de> for Url {
             common: raw.common,
             value: raw.value,
         };
-        obj.validate().map_err(serde::de::Error::custom)?;
+        obj.validate()
+            .map_err(crate::model::ModelError::into_de_custom)?;
         Ok(obj)
     }
 }
