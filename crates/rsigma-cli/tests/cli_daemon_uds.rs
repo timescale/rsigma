@@ -8,7 +8,11 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
+// `BufRead`/`BufReader` are only used by the `daemon-tls`-gated test below; gate
+// the import to match so a `daemon` (non-TLS) build stays warning-clean.
+#[cfg(feature = "daemon-tls")]
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

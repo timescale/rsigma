@@ -425,14 +425,15 @@ pub async fn api_auth_middleware(
                 .with_label_values(&["unauthorized"])
                 .inc();
             tracing::warn!(path = %path, "API auth failure: missing or invalid bearer token");
-            (
+            let response = (
                 StatusCode::UNAUTHORIZED,
                 [("www-authenticate", "Bearer")],
                 axum::Json(serde_json::json!({
                     "error": "missing or invalid bearer token"
                 })),
             )
-                .into_response()
+                .into_response();
+            drain_then_respond(request, response).await
         }
         Decision::Forbidden { token } => {
             state
@@ -446,15 +447,38 @@ pub async fn api_auth_middleware(
                 required = %required,
                 "API auth failure: token lacks required permission"
             );
-            (
+            let response = (
                 StatusCode::FORBIDDEN,
                 axum::Json(serde_json::json!({
                     "error": format!("token lacks required permission '{required}'")
                 })),
             )
-                .into_response()
+                .into_response();
+            drain_then_respond(request, response).await
         }
     }
+}
+
+/// Byte cap for draining a rejected request's body before responding.
+///
+/// The auth layer is mounted outermost so it can reject before the body is
+/// buffered. But hyper closes the connection when a handler returns without
+/// consuming the request body, and on Windows an unread body makes the OS send
+/// a TCP RST — the client then sees a connection abort (`WSAECONNABORTED`,
+/// os error 10053) instead of the 401/403 response. Draining a bounded prefix
+/// lets normal small requests (e.g. an unauthenticated `POST /v1/logs`) close
+/// gracefully, while still refusing to buffer large unauthenticated uploads:
+/// a body past the cap stops draining and the connection closes hard, which is
+/// the correct outcome for an abusive oversized request.
+const REJECTED_BODY_DRAIN_LIMIT: usize = 64 * 1024;
+
+/// Drain up to [`REJECTED_BODY_DRAIN_LIMIT`] bytes of a rejected request's body
+/// so the connection can close gracefully, then return the prepared rejection
+/// `response`. The drained bytes are discarded; only the socket-draining side
+/// effect matters.
+async fn drain_then_respond(request: Request, response: Response) -> Response {
+    let _ = axum::body::to_bytes(request.into_body(), REJECTED_BODY_DRAIN_LIMIT).await;
+    response
 }
 
 /// Constant-time byte comparison so token checks do not leak the matched
