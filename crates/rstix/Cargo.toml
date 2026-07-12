@@ -9,6 +9,12 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# docs.rs builds with default features unless told otherwise; the pattern
+# engine and validation pipeline are feature-gated public API and must
+# appear in the rendered docs.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["serde"]
 
