@@ -4,6 +4,20 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-13
+
+**TL;DR**
+RSigma v0.19.0 is the "secured daemon control plane and shipped threat-intel library" release: the daemon API gains authentication, granular RBAC, and an audit trail, detection authoring grows rule drafting and schema discovery, `rstix` completes its validation pipeline and pattern engine and ships to crates.io, and the documentation moves to a new docmd site on rsigma.io.
+* Daemon API security and governance: opt-in bearer-token authentication with `resource:action` RBAC and anonymous permission grants (#304), plus an append-only control-plane audit trail persisted in the state database (#307).
+* Detection authoring: draft a complete Sigma rule from exemplar events (#286), mine ranked candidate schema signatures from unknown events (#285), and schema and logsource routing v2 with richer signatures and schema-derived logsource pruning (#277).
+* `rstix` threat-intel library: STIX pattern evaluation, canonical printer, and Indicator wiring (#276, #296); a validation pipeline taken from scaffold to all twelve checks to a conformance corpus (#297, #298, #315); and the crate now publishes to crates.io (#316), thanks to @SecurityEnthusiast.
+* WASM: an ABI version 1 contract and a JavaScript-free `wasm32-unknown-unknown` build for `rsigma-parser` and `rsigma-eval` (#306).
+* Dynamic sources: `http` sources can send a request body (#310), copy-paste disposition source recipes for TheHive, Jira, and GitHub Issues (#311), and pipeline-embedded `sources:` blocks are removed in favor of standalone source files (#293).
+* Integrations: the MCP `convert_rules` tool can delegate to sigma-cli for the pySigma backend set (#290).
+* Documentation: migrated to docmd with search on rsigma.io and refreshed branding (#312, #313, #314).
+* Cleanup and performance: the deprecated flat CLI aliases are removed (#292), and the benchmark suite is refreshed with four new suites (#291).
+* Fixes and dependencies: de-flaked the Windows schema-observer and macOS TLS end-to-end tests (#305, #295), and two rolled-up dependency bumps (#289, #308).
+
 ### Publish rstix to crates.io (#316)
 
 The `rstix` STIX 2.1 library now ships as part of the release. `publish.yml` publishes it to crates.io alongside the other workspace crates (it has no workspace dependencies, so it needs no index-wait), `docs.rs` builds it with all features so the `pattern` and `validate` surfaces are documented, and the weekly fuzz workflow schedules the `fuzz_stix_pattern` target next to the existing rstix parse and validate fuzzers. The crate README and the library docs page are refreshed for the crates.io landing page and link to `docs.rs/rstix`.
@@ -203,6 +217,8 @@ Adds STIX pattern evaluation to the `pattern` feature:
 * **Tests** — manifest-driven SCO field coverage (`tests/pattern_eval_sco_fields.rs`, 276 cases), per-operator eval (`tests/pattern_eval_operators.rs`), every `PatternMatchError` path (`tests/pattern_eval_errors.rs`), §9.8 spec eval (`tests/pattern_spec_eval.rs`); 447 tests pass with `pattern,serde`.
 
 Canonical printer, `IndicatorPattern::Stix { ast }` serde wiring, and `fuzz_stix_pattern` remain in the next Pattern Engine slice.
+
+[v0.18.0...v0.19.0](https://github.com/timescale/rsigma/compare/v0.18.0...v0.19.0)
 
 ## [0.18.0] - 2026-07-01
 
@@ -2401,6 +2417,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.19.0]: https://github.com/timescale/rsigma/releases/tag/v0.19.0
 [0.18.0]: https://github.com/timescale/rsigma/releases/tag/v0.18.0
 [0.17.0]: https://github.com/timescale/rsigma/releases/tag/v0.17.0
 [0.16.0]: https://github.com/timescale/rsigma/releases/tag/v0.16.0
