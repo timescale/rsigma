@@ -1,0 +1,24 @@
+{
+  "CreationTime": "2024-01-15T10:30:00",
+  "Id": "12345678-1234-1234-1234-123456789012",
+  "RecordType": 11,
+  "Operation": "Disable Strong Authentication.",
+  "OrganizationId": "example.onmicrosoft.com-72f988bf-86f1-41af-91ab-2d7cd011db47",
+  "UserType": 0,
+  "Workload": "AzureActiveDirectory",
+  "UserId": "john.doe@example.com",
+  "ClientIP": "203.0.113.42",
+  "UserID": "john.doe@example.com",
+  "AppName": "AzurePortal",
+  "Activity": "disable_strong_auth",
+  "ActivityType": "AdminActivity",
+  "Parameters": [
+    {
+      "name": "StrongAuthenticationMethod",
+      "value": ""
+    }
+  ],
+  "ResultStatus": "Success",
+  "ResultStatusDescription": "",
+  "ExtendedProperties": []
+}

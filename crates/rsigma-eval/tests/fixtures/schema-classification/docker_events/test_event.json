@@ -1,0 +1,18 @@
+{
+  "time": 1705312200,
+  "timeNano": 1705312200000000000,
+  "Type": "container",
+  "Action": "start",
+  "Actor": {
+    "ID": "abc123def456",
+    "Attributes": {
+      "name": "my-app",
+      "image": "nginx:latest",
+      "label": "com.example.project=webapp"
+    }
+  },
+  "scope": "local",
+  "container": "abc123def456",
+  "from": "nginx:latest",
+  "status": "start"
+}

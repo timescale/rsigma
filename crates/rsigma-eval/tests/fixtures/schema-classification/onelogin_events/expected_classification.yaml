@@ -1,0 +1,5 @@
+schema: onelogin_events
+specificity: 85
+logsource:
+  product: onelogin
+  service: onelogin.events

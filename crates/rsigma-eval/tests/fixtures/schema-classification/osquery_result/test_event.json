@@ -1,0 +1,25 @@
+{
+  "name": "users",
+  "hostIdentifier": "workstation-01",
+  "calendarTime": "Mon Jan 15 10:30:00 2024 UTC",
+  "unixTime": 1705312200,
+  "epoch": {
+    "milliseconds": 1705312200000,
+    "seconds": 1705312200
+  },
+  "count": 5,
+  "columns": {
+    "uid": "1000",
+    "username": "admin",
+    "description": "Admin User",
+    "directory": "/home/admin",
+    "shell": "/bin/bash"
+  },
+  "action": "added",
+  "decorations": {
+    "hostName": "workstation-01",
+    "platform": "darwin",
+    "version": "14.2.1",
+    "localTimezone": "America/New_York"
+  }
+}

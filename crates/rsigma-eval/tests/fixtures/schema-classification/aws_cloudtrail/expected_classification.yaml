@@ -1,0 +1,5 @@
+schema: aws_cloudtrail
+specificity: 85
+logsource:
+  product: aws
+  service: cloudtrail

@@ -1,0 +1,5 @@
+schema: github_audit
+specificity: 92
+logsource:
+  product: github
+  service: audit

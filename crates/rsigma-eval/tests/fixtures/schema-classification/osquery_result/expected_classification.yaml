@@ -1,0 +1,6 @@
+schema: osquery_result
+specificity: 75
+logsource:
+  custom:
+    platform: osquery
+    source: osquery.result

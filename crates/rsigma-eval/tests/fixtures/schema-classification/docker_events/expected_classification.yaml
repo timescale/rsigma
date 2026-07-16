@@ -1,0 +1,6 @@
+schema: docker_events
+specificity: 70
+logsource:
+  custom:
+    platform: docker
+    source: docker.events

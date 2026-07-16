@@ -1,0 +1,44 @@
+{
+  "eventType": "user.lifecycle.activate.pre_auth",
+  "published": "2024-01-15T10:30:00.000Z",
+  "actor": {
+    "id": "00u1234567890abcdef01",
+    "alternateId": "user@example.com",
+    "displayName": "John Doe",
+    "type": "User"
+  },
+  "outcome": {
+    "result": "SUCCESS",
+    "reason": "User activated",
+    "resultDescription": null
+  },
+  "outcome_additionalResult": null,
+  "request": {
+    "ipChain": [
+      {
+        "ipAddress": "203.0.113.42",
+        "geographicalContext": {
+          "city": "Seattle",
+          "state": "Washington",
+          "country": "US"
+        }
+      }
+    ],
+    "httpRequest": null,
+    "ipAddress": "203.0.113.42"
+  },
+  "severity": "INFO",
+  "transactionId": "abc123-def456",
+  "transactionType": "USERACTIVATE",
+  "uuid": "0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+  "legacyEventType": "user.lifecycle.activate.pre_auth",
+  "displayMessage": {
+    "en": "User account was activated"
+  },
+  "debugContext": {
+    "debugData": {
+      "userAgent": "Okta Identity Engine"
+    }
+  },
+  "version": "0"
+}

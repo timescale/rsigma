@@ -1,0 +1,51 @@
+{
+  "authentication": {
+    "identityType": "Application",
+    "principalId": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
+    "role": "e7fe64d8-3788-49b2-a894-6e52540a1720",
+    "scope": "/subscriptions/abc123"
+  },
+  "category": "AuditLogs",
+  "correlationId": "def45678-9abc-def0-1234-567890abcdef",
+  "eventTimestamp": "2024-01-15T11:00:00.0000000Z",
+  "id": "/subscriptions/abc123/auditLogs/def4567",
+  "level": "Informational",
+  "properties": {
+    "actingIdentityType": "Application",
+    "actingPrincipalId": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
+    "activityDisplayName": "Add service principal",
+    "activityObjectId": "12345678-1234-1234-1234-123456789012",
+    "approvedForRbac": null,
+    "causedBy": null,
+    "changedPropertyDisplayNames": [
+      "DisplayName",
+      "ApplicationId"
+    ],
+    "clientInfo": null,
+    "condition": null,
+    "cause": "User Admin",
+    "correlationId": "def45678-9abc-def0-1234-567890abcdef",
+    "description": "Added service principal",
+    "details": [],
+    "impact": "Added service principal to tenant",
+    "impactedProperties": [],
+    "inProgress": false,
+    "logsType": "ActivityLogs",
+    "origin": "Microsoft Support",
+    "originUserId": null,
+    "originUserName": null,
+    "originUserAgent": null,
+    "protocolType": null,
+    "reason": null,
+    "responseJson": null
+  },
+  "resourceGroupName": null,
+  "resourceProviderName": "Microsoft.Insights",
+  "resourceType": "Microsoft.Insights/ActivityLogAlerts",
+  "resources": [],
+  "subscriptionId": "abc123",
+  "tenantId": "12345678-1234-1234-1234-123456789012",
+  "status": {
+    "value": "Active"
+  }
+}

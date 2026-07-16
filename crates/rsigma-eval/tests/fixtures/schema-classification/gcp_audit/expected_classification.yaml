@@ -1,0 +1,5 @@
+schema: gcp_audit
+specificity: 95
+logsource:
+  product: gcp
+  service: gcp.audit

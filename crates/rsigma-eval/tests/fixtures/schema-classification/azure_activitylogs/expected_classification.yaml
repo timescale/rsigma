@@ -1,0 +1,5 @@
+schema: azure_activitylogs
+specificity: 90
+logsource:
+  product: azure
+  service: activitylogs

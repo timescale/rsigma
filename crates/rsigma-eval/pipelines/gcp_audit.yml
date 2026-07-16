@@ -1,0 +1,32 @@
+# GCP Cloud Audit logfield mapping pipeline.
+#
+# SigmaHQ's `gcp.audit` rules reference fields under a `data.` prefix
+# (for example `data.protoPayload.serviceName`,
+# `data.protoPayload.authorizationInfo.permission`, `data.resource.type`),
+# because they are written against the Cloud Logging LogEntry as delivered
+# nested under a `data` envelope. A native GCP audit event, as classified by
+# the `gcp_audit` schema signature (`protoPayload.@type` = the AuditLog proto),
+# carries those same fields WITHOUT the `data.` prefix (`protoPayload.*`,
+# `resource.*`, ...).
+#
+# This pipeline strips the `data.` prefix from rule field names so SigmaHQ's
+# `gcp.audit` rules match native GCP audit events. It is a single prefix
+# remapping, so it covers every `data.*` field the ruleset uses (protoPayload,
+# resource, severity, ...) without enumerating them.
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p gcp_audit -e '{"protoPayload": {"methodName": "..."}, ...}'
+#   rsigma engine daemon -r rules/ -p gcp_audit
+
+name: gcp_audit
+priority: 20
+
+transformations:
+  - id: gcp_strip_data_envelope
+    type: field_name_prefix_mapping
+    mapping:
+      "data.": ""
+    rule_conditions:
+      - type: logsource
+        product: gcp
+        service: gcp.audit

@@ -16,8 +16,13 @@
 //!
 //! Built-in signatures cover `ecs`, `ocsf`, `windows_eventlog`, `sysmon`,
 //! `cef`, and a low-specificity `generic_json` fallback for structured events
-//! that match no specific security schema. Users extend the set with their own
-//! signatures loaded from YAML (see [`parse_schema_signatures`]).
+//! that match no specific security schema. Cloud/SaaS/Container sources are
+//! also recognized out of the box: AWS CloudTrail, AWS VPC Flow Logs, Azure
+//! (ActivityLogs, SignInLogs, AuditLogs), GCP Cloud Audit, Microsoft 365
+//! unified audit log, GitHub Audit, Okta System Log, OneLogin, Kubernetes
+//! audit, Docker events, and osquery.
+//! Users extend the set with their own signatures loaded from YAML (see
+//! [`parse_schema_signatures`]).
 //!
 //! Detection-side only: this recognizes events so callers can route them to the
 //! right field-mapping pipeline. It does not collect, transport, or normalize
@@ -525,6 +530,215 @@ fn builtin_signatures() -> Vec<SchemaSignature> {
                 SchemaPredicate::FieldPresent("signatureId".to_string()),
             ],
         },
+        // ─────────────────────────────────────────────────────────────────────
+        // Cloud / SaaS / Container sources (always-on recognition)
+        // ─────────────────────────────────────────────────────────────────────
+        // AWS VPC Flow Logs (JSON form): src + dst addr + action ACCEPT/REJECT.
+        // Off-taxonomy: ships as `{platform: aws, source: vpcflow}`.
+        SchemaSignature {
+            name: "aws_vpcflow".to_string(),
+            specificity: 80,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("srcaddr".to_string()),
+                SchemaPredicate::FieldPresent("dstaddr".to_string()),
+                SchemaPredicate::In {
+                    field: "action".to_string(),
+                    values: vec!["ACCEPT".to_string(), "REJECT".to_string()],
+                },
+            ],
+        },
+        // AWS CloudTrail: `eventVersion` + `eventSource` + `eventID` +
+        // `userIdentity` collectively disambiguate CloudTrail from
+        // all other JSON schemas.
+        SchemaSignature {
+            name: "aws_cloudtrail".to_string(),
+            specificity: 85,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("eventVersion".to_string()),
+                SchemaPredicate::FieldPresent("eventSource".to_string()),
+                SchemaPredicate::FieldPresent("eventID".to_string()),
+                SchemaPredicate::FieldPresent("userIdentity".to_string()),
+            ],
+        },
+        // OneLogin events: `event_type_id` is the single strongest discriminator,
+        // corroborated by account_id and created_at.
+        SchemaSignature {
+            name: "onelogin_events".to_string(),
+            specificity: 85,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("event_type_id".to_string()),
+                SchemaPredicate::FieldPresent("account_id".to_string()),
+                SchemaPredicate::AnyOf(vec!["user_id".to_string(), "actor_user_id".to_string()]),
+            ],
+        },
+        // Kubernetes audit events: `kind: Event` with apiVersion
+        // `audit.k8s.io/` is unique to the Kubernetes audit backend;
+        // auditID and requestURI add corroborating markers.
+        SchemaSignature {
+            name: "k8s_audit".to_string(),
+            specificity: 92,
+            predicates: vec![
+                SchemaPredicate::Equals {
+                    field: "kind".to_string(),
+                    value: "Event".to_string(),
+                },
+                SchemaPredicate::Matches {
+                    field: "apiVersion".to_string(),
+                    regex: regex::Regex::new("^audit\\.k8s\\.io/")
+                        .expect("k8s audit apiVersion regex"),
+                },
+                SchemaPredicate::FieldPresent("auditID".to_string()),
+            ],
+        },
+        // GitHub audit log events: `action` + `actor` + any-of(
+        // `org`, `repo`) + `created_at`/`_document_id` distinguish GitHub
+        // audit JSON from all other event sources.
+        SchemaSignature {
+            name: "github_audit".to_string(),
+            specificity: 92,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("action".to_string()),
+                SchemaPredicate::FieldPresent("actor".to_string()),
+                SchemaPredicate::AnyOf(vec!["org".to_string(), "repo".to_string()]),
+                SchemaPredicate::AnyOf(vec!["created_at".to_string(), "_document_id".to_string()]),
+            ],
+        },
+        // Okta System Log events: `eventType` is a unique per-event
+        // identifier (e.g. `user.lifecycle.activate.pre_auth`),
+        // corroborated by `actor`, `outcome.result`, and `published`.
+        SchemaSignature {
+            name: "okta_system_log".to_string(),
+            specificity: 88,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("eventType".to_string()),
+                SchemaPredicate::FieldPresent("actor".to_string()),
+                SchemaPredicate::FieldPresent("published".to_string()),
+                SchemaPredicate::FieldPresent("outcome".to_string()),
+            ],
+        },
+        // Docker events: `Type` in {container,image,daemon, …} + `Action` +
+        // `Actor` is the canonical Docker CLI --format json event shape.
+        SchemaSignature {
+            name: "docker_events".to_string(),
+            specificity: 70,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("Type".to_string()),
+                SchemaPredicate::FieldPresent("Action".to_string()),
+                SchemaPredicate::FieldPresent("Actor".to_string()),
+            ],
+        },
+        // osquery structured result: `name` (table) + `action` in
+        // {added, removed, snapshot} + `columns` or `snapshot` +
+        // `hostIdentifier` identifies the osquery log format.
+        SchemaSignature {
+            name: "osquery_result".to_string(),
+            specificity: 75,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("name".to_string()),
+                SchemaPredicate::In {
+                    field: "action".to_string(),
+                    values: vec![
+                        "added".to_string(),
+                        "removed".to_string(),
+                        "snapshot".to_string(),
+                    ],
+                },
+                SchemaPredicate::AnyOf(vec!["columns".to_string(), "snapshot".to_string()]),
+                SchemaPredicate::FieldPresent("hostIdentifier".to_string()),
+            ],
+        },
+        // GCP AuditLog: the `@type` discriminator is a single-precision
+        // field that matches exactly the Cloud Audit Log proto type.
+        SchemaSignature {
+            name: "gcp_audit".to_string(),
+            specificity: 95,
+            predicates: vec![SchemaPredicate::Equals {
+                field: "protoPayload.@type".to_string(),
+                value: "type.googleapis.com/google.cloud.audit.AuditLog".to_string(),
+            }],
+        },
+        // Azure Activity Logs: `category` in {Administrative, Policy,
+        // Security} + `resourceId` (/subscriptions/…) + `operationName`.
+        // The subscription path is matched case-insensitively because Azure
+        // emits resource IDs in inconsistent casing across services.
+        SchemaSignature {
+            name: "azure_activitylogs".to_string(),
+            specificity: 90,
+            predicates: vec![
+                SchemaPredicate::In {
+                    field: "category".to_string(),
+                    values: vec![
+                        "Administrative".to_string(),
+                        "Policy".to_string(),
+                        "Security".to_string(),
+                    ],
+                },
+                SchemaPredicate::Matches {
+                    field: "id".to_string(),
+                    regex: regex::Regex::new("(?i)^/subscriptions/")
+                        .expect("Azure resourceId regex"),
+                },
+                SchemaPredicate::FieldPresent("operationName".to_string()),
+            ],
+        },
+        // Azure AuditLogs (Entra): `category: AuditLogs` + `properties` with
+        // `activityDisplayName` — Entra audit log discriminators.
+        SchemaSignature {
+            name: "azure_auditlogs".to_string(),
+            specificity: 90,
+            predicates: vec![
+                SchemaPredicate::Equals {
+                    field: "category".to_string(),
+                    value: "AuditLogs".to_string(),
+                },
+                SchemaPredicate::FieldPresent("properties.activityDisplayName".to_string()),
+            ],
+        },
+        // Azure SignInLogs (Entra): `category: SignInLogs` + `properties`
+        // with `ipAddress`/`userAgent` — Entra sign-in log discriminators.
+        SchemaSignature {
+            name: "azure_signinlogs".to_string(),
+            specificity: 90,
+            predicates: vec![
+                SchemaPredicate::Equals {
+                    field: "category".to_string(),
+                    value: "SignInLogs".to_string(),
+                },
+                SchemaPredicate::FieldPresent("properties.userDisplayName".to_string()),
+            ],
+        },
+        // Azure product-only fallback: when `category` is absent (e.g.
+        // an Azure resource-level event) but a subscription-level `resourceId`
+        // is present, classify as the generic Azure product. Case-insensitive
+        // to match Azure's inconsistent resource-ID casing.
+        SchemaSignature {
+            name: "azure".to_string(),
+            specificity: 65,
+            predicates: vec![SchemaPredicate::Matches {
+                field: "id".to_string(),
+                regex: regex::Regex::new("(?i)^/subscriptions/")
+                    .expect("Azure subscriptionId regex"),
+            }],
+        },
+        // Microsoft 365 unified audit log (Office 365 Management Activity API
+        // common schema): `RecordType` (int) + `Operation` + `CreationTime` +
+        // `Workload` identify the raw audit feed. SigmaHQ's `service: audit`
+        // rules match these native fields directly, so the feed maps to
+        // `product: m365, service: audit`. The exchange, threat_detection, and
+        // threat_management services use a separately normalized shape
+        // (`eventSource`/`eventName`/`status`, which are not Management
+        // Activity common-schema fields) and would need a normalization
+        // pipeline, so they are intentionally not classified here.
+        SchemaSignature {
+            name: "m365_audit".to_string(),
+            specificity: 88,
+            predicates: vec![
+                SchemaPredicate::FieldPresent("RecordType".to_string()),
+                SchemaPredicate::FieldPresent("Operation".to_string()),
+                SchemaPredicate::FieldPresent("CreationTime".to_string()),
+                SchemaPredicate::FieldPresent("Workload".to_string()),
+            ],
+        },
         // Generic JSON: any structured event that matched no specific schema.
         SchemaSignature {
             name: "generic_json".to_string(),
@@ -534,16 +748,44 @@ fn builtin_signatures() -> Vec<SchemaSignature> {
     ]
 }
 
-/// Distinct built-in schema names, most specific first.
+/// Distinct built-in schema names, ordered by non-increasing specificity
+/// (ties broken by name). Kept in sync with `builtin_signatures` by
+/// `builtin_schema_names_match_signatures` in the test module.
 pub fn builtin_schema_names() -> Vec<&'static str> {
     vec![
-        "ecs_windows",
+        // 105 — ECS platform specializations
         "ecs_linux",
+        "ecs_windows",
+        // 100 — ECS baseline
         "ecs",
+        // 95
+        "gcp_audit",
         "ocsf",
+        // 92
+        "github_audit",
+        "k8s_audit",
+        // 90
+        "azure_activitylogs",
+        "azure_auditlogs",
+        "azure_signinlogs",
         "windows_eventlog",
+        // 88
+        "m365_audit",
+        "okta_system_log",
         "sysmon",
+        // 85
+        "aws_cloudtrail",
         "cef",
+        "onelogin_events",
+        // 80
+        "aws_vpcflow",
+        // 75
+        "osquery_result",
+        // 70
+        "docker_events",
+        // 65 — Azure product-only fallback
+        "azure",
+        // 0 — generic JSON catch-all
         "generic_json",
     ]
 }
@@ -1016,8 +1258,12 @@ pub struct SchemaBinding {
 /// they must not imply a product, since doing so would prune correct rules for
 /// the other platforms those schemas also carry. The `ecs_windows` and
 /// `ecs_linux` specializations do carry a platform (and route as `ecs` via
-/// [`builtin_schema_aliases`]).
-fn builtin_schema_logsource() -> HashMap<String, LogSource> {
+/// `builtin_schema_aliases`).
+/// Built-in schema-to-logsource mapping for schemas that carry an implied
+/// product/service (or custom dimensions for off-taxonomy sources).
+/// Testable via the public API: callers who need the map can inspect it
+/// to verify that every signature name they recognize also has a logsource.
+pub fn builtin_schema_logsource() -> HashMap<String, LogSource> {
     fn ls(product: &str, service: Option<&str>) -> LogSource {
         LogSource {
             product: Some(product.to_string()),
@@ -1025,12 +1271,98 @@ fn builtin_schema_logsource() -> HashMap<String, LogSource> {
             ..LogSource::default()
         }
     }
-    HashMap::from([
-        ("sysmon".to_string(), ls("windows", Some("sysmon"))),
-        ("windows_eventlog".to_string(), ls("windows", None)),
-        ("ecs_windows".to_string(), ls("windows", None)),
-        ("ecs_linux".to_string(), ls("linux", None)),
-    ])
+    fn ls_custom(product: Option<&str>, custom: HashMap<&str, String>) -> LogSource {
+        LogSource {
+            product: product.map(str::to_string),
+            service: None,
+            category: None,
+            custom: custom
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            ..LogSource::default()
+        }
+    }
+    let mut map = HashMap::new();
+
+    // Windows (already shipped)
+    map.insert("sysmon".to_string(), ls("windows", Some("sysmon")));
+    map.insert("windows_eventlog".to_string(), ls("windows", None));
+    map.insert("ecs_windows".to_string(), ls("windows", None));
+    map.insert("ecs_linux".to_string(), ls("linux", None));
+
+    // AWS
+    map.insert("aws_cloudtrail".to_string(), ls("aws", Some("cloudtrail")));
+    // VPC Flow Logs: on-taxonomy AWS product + custom source dimension.
+    map.insert(
+        "aws_vpcflow".to_string(),
+        ls_custom(
+            Some("aws"),
+            HashMap::from([("source", "vpcflow".to_string())]),
+        ),
+    );
+
+    // Azure (Entra / Microsoft 365 platform)
+    map.insert(
+        "azure_activitylogs".to_string(),
+        ls("azure", Some("activitylogs")),
+    );
+    map.insert(
+        "azure_auditlogs".to_string(),
+        ls("azure", Some("auditlogs")),
+    );
+    map.insert(
+        "azure_signinlogs".to_string(),
+        ls("azure", Some("signinlogs")),
+    );
+
+    // GCP
+    map.insert("gcp_audit".to_string(), ls("gcp", Some("gcp.audit")));
+
+    // Microsoft 365 / Entra unified audit log
+    map.insert("m365_audit".to_string(), ls("m365", Some("audit")));
+
+    // SaaS / Identity
+    map.insert("github_audit".to_string(), ls("github", Some("audit")));
+    map.insert("okta_system_log".to_string(), ls("okta", Some("okta")));
+    map.insert(
+        "onelogin_events".to_string(),
+        ls("onelogin", Some("onelogin.events")),
+    );
+
+    // Container / Endpoint (off-taxonomy — custom dimensions)
+    map.insert(
+        "k8s_audit".to_string(),
+        ls_custom(
+            None,
+            HashMap::from([
+                ("platform", "kubernetes".to_string()),
+                ("source", "k8s.audit".to_string()),
+            ]),
+        ),
+    );
+    map.insert(
+        "docker_events".to_string(),
+        ls_custom(
+            None,
+            HashMap::from([
+                ("platform", "docker".to_string()),
+                ("source", "docker.events".to_string()),
+            ]),
+        ),
+    );
+    map.insert(
+        "osquery_result".to_string(),
+        ls_custom(
+            None,
+            HashMap::from([
+                ("platform", "osquery".to_string()),
+                ("source", "osquery.result".to_string()),
+            ]),
+        ),
+    );
+
+    map
 }
 
 /// The `routing:` section of a schema config file.
@@ -2254,5 +2586,312 @@ routing:
         assert_eq!(snap.unknown_shapes.len(), 1);
         assert_eq!(snap.unknown_shapes[0].count, 2);
         assert_eq!(snap.unknown_shapes[0].keys, vec!["shape", "weird"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Cloud specificity ordering tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cloud_signatures_have_higher_specificity_than_generic_json() {
+        // Every cloud-specific signature must outrank generic_json (0).
+        let cls = SchemaClassifier::builtin();
+        let names = cls.schema_names();
+        assert_eq!(names.first(), Some(&"ecs_linux"));
+        // generic_json is the last (lowest specificity)
+        assert_eq!(names.last(), Some(&"generic_json"));
+        // The cloud schemas should appear before generic_json
+        let cloud_order: Vec<&str> = vec![
+            "gcp_audit",
+            "aws_cloudtrail",
+            "azure_signinlogs",
+            "github_audit",
+            "k8s_audit",
+            "aws_vpcflow",
+            "docker_events",
+            "osquery_result",
+        ];
+        let cloud_indices: Vec<usize> = cloud_order
+            .iter()
+            .filter_map(|&n| names.iter().position(|&x| x == n))
+            .collect();
+        if cloud_indices.len() == cloud_order.len() {
+            // generic_json (last index) must be after all cloud schemas
+            let max_cloud = cloud_indices.iter().max().copied().unwrap_or(0);
+            let generic_idx = names
+                .last()
+                .copied()
+                .map(|n| names.iter().position(|&x| x == n).unwrap_or(0))
+                .unwrap_or(0);
+            assert!(
+                generic_idx > max_cloud,
+                "generic_json ({}) should be after all cloud schemas, but cloud max = {max_cloud}",
+                names[generic_idx]
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_signatures_dont_shadow_each_other() {
+        // An event matching a more-specific cloud signature must not also be
+        // classified as a less-specific sibling. Build events that exercise
+        // each cloud signature and verify exact classification.
+
+        // GCP Audit: @type discriminator alone is sufficient.
+        let gcp =
+            json!({"protoPayload": {"@type": "type.googleapis.com/google.cloud.audit.AuditLog"}});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&gcp))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("gcp_audit")
+        );
+
+        // AWS CloudTrail: needs eventVersion + eventSource + eventID + userIdentity
+        let cloudtrail = json!({"eventVersion": "1.05", "eventSource": "s3.amazonaws.com", "eventID": "abc", "userIdentity": {"type": "IAMUser"}});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&cloudtrail))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("aws_cloudtrail")
+        );
+
+        // GitHub Audit: needs action + actor + one of (org, repo) + one of (created_at, _document_id)
+        let github = json!({"action": "repo.create", "actor": "admin", "org": {"id": 123}, "created_at": "2024-01-01T00:00:00Z"});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&github))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("github_audit")
+        );
+
+        // K8s Audit: kind + apiVersion regex + auditID
+        let k8s = json!({"kind": "Event", "apiVersion": "audit.k8s.io/v1", "auditID": "abc"});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&k8s))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("k8s_audit")
+        );
+
+        // Azure ActivityLogs: category + resourceId + operationName
+        let azure_act = json!({"category": "Administrative", "id": "/SUBSCRIPTIONS/abc", "operationName": {"value": "test"}});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&azure_act))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("azure_activitylogs")
+        );
+
+        // M365 unified audit log: RecordType + Operation + CreationTime + Workload
+        let m365 = json!({"RecordType": 15, "Workload": "AzureActiveDirectory", "Operation": "UserLoggedIn", "CreationTime": "2024-01-01T00:00:00Z"});
+        assert_eq!(
+            SchemaClassifier::builtin()
+                .classify(&JsonEvent::borrow(&m365))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("m365_audit")
+        );
+    }
+
+    #[test]
+    fn off_taxonomy_signatures_use_custom_logsource() {
+        // Off-taxonomy schemas (k8s, docker, osquery, vpcflow) must have
+        // custom dimensions rather than a product/service pair.
+        let map = builtin_schema_logsource();
+
+        for schema in [
+            "k8s_audit",
+            "docker_events",
+            "osquery_result",
+            "aws_vpcflow",
+        ] {
+            let ls = map
+                .get(schema)
+                .unwrap_or_else(|| panic!("logsource mapping for {schema}"));
+            // For k8s, docker, osquery: no product
+            if schema != "aws_vpcflow" {
+                assert!(
+                    ls.product.is_none(),
+                    "{schema} must not have a product (off-taxonomy uses custom only)"
+                );
+            }
+            // All should have custom dimensions
+            assert!(
+                !ls.custom.is_empty(),
+                "{schema} must have custom dimensions for pruning"
+            );
+        }
+
+        // VPC flow: has product=aws + custom source=vpcflow
+        let vpc = map.get("aws_vpcflow").expect("vpcflow mapping");
+        assert_eq!(vpc.product.as_deref(), Some("aws"));
+        assert_eq!(vpc.custom.get("source"), Some(&"vpcflow".to_string()));
+    }
+
+    #[test]
+    fn builtin_schema_names_match_signatures() {
+        // builtin_schema_names() is a hand-maintained list; guard it against
+        // drift from builtin_signatures() on both membership and ordering.
+        use std::collections::{HashMap, HashSet};
+
+        // Effective specificity per name = the highest across its signatures
+        // (matches classify's dedup, which keeps the highest-specificity hit).
+        let mut spec_by_name: HashMap<String, u32> = HashMap::new();
+        for sig in builtin_signatures() {
+            let entry = spec_by_name
+                .entry(sig.name.clone())
+                .or_insert(sig.specificity);
+            *entry = (*entry).max(sig.specificity);
+        }
+
+        let names = builtin_schema_names();
+
+        // 1. Same set of names.
+        let listed: HashSet<String> = names.iter().map(|s| s.to_string()).collect();
+        let produced: HashSet<String> = spec_by_name.keys().cloned().collect();
+        assert_eq!(
+            listed, produced,
+            "builtin_schema_names() is out of sync with builtin_signatures()"
+        );
+
+        // 2. Non-increasing specificity in listed order.
+        let mut prev = u32::MAX;
+        for name in &names {
+            let spec = spec_by_name[*name];
+            assert!(
+                spec <= prev,
+                "builtin_schema_names() not ordered by non-increasing specificity at '{name}' ({spec} > {prev})"
+            );
+            prev = spec;
+        }
+    }
+
+    #[test]
+    fn okta_and_onelogin_signatures() {
+        // Okta: eventType + actor + published + outcome
+        let okta = json!({
+            "eventType": "user.lifecycle.activate.pre_auth",
+            "actor": {"id": "abc"},
+            "published": "2024-01-01T00:00:00Z",
+            "outcome": {"result": "SUCCESS"}
+        });
+        let classifier = SchemaClassifier::builtin();
+        assert_eq!(
+            classifier
+                .classify(&JsonEvent::borrow(&okta))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("okta_system_log")
+        );
+
+        // OneLogin: event_type_id + account_id + any(user_id, actor_user_id)
+        let onelogin = json!({
+            "event_type_id": 123,
+            "account_id": 456,
+            "user_id": 789,
+            "created_at": "2024-01-01T00:00:00Z"
+        });
+        assert_eq!(
+            classifier
+                .classify(&JsonEvent::borrow(&onelogin))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("onelogin_events")
+        );
+    }
+
+    #[test]
+    fn m365_unified_audit_log_maps_to_audit_service() {
+        // The Office 365 Management Activity common schema (any Workload)
+        // classifies as the unified audit feed and maps to service: audit,
+        // where SigmaHQ's native-field rules live. It outranks generic_json.
+        let exchange = json!({
+            "CreationTime": "2024-01-01T00:00:00Z",
+            "RecordType": 1,
+            "Workload": "Exchange",
+            "Operation": "New-RemoteDomain"
+        });
+        let classifier = SchemaClassifier::builtin();
+
+        let m = classifier
+            .classify(&JsonEvent::borrow(&exchange))
+            .expect("matched");
+        assert_eq!(m.name, "m365_audit");
+
+        let map = builtin_schema_logsource();
+        let ls = map.get("m365_audit").expect("m365_audit mapping");
+        assert_eq!(ls.product.as_deref(), Some("m365"));
+        assert_eq!(ls.service.as_deref(), Some("audit"));
+    }
+
+    #[test]
+    fn docker_and_osquery_signatures() {
+        // Docker events: Type + Action + Actor
+        let docker = json!({"Type": "container", "Action": "start", "Actor": {"ID": "abc"}});
+        let classifier = SchemaClassifier::builtin();
+        assert_eq!(
+            classifier
+                .classify(&JsonEvent::borrow(&docker))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("docker_events")
+        );
+
+        // osquery: name + action + columns/snapshot + hostIdentifier
+        let osquery = json!({
+            "name": "users",
+            "action": "added",
+            "columns": {"uid": "1000", "username": "admin"},
+            "hostIdentifier": "workstation-01"
+        });
+        assert_eq!(
+            classifier
+                .classify(&JsonEvent::borrow(&osquery))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("osquery_result")
+        );
+    }
+
+    #[test]
+    fn aws_vpcflow_classification() {
+        // VPC Flow Logs: srcaddr + dstaddr + action ACCEPT/REJECT
+        let vpc = json!({
+            "version": 2,
+            "srcaddr": "10.0.1.100",
+            "dstaddr": "10.0.2.50",
+            "srcport": 45678,
+            "dstport": 443,
+            "protocol": 6,
+            "action": "ACCEPT",
+            "log_status": "OK"
+        });
+        let classifier = SchemaClassifier::builtin();
+        assert_eq!(
+            classifier
+                .classify(&JsonEvent::borrow(&vpc))
+                .as_ref()
+                .map(|m| m.name.as_str()),
+            Some("aws_vpcflow")
+        );
+
+        // VPC event should NOT match cloudtrail (no CloudTrail markers)
+        let all = classifier.classify_all(&JsonEvent::borrow(&vpc));
+        assert!(
+            !all.iter().any(|s| s == "aws_cloudtrail"),
+            "VPC flow event should not match CloudTrail"
+        );
+
+        // But the vpcflow schema has custom source=vpcflow + product=aws
+        let map = builtin_schema_logsource();
+        let vpc_ls = map.get("aws_vpcflow").expect("vpcflow mapping");
+        assert_eq!(vpc_ls.product.as_deref(), Some("aws"));
+        assert_eq!(vpc_ls.custom.get("source"), Some(&"vpcflow".to_string()));
     }
 }

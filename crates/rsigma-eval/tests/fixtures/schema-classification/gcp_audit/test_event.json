@@ -1,0 +1,40 @@
+{
+  "insertId": "1234567890abcdef",
+  "labels": {},
+  "logName": "projects/my-project/organizations/123456789/logs/googlecloudaudit.googleapis.com%2Fcloud_audit",
+  "operation": {
+    "first": true,
+    "id": "operation-abc-123",
+    "last": true
+  },
+  "protoPayload": {
+    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+    "authenticationInfo": {
+      "principalEmail": "admin@example-project.iam.gserviceaccount.com",
+      "principalIp": "203.0.113.42",
+      "serviceAccountKeyName": "projects/my-project/serviceAccounts/admin@example-project.iam.gserviceaccount.com"
+    },
+    "methodName": "storage.buckets.list",
+    "resourceName": "projects/_/buckets",
+    "serviceName": "storage.googleapis.com",
+    "request": {
+      "@type": "type.googleapis.com/google.storage.v2.ListBucketsRequest",
+      "parent": "projects/my-project",
+      "readMask": {}
+    },
+    "response": {
+      "@type": "type.googleapis.com/google.storage.v2.ListBucketsResponse"
+    }
+  },
+  "resource": {
+    "labels": {
+      "project_id": "my-project",
+      "project_number": "123456789012"
+    },
+    "type": "cloud_audit"
+  },
+  "severity": "INFO",
+  "sourceLocations": [],
+  "time": "2024-01-15T10:30:00.123456Z",
+  "timestamp": "2024-01-15T10:30:00.123456Z"
+}

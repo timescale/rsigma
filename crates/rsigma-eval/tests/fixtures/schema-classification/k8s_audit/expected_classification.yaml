@@ -1,0 +1,6 @@
+schema: k8s_audit
+specificity: 92
+logsource:
+  custom:
+    platform: kubernetes
+    source: k8s.audit

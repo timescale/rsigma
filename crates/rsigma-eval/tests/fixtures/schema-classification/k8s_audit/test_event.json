@@ -1,0 +1,38 @@
+{
+  "kind": "Event",
+  "apiVersion": "audit.k8s.io/v1",
+  "level": "Metadata",
+  "auditID": "abc-123-def",
+  "stage": "RequestReceived",
+  "requestURI": "/api/v1/namespaces/default/pods",
+  "verb": "list",
+  "user": {
+    "username": "system:serviceaccount:default:my-sa",
+    "uid": "12345678-1234-1234-1234-123456789012",
+    "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:default"
+    ]
+  },
+  "sourceIPs": [
+    "10.0.1.15"
+  ],
+  "objectRef": {
+    "resource": "pods",
+    "namespace": "default",
+    "apiVersion": "v1",
+    "apiGroup": "",
+    "subresource": "",
+    "name": "",
+    "resourceType": "Pods"
+  },
+  "responseStatus": {
+    "status": "Success",
+    "code": 200
+  },
+  "requestReceivedTime": "2024-01-15T10:30:00.000000Z",
+  "annotations": {
+    "authorization.k8s.io/decision": "allow",
+    "authorization.k8s.io/reason": ""
+  }
+}

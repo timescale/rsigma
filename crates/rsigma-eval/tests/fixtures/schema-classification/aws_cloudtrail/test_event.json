@@ -1,0 +1,27 @@
+{
+  "eventVersion": "1.05",
+  "userIdentity": {
+    "type": "IAMUser",
+    "principalId": "AIDAEXAMPLE123456",
+    "arn": "arn:aws:iam::123456789012:user/admin",
+    "accountId": "123456789012",
+    "userName": "admin"
+  },
+  "eventTime": "2024-01-15T10:30:00Z",
+  "eventSource": "s3.amazonaws.com",
+  "eventName": "ListBuckets",
+  "eventID": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "readOnly": false,
+  "recipientAccountId": "123456789012",
+  "requestParameters": {
+    "nextToken": null
+  },
+  "responseElements": {
+    "xAmznRequestId": "ABC123"
+  },
+  "sourceIPAddress": "203.0.113.42",
+  "userAgent": "aws-cli/2.13.0",
+  "awsRegion": "us-east-1",
+  "eventName": "ListBuckets",
+  "eventName": "ListBuckets"
+}

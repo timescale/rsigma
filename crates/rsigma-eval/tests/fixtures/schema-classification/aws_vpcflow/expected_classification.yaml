@@ -1,0 +1,6 @@
+schema: aws_vpcflow
+specificity: 80
+logsource:
+  product: aws
+  custom:
+    source: vpcflow

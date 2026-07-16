@@ -1,0 +1,5 @@
+schema: azure_auditlogs
+specificity: 90
+logsource:
+  product: azure
+  service: auditlogs

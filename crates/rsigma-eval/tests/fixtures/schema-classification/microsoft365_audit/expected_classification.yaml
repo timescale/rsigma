@@ -1,0 +1,5 @@
+schema: m365_audit
+specificity: 88
+logsource:
+  product: m365
+  service: audit

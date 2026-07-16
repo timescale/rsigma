@@ -1,0 +1,5 @@
+schema: okta_system_log
+specificity: 88
+logsource:
+  product: okta
+  service: okta

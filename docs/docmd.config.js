@@ -117,7 +117,10 @@ export default {
         {
           title: "Integrate",
           collapsible: true,
-          children: [{ title: "MCP Server", path: "/guide/mcp-server" }],
+          children: [
+            { title: "Cloud Collection Recipes", path: "/guide/cloud-collection-recipes" },
+            { title: "MCP Server", path: "/guide/mcp-server" },
+          ],
         },
       ],
     },

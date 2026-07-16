@@ -1,0 +1,19 @@
+{
+  "action": "repo.create",
+  "created_at": "2024-01-15T10:30:00Z",
+  "actor": "admin",
+  "actor_id": 12345678,
+  "org": {
+    "id": 87654321,
+    "login": "my-org"
+  },
+  "repo": {
+    "id": 11111111,
+    "name": "my-new-repo"
+  },
+  "_document_id": "abc123",
+  "created_with_grant": false,
+  "ip_address": "203.0.113.42",
+  "public": true,
+  "ref_type": "repository"
+}

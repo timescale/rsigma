@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "account_id": "123456789012",
+  "interface_id": "eni-0123456789abcdef0",
+  "srcaddr": "10.0.1.100",
+  "dstaddr": "10.0.2.50",
+  "srcport": 45678,
+  "dstport": 443,
+  "protocol": 6,
+  "packets": 5,
+  "bytes": 1200,
+  "start": 1705312200,
+  "end": 1705312205,
+  "action": "ACCEPT",
+  "log_status": "OK"
+}

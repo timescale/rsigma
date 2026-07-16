@@ -18,7 +18,31 @@ schemas:
 
 When several signatures match one event, the highest `specificity` wins; ties break by name (ascending) for determinism. A tie between two different-name signatures at the winning specificity is reported as ambiguous by `engine classify` and the `rsigma_events_ambiguous_schema_total` daemon counter, since the name tie-break, not the specificity, decided the result.
 
-User signatures default to specificity 50. The built-ins are `ecs_windows` and `ecs_linux` (105), `ecs` (100), `ocsf` (95), `windows_eventlog` (90), `sysmon` (88 and 80), `cef` (85), and `generic_json` (0, the structured-event fallback). Set a user signature above 105 to win over a built-in, or below the built-ins to act only as a fallback.
+User signatures default to specificity 50. The built-ins are:
+
+| Schema | Specificity |
+|--------|------------|
+| `ecs_windows` / `ecs_linux` | 105 |
+| `ecs` | 100 |
+| `gcp_audit` | 95 |
+| `github_audit` | 92 |
+| `k8s_audit` | 92 |
+| `azure_activitylogs` | 90 |
+| `azure_auditlogs` | 90 |
+| `azure_signinlogs` | 90 |
+| `windows_eventlog` | 90 |
+| `m365_audit` | 88 |
+| `okta_system_log` | 88 |
+| `sysmon` (channel/provider) | 88 |
+| `aws_cloudtrail` | 85 |
+| `cef` | 85 |
+| `onelogin_events` | 85 |
+| `aws_vpcflow` | 80 |
+| `sysmon` (flat shape) | 80 |
+| `osquery_result` | 75 |
+| `docker_events` | 70 |
+| `azure` (product-only) | 65 |
+| `generic_json` | 0 |
 
 The `ecs_windows` and `ecs_linux` specializations recognize an ECS event that also carries a platform marker, so they win over plain `ecs` and can attach a platform-specific implied logsource. They are aliases of `ecs` for routing (see [schema aliases](../guide/schema-routing.md#schema-aliases)), so an existing `ecs` binding still matches them.
 

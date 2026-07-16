@@ -1,0 +1,37 @@
+{
+  "authentication": {
+    "type": "ServicePrincipal",
+    "issuer": "https://sts.windows.net/",
+    "principalId": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
+    "role": "Contributor",
+    "scope": "/subscriptions/abc123/resourceGroups/test-rg"
+  },
+  "category": "Administrative",
+  "correlationId": "def45678-9abc-def0-1234-567890abcdef",
+  "eventTimestamp": "2024-01-15T10:30:00.0000000Z",
+  "httpRequest": {
+    "clientRequestIp": "203.0.113.42",
+    "method": "PUT"
+  },
+  "id": "/SUBSCRIPTIONS/abc12345-6789-0ABC-DEF0-123456789ABC/RESOURCEGROUPS/TEST-RG/PROVIDERS/MICROSOFT.NETWORK/AZUREFIREWALLS/TEST-FW",
+  "level": "Information",
+  "operationName": {
+    "value": "Microsoft.Network/azureFirewalls/write",
+    "localizedValue": "Create or update an Azure Firewall"
+  },
+  "resourceGroupName": "test-rg",
+  "resourceProviderName": "Microsoft.Network",
+  "resourceType": "Microsoft.Network/azureFirewalls",
+  "resources": [
+    {
+      "id": "/subscriptions/abc12345-6789-0ABC-DEF0-123456789ABC/resourceGroups/test-rg/providers/Microsoft.Network/azureFirewalls/test-fw",
+      "type": "Microsoft.Network/azureFirewalls",
+      "name": "test-fw"
+    }
+  ],
+  "subscriptionId": "abc12345-6789-0ABC-DEF0-123456789ABC",
+  "tenantId": "12345678-1234-1234-1234-123456789012",
+  "status": {
+    "value": "Accepted"
+  }
+}
