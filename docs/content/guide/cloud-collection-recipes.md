@@ -1,8 +1,8 @@
 # Cloud Collection Recipes
 
-This page shows how common log shippers — Vector, OpenTelemetry (OTel), and Fluent Bit — deliver CloudTrail, Azure, GCP, M365, GitHub, Okta, OneLogin, Kubernetes audit, Docker, and osquery events in a structured JSON shape that [schema classification](../reference/schema-signatures.md) recognizes automatically, and which routing binding to use.
+This page shows how common log shippers, such as Vector, OpenTelemetry (OTel), and Fluent Bit, deliver CloudTrail, Azure, GCP, M365, GitHub, Okta, OneLogin, Kubernetes audit, Docker, and osquery events in a structured JSON shape that [schema classification](../reference/schema-signatures.md) recognizes automatically, and which routing binding to use.
 
-All examples target `rsigma engine daemon` with `--schema-routing` and `--schema-config`. Each recipe maps to one of the built-in schemas defined in [schema-signatures.md](../reference/schema-signatures.md); no user-defined `schemas:` block is needed because every source ships as a built-in.
+All examples target `rsigma engine daemon` with `--schema-routing` and `--schema-config`. Each recipe maps to one of the built-in schemas defined in [Schema Signatures](../reference/schema-signatures.md); no user-defined `schemas:` block is needed because every source ships as a built-in.
 
 ## Built-in schemas (quick reference)
 
