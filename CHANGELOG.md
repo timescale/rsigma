@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Cloud Schema Signature Bundle (#TBD)
+
+Built-in schema signatures cover AWS CloudTrail (`aws_cloudtrail`), AWS VPC Flow Logs (`aws_vpcflow`), Azure Activity/SignIn/Audit logs (`azure_activitylogs`, `azure_signinlogs`, `azure_auditlogs`), GCP Cloud Audit (`gcp_audit`), Microsoft 365 unified audit log (`m365_audit`), GitHub Audit (`github_audit`), Okta System Log (`okta_system_log`), OneLogin (`onelogin_events`), Kubernetes audit (`k8s_audit`), Docker events (`docker_events`), and osquery (`osquery_result`). Each signature uses multi-field markers (high specificity, no misfires) and implies a SigmaHQ taxonomy-compatible `product`/`service` logsource for conflict-based pruning. Off-taxonomy sources (k8s, docker, osquery) ship as `logsource.custom` dimensions to stay within the no-blessed-vocabulary line, and AWS VPC Flow Logs ships as `product: aws` plus `custom: {source: vpcflow}`. A `gcp_audit.yml` pipeline strips the `data.` prefix that SigmaHQ's `gcp.audit` rules use (`data.protoPayload.*`) so they match native Cloud Logging events (`protoPayload.*`). Per-source golden fixtures (`test_event.json` + `expected_classification.yaml`) with a walk test, an end-to-end GCP routing test, and specificity-ordering unit tests guard correctness and prevent regressions. A new cloud collection recipes guide covers Vector, OTel, and Fluent Bit configs per source.
+
 ## [0.19.0] - 2026-07-13
 
 **TL;DR**

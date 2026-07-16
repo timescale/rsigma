@@ -79,7 +79,39 @@ eval:
 
 When schema routing is combined with [logsource routing](logsource-routing.md), the schema rsigma recognizes supplies the event's logsource for [conflict-based pruning](logsource-routing.md#conflict-based-not-subset), even when the event carries no explicit `product`/`service`/`category` field. So an event recognized as `sysmon` implies `product: windows, service: sysmon`, and a Cisco or Linux rule is pruned instead of false-positive matching on a mapped field.
 
-Built-in implied logsources cover the platform-locked schemas: `sysmon` (windows/sysmon), `windows_eventlog` (windows), and the two ECS platform specializations `ecs_windows` (windows) and `ecs_linux` (linux). The plain cross-platform schemas (`ecs`, `ocsf`, `cef`, `generic_json`) imply nothing, because they carry events from many platforms.
+Built-in implied logsources cover the platform-locked schemas:
+
+| Schema | Implied logsource (product / service) |
+|--------|---------------------------------------|
+| `windows_eventlog` | `windows / (none)` |
+| `sysmon` | `windows / sysmon` |
+| `ecs_windows` | `windows / (none)` |
+| `ecs_linux` | `linux / (none)` |
+
+Cloud / SaaS sources supply the exact SigmaHQ taxonomy service tokens, so `product`/`service`-scoped rules route correctly:
+
+| Schema | Implied logsource (product / service) |
+|--------|---------------------------------------|
+| `aws_cloudtrail` | `aws / cloudtrail` |
+| `azure_activitylogs` | `azure / activitylogs` |
+| `azure_auditlogs` | `azure / auditlogs` |
+| `azure_signinlogs` | `azure / signinlogs` |
+| `gcp_audit` | `gcp / gcp.audit` |
+| `m365_audit` | `m365 / audit` |
+| `github_audit` | `github / audit` |
+| `okta_system_log` | `okta / okta` |
+| `onelogin_events` | `onelogin / onelogin.events` |
+
+Off-taxonomy sources use the `logsource.custom` dimension rather than inserting a blessed `product`. This preserves the no-blessed-vocabulary line while still enabling conflict-based pruning:
+
+| Schema | Implied `logsource.custom` |
+|--------|---------------------------|
+| `aws_vpcflow` | `product: aws` + `{source: vpcflow}` |
+| `k8s_audit` | `{platform: kubernetes, source: k8s.audit}` |
+| `docker_events` | `{platform: docker, source: docker.events}` |
+| `osquery_result` | `{platform: osquery, source: osquery.result}` |
+
+Plain cross-platform schemas (`ecs`, `ocsf`, `cef`, `generic_json`) imply nothing, because they carry events from many platforms.
 
 An ECS event that also carries a platform marker (`winlog.*`, `host.os.type`) classifies as `ecs_windows`/`ecs_linux` and gets the platform for pruning automatically. These specializations are aliases of `ecs` (see below), so an existing `ecs` binding still matches them, no config change needed. For a source ECS routes without a marker, point the logsource extractor at the event's own OS field instead (`--logsource-field-map product=host.os.type`).
 
