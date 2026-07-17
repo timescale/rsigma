@@ -146,6 +146,27 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  rstix-lean-features:
+    name: rstix lean features
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust stable with clippy
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --no-self-update
+          rustup override set stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # rstix default features include serde; these combos catch lean-build drift.
+      - run: cargo check -p rstix --no-default-features --locked
+      - run: cargo clippy -p rstix --no-default-features --all-targets --locked -- -D warnings
+      - run: cargo check -p rstix --no-default-features --features pattern --locked
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

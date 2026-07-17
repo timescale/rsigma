@@ -62,7 +62,7 @@ This library is part of [rsigma].
 ## Feature flags
 
 - `serde` (default): enables serialization and deserialization support.
-- `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`).
+- `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`). Implies `serde` (evaluation uses typed bundle/SCO model types).
 - `validate`: profile-based Validation Pipeline (`Validator`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry). Implies `serde` and `pattern`.
 - `graph`: STIX property graph over parsed bundles (`StixGraph::from_bundle`, SRO traversal, inlined refs, `RelationshipExpander`). Implies `serde`.
 - `marking`: TLP and statement marking resolution (`MarkingResolver`, `TlpV2Level`, granular selectors). Implies `serde`.

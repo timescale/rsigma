@@ -44,11 +44,16 @@ impl<'de> serde::Deserialize<'de> for SpecVersion {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[test]
+    fn as_str() {
+        assert_eq!(super::SpecVersion::V2_1.as_str(), "2.1");
+    }
 
     #[test]
     #[cfg(feature = "serde")]
     fn serde_round_trip() {
+        use super::SpecVersion;
+
         let encoded = serde_json::to_string(&SpecVersion::V2_1).expect("serialize");
         assert_eq!(encoded, "\"2.1\"");
         let decoded: SpecVersion = serde_json::from_str(&encoded).expect("deserialize");

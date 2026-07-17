@@ -26,7 +26,7 @@ serde = [
   "dep:base64",
   "dep:encoding_rs",
 ]
-pattern = ["dep:ipnet", "dep:regex", "dep:unicode-normalization", "dep:base64"]
+pattern = ["serde", "dep:ipnet", "dep:regex", "dep:unicode-normalization", "dep:base64"]
 validate = ["serde", "pattern"]
 graph = ["serde"]
 marking = ["serde"]
