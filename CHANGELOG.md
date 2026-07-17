@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix STIX 2.1 spec-exact closure with Graph + Marking + Store (`graph`, `marking`, `store` features)
+### rstix STIX 2.1 spec-exact closure with Graph + Marking + Store (`graph`, `marking`, `store` features) (#327)
 
 - **Wire MUST at parse (Decision A):** `domain-name`, `email-addr`, and `url` values use IDNA / RFC 5322 / RFC 3986 validation at the default `serde` boundary (`idna`, `email_address`, `url` are required dependencies).
 - **SCO `*_enc` (§3.1 / §3.9.1):** IANA charset validation and `_enc`-without-base pairing on spec-defined `file.name_enc` and `directory.path_enc`, plus any `_enc` keys in `common.extra`; negative fixtures in `tests/fixtures/spec/sco/`.
