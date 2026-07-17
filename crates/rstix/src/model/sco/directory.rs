@@ -82,6 +82,15 @@ impl Directory {
         if self.path.is_empty() {
             return Err(ModelError::DirectoryPathEmpty);
         }
+        crate::model::validate::validate_sco_string_encoding_pair(
+            &Some(self.path.clone()),
+            &self.path_enc,
+            "path_enc",
+        )?;
+        crate::model::validate::validate_extra_enc_pairings(
+            &self.common.extra,
+            &[("path", Some(self.path.as_str()))],
+        )?;
         Ok(())
     }
 }

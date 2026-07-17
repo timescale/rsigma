@@ -75,8 +75,10 @@ fn check_closed_vocabulary_on_wire(value: &serde_json::Value, report: &mut Valid
         {
             report.push(
                 Diagnostic::new(
-                    DiagnosticCode::E0013,
-                    format!("unknown encryption_algorithm value `{algorithm}`"),
+                    DiagnosticCode::W0010,
+                    format!(
+                        "encryption_algorithm `{algorithm}` is not in the STIX closed vocabulary"
+                    ),
                 )
                 .with_property_path(format!("objects[{index}].encryption_algorithm")),
             );

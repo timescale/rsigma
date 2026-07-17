@@ -25,9 +25,7 @@ use crate::vocab::{REGION_OV, is_iso3166_alpha2};
 
 use super::ValidationReport;
 use super::diagnostic::{Diagnostic, DiagnosticCode};
-use super::legacy_paths::{
-    self, EXTERNAL_REF_CAPEC, EXTERNAL_REF_CVE, language_content_mismatch, language_content_unknown,
-};
+use super::legacy_paths::{self, EXTERNAL_REF_CAPEC, EXTERNAL_REF_CVE, language_content_mismatch};
 
 /// Cross-object semantic checks (relationship matrix, granular selectors, language-content).
 pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut ValidationReport) {
@@ -331,6 +329,7 @@ fn check_granular_selectors(
     object_id: &StixId,
     report: &mut ValidationReport,
 ) {
+    let owned;
     let granular_markings = match object {
         StixObject::Sdo(sdo) => &sdo.common_props().granular_markings,
         StixObject::Sro(sro) => &sro.common_props().granular_markings,
@@ -340,7 +339,10 @@ fn check_granular_selectors(
             &common.granular_markings
         }
         StixObject::Meta(MetaObject::ExtensionDefinition(ext)) => &ext.common.granular_markings,
-        StixObject::Custom(_) => return,
+        StixObject::Custom(custom) => {
+            owned = crate::model::validate::granular_markings_from_wire(&custom.raw);
+            &owned
+        }
     };
 
     for granular in granular_markings {
@@ -417,17 +419,6 @@ fn check_language_content(
     for (lang, fields) in &content.contents {
         for (field, translation) in fields {
             let Some(target_value) = resolve_selector_value(&target_wire, field) else {
-                report.push(
-                    Diagnostic::new(
-                        DiagnosticCode::E0024,
-                        format!(
-                            "language-content field `{field}` for lang `{lang}` is not a property on target `{}`",
-                            content.object_ref.type_name()
-                        ),
-                    )
-                    .with_object_id(object_id.clone())
-                    .with_property_path(language_content_unknown(lang, field)),
-                );
                 continue;
             };
             if !language_content_translation_matches_target(target_value, translation) {

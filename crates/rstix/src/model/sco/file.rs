@@ -46,7 +46,7 @@ pub struct File {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub name: Option<String>,
-    /// Character encoding of the file name (STIX §6.7.2).
+    /// Character encoding of the file name (STIX §3.9.1 IANA charset label).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -111,6 +111,15 @@ impl File {
         if self.hashes.is_empty() && self.name.as_ref().is_none_or(String::is_empty) {
             return Err(ModelError::FileHashesOrNameRequired);
         }
+        crate::model::validate::validate_sco_string_encoding_pair(
+            &self.name,
+            &self.name_enc,
+            "name_enc",
+        )?;
+        crate::model::validate::validate_extra_enc_pairings(
+            &self.common.extra,
+            &[("name", self.name.as_deref())],
+        )?;
         ArchiveExt::validate_in_map(&self.common.extensions)?;
         NtfsExt::validate_in_map(&self.common.extensions)?;
         PdfExt::validate_in_map(&self.common.extensions)?;

@@ -8,6 +8,9 @@ Two optional features extend the core model:
 
 - `pattern` — the STIX patterning engine: parse, type-check, and Level 1-3 evaluation against observations, a canonical printer, and `Indicator` wiring via `IndicatorBuilder`.
 - `validate` — a profile-based validation pipeline with all twelve checks, `STIX-E/W/I/H` diagnostics, raw-JSON entry points, and a pattern parse/semantic split.
+- `graph` — STIX property graph construction and traversal over parsed bundles (SRO edges, inlined `_ref`/`_refs`, typed expansion from indicators).
+- `marking` — effective TLP and statement marking resolution (object-level and granular property selectors).
+- `store` — object-safe in-memory STIX store with typed queries, SCO fingerprint reporting, and bundle import.
 
 ## Install
 
@@ -51,6 +54,9 @@ This library is part of [rsigma].
 - `vocab` (always): open/closed vocabulary tables and `OpinionValue` ordering enum.
 - `pattern` (`pattern` feature): `Pattern::parse`, `Pattern::evaluate`, `Pattern::matches_single`, `Pattern::evaluate_observed_data`, `Pattern::canonical`, `PatternAst`, `ObservationContext`, `PatternScoType`, `PatternError`, `PatternMatchError`; `IndicatorPattern::parsed_pattern`, `IndicatorPattern::evaluate` — STIX Specification §9 Levels 1–3 parse, type-check, evaluation, and canonical printing (see [Pattern Engine (STIX §9)](#pattern-engine-stix-9)).
 - `validate` (`validate` feature): `Validator`, `ValidatorBuilder` (`with_allow_custom`, `with_parse_options`, `with_phase`), `ValidationPhase`, `Leniency`, `Diagnostic`, `DiagnosticCode`, `Severity`, `SourceSpan`, `PipelineValidationReport` (re-export alias) — profile-based validation pipeline with `validate_json_str`, `validate_json_value`, `validate_bundle`, and `validate_object` (see [Validation Pipeline](#validation-pipeline)).
+- `graph` (`graph` feature): `StixGraph`, `Edge`, `EdgePredicate`, `EdgeTraversal`, `TraversalBuilder`, `RelationshipExpander`, `ExpansionResult` — zero-copy graph over a parsed [`Bundle`](model::Bundle) with SRO traversal, inlined ref walking, dangling-ref reporting, and indicator-centric expansion (see [Graph](#graph)).
+- `marking` (`marking` feature): `MarkingResolver`, `EffectiveMarking`, `TlpV2Level`, `TlpV1Level` (deprecated), `DisclosureContext`, `StatementMarking` — effective TLP resolution with granular selector support (see [Marking](#marking)).
+- `store` (`store` feature): `StixStore`, `MemoryStore`, `StixQuery`, `ImportReport`, `StoredSco`, `FingerprintConflict` — object-safe in-memory storage with typed queries and SCO dedup reporting (see [Store](#store)).
 - `serde_impls` (internal, `serde` feature): hand-written serializers for `StixId`, timestamps, and `Confidence`; typed-ID serde is generated in the `define_typed_id!` macro.
 
 ## Feature flags
@@ -58,13 +64,16 @@ This library is part of [rsigma].
 - `serde` (default): enables serialization and deserialization support.
 - `pattern`: STIX patterning lexer, Level 1–3 parser, SCO schema type-checker, and evaluator (`Pattern::parse`, `Pattern::evaluate`).
 - `validate`: profile-based Validation Pipeline (`Validator`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry). Implies `serde` and `pattern`.
+- `graph`: STIX property graph over parsed bundles (`StixGraph::from_bundle`, SRO traversal, inlined refs, `RelationshipExpander`). Implies `serde`.
+- `marking`: TLP and statement marking resolution (`MarkingResolver`, `TlpV2Level`, granular selectors). Implies `serde`.
+- `store`: in-memory STIX object store (`MemoryStore`, `StixQuery`, `ImportReport`). Implies `serde`.
 
 ## Current status
 
-- **Data Model + Serialization:** **complete**
+- **Data Model + Serialization:** **complete** (STIX 2.1 spec-audit differentials closed — see [Model invariant decisions](#model-invariant-decisions-modelcommon))
 - **Pattern Engine:** **complete** (`--features pattern`)
 - **Validation Pipeline:** **complete** (`--features validate`) — all twelve checks, 39 structured diagnostics, conformance corpus + per-code coverage tests
-- **Next after Validation Pipeline:** **Graph + Marking + Store**
+- **Graph + Marking + Store:** **complete** (`--features graph`, `--features marking`, `--features store`; each independent, all imply `serde`)
 - **Optional corpus:** real MITRE ATT&CK bundle via `RSTIX_ATTCK_BUNDLE` / `tests/fixtures/corpus/enterprise-attack.json` (integration test skips when absent; synthetic large-bundle tests run in CI today).
 
 ## Usage
@@ -178,6 +187,95 @@ Evaluation notes (STIX §9):
 - **Custom SCO types** (`x-usb-device`, …): parsed and type-checked permissively (leaf properties as string).
 
 Fixtures: `tests/fixtures/pattern/` (§9.8 examples) and `tests/fixtures/pattern/sco-fields/` (manifest-driven SCO field paths). Acceptance tests: `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::security`, `pattern::eval`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`.
+
+## Graph
+
+The optional **`graph`** feature builds a zero-copy property graph from a parsed [`Bundle`](model::Bundle):
+
+- **SRO edges** — each `relationship` object indexes an outgoing edge from `source_ref` to `target_ref`; each `sighting` indexes an edge from the sighting id to `sighting_of_ref` (type `"sighting"`). Full SRO payloads are available via [`SroEdgePayload`](graph::SroEdgePayload) on [`Edge`](graph::Edge).
+- **Inlined refs** — every typed `_ref` / `_refs` property (including SCO extensions such as `archive-ext.contains_refs` and `body_multipart[].body_raw_ref`) is indexed with a property path for [`StixGraph::unresolved_references`](graph::StixGraph::unresolved_references).
+- **Traversal** — [`StixGraph::from`](graph::StixGraph::from) returns a [`TraversalBuilder`](graph::TraversalBuilder); chain `out_edges_matching` / `in_edges_matching` → [`EdgeTraversal`](graph::EdgeTraversal) → `targets` / `targets_as::<T>()`, plus `out_refs` / `in_refs`.
+- **Expansion** — [`RelationshipExpander::expand_from`](graph::RelationshipExpander::expand_from) (any start node) and [`expand_from_indicator`](graph::RelationshipExpander::expand_from_indicator) walk matrix-valid relationship types up to a configurable depth (outgoing and incoming SRO edges).
+
+```rust
+use rstix::graph::{EdgePredicate, StixGraph};
+use rstix::model::sdo::Malware;
+use rstix::parse_bundle;
+
+let bundle = parse_bundle(json)?;
+let graph = StixGraph::from_bundle(&bundle)?;
+
+let malware: Vec<&Malware> = graph
+    .from(indicator_id)
+    .out_edges_matching(EdgePredicate::Type("indicates"))
+    .targets_as::<Malware>()
+    .collect();
+
+for (path, target_id) in graph.from(indicator_id).out_refs() {
+    println!("ref {path} -> {target_id}");
+}
+```
+
+Integration tests: `tests/graph.rs`; unit modules `graph::from_bundle`, `graph::traversal`, `graph::predicates`, `graph::unresolved`, `graph::expander`. Path-aware ref inventory lives in `model/ref_paths.rs` (shared with bundle ref validation).
+
+## Marking
+
+The optional **`marking`** feature resolves effective TLP and statement markings at query time:
+
+- **`TlpV2Level`** — all five predefined TLP 2.0 UUIDs; `TLP:AMBER` vs `TLP:AMBER+STRICT` preserved with distinct `permits_disclosure` behavior.
+- **`MarkingResolver`** — indexes `marking-definition` objects from a bundle; `effective_for_object` (most restrictive wins), `effective_for_property` / `effective_for_selector` (granular selectors with JSON path resolution), `permits_disclosure(audience)`, and `EffectiveMarking::language_tags` for granular language markings.
+- **Granular selectors** — reuses syntax validation from `model/validate.rs` (`name`, `labels.[0]`, …); `selector_matches_target` resolves selectors against wire JSON.
+
+```rust
+use rstix::marking::{MarkingResolver, TlpV2Level};
+use rstix::parse_bundle;
+
+let bundle = parse_bundle(json)?;
+let resolver = MarkingResolver::new(&bundle);
+let effective = resolver.effective_for_object(&indicator_object);
+assert_eq!(effective.tlp_level, Some(TlpV2Level::Red));
+```
+
+Acceptance tests: `marking::tlp2`, `marking::tlp2::amber_strict`, `marking::resolver::object`, `marking::resolver::property`, `marking::resolver::disclosure`, `tests/marking.rs`.
+
+## Store
+
+The optional **`store`** feature provides an object-safe [`StixStore`](store::StixStore) trait and [`MemoryStore`](store::MemoryStore):
+
+- **Versioned SDO/SRO storage** — `upsert` appends new versions when content changes; identical re-upserts deduplicate.
+- **SCO asserted-id preservation** — store key is always the source `id`; UUIDv5 fingerprint is computed for dedup **reporting** only (`FingerprintConflict` in [`ImportReport`](store::ImportReport)).
+- **Typed queries** — [`StixQuery`](store::StixQuery) builder with type-indexed scans, id filter, `modified_after`, labels, **`text_search`**, pagination (`QueryCursor` / `next_cursor`), and `StoreError::InvalidQuery` for out-of-range cursors.
+- **SCO updates** — changed SCO content under the same asserted id updates the stored payload (`ImportReport::objects_updated`).
+- **Export / delete** — [`StixStore::export_bundle`](store::StixStore::export_bundle) and [`StixStore::delete`](store::StixStore::delete) on all store backends.
+- **`FsStore`** (`store-fs` feature) — durable JSON-on-disk store with hot in-memory index; reopens persistently across process restarts.
+
+```rust
+use rstix::store::{FsStore, MemoryStore, StixQuery, StixStore};
+use rstix::core::{SdoKind, StixObjectKind};
+use rstix::parse_bundle;
+
+let store = MemoryStore::new();
+let report = store.import_bundle(&bundle)?;
+let indicators = store.query(
+    &StixQuery::new().type_filter(vec![StixObjectKind::Sdo(SdoKind::Indicator)])
+)?;
+let durable = FsStore::open("/var/lib/rstix/store")?;
+```
+
+Acceptance tests: `store::memory::dedup`, `store::memory::fingerprint`, `store::memory::pagination`, `store::memory::sco_update`, `store::import_report`, `tests/store.rs`, `tests/store_fs.rs` (`store-fs`).
+
+### Graph + Marking + Store invariant decisions
+
+| Area | Enforced behavior | Notes |
+| ---- | ----------------- | ----- |
+| Graph SRO edges | `relationship` and `sighting` indexed; sighting type is `"sighting"`. | Full payload via `SroEdgePayload` / `Edge::relationship()` / `Edge::sighting()`. |
+| Graph ref traversal | `out_refs` / `in_refs` return owned `(path, id)` pairs (including dangling targets). | Zero-copy not possible for owned inlined target ids outside the bundle. |
+| Marking resolution | Most restrictive TLP wins; granular selectors use JSON path matching; custom objects read wire common props. | `MarkingResolver` is query-time; validation pipeline emits separate TLP encoding warnings. |
+| Marking disclosure | `permits_disclosure(audience)` uses `created_by_ref` vs audience for SameOrganization vs ThirdParty. | Amber+Strict blocks third parties per TLP 2.0 rules. |
+| Store object-safety | `StixStore::get` returns owned clones; `MemoryStore::get_sco` returns owned `StoredSco`. | Required for `dyn StixStore` vtable safety. |
+| Store SCO keys | Asserted source id is always the store key; UUIDv5 fingerprint is reporting-only. | Never silently rewrite SCO ids. |
+| Store search | Full-text index updated on upsert; `StixQuery::text_search` is case-insensitive substring match. | Typed filters compose with text search. |
+| FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. | `store-fs` feature implies `store`. |
 
 ## Validation Pipeline
 
@@ -325,9 +423,8 @@ for w in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
 | `StixW0031TlpV1Encoding` | Legacy TLP 1.x marking encoding or TLP1 marking ref (STIX-W0031). |
 | `ScoDeterministicIdMismatch` | SCO `id` does not match UUIDv5 from id-contributing properties. |
 | `GranularSelectorSemanticInvalid` | Granular-marking selector does not resolve on the object. |
-| `LanguageContentFieldUnknown` | Translation field is not a property on the target object. |
-| `LanguageContentValueMismatch` | Translation type or list length does not mirror the target property. |
-| `LanguageContentObjectModifiedMismatch` | `object_modified` does not match target `modified`. |
+| `LanguageContentValueMismatch` | Translation type, list length, or nested object shape does not mirror the target (§7.1.1). |
+| `LanguageContentObjectModifiedMismatch` | `object_modified` does not match target `modified` (§7.1.1 MUST). |
 | `LocationCountryNotIso3166` | `country` is not ISO 3166-1 alpha-2. |
 | `LocationRegionNotInOpenVocab` | `region` is not in STIX `region-ov`. |
 | `InvalidCapecExternalReference` | CAPEC `external_id` shape (attack-pattern). |
@@ -335,15 +432,23 @@ for w in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
 | `RelationshipEndpointMatrixInvalid` | Relationship source/target types outside STIX 2.1 matrix. |
 | `EncryptionAlgorithmInvalid` | Artifact `encryption_algorithm` not in closed vocabulary. |
 
-### Wire-format validation (pragmatic vs full spec)
+### Wire-format validation (spec MUST at parse)
 
-STIX **SHOULD** cite full Internet standards for some string fields. rstix uses **lightweight structural checks** at the Data Model parse boundary and runs **full wire-format validators** only in the Validation Pipeline (`validate` feature), emitting `STIX-I0002` for SHOULD-level format issues.
+STIX **MUST** rules for `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986) are enforced at the **default `serde` parse boundary** via `idna`, `email_address`, and `url`.
 
-| Field | STIX reference | Parse boundary (`serde`) | Validation Pipeline (`validate`) |
-| ----- | -------------- | ------------------------ | -------------------------------- |
-| `domain-name.value` | RFC 1034 / 5890 | ASCII label rules | **IDNA** (UTS #46) via optional `idna` dep |
-| `email-addr.value` | RFC 5322 | Basic `@` / label structure | **RFC 5322 addr-spec** via optional `email_address` |
-| `url.value` | Valid URL | `http`/`https`/`ftp` prefix | **WHATWG URL** via optional `url` crate |
+| Field | Spec reference | Parse boundary (`serde`) |
+| ----- | -------------- | ------------------------ |
+| `domain-name.value` | RFC 1034 / 5890 | IDNA (UTS #46) + label rules |
+| `email-addr.value` | RFC 5322 | RFC 5322 addr-spec (`email_address`) |
+| `url.value` | RFC 3986 | URL parse (`http`, `https`, `ftp` schemes) |
+
+The Validation Pipeline re-runs the same checks on typed objects during the schema phase.
+
+SCO `*_enc` properties (§3.1 / §3.9.1) MUST be IANA character-set names and MUST NOT appear without their base property. Spec-defined properties are **`file.name_enc`** and **`directory.path_enc`** only; additional `_enc` keys that land in [`ScoCommonProps::extra`](model::common::ScoCommonProps) (for example vendor extensions or pattern fixtures) follow the same pairing and charset rules via `validate_extra_enc_pairings()`.
+
+`email-message` RFC 2047 encoded-words in header string fields (`subject`, `message_id`, `body`, `received_lines`, `additional_header_fields`) are decoded on ingest (§6.6). Pattern evaluation can still address vendor `_enc` siblings through `common.extra` (for example `[email-message:subject_enc = 'UTF-8']` when the wire object carries `subject_enc` alongside `subject`).
+
+Negative fixtures: `tests/fixtures/spec/sco/file-name-enc-*.json`, `directory-path-enc-*.json`, `file-extra-enc-without-base.json`; observed-data SRO embedding: `tests/fixtures/spec/sdo/observed-data-deprecated-objects-sro.json`; standalone `common.extra`: `tests/fixtures/spec/sdo/identity-standalone-extra.json`.
 
 ### Local MITRE ATT&CK corpus test
 
@@ -363,17 +468,30 @@ This runs `parse_reader` → serialize → reparse and asserts object count stab
 - Release notes belong to the repository root `CHANGELOG.md` only.
 - Public API and behavior updates must be synchronized with workspace docs under `docs/`.
 
+### Serialization map conventions
+
+Follow sibling types in `model/` when choosing a map type (PR #213 / #201 review lessons):
+
+| Use | Map type | Examples |
+| --- | -------- | -------- |
+| Wire JSON object properties where **stable key order** matters for strict round-trip, JCS canonicalization, or deterministic re-serialize | **`BTreeMap`** | `ExtensionMap`, `ExternalReference.hashes`, `LanguageContent.contents`, `SdoSroCommonProps::extra`, `ScoCommonProps::extra`, SCO `hashes`, `Bundle.extra_properties()` **values** |
+| Internal **indexes** keyed by STIX id or opaque string where iteration order is irrelevant | **`HashMap`** | `Bundle.id_index`, `Bundle.extra_properties` **keys** (object id → peeled props), `StixGraph` adjacency, `MemoryStore` buckets, `MarkingResolver` marking index |
+
+Do not introduce `HashMap` for a new wire-facing property bag that participates in `roundtrip_strict` or bundle serialize merge — use `BTreeMap` to match `ExtensionMap` and avoid silent key-order drift.
+
 ### Testing layout
 
 Two layers, consistent across the Data Model + Serialization phase:
 
 | Layer | Location | Purpose |
 | ----- | -------- | ------- |
-| **Wire / JSON** | `tests/spec.rs` + `tests/fixtures/spec/` | Deserialize → serialize → reparse; negative fixtures; `roundtrip_strict` for complete types, subset `roundtrip` for common-property-only structs. |
-| **Bundle integration** | `tests/bundle.rs` | Bundle container, ref validation, `x_*` round-trip. |
-| **Semantic validation** | `tests/validation.rs` + `tests/fixtures/validation/` | `Bundle::validate()` advisory codes. |
+| **Wire / JSON** | `tests/spec.rs` + `tests/fixtures/spec/` | Deserialize → serialize → reparse; negative fixtures; `roundtrip_strict` for complete types, subset `roundtrip` for common-property-only structs. Spec-audit fixtures: observed-data embedded SRO, standalone `common.extra`, extra `_enc` rejection. |
+| **Bundle integration** | `tests/bundle.rs` | Bundle container, ref validation, `x_*` and toplevel-property-extension round-trip via `extra_properties`. |
+| **Semantic validation** | `tests/validation.rs` + `tests/fixtures/validation/` | `Bundle::validate()` advisory codes (granular selectors, language-content, ISO 3166, region-ov, STIX-W0031, …). |
+| **Validation Pipeline** | `tests/validate_conformance.rs`, `tests/validate_diagnostic_coverage.rs` + `tests/fixtures/conformance/` | Profile-driven pipeline; one case per `DiagnosticCode::ALL` entry. Requires `validate` feature. |
+| **Graph / Marking / Store** | `tests/graph.rs`, `tests/marking.rs`, `tests/store.rs`, `tests/store_fs.rs` | Optional features; `store-fs` for durable backend. |
 | **Streaming / custom types / ATT&CK** | `tests/integration.rs` | `parse_reader`, `TypeRegistry`, optional local ATT&CK corpus via `RSTIX_ATTCK_BUNDLE`. |
-| **Pattern parse + type-check** | `tests/pattern_parse.rs` + `tests/fixtures/pattern/` | STIX §9.8 examples; requires `pattern` feature. |
+| **Pattern parse + type-check** | `tests/pattern_parse.rs`, `tests/pattern_eval*.rs` + `tests/fixtures/pattern/` | STIX §9.8 examples and manifest-driven SCO field paths; requires `pattern` feature. |
 | **Unit** | `#[cfg(test)]` in `src/` | Invariants, normative constant pins, and parse smoke tests that do not need a dedicated fixture file (or that use `include_str!` for a single inline read). |
 
 Do not duplicate wire-format coverage in unit tests. Do not put fixture-backed integration tests under `src/test_support/`.
@@ -463,11 +581,13 @@ The **Data Model + Serialization** phase validates STIX invariants at deserializ
 | Semantic validation | `Bundle::validate()` returns `ValidationReport` with SHOULD-level warnings (STIX-W0031, SCO deterministic id, granular selector semantics, language-content field/type/list checks, ISO 3166 country, region open vocab, CAPEC/CVE, relationship matrix, encryption algorithm). Parse remains permissive for these rules. | STIX advisory codes; no `strict` parse flag. |
 | SDO invariants | Removed stricter-than-spec empty-name / empty-list checks on grouping context length, note/opinion/report refs, malware-analysis product emptiness and analysis window ordering. Retained spec MUST rules: observed-data XOR + ordering + count range; indicator time window; malware family name when `is_family: true`; malware-analysis result/sco_refs + SCO kind on `analysis_sco_refs`; location geo rules; kill-chain phase empties; `OpinionValue` closed vocab. CAPEC/CVE external ref shape is validated as warnings via `Bundle::validate()`. | Align deserialize validation with STIX property tables. |
 | `Relationship` per-type matrix | Advisory via `Bundle::validate()` (`ValidationCode::RelationshipEndpointMatrixInvalid`). | STIX relationship context tables are SHOULD-level. |
-| `language-content` | `object_modified` is `Option<StixTimestamp>`; `lang` rejected on common props; bundle validates `object_ref` exists; `object_modified`, unknown fields, and translation type/list-length mirroring are warnings via `Bundle::validate()`. | STIX §7.2.4. |
-| SCO `*_enc` (§3.9.1) | `file.name_enc`, `directory.path_enc`, `email-message.subject_enc`, `email-message.body_enc` modeled. | Full STIX 2.1 encrypted-property inventory. |
+| `language-content` | `object_modified` is `Option<StixTimestamp>`; `lang` rejected on common props; bundle validates `object_ref` exists; `object_modified` mismatch and translation type/list-length/object-shape mirroring are warnings via `Bundle::validate()`; unknown target fields are ignored (§7.1.1). | STIX §7.2.4 / §7.1.1. |
+| SCO `*_enc` (§3.1 / §3.9.1) | Spec-defined: `file.name_enc`, `directory.path_enc` only; additional `_enc` keys in `common.extra` validated with the same IANA charset and pairing rules. | STIX §3.9.1 per-type tables list only those two properties. |
+| `email-message` headers (§6.6) | RFC 2047 encoded-words decoded on ingest for `subject`, `message_id`, `body`, `received_lines`, and `additional_header_fields`. | Raw RFC2047 on the wire is normalized before storage. |
 | `marking-definition` | `spec_version` required; legacy `definition_type` + `definition` required when `extensions` empty. | STIX §7.2.1. |
 | `extension-definition` | Rejects `extensions`, `confidence`, and `lang` on common props. | STIX §7.2.2 forbidden common properties. |
-| SCO ref/format checks | `file.contains_refs` SCO kind; domain-name/email-addr/url basic format validation; observed-data `object_refs` SCO or SRO kind. Artifact `encryption_algorithm` closed vocab is a warning via `Bundle::validate()`. | STIX §6 reference targets; encryption vocab is SHOULD-level. |
+| SCO ref/format checks | `file.contains_refs` SCO kind; domain-name/email-addr/url spec MUST format validation at parse; observed-data `object_refs` SCO or SRO kind. Artifact `encryption_algorithm` closed vocab is a warning via `Bundle::validate()`. | STIX §6 reference targets; encryption vocab is SHOULD-level. |
+| Standalone unknown top-level keys | Unmodeled keys captured in `common.extra` (SDO/SRO/SCO) or `MarkingDefinition.extra` at leaf deserialize; strict round-trip preserves them. | Vendor and future spec fields without a typed struct field. |
 | Extension map | Predefined extension keys (`*-ext`, TLP definition id) must not carry `extension_type`; toplevel-property-extension entries peeled before typed deserialize and hoisted keys stored in `extra_properties` (with unmodeled top-level keys captured on reparse via `common.extra` drain). | STIX §3.10 / §7.3. |
 | `Sighting.count` | `0..=999_999_999` when present. | STIX §5.2.1 inclusive range. |
 | `Sighting` time window | `last_seen >= first_seen` when both set. | STIX §5.2.1 ordering rule. |
@@ -487,8 +607,11 @@ The **Data Model + Serialization** phase validates STIX invariants at deserializ
 | `Process` at-least-one-property | §6.13 type-specific fields **or** `windows-process-ext` / `windows-service-ext` key present; extension body validated separately. | STIX 2.1 Specification §6.13. |
 | `UserAccount` at-least-one-property | §6.16.1 specific fields **or** `unix-account-ext` key present; extension body validated separately (`windows-registry-key` checks §6.17.1 fields only — no predefined extension). | STIX 2.1 Specification §6.16 / §6.16.2 / §6.17. |
 | `ScoObject` / `QueryValue` | `#[non_exhaustive]`; `created()` / `modified()` always `None` for SCO arms. | STIX §3.2 — SCOs have no created/modified. |
-| `ExtensionMap` | Public `insert()` mirrors `BTreeMap` semantics. | Programmatic extension assembly without reaching into the inner map. |
+| `ExtensionMap` | Public `insert()` mirrors `BTreeMap` semantics; inner map is `BTreeMap` for stable JSON key order. | Programmatic extension assembly without reaching into the inner map; matches JCS / strict round-trip expectations (PR #213). |
+| JSON map key order | Wire-facing property bags use `BTreeMap`; internal id indexes use `HashMap`. | See [Serialization map conventions](#serialization-map-conventions). |
 | Round-trip helpers (`tests/support/roundtrip.rs`) | `roundtrip_strict`: re-serialized JSON must equal the fixture (complete types — meta, SDO, SRO, SCO, common leaf types). `roundtrip`: subset compare for `SdoSroCommonProps` / `ScoCommonProps` fixtures only. | Strict mode catches dropped fields; subset mode is documented as partial. |
+| Language-content unknown fields | Keys not on the target object are **ignored** (§7.1.1); no advisory is emitted. | Spec MUST ignore non-translatable / unknown keys. |
+| Granular selectors on custom objects | Selector resolution runs on custom object wire JSON when `allow_custom` is enabled. | Same §7.2.3 MUST as typed objects. |
 
 ## License
 

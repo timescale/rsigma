@@ -1,0 +1,52 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000010",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--e828b379-4398-4577-93c8-9d3c7c13d7b5",
+      "created": "2022-03-11T19:45:00.000Z",
+      "name": "TLP:RED",
+      "extensions": {
+        "extension-definition--60477d8d-78ac-1058-8160-d776f9386f83": {
+          "extension_type": "property-extension",
+          "tlp_2_0": "red"
+        }
+      }
+    },
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--bab4a63c-aab9-4723-a3c3-079ae6f0b36e",
+      "created": "2022-03-11T19:45:00.000Z",
+      "name": "TLP:GREEN",
+      "extensions": {
+        "extension-definition--60477d8d-78ac-1058-8160-d776f9386f83": {
+          "extension_type": "property-extension",
+          "tlp_2_0": "green"
+        }
+      }
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--a932f6a0-9711-4f51-9c17-bfe203cb99b3",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "pattern": "[file:hashes.MD5 = '644bf17e482f443f763b0b7355b14372']",
+      "pattern_type": "stix",
+      "valid_from": "2016-05-12T08:17:27.000Z",
+      "object_marking_refs": [
+        "marking-definition--e828b379-4398-4577-93c8-9d3c7c13d7b5"
+      ],
+      "granular_markings": [
+        {
+          "selectors": ["name"],
+          "marking_ref": "marking-definition--bab4a63c-aab9-4723-a3c3-079ae6f0b36e"
+        }
+      ],
+      "name": "Test indicator"
+    }
+  ]
+}

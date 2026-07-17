@@ -150,19 +150,13 @@ pub struct EmailMessage {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub message_id: Option<String>,
-    /// Subject line (STIX §6.6.2).
+    /// Subject line (STIX §6.6.1).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub subject: Option<String>,
-    /// Encrypted subject line (STIX §6.6.2).
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub subject_enc: Option<String>,
-    /// `Received` header lines in order (STIX §6.6.2).
+    /// `Received` header lines in order (STIX §6.6.1).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -180,13 +174,7 @@ pub struct EmailMessage {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body: Option<String>,
-    /// Encrypted body of a single-part message (STIX §6.6.2).
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub body_enc: Option<String>,
-    /// MIME parts of a multipart message (STIX §6.6.2; required when `is_multipart` is true).
+    /// MIME parts of a multipart message (STIX §6.6.1; required when `is_multipart` is true).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -216,6 +204,14 @@ impl EmailMessage {
         } else if self.body_multipart.is_some() {
             return Err(ModelError::EmailMessageMultipartWhenSinglePart);
         }
+        crate::model::validate::validate_extra_enc_pairings(
+            &self.common.extra,
+            &[
+                ("subject", self.subject.as_deref()),
+                ("body", self.body.as_deref()),
+                ("message_id", self.message_id.as_deref()),
+            ],
+        )?;
         if let Some(parts) = &self.body_multipart {
             for part in parts {
                 part.validate()?;
@@ -265,21 +261,23 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             #[serde(default)]
             subject: Option<String>,
             #[serde(default)]
-            subject_enc: Option<String>,
-            #[serde(default)]
             received_lines: Vec<String>,
             #[serde(default)]
             additional_header_fields: BTreeMap<String, Vec<String>>,
             #[serde(default)]
             body: Option<String>,
             #[serde(default)]
-            body_enc: Option<String>,
-            #[serde(default)]
             body_multipart: Option<Vec<EmailMimePart>>,
             #[serde(default)]
             raw_email_ref: Option<ArtifactId>,
         }
         let raw = Raw::deserialize(deserializer)?;
+        let mut additional_header_fields = raw.additional_header_fields;
+        for values in additional_header_fields.values_mut() {
+            for value in values {
+                *value = crate::model::rfc2047::decode_header_value(value);
+            }
+        }
         let obj = Self {
             object_type: raw.object_type,
             common: raw.common,
@@ -291,13 +289,21 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             to_refs: raw.to_refs,
             cc_refs: raw.cc_refs,
             bcc_refs: raw.bcc_refs,
-            message_id: raw.message_id,
-            subject: raw.subject,
-            subject_enc: raw.subject_enc,
-            received_lines: raw.received_lines,
-            additional_header_fields: raw.additional_header_fields,
-            body: raw.body,
-            body_enc: raw.body_enc,
+            message_id: raw
+                .message_id
+                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
+            subject: raw
+                .subject
+                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
+            received_lines: raw
+                .received_lines
+                .into_iter()
+                .map(|line| crate::model::rfc2047::decode_header_value(&line))
+                .collect(),
+            additional_header_fields,
+            body: raw
+                .body
+                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
             body_multipart: raw.body_multipart,
             raw_email_ref: raw.raw_email_ref,
         };
@@ -335,9 +341,19 @@ impl QueryableStixObject for EmailMessage {
             ["content_type"] => self.content_type.as_deref().map(QueryValue::Str),
             ["message_id"] => self.message_id.as_deref().map(QueryValue::Str),
             ["subject"] => self.subject.as_deref().map(QueryValue::Str),
-            ["subject_enc"] => self.subject_enc.as_deref().map(QueryValue::Str),
+            ["subject_enc"] => self
+                .common
+                .extra
+                .get("subject_enc")
+                .and_then(serde_json::Value::as_str)
+                .map(QueryValue::Str),
             ["body"] => self.body.as_deref().map(QueryValue::Str),
-            ["body_enc"] => self.body_enc.as_deref().map(QueryValue::Str),
+            ["body_enc"] => self
+                .common
+                .extra
+                .get("body_enc")
+                .and_then(serde_json::Value::as_str)
+                .map(QueryValue::Str),
             ["received_lines"] if !self.received_lines.is_empty() => Some(QueryValue::Null),
             ["additional_header_fields"] if !self.additional_header_fields.is_empty() => {
                 Some(QueryValue::Null)

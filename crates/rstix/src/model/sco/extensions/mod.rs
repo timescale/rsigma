@@ -10,6 +10,7 @@ mod socket;
 mod tcp;
 mod unix_account;
 mod util;
+pub(crate) use util::deserialize_from_entry;
 mod windows_pe;
 mod windows_process;
 mod windows_service;

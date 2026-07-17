@@ -4,7 +4,7 @@
   "id": "file--00000000-0000-0000-0000-000000000008",
   "defanged": false,
   "name": "sample.exe",
-  "name_enc": "c2FtcGxlLmVuYw==",
+  "name_enc": "windows-1252",
   "size": 4096,
   "mime_type": "application/x-dosexec",
   "magic_number_hex": "4d5a",

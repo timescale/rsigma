@@ -1,10 +1,12 @@
 //! STIX vocabulary tables.
 
 mod closed;
+mod iana_charset;
 mod iso3166;
 mod open;
 
 pub use closed::*;
+pub use iana_charset::{IANA_CHARACTER_SETS, is_iana_character_set};
 pub use iso3166::{ISO3166_ALPHA2, is_iso3166_alpha2};
 pub use open::*;
 

@@ -93,7 +93,13 @@ mod tests {
 
     use super::*;
     use crate::model::Bundle;
-    use crate::validate::legacy_paths::{language_content_mismatch, language_content_unknown};
+    use crate::validate::legacy_paths::{
+        LANGUAGE_CONTENT_UNKNOWN_PREFIX, language_content_mismatch,
+    };
+
+    fn language_content_unknown(lang: &str, field: &str) -> String {
+        format!("{LANGUAGE_CONTENT_UNKNOWN_PREFIX}{lang}.{field}")
+    }
 
     #[test]
     fn legacy_validation_code_mapping_is_structural() {
@@ -221,10 +227,6 @@ mod tests {
             "validation/bundle-language-content-list-length.json"
         );
         assert_code_in_fixture!(
-            ValidationCode::LanguageContentFieldUnknown,
-            "validation/bundle-language-content-unknown-field.json"
-        );
-        assert_code_in_fixture!(
             ValidationCode::LanguageContentObjectModifiedMismatch,
             "validation/bundle-language-content-object-modified-mismatch.json"
         );
@@ -257,7 +259,6 @@ mod tests {
             ValidationCode::StixW0031TlpV1Encoding,
             ValidationCode::ScoDeterministicIdMismatch,
             ValidationCode::GranularSelectorSemanticInvalid,
-            ValidationCode::LanguageContentFieldUnknown,
             ValidationCode::LanguageContentValueMismatch,
             ValidationCode::LanguageContentObjectModifiedMismatch,
             ValidationCode::LocationCountryNotIso3166,
@@ -271,7 +272,7 @@ mod tests {
         .collect();
         assert_eq!(
             expected.len(),
-            12,
+            11,
             "test inventory must cover every legacy code"
         );
     }

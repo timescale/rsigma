@@ -162,6 +162,14 @@ fn coverage_cases() -> Vec<CoverageCase> {
         },
         CoverageCase {
             code: DiagnosticCode::E0013,
+            source: bundle_object!(
+                r#"{"type":"opinion","spec_version":"2.1","id":"opinion--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061","created":"2020-01-01T00:00:00.000Z","modified":"2020-01-01T00:00:00.000Z","opinion":"not-a-valid-opinion","object_refs":["indicator--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061"]}"#
+            ),
+            profile: Profile::ConsumerStrict,
+            label: "unknown opinion closed vocabulary",
+        },
+        CoverageCase {
+            code: DiagnosticCode::W0010,
             source: JsonSource::Fixture("validation/bundle-bad-encryption.json"),
             profile: Profile::ConsumerStrict,
             label: "closed vocabulary encryption_algorithm",

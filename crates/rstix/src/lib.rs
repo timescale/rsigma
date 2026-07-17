@@ -23,6 +23,18 @@ pub mod model;
 #[cfg(feature = "validate")]
 pub mod validate;
 
+/// STIX property graph construction and traversal.
+#[cfg(feature = "graph")]
+pub mod graph;
+
+/// STIX marking resolution (TLP + granular + statement).
+#[cfg(feature = "marking")]
+pub mod marking;
+
+/// STIX object store trait and in-memory implementation.
+#[cfg(feature = "store")]
+pub mod store;
+
 #[cfg(feature = "serde")]
 mod serde_impls;
 
@@ -91,6 +103,28 @@ pub use pattern::{Pattern, PatternAst, PatternError, PatternMatchError, PatternS
 pub use validate::{
     Diagnostic, DiagnosticCode, Leniency, Severity, SourceSpan, ValidationPhase,
     ValidationReport as PipelineValidationReport, Validator, ValidatorBuilder,
+};
+
+#[cfg(feature = "graph")]
+pub use graph::{
+    AttackPatternSummary, CampaignSummary, CoaSummary, Edge, EdgePredicate, EdgeTraversal,
+    ExpansionResult, GraphError, IdentitySummary, IndicatorSummary, InfrastructureSummary,
+    MalwareSummary, PredicateFn, RelationshipExpander, SroEdgePayload, StixGraph,
+    ThreatActorSummary, TraversalBuilder, VulnerabilitySummary,
+};
+
+#[cfg(feature = "marking")]
+#[allow(deprecated)]
+pub use marking::{
+    DisclosureContext, EffectiveMarking, MarkingResolver, StatementMarking, TlpV1Level, TlpV2Level,
+};
+
+#[cfg(feature = "store-fs")]
+pub use store::FsStore;
+#[cfg(feature = "store")]
+pub use store::{
+    FingerprintConflict, ImportReport, MemoryStore, QueryCursor, QueryResult, StixQuery, StixStore,
+    StoreError, StoredSco,
 };
 
 #[cfg(feature = "serde")]

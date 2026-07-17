@@ -76,6 +76,8 @@ pub(crate) fn model_error_pipeline_mapping(
         | ModelError::ExtensionDefinitionForbiddenCommonProperty { .. }
         | ModelError::ExtensionTypeOnPredefinedExtension { .. } => (DiagnosticCode::E0030, None),
         ModelError::ScoDeterministicIdMismatch => (DiagnosticCode::W0002, Some("id")),
+        ModelError::ScoEncWithoutBaseProperty { .. } => (DiagnosticCode::E0003, None),
+        ModelError::ScoEncInvalidCharset { .. } => (DiagnosticCode::E0013, None),
         ModelError::ScoForbiddenCommonProperty { .. } => (DiagnosticCode::W0040, None),
         ModelError::RelationshipEndpointMatrixInvalid { .. } => (DiagnosticCode::I0002, None),
         ModelError::InvalidCapecExternalReference | ModelError::InvalidCveExternalReference => {

@@ -391,6 +391,18 @@ pub enum ModelError {
     /// language-content `contents` key is not a valid RFC 5646 language tag.
     #[error("language-content contents key is not a valid RFC 5646 language tag")]
     LanguageContentInvalidLanguageCode,
+    /// SCO `*_enc` property is present without its base string property (STIX §3.1).
+    #[error("SCO encoding property `{property}` is present without its base property")]
+    ScoEncWithoutBaseProperty {
+        /// Wire property name (for example `name_enc`).
+        property: String,
+    },
+    /// SCO `*_enc` value is not a recognized IANA character set name (STIX §3.9.1).
+    #[error("SCO encoding property `{property}` value is not a recognized IANA character set name")]
+    ScoEncInvalidCharset {
+        /// Wire property name (for example `name_enc`).
+        property: String,
+    },
     /// granular-marking selector syntax is invalid (STIX §7.2.3.1).
     #[error("granular marking selector syntax is invalid: `{selector}`")]
     GranularSelectorSyntaxInvalid {
@@ -615,6 +627,16 @@ impl ModelError {
             }
             "malware sample_refs must reference the same binary when is_family is false" => {
                 Some(Self::MalwareSampleRefsNotSameBinary)
+            }
+            "SCO encoding property is present without its base property" => {
+                Some(Self::ScoEncWithoutBaseProperty {
+                    property: "name_enc".into(),
+                })
+            }
+            "SCO encoding property value is not a recognized IANA character set name" => {
+                Some(Self::ScoEncInvalidCharset {
+                    property: "name_enc".into(),
+                })
             }
             _ => None,
         }

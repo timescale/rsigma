@@ -19,8 +19,12 @@ all-features = true
 default = ["serde"]
 
 serde = ["dep:serde"]
-pattern = ["dep:base64", "dep:ipnet", "dep:regex", "dep:unicode-normalization"]
-validate = ["serde", "pattern", "dep:idna", "dep:url", "dep:email_address"]
+pattern = ["dep:ipnet", "dep:regex", "dep:unicode-normalization"]
+validate = ["serde", "pattern"]
+graph = ["serde"]
+marking = ["serde"]
+store = ["serde"]
+store-fs = ["store"]
 
 [dependencies]
 phf = { version = "0.14", features = ["macros"] }
@@ -29,13 +33,14 @@ thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 uuid = { version = "1", features = ["v4", "v5"] }
 
-idna = { version = "1.0", optional = true }
-url = { version = "2.5", optional = true }
-email_address = { version = "0.2", optional = true }
+idna = "1.0"
+url = "2.5"
+email_address = "0.2"
+base64 = "0.22"
+encoding_rs = "0.8"
 
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
-base64 = { version = "0.22", optional = true }
 ipnet = { version = "2", optional = true }
 regex = { version = "1", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
@@ -75,3 +80,19 @@ required-features = ["pattern", "serde"]
 [[test]]
 name = "validate_pipeline"
 required-features = ["validate"]
+
+[[test]]
+name = "graph"
+required-features = ["graph", "serde"]
+
+[[test]]
+name = "marking"
+required-features = ["marking", "serde"]
+
+[[test]]
+name = "store"
+required-features = ["store", "serde"]
+
+[[test]]
+name = "store_fs"
+required-features = ["store-fs", "serde"]

@@ -39,10 +39,10 @@ impl<'a> ObservationContext<'a> {
 
 /// Build timestamped observations from an [`ObservedData`] SDO and its bundle.
 ///
-/// Each referenced or embedded SCO is stamped with [`ObservedData::first_observed`]
-/// as its observation time. When `object_refs` is used, every referenced SCO shares
-/// that timestamp (STIX §4.14 sighting window start). `last_observed` is not used to
-/// synthesize per-SCO timestamps in this release.
+/// Each referenced or embedded **SCO** is stamped with [`ObservedData::first_observed`]
+/// as its observation time. Embedded **SRO** members in deprecated `objects` maps and
+/// non-SCO `object_refs` entries are skipped — STIX §9 pattern evaluation is defined
+/// over cyber-observable objects only.
 pub(crate) fn build_observations_from_observed_data<'a>(
     observed_data: &'a ObservedData,
     bundle: &'a Bundle,
@@ -182,7 +182,7 @@ mod tests {
             "../../tests/fixtures/spec/sdo/observed-data-object-refs.json"
         ))
         .expect("observed-data");
-        let bundle = Bundle::from_objects_for_test(
+        let bundle = Bundle::from_objects(
             StixId::parse("bundle--00000000-0000-0000-0000-000000000001").expect("id"),
             vec![],
         );
@@ -233,7 +233,7 @@ mod tests {
             }"#,
         )
         .expect("relationship");
-        let bundle = Bundle::from_objects_for_test(
+        let bundle = Bundle::from_objects(
             StixId::parse("bundle--00000000-0000-0000-0000-000000000002").expect("id"),
             vec![StixObject::Sro(crate::model::sro::SroObject::Relationship(
                 relationship,
