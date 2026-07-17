@@ -284,9 +284,25 @@ Parse enforces STIX **MUST** rules (hard errors). **`Bundle::validate()`** colle
 
 There is no `strict` parse flag: permissive parse + explicit `validate()` is the supported workflow (see maintainer direction on [issue #267](https://github.com/timescale/rsigma/issues/267)).
 
-## Wire-format validation (spec MUST at parse)
+### Data Model + Serialization design decisions
 
-STIX **MUST** rules for `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986) are enforced at the **default `serde` parse boundary** via `idna`, `email_address`, and `url`.
+Formal record of wire-parse engineering choices. Full text: [crate README — Data Model + Serialization design decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#data-model--serialization-design-decisions).
+
+<a id="dd-dm-001--wire-must-at-parse"></a>
+
+#### DD-DM-001 — Wire MUST at parse (`domain-name`, `email-addr`, `url`)
+
+| | |
+| --- | --- |
+| **Status** | Accepted (#327) |
+| **Applies to** | `serde` feature (default), `domain-name`, `email-addr`, `url` SCO types |
+| **Spec** | STIX 2.1 §6.4, §6.5, §6.15 |
+
+**Decision.** Malformed `domain-name`, `email-addr`, and `url` values are **rejected at default `serde` parse**, not deferred to the Validation Pipeline. Supersedes PR #315 permissive-parse posture for these three fields only. General MUST vs SHOULD split: [issue #267](https://github.com/timescale/rsigma/issues/267).
+
+## Wire-format validation (DD-DM-001)
+
+STIX **MUST** rules for `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986) are enforced at the **default `serde` parse boundary** per **DD-DM-001** above, via optional deps (`idna`, `email_address`, `url`, `base64`, `encoding_rs`) enabled by the `serde` feature. `--no-default-features` builds omit those crates.
 
 | Field | Spec reference | Parse boundary (`serde`) |
 | ----- | -------------- | ------------------------ |

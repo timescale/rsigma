@@ -10,6 +10,7 @@ mod socket;
 mod tcp;
 mod unix_account;
 mod util;
+#[cfg(feature = "serde")]
 pub(crate) use util::deserialize_from_entry;
 mod windows_pe;
 mod windows_process;

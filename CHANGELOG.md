@@ -4,6 +4,11 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: serde-gate wire-format validator dependencies
+
+- **Wire MUST at parse (DD-DM-001)** — STIX §6.4 / §6.5 / §6.15 require well-formed `domain-name`, `email-addr`, and `url` values; rstix rejects malformed values at default `serde` parse rather than accepting them and reporting later. Documented in [`crates/rstix/README.md`](crates/rstix/README.md#dd-dm-001--wire-must-at-parse).
+- **`idna`, `url`, `email_address`, `base64`, `encoding_rs`** — optional deps enabled by the `serde` feature (`base64` also under `pattern`); `--no-default-features` builds omit them. Default `serde` parse still enforces **DD-DM-001** unchanged.
+
 ### rstix STIX 2.1 spec-exact closure with Graph + Marking + Store (`graph`, `marking`, `store` features) (#327)
 
 - **Wire MUST at parse (Decision A):** `domain-name`, `email-addr`, and `url` values use IDNA / RFC 5322 / RFC 3986 validation at the default `serde` boundary (`idna`, `email_address`, `url` are required dependencies).

@@ -432,9 +432,33 @@ for w in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
 | `RelationshipEndpointMatrixInvalid` | Relationship source/target types outside STIX 2.1 matrix. |
 | `EncryptionAlgorithmInvalid` | Artifact `encryption_algorithm` not in closed vocabulary. |
 
-### Wire-format validation (spec MUST at parse)
+### Data Model + Serialization design decisions
 
-STIX **MUST** rules for `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986) are enforced at the **default `serde` parse boundary** via `idna`, `email_address`, and `url`.
+Recorded engineering choices for wire parsing and SCO value validation. Summaries also appear on the [rstix library page](../../docs/library/rstix.md#data-model--serialization-design-decisions).
+
+<a id="dd-dm-001--wire-must-at-parse"></a>
+
+#### DD-DM-001 — Wire MUST at parse (`domain-name`, `email-addr`, `url`)
+
+| | |
+| --- | --- |
+| **Status** | Accepted (#327) |
+| **Applies to** | `serde` feature (default), `domain-name`, `email-addr`, `url` SCO types |
+| **Spec** | STIX 2.1 §6.4, §6.5, §6.15 |
+
+**Context.** STIX **MUST** rules require well-formed `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986). PR #315 gated strict IDNA / RFC 5322 / URL checks behind the optional `validate` feature (`STIX-I0002` findings). [Issue #267](https://github.com/timescale/rsigma/issues/267) directs a general split: MUST at parse, SHOULD via explicit `Bundle::validate()`.
+
+**Decision.** For these three SCO fields only, rstix **rejects malformed values at the default `serde` parse boundary** (hard `ParseError` / `ModelError`), not only when the Validation Pipeline runs. Optional deps `idna`, `email_address`, and `url` are enabled by the `serde` feature; `Bundle::validate()` and the pipeline schema phase re-run the same checks on typed objects.
+
+**Rationale.** The spec marks these as MUST on the wire; accepting invalid values at parse and failing later breaks the “invalid JSON never becomes a typed object” contract for the most common SCO format mistakes.
+
+**Supersedes (partial).** PR #315 permissive-parse posture for **domain / email / url only**; other wire-format advisories remain pipeline- or `Bundle::validate()`-driven.
+
+**Consequences.** `--no-default-features` builds omit format-validator deps and skip strict checks until `serde` is enabled. URL validation additionally restricts schemes to `http`, `https`, and `ftp`.
+
+### Wire-format validation (DD-DM-001)
+
+STIX **MUST** rules for `domain-name.value` (RFC 1034 / RFC 5890), `email-addr.value` (RFC 5322 addr-spec), and `url.value` (RFC 3986) are enforced at the **default `serde` parse boundary** per **DD-DM-001** above, via optional deps (`idna`, `email_address`, `url`, `base64`, `encoding_rs`) pulled in by the `serde` feature. A `--no-default-features` build stays lean (core/id/vocab only).
 
 | Field | Spec reference | Parse boundary (`serde`) |
 | ----- | -------------- | ------------------------ |

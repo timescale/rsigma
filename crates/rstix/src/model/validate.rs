@@ -437,6 +437,7 @@ pub fn validate_relationship_type(relationship_type: &str) -> Result<(), ModelEr
     Ok(())
 }
 
+#[cfg(feature = "serde")]
 fn is_valid_domain_label(label: &str) -> bool {
     if label.is_empty() || label.len() > 63 {
         return false;
@@ -449,6 +450,8 @@ fn is_valid_domain_label(label: &str) -> bool {
 }
 
 /// Domain-name format check (RFC 1034 / RFC 5890 per label) at the parse boundary.
+///
+/// Full IDNA validation requires the `serde` feature ([DD-DM-001](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#dd-dm-001--wire-must-at-parse) — wire MUST at parse).
 pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::DomainNameValueEmpty);
@@ -456,38 +459,52 @@ pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
     if value.starts_with('.') || value.ends_with('.') || value.contains("..") {
         return Err(ModelError::DomainNameFormatInvalid);
     }
-    let ascii = if value.is_ascii() {
-        value.to_owned()
-    } else {
-        idna::domain_to_ascii(value).map_err(|_| ModelError::DomainNameFormatInvalid)?
-    };
-    if !ascii.split('.').all(is_valid_domain_label) {
-        return Err(ModelError::DomainNameFormatInvalid);
+    #[cfg(feature = "serde")]
+    {
+        let ascii = if value.is_ascii() {
+            value.to_owned()
+        } else {
+            idna::domain_to_ascii(value).map_err(|_| ModelError::DomainNameFormatInvalid)?
+        };
+        if !ascii.split('.').all(is_valid_domain_label) {
+            return Err(ModelError::DomainNameFormatInvalid);
+        }
     }
     Ok(())
 }
 
 /// Email address format check (RFC 5322 addr-spec) at the parse boundary.
+///
+/// Full addr-spec validation requires the `serde` feature ([DD-DM-001](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#dd-dm-001--wire-must-at-parse) — wire MUST at parse).
 pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::EmailAddrValueEmpty);
     }
-    if email_address::EmailAddress::is_valid(value) {
-        Ok(())
-    } else {
-        Err(ModelError::EmailAddrFormatInvalid)
+    #[cfg(feature = "serde")]
+    if !email_address::EmailAddress::is_valid(value) {
+        return Err(ModelError::EmailAddrFormatInvalid);
     }
+    Ok(())
 }
 
 /// URL format check (RFC 3986) at the parse boundary.
+///
+/// Full RFC 3986 validation requires the `serde` feature ([DD-DM-001](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#dd-dm-001--wire-must-at-parse) — wire MUST at parse).
 pub fn validate_url_format(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::UrlValueEmpty);
     }
-    let parsed = url::Url::parse(value).map_err(|_| ModelError::UrlFormatInvalid)?;
-    match parsed.scheme() {
-        "http" | "https" | "ftp" => Ok(()),
-        _ => Err(ModelError::UrlFormatInvalid),
+    #[cfg(feature = "serde")]
+    {
+        let parsed = url::Url::parse(value).map_err(|_| ModelError::UrlFormatInvalid)?;
+        match parsed.scheme() {
+            "http" | "https" | "ftp" => Ok(()),
+            _ => Err(ModelError::UrlFormatInvalid),
+        }
+    }
+    #[cfg(not(feature = "serde"))]
+    {
+        Ok(())
     }
 }
 
@@ -553,6 +570,7 @@ pub fn validate_sco_string_encoding_pair(
 }
 
 /// Parse `granular_markings` from wire JSON (typed objects and custom objects).
+#[cfg(feature = "serde")]
 pub fn granular_markings_from_wire(wire: &serde_json::Value) -> Vec<GranularMarking> {
     wire.get("granular_markings")
         .and_then(|value| serde_json::from_value(value.clone()).ok())
