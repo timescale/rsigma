@@ -144,6 +144,12 @@ enum ModelErrorWire {
     UrlFormatInvalid,
     EncryptionAlgorithmInvalid,
     ScoDeterministicIdMismatch,
+    ScoEncWithoutBaseProperty {
+        property: String,
+    },
+    ScoEncInvalidCharset {
+        property: String,
+    },
     PropertyExtensionDefinitionMissing {
         extension_id: String,
     },
@@ -337,6 +343,12 @@ impl From<&ModelError> for ModelErrorWire {
             ModelError::UrlFormatInvalid => Self::UrlFormatInvalid,
             ModelError::EncryptionAlgorithmInvalid => Self::EncryptionAlgorithmInvalid,
             ModelError::ScoDeterministicIdMismatch => Self::ScoDeterministicIdMismatch,
+            ModelError::ScoEncWithoutBaseProperty { property } => Self::ScoEncWithoutBaseProperty {
+                property: property.clone(),
+            },
+            ModelError::ScoEncInvalidCharset { property } => Self::ScoEncInvalidCharset {
+                property: property.clone(),
+            },
             ModelError::PropertyExtensionDefinitionMissing { extension_id } => {
                 Self::PropertyExtensionDefinitionMissing {
                     extension_id: extension_id.clone(),
@@ -555,6 +567,14 @@ impl From<ModelErrorWire> for ModelError {
             ModelErrorWire::UrlFormatInvalid => Self::UrlFormatInvalid,
             ModelErrorWire::EncryptionAlgorithmInvalid => Self::EncryptionAlgorithmInvalid,
             ModelErrorWire::ScoDeterministicIdMismatch => Self::ScoDeterministicIdMismatch,
+            ModelErrorWire::ScoEncWithoutBaseProperty { property } => {
+                Self::ScoEncWithoutBaseProperty {
+                    property: property.clone(),
+                }
+            }
+            ModelErrorWire::ScoEncInvalidCharset { property } => Self::ScoEncInvalidCharset {
+                property: property.clone(),
+            },
             ModelErrorWire::PropertyExtensionDefinitionMissing { extension_id } => {
                 Self::PropertyExtensionDefinitionMissing { extension_id }
             }

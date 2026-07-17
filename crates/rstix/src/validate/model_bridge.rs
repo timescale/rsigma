@@ -43,6 +43,7 @@ fn map_model_error(
         .or_else(|| granular_selector_path(err))
         .or_else(|| extension_path(err))
         .or_else(|| sco_forbidden_property_path(err))
+        .or_else(|| sco_enc_property_path(err))
         .or_else(|| bundle_reference_path(err));
     (code, path)
 }
@@ -73,6 +74,14 @@ fn extension_path(err: &ModelError) -> Option<String> {
 fn sco_forbidden_property_path(err: &ModelError) -> Option<String> {
     match err {
         ModelError::ScoForbiddenCommonProperty { property } => Some(property.clone()),
+        _ => None,
+    }
+}
+
+fn sco_enc_property_path(err: &ModelError) -> Option<String> {
+    match err {
+        ModelError::ScoEncWithoutBaseProperty { property }
+        | ModelError::ScoEncInvalidCharset { property } => Some(property.clone()),
         _ => None,
     }
 }

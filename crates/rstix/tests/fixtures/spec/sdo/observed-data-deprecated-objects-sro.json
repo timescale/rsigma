@@ -1,0 +1,28 @@
+{
+  "type": "observed-data",
+  "spec_version": "2.1",
+  "id": "observed-data--0960319a-3cab-4258-a143-4dbb25525bb1",
+  "created": "2016-04-06T19:58:16.000Z",
+  "modified": "2016-04-06T19:58:16.000Z",
+  "first_observed": "2015-12-21T19:00:00Z",
+  "last_observed": "2015-12-21T19:00:00Z",
+  "number_observed": 1,
+  "objects": {
+    "0": {
+      "type": "ipv4-addr",
+      "spec_version": "2.1",
+      "id": "ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4",
+      "value": "198.51.100.3"
+    },
+    "1": {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--a2216352-483a-4941-842c-5328ad08abfd",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "relationship_type": "related-to",
+      "source_ref": "ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4",
+      "target_ref": "ipv4-addr--28bb3599-77cd-5a82-a950-b5bc3caf07c4"
+    }
+  }
+}

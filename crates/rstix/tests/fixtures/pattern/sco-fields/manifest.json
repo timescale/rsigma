@@ -631,7 +631,7 @@
   },
   {
     "id": "directory:path_enc",
-    "pattern": "[directory:path_enc = 'L3Vzci9ob21lL3RlbXAvZW5j']",
+    "pattern": "[directory:path_enc = 'windows-1252']",
     "sco_file": "sco/directory.json",
     "bundle_file": "full-bundle.json",
     "expect": true
@@ -750,7 +750,7 @@
   },
   {
     "id": "email-message:subject_enc",
-    "pattern": "[email-message:subject_enc = 'encrypted-subject']",
+    "pattern": "[email-message:subject_enc = 'UTF-8']",
     "sco_file": "sco/email-message.json",
     "bundle_file": "full-bundle.json",
     "expect": true
@@ -897,7 +897,7 @@
   },
   {
     "id": "file:name_enc",
-    "pattern": "[file:name_enc = 'c2FtcGxlLmVuYw==']",
+    "pattern": "[file:name_enc = 'windows-1252']",
     "sco_file": "sco/file.json",
     "bundle_file": "full-bundle.json",
     "expect": true

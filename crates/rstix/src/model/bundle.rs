@@ -33,6 +33,8 @@ pub struct Bundle {
     objects: Vec<StixObject>,
     id_index: HashMap<String, usize>,
     extra_properties: HashMap<String, BTreeMap<String, serde_json::Value>>,
+    /// When true, refs to [`StixObject::Custom`] targets in this bundle pass SDO/SCO kind checks.
+    allow_custom: bool,
 }
 
 impl QueryableContainer for Bundle {
@@ -189,14 +191,14 @@ impl Bundle {
             objects,
             id_index,
             extra_properties,
+            allow_custom: opts.allow_custom,
         };
         bundle.validate_refs()?;
         Ok(bundle)
     }
 
-    /// Build a bundle without reference validation (unit tests only).
-    #[cfg(test)]
-    pub(crate) fn from_objects_for_test(id: StixId, objects: Vec<StixObject>) -> Self {
+    /// Build a bundle from already-parsed objects (no reference validation).
+    pub fn from_objects(id: StixId, objects: Vec<StixObject>) -> Self {
         let mut id_index = HashMap::with_capacity(objects.len());
         for (index, object) in objects.iter().enumerate() {
             id_index.insert(object.id().as_str().to_owned(), index);
@@ -206,6 +208,36 @@ impl Bundle {
             objects,
             id_index,
             extra_properties: HashMap::new(),
+            allow_custom: false,
+        }
+    }
+
+    fn custom_object_in_bundle(&self, id: &StixId) -> bool {
+        self.get(id)
+            .is_some_and(|object| matches!(object, StixObject::Custom(_)))
+    }
+
+    fn validate_stix_or_sco_ref_in_bundle(&self, id: &StixId) -> Result<(), ModelError> {
+        match validate_stix_or_sco_ref(id) {
+            Ok(()) => Ok(()),
+            Err(_err) if self.allow_custom && self.custom_object_in_bundle(id) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn validate_sdo_ref_in_bundle(&self, id: &StixId) -> Result<(), ModelError> {
+        match validate_sdo_ref(id) {
+            Ok(()) => Ok(()),
+            Err(_err) if self.allow_custom && self.custom_object_in_bundle(id) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn validate_sco_or_sro_ref_in_bundle(&self, id: &StixId) -> Result<(), ModelError> {
+        match validate_sco_or_sro_ref(id) {
+            Ok(()) => Ok(()),
+            Err(_err) if self.allow_custom && self.custom_object_in_bundle(id) => Ok(()),
+            Err(err) => Err(err),
         }
     }
 
@@ -358,7 +390,7 @@ impl Bundle {
                         ..
                     }) => {
                         for object_ref in object_refs {
-                            validate_sco_or_sro_ref(object_ref)?;
+                            self.validate_sco_or_sro_ref_in_bundle(object_ref)?;
                         }
                     }
                     SdoObject::Grouping(Grouping { object_refs, .. })
@@ -366,7 +398,7 @@ impl Bundle {
                     | SdoObject::Opinion(Opinion { object_refs, .. })
                     | SdoObject::Report(Report { object_refs, .. }) => {
                         for object_ref in object_refs {
-                            validate_stix_or_sco_ref(object_ref)?;
+                            self.validate_stix_or_sco_ref_in_bundle(object_ref)?;
                         }
                     }
                     _ => {}
@@ -386,13 +418,13 @@ impl Bundle {
                         target_ref,
                         ..
                     }) => {
-                        validate_stix_or_sco_ref(source_ref)?;
-                        validate_stix_or_sco_ref(target_ref)?;
+                        self.validate_stix_or_sco_ref_in_bundle(source_ref)?;
+                        self.validate_stix_or_sco_ref_in_bundle(target_ref)?;
                     }
                     SroObject::Sighting(Sighting {
                         sighting_of_ref, ..
                     }) => {
-                        validate_sdo_ref(sighting_of_ref)?;
+                        self.validate_sdo_ref_in_bundle(sighting_of_ref)?;
                     }
                 }
             }
@@ -420,7 +452,7 @@ impl Bundle {
                     if let Some(created_by) = &common.created_by_ref {
                         validate_identity_ref(created_by.as_stix_id())?;
                     }
-                    validate_sdo_ref(object_ref)?;
+                    self.validate_sdo_ref_in_bundle(object_ref)?;
                 }
             },
             StixObject::Sco(_) | StixObject::Custom(_) => {}

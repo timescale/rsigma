@@ -1,0 +1,9 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--0c7b5b88-8ff7-4a4d-aa9d-feb398cd0061",
+  "hashes": {
+    "SHA-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "vendor_note_enc": "windows-1252"
+}

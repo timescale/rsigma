@@ -1,0 +1,17 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000001",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--a932f6a0-9711-4f51-9c17-bfe203cb99b3",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "pattern": "[file:hashes.MD5 = '644bf17e482f443f763b0b7355b14372']",
+      "pattern_type": "stix",
+      "valid_from": "2016-05-12T08:17:27.000Z",
+      "created_by_ref": "identity--00000000-0000-0000-0000-000000000099"
+    }
+  ]
+}

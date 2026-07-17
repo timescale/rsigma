@@ -15,6 +15,10 @@ mod error;
 mod json_limits;
 pub mod meta;
 pub mod parse_options;
+#[cfg(feature = "serde")]
+pub(crate) mod ref_paths;
+#[cfg(feature = "serde")]
+mod rfc2047;
 pub mod sco;
 pub mod sdo;
 #[cfg(feature = "serde")]

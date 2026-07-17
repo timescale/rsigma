@@ -1,12 +1,12 @@
 //! Shared STIX model validation helpers (STIX 2.1 spec compliance).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::core::{LanguageTag, StixId, StixObjectKind, StixTimestamp};
 use crate::model::ModelError;
 use crate::model::common::{ExternalReference, GranularMarking, SdoSroCommonProps};
 use crate::model::sdo::MalwareSampleRef;
-use crate::vocab::ENCRYPTION_ALGORITHM_ENUM;
+use crate::vocab::{ENCRYPTION_ALGORITHM_ENUM, is_iana_character_set};
 
 /// Marker for relationship matrix entries that accept any SCO target type.
 const SCO_TARGET: &str = "__SCO__";
@@ -359,6 +359,31 @@ fn relationship_matrix() -> &'static HashMap<(&'static str, &'static str), &'sta
     })
 }
 
+/// Distinct STIX 2.1 `relationship_type` values from the normative matrix.
+pub fn stix_relationship_types() -> Vec<&'static str> {
+    static TYPES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    TYPES
+        .get_or_init(|| {
+            let mut types: Vec<&'static str> = relationship_matrix()
+                .keys()
+                .map(|(_, rel_type)| *rel_type)
+                .collect();
+            types.sort_unstable();
+            types.dedup();
+            types
+        })
+        .clone()
+}
+
+/// Relationship types allowed from an SDO source type per STIX 2.1 §3.5.
+pub fn relationship_types_for_source(source_type: &str) -> Vec<&'static str> {
+    relationship_matrix()
+        .keys()
+        .filter(|(source, _)| *source == source_type)
+        .map(|(_, rel_type)| *rel_type)
+        .collect()
+}
+
 fn target_allowed(target_type: &str, allowed: &[&str]) -> bool {
     allowed.iter().any(|entry| {
         *entry == SCO_TARGET
@@ -423,24 +448,8 @@ fn is_valid_domain_label(label: &str) -> bool {
         && !label.ends_with('-')
 }
 
-/// Basic domain-name format check (non-empty ASCII label structure).
+/// Domain-name format check (RFC 1034 / RFC 5890 per label) at the parse boundary.
 pub fn validate_domain_name_format(value: &str) -> Result<(), ModelError> {
-    if value.is_empty() {
-        return Err(ModelError::DomainNameValueEmpty);
-    }
-    if value.starts_with('.') || value.ends_with('.') || value.contains("..") {
-        return Err(ModelError::DomainNameFormatInvalid);
-    }
-    if value.split('.').all(is_valid_domain_label) {
-        Ok(())
-    } else {
-        Err(ModelError::DomainNameFormatInvalid)
-    }
-}
-
-/// Strict domain-name format check (IDNA UTS #46) for the Validation Pipeline.
-#[cfg(feature = "validate")]
-pub fn validate_domain_name_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::DomainNameValueEmpty);
     }
@@ -458,26 +467,8 @@ pub fn validate_domain_name_format_strict(value: &str) -> Result<(), ModelError>
     Ok(())
 }
 
-/// Basic email address format check at the Data Model parse boundary.
+/// Email address format check (RFC 5322 addr-spec) at the parse boundary.
 pub fn validate_email_addr_format(value: &str) -> Result<(), ModelError> {
-    if value.is_empty() {
-        return Err(ModelError::EmailAddrValueEmpty);
-    }
-    let Some((local, domain)) = value.split_once('@') else {
-        return Err(ModelError::EmailAddrFormatInvalid);
-    };
-    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(ModelError::EmailAddrFormatInvalid);
-    }
-    if local.contains(char::is_whitespace) || domain.contains(char::is_whitespace) {
-        return Err(ModelError::EmailAddrFormatInvalid);
-    }
-    Ok(())
-}
-
-/// Strict RFC 5322 addr-spec check for the Validation Pipeline.
-#[cfg(feature = "validate")]
-pub fn validate_email_addr_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::EmailAddrValueEmpty);
     }
@@ -488,22 +479,8 @@ pub fn validate_email_addr_format_strict(value: &str) -> Result<(), ModelError> 
     }
 }
 
-/// Basic URL format check at the Data Model parse boundary.
+/// URL format check (RFC 3986) at the parse boundary.
 pub fn validate_url_format(value: &str) -> Result<(), ModelError> {
-    if value.is_empty() {
-        return Err(ModelError::UrlValueEmpty);
-    }
-    if value.starts_with("http://") || value.starts_with("https://") || value.starts_with("ftp://")
-    {
-        Ok(())
-    } else {
-        Err(ModelError::UrlFormatInvalid)
-    }
-}
-
-/// Strict WHATWG URL check for the Validation Pipeline (`http`, `https`, `ftp` only).
-#[cfg(feature = "validate")]
-pub fn validate_url_format_strict(value: &str) -> Result<(), ModelError> {
     if value.is_empty() {
         return Err(ModelError::UrlValueEmpty);
     }
@@ -512,6 +489,74 @@ pub fn validate_url_format_strict(value: &str) -> Result<(), ModelError> {
         "http" | "https" | "ftp" => Ok(()),
         _ => Err(ModelError::UrlFormatInvalid),
     }
+}
+
+/// Returns true when `name` is a recognized IANA character set label (STIX §3.9.1).
+pub fn validate_iana_character_set(name: &str, property: &str) -> Result<(), ModelError> {
+    if is_iana_character_set(name) {
+        Ok(())
+    } else {
+        Err(ModelError::ScoEncInvalidCharset {
+            property: property.to_owned(),
+        })
+    }
+}
+
+/// Validate `_enc` siblings stored in `ScoCommonProps::extra` (§3.1 / §3.9.1).
+///
+/// Spec-defined `_enc` properties are modeled on their types; vendor or future keys
+/// land in `extra` via flatten and MUST obey the same pairing and IANA charset rules.
+pub fn validate_extra_enc_pairings(
+    extra: &BTreeMap<String, serde_json::Value>,
+    typed_bases: &[(&str, Option<&str>)],
+) -> Result<(), ModelError> {
+    for (enc_key, enc_value) in extra {
+        let Some(enc_property) = enc_key.strip_suffix("_enc") else {
+            continue;
+        };
+        let Some(encoding) = enc_value.as_str() else {
+            continue;
+        };
+        let base_value = typed_bases
+            .iter()
+            .find_map(|(name, value)| (*name == enc_property).then_some(*value))
+            .flatten()
+            .map(str::to_owned)
+            .or_else(|| {
+                extra
+                    .get(enc_property)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+        validate_sco_string_encoding_pair(&base_value, &Some(encoding.to_owned()), enc_key)?;
+    }
+    Ok(())
+}
+
+/// Validate `_enc` pairing for a typed base property and its `_enc` sibling (STIX §3.1 / §3.9.1).
+pub fn validate_sco_string_encoding_pair(
+    base: &Option<String>,
+    enc: &Option<String>,
+    enc_property: &str,
+) -> Result<(), ModelError> {
+    match enc {
+        None => Ok(()),
+        Some(encoding) => {
+            if base.as_ref().is_none_or(String::is_empty) {
+                return Err(ModelError::ScoEncWithoutBaseProperty {
+                    property: enc_property.to_owned(),
+                });
+            }
+            validate_iana_character_set(encoding, enc_property)
+        }
+    }
+}
+
+/// Parse `granular_markings` from wire JSON (typed objects and custom objects).
+pub fn granular_markings_from_wire(wire: &serde_json::Value) -> Vec<GranularMarking> {
+    wire.get("granular_markings")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
 }
 
 /// Validate encryption algorithm against the STIX closed vocabulary.
@@ -570,7 +615,7 @@ pub fn resolve_selector_value<'a>(
     Some(current)
 }
 
-/// Returns true when a language-content translation mirrors the target property type and list length (STIX §7.2.4).
+/// Returns true when a language-content translation mirrors the target property (STIX §7.1.1).
 pub fn language_content_translation_matches_target(
     target: &serde_json::Value,
     translation: &serde_json::Value,
@@ -582,12 +627,21 @@ pub fn language_content_translation_matches_target(
         (serde_json::Value::String(_), serde_json::Value::String(_)) => true,
         (serde_json::Value::Array(target_items), serde_json::Value::Array(translation_items)) => {
             target_items.len() == translation_items.len()
-                && target_items
-                    .iter()
-                    .zip(translation_items)
-                    .all(|(t, tr)| language_content_translation_matches_target(t, tr))
+                && target_items.iter().zip(translation_items).all(|(t, tr)| {
+                    if tr.as_str().is_some_and(str::is_empty) {
+                        true
+                    } else {
+                        language_content_translation_matches_target(t, tr)
+                    }
+                })
         }
-        (serde_json::Value::Object(_), serde_json::Value::Object(_)) => true,
+        (serde_json::Value::Object(target_obj), serde_json::Value::Object(translation_obj)) => {
+            translation_obj.iter().all(|(key, tr_val)| {
+                target_obj
+                    .get(key)
+                    .is_some_and(|t_val| language_content_translation_matches_target(t_val, tr_val))
+            })
+        }
         _ => false,
     }
 }
@@ -698,5 +752,41 @@ mod tests {
             &json!(["a", "b"]),
             &json!(["x"])
         ));
+        assert!(language_content_translation_matches_target(
+            &json!(["a", "b"]),
+            &json!(["", "y"])
+        ));
+        assert!(language_content_translation_matches_target(
+            &json!({"name": "x", "labels": ["a"]}),
+            &json!({"name": "y"})
+        ));
+        assert!(!language_content_translation_matches_target(
+            &json!({"name": "x"}),
+            &json!({"labels": ["a"]})
+        ));
+    }
+
+    #[test]
+    fn sco_enc_pairing_and_charset() {
+        assert!(
+            validate_sco_string_encoding_pair(
+                &Some("quêry.dll".into()),
+                &Some("windows-1252".into()),
+                "name_enc"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_sco_string_encoding_pair(&None, &Some("windows-1252".into()), "name_enc")
+                .is_err()
+        );
+        assert!(
+            validate_sco_string_encoding_pair(
+                &Some("name".into()),
+                &Some("not-a-charset".into()),
+                "name_enc"
+            )
+            .is_err()
+        );
     }
 }

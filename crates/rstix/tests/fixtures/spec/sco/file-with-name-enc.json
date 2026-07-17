@@ -1,0 +1,10 @@
+{
+  "type": "file",
+  "spec_version": "2.1",
+  "id": "file--1389b98d-a3d3-5190-a996-716fd444059a",
+  "hashes": {
+    "SHA-256": "effb46bba03f6c8aea5c653f9cf984f170dcdd3bbbe2ff6843c3e5da0e698766"
+  },
+  "name": "quêry.dll",
+  "name_enc": "windows-1252"
+}

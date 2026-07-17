@@ -172,7 +172,7 @@ fn sco_deterministic_id_mismatch_warns() {
 }
 
 #[test]
-fn language_content_unknown_field_warns() {
+fn language_content_unknown_field_is_ignored() {
     let bundle = parse_bundle(&load_fixture(
         "validation/bundle-language-content-unknown-field.json",
     ))
@@ -182,7 +182,7 @@ fn language_content_unknown_field_warns() {
         report
             .warnings_with_code(ValidationCode::LanguageContentFieldUnknown)
             .next()
-            .is_some()
+            .is_none()
     );
 }
 

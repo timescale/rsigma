@@ -1,0 +1,32 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000050",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--e828b379-4398-4577-93c8-9d3c7c13d7b5",
+      "created": "2022-03-11T19:45:00.000Z",
+      "name": "TLP:RED",
+      "extensions": {
+        "extension-definition--60477d8d-78ac-1058-8160-d776f9386f83": {
+          "extension_type": "property-extension",
+          "tlp_2_0": "red"
+        }
+      }
+    },
+    {
+      "type": "x-custom-indicator",
+      "spec_version": "2.1",
+      "id": "indicator--eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "created": "2016-05-12T08:17:27.000Z",
+      "modified": "2016-05-12T08:17:27.000Z",
+      "pattern": "[file:hashes.MD5 = '644bf17e482f443f763b0b7355b14372']",
+      "pattern_type": "stix",
+      "valid_from": "2016-05-12T08:17:27.000Z",
+      "object_marking_refs": [
+        "marking-definition--e828b379-4398-4577-93c8-9d3c7c13d7b5"
+      ]
+    }
+  ]
+}

@@ -4,6 +4,40 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix STIX 2.1 spec-exact closure with Graph + Marking + Store (`graph`, `marking`, `store` features)
+
+- **Wire MUST at parse (Decision A):** `domain-name`, `email-addr`, and `url` values use IDNA / RFC 5322 / RFC 3986 validation at the default `serde` boundary (`idna`, `email_address`, `url` are required dependencies).
+- **SCO `*_enc` (§3.1 / §3.9.1):** IANA charset validation and `_enc`-without-base pairing on spec-defined `file.name_enc` and `directory.path_enc`, plus any `_enc` keys in `common.extra`; negative fixtures in `tests/fixtures/spec/sco/`.
+- **Spec-audit closure:** observed-data deprecated `objects` with embedded SRO; standalone unknown top-level keys via `common.extra`; granular selector semantics, language-content nested rules, STIX-W0031, and location ISO 3166 / region-ov via `Bundle::validate()`.
+- **Serialization conventions:** wire-facing JSON property bags use `BTreeMap` (stable key order for strict round-trip and JCS); internal STIX-id indexes use `HashMap` — aligned with PR #213 review (`ExtensionMap`, `LanguageContent.contents`, `common.extra`).
+- **Language-content (§7.1.1):** recursive object mirroring, `""` list placeholders, unknown target fields silently ignored (no advisory).
+- **Granular markings:** selector resolution on custom object wire JSON; custom objects validated in the pipeline schema phase.
+- **Email-message (§6.6):** RFC 2047 encoded-word decoding on ingest for header string fields.
+- **Encryption algorithm:** pipeline `property_types` check aligned to SHOULD warning (`W0010`), matching `Bundle::validate()`.
+
+Adds three independent modules for Graph + Marking + Store:
+
+**Graph** (`graph` feature):
+
+* **`StixGraph::from_bundle`** — indexes SRO `relationship` edges and all typed `_ref` / `_refs` properties (including nested SCO extension refs); duplicate object ids rejected with `GraphError::DuplicateObjectId`.
+* **`EdgeTraversal`** — plan-style chain: `from(id).out_edges_matching(pred).targets_as::<T>()`.
+* **`RelationshipExpander`** — multi-hop expansion from any start node (`expand_from`) or an [`IndicatorId`](core::IndicatorId) (`expand_from_indicator`); collects identity, infrastructure, indicator, malware, threat-actor, campaign, attack-pattern, course-of-action, and vulnerability summaries.
+* **`SroEdgePayload`** — typed access to underlying `relationship` or `sighting` SRO on graph edges; sighting edges indexed with type `"sighting"`.
+* **`in_refs` / incoming SRO traversal** — bidirectional graph walking on SRO and inlined ref edges.
+* **`model/ref_paths`** — path-aware ref inventory shared with bundle ref validation.
+
+**Marking** (`marking` feature):
+
+* **`TlpV2Level`** — all five predefined TLP 2.0 UUIDs; `TLP:AMBER+STRICT` vs `TLP:AMBER` with distinct `permits_disclosure`.
+* **`MarkingResolver`** — `effective_for_object` (most restrictive), `effective_for_property` / `effective_for_selector` (granular selectors with JSON path resolution), `permits_disclosure(audience)`, and `EffectiveMarking::language_tags` for granular language markings.
+
+**Store** (`store` feature):
+
+* **`StixStore`** trait (object-safe) + **`MemoryStore`** with versioned SDO/SRO storage, full-text search index, `delete`, and `export_bundle`.
+* **`FsStore`** (`store-fs` feature) — filesystem-backed durability with JSON object files under a store root.
+* **SCO asserted-id preservation** — store key is source id; UUIDv5 fingerprint reported via **`FingerprintConflict`** in **`ImportReport`**.
+* **`StixQuery`** builder for typed store queries with pagination (`QueryCursor` / `next_cursor`), type-indexed scans, **`text_search`**, SCO content updates, and `StoreError::InvalidQuery` for out-of-range cursors.
+
 ### Cloud Schema Signature Bundle (#318)
 
 Built-in schema signatures cover AWS CloudTrail (`aws_cloudtrail`), AWS VPC Flow Logs (`aws_vpcflow`), Azure Activity/SignIn/Audit logs (`azure_activitylogs`, `azure_signinlogs`, `azure_auditlogs`), GCP Cloud Audit (`gcp_audit`), Microsoft 365 unified audit log (`m365_audit`), GitHub Audit (`github_audit`), Okta System Log (`okta_system_log`), OneLogin (`onelogin_events`), Kubernetes audit (`k8s_audit`), Docker events (`docker_events`), and osquery (`osquery_result`). Each signature uses multi-field markers (high specificity, no misfires) and implies a SigmaHQ taxonomy-compatible `product`/`service` logsource for conflict-based pruning. Off-taxonomy sources (k8s, docker, osquery) ship as `logsource.custom` dimensions to stay within the no-blessed-vocabulary line, and AWS VPC Flow Logs ships as `product: aws` plus `custom: {source: vpcflow}`. A `gcp_audit.yml` pipeline strips the `data.` prefix that SigmaHQ's `gcp.audit` rules use (`data.protoPayload.*`) so they match native Cloud Logging events (`protoPayload.*`). Per-source golden fixtures (`test_event.json` + `expected_classification.yaml`) with a walk test, an end-to-end GCP routing test, and specificity-ordering unit tests guard correctness and prevent regressions. A new cloud collection recipes guide covers Vector, OTel, and Fluent Bit configs per source.

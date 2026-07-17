@@ -165,11 +165,15 @@ mod integration {
         use std::fs::File;
         use std::io::BufReader;
 
+        // MITRE ATT&CK bundles ship x-mitre-* custom SDOs (collection, matrix, …).
+        let opts = ParseOptions::default().allow_custom(true);
+
         let file = File::open(&path).expect("open ATT&CK bundle");
-        let bundle = Bundle::parse_reader(BufReader::new(file)).expect("parse ATT&CK bundle");
+        let bundle = Bundle::parse_reader_with_options(BufReader::new(file), &opts)
+            .expect("parse ATT&CK bundle");
         assert!(bundle.object_count() > 1_000);
         let serialized = serde_json::to_string(&bundle).expect("serialize");
-        let reparsed = parse_bundle(&serialized).expect("reparse");
+        let reparsed = Bundle::parse_with_options(&serialized, &opts).expect("reparse");
         assert_eq!(reparsed.object_count(), bundle.object_count());
     }
 }

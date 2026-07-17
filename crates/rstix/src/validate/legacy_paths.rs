@@ -13,7 +13,7 @@ pub const EXTERNAL_REF_CVE: &str = "external_references.cve";
 /// Prefix for unresolved granular selector paths (`GranularSelectorSemanticInvalid`).
 pub const GRANULAR_SELECTOR_UNRESOLVED_PREFIX: &str = "granular_markings.selectors.unresolved[";
 
-/// Prefix for language-content unknown target field paths (`LanguageContentFieldUnknown`).
+/// Prefix for language-content unknown target field paths (legacy DD-VP-001 mapping).
 pub const LANGUAGE_CONTENT_UNKNOWN_PREFIX: &str = "contents.unknown.";
 
 /// Prefix for language-content type/length mismatch paths (`LanguageContentValueMismatch`).
@@ -27,11 +27,6 @@ pub fn granular_selector_unresolved(selector: &str) -> String {
 /// Build the property path for a granular selector syntax error (pipeline-only).
 pub fn granular_selector_syntax(selector: &str) -> String {
     format!("granular_markings.selectors.syntax[{selector}]")
-}
-
-/// Build the property path for a language-content unknown target field.
-pub fn language_content_unknown(lang: &str, field: &str) -> String {
-    format!("{LANGUAGE_CONTENT_UNKNOWN_PREFIX}{lang}.{field}")
 }
 
 /// Build the property path for a language-content translation mismatch.

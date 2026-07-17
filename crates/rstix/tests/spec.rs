@@ -25,8 +25,8 @@ use rstix::model::sco::{
 };
 use rstix::model::sdo::{
     AttackPattern, Campaign, CourseOfAction, Grouping, Identity, Incident, Indicator,
-    Infrastructure, IntrusionSet, Location, Malware, MalwareAnalysis, Note, ObservedData, Opinion,
-    Report, SdoObject, ThreatActor, Tool, Vulnerability,
+    Infrastructure, IntrusionSet, Location, Malware, MalwareAnalysis, Note, ObservedData,
+    ObservedDataEmbeddedObject, Opinion, Report, SdoObject, ThreatActor, Tool, Vulnerability,
 };
 use rstix::model::sro::{Relationship, Sighting};
 use rstix::vocab::OpinionValue;
@@ -375,7 +375,10 @@ fn sco_file_round_trips_and_rejects_missing_name_and_hash() {
     roundtrip_strict::<File>("sco/file-basic.json");
     roundtrip_strict::<File>("sco/file-with-parent.json");
     roundtrip_strict::<File>("sco/file-with-archive-ext.json");
+    roundtrip_strict::<File>("sco/file-with-name-enc.json");
     assert_fixture_rejects::<File>("sco/file-no-name-or-hash.json");
+    assert_fixture_rejects::<File>("sco/file-name-enc-without-name.json");
+    assert_fixture_rejects::<File>("sco/file-name-enc-invalid.json");
     assert_fixture_rejects::<File>("sco/file-with-invalid-archive-ext.json");
 }
 
@@ -526,6 +529,37 @@ fn observed_data_round_trips_object_refs_and_objects() {
         objects.form,
         ObservedDataForm::DeprecatedObjects(_)
     ));
+
+    let with_sro =
+        roundtrip_strict::<ObservedData>("sdo/observed-data-deprecated-objects-sro.json");
+    match &with_sro.form {
+        ObservedDataForm::DeprecatedObjects(map) => {
+            assert_eq!(map.len(), 2);
+            assert!(matches!(
+                map.get("1"),
+                Some(ObservedDataEmbeddedObject::Sro(_))
+            ));
+        }
+        ObservedDataForm::ObjectRefs(_) => panic!("expected deprecated objects form"),
+    }
+}
+
+#[test]
+fn identity_standalone_preserves_unmodeled_and_x_properties() {
+    let identity = roundtrip_strict::<Identity>("sdo/identity-standalone-extra.json");
+    assert_eq!(
+        identity.common.extra.get("x_mitre_platform"),
+        Some(&serde_json::json!("windows"))
+    );
+    assert_eq!(
+        identity.common.extra.get("vendor_tier"),
+        Some(&serde_json::json!("gold"))
+    );
+}
+
+#[test]
+fn file_rejects_extra_enc_without_base_property() {
+    assert_fixture_rejects::<File>("sco/file-extra-enc-without-base.json");
 }
 
 #[test]

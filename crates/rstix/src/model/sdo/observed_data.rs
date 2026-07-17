@@ -38,15 +38,6 @@ impl ObservedDataEmbeddedObject {
             Self::Sro(sro) => sro.id(),
         }
     }
-
-    #[cfg(feature = "serde")]
-    pub(crate) fn collect_internal_refs(&self, refs: &mut Vec<StixId>) {
-        use crate::model::stix_object::StixObject;
-        match self {
-            Self::Sco(sco) => StixObject::Sco(sco.clone()).collect_internal_refs(refs),
-            Self::Sro(sro) => StixObject::Sro(sro.clone()).collect_internal_refs(refs),
-        }
-    }
 }
 
 #[cfg(feature = "serde")]
