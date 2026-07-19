@@ -38,9 +38,9 @@ RSigma understands the full Sigma v2 family, not just simple detection rules.
 
 | Kind | Purpose | Example |
 |------|---------|---------|
-| **Detection** | Match individual events. Most common kind of rule. | "Flag any command line containing `whoami`." |
-| **Correlation** | Aggregate across events over time. Eight types: `event_count`, `value_count`, `temporal`, `temporal_ordered`, `value_sum`, `value_avg`, `value_percentile`, `value_median`. | "Five failed logins from the same user within five minutes." |
-| **Filter** | Inject `AND NOT` conditions into other rules. Used for centralized tuning without editing the original rules. | "Exclude actions performed by service accounts whose name starts with `svc_`." |
+| **Detection** | Match individual events; most common kind of rule | "Flag any command line containing `whoami`" |
+| **Correlation** | Aggregate across events over time; eight types: `event_count`, `value_count`, `temporal`, `temporal_ordered`, `value_sum`, `value_avg`, `value_percentile`, `value_median` | "Five failed logins from the same user within five minutes" |
+| **Filter** | Inject `AND NOT` conditions into other rules; used for centralized tuning without editing the original rules | "Exclude actions performed by service accounts whose name starts with `svc_`" |
 
 A `SigmaCollection` is the in-memory bundle of all three. Loading a directory of YAML files yields one collection, and conversion or evaluation operates on the collection as a whole.
 
@@ -76,13 +76,13 @@ RSigma offers two evaluation modes that share the same engine:
 
 | | `rsigma engine eval` | `rsigma engine daemon` |
 |---|---|---|
-| Lifetime | One-shot. Exits after EOF. | Long-running. Stays alive after stdin EOF. |
-| Inputs | Inline event, `@file`, stdin NDJSON, EVTX files. | stdin, HTTP POST, NATS JetStream, OTLP HTTP/gRPC. |
-| Correlation state | In-memory only, lost on exit. | Persisted to SQLite, survives restarts. |
-| Hot-reload | No. | File watcher + `SIGHUP` + `POST /api/v1/reload`. |
-| Health checks | None. | `/healthz`, `/readyz`, `/metrics`. |
-| Output | stdout (NDJSON or pretty JSON). | Fan-out to stdout, file, NATS. |
-| Use cases | CI rule validation, forensic replay, ad-hoc hunting. | Production streaming detection. |
+| Lifetime | One-shot; exits after EOF | Long-running; stays alive after stdin EOF |
+| Inputs | Inline event, `@file`, stdin NDJSON, EVTX files | stdin, HTTP POST, NATS JetStream, OTLP HTTP/gRPC |
+| Correlation state | In-memory only, lost on exit | Persisted to SQLite, survives restarts |
+| Hot-reload | No | File watcher + `SIGHUP` + `POST /api/v1/reload` |
+| Health checks | None | `/healthz`, `/readyz`, `/metrics` |
+| Output | stdout (NDJSON or pretty JSON) | Fan-out to stdout, file, NATS |
+| Use cases | CI rule validation, forensic replay, ad-hoc hunting | Production streaming detection |
 
 Rule of thumb: anything that runs in a terminal and exits is `engine eval`; anything that runs as a service is `engine daemon`. The flags overlap heavily because the underlying engine is the same.
 
@@ -147,17 +147,18 @@ RSigma reads events in seven formats with auto-detection by default:
 
 See [input formats](../guide/input-formats.md) for the full reference, including the format-specific flags.
 
-## The five command groups
+## The command groups
 
-The RSigma CLI has been reorganized into noun-led command groups so it can scale as more subcommands arrive. Every group is a noun, every leaf is a verb:
+The RSigma CLI is organized into noun-led command groups so it can scale as more subcommands arrive. Every group is a noun, every leaf is a verb:
 
 | Group | Subcommands | Purpose |
 |-------|-------------|---------|
-| `engine` | `eval`, `daemon` | Run rules against events. |
-| `rule` | `parse`, `validate`, `lint`, `fields`, `condition`, `stdin`, `migrate-sources` | Operate on rule files. `migrate-sources` extracts pipeline-embedded sources into standalone files. |
-| `backend` | `convert`, `targets`, `formats` | Generate backend-native queries. |
-| `pipeline` | `resolve` | Test dynamic pipeline source resolution. |
-| `config` | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the layered YAML configuration. |
+| `engine` | `eval`, `explain`, `classify`, `discover-schemas`, `status`, `tap`, `tail`, `daemon` | Run and inspect rules against events (one-shot, explain, live daemon tooling) |
+| `rule` | `parse`, `validate`, `lint`, `fields`, `draft`, `doc`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Operate on rule files (inspect, lint, draft, backtest, coverage, hygiene, and more) |
+| `backend` | `convert`, `targets`, `formats` | Generate backend-native queries |
+| `pipeline` | `diff`, `resolve` | Diff pipeline rewrites and test dynamic source resolution |
+| `config` | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the layered YAML configuration |
+| `mcp` | `serve` | Run the Model Context Protocol server for agent tooling (feature-gated) |
 
 ## Output
 

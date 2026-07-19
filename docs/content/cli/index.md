@@ -1,6 +1,6 @@
 # CLI Reference
 
-`rsigma` is a single binary that exposes every operation through five noun-led command groups: `engine`, `rule`, `backend`, `pipeline`, and `config`. Each subcommand is independent and self-contained; there is no global state. A YAML config file is optional but supported, with strict CLI > env > file > default precedence — see the [Configuration Reference](../reference/configuration.md).
+`rsigma` is a single binary that exposes every operation through noun-led command groups: `engine`, `rule`, `backend`, `pipeline`, `config`, and (when built with the `mcp` feature) `mcp`. Each subcommand is independent and self-contained; there is no global state. A YAML config file is optional but supported, with strict CLI > env > file > default precedence. See the [Configuration Reference](../reference/configuration.md).
 
 This reference documents every subcommand with its flag table, verified examples, and exit-code semantics. For narrative walkthroughs see the [User Guide](../guide/evaluating-rules.md).
 
@@ -8,11 +8,12 @@ This reference documents every subcommand with its flag table, verified examples
 
 | Group | Subcommands | What it does |
 |-------|-------------|--------------|
-| [`engine`](engine/eval.md) | `eval`, `daemon` | Run Sigma rules against events: one-shot or long-running. |
-| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `backtest`, `coverage`, `condition`, `stdin` | Inspect, validate, lint, backtest, and ATT&CK-map Sigma rule files. |
-| [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, …). |
-| [`pipeline`](pipeline/resolve.md) | `resolve` | Inspect and test processing pipelines, including dynamic sources. |
-| [`config`](config/init.md) | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the YAML config file. |
+| [`engine`](engine/eval.md) | `eval`, `explain`, `classify`, `discover-schemas`, `status`, `tap`, `tail`, `daemon` | Run and inspect Sigma rules against events: one-shot, explain, classify, or long-running |
+| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `draft`, `doc`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, backtest, score, and ATT&CK-map Sigma rule files |
+| [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, …) |
+| [`pipeline`](pipeline/diff.md) | `diff`, `resolve` | Diff pipeline rewrites and test dynamic sources |
+| [`config`](config/init.md) | `init`, `validate`, `show`, `schema`, `path`, `reload` | Scaffold, validate, introspect, and reload the YAML config file |
+| [`mcp`](mcp/serve.md) | `serve` | Run the Model Context Protocol server for agent tooling (feature-gated) |
 
 ## Global flags
 
@@ -34,30 +35,44 @@ Every subcommand accepts five global flags. They share the same layered preceden
 rsigma
 ├── engine
 │   ├── eval                   one-shot evaluation against fixed input
+│   ├── explain                explain why a rule matched or missed an event
+│   ├── classify               report which schema each event matches
+│   ├── discover-schemas       mine unrecognized events into candidate schemas
+│   ├── status                 query a running daemon's /api/v1/status snapshot
+│   ├── tap                    capture a bounded window of the live event stream
+│   ├── tail                   stream a running daemon's live detections
 │   └── daemon                 long-running streaming detection
 ├── rule
 │   ├── parse                  parse a single rule file, dump AST as JSON
 │   ├── validate               parse + compile a directory of rules
 │   ├── lint                   run the {{ rsigma.lint.rules }} lint checks
-│   ├── migrate-sources        extract pipeline-embedded sources into standalone files
 │   ├── fields                 list every field referenced by the rules
+│   ├── draft                  draft a rule from exemplar events (optional baseline)
+│   ├── doc                    report or scaffold ADS detection-strategy documents
 │   ├── backtest               replay a corpus and diff per-rule fires vs expectations
 │   ├── coverage               map rules onto ATT&CK; Navigator export + gap analysis
+│   ├── scorecard              fuse backtest/coverage into keep/tune/retire verdicts
+│   ├── visibility             score telemetry visibility (DeTT&CT + Navigator layer)
+│   ├── hygiene                flag hygiene and retirement candidates
 │   ├── condition              parse a condition expression, dump AST
-│   └── stdin                  parse a rule from stdin
+│   ├── stdin                  parse a rule from stdin
+│   └── migrate-sources        extract pipeline-embedded sources into standalone files
 ├── backend
 │   ├── convert                emit backend-native queries from rules
 │   ├── targets                list compiled-in backends
 │   └── formats                list output formats for one backend
 ├── pipeline
+│   ├── diff                   show how pipelines rewrite a rule before evaluation
 │   └── resolve                offline source resolution + dry-run for dynamic pipelines
-└── config
-    ├── init                   scaffold a commented rsigma.yaml
-    ├── validate               check files for unknown keys and inactive sections
-    ├── show                   print the effective config with per-leaf sources
-    ├── schema                 emit the JSON Schema
-    ├── path                   list the config files that would be loaded
-    └── reload                 hot-reload a running daemon (POST /api/v1/reload)
+├── config
+│   ├── init                   scaffold a commented rsigma.yaml
+│   ├── validate               check files for unknown keys and inactive sections
+│   ├── show                   print the effective config with per-leaf sources
+│   ├── schema                 emit the JSON Schema
+│   ├── path                   list the config files that would be loaded
+│   └── reload                 hot-reload a running daemon (POST /api/v1/reload)
+└── mcp                        (feature-gated)
+    └── serve                  run the Model Context Protocol server
 ```
 
 ## Exit codes
@@ -66,10 +81,10 @@ Every subcommand uses the same four-code scheme. Full table and CI patterns are 
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success. |
-| `1` | Findings. `eval --fail-on-detection` matched, or `lint` produced findings at or above `--fail-level`. |
-| `2` | Rule error: rules could not be parsed, compiled, or converted. |
-| `3` | Configuration error: bad pipeline file, malformed argument. |
+| `0` | Success |
+| `1` | Findings: `eval --fail-on-detection` matched, or `lint` produced findings at or above `--fail-level` |
+| `2` | Rule error: rules could not be parsed, compiled, or converted |
+| `3` | Configuration error: bad pipeline file, malformed argument |
 
 ## Environment variables
 
