@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Dependency bumps
+
+Rolls up the open Dependabot PRs into a single merge. Rust (workspace `Cargo.lock` and `fuzz/Cargo.lock`): `bytes` 1.12.0 to 1.12.1 (#322), `regex` 1.12.4 to 1.13.1 (#326, #319), and `jsonschema` 0.46.9 to 0.48.1 (#325). `rsigma-parser` Cargo.toml pins for `yamlpath`/`yamlpatch` move from `1.25` to `1.26` (lockfile already on 1.26.1; `yamlpath` 1.27.0 is held back until `yamlpatch` publishes a matching release). CI (all repinned by commit SHA, batched via the `actions-updates` group, #324): `taiki-e/install-action` v2.82.8 to v2.83.0, `github/codeql-action/upload-sarif` v4.36.3 to v4.37.0, and `actions/setup-node` v4.4.0 to v6.4.0. VS Code extension: `typescript` 6.0.3 to 7.0.2 (#321) and `@types/node` 26.1.0 to 26.1.1 (#320). Held back: `rusqlite` 0.39 to 0.40.1 (#234) on MSRV 1.88, and `rmcp` 2.1.0 to 2.2.0 (#323) because 2.2.0 fails to compile against current `sse-stream` (`SseStream::from_bytes_stream` vs `from_byte_stream`).
+
 ### rstix: serde-gate wire-format validator dependencies (#352)
 
 - **Wire MUST at parse (DD-DM-001)** — STIX §6.4 / §6.5 / §6.15 require well-formed `domain-name`, `email-addr`, and `url` values; rstix rejects malformed values at default `serde` parse rather than accepting them and reporting later. Documented in [`crates/rstix/README.md`](crates/rstix/README.md#dd-dm-001--wire-must-at-parse).
