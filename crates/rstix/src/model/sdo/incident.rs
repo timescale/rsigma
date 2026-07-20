@@ -54,7 +54,7 @@ impl Incident {
     /// STIX type name for incidents.
     pub const TYPE_NAME: &'static str = "incident";
 
-    /// Rejects empty `name`.
+    /// Check common SDO properties.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)
     }

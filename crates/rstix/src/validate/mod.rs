@@ -11,7 +11,7 @@
 //! - Use [`Validator`] for untrusted ingest, named profiles, and structured diagnostics.
 //! - Use [`Bundle::validate`](crate::model::Bundle::validate) for advisory checks on
 //!   already-parsed bundles; when the `validate` feature is enabled it delegates to
-//!   the same semantic helpers as phases 10 and 12.
+//!   the same semantic helpers as cross-object semantic and TLP marking checks.
 //!
 //! All checks are wired through the dispatcher and share helpers under
 //! `model_bridge`, `object_validate`, `semantic`, and `wire`.

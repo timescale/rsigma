@@ -80,7 +80,7 @@ impl Campaign {
     /// STIX type name for campaigns.
     pub const TYPE_NAME: &'static str = "campaign";
 
-    /// Check campaign-specific invariants (non-empty `name`, time ordering).
+    /// Check campaign-specific invariants (time ordering when both timestamps are set).
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_first_last_seen(&self.first_seen, &self.last_seen)

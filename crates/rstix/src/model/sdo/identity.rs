@@ -80,7 +80,7 @@ impl Identity {
     /// STIX type name for identities.
     pub const TYPE_NAME: &'static str = "identity";
 
-    /// Rejects empty `name`.
+    /// Check common SDO properties.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)
     }

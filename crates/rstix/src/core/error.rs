@@ -1,4 +1,4 @@
-//! Error types for core STIX/TAXII primitives.
+//! Error types for core STIX primitives.
 
 /// Errors for STIX ID parsing and typed-ID conversion.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

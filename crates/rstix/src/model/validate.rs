@@ -1,4 +1,6 @@
-//! Shared STIX model validation helpers (STIX 2.1 spec compliance).
+//! Shared STIX model validation helpers used at parse time and by per-type
+//! `validate()` methods. Coverage is intentional and partial — see crate README
+//! conformance notes.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -577,7 +579,10 @@ pub fn granular_markings_from_wire(wire: &serde_json::Value) -> Vec<GranularMark
         .unwrap_or_default()
 }
 
-/// Validate encryption algorithm against the STIX closed vocabulary.
+/// Validate encryption algorithm against the rstix closed vocabulary table
+/// ([`ENCRYPTION_ALGORITHM_ENUM`]).
+///
+/// This table is a subset of STIX §3.9.1 and does not match the full normative enum.
 pub fn validate_encryption_algorithm(value: &str) -> Result<(), ModelError> {
     if ENCRYPTION_ALGORITHM_ENUM.contains(value) {
         Ok(())

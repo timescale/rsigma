@@ -130,7 +130,7 @@ impl Validator {
         &self.phases
     }
 
-    /// Subset of [`Self::phases`] that are implemented today.
+    /// Subset of [`Self::phases`] that are implemented in this build.
     pub fn implemented_phases_in_profile(&self) -> impl Iterator<Item = ValidationPhase> + '_ {
         self.phases
             .iter()

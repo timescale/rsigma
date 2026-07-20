@@ -26,7 +26,7 @@ use edge::{InlinedEdgeStorage, SroEdgeStorage};
 
 /// A typed property graph built from a STIX bundle.
 ///
-/// All node and edge references are zero-copy borrows into the source [`Bundle`].
+/// Indexes nodes and edges by borrowing object references from the source [`Bundle`].
 pub struct StixGraph<'b> {
     nodes: HashMap<&'b StixId, &'b StixObject>,
     sro_edges: Vec<SroEdgeStorage<'b>>,

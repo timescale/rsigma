@@ -124,7 +124,7 @@ impl ThreatActor {
     /// STIX type name for threat actors.
     pub const TYPE_NAME: &'static str = "threat-actor";
 
-    /// Check threat-actor-specific invariants (non-empty `name`, time ordering).
+    /// Check threat-actor-specific invariants (time ordering when both timestamps are set).
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_first_last_seen(&self.first_seen, &self.last_seen)

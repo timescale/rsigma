@@ -81,7 +81,7 @@ impl Tool {
     /// STIX type name for tools.
     pub const TYPE_NAME: &'static str = "tool";
 
-    /// Check tool-specific invariants (non-empty `name`, kill-chain phases).
+    /// Check tool-specific invariants (kill-chain phases).
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_kill_chain_phases(&self.kill_chain_phases)

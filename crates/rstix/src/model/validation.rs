@@ -128,19 +128,23 @@ impl ValidationReport {
 }
 
 impl Bundle {
-    /// Run SHOULD-level semantic validation over parsed bundle contents.
+    /// Collect SHOULD-level semantic validation over parsed bundle contents.
     ///
-    /// Parse-time checks enforce STIX MUST rules; this method collects advisory
-    /// findings (for example STIX-W0031, SCO deterministic id mismatches, and
-    /// relationship matrix violations) without rejecting the bundle.
+    /// T0 parse enforces the MUST rules wired at the deserialize boundary (see crate
+    /// README — Validation tiers). This method returns advisory findings (for example
+    /// STIX-W0031, SCO deterministic id mismatches, and relationship matrix violations)
+    /// without rejecting the bundle.
     #[cfg(feature = "validate")]
     pub fn validate(&self) -> ValidationReport {
         crate::validate::legacy::bundle_validate(self)
     }
 
-    /// Parse-time checks enforce STIX MUST rules; this method collects advisory
-    /// findings (for example STIX-W0031, SCO deterministic id mismatches, and
-    /// relationship matrix violations) without rejecting the bundle.
+    /// Collect SHOULD-level semantic validation over parsed bundle contents.
+    ///
+    /// T0 parse enforces the MUST rules wired at the deserialize boundary (see crate
+    /// README — Validation tiers). This method returns advisory findings (for example
+    /// STIX-W0031, SCO deterministic id mismatches, and relationship matrix violations)
+    /// without rejecting the bundle.
     #[cfg(not(feature = "validate"))]
     pub fn validate(&self) -> ValidationReport {
         self.validate_advisory()

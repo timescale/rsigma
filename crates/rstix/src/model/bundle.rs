@@ -16,7 +16,7 @@ use crate::model::validate::{
     validate_sco_ref, validate_sdo_ref, validate_stix_or_sco_ref,
 };
 
-/// Container trait for bundle navigation (Data Model + Serialization).
+/// Container trait for bundle navigation.
 pub trait QueryableContainer {
     /// Bundle identifier.
     fn bundle_id(&self) -> &StixId;

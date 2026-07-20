@@ -64,7 +64,7 @@ impl Infrastructure {
     /// STIX type name for infrastructure objects.
     pub const TYPE_NAME: &'static str = "infrastructure";
 
-    /// Check infrastructure invariants (non-empty name, kill-chain phases, time ordering).
+    /// Check infrastructure invariants (kill-chain phases, time ordering).
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_kill_chain_phases(&self.kill_chain_phases)?;
