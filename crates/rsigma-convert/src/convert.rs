@@ -145,7 +145,7 @@ pub fn convert_collection(
 /// (`name[N]`, including a negative `name[-N]`). The quantifier selectors never
 /// reach field names (the parser desugars them into `Detection::ArrayMatch`),
 /// so a bracketed integer is the positional-index signal.
-fn field_has_positional_index(field: &str) -> bool {
+pub(crate) fn field_has_positional_index(field: &str) -> bool {
     field.split('.').any(|seg| {
         // Only an unescaped trailing `[...]` is a selector; `\[` / `\]` are a
         // literal bracket in the field name, not a positional index.

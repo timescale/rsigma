@@ -49,6 +49,7 @@ mod tests;
 use std::collections::HashMap;
 
 use rsigma_eval::pipeline::state::PipelineState;
+use rsigma_ir::{IrDetectionItem, IrMatcher, IrStrOp};
 use rsigma_parser::*;
 
 use crate::backend::*;
@@ -303,6 +304,79 @@ impl FibratusBackend {
             .join(", ");
         Ok(Some(format!("{f} {op} ({list})")))
     }
+
+    /// IR-native analogue of [`try_string_value_list`](Self::try_string_value_list):
+    /// collapse a uniform `AnyOf` of string matchers into a single Fibratus
+    /// list-operator clause. Returns `None` (fall back to per-value dispatch)
+    /// unless every matcher is an `IrMatcher::Str` with the same operator and
+    /// case sensitivity.
+    fn try_string_value_list_ir(&self, field: &str, ms: &[IrMatcher]) -> Option<String> {
+        let mut op: Option<IrStrOp> = None;
+        let mut ci: Option<bool> = None;
+        let mut patterns = Vec::with_capacity(ms.len());
+        for m in ms {
+            match m {
+                IrMatcher::Str {
+                    op: o,
+                    pattern,
+                    case_insensitive,
+                } => {
+                    if *op.get_or_insert(*o) != *o {
+                        return None;
+                    }
+                    if *ci.get_or_insert(*case_insensitive) != *case_insensitive {
+                        return None;
+                    }
+                    patterns.push(pattern);
+                }
+                _ => return None,
+            }
+        }
+        let op = op?;
+        let cased = self.fibratus.case_sensitive || !ci?;
+        let any_wild = patterns.iter().any(|p| p.has_wildcards());
+        let f = self.escape_and_quote_field(field);
+
+        let list_op = match op {
+            IrStrOp::Contains => {
+                if cased {
+                    "contains"
+                } else {
+                    "icontains"
+                }
+            }
+            IrStrOp::StartsWith => {
+                if cased {
+                    "startswith"
+                } else {
+                    "istartswith"
+                }
+            }
+            IrStrOp::EndsWith => {
+                if cased {
+                    "endswith"
+                } else {
+                    "iendswith"
+                }
+            }
+            IrStrOp::Exact => {
+                if any_wild {
+                    if cased { "matches" } else { "imatches" }
+                } else if cased || field == "evt.name" {
+                    "in"
+                } else {
+                    "iin"
+                }
+            }
+        };
+
+        let list = patterns
+            .iter()
+            .map(|p| shared::quote_sigma_string(&crate::backend::ir_pattern_to_sigma(p)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{f} {list_op} ({list})"))
+    }
 }
 
 impl Default for FibratusBackend {
@@ -478,6 +552,57 @@ impl Backend for FibratusBackend {
         }
 
         default_convert_detection_item(self, item, state)
+    }
+
+    fn convert_ir_detection_item(
+        &self,
+        item: &IrDetectionItem,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        // Multi-value OR lists (`AnyOf`) collapse into a single Fibratus
+        // list-operator / variadic-function clause. `|all` lowers to `AllOf`
+        // and falls through to the generic AND-join.
+        if let IrMatcher::AnyOf(ms) = &item.matcher
+            && let Some(field) = item.field.as_deref()
+            && ms.len() >= 2
+        {
+            // Multi-value `|re` → one variadic `regex(field, 'a', 'b') = true`.
+            if ms.iter().all(|m| matches!(m, IrMatcher::Regex { .. })) {
+                let mut quoted = Vec::with_capacity(ms.len());
+                for m in ms {
+                    if let IrMatcher::Regex { pattern, .. } = m {
+                        if !shared::is_re2_compatible(pattern) {
+                            return Err(ConvertError::UnsupportedModifier(format!(
+                                "regex pattern uses PCRE-only construct (lookaround/backreference) Fibratus's RE2 engine does not support: {pattern}"
+                            )));
+                        }
+                        quoted.push(shared::quote_plain_str(pattern));
+                    }
+                }
+                let f = self.escape_and_quote_field(field);
+                return Ok(format!("regex({f}, {}) = true", quoted.join(", ")));
+            }
+
+            // Multi-value `|cidr` → one variadic `cidr_contains(field, ...)`.
+            if ms.iter().all(|m| matches!(m, IrMatcher::Cidr { .. })) {
+                let masks: Vec<String> = ms
+                    .iter()
+                    .filter_map(|m| match m {
+                        IrMatcher::Cidr { network } => Some(shared::quote_plain_str(network)),
+                        _ => None,
+                    })
+                    .collect();
+                let f = self.escape_and_quote_field(field);
+                return Ok(format!("cidr_contains({f}, {})", masks.join(", ")));
+            }
+
+            // Uniform string list → a single list-operator clause.
+            if let Some(list_expr) = self.try_string_value_list_ir(field, ms) {
+                return Ok(list_expr);
+            }
+        }
+
+        crate::ir_convert::default_convert_ir_detection_item(self, item, state)
     }
 
     // --- Field/value escaping ---

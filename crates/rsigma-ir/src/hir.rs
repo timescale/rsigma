@@ -211,11 +211,16 @@ pub enum IrMatcher {
     },
     /// Explicit regex (`|re`) with raw pattern and flags kept separate so eval
     /// compiles them and convert renders them (case-sensitive vs insensitive).
+    ///
+    /// `case_insensitive` is the `|i` flag (eval's regex case sensitivity).
+    /// `cased` records the `|cased` modifier, which eval ignores for regex but
+    /// some backends use to choose a case-sensitive regex operator.
     Regex {
         pattern: String,
         case_insensitive: bool,
         multiline: bool,
         dotall: bool,
+        cased: bool,
     },
     Cidr {
         network: String,

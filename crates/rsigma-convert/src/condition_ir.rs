@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use rsigma_eval::pipeline::PipelineState;
-use rsigma_ir::IrCondition;
-use rsigma_parser::{Detection, Quantifier, SigmaRule};
+use rsigma_ir::{IrCondition, IrDetection};
+use rsigma_parser::{Quantifier, SigmaRule};
 
 use crate::backend::Backend;
 use crate::error::{ConvertError, Result};
@@ -22,7 +22,7 @@ use crate::state::ConversionState;
 pub fn convert_ir_condition(
     backend: &dyn Backend,
     expr: &IrCondition,
-    detections: &HashMap<String, Detection>,
+    detections: &HashMap<String, IrDetection>,
     state: &mut ConversionState,
 ) -> Result<String> {
     match expr {
@@ -30,7 +30,7 @@ pub fn convert_ir_condition(
             let det = detections.get(name).ok_or_else(|| {
                 ConvertError::RuleConversion(format!("detection '{name}' not found"))
             })?;
-            backend.convert_detection(det, state)
+            backend.convert_ir_detection(det, state)
         }
         IrCondition::And(exprs) => {
             let parts: Vec<String> = exprs
@@ -74,7 +74,7 @@ pub fn convert_ir_condition(
                             "selector matched detection '{name}' but it disappeared before lookup"
                         ))
                     })?;
-                    backend.convert_detection(det, state)
+                    backend.convert_ir_detection(det, state)
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -89,24 +89,37 @@ pub fn convert_ir_condition(
     }
 }
 
-/// Shared `Backend::convert_rule` implementation: resolve selectors via IR
-/// condition lowering, keep detection-body conversion on the parser AST.
+/// Map an IR lowering error to the closest `ConvertError`, preserving the
+/// error kinds convert historically surfaced (invalid/unsupported modifiers,
+/// incompatible values).
+fn ir_err(e: rsigma_ir::IrError) -> ConvertError {
+    use rsigma_ir::IrError;
+    match e {
+        IrError::InvalidModifiers(m) => ConvertError::UnsupportedModifier(m),
+        IrError::IncompatibleValue(m) | IrError::ExpectedNumeric(m) => {
+            ConvertError::UnsupportedValue(m)
+        }
+        other => ConvertError::RuleConversion(other.to_string()),
+    }
+}
+
+/// Shared `Backend::convert_rule` implementation: lower the whole rule to HIR
+/// and convert detections and conditions from the faithful IR.
 pub fn convert_rule_via_ir(
     backend: &dyn Backend,
     rule: &SigmaRule,
     output_format: &str,
     pipeline_state: &PipelineState,
 ) -> Result<Vec<String>> {
-    let conditions = rsigma_ir::lower_conditions(&rule.detection)
-        .map_err(|e| ConvertError::RuleConversion(e.to_string()))?;
+    let ir = rsigma_ir::lower_rule(rule, &rsigma_ir::LowerOptions::default()).map_err(ir_err)?;
 
-    let mut queries = Vec::with_capacity(conditions.len());
-    for (idx, cond) in conditions.iter().enumerate() {
+    let mut queries = Vec::with_capacity(ir.conditions.len());
+    for (idx, cond) in ir.conditions.iter().enumerate() {
         let mut state = ConversionState::new(pipeline_state.state.clone());
         state
             .processing_state
             .insert("_output_format".to_string(), output_format.into());
-        let query = convert_ir_condition(backend, cond, &rule.detection.named, &mut state)?;
+        let query = convert_ir_condition(backend, cond, &ir.detections, &mut state)?;
         let finished = backend.finish_query(rule, query, &state)?;
         let finalized = backend.finalize_query(rule, finished, idx, &state, output_format)?;
         queries.push(finalized);

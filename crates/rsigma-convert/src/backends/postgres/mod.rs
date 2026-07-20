@@ -15,6 +15,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use rsigma_eval::pipeline::state::PipelineState;
+use rsigma_ir::{IrDetection, IrDetectionItem};
 use rsigma_parser::*;
 
 use crate::backend::*;
@@ -476,6 +477,77 @@ impl PostgresBackend {
         }
     }
 
+    /// IR-native analogue of [`scalar_self_body`](Self::scalar_self_body).
+    fn scalar_self_body_ir(body: &IrDetection) -> Option<&[IrDetectionItem]> {
+        if let IrDetection::AllOf(items) = body
+            && !items.is_empty()
+            && items.iter().all(|it| it.field.is_none())
+        {
+            return Some(items);
+        }
+        None
+    }
+
+    /// IR-native analogue of [`array_exists_from_expr`](Self::array_exists_from_expr).
+    /// The body is converted through the IR-native detection dispatch, so the
+    /// emitted SQL is byte-identical to the parser path.
+    fn array_exists_from_expr_ir(
+        &self,
+        array_expr: &str,
+        quantifier: ArrayQuantifier,
+        body: &IrDetection,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        let seq = next_array_alias_seq(state);
+        let alias = format!("__sigma_e{seq}");
+
+        let (srf, body_sql) = if let Some(items) = Self::scalar_self_body_ir(body) {
+            let renamed = IrDetection::AllOf(
+                items
+                    .iter()
+                    .map(|it| IrDetectionItem {
+                        field: Some(alias.clone()),
+                        matcher: it.matcher.clone(),
+                        exists: it.exists,
+                    })
+                    .collect(),
+            );
+            let elem = self.with_json_field(None);
+            (
+                "jsonb_array_elements_text",
+                crate::ir_convert::default_convert_ir_detection(&elem, &renamed, state)?,
+            )
+        } else {
+            let elem = self.with_json_field(Some(alias.clone()));
+            (
+                "jsonb_array_elements",
+                crate::ir_convert::default_convert_ir_detection(&elem, body, state)?,
+            )
+        };
+
+        Ok(match quantifier {
+            ArrayQuantifier::Any => format!(
+                "(jsonb_typeof({array_expr}) = 'array' AND EXISTS \
+                 (SELECT 1 FROM {srf}({array_expr}) AS {alias} WHERE {body_sql}))"
+            ),
+            ArrayQuantifier::All => format!(
+                "(jsonb_typeof({array_expr}) = 'array' AND jsonb_array_length({array_expr}) > 0 \
+                 AND NOT EXISTS \
+                 (SELECT 1 FROM {srf}({array_expr}) AS {alias} WHERE NOT ({body_sql})))"
+            ),
+            ArrayQuantifier::AllOrEmpty => format!(
+                "(CASE WHEN jsonb_typeof({array_expr}) = 'array' \
+                 THEN NOT EXISTS (SELECT 1 FROM {srf}({array_expr}) AS {alias} WHERE NOT ({body_sql})) \
+                 ELSE {array_expr} IS NULL OR jsonb_typeof({array_expr}) = 'null' END)"
+            ),
+            ArrayQuantifier::None => format!(
+                "(CASE WHEN jsonb_typeof({array_expr}) = 'array' \
+                 THEN NOT EXISTS (SELECT 1 FROM {srf}({array_expr}) AS {alias} WHERE {body_sql}) \
+                 ELSE {array_expr} IS NULL OR jsonb_typeof({array_expr}) = 'null' END)"
+            ),
+        })
+    }
+
     /// If `body` matches the array member value itself (every item is
     /// field-less), return those items so the element can be bound as a scalar
     /// text column via `jsonb_array_elements_text`.
@@ -662,6 +734,21 @@ impl Backend for PostgresBackend {
             .ok_or(ConvertError::UnsupportedArrayMatching)?;
         let array_expr = Self::jsonb_path(json_col, field, false)?;
         self.array_exists_from_expr(&array_expr, quantifier, body, state)
+    }
+
+    fn convert_ir_array_match(
+        &self,
+        field: &str,
+        quantifier: ArrayQuantifier,
+        body: &IrDetection,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        let json_col = self
+            .json_field
+            .as_deref()
+            .ok_or(ConvertError::UnsupportedArrayMatching)?;
+        let array_expr = Self::jsonb_path(json_col, field, false)?;
+        self.array_exists_from_expr_ir(&array_expr, quantifier, body, state)
     }
 
     fn supports_field_index(&self) -> bool {

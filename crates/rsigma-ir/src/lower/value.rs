@@ -128,6 +128,7 @@ pub(super) fn lower_value(value: &SigmaValue, ctx: &ModCtx) -> Result<IrMatcher>
             case_insensitive: ctx.ignore_case,
             multiline: ctx.multiline,
             dotall: ctx.dotall,
+            cased: ctx.cased,
         });
     }
 

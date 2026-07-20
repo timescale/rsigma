@@ -160,6 +160,9 @@ fn compile_ir_matcher(matcher: &IrMatcher) -> Result<CompiledMatcher> {
             case_insensitive,
             multiline,
             dotall,
+            // `cased` only informs convert's operator choice; eval regex case
+            // sensitivity is the `|i` flag (`case_insensitive`).
+            cased: _,
         } => Ok(CompiledMatcher::Regex(build_regex(
             pattern,
             *case_insensitive,

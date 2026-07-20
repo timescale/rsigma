@@ -23,6 +23,7 @@ pub mod condition;
 pub mod condition_ir;
 pub mod convert;
 pub mod error;
+pub mod ir_convert;
 pub mod output;
 #[cfg(feature = "sigma-cli")]
 pub mod sigma_cli;

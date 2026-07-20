@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use rsigma_eval::pipeline::state::PipelineState;
-use rsigma_ir::{IrPattern, IrPatternPart, IrStrOp};
+use rsigma_ir::{IrDetection, IrDetectionItem, IrPattern, IrPatternPart, IrStrOp};
 use rsigma_parser::*;
 
 use crate::error::{ConvertError, Result};
@@ -46,6 +46,18 @@ pub enum CompareOp {
     Gte,
     Lt,
     Lte,
+}
+
+/// Regex match flags for [`Backend::convert_field_regex`].
+///
+/// `case_insensitive` is the `|i` flag; `cased` records the `|cased` modifier
+/// (which some backends use to select a case-sensitive regex operator).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RegexFlags {
+    pub case_insensitive: bool,
+    pub multiline: bool,
+    pub dotall: bool,
+    pub cased: bool,
 }
 
 /// Reconstruct a parser [`SigmaString`] from a faithful [`IrPattern`].
@@ -182,6 +194,40 @@ pub trait Backend: Send + Sync {
         false
     }
 
+    // --- IR-native detection dispatch ---
+
+    /// Convert a lowered [`IrDetection`] into a query fragment.
+    fn convert_ir_detection(
+        &self,
+        det: &IrDetection,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        crate::ir_convert::default_convert_ir_detection(self, det, state)
+    }
+
+    /// Convert a single lowered [`IrDetectionItem`] into a query fragment.
+    fn convert_ir_detection_item(
+        &self,
+        item: &IrDetectionItem,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        crate::ir_convert::default_convert_ir_detection_item(self, item, state)
+    }
+
+    /// Convert an array object-scope match (`field[any]:` / `field[all]:`) over
+    /// a lowered body. Default reports the construct unsupported; JSONB-capable
+    /// backends override it.
+    fn convert_ir_array_match(
+        &self,
+        field: &str,
+        quantifier: ArrayQuantifier,
+        body: &IrDetection,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        let _ = (field, quantifier, body, state);
+        Err(ConvertError::UnsupportedArrayMatching)
+    }
+
     // --- Field/value escaping ---
 
     fn escape_and_quote_field(&self, field: &str) -> String;
@@ -315,27 +361,28 @@ pub trait Backend: Send + Sync {
         self.convert_field_eq_null(field, state)
     }
 
-    /// Regex match with raw pattern and explicit flags.
+    /// Regex match with raw pattern and explicit [`RegexFlags`].
     fn convert_field_regex(
         &self,
         field: &str,
         pattern: &str,
-        case_insensitive: bool,
-        multiline: bool,
-        dotall: bool,
+        flags: RegexFlags,
         state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let mut flags = vec![Modifier::Re];
-        if case_insensitive {
-            flags.push(Modifier::IgnoreCase);
+        let mut mods = vec![Modifier::Re];
+        if flags.case_insensitive {
+            mods.push(Modifier::IgnoreCase);
         }
-        if multiline {
-            flags.push(Modifier::Multiline);
+        if flags.multiline {
+            mods.push(Modifier::Multiline);
         }
-        if dotall {
-            flags.push(Modifier::DotAll);
+        if flags.dotall {
+            mods.push(Modifier::DotAll);
         }
-        self.convert_field_eq_re(field, pattern, &flags, state)
+        if flags.cased {
+            mods.push(Modifier::Cased);
+        }
+        self.convert_field_eq_re(field, pattern, &mods, state)
     }
 
     /// CIDR containment match.
