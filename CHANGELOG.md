@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Intermediate representation crate and IR-backed compile
+### Intermediate representation crate and IR-backed compile (#360)
 
 - **`rsigma-ir`** — new sync-only crate with HIR types (`IrRule`, `IrDetection`, `IrMatcher`, `IrCondition`, `IrCorrelation`, `IrFilter`) and `lower_rule` / `lower_*` that resolve modifiers and collapse selectors before eval.
 - **`rsigma-eval`** — `compile_rule` routes through `lower_rule` → `compile_to_compiled`. `compile_rule_legacy` remains for dual-path differential tests. Public physical API (`CompiledRule`, `evaluate_rule`, `Engine`) is unchanged.
