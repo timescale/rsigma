@@ -40,7 +40,7 @@
 //! density are disabled until the total fits.
 
 use std::collections::HashMap;
-use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
+use std::hash::{BuildHasher, Hasher};
 
 use crate::compiler::{CompiledDetection, CompiledRule};
 use crate::event::{Event, EventValue};
@@ -110,6 +110,32 @@ impl BloomLookup for NoBloom {
     }
 }
 
+/// Fixed seeds for the bloom hasher.
+///
+/// `BuildHasherDefault<ahash::AHasher>` derives its keys from ahash's
+/// runtime RNG: constant within a process but different across runs. That
+/// made the filter's exact bit layout, and therefore which non-matching
+/// inputs happen to be false positives, vary run to run. Pinning explicit
+/// seeds makes the filter deterministic across processes and platforms.
+/// Correctness is unaffected either way: the bloom only ever over-approximates
+/// (no false negatives) regardless of seed. The values are arbitrary fixed
+/// constants (digits of pi).
+const BLOOM_HASH_SEEDS: [u64; 4] = [
+    0x243f_6a88_85a3_08d3,
+    0x1319_8a2e_0370_7344,
+    0xa409_3822_299f_31d0,
+    0x082e_fa98_ec4e_6c89,
+];
+
+fn bloom_hasher() -> ahash::RandomState {
+    ahash::RandomState::with_seeds(
+        BLOOM_HASH_SEEDS[0],
+        BLOOM_HASH_SEEDS[1],
+        BLOOM_HASH_SEEDS[2],
+        BLOOM_HASH_SEEDS[3],
+    )
+}
+
 /// Bit-array bloom filter using FNV-style double hashing over the AHash
 /// output of each input. `k` hash functions are simulated by `h1 + i*h2`
 /// where `h1`, `h2` are the low and high words of a 128-bit AHash digest.
@@ -117,7 +143,7 @@ struct FieldBloom {
     bits: Vec<u64>,
     num_bits: usize,
     num_hashes: u32,
-    hasher_factory: BuildHasherDefault<ahash::AHasher>,
+    hasher_factory: ahash::RandomState,
 }
 
 impl FieldBloom {
@@ -150,7 +176,7 @@ impl FieldBloom {
             bits: vec![0u64; num_bits / 64],
             num_bits,
             num_hashes,
-            hasher_factory: BuildHasherDefault::default(),
+            hasher_factory: bloom_hasher(),
         })
     }
 
