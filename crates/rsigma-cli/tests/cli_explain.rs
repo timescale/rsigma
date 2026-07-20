@@ -177,64 +177,12 @@ detection:
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Snapshot the raw stdout so key order comes straight from the struct
+    // `Serialize` impls and does not depend on whether serde_json's
+    // `preserve_order` feature is unified into the build.
     assert_snapshot!(
-        serde_json::to_string_pretty(&value).unwrap(),
-        @r#"
-[
-  {
-    "conditions": [
-      {
-        "children": [
-          {
-            "detection": {
-              "items": [
-                {
-                  "actual": "run powershell",
-                  "field": "CommandLine",
-                  "matched": true,
-                  "matcher": "contains",
-                  "pattern": "powershell",
-                  "reason": "matched"
-                }
-              ],
-              "matched": true,
-              "type": "all_of"
-            },
-            "matched": true,
-            "name": "selection_a",
-            "type": "selection"
-          },
-          {
-            "detection": {
-              "items": [
-                {
-                  "actual": "run powershell",
-                  "field": "CommandLine",
-                  "matched": false,
-                  "matcher": "contains",
-                  "pattern": "whoami",
-                  "reason": "value_mismatch"
-                }
-              ],
-              "matched": false,
-              "type": "all_of"
-            },
-            "matched": false,
-            "name": "selection_b",
-            "type": "selection"
-          }
-        ],
-        "matched": true,
-        "type": "or"
-      }
-    ],
-    "matched": true,
-    "rule_id": "oneof-1",
-    "rule_title": "One Of"
-  }
-]
-"#
+        String::from_utf8_lossy(&output.stdout).trim(),
+        @r#"[{"rule_title":"One Of","rule_id":"oneof-1","matched":true,"conditions":[{"type":"or","matched":true,"children":[{"type":"selection","name":"selection_a","matched":true,"detection":{"type":"all_of","matched":true,"items":[{"field":"CommandLine","matcher":"contains","pattern":"powershell","actual":"run powershell","matched":true,"reason":"matched"}]}},{"type":"selection","name":"selection_b","matched":false,"detection":{"type":"all_of","matched":false,"items":[{"field":"CommandLine","matcher":"contains","pattern":"whoami","actual":"run powershell","matched":false,"reason":"value_mismatch"}]}}]}]}]"#
     );
 }
 
