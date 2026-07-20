@@ -7,11 +7,14 @@
 //! Modifier interpretation happens here: the compiler reads the `Vec<Modifier>`
 //! from each `FieldSpec` and produces the appropriate `CompiledMatcher` variant.
 
+mod from_ir;
 mod helpers;
 #[doc(hidden)]
 pub mod optimizer;
 #[cfg(test)]
 mod tests;
+
+pub use from_ir::compile_to_compiled;
 
 // Re-export so equivalence proptests in other modules and the fuzz target
 // can drive the optimizer directly.
@@ -241,7 +244,18 @@ impl ModCtx {
 // =============================================================================
 
 /// Compile a parsed `SigmaRule` into a `CompiledRule`.
+///
+/// Routes through the IR layer: `lower_rule` → [`compile_to_compiled`].
+/// For the pre-IR direct compiler, see [`compile_rule_legacy`].
 pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
+    let ir = rsigma_ir::lower_rule(rule, &rsigma_ir::LowerOptions::default())?;
+    compile_to_compiled(&ir)
+}
+
+/// Legacy direct AST→`CompiledRule` compiler (no IR).
+///
+/// Kept for dual-path differential testing against [`compile_rule`].
+pub fn compile_rule_legacy(rule: &SigmaRule) -> Result<CompiledRule> {
     let mut detections = HashMap::new();
     for (name, detection) in &rule.detection.named {
         detections.insert(name.clone(), compile_detection(detection)?);

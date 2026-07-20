@@ -164,7 +164,7 @@ pub(super) fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result
         }
     }
     if operators.len() > 1 {
-        return Err(IrError::Lowering(format!(
+        return Err(IrError::InvalidModifiers(format!(
             "conflicting modifiers: at most one operator may be set per field; \
              got |{}",
             operators.join(", |")
@@ -182,7 +182,7 @@ pub(super) fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result
         wide_encodings.push("utf16be");
     }
     if wide_encodings.len() > 1 {
-        return Err(IrError::Lowering(format!(
+        return Err(IrError::InvalidModifiers(format!(
             "conflicting modifiers: |wide, |utf16, and |utf16be are mutually \
              exclusive UTF-16 encodings; got |{}",
             wide_encodings.join(", |")
@@ -190,7 +190,7 @@ pub(super) fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result
     }
 
     if ctx.base64 && ctx.base64offset {
-        return Err(IrError::Lowering(
+        return Err(IrError::InvalidModifiers(
             "conflicting modifiers: |base64 and |base64offset are mutually \
              exclusive base64 strategies; pick one"
                 .into(),
@@ -227,7 +227,7 @@ pub(super) fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result
             transforms.push("expand");
         }
         if !transforms.is_empty() {
-            return Err(IrError::Lowering(format!(
+            return Err(IrError::InvalidModifiers(format!(
                 "conflicting modifiers: value transformations |{} only apply \
                  to string match operators (default eq, contains, startswith, \
                  endswith) and cannot be combined with the operator that is \
@@ -249,7 +249,7 @@ pub(super) fn validate_modifiers(ctx: &ModCtx, modifiers: &[Modifier]) -> Result
             regex_flags.push("s");
         }
         if !regex_flags.is_empty() {
-            return Err(IrError::Lowering(format!(
+            return Err(IrError::InvalidModifiers(format!(
                 "regex flag modifiers |{} have no effect without |re; \
                  case sensitivity for substring or equality matching is \
                  controlled by |cased (or its absence, which keeps the \

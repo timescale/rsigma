@@ -61,7 +61,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
     match detection {
         Detection::AllOf(items) => {
             if items.is_empty() {
-                return Err(IrError::Lowering(
+                return Err(IrError::InvalidModifiers(
                     "AllOf detection must not be empty (vacuous truth)".into(),
                 ));
             }
@@ -73,7 +73,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
         }
         Detection::AnyOf(dets) => {
             if dets.is_empty() {
-                return Err(IrError::Lowering(
+                return Err(IrError::InvalidModifiers(
                     "AnyOf detection must not be empty (would never match)".into(),
                 ));
             }
@@ -94,14 +94,16 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
         }
         Detection::And(dets) => {
             if dets.is_empty() {
-                return Err(IrError::Lowering("And detection must not be empty".into()));
+                return Err(IrError::InvalidModifiers(
+                    "And detection must not be empty".into(),
+                ));
             }
             let lowered: Result<Vec<_>> = dets.iter().map(|d| lower_detection(d, opts)).collect();
             Ok(IrDetection::And(lowered?))
         }
         Detection::Conditional { named, condition } => {
             if named.is_empty() {
-                return Err(IrError::Lowering(
+                return Err(IrError::InvalidModifiers(
                     "Conditional detection must have at least one named sub-selection".into(),
                 ));
             }
@@ -122,7 +124,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
             let matchers = matchers?;
             let matcher = match matchers.len() {
                 0 => {
-                    return Err(IrError::Lowering(
+                    return Err(IrError::InvalidModifiers(
                         "Keywords detection must not be empty".into(),
                     ));
                 }
@@ -170,7 +172,7 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
     }
 
     if ctx.all && item.values.len() <= 1 {
-        return Err(IrError::Lowering(
+        return Err(IrError::InvalidModifiers(
             "|all modifier requires more than one value".to_string(),
         ));
     }
@@ -204,9 +206,7 @@ pub fn lower_condition(expr: &ConditionExpr, detection_names: &[String]) -> Resu
     match expr {
         ConditionExpr::Identifier(name) => {
             if !detection_names.iter().any(|n| n == name) {
-                return Err(IrError::Lowering(format!(
-                    "unknown detection reference: {name}"
-                )));
+                return Err(IrError::UnknownDetection(name.clone()));
             }
             Ok(IrCondition::Detection(name.clone()))
         }

@@ -48,6 +48,26 @@ pub enum EvalError {
     /// A cycle was detected in correlation rule references.
     #[error("correlation cycle detected: {0}")]
     CorrelationCycle(String),
+
+    /// An error from the IR lowering pipeline that has no more specific mapping.
+    #[error("IR lowering error: {0}")]
+    Ir(String),
+}
+
+impl From<rsigma_ir::IrError> for EvalError {
+    fn from(err: rsigma_ir::IrError) -> Self {
+        use rsigma_ir::IrError;
+        match err {
+            IrError::InvalidRegex(e) => EvalError::InvalidRegex(e),
+            IrError::InvalidCidr(e) => EvalError::InvalidCidr(e),
+            IrError::UnknownDetection(name) => EvalError::UnknownDetection(name),
+            IrError::InvalidModifiers(msg) => EvalError::InvalidModifiers(msg),
+            IrError::IncompatibleValue(msg) => EvalError::IncompatibleValue(msg),
+            IrError::ExpectedNumeric(msg) => EvalError::ExpectedNumeric(msg),
+            IrError::Parser(e) => EvalError::Parser(e),
+            other => EvalError::Ir(other.to_string()),
+        }
+    }
 }
 
 /// Convenience result type.

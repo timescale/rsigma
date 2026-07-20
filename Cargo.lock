@@ -4053,6 +4053,7 @@ dependencies = [
  "rand 0.10.2",
  "rayon",
  "regex",
+ "rsigma-ir",
  "rsigma-parser",
  "serde",
  "serde_json",

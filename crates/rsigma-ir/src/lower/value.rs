@@ -46,14 +46,14 @@ pub(super) fn lower_value(value: &SigmaValue, ctx: &ModCtx) -> Result<IrMatcher>
             SigmaValue::String(s) => {
                 let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
                 let n: f64 = plain.parse().map_err(|_| {
-                    IrError::Lowering(format!(
+                    IrError::IncompatibleValue(format!(
                         "timestamp part modifier requires numeric value, got: {plain}"
                     ))
                 })?;
                 IrMatcher::NumericEq(IrNumber::Literal(n))
             }
             _ => {
-                return Err(IrError::Lowering(
+                return Err(IrError::IncompatibleValue(
                     "timestamp part modifier requires numeric value".into(),
                 ));
             }
@@ -80,9 +80,7 @@ pub(super) fn lower_value(value: &SigmaValue, ctx: &ModCtx) -> Result<IrMatcher>
 
     if ctx.cidr {
         let cidr_str = value_to_plain_string(value)?;
-        let _: ipnet::IpNet = cidr_str
-            .parse()
-            .map_err(|e: ipnet::AddrParseError| IrError::Lowering(format!("invalid CIDR: {e}")))?;
+        let _: ipnet::IpNet = cidr_str.parse()?;
         return Ok(IrMatcher::Cidr {
             network: lit(cidr_str),
         });
@@ -193,7 +191,7 @@ fn lower_sigma_string(sigma_str: &SigmaString, ctx: &ModCtx) -> Result<IrMatcher
         ctx.startswith,
         ctx.endswith,
     );
-    Regex::new(&pattern).map_err(|e| IrError::Lowering(format!("invalid regex: {e}")))?;
+    Regex::new(&pattern)?;
     Ok(IrMatcher::Regex {
         pattern: lit(pattern),
     })
@@ -239,8 +237,7 @@ pub(super) fn lower_value_keywords(value: &SigmaValue) -> Result<IrMatcher> {
                 })
             } else {
                 let pattern = super::helpers::keywords_wildcard_pattern(&s.parts, ci);
-                Regex::new(&pattern)
-                    .map_err(|e| IrError::Lowering(format!("invalid regex: {e}")))?;
+                Regex::new(&pattern)?;
                 Ok(IrMatcher::Regex {
                     pattern: lit(pattern),
                 })

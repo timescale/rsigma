@@ -57,7 +57,9 @@ pub(super) fn value_to_plain_string(value: &SigmaValue) -> Result<String> {
         SigmaValue::Integer(n) => Ok(n.to_string()),
         SigmaValue::Float(n) => Ok(n.to_string()),
         SigmaValue::Bool(b) => Ok(b.to_string()),
-        SigmaValue::Null => Err(IrError::Lowering("null value for string modifier".into())),
+        SigmaValue::Null => Err(IrError::IncompatibleValue(
+            "null value for string modifier".into(),
+        )),
     }
 }
 
@@ -69,11 +71,9 @@ pub(super) fn value_to_f64(value: &SigmaValue) -> Result<f64> {
             let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
             plain
                 .parse::<f64>()
-                .map_err(|_| IrError::Lowering(format!("expected numeric value, got: {plain}")))
+                .map_err(|_| IrError::ExpectedNumeric(plain))
         }
-        _ => Err(IrError::Lowering(format!(
-            "expected numeric value, got: {value:?}"
-        ))),
+        _ => Err(IrError::ExpectedNumeric(format!("{value:?}"))),
     }
 }
 
@@ -157,9 +157,8 @@ pub(super) fn build_regex_pattern(
         format!("(?{flags}){pattern}")
     };
 
-    // Validate the pattern at lower time so invalid regex fails early,
-    // matching compile_rule.
-    Regex::new(&full_pattern).map_err(|e| IrError::Lowering(format!("invalid regex: {e}")))?;
+    // Validate the pattern at lower time so invalid regex fails early.
+    Regex::new(&full_pattern)?;
     Ok(full_pattern)
 }
 
@@ -179,7 +178,7 @@ pub(super) fn expand_windash(input: &str) -> Result<Vec<String>> {
 
     let n = dash_positions.len();
     if n > MAX_WINDASH_DASHES {
-        return Err(IrError::Lowering(format!(
+        return Err(IrError::InvalidModifiers(format!(
             "windash modifier: value contains {n} dashes, max is {MAX_WINDASH_DASHES} \
              (would generate {} variants)",
             5u64.saturating_pow(n as u32)
