@@ -49,6 +49,8 @@ fn run_golden(name: &str, format: &str) {
         .cloned()
         .collect::<Vec<_>>()
         .join("\n");
+    // Normalize CRLF so a Windows checkout of the fixtures still compares equal.
+    let actual = actual.replace("\r\n", "\n");
     let actual = actual.trim_end();
 
     if std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some() {
@@ -59,6 +61,7 @@ fn run_golden(name: &str, format: &str) {
 
     let expected = fs::read_to_string(&expected_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", expected_path.display()));
+    let expected = expected.replace("\r\n", "\n");
     let expected = expected.trim_end();
 
     assert_eq!(
