@@ -6,18 +6,22 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use regex::Regex;
 use rsigma_ir::{
-    IrCondition, IrDetection, IrDetectionItem, IrExpandPart, IrMatcher, IrNumber, IrRule,
-    IrTimePart, IrValue,
+    IrCondition, IrDetection, IrDetectionItem, IrEncoding, IrExpandPart, IrMatcher, IrNumber,
+    IrPattern, IrPatternPart, IrRule, IrStrOp, IrTimePart,
 };
-use rsigma_parser::ConditionExpr;
+use rsigma_parser::value::{SigmaString, SpecialChar, StringPart};
+use rsigma_parser::{ConditionExpr, Modifier, SigmaValue};
 
 use crate::error::{EvalError, Result};
 use crate::matcher::{CompiledMatcher, ExpandPart, TimePart};
 
+use super::helpers::build_regex;
 use super::optimizer;
-use super::{CompiledDetection, CompiledDetectionItem, CompiledRule};
+use super::{
+    CompiledDetection, CompiledDetectionItem, CompiledRule, ModCtx, compile_sigma_string,
+    compile_string_value, compile_value,
+};
 
 /// Compile an [`IrRule`] into a physical [`CompiledRule`] ready for evaluation.
 pub fn compile_to_compiled(ir: &IrRule) -> Result<CompiledRule> {
@@ -128,42 +132,42 @@ fn compile_ir_detection_item(item: &IrDetectionItem) -> Result<CompiledDetection
 
 fn compile_ir_matcher(matcher: &IrMatcher) -> Result<CompiledMatcher> {
     match matcher {
-        IrMatcher::Exact {
-            value,
+        IrMatcher::Str {
+            op,
+            pattern,
             case_insensitive,
-        } => Ok(CompiledMatcher::Exact {
-            value: ir_value_literal(value)?,
-            case_insensitive: *case_insensitive,
-        }),
-        IrMatcher::Contains {
-            value,
-            case_insensitive,
-        } => Ok(CompiledMatcher::Contains {
-            value: ir_value_literal(value)?,
-            case_insensitive: *case_insensitive,
-        }),
-        IrMatcher::StartsWith {
-            value,
-            case_insensitive,
-        } => Ok(CompiledMatcher::StartsWith {
-            value: ir_value_literal(value)?,
-            case_insensitive: *case_insensitive,
-        }),
-        IrMatcher::EndsWith {
-            value,
-            case_insensitive,
-        } => Ok(CompiledMatcher::EndsWith {
-            value: ir_value_literal(value)?,
-            case_insensitive: *case_insensitive,
-        }),
-        IrMatcher::Regex { pattern } => {
-            let pattern = ir_value_literal(pattern)?;
-            let regex = Regex::new(&pattern).map_err(EvalError::InvalidRegex)?;
-            Ok(CompiledMatcher::Regex(regex))
+        } => {
+            let ctx = str_modctx(*op, *case_insensitive, &[]);
+            if pattern.is_plain() {
+                compile_string_value(&pattern.as_plain().unwrap_or_default(), &ctx)
+            } else {
+                compile_sigma_string(&sigma_from_pattern(pattern), &ctx)
+            }
         }
+        IrMatcher::Encoded {
+            encodings,
+            op,
+            value,
+            case_insensitive,
+        } => {
+            // Replay the encoding chain through the proven value compiler by
+            // reconstructing the equivalent modifier context and plain value.
+            let ctx = str_modctx(*op, *case_insensitive, encodings);
+            compile_value(&SigmaValue::String(sigma_plain(value)), &ctx)
+        }
+        IrMatcher::Regex {
+            pattern,
+            case_insensitive,
+            multiline,
+            dotall,
+        } => Ok(CompiledMatcher::Regex(build_regex(
+            pattern,
+            *case_insensitive,
+            *multiline,
+            *dotall,
+        )?)),
         IrMatcher::Cidr { network } => {
-            let cidr_str = ir_value_literal(network)?;
-            let net: ipnet::IpNet = cidr_str.parse().map_err(EvalError::InvalidCidr)?;
+            let net: ipnet::IpNet = network.parse().map_err(EvalError::InvalidCidr)?;
             Ok(CompiledMatcher::Cidr(net))
         }
         IrMatcher::NumericEq(n) => Ok(CompiledMatcher::NumericEq(ir_number_literal(n)?)),
@@ -204,6 +208,62 @@ fn compile_ir_matcher(matcher: &IrMatcher) -> Result<CompiledMatcher> {
     }
 }
 
+/// Reconstruct the modifier context for a string/encoded matcher so the proven
+/// value compilers produce byte-identical `CompiledMatcher`s.
+fn str_modctx(op: IrStrOp, case_insensitive: bool, encodings: &[IrEncoding]) -> ModCtx {
+    let mut mods: Vec<Modifier> = Vec::new();
+    match op {
+        IrStrOp::Exact => {}
+        IrStrOp::Contains => mods.push(Modifier::Contains),
+        IrStrOp::StartsWith => mods.push(Modifier::StartsWith),
+        IrStrOp::EndsWith => mods.push(Modifier::EndsWith),
+    }
+    if !case_insensitive {
+        mods.push(Modifier::Cased);
+    }
+    for e in encodings {
+        mods.push(match e {
+            IrEncoding::Wide => Modifier::Wide,
+            IrEncoding::Utf16 => Modifier::Utf16,
+            IrEncoding::Utf16Be => Modifier::Utf16be,
+            IrEncoding::Base64 => Modifier::Base64,
+            IrEncoding::Base64Offset => Modifier::Base64Offset,
+            IrEncoding::Windash => Modifier::WindAsh,
+        });
+    }
+    ModCtx::from_modifiers(&mods)
+}
+
+fn sigma_plain(s: &str) -> SigmaString {
+    SigmaString {
+        parts: vec![StringPart::Plain(s.to_string())],
+        original: s.to_string(),
+    }
+}
+
+fn sigma_from_pattern(pattern: &IrPattern) -> SigmaString {
+    let mut original = String::new();
+    let parts = pattern
+        .parts
+        .iter()
+        .map(|p| match p {
+            IrPatternPart::Literal(t) => {
+                original.push_str(t);
+                StringPart::Plain(t.clone())
+            }
+            IrPatternPart::WildcardMulti => {
+                original.push('*');
+                StringPart::Special(SpecialChar::WildcardMulti)
+            }
+            IrPatternPart::WildcardSingle => {
+                original.push('?');
+                StringPart::Special(SpecialChar::WildcardSingle)
+            }
+        })
+        .collect();
+    SigmaString { parts, original }
+}
+
 fn ir_condition_to_expr(cond: &IrCondition) -> ConditionExpr {
     match cond {
         IrCondition::Detection(name) => ConditionExpr::Identifier(name.clone()),
@@ -221,16 +281,6 @@ fn ir_condition_to_expr(cond: &IrCondition) -> ConditionExpr {
             quantifier: quantifier.clone(),
             pattern: pattern.clone(),
         },
-    }
-}
-
-fn ir_value_literal(value: &IrValue) -> Result<String> {
-    match value {
-        IrValue::Literal(s) => Ok(s.clone()),
-        IrValue::DynamicSourceRef { source_id, .. } => Err(EvalError::IncompatibleValue(format!(
-            "unresolved dynamic source reference '{source_id}' cannot be compiled; \
-             specialize the IR first"
-        ))),
     }
 }
 

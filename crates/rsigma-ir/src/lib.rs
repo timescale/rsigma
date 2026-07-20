@@ -33,10 +33,11 @@
 //!   `Conditional`.  Array-scope quantifiers (`any`/`all`/`all-or-empty`/`none`)
 //!   are preserved.
 //!
-//! - **`SurfaceSpec`** — optional sidecar on `IrDetectionItem` that records the
-//!   original field name, modifiers, and values.  Eval ignores it; convert
-//!   backends use it when they need the modifier spelling for idiomatic query
-//!   emission.
+//! - **`IrMatcher`** — a faithful, lossless match model. String matches keep a
+//!   wildcard-aware, original-case [`hir::IrPattern`]; encoding modifiers stay
+//!   explicit as [`hir::IrEncoding`] steps. Nothing is lowercased,
+//!   regex-compiled, or encoding-expanded during lowering, so both eval (at
+//!   compile time) and convert (at emit time) can render it exactly.
 //!
 //! ## Constraints
 //!

@@ -58,8 +58,6 @@ impl From<rsigma_ir::IrError> for EvalError {
     fn from(err: rsigma_ir::IrError) -> Self {
         use rsigma_ir::IrError;
         match err {
-            IrError::InvalidRegex(e) => EvalError::InvalidRegex(e),
-            IrError::InvalidCidr(e) => EvalError::InvalidCidr(e),
             IrError::UnknownDetection(name) => EvalError::UnknownDetection(name),
             IrError::InvalidModifiers(msg) => EvalError::InvalidModifiers(msg),
             IrError::IncompatibleValue(msg) => EvalError::IncompatibleValue(msg),

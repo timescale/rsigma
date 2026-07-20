@@ -1753,9 +1753,6 @@ dependencies = [
 name = "rsigma-ir"
 version = "0.19.0"
 dependencies = [
- "base64",
- "ipnet",
- "regex",
  "rsigma-parser",
  "serde",
  "serde_json",

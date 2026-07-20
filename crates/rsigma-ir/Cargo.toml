@@ -14,10 +14,7 @@ rsigma-parser = { path = "../rsigma-parser", version = "0.19.0", default-feature
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-base64 = "0.22"
 yaml_serde = "0.10"
-ipnet = "2"
-regex = "1"
 
 [dev-dependencies]
 rsigma-eval = { path = "../rsigma-eval", version = "0.19.0" }

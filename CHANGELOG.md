@@ -4,10 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Intermediate representation crate and IR-backed compile (#360)
+### Intermediate representation crate and IR-backed compile (#360, #362)
 
-- **`rsigma-ir`** — new sync-only crate with HIR types (`IrRule`, `IrDetection`, `IrMatcher`, `IrCondition`, `IrCorrelation`, `IrFilter`) and `lower_rule` / `lower_*` that resolve modifiers before eval. Quantified selectors are preserved so evaluation stays count-based.
-- **`rsigma-eval`** — `compile_rule` routes through `lower_rule` → `compile_to_compiled`. `compile_rule_legacy` remains for dual-path differential tests. Public physical API (`CompiledRule`, `evaluate_rule`, `Engine`) is unchanged.
+- **`rsigma-ir`** — new sync-only crate with HIR types (`IrRule`, `IrDetection`, `IrMatcher`, `IrCondition`, `IrCorrelation`, `IrFilter`) and `lower_rule` / `lower_*` that resolve modifiers before eval. Quantified selectors are preserved so evaluation stays count-based. The matcher model is faithful and lossless: string matches keep a wildcard-aware, original-case `IrPattern` and encoding modifiers stay explicit as `IrEncoding` steps, so lowering never lowercases, compiles regexes, or expands encodings.
+- **`rsigma-eval`** — `compile_rule` routes through `lower_rule` → `compile_to_compiled`, which performs the physical work (lowercasing, regex/aho-corasick, encoding expansion). `compile_rule_legacy` remains for dual-path differential tests. Public physical API (`CompiledRule`, `evaluate_rule`, `Engine`) is unchanged.
 - **`rsigma-convert`** — detection-rule conversion resolves conditions through IR (`convert_rule_via_ir`); detection-item dispatch still uses the parser AST. PostgreSQL, LynxDB, and Fibratus golden tests unchanged.
 
 ### Dependency bumps (#354, #357)
