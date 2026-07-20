@@ -1,7 +1,9 @@
-//! Encoding and value helpers ported from `rsigma-eval` compiler helpers.
+//! Value-extraction helpers for lowering.
+//!
+//! Encoding, regex, and wildcard rendering deliberately live in the consumers
+//! (eval's compile step and convert), not here: lowering stays purely
+//! structural so the HIR round-trips faithfully.
 
-use base64::Engine as Base64Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rsigma_parser::SigmaValue;
 
 use crate::error::IrError;
@@ -76,134 +78,6 @@ pub(super) fn value_to_f64(value: &SigmaValue) -> Result<f64> {
     }
 }
 
-pub(super) fn sigma_string_to_bytes(s: &rsigma_parser::SigmaString) -> Vec<u8> {
-    let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-    plain.into_bytes()
-}
-
-pub(super) fn to_utf16le_bytes(bytes: &[u8]) -> Vec<u8> {
-    let s = String::from_utf8_lossy(bytes);
-    let mut wide = Vec::with_capacity(s.len() * 2);
-    for c in s.chars() {
-        let mut buf = [0u16; 2];
-        let encoded = c.encode_utf16(&mut buf);
-        for u in encoded {
-            wide.extend_from_slice(&u.to_le_bytes());
-        }
-    }
-    wide
-}
-
-pub(super) fn to_utf16be_bytes(bytes: &[u8]) -> Vec<u8> {
-    let s = String::from_utf8_lossy(bytes);
-    let mut wide = Vec::with_capacity(s.len() * 2);
-    for c in s.chars() {
-        let mut buf = [0u16; 2];
-        let encoded = c.encode_utf16(&mut buf);
-        for u in encoded {
-            wide.extend_from_slice(&u.to_be_bytes());
-        }
-    }
-    wide
-}
-
-pub(super) fn to_utf16_bom_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut result = vec![0xFF, 0xFE];
-    result.extend_from_slice(&to_utf16le_bytes(bytes));
-    result
-}
-
-pub(super) fn base64_offset_patterns(value: &[u8]) -> Vec<String> {
-    let mut patterns = Vec::with_capacity(3);
-
-    for offset in 0..3usize {
-        let mut padded = vec![0u8; offset];
-        padded.extend_from_slice(value);
-
-        let encoded = BASE64_STANDARD.encode(&padded);
-        let start = (offset * 4).div_ceil(3);
-        let trimmed = encoded.trim_end_matches('=');
-        let end = trimmed.len();
-
-        if start < end {
-            patterns.push(trimmed[start..end].to_string());
-        }
-    }
-
-    patterns
-}
-
-/// Assemble a regex pattern string with inline flags.
-///
-/// The pattern is not compiled here: the eval compile step compiles it into a
-/// physical matcher (and surfaces any syntax error), while convert emits it to
-/// a backend with its own regex engine. Compiling here would both double the
-/// work on the eval path and reject patterns valid for a target backend but
-/// not for the Rust `regex` crate.
-pub(super) fn build_regex_pattern(
-    pattern: &str,
-    case_insensitive: bool,
-    multiline: bool,
-    dotall: bool,
-) -> String {
-    let mut flags = String::new();
-    if case_insensitive {
-        flags.push('i');
-    }
-    if multiline {
-        flags.push('m');
-    }
-    if dotall {
-        flags.push('s');
-    }
-
-    if flags.is_empty() {
-        pattern.to_string()
-    } else {
-        format!("(?{flags}){pattern}")
-    }
-}
-
-const WINDASH_CHARS: [char; 5] = ['-', '/', '\u{2013}', '\u{2014}', '\u{2015}'];
-const MAX_WINDASH_DASHES: usize = 8;
-
-pub(super) fn expand_windash(input: &str) -> Result<Vec<String>> {
-    let dash_positions: Vec<usize> = input
-        .char_indices()
-        .filter(|(_, c)| *c == '-')
-        .map(|(i, _)| i)
-        .collect();
-
-    if dash_positions.is_empty() {
-        return Ok(vec![input.to_string()]);
-    }
-
-    let n = dash_positions.len();
-    if n > MAX_WINDASH_DASHES {
-        return Err(IrError::InvalidModifiers(format!(
-            "windash modifier: value contains {n} dashes, max is {MAX_WINDASH_DASHES} \
-             (would generate {} variants)",
-            5u64.saturating_pow(n as u32)
-        )));
-    }
-
-    let total = WINDASH_CHARS.len().pow(n as u32);
-    let mut variants = Vec::with_capacity(total);
-
-    for combo in 0..total {
-        let mut variant = input.to_string();
-        let mut idx = combo;
-        for &pos in dash_positions.iter().rev() {
-            let replacement = WINDASH_CHARS[idx % WINDASH_CHARS.len()];
-            variant.replace_range(pos..pos + 1, &replacement.to_string());
-            idx /= WINDASH_CHARS.len();
-        }
-        variants.push(variant);
-    }
-
-    Ok(variants)
-}
-
 /// Parse an expand template string like `C:\Users\%user%\AppData` into parts.
 pub(super) fn parse_expand_template(s: &str) -> Vec<crate::IrExpandPart> {
     use crate::IrExpandPart;
@@ -245,68 +119,4 @@ pub(super) fn parse_expand_template(s: &str) -> Vec<crate::IrExpandPart> {
     }
 
     parts
-}
-
-/// Build a regex pattern from Sigma string parts (wildcards → `.*` / `.`).
-pub(super) fn sigma_parts_to_regex_pattern(
-    parts: &[rsigma_parser::value::StringPart],
-    case_insensitive: bool,
-    contains: bool,
-    startswith: bool,
-    endswith: bool,
-) -> String {
-    use rsigma_parser::value::{SpecialChar, StringPart};
-
-    let mut pattern = String::new();
-    if case_insensitive {
-        pattern.push_str("(?i)");
-    }
-
-    if !contains && !startswith {
-        pattern.push('^');
-    }
-
-    for part in parts {
-        match part {
-            StringPart::Plain(text) => {
-                pattern.push_str(&regex::escape(text));
-            }
-            StringPart::Special(SpecialChar::WildcardMulti) => {
-                pattern.push_str(".*");
-            }
-            StringPart::Special(SpecialChar::WildcardSingle) => {
-                pattern.push('.');
-            }
-        }
-    }
-
-    if !contains && !endswith {
-        pattern.push('$');
-    }
-
-    pattern
-}
-
-/// Keywords wildcard path: contains-semantics regex anchored at both ends
-/// after converting wildcards (same as eval `sigma_string_to_regex`).
-pub(super) fn keywords_wildcard_pattern(
-    parts: &[rsigma_parser::value::StringPart],
-    case_insensitive: bool,
-) -> String {
-    use rsigma_parser::value::{SpecialChar, StringPart};
-
-    let mut pattern = String::new();
-    if case_insensitive {
-        pattern.push_str("(?i)");
-    }
-    pattern.push('^');
-    for part in parts {
-        match part {
-            StringPart::Plain(text) => pattern.push_str(&regex::escape(text)),
-            StringPart::Special(SpecialChar::WildcardMulti) => pattern.push_str(".*"),
-            StringPart::Special(SpecialChar::WildcardSingle) => pattern.push('.'),
-        }
-    }
-    pattern.push('$');
-    pattern
 }

@@ -5,12 +5,6 @@ pub enum IrError {
     #[error("lowering error: {0}")]
     Lowering(String),
 
-    #[error("invalid regex pattern: {0}")]
-    InvalidRegex(#[from] regex::Error),
-
-    #[error("invalid CIDR: {0}")]
-    InvalidCidr(#[from] ipnet::AddrParseError),
-
     #[error("unknown detection identifier: {0}")]
     UnknownDetection(String),
 

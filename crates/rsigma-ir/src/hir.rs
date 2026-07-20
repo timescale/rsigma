@@ -107,47 +107,118 @@ pub struct IrDetectionItem {
     pub field: Option<String>,
     pub matcher: IrMatcher,
     pub exists: Option<bool>,
-    /// Original surface for convert / reverse-convert. Eval ignores this.
-    pub surface: Option<SurfaceSpec>,
-}
-
-/// Original field declaration before modifier resolution.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SurfaceSpec {
-    pub field: Option<String>,
-    pub modifiers: Vec<rsigma_parser::Modifier>,
-    pub values: Vec<rsigma_parser::SigmaValue>,
 }
 
 // =============================================================================
 // IrMatcher
 // =============================================================================
 
+/// String match operator.
+///
+/// The comparison is decided here rather than re-derived from modifiers by
+/// each consumer. `Exact` is full-value equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrStrOp {
+    Exact,
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+
+/// A backend-neutral string pattern: decoded literal segments interleaved with
+/// wildcards, **original case preserved**.
+///
+/// This is the lossless heart of the faithful HIR. Eval lowercases (for
+/// case-insensitive matching) and compiles wildcards into a regex at compile
+/// time; convert renders the wildcards into backend-native tokens. Neither
+/// transform happens during lowering, so the pattern round-trips exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrPatternPart {
+    Literal(String),
+    /// `*` — matches any run of characters.
+    WildcardMulti,
+    /// `?` — matches any single character.
+    WildcardSingle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IrPattern {
+    pub parts: Vec<IrPatternPart>,
+}
+
+impl IrPattern {
+    /// A pattern with no wildcards.
+    pub fn is_plain(&self) -> bool {
+        self.parts
+            .iter()
+            .all(|p| matches!(p, IrPatternPart::Literal(_)))
+    }
+
+    /// Whether the pattern contains any wildcard.
+    pub fn has_wildcards(&self) -> bool {
+        !self.is_plain()
+    }
+
+    /// The concatenated literal text if the pattern is plain.
+    pub fn as_plain(&self) -> Option<String> {
+        if !self.is_plain() {
+            return None;
+        }
+        let mut s = String::new();
+        for p in &self.parts {
+            if let IrPatternPart::Literal(t) = p {
+                s.push_str(t);
+            }
+        }
+        Some(s)
+    }
+}
+
+/// A value transformation applied before matching (an encoding modifier).
+///
+/// Kept explicit rather than pre-expanded so consumers can either replay the
+/// transform (eval) or reject it as inexpressible (convert backends).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrEncoding {
+    Wide,
+    Utf16,
+    Utf16Be,
+    Base64,
+    Base64Offset,
+    Windash,
+}
+
 /// Resolved match operation. Grow by appending variants and bumping the pack
 /// IR schema major. No `Unknown` catch-all.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrMatcher {
-    Exact {
-        value: IrValue,
+    /// Structured string match (equality/substring/prefix/suffix) over a
+    /// wildcard-aware, original-case [`IrPattern`].
+    Str {
+        op: IrStrOp,
+        pattern: IrPattern,
         case_insensitive: bool,
     },
-    Contains {
-        value: IrValue,
+    /// Encoding-transformed string match (`base64`, `base64offset`, `wide`,
+    /// `utf16`, `utf16be`, `windash`). `value` is the untransformed plain
+    /// string. Eval replays `encodings` (in order) to build the concrete
+    /// matcher; convert backends that cannot express the transform reject it.
+    Encoded {
+        encodings: Vec<IrEncoding>,
+        op: IrStrOp,
+        value: String,
         case_insensitive: bool,
     },
-    StartsWith {
-        value: IrValue,
-        case_insensitive: bool,
-    },
-    EndsWith {
-        value: IrValue,
-        case_insensitive: bool,
-    },
+    /// Explicit regex (`|re`) with raw pattern and flags kept separate so eval
+    /// compiles them and convert renders them (case-sensitive vs insensitive).
     Regex {
-        pattern: IrValue,
+        pattern: String,
+        case_insensitive: bool,
+        multiline: bool,
+        dotall: bool,
     },
     Cidr {
-        network: IrValue,
+        network: String,
     },
     NumericEq(IrNumber),
     NumericGt(IrNumber),
@@ -193,17 +264,8 @@ pub enum IrTimePart {
 }
 
 // =============================================================================
-// IrValue / IrNumber
+// IrNumber
 // =============================================================================
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum IrValue {
-    Literal(String),
-    DynamicSourceRef {
-        source_id: String,
-        extract: Option<IrExtractExpr>,
-    },
-}
 
 /// Numeric literal or deferred source reference.
 #[derive(Debug, Clone, PartialEq)]

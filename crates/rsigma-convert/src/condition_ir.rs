@@ -1,8 +1,8 @@
 //! Convert selector-free [`IrCondition`] trees against parser AST detections.
 //!
-//! Detection bodies still use the existing `Backend::convert_detection` path
-//! (modifier dispatch via AST / `SurfaceSpec` comes later). Conditions are
-//! taken from `lower_rule` so convert no longer re-resolves selectors.
+//! Detection bodies still use the existing `Backend::convert_detection` path;
+//! conditions are taken from `lower_conditions` so convert no longer resolves
+//! selectors itself.
 
 use std::collections::HashMap;
 

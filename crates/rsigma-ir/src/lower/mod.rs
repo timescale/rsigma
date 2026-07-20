@@ -18,7 +18,7 @@ use rsigma_parser::{
 use crate::error::IrError;
 use crate::{
     IrCondition, IrCorrelation, IrDetection, IrDetectionItem, IrFilter, IrMatcher, IrRule,
-    IrRuleMetadata, SurfaceSpec,
+    IrRuleMetadata,
 };
 
 use helpers::{Result, yaml_to_json_map};
@@ -29,14 +29,9 @@ use value::{lower_value, lower_value_keywords};
 #[derive(Debug, Clone, Default)]
 pub struct LowerOptions {
     /// When false (default), reject string values that still contain
-    /// `${source.*}` placeholders. When true, preserve them as
-    /// `IrValue::DynamicSourceRef` (deferred specialization path).
+    /// `${source.*}` placeholders. When true, preserve them for the deferred
+    /// specialization path.
     pub permissive_placeholders: bool,
-    /// When true, record the original field spelling, modifiers, and values on
-    /// each [`IrDetectionItem`] as a [`SurfaceSpec`]. The eval compile path
-    /// ignores it, so it defaults to off to avoid cloning every value; convert
-    /// (which needs the original modifiers) opts in.
-    pub retain_surface: bool,
 }
 
 /// Lower a single parsed `SigmaRule` into its HIR form.
@@ -167,16 +162,6 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
     let ctx = ModCtx::from_modifiers(&item.field.modifiers);
     validate_modifiers(&ctx, &item.field.modifiers)?;
 
-    let surface = if opts.retain_surface {
-        Some(SurfaceSpec {
-            field: item.field.name.clone(),
-            modifiers: item.field.modifiers.clone(),
-            values: item.values.clone(),
-        })
-    } else {
-        None
-    };
-
     if ctx.exists {
         let expect = match item.values.first() {
             Some(SigmaValue::Bool(b)) => *b,
@@ -191,7 +176,6 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
             field: item.field.name.clone(),
             matcher: IrMatcher::Exists(expect),
             exists: Some(expect),
-            surface,
         });
     }
 
@@ -221,7 +205,6 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
         field: item.field.name.clone(),
         matcher: combined,
         exists: None,
-        surface,
     })
 }
 
