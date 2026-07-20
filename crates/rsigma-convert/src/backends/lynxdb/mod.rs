@@ -43,7 +43,7 @@ static LYNXDB_CONFIG: TextQueryConfig = TextQueryConfig {
     // LynxDB only supports `*` glob; `?` is a literal character.
     // Sigma's single-char wildcard is mapped to `*` here (lossy fallback);
     // patterns that actually contain `?` are deferred to a regex `where` clause
-    // in `convert_field_eq_str`.
+    // in `convert_field_str`.
     wildcard_multi: "*",
     wildcard_single: "*",
 

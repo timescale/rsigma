@@ -1,11 +1,15 @@
 //! Compile parsed Sigma rules into optimized in-memory representations.
 //!
-//! The compiler transforms the parser AST (`SigmaRule`, `Detection`,
-//! `DetectionItem`) into compiled forms (`CompiledRule`, `CompiledDetection`,
-//! `CompiledDetectionItem`) that can be evaluated efficiently against events.
+//! The primary entry point, [`compile_rule`], lowers a `SigmaRule` to HIR via
+//! `rsigma_ir::lower_rule` and then materializes the physical forms
+//! (`CompiledRule`, `CompiledDetection`, `CompiledDetectionItem`) with
+//! [`compile_to_compiled`], which builds the concrete `CompiledMatcher`
+//! variants (regex, Aho-Corasick, `IpNet`, lowercased patterns) that evaluate
+//! efficiently against events. Modifier interpretation happens during lowering;
+//! this module turns the resolved matchers into executable artifacts.
 //!
-//! Modifier interpretation happens here: the compiler reads the `Vec<Modifier>`
-//! from each `FieldSpec` and produces the appropriate `CompiledMatcher` variant.
+//! [`compile_rule_legacy`] retains the pre-IR direct AST-to-`CompiledRule`
+//! compiler for the dual-path differential.
 
 mod from_ir;
 mod helpers;

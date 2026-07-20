@@ -1,7 +1,8 @@
 //! Lowering: parser AST → HIR.
 //!
 //! Walks metadata, detections, and conditions after static pipeline transforms.
-//! Selectors collapse here into [`IrCondition`] trees with no `Selector` variant.
+//! Quantified selectors are preserved as [`IrCondition::Selector`] rather than
+//! being expanded, so downstream consumers keep count-based semantics.
 //! Modifier interpretation lives in private helpers alongside this module.
 
 mod helpers;
@@ -59,9 +60,9 @@ pub fn lower_rule(rule: &SigmaRule, opts: &LowerOptions) -> Result<IrRule> {
 /// Lower only the condition trees of a detection section, without lowering
 /// detection items.
 ///
-/// Convert re-walks the parser AST for detection bodies, so it only needs the
-/// selector-resolved condition trees. This avoids the cost (and eval-specific
-/// value constraints) of fully lowering every detection item.
+/// Used by filter lowering and any caller that needs the condition trees
+/// without paying to fully lower every detection item (and without the
+/// eval-specific value constraints that lowering items would impose).
 pub fn lower_conditions(section: &Detections) -> Result<Vec<IrCondition>> {
     let names: Vec<String> = section.named.keys().cloned().collect();
     section

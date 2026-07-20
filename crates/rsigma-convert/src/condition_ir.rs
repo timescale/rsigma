@@ -1,8 +1,10 @@
-//! Convert selector-free [`IrCondition`] trees against parser AST detections.
+//! Convert [`IrCondition`] trees against a rule's [`IrDetection`] map.
 //!
-//! Detection bodies still use the existing `Backend::convert_detection` path;
-//! conditions are taken from `lower_conditions` so convert no longer resolves
-//! selectors itself.
+//! The whole rule is lowered to HIR once (`convert_rule_via_ir`); both the
+//! detection bodies and the conditions are then walked from the IR. Quantified
+//! selectors are resolved here against the IR detections, mirroring eval:
+//! an empty match set is rejected, `any` / `1 of` become OR, `all of` becomes
+//! AND, and `N of` (N > 1) is unsupported.
 
 use std::collections::HashMap;
 

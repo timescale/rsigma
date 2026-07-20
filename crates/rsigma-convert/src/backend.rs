@@ -94,10 +94,11 @@ pub(crate) fn ir_pattern_to_sigma(pattern: &IrPattern) -> SigmaString {
 
 /// Core conversion trait.
 ///
-/// Backends implement this to convert parsed Sigma AST nodes into
-/// backend-native query strings. The trait operates on **parsed** types
-/// from `rsigma-parser` because conversion needs the original field names,
-/// modifiers, and values rather than compiled matchers.
+/// Backends implement this to convert a rule's intermediate representation
+/// (`rsigma-ir`) into backend-native query strings. The value leaves consume
+/// the faithful HIR (`IrPattern`, `IrStrOp`, `IrNumber`, `RegexFlags`,
+/// `CompareOp`) rather than parser types or compiled matchers, so a backend
+/// never touches `rsigma-parser` to emit a value match.
 pub trait Backend: Send + Sync {
     fn name(&self) -> &str;
     fn formats(&self) -> &[(&str, &str)];

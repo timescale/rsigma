@@ -26,15 +26,15 @@ pub struct FibratusConfig {
     /// The Fibratus loader rejects a rule that omits it.
     pub rule_version: String,
 
-    /// Whether to walk the condition AST and rewrite recognized
-    /// sub-trees into idiomatic Fibratus macros
-    /// (`spawn_process`/`open_file`/...). Phase 3 wires the recognition;
-    /// the knob is present from Phase 0 so output formats stay stable
-    /// when the recognition pass lands.
+    /// Whether to rewrite recognized clauses in the generated filter
+    /// expression into idiomatic Fibratus macros
+    /// (`spawn_process`/`open_file`/...). Applied by `finalize_query` via the
+    /// macro recognizer, which is a no-op on inputs that match no macros, so
+    /// disabling it yields byte-equivalent output.
     pub use_macros: bool,
 
     /// Default logsource product to assume when a Sigma rule lacks
-    /// `logsource.product`. Used by Phase 2's pipeline matching.
+    /// `logsource.product`, used when matching the rule against the pipeline.
     pub default_logsource: String,
 
     /// Emit `description:` and `labels:` blocks. Disable to produce a
@@ -42,10 +42,9 @@ pub struct FibratusConfig {
     /// from another source).
     pub emit_metadata: bool,
 
-    /// Maximum number of repeated/distinct sequence slots Phase 4 will
-    /// generate when emulating `event_count` / `value_count`. Anything
-    /// above this threshold returns `UnsupportedCorrelation` rather
-    /// than ballooning the YAML.
+    /// Maximum number of repeated/distinct sequence slots generated when
+    /// emulating `event_count` / `value_count`. Anything above this threshold
+    /// returns `UnsupportedCorrelation` rather than ballooning the YAML.
     pub max_repeated_slots: u64,
 
     /// When converting `temporal` (any-order) correlation, emit
