@@ -8,8 +8,9 @@
 //! - **Selector-resolved**: [`IrCondition`] has no `Selector` variant.
 //! - **Array-scope complete**: [`IrDetection`] mirrors
 //!   `CompiledDetection::{ArrayMatch, And, Conditional}`.
-//! - **Serializable** (Phase 4): no compiled `Regex`, no `IpNet`.
-//! - **Placeholder-aware** on the Phase 6b path (`IrValue::DynamicSourceRef`).
+//! - **Serializable**: no compiled `Regex`, no `IpNet`.
+//! - **Placeholder-aware** when lowering preserves `${source.*}` as
+//!   [`IrValue::DynamicSourceRef`].
 //! - **`RuleHeader`-projecting**: [`IrRuleMetadata`] is a superset; compile
 //!   projects the subset used by `rsigma_eval::result::RuleHeader`.
 //! - **Convert-friendly**: each [`IrDetectionItem`] may carry an optional
@@ -174,7 +175,7 @@ pub enum IrMatcher {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrExpandPart {
     Literal(String),
-    /// Deferred `${source.*}` token on the Phase 6b path.
+    /// Deferred `${source.*}` token awaiting specialization.
     Placeholder(String),
 }
 
@@ -202,7 +203,7 @@ pub enum IrValue {
     },
 }
 
-/// Numeric literal or deferred source reference (Phase 6b).
+/// Numeric literal or deferred source reference.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrNumber {
     Literal(f64),

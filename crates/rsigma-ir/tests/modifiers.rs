@@ -1,7 +1,7 @@
 //! Modifier contradiction, `|all`, encoding-chain, and numeric fixtures.
 //!
-//! Ground truth is the legacy compile/evaluate path. Lowering (Phase 0.2) must
-//! reproduce the same accept/reject and match/no-match decisions.
+//! Ground truth is the legacy compile/evaluate path. Lowering must reproduce
+//! the same accept/reject and match/no-match decisions.
 
 mod common;
 

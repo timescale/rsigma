@@ -1,7 +1,7 @@
-//! Correlation-rule fixtures for Phase 0.0.
+//! Correlation-rule fixtures.
 //!
-//! Lock parse + legacy correlation-engine behavior so Phase 0.2
-//! `lower_correlation` has a concrete oracle.
+//! Lock parse + legacy correlation-engine behavior so `lower_correlation`
+//! has a concrete oracle.
 
 mod common;
 

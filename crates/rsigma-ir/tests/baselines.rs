@@ -1,4 +1,4 @@
-//! Simple match / no-match / boolean-condition baselines for Phase 0.0.
+//! Simple match / no-match / boolean-condition baselines.
 
 mod common;
 

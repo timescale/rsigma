@@ -1,4 +1,4 @@
-//! Mandatory selector fixtures (Phase 0.0).
+//! Mandatory selector fixtures.
 //!
 //! Common Sigma regression points:
 //! - vacuous `all of <pattern>` over zero matching detection names → true

@@ -1,7 +1,7 @@
-//! Filter-rule fixtures for Phase 0.0.
+//! Filter-rule fixtures.
 //!
 //! Lock parse + legacy `Engine::apply_filter` / `add_collection` behavior so
-//! Phase 0.2 `lower_filter` and Phase 6a HIR injection have a concrete oracle.
+//! `lower_filter` has a concrete oracle.
 
 mod common;
 

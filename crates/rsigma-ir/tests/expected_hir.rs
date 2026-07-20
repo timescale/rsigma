@@ -40,8 +40,8 @@ pub fn expected_vacuous_all_of_multiple_conditions() -> Vec<IrCondition> {
 
 #[test]
 fn expected_hir_stubs_are_well_formed() {
-    // Construction itself is the Phase 0.0 deliverable: these shapes must
-    // compile and stay stable as the lowering contract.
+    // Construction itself is the deliverable: these shapes must compile and
+    // stay stable as the lowering contract.
     assert_eq!(
         expected_vacuous_all_of_conditions(),
         vec![IrCondition::And(vec![])]
