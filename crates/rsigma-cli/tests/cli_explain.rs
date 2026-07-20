@@ -3,6 +3,7 @@
 mod common;
 
 use common::{rsigma, temp_file};
+use insta::assert_snapshot;
 use predicates::prelude::*;
 
 const RULE: &str = r#"
@@ -138,8 +139,9 @@ fn negation_node_is_rendered() {
 
 #[test]
 fn quantified_selector_collapses_to_or_in_explain() {
-    // `1 of selection_*` collapses to Or at lower time, so explain walks a
-    // selector-free Or tree rather than a quantified (need/got) node.
+    // `1 of selection_*` collapses to Or at lower time. Snapshot the JSON
+    // trace so the check is structural (`type: or`) rather than tied to
+    // human tree labels like "any of:" / "(1/1 matched)".
     let rule = temp_file(
         ".yml",
         r#"
@@ -155,7 +157,7 @@ detection:
     condition: 1 of selection_*
 "#,
     );
-    rsigma()
+    let output = rsigma()
         .args([
             "engine",
             "explain",
@@ -163,14 +165,77 @@ detection:
             rule.path().to_str().unwrap(),
             "--color",
             "never",
+            "--output-format",
+            "json",
             "-e",
             r#"{"CommandLine":"run powershell"}"#,
         ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("any of:"))
-        .stdout(predicate::str::contains("selection_a"))
-        .stdout(predicate::str::contains("MATCH"));
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_snapshot!(
+        serde_json::to_string_pretty(&value).unwrap(),
+        @r#"
+[
+  {
+    "conditions": [
+      {
+        "children": [
+          {
+            "detection": {
+              "items": [
+                {
+                  "actual": "run powershell",
+                  "field": "CommandLine",
+                  "matched": true,
+                  "matcher": "contains",
+                  "pattern": "powershell",
+                  "reason": "matched"
+                }
+              ],
+              "matched": true,
+              "type": "all_of"
+            },
+            "matched": true,
+            "name": "selection_a",
+            "type": "selection"
+          },
+          {
+            "detection": {
+              "items": [
+                {
+                  "actual": "run powershell",
+                  "field": "CommandLine",
+                  "matched": false,
+                  "matcher": "contains",
+                  "pattern": "whoami",
+                  "reason": "value_mismatch"
+                }
+              ],
+              "matched": false,
+              "type": "all_of"
+            },
+            "matched": false,
+            "name": "selection_b",
+            "type": "selection"
+          }
+        ],
+        "matched": true,
+        "type": "or"
+      }
+    ],
+    "matched": true,
+    "rule_id": "oneof-1",
+    "rule_title": "One Of"
+  }
+]
+"#
+    );
 }
 
 #[test]
