@@ -1,0 +1,6 @@
+title: Evt Name
+detection:
+  s:
+    evt.name: CreateProcess
+    ps.name: cmd.exe
+  condition: s

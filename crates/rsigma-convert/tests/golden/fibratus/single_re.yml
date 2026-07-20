@@ -1,0 +1,5 @@
+title: Single Re
+detection:
+  s:
+    ps.cmdline|re: 'foo.*bar'
+  condition: s

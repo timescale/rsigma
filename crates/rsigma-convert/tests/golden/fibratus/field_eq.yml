@@ -1,0 +1,5 @@
+title: Field Eq
+detection:
+  s:
+    ps.name: cmd.exe
+  condition: s

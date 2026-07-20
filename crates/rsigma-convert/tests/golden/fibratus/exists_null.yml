@@ -1,0 +1,6 @@
+title: Exists Null
+detection:
+  s:
+    ps.exe|exists: true
+    ps.args: null
+  condition: s

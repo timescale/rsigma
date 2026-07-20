@@ -1,0 +1,7 @@
+title: Substring Ops
+detection:
+  s:
+    ps.cmdline|contains: mimikatz
+    ps.exe|startswith: 'C:\Windows'
+    ps.name|endswith: .exe
+  condition: s

@@ -1,0 +1,1 @@
+regex(ps.cmdline, 'foo.*bar', 'baz[0-9]+') = true

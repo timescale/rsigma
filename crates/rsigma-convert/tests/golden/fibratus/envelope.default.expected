@@ -1,0 +1,15 @@
+name: Suspicious Cmd Execution
+id: 11111111-2222-3333-4444-555555555555
+version: 1.0.0
+description: |
+  Detects suspicious cmd.exe execution with encoded payload
+labels:
+  tactic.id: TA0002
+  tactic.name: Execution
+  tactic.ref: 'https://attack.mitre.org/tactics/TA0002/'
+  technique.id: T1059
+  technique.ref: 'https://attack.mitre.org/techniques/T1059/'
+condition: >
+  ps.name ~= 'cmd.exe' and ps.cmdline icontains '-enc'
+min-engine-version: 3.0.0
+

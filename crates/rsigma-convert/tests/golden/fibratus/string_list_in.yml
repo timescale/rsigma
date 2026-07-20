@@ -1,0 +1,8 @@
+title: String List In
+detection:
+  s:
+    ps.name:
+      - a.exe
+      - b.exe
+      - c.exe
+  condition: s

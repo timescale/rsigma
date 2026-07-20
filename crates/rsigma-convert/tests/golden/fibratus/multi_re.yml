@@ -1,0 +1,7 @@
+title: Multi Re
+detection:
+  s:
+    ps.cmdline|re:
+      - 'foo.*bar'
+      - 'baz[0-9]+'
+  condition: s

@@ -1,0 +1,1 @@
+spawn_process and ps.name ~= 'cmd.exe'

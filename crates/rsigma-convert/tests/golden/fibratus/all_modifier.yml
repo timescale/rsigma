@@ -1,0 +1,7 @@
+title: All Modifier
+detection:
+  s:
+    ps.cmdline|contains|all:
+      - powershell
+      - -enc
+  condition: s

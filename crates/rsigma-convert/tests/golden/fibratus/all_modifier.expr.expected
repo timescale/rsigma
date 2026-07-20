@@ -1,0 +1,1 @@
+ps.cmdline icontains 'powershell' and ps.cmdline icontains '-enc'

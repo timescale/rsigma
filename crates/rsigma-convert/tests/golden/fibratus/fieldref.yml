@@ -1,0 +1,5 @@
+title: Fieldref
+detection:
+  s:
+    ps.name|fieldref: ps.exe
+  condition: s

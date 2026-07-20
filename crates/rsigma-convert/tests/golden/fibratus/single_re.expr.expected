@@ -1,0 +1,1 @@
+regex(ps.cmdline, 'foo.*bar') = true

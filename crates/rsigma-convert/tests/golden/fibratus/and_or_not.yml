@@ -1,0 +1,9 @@
+title: And Or Not
+detection:
+  sel_a:
+    ps.name: cmd.exe
+  sel_b:
+    ps.cmdline|contains: whoami
+  filter:
+    ps.exe|endswith: legit.exe
+  condition: (sel_a or sel_b) and not filter

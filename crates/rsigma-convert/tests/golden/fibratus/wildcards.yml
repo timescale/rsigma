@@ -1,0 +1,5 @@
+title: Wildcards
+detection:
+  s:
+    ps.cmdline: '*mimikatz*'
+  condition: s

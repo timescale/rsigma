@@ -1,0 +1,1 @@
+ps.cmdline icontains 'mimikatz' and ps.exe istartswith 'C:\\Windows' and ps.name iendswith '.exe'

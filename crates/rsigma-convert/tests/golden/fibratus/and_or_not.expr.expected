@@ -1,0 +1,1 @@
+(ps.name ~= 'cmd.exe' or ps.cmdline icontains 'whoami') and not (ps.exe iendswith 'legit.exe')

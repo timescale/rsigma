@@ -1,0 +1,5 @@
+title: Numeric Compare
+detection:
+  s:
+    ps.sessionid|gt: 1000
+  condition: s

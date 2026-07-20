@@ -1,0 +1,12 @@
+title: Suspicious Cmd Execution
+id: 11111111-2222-3333-4444-555555555555
+description: Detects suspicious cmd.exe execution with encoded payload
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+detection:
+  s:
+    ps.name: cmd.exe
+    ps.cmdline|contains: -enc
+  condition: s

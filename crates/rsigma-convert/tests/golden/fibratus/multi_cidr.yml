@@ -1,0 +1,7 @@
+title: Multi Cidr
+detection:
+  s:
+    net.dip|cidr:
+      - 10.0.0.0/8
+      - 192.168.0.0/16
+  condition: s

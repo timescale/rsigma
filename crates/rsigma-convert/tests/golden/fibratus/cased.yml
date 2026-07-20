@@ -1,0 +1,5 @@
+title: Cased
+detection:
+  s:
+    ps.name|cased: Cmd.exe
+  condition: s
