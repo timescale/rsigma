@@ -137,7 +137,9 @@ fn negation_node_is_rendered() {
 }
 
 #[test]
-fn quantified_selector_reports_counts() {
+fn quantified_selector_collapses_to_or_in_explain() {
+    // `1 of selection_*` collapses to Or at lower time, so explain walks a
+    // selector-free Or tree rather than a quantified (need/got) node.
     let rule = temp_file(
         ".yml",
         r#"
@@ -166,7 +168,8 @@ detection:
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("(1/1 matched)"))
+        .stdout(predicate::str::contains("any of:"))
+        .stdout(predicate::str::contains("selection_a"))
         .stdout(predicate::str::contains("MATCH"));
 }
 
