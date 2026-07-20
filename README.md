@@ -94,6 +94,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 | Crate | Description |
 |-------|-------------|
 | [`rsigma-parser`](crates/rsigma-parser/) | Parse Sigma YAML into a strongly-typed AST |
+| [`rsigma-ir`](crates/rsigma-ir/) | Intermediate representation shared by evaluation and conversion |
 | [`rsigma-eval`](crates/rsigma-eval/) | Compile and evaluate rules against JSON events |
 | [`rsigma-convert`](crates/rsigma-convert/) | Transform rules into backend-native query strings |
 | [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
@@ -276,7 +277,7 @@ assert_eq!(matches[0].rule_title, "Detect Whoami");
 
 ![rsigma streaming detection architecture](assets/architecture.svg)
 
-A Sigma rule is parsed into a strongly-typed AST (`rsigma-parser`), then compiled and evaluated against live events (`rsigma-eval` inside `rsigma-runtime`), converted into backend-native queries (`rsigma-convert`), or served to editors and AI agents (`rsigma-lsp`, `rsigma-mcp`). The full walkthrough, covering every module and all four execution shapes, lives in the [Architecture reference](https://timescale.github.io/rsigma/reference/architecture/).
+A Sigma rule is parsed into a strongly-typed AST (`rsigma-parser`), lowered into a shared intermediate representation (`rsigma-ir`), then compiled and evaluated against live events (`rsigma-eval` inside `rsigma-runtime`), converted into backend-native queries (`rsigma-convert`), or served to editors and AI agents (`rsigma-lsp`, `rsigma-mcp`). The full walkthrough, covering every module and all four execution shapes, lives in the [Architecture reference](https://timescale.github.io/rsigma/reference/architecture/).
 
 ![rsigma internal architecture](assets/internal_architecture.svg)
 
