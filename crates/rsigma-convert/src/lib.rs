@@ -20,6 +20,7 @@
 pub mod backend;
 pub mod backends;
 pub mod condition;
+pub mod condition_ir;
 pub mod convert;
 pub mod error;
 pub mod output;

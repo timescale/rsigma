@@ -4026,6 +4026,7 @@ dependencies = [
  "log",
  "regex",
  "rsigma-eval",
+ "rsigma-ir",
  "rsigma-parser",
  "serde_json",
  "testcontainers",

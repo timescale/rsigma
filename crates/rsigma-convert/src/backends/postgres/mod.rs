@@ -19,6 +19,7 @@ use rsigma_parser::*;
 
 use crate::backend::*;
 use crate::condition::convert_condition_expr;
+use crate::condition_ir::convert_rule_via_ir;
 use crate::convert::{default_convert_detection, default_convert_detection_item};
 use crate::error::{ConvertError, Result};
 use crate::state::{ConversionState, ConvertResult};
@@ -606,18 +607,7 @@ impl Backend for PostgresBackend {
         output_format: &str,
         pipeline_state: &PipelineState,
     ) -> Result<Vec<String>> {
-        let mut queries = Vec::new();
-        for (idx, cond_expr) in rule.detection.conditions.iter().enumerate() {
-            let mut state = ConversionState::new(pipeline_state.state.clone());
-            state
-                .processing_state
-                .insert("_output_format".to_string(), output_format.into());
-            let query = self.convert_condition(cond_expr, &rule.detection.named, &mut state)?;
-            let finished = self.finish_query(rule, query, &state)?;
-            let finalized = self.finalize_query(rule, finished, idx, &state, output_format)?;
-            queries.push(finalized);
-        }
-        Ok(queries)
+        convert_rule_via_ir(self, rule, output_format, pipeline_state)
     }
 
     // --- Condition tree dispatch ---

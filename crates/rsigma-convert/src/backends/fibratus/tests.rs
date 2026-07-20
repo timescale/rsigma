@@ -518,8 +518,9 @@ detection:
     let err = backend
         .convert_rule(&collection.rules[0], "expr", &PipelineState::default())
         .unwrap_err();
+    let msg = format!("{err}");
     assert!(
-        format!("{err}").contains("lookaround"),
+        msg.contains("lookaround") || msg.contains("look-around"),
         "expected lookaround error, got: {err}",
     );
 }
