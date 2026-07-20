@@ -55,7 +55,7 @@ enum PendingPattern {
 /// `build()`), not when each field setter runs.
 ///
 /// Design decision **DD-PE-001** (rationale, alternatives, consequences):
-/// [Pattern Engine design decisions](https://github.com/timescale/rsigma/blob/main/docs/library/rstix.md#dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters).
+/// [Pattern Engine design decisions](https://github.com/timescale/rsigma/blob/main/docs/content/library/rstix.md#dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters).
 ///
 /// # Examples
 ///

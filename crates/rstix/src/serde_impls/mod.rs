@@ -7,8 +7,8 @@
 //! precision-preserving timestamp formats, and [`Confidence`](crate::core::Confidence)
 //! range validation on deserialize. Typed-ID serde is generated in the
 //! [`define_typed_id!`](crate::core::id) macro so the 42-type list stays
-//! single-sourced. Later Data Model + Serialization work adds type-discriminated
-//! object dispatch, extension-map routing, and streaming readers here.
+//! single-sourced. Bundle/object dispatch, extension-map routing, and streaming
+//! readers are implemented in this module.
 
 mod confidence;
 mod stix_id;

@@ -1,4 +1,4 @@
-//! Timestamp types for STIX and TAXII.
+//! Timestamp types for STIX objects and TAXII-compatible RFC 3339 wire values.
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};

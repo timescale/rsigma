@@ -115,12 +115,12 @@ impl Pattern {
     }
 }
 
-/// Parse a STIX pattern AST without running the type-checker (validation pipeline phase 7).
+/// Parse a STIX pattern AST without running the type-checker.
 pub fn parse_ast(source: &str) -> Result<PatternAst, PatternError> {
     parser::parse(source)
 }
 
-/// Type-check a parsed STIX pattern AST (validation pipeline phase 8).
+/// Type-check a parsed STIX pattern AST.
 pub fn type_check_ast(ast: &PatternAst) -> Result<(), PatternError> {
     typeck::type_check(ast)
 }

@@ -1,4 +1,7 @@
-//! Core STIX/TAXII primitives.
+//! Core STIX primitives (typed ids, timestamps, confidence, language tags).
+//!
+//! Includes [`TaxiiTimestamp`](crate::core::TaxiiTimestamp) for RFC 3339 wire
+//! normalization; this crate does not implement a TAXII client.
 
 mod confidence;
 mod error;

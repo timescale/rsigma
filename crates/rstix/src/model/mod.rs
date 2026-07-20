@@ -1,10 +1,12 @@
 //! STIX 2.1 data model: typed objects and the common property structures they
 //! share.
 //!
-//! The **Data Model + Serialization** phase provides common property containers
+//! With the default `serde` feature, this module provides common property containers
 //! (`common`), all typed object layers (meta, SDO, SRO, SCO), top-level
 //! [`StixObject`] dispatch, and [`Bundle`] parsing with bundle-scoped reference
-//! validation.
+//! validation. Without `serde`, programmatic construction and per-type
+//! [`validate`](crate::model::sdo::Indicator::validate) helpers remain available
+//! but JSON wire parsing is not.
 
 #[cfg(feature = "serde")]
 pub mod bundle;

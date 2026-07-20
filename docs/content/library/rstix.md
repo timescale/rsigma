@@ -1,6 +1,6 @@
 # rstix
 
-`rstix` is the rsigma workspace crate for **STIX 2.1**. It provides typed Rust objects for all 42 built-in STIX types, bundle ingestion, extension round-trip, and a semantic validation pipeline.
+`rstix` is the rsigma workspace crate for **STIX 2.1**. It provides typed Rust objects for all 42 built-in STIX types (3 meta, 19 SDO, 2 SRO, 18 SCO), bundle ingestion with streaming, extension round-trip, T1 advisory validation via `Bundle::validate()` (default `serde`), and an optional T2 Validation Pipeline (`validate` feature).
 
 API reference: [docs.rs/rstix](https://docs.rs/rstix), the [crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md), and the [crate source](https://github.com/timescale/rsigma/tree/main/crates/rstix).
 
@@ -8,8 +8,10 @@ API reference: [docs.rs/rstix](https://docs.rs/rstix), the [crate README](https:
 # Cargo.toml
 [dependencies]
 rstix = "{{ rsigma.version }}"
-# For the pattern engine and validation pipeline:
+# For Pattern Engine + Validation Pipeline:
 # rstix = { version = "{{ rsigma.version }}", features = ["pattern", "validate"] }
+# Graph, marking, store (combine as needed):
+# rstix = { version = "{{ rsigma.version }}", features = ["graph", "marking", "store"] }
 ```
 
 ## Feature status
@@ -17,10 +19,10 @@ rstix = "{{ rsigma.version }}"
 | Area | Status |
 | ----- | ------ |
 | **Core Foundation** (`core`, `id`, `vocab`) | Complete |
-| **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete — STIX 2.1 spec-audit differentials closed (see [Model invariants](#model-invariants-summary)) |
+| **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete — see [Validation tiers](#validation-tiers), [Conformance notes](#conformance-notes-stix-21), and [Model invariants](#model-invariants-summary) |
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
-| **Graph + Marking + Store** (`graph`, `marking`, `store` — property graph, TLP resolution, in-memory store) | **Complete** |
+| **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs` — property graph, TLP resolution, in-memory and filesystem store) | **Complete** |
 
 ## Quick start
 
@@ -38,7 +40,7 @@ let bundle = parse_bundle(json_str)?;
 let file = File::open("enterprise-attack.json")?;
 let bundle = Bundle::parse_reader(BufReader::new(file))?;
 
-// MUST rules enforced at parse; SHOULD rules as warnings
+// T0 MUST rules at parse where wired; T1 SHOULD via bundle.validate()
 let report = bundle.validate();
 for warning in report.warnings_with_code(ValidationCode::StixW0031TlpV1Encoding) {
     eprintln!("{}: {}", warning.object_id.as_deref().unwrap_or("?"), warning.message);
@@ -101,22 +103,21 @@ Evaluation notes (STIX §9):
 - **`TimestampedObservation::at`**: `Option<StixTimestamp>`; patterns with `WITHIN`, `FOLLOWEDBY`, `REPEATS`, or `START`/`STOP` return `MissingTimestamp` when any observation lacks a timestamp. Plain observation expressions accept `at: None`.
 - **`matches_single_with_bundle`**: pass a bundle when Level 1 patterns dereference `_ref` paths. Absent optional `_ref` properties yield no match for comparisons and `false` for `EXISTS`; present refs that cannot be resolved in the bundle still return `RefResolution`.
 - **`LIKE` / `MATCHES` (§9.6.1)**: pattern constants and string property values are NFC-normalized before comparison; `MATCHES` compiles with PCRE DOTALL (`.` matches newlines) and a 1 MiB compile-size cap (`pattern::security`).
-- **Custom SCO types**: vendor types (e.g. `x-usb-device`) deserialize as `CustomSco` and evaluate nested property paths.
+- **Custom SCO types** (`x-usb-device`, …): vendor types deserialize as `CustomSco`; parsed and type-checked permissively (leaf properties as string).
 - **`process:name`**: resolved from `image_ref` → file name when a bundle is present, otherwise from the executable token in `command_line`.
 - **`file:created`**: alias for `ctime`.
 - **`network-traffic:dst_ref.type`**: `_ref` dereference then `type` on the target SCO.
 - **`file:hashes.MD5`**: dictionary dot-key syntax per §9.7.3.
 - **`extensions.'…'`**: predefined SCO extension paths (e.g. `windows-pebinary-ext.sections[*].entropy`).
 - **`ISSUBSET` / `ISSUPERSET` on string**: IP/CIDR subset checks per §9.6.
-- **Custom SCO types** (`x-usb-device`, …): parsed and type-checked permissively (leaf properties as string).
 
-Tests: `tests/fixtures/pattern/` (STIX §9.8), `tests/fixtures/pattern/sco-fields/` (SCO field manifest), `tests/pattern_parse.rs`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, unit modules `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::eval`, `pattern::security`.
+Tests: `tests/fixtures/pattern/` (STIX §9.8), `tests/fixtures/pattern/sco-fields/` (SCO field manifest, 276 cases), `tests/pattern_parse.rs`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, `tests/pattern_eval_security.rs`, `tests/pattern_indicator.rs`, unit modules `pattern::parser::level1`, `level23`, `not`, `pattern::typeck::`, `pattern::eval`, `pattern::security`.
 
 Later workspace phases (TAXII Client) may index indicators by `Pattern::observed_types()` but do not reimplement pattern grammar.
 
 ## Graph + Marking + Store
 
-Three optional, independent features (each implies `serde`):
+Four optional feature flags (each implies `serde`; `store-fs` also implies `store`):
 
 | Feature | Module | Highlights |
 | ------- | ------ | ---------- |
@@ -165,7 +166,7 @@ Formal record of engineering choices for the Pattern Engine. Full text: [crate R
 2. **One error surface** — missing `valid_from`, bad pattern, and model invariants all return from `build()` as `IndicatorBuilderError`.
 3. **Fluent API** — setters return `Self`; callers use a single `?` at the end of the chain.
 
-**Alternatives not chosen:** parse in `stix_pattern() -> Result<Self, _>` (fail-fast but breaks fluent chain); error accumulation in the builder (same outcome, more state); type-state builder (compile-time safety, out of scope for Phase 3).
+**Alternatives not chosen:** parse in `stix_pattern() -> Result<Self, _>` (fail-fast but breaks fluent chain); error accumulation in the builder (same outcome, more state); type-state builder (compile-time safety, out of scope for the Pattern Engine slice).
 
 **Consequences.** Pattern errors appear at `build()`. With `pattern` off, only the raw string is stored. Callers who want eager parse can use `IndicatorPattern::stix(...)?` and `.pattern(...)`.
 
@@ -175,13 +176,14 @@ Formal record of engineering choices for the Pattern Engine. Full text: [crate R
 
 | Symbol | Role |
 | ------ | ---- |
-| `parse_bundle(&str)` | Parse a bundle JSON string with default `ParseOptions` (see the [crate source](https://github.com/timescale/rsigma/tree/main/crates/rstix)). |
-| `Bundle` | Typed container; navigation, serialize, `validate()`. |
+| `parse_bundle(&str)` | Parse a bundle JSON string with default `ParseOptions` (`serde` feature). |
+| `Bundle` | Typed container; navigation, serialize, T1 `validate()` (`serde` feature). |
 | `StixObject` | Top-level enum: SDO / SCO / SRO / Meta / Custom. |
 | `ParseOptions`, `TypeRegistry` | Limits, custom type registration. |
 | `ValidationReport`, `ValidationCode`, `ValidationFinding` | Semantic validation output. |
-| `ParseError`, `model::ModelError` | Parse-time failures (MUST rules). |
-| `Pattern`, `PatternAst`, `PatternScoType`, `PatternError`, `PatternMatchError`, `ObservationContext`, `TimestampedObservation` | STIX pattern parse, type-check, and evaluation (`pattern` feature). |
+| `ParseError`, `model::ModelError` | Parse-time failures for rules enforced at T0 (see [Validation tiers](#validation-tiers)). |
+| `Pattern`, `PatternAst`, `PatternScoType`, `PatternError`, `PatternMatchError` | STIX pattern parse and type-check at crate root (`pattern` feature). |
+| `pattern::ObservationContext`, `pattern::TimestampedObservation` | Pattern evaluation context (`pattern` feature). |
 
 ### `core`
 
@@ -205,7 +207,7 @@ Deterministic SCO UUIDv5: `select_id_contributing_properties`, JCS canonicalizat
 
 ### `vocab`
 
-Closed enums (hash algorithms, encryption algorithms, opinion values) and open vocabularies (`REGION_OV`, malware types, etc.).
+Closed vocabulary tables (`encryption-algorithm-enum`, `opinion-enum`, …), a reference `HASH_ALGORITHM_ENUM` set (hash keys are not validated at parse — see [Conformance notes](#conformance-notes-stix-21)), and open vocabulary tables (`REGION_OV`, malware types, …) used by the Validation Pipeline.
 
 ## Bundle parsing
 
@@ -237,7 +239,8 @@ Closed enums (hash algorithms, encryption algorithms, opinion values) and open v
 | `bundle.get_typed::<T>(&StixId)` | Typed lookup (`Malware`, custom types, …). |
 | `bundle.objects_of_type::<T>()` | Iterator over all objects of type `T`. |
 | `bundle.extra_properties(&StixId)` | Top-level `x_*` and hoisted extension keys peeled at parse. |
-| `bundle.validate_refs()` | Re-run MUST ref resolution (normally called during parse). |
+| `bundle.validate_refs()` | Re-run in-bundle ref existence and ref-kind checks (normally called during parse). |
+| `bundle.validate()` | Collect T1 SHOULD-level semantic warnings. |
 
 Plan API name `get::<T>()` is implemented as **`get_typed::<T>()`** to avoid clashing with untyped `get`.
 
@@ -266,7 +269,7 @@ let bundle = Bundle::parse_with_options(json, &opts)?;
 
 ## Semantic validation (`Bundle::validate`)
 
-Parse enforces STIX **MUST** rules (hard errors). **`Bundle::validate()`** collects **SHOULD**-level and advisory findings without rejecting the bundle.
+Default **`serde` parse** enforces MUST rules wired at the deserialize boundary (see [Validation tiers](#validation-tiers)). **`Bundle::validate()`** collects **SHOULD**-level and advisory findings without rejecting the bundle. Stricter gates use the optional **`validate`** feature (`Validator` profiles).
 
 | `ValidationCode` | Meaning |
 | ---------------- | ------- |
@@ -282,7 +285,9 @@ Parse enforces STIX **MUST** rules (hard errors). **`Bundle::validate()`** colle
 | `RelationshipEndpointMatrixInvalid` | Relationship source/target types outside STIX 2.1 matrix. |
 | `EncryptionAlgorithmInvalid` | Artifact `encryption_algorithm` not in closed vocabulary. |
 
-There is no `strict` parse flag: permissive parse + explicit `validate()` is the supported workflow (see maintainer direction on [issue #267](https://github.com/timescale/rsigma/issues/267)).
+`ValidationCode::LanguageContentFieldUnknown` exists for pipeline/legacy mapping but is **not emitted** by `Bundle::validate()` (§7.1.1 unknown target fields are ignored without a warning).
+
+There is no `strict` parse flag on `Bundle::parse`. Use **`Validator`** profiles when structured diagnostics or profile-driven pass/fail is required.
 
 ### Data Model + Serialization design decisions
 
@@ -298,7 +303,7 @@ Formal record of wire-parse engineering choices. Full text: [crate README — Da
 | **Applies to** | `serde` feature (default), `domain-name`, `email-addr`, `url` SCO types |
 | **Spec** | STIX 2.1 §6.4, §6.5, §6.15 |
 
-**Decision.** Malformed `domain-name`, `email-addr`, and `url` values are **rejected at default `serde` parse**, not deferred to the Validation Pipeline. Supersedes PR #315 permissive-parse posture for these three fields only. General MUST vs SHOULD split: [issue #267](https://github.com/timescale/rsigma/issues/267).
+**Decision.** Malformed `domain-name`, `email-addr`, and `url` values are **rejected at default `serde` parse**. URL schemes are limited to `http`, `https`, and `ftp`. Other wire-format checks use T1 (`Bundle::validate()`) or T2 (Validation Pipeline) as documented in [Validation tiers](#validation-tiers).
 
 ## Wire-format validation (DD-DM-001)
 
@@ -339,11 +344,11 @@ Do not use `HashMap` for a new property bag that participates in `roundtrip_stri
 | Wire round-trip | `tests/spec.rs`, `tests/fixtures/spec/` |
 | Bundle integration | `tests/bundle.rs` |
 | Semantic validation | `tests/validation.rs`, `tests/fixtures/validation/` |
-| Validation Pipeline | `tests/validate_conformance.rs`, `tests/validate_diagnostic_coverage.rs`, `tests/fixtures/conformance/` (`validate` feature) |
+| Validation Pipeline | `tests/validate_conformance.rs`, `tests/validate_diagnostic_coverage.rs`, `tests/validate_pipeline.rs`, `tests/fixtures/conformance/` (`validate` feature) |
 | Graph / Marking / Store | `tests/graph.rs`, `tests/marking.rs`, `tests/store.rs`, `tests/store_fs.rs` |
 | Streaming + custom types + ATT&CK | `tests/integration.rs` |
-| Pattern parse + type-check + evaluation | `tests/pattern_parse.rs`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, `tests/fixtures/pattern/`, `tests/fixtures/pattern/sco-fields/` (requires `pattern` feature) |
-| Fuzz | `fuzz/fuzz_targets/fuzz_rstix_parse_bundle.rs` |
+| Pattern parse + type-check + evaluation | `tests/pattern_parse.rs`, `tests/pattern_eval.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, `tests/pattern_eval_security.rs`, `tests/pattern_indicator.rs`, `tests/fixtures/pattern/`, `tests/fixtures/pattern/sco-fields/` (requires `pattern` feature) |
+| Fuzz | `fuzz/fuzz_targets/fuzz_rstix_parse_bundle.rs`, `fuzz/fuzz_targets/fuzz_rstix_validate_json.rs` (`validate` feature) |
 
 Run crate tests:
 
@@ -351,6 +356,8 @@ Run crate tests:
 cargo test -p rstix --features serde
 cargo test -p rstix --features pattern   # Pattern Engine
 ```
+
+<a id="local-mitre-attck-corpus-test"></a>
 
 ### Local MITRE ATT&CK corpus
 
@@ -377,20 +384,61 @@ A STIX **2.1** bundle can contain `marking-definition` objects that still use th
 
 Full developer guide: [crate README — STIX version vs TLP marking encoding](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#stix-version-vs-tlp-marking-encoding).
 
+<a id="validation-tiers"></a>
+
+## Validation tiers
+
+| Tier | API | Severity | Examples |
+| ---- | --- | -------- | -------- |
+| **T0 — parse** | `Bundle::parse`, `parse_reader`, leaf `Deserialize` | Hard error | Type discriminants, in-bundle ref existence, DD-DM-001 domain/email/url format, SCO MUST in `validate()` at deserialize |
+| **T1 — advisory** | `Bundle::validate()` | Warnings only | Relationship matrix, TLP v1 (STIX-W0031), granular selectors, language-content mirroring, location ISO/region, SCO deterministic id |
+| **T2 — pipeline** | `Validator` (`validate` feature) | Structured diagnostics | All twelve validation phases, conformance corpus |
+
+Full detail: [crate README — Validation tiers](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#validation-tiers).
+
+<a id="conformance-notes-stix-21"></a>
+
+## Conformance notes (STIX 2.1)
+
+rstix **phase delivery is complete** for bundle parse, patterning, validation pipeline, graph, marking, and store. **Wire conformance** is substantially met with documented exceptions:
+
+| Topic | rstix behavior today |
+| ----- | -------------------- |
+| Report / Grouping / Note / Opinion `object_refs` | Ref kind limited to **SDO or SCO** at bundle parse; empty lists accepted |
+| SDO `name` / grouping `context` | Empty strings accepted at parse |
+| Malware Analysis time ordering | Not checked in `MalwareAnalysis::validate()` |
+| Language-content `object_ref` | **SDO-only** ref kind; target must exist in bundle |
+| IPv4 / IPv6 / MAC `value` | Non-empty string only (no address/MAC syntax check) |
+| URL schemes | `http`, `https`, `ftp` only (DD-DM-001) |
+| `encryption-algorithm-enum` | Advisory check uses `ENCRYPTION_ALGORITHM_ENUM`, which does not match the STIX 2.1 normative set |
+| `hash-algorithm-ov` | Open in STIX; hash keys not validated at parse |
+| Open vocabulary tables | Curated subsets in `vocab/open.rs`; unknown wire values not rejected at T0 |
+
+Full table: [crate README — Conformance notes](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#conformance-notes-stix-21).
+
+<a id="model-invariants-summary"></a>
+
 ## Model invariants (summary)
 
 Full table: [crate README — Model invariant decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#model-invariant-decisions-modelcommon).
 
-- **MUST at parse:** id/type match, ref resolution in bundle, extension routing, SCO forbidden common props, SDO/SRO time ordering, domain/email/url format checks, `_enc` IANA charset + pairing, and type-specific MUST rules documented in `ModelError`.
-- **SHOULD via `validate()`:** relationship matrix, CAPEC/CVE, encryption algorithm, TLP v1 warnings (STIX-W0031), granular selector semantics, language-content rules, location country/region vocabularies, SCO deterministic id.
-- **Spec-audit closure (2026-07):** granular selector semantics, language-content nested mirroring, standalone `common.extra`, observed-data embedded SRO, location ISO 3166 / region-ov, full spec `_enc` inventory — all resolved; see crate README invariant table.
+- **T0 (parse):** id/type match, in-bundle ref resolution, extension routing, SCO forbidden common props, SDO/SRO time ordering, DD-DM-001 domain/email/url format, `_enc` IANA charset + pairing, and type-specific MUST rules documented in `ModelError`.
+- **T1 (`Bundle::validate()`):** relationship matrix, CAPEC/CVE, encryption algorithm, TLP v1 warnings (STIX-W0031), granular selector semantics, language-content rules, location country/region vocabularies, SCO deterministic id.
+- **Partial T0:** report/grouping/note/opinion `object_refs` (SDO/SCO kind only; empty lists allowed); see [Conformance notes](#conformance-notes-stix-21).
 - **Map types:** wire-facing property bags use `BTreeMap` for deterministic JSON key order; internal id indexes use `HashMap`.
 
 Pattern Engine engineering choices (separate from STIX spec invariants): [Pattern Engine design decisions](#pattern-engine-design-decisions).
 
 ## Validation Pipeline
 
-Optional **`validate`** feature (implies `serde` + `pattern`). Distinct from advisory [`Bundle::validate()`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#validation-pipeline) — see **DD-VP-001** in the crate README.
+Optional **`validate`** feature (implies `serde` + `pattern`) adds profile-based **`Validator`** with structured `STIX-E/W/I/H` diagnostics (T2). Advisory **`Bundle::validate()`** (T1) is available with **`serde` alone**; with `validate` enabled it routes through `validate::legacy::bundle_validate` for alignment with pipeline semantic checks — see **DD-VP-001** in the crate README.
+
+| Profile | Phases | Use case |
+| ------- | ------ | -------- |
+| `consumer_permissive` | JSON, type, schema, references (4 of 12) | Mixed-trust ingest |
+| `consumer_strict` | all 12 | Untrusted external input |
+| `producer_strict` | all except references (11 of 12) | Publishing/export |
+| `interop_strict` | all 12, zero leniency | OASIS interop tests |
 
 ```rust
 use rstix::validate::{Validator, ValidationPhase};
@@ -404,7 +452,7 @@ let partial = Validator::builder()
     .validate_bundle(&bundle);
 ```
 
-**Current status:** all twelve checks are implemented. The conformance harness runs against bundled in-repo fixtures for deterministic CI.
+All twelve pipeline checks are implemented. The conformance harness (`tests/fixtures/conformance/`) and `validate_diagnostic_coverage` assert one case per `DiagnosticCode::ALL` entry (39 codes).
 
 ## Feature flags
 

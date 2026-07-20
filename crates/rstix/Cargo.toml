@@ -1,6 +1,6 @@
 [package]
 name = "rstix"
-description = "STIX 2.1 + TAXII 2.1 library for Rust"
+description = "STIX 2.1 library for Rust"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true

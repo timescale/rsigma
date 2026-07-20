@@ -64,7 +64,7 @@ impl CourseOfAction {
     /// STIX type name for courses of action.
     pub const TYPE_NAME: &'static str = "course-of-action";
 
-    /// Rejects empty `name`.
+    /// Check common SDO properties.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)
     }

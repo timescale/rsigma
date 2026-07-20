@@ -93,7 +93,7 @@ impl Default for ParseOptions {
 }
 
 impl ParseOptions {
-    /// Create options with defaults from the Data Model + Serialization plan.
+    /// Create options with default parse limits.
     pub fn new() -> Self {
         Self::default()
     }

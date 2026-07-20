@@ -50,7 +50,7 @@ impl ValidationPhase {
     /// Checks that currently perform validation logic.
     pub const IMPLEMENTED: [Self; 12] = Self::ALL;
 
-    /// Whether this check performs validation logic today.
+    /// Whether this check performs validation logic.
     pub const fn is_implemented(self) -> bool {
         true
     }

@@ -370,7 +370,7 @@ pub enum ModelError {
     /// URL value failed basic format validation.
     #[error("url value has invalid format")]
     UrlFormatInvalid,
-    /// Encryption algorithm is not in the STIX closed vocabulary.
+    /// Encryption algorithm is not in the rstix closed vocabulary table.
     #[error("artifact encryption_algorithm is not in the STIX closed vocabulary")]
     EncryptionAlgorithmInvalid,
     /// SCO id does not match deterministic id generation from contributing properties.

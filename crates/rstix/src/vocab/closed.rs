@@ -1,4 +1,7 @@
-//! Closed vocabulary tables (unknown values are errors in validation).
+//! Closed vocabulary tables used by parse-time and bundle validation.
+//!
+//! Unknown values are rejected only when the corresponding validator runs.
+//! The encryption-algorithm table is a rstix subset, not the full STIX §3.9.1 enum.
 
 /// Encryption algorithm enum.
 pub static ENCRYPTION_ALGORITHM_ENUM: phf::Set<&'static str> = phf::phf_set! {

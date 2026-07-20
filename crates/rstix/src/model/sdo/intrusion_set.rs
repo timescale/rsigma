@@ -96,7 +96,7 @@ impl IntrusionSet {
     /// STIX type name for intrusion sets.
     pub const TYPE_NAME: &'static str = "intrusion-set";
 
-    /// Check intrusion-set invariants (non-empty name, time ordering).
+    /// Check intrusion-set invariants (time ordering when both timestamps are set).
     pub fn validate(&self) -> Result<(), ModelError> {
         self.common.validate(Self::TYPE_NAME)?;
         validate_first_last_seen(&self.first_seen, &self.last_seen)

@@ -8,7 +8,7 @@ use super::diagnostic::{Diagnostic, Severity};
 /// When both report types are in scope, prefer the crate-root alias
 /// [`crate::PipelineValidationReport`]. With the `validate` feature enabled,
 /// [`crate::model::Bundle::validate`] delegates to the same semantic helpers as
-/// phases 10 and 12 (DD-VP-001).
+/// cross-object semantic and TLP marking checks (DD-VP-001).
 #[doc(alias = "PipelineValidationReport")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidationReport {

@@ -6,8 +6,9 @@ use crate::model::common::SdoSroCommonProps;
 
 /// A STIX grouping asserting shared context among referenced objects (STIX §4.4).
 ///
-/// Required properties: common SDO fields, `name`, `context`, and `object_refs`.
-/// Optional field: `description`.
+/// Required properties per STIX §4.4.1: common SDO fields, `name`, `context`, and
+/// `object_refs`. The spec requires non-empty values for those fields; empty strings
+/// or lists may still parse (see crate README conformance notes).
 ///
 /// # Examples
 ///

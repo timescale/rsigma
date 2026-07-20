@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-//! STIX 2.1 + TAXII 2.1 library for Rust.
+//! STIX 2.1 library for Rust.
 
 /// Core types shared across the crate.
 pub mod core;

@@ -6,8 +6,10 @@ use crate::model::common::SdoSroCommonProps;
 
 /// A collection of related STIX objects published as a threat-intelligence report (STIX §4.16).
 ///
-/// Required properties: common SDO fields plus `name`, `published`, and a non-empty
-/// [`object_refs`](Self::object_refs) list (STIX §4.16.1).
+/// Required properties per STIX §4.16.1: common SDO fields plus `name`,
+/// `published`, and `object_refs`. The spec requires a non-empty
+/// [`object_refs`](Self::object_refs) list; empty lists may still parse (see crate
+/// README conformance notes).
 ///
 /// # Examples
 ///

@@ -1,4 +1,6 @@
-//! Typed views of [`StixObject`] for bundle navigation (`get`, `objects_of_type`).
+//! Typed views of [`StixObject`] for bundle navigation
+//! ([`Bundle::get_typed`](crate::model::Bundle::get_typed),
+//! [`Bundle::objects_of_type`](crate::model::Bundle::objects_of_type)).
 
 #[cfg(feature = "serde")]
 use crate::model::stix_object::StixObject;
