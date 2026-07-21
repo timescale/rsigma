@@ -61,14 +61,18 @@ cd ../../../..
 cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
 ```
 
-## After `git pull` (Caddyfile or zone changes)
+## After updating harness files
 
-Recreate Caddy so config reloads:
+If you pulled changes to `Caddyfile`, `docker-compose.yml`, or the CoreDNS zone, recreate Caddy so config reloads:
 
 ```bash
 cd crates/rstix/tests/taxii-live
 docker compose up -d --force-recreate caddy
 ```
+
+## Same machine vs remote Docker
+
+The tests assume the Rust client and Docker stack run on the **same host** (`127.0.0.1` / `localhost`). If Docker runs elsewhere, you must adjust URLs, firewall, cert SANs, and the zone file yourself — that path is not automated.
 
 ## Stop stack
 
@@ -78,14 +82,3 @@ docker compose down
 ```
 
 Regenerate certs: `rm -rf fixtures/certs && ./generate-certs.sh`
-
-## VM workflow
-
-```bash
-git clone <repo-url> rsigma && cd rsigma
-git checkout feat/rstix-taxii-client
-./crates/rstix/tests/taxii-live/run-live-tests.sh
-cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
-```
-
-Client and Docker on the same VM — no IP or env changes needed.

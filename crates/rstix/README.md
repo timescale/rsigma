@@ -535,7 +535,7 @@ cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
 
 **Wiremock (CI-style):** `cargo test -p rstix --features taxii --test taxii_client` — **59** tests on plain HTTP.
 
-**Live (optional, manual):** three `#[ignore]` tests in `tests/taxii_live.rs` after the stack script above. Verified on a VM with Docker: TLS (`127.0.0.1:8443`), mTLS (`localhost:8444` — Caddy strict SNI; do not use the IP for mTLS), SRV (CoreDNS `127.0.0.1:5353` via `dns_nameserver()`). Not run in default workspace CI.
+**Live (optional, manual):** three `#[ignore]` tests in `tests/taxii_live.rs` after the stack script above. Requires Docker on the same machine as the test runner. TLS uses `127.0.0.1:8443`; mTLS uses `localhost:8444` (Caddy strict SNI — IP Host returns HTTP 421); SRV uses CoreDNS at `127.0.0.1:5353` via `dns_nameserver()`. Not run in default workspace CI.
 
 | Area | Wiremock E2E | Live (Docker) | Unit / other |
 | ---- | ------------ | ------------- | ------------ |
