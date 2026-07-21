@@ -196,6 +196,58 @@ function escapeHtml(text) {
 }
 
 /**
+ * Render inline-code spans (`` `code` ``) in an already-HTML-escaped string as
+ * `<code>` elements. Used where HTML renders (the visible header title).
+ *
+ * @param {string} escaped
+ * @returns {string}
+ */
+function inlineCodeToHtml(escaped) {
+  return escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+/**
+ * Drop inline-code backticks, keeping the inner text. Used in plain-text
+ * contexts (`<title>`, Open Graph / Twitter meta) where HTML does not render.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripInlineCode(text) {
+  return text.replace(/`([^`]+)`/g, "$1");
+}
+
+/**
+ * docmd derives the page title from the first Markdown H1 but keeps the raw
+ * text, so a heading like `` # `rsigma engine discover-schemas` `` leaves
+ * literal backticks in the header bar, the `<title>`, and the social meta. Fix
+ * that after render: the visible header title renders the code span as `<code>`
+ * (matching the in-body H1), and the plain-text `<title>` / meta strip the
+ * markers. Pages whose title has no backticks are left untouched.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function renderMarkdownTitles(html) {
+  let out = html.replace(
+    /(<span class="header-title">)([\s\S]*?)(<\/span>)/,
+    (match, open, inner, close) =>
+      inner.includes("`") ? `${open}${inlineCodeToHtml(inner.trim())}${close}` : match,
+  );
+  out = out.replace(
+    /(<title>)([\s\S]*?)(<\/title>)/,
+    (match, open, inner, close) =>
+      inner.includes("`") ? `${open}${stripInlineCode(inner)}${close}` : match,
+  );
+  out = out.replace(
+    /(<meta (?:property="og:title"|name="twitter:title") content=")([^"]*)(">)/g,
+    (match, open, content, close) =>
+      content.includes("`") ? `${open}${stripInlineCode(content)}${close}` : match,
+  );
+  return out;
+}
+
+/**
  * Append a plain-text site label beside the sidebar logo image.
  *
  * @param {string} html
@@ -338,6 +390,7 @@ export default {
     await writeBrandImages(path.join(docsRoot, "assets", "images"), logoPng);
     let stripped = 0;
     let logoTextInjected = 0;
+    let titlesRendered = 0;
     const logoText =
       typeof ctx?.config?.logo === "object" && ctx.config.logo.text
         ? String(ctx.config.logo.text)
@@ -355,13 +408,19 @@ export default {
           next = withLogoText;
         }
       }
+      const withTitles = renderMarkdownTitles(next);
+      if (withTitles !== next) {
+        titlesRendered += 1;
+        next = withTitles;
+      }
       if (next !== html) {
         fs.writeFileSync(file, next);
       }
     }
     log(
       `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages` +
-        (logoText ? `, added logo text to ${logoTextInjected} pages` : ""),
+        (logoText ? `, added logo text to ${logoTextInjected} pages` : "") +
+        `, rendered Markdown in ${titlesRendered} page titles`,
     );
   },
 };
