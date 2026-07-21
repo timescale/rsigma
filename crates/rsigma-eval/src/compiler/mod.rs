@@ -7,9 +7,6 @@
 //! variants (regex, Aho-Corasick, `IpNet`, lowercased patterns) that evaluate
 //! efficiently against events. Modifier interpretation happens during lowering;
 //! this module turns the resolved matchers into executable artifacts.
-//!
-//! [`compile_rule_legacy`] retains the pre-IR direct AST-to-`CompiledRule`
-//! compiler for the dual-path differential.
 
 mod from_ir;
 mod helpers;
@@ -250,69 +247,9 @@ impl ModCtx {
 /// Compile a parsed `SigmaRule` into a `CompiledRule`.
 ///
 /// Routes through the IR layer: `lower_rule` → [`compile_to_compiled`].
-/// For the pre-IR direct compiler, see [`compile_rule_legacy`].
 pub fn compile_rule(rule: &SigmaRule) -> Result<CompiledRule> {
     let ir = rsigma_ir::lower_rule(rule, &rsigma_ir::LowerOptions::default())?;
     compile_to_compiled(&ir)
-}
-
-/// Legacy direct AST→`CompiledRule` compiler (no IR).
-///
-/// Kept for dual-path differential testing against [`compile_rule`].
-pub fn compile_rule_legacy(rule: &SigmaRule) -> Result<CompiledRule> {
-    let mut detections = HashMap::new();
-    for (name, detection) in &rule.detection.named {
-        detections.insert(name.clone(), compile_detection(detection)?);
-    }
-
-    for condition in &rule.detection.conditions {
-        validate_condition_refs(condition, &detections)?;
-    }
-
-    let include_event = rule
-        .custom_attributes
-        .get("rsigma.include_event")
-        .and_then(|v| v.as_str())
-        == Some("true");
-
-    let custom_attributes = Arc::new(yaml_to_json_map(&rule.custom_attributes));
-
-    Ok(CompiledRule {
-        title: rule.title.clone(),
-        id: rule.id.clone(),
-        level: rule.level,
-        tags: rule.tags.clone(),
-        logsource: rule.logsource.clone(),
-        detections,
-        conditions: rule.detection.conditions.clone(),
-        include_event,
-        custom_attributes,
-    })
-}
-
-/// Validate that all `Identifier` references in a condition expression resolve
-/// to an existing detection name. `Selector` patterns are exempt because they
-/// match by glob/wildcard and zero matches is semantically valid.
-fn validate_condition_refs(
-    expr: &ConditionExpr,
-    detections: &HashMap<String, CompiledDetection>,
-) -> Result<()> {
-    match expr {
-        ConditionExpr::Identifier(name) => {
-            if !detections.contains_key(name) {
-                return Err(EvalError::UnknownDetection(name.clone()));
-            }
-            Ok(())
-        }
-        ConditionExpr::And(exprs) | ConditionExpr::Or(exprs) => {
-            for e in exprs {
-                validate_condition_refs(e, detections)?;
-            }
-            Ok(())
-        }
-        ConditionExpr::Not(inner) => validate_condition_refs(inner, detections),
-        ConditionExpr::Selector { .. } => Ok(()),
-    }
 }
 
 /// Evaluate a compiled rule against an event, returning an
