@@ -37,9 +37,7 @@ impl ClientCertificate {
         )
         .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?;
         let (_alias, chain) = keystore.private_key_chain().ok_or_else(|| {
-            TaxiiError::InvalidClientCertificate(
-                "PKCS#12 archive contains no private key".into(),
-            )
+            TaxiiError::InvalidClientCertificate("PKCS#12 archive contains no private key".into())
         })?;
         Self::from_rustls_parts(chain.certs(), chain.key().as_der())
     }
