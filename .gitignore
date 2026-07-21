@@ -1,5 +1,6 @@
 /target
 /fuzz/target
+/ci/wasm-smoke/target
 *.profdata
 
 # VSCode extension build artifacts

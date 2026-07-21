@@ -17,7 +17,11 @@ use rsigma_parser::{
     ConditionExpr, FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule,
 };
 
-use crate::compiler::{CompiledRule, compile_detection, compile_rule, evaluate_rule_with_bloom};
+use rsigma_ir::{IrRule, LowerOptions, lower_rule};
+
+use crate::compiler::{
+    CompiledRule, compile_detection, compile_to_compiled, evaluate_rule_with_bloom,
+};
 use crate::error::{EvalError, Result};
 use crate::event::Event;
 use crate::logsource::LogSourceExtractor;
@@ -69,6 +73,11 @@ use filters::{
 /// ```
 pub struct Engine {
     rules: Vec<CompiledRule>,
+    /// Post-pipeline, pre-filter HIR for rules added via the parsed-rule paths,
+    /// retained so [`Engine::save_hir`] can serialize a restart cache. Kept in
+    /// step with `rules` for those paths; rules added via `add_compiled_rule`
+    /// have no HIR and are not represented here.
+    ir_rules: Vec<IrRule>,
     pipelines: Vec<Pipeline>,
     /// Global override: include the full event JSON in all match results.
     /// When `true`, overrides per-rule `rsigma.include_event` custom attributes.
@@ -139,6 +148,7 @@ impl Engine {
     pub fn new() -> Self {
         Engine {
             rules: Vec::new(),
+            ir_rules: Vec::new(),
             pipelines: Vec::new(),
             include_event: false,
             match_detail: MatchDetailLevel::Off,
@@ -163,6 +173,7 @@ impl Engine {
     pub fn new_with_pipeline(pipeline: Pipeline) -> Self {
         Engine {
             rules: Vec::new(),
+            ir_rules: Vec::new(),
             pipelines: vec![pipeline],
             include_event: false,
             match_detail: MatchDetailLevel::Off,
@@ -356,8 +367,7 @@ impl Engine {
     /// call falls back to a full rebuild because the daachorse automaton
     /// has no incremental update path.
     pub fn add_rule(&mut self, rule: &SigmaRule) -> Result<()> {
-        let compiled = self.compile_with_pipelines(rule)?;
-        self.rules.push(compiled);
+        self.compile_and_store(rule)?;
         self.index_append_last_rule();
         Ok(())
     }
@@ -379,9 +389,8 @@ impl Engine {
     {
         let mut errors = Vec::new();
         for (idx, rule) in rules.into_iter().enumerate() {
-            match self.compile_with_pipelines(rule) {
-                Ok(compiled) => self.rules.push(compiled),
-                Err(e) => errors.push((idx, e)),
+            if let Err(e) = self.compile_and_store(rule) {
+                errors.push((idx, e));
             }
         }
         self.rebuild_index();
@@ -395,8 +404,7 @@ impl Engine {
     /// The inverted index is rebuilt once after all rules and filters are loaded.
     pub fn add_collection(&mut self, collection: &SigmaCollection) -> Result<()> {
         for rule in &collection.rules {
-            let compiled = self.compile_with_pipelines(rule)?;
-            self.rules.push(compiled);
+            self.compile_and_store(rule)?;
         }
         for filter in &collection.filters {
             self.apply_filter_no_rebuild(filter)?;
@@ -405,17 +413,60 @@ impl Engine {
         Ok(())
     }
 
-    /// Compile a rule, applying any configured pipelines first. Shared by
-    /// the single- and batched-add paths so they stay behaviourally
-    /// identical.
-    fn compile_with_pipelines(&self, rule: &SigmaRule) -> Result<CompiledRule> {
+    /// Lower a rule to HIR (applying any configured pipelines first), compile
+    /// it, and store both the HIR and the compiled rule. Shared by the single-
+    /// and batched-add paths so they stay behaviourally identical, and so the
+    /// retained HIR (`ir_rules`) tracks `rules` for [`Engine::save_hir`].
+    ///
+    /// Both pushes happen only after lowering and compilation succeed, so a
+    /// failing rule leaves neither vector mutated.
+    fn compile_and_store(&mut self, rule: &SigmaRule) -> Result<()> {
+        let ir = self.lower_with_pipelines(rule)?;
+        let compiled = compile_to_compiled(&ir)?;
+        self.ir_rules.push(ir);
+        self.rules.push(compiled);
+        Ok(())
+    }
+
+    /// Lower a rule to HIR, applying any configured pipelines first.
+    fn lower_with_pipelines(&self, rule: &SigmaRule) -> Result<IrRule> {
         if self.pipelines.is_empty() {
-            compile_rule(rule)
+            Ok(lower_rule(rule, &LowerOptions::default())?)
         } else {
             let mut transformed = rule.clone();
             apply_pipelines(&self.pipelines, &mut transformed)?;
-            compile_rule(&transformed)
+            Ok(lower_rule(&transformed, &LowerOptions::default())?)
         }
+    }
+
+    /// Serialize the retained rule HIR to a versioned cache blob (see
+    /// [`rsigma_ir::encode_rules`]).
+    ///
+    /// The blob captures rules added via the parsed-rule paths (`add_rule`,
+    /// `add_rules`, `add_collection`, and the pipeline variants) in
+    /// post-pipeline, pre-filter form. It does **not** capture filter
+    /// injections (applied to the compiled rules) or rules added via
+    /// [`Engine::add_compiled_rule`] / [`Engine::extend_compiled_rules`].
+    /// Re-apply any filters after [`Engine::load_hir`] if the engine used them.
+    pub fn save_hir(&self) -> Result<Vec<u8>> {
+        Ok(rsigma_ir::encode_rules(&self.ir_rules)?)
+    }
+
+    /// Load rules from a HIR cache blob produced by [`Engine::save_hir`],
+    /// compiling each into the engine and rebuilding the indexes once.
+    ///
+    /// Rules are appended to any already loaded, so a warm start loads into a
+    /// fresh [`Engine::new`]. A blob whose schema version differs from this
+    /// build's is rejected (see [`rsigma_ir::decode_rules`]).
+    pub fn load_hir(&mut self, bytes: &[u8]) -> Result<()> {
+        let rules = rsigma_ir::decode_rules(bytes)?;
+        for ir in rules {
+            let compiled = compile_to_compiled(&ir)?;
+            self.ir_rules.push(ir);
+            self.rules.push(compiled);
+        }
+        self.rebuild_index();
+        Ok(())
     }
 
     /// Add all detection rules from a collection, applying the given pipelines.

@@ -27,6 +27,11 @@ The HIR is modifier-resolved. Quantified selectors keep their quantifier and nam
 | [`LowerOptions`] | Strict vs placeholder-preserving lowering |
 | [`optimize_rule`] / [`flatten_condition`] / [`eliminate_dead_detections`] | Opt-in, semantics-preserving HIR passes |
 | [`common_subexpressions`] | Non-mutating analysis of repeated detection items |
+| [`encode_rules`] / [`decode_rules`] / [`HirCacheHeader`] | Versioned HIR cache (CBOR) with schema-version check |
+
+## HIR cache
+
+`cache::*` serializes a slice of lowered rules to a versioned, self-describing blob for an on-disk cache (e.g. a daemon restart cache that skips parse, pipeline, and lowering). The blob is a [`HirCacheHeader`] (schema version + producing crate version) followed by the rules; `decode_rules` reads and version-checks the header before decoding the rules, rejecting an incompatible [`HIR_SCHEMA_VERSION`]. CBOR is the wire format because the HIR embeds `LogSource`, whose `#[serde(flatten)]` map has an unknown length that fixed-layout encoders reject. `cache::to_json` gives a human-readable debug export.
 
 ## Optimization passes
 
@@ -36,6 +41,7 @@ The HIR is modifier-resolved. Quantified selectors keep their quantifier and nam
 
 - Sync-only: no tokio, reqwest, or other async runtime dependencies.
 - Default lowering rejects unresolved `${source.*}` placeholders.
+- All HIR types derive `serde::{Serialize, Deserialize}` for the cache and JSON export.
 
 ## License
 
@@ -58,3 +64,7 @@ MIT. See the repository root.
 [`flatten_condition`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.flatten_condition.html
 [`eliminate_dead_detections`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.eliminate_dead_detections.html
 [`common_subexpressions`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.common_subexpressions.html
+[`encode_rules`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/cache/fn.encode_rules.html
+[`decode_rules`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/cache/fn.decode_rules.html
+[`HirCacheHeader`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/cache/struct.HirCacheHeader.html
+[`HIR_SCHEMA_VERSION`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/cache/constant.HIR_SCHEMA_VERSION.html

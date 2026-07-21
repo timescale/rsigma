@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, SigmaParserError};
 
@@ -215,7 +215,7 @@ impl fmt::Display for SigmaValue {
 // =============================================================================
 
 /// Unit of time for a [`Timespan`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimespanUnit {
     Second,
     Minute,
@@ -244,7 +244,7 @@ impl fmt::Display for TimespanUnit {
 /// A parsed timespan like `1h`, `15s`, `30m`, `7d`.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationTimespan
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timespan {
     pub count: u64,
     pub unit: TimespanUnit,
