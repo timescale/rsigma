@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt;
 use reqwest::{Method, StatusCode, header::HeaderMap};
 use url::Url;
 
@@ -162,16 +163,11 @@ impl TaxiiHttp {
         if let (Some(skew), Ok(mut guard)) = (clock_skew, self.clock_skew.write()) {
             *guard = Some(skew);
         }
-        let bytes = response.bytes().await.map_err(TaxiiError::NetworkError)?;
-        if bytes.len() > self.max_response_bytes {
-            return Err(TaxiiError::ResponseTooLarge {
-                max: self.max_response_bytes,
-            });
-        }
+        let body = read_response_body(response, self.max_response_bytes).await?;
         Ok(TaxiiResponse {
             status,
             headers,
-            body: bytes.to_vec(),
+            body,
             clock_skew,
         })
     }
@@ -198,9 +194,44 @@ impl TaxiiHttp {
         };
         let port = url.port().unwrap_or(443);
         let records = super::dns::resolve_tlsa_with(host, port, self.dns_nameserver).await?;
+        if records.is_empty() {
+            return Err(TaxiiError::InvalidServerTrust {
+                reason: format!("DANE: no TLSA records for {host}:{port}"),
+            });
+        }
         self.tlsa_cache.insert(host.to_owned(), records);
         Ok(())
     }
+}
+
+fn check_content_length(len: Option<u64>, max_response_bytes: usize) -> Result<(), TaxiiError> {
+    if let Some(len) = len
+        && len > max_response_bytes as u64
+    {
+        return Err(TaxiiError::ResponseTooLarge {
+            max: max_response_bytes,
+        });
+    }
+    Ok(())
+}
+
+async fn read_response_body(
+    response: reqwest::Response,
+    max_response_bytes: usize,
+) -> Result<Vec<u8>, TaxiiError> {
+    check_content_length(response.content_length(), max_response_bytes)?;
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(TaxiiError::NetworkError)?;
+        if body.len().saturating_add(chunk.len()) > max_response_bytes {
+            return Err(TaxiiError::ResponseTooLarge {
+                max: max_response_bytes,
+            });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 pub(crate) fn default_user_agent() -> String {
@@ -256,5 +287,11 @@ mod tests {
         headers.insert(reqwest::header::CONTENT_TYPE, "text/plain".parse().unwrap());
         let err = validate_success_content_type(&headers).unwrap_err();
         assert!(matches!(err, TaxiiError::InvalidContentType { .. }));
+    }
+
+    #[test]
+    fn content_length_over_max_is_rejected_before_read() {
+        let err = check_content_length(Some(1024), 512).unwrap_err();
+        assert!(matches!(err, TaxiiError::ResponseTooLarge { max: 512 }));
     }
 }

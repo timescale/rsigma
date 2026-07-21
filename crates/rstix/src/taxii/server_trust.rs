@@ -1,4 +1,14 @@
-//! Server TLS trust policies: PKIX, SPKI pinning, and DANE (spec section 8.5.2).
+//! Server TLS trust policies: PKIX, SPKI pinning, and DANE (TAXII 2.1 spec section 8.5.2).
+//!
+//! Default verification follows PKIX (RFC 5280 / RFC 6125). Optional policies:
+//!
+//! - **SPKI pinning** — [`ServerTrustPolicy::PinnedSpki`] adds a pin check before PKIX;
+//!   [`ServerTrustPolicy::PinnedSpkiOnly`] accepts a matching pin **without** hostname (SAN)
+//!   or notAfter validation (intentional for self-signed or test pins; see spec section 8.5.2
+//!   certificate pinning).
+//! - **DANE** — [`ServerTrustPolicy::Dane`] is fail-closed (RFC 7671): missing TLSA data or
+//!   non-matching usable records reject the handshake. Usage 3 (DANE-EE) and verified usage 2
+//!   (DANE-TA) bypass PKIX and therefore also skip hostname and expiry checks (RFC 7671 §5.1).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -16,7 +26,7 @@ use rustls_pki_types::CertificateDer as CertDer;
 use webpki_roots::TLS_SERVER_ROOTS;
 
 use super::TaxiiError;
-use super::dane::{TlsaRecord, spki_sha256, verify_dane};
+use super::dane::{DaneDecision, TlsaRecord, evaluate_dane, spki_sha256};
 use super::tls::ClientCertificate;
 
 /// SHA-256 SPKI pin for certificate pinning.
@@ -52,9 +62,11 @@ pub enum ServerTrustPolicy {
     SystemRoots,
     /// Require SPKI SHA-256 pins (checked in addition to PKIX).
     PinnedSpki(Vec<SpkiPin>),
-    /// Validate using DNSSEC TLSA records (RFC 7671).
+    /// Validate using DNSSEC TLSA records (RFC 7671). Fail-closed when TLSA is missing or no
+    /// record matches.
     Dane,
-    /// SPKI pins without PKIX fallback.
+    /// SPKI pins without PKIX fallback. Accepts a matching pin without hostname or expiry
+    /// checks (spec section 8.5.2 certificate pinning for non-PKIX deployments).
     PinnedSpkiOnly(Vec<SpkiPin>),
 }
 
@@ -81,15 +93,15 @@ pub fn build_rustls_config(
     tlsa_cache: &TlsaCache,
     client_certificate: Option<&ClientCertificate>,
 ) -> Result<ClientConfig, TaxiiError> {
+    let provider = Arc::new(default_provider());
     let mut roots = RootCertStore::empty();
     roots.extend(TLS_SERVER_ROOTS.iter().cloned());
 
-    let webpki =
-        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::new(default_provider()))
-            .build()
-            .map_err(|err| TaxiiError::InvalidServerTrust {
-                reason: err.to_string(),
-            })?;
+    let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+        .build()
+        .map_err(|err| TaxiiError::InvalidServerTrust {
+            reason: err.to_string(),
+        })?;
 
     let (pins, pin_only, use_dane) = match policy {
         ServerTrustPolicy::SystemRoots => (HashSet::new(), false, false),
@@ -109,10 +121,11 @@ pub fn build_rustls_config(
             pin_only,
             tlsa_cache: tlsa_cache.clone(),
             use_dane,
+            provider: provider.clone(),
         })
     };
 
-    let builder = ClientConfig::builder_with_provider(Arc::new(default_provider()))
+    let builder = ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&TLS12, &TLS13])
         .map_err(|err| TaxiiError::InvalidServerTrust {
             reason: err.to_string(),
@@ -135,6 +148,7 @@ struct PolicyVerifier {
     pin_only: bool,
     tlsa_cache: TlsaCache,
     use_dane: bool,
+    provider: Arc<rustls::crypto::CryptoProvider>,
 }
 
 impl fmt::Debug for PolicyVerifier {
@@ -158,11 +172,40 @@ impl ServerCertVerifier for PolicyVerifier {
     ) -> Result<ServerCertVerified, Error> {
         let host = server_name_to_str(server_name);
 
-        if self.use_dane
-            && let Some(records) = self.tlsa_cache.get(&host)
-            && verify_dane(end_entity, &records)
-        {
-            return Ok(ServerCertVerified::assertion());
+        if self.use_dane {
+            let Some(records) = self.tlsa_cache.get(&host) else {
+                return Err(Error::General(format!(
+                    "DANE: no TLSA records cached for {host} (prefetch TLSA before connect)"
+                )));
+            };
+            if records.is_empty() {
+                return Err(Error::General(format!(
+                    "DANE: empty TLSA record set for {host}"
+                )));
+            }
+            match evaluate_dane(
+                &records,
+                end_entity,
+                intermediates,
+                server_name,
+                now,
+                &self.provider,
+            ) {
+                Ok(DaneDecision::AcceptWithoutPkix) => {
+                    // RFC 7671 §5.1: DANE-EE / verified DANE-TA — no hostname or expiry check.
+                    return Ok(ServerCertVerified::assertion());
+                }
+                Ok(DaneDecision::RequirePkix) => {
+                    return self.inner.verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        server_name,
+                        ocsp_response,
+                        now,
+                    );
+                }
+                Err(reason) => return Err(Error::General(reason)),
+            }
         }
 
         if !self.pins.is_empty() {
@@ -173,6 +216,7 @@ impl ServerCertVerifier for PolicyVerifier {
                 return Err(Error::General("certificate SPKI pin mismatch".into()));
             }
             if self.pin_only {
+                // Pin-only: intentional bypass of hostname (SAN) and notAfter checks.
                 return Ok(ServerCertVerified::assertion());
             }
         }

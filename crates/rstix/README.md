@@ -453,7 +453,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `dns_nameserver(addr)` | system resolver | Override DNS for SRV/TLSA lookups (local CoreDNS). |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate) — mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
-| `max_response_bytes(n)` | 512 MiB | Reject oversized bodies → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
+| `max_response_bytes(n)` | 512 MiB | Reject oversized bodies (`Content-Length` or streaming cap) → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
 | `parse_options(o)` | default | STIX parse options for envelope objects. |
 | `status_poll_interval(d)` | 1s | Delay between status polls. |
 | `status_max_polls(n)` | 120 | Max polls before [`TaxiiError::StatusPollTimeout`](taxii::TaxiiError::StatusPollTimeout). |
@@ -570,6 +570,9 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Envelope vs Bundle | POST/GET object pages deserialize `TaxiiEnvelope` | Bundle rejected at API boundary |
 | Response media type | Success responses must include TAXII JSON `Content-Type` | `MissingContentType` / `InvalidContentType` |
 | TLS | rustls with **TLS 1.2 and TLS 1.3** (no 1.0/1.1); optional SPKI pinning and DANE | `ServerTrustPolicy`, `build_rustls_config`, `SpkiPin`, `TlsaCache`, `resolve_tlsa` |
+| DANE (`ServerTrustPolicy::Dane`) | Fail-closed (RFC 7671): missing/non-matching TLSA rejects; usage 3 (DANE-EE) and verified usage 2 (DANE-TA) bypass PKIX (no hostname/expiry); usage 0/1 require PKIX after association match | `evaluate_dane`, TLSA prefetch in `TaxiiHttp` |
+| SPKI pin-only | `PinnedSpkiOnly` accepts matching pin without hostname or expiry checks (spec section 8.5.2 pinning) | Documented on `ServerTrustPolicy::PinnedSpkiOnly` |
+| Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
 | Capability checks | API Root `versions` and collection `media_types` verified before use | `CapabilityPolicy::Enforce` (default); disable for interop |
 | POST status | Poll until complete by default (`PostSubmitPolicy`) | `ReturnInitial` for one-shot 202 |
 | Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last` | `MissingPaginationHeaders` |
