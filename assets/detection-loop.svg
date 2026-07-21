@@ -45,13 +45,30 @@
     <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
+    <style>
+      /* Light values are presentation attributes on each element (below);
+         this block only overrides them when the viewer prefers dark. */
+      @media (prefers-color-scheme: dark) {
+        .bg { fill: #0b1220; }
+        .card { fill: #131f36; stroke: #24324d; }
+        .ink { fill: #cbd5e1; }
+        .muted { fill: #93a1b5; }
+        .title { fill: #f1f5f9; }
+        .sub { fill: #94a3b8; }
+        .leader { stroke: #2a3a57; }
+        .logo { fill: #e2e8f0; }
+        .lobeL { fill: #93c5fd; }
+        .lobeR { fill: #fdba74; }
+        .annot { fill: #94a3b8; }
+      }
+    </style>
   </defs>
 
-  <rect x="0" y="0" width="980" height="596" fill="#ffffff"/>
+  <rect class="bg" fill="#ffffff" x="0" y="0" width="980" height="596"/>
 
   <!-- RSigma logo (inlined from rsigma-logo.svg) -->
   <g transform="translate(20,3) scale(0.04) translate(-53.914588,-194.29212)">
-    <path d="M 503.00834 290.95228 C 445.50878 288.48774 364.45808 302.9678 331.62357 350.05579 C 333.9174 314.13999 331.20656 350.44476 334.1099 313.15735 C 216.48704 311.12198 164.41038 381.58482 158.26029 458.54798 C 156.58941 604.12675 159.97446 790.97481 159.56888 936.59485 C 222.0058 936.95135 260.93804 936.76923 349.51224 936.11439 C 351.26051 858.16832 350.8831 771.91189 351.45951 693.89759 C 355.31256 644.45271 341.96547 591.31345 363.93607 544.80775 C 386.28876 494.82 445.33194 469.44183 497.55326 483.65345 C 487.78502 504.44033 473.80005 550.60733 469.13724 585.47767 C 442.69725 717.88365 513.44554 866.43779 639.1392 920.09095 C 759.82234 979.81901 918.91232 940.14175 998.27982 831.52845 C 1076.3878 731.64733 1081.3431 573.55487 991.90287 479.06751 C 1047.3212 483.79057 1071.762 455.17626 1108.4908 408.60462 C 1126.0097 380.68346 1177.3451 311.70494 1131.4204 312.38001 C 1012.56 312.63356 893.68778 312.02866 774.83451 312.94837 C 728.06602 313.87516 701.91549 317.77526 650.0806 337.91517 C 616.41134 316.3851 567.61969 295.63426 526.00053 292.99915 C 518.9568 292.0011 511.22256 291.30435 503.00834 290.95228 z M 771.77006 501.97376 C 779.14412 502.27657 786.57053 503.27915 794.00053 504.99915 C 796.64053 505.55915 799.28053 506.11056 802.00053 506.69056 C 820.01053 511.89056 835.85053 521.84915 850.00053 533.99915 C 851.71053 535.45915 853.41998 536.93056 855.18998 538.44056 C 879.12998 561.13056 891.96053 592.69915 896.00053 624.99915 C 896.12053 629.74915 896.17998 634.49915 896.18998 639.24915 C 896.19998 641.72915 896.21904 644.21064 896.22904 646.77064 C 895.00904 685.04064 877.90053 720.34915 851.00053 746.99915 C 823.72053 770.44915 790.77053 781.29915 755.00053 778.99915 C 719.05053 772.67915 689.08943 755.50915 666.87943 726.24915 C 643.69943 691.77915 634.28967 651.85025 642.11967 610.62025 C 651.16967 570.97024 674.02967 539.5797 708.11967 517.8097 C 727.99467 506.4697 749.64787 501.06532 771.77006 501.97376 z" fill="#000000"/>
+    <path class="logo" fill="#0f172a" d="M 503.00834 290.95228 C 445.50878 288.48774 364.45808 302.9678 331.62357 350.05579 C 333.9174 314.13999 331.20656 350.44476 334.1099 313.15735 C 216.48704 311.12198 164.41038 381.58482 158.26029 458.54798 C 156.58941 604.12675 159.97446 790.97481 159.56888 936.59485 C 222.0058 936.95135 260.93804 936.76923 349.51224 936.11439 C 351.26051 858.16832 350.8831 771.91189 351.45951 693.89759 C 355.31256 644.45271 341.96547 591.31345 363.93607 544.80775 C 386.28876 494.82 445.33194 469.44183 497.55326 483.65345 C 487.78502 504.44033 473.80005 550.60733 469.13724 585.47767 C 442.69725 717.88365 513.44554 866.43779 639.1392 920.09095 C 759.82234 979.81901 918.91232 940.14175 998.27982 831.52845 C 1076.3878 731.64733 1081.3431 573.55487 991.90287 479.06751 C 1047.3212 483.79057 1071.762 455.17626 1108.4908 408.60462 C 1126.0097 380.68346 1177.3451 311.70494 1131.4204 312.38001 C 1012.56 312.63356 893.68778 312.02866 774.83451 312.94837 C 728.06602 313.87516 701.91549 317.77526 650.0806 337.91517 C 616.41134 316.3851 567.61969 295.63426 526.00053 292.99915 C 518.9568 292.0011 511.22256 291.30435 503.00834 290.95228 z M 771.77006 501.97376 C 779.14412 502.27657 786.57053 503.27915 794.00053 504.99915 C 796.64053 505.55915 799.28053 506.11056 802.00053 506.69056 C 820.01053 511.89056 835.85053 521.84915 850.00053 533.99915 C 851.71053 535.45915 853.41998 536.93056 855.18998 538.44056 C 879.12998 561.13056 891.96053 592.69915 896.00053 624.99915 C 896.12053 629.74915 896.17998 634.49915 896.18998 639.24915 C 896.19998 641.72915 896.21904 644.21064 896.22904 646.77064 C 895.00904 685.04064 877.90053 720.34915 851.00053 746.99915 C 823.72053 770.44915 790.77053 781.29915 755.00053 778.99915 C 719.05053 772.67915 689.08943 755.50915 666.87943 726.24915 C 643.69943 691.77915 634.28967 651.85025 642.11967 610.62025 C 651.16967 570.97024 674.02967 539.5797 708.11967 517.8097 C 727.99467 506.4697 749.64787 501.06532 771.77006 501.97376 z"/>
     <path d="m 801.375,349.77295 h 9.52 c 8.59,0 17.17,0.01 25.75,0.02 8.98,0.02 17.96,0.02 26.94,0.02 17,0.01 33.99,0.02 50.98,0.04 19.35,0.03 38.7,0.04 58.06,0.05 39.79,0.02 77.5203,2.06286 117.3103,2.11286 l 0.047,0.034 0.013,-0.0468 c -0.65,1.98 -1.32,3.96 -2,6 -18.99,35.11 -41.04,71.04 -81,84 -18.46,4.41 -36.27,4.6 -55.2,4.61 -1.62,0 -1.62,0 -9.8,0.05 -8.53,0.04 -17.05,0.06 -25.58,0.08 -8.73,0.01 -17.46,0.06 -26.19,0.1 -17.07,0.07 -34.15,0.12 -51.23,0.16 4.48,1.76 8.96,3.52 13.44,5.29 2.49,0.98 4.99,1.96 7.55,2.97 5.34,2.09 10.71,4.11 16.08,6.11 6.12,2.32 11.98,4.91 17.93,7.63 3.79,1.6 7.58,3.18 11.38,4.75 2.09,0.87 4.19,1.74 6.34,2.64 3.96,1.64 7.92,3.28 11.88,4.9 40.27,16.81 62.8,42.59 81.4,81.71 v 2 c -6.48,2.88 -12.94,5.63 -19.52,8.26 -2.01,0.81 -4.02,1.62 -6.09,2.45 -4.18,1.68 -8.36,3.35 -12.54,5.03 -35.32,14.21 -35.32,14.21 -36.85,17.26 1.53,0.1 3.05,0.21 4.62,0.32 7,0.74 13.69,2.08 20.57,3.55 10.25,2.17 20.51,4.22 30.81,6.13 22.94,4.48 22.94,4.48 33,7 0.84,6.67 1.11,12.8 1.07,19.5 -0.01,1.97 -0.02,3.94 -0.03,5.97 -0.01,0.74 -0.01,0.74 -0.04,4.53 -1.76,0.81 -3.53,1.62 -5.35,2.45 -41.29,19.06 -41.29,19.06 -58.47,30.2 -6.35,4.11 -12.79,8.07 -19.24,12.03 -2.22,1.37 -4.43,2.73 -6.72,4.14 -5.21,3.18 -5.21,3.18 -7.22,4.18 0.9,-8.04 2.39,-15.55 4.07,-23.44 6.09,-32.03 3.72,-62.67 -6.07,-93.56 -0.66,-2.17 -1.31,-4.33 -2,-6.57 -15.04,-40.91 -45.03,-74.88 -84.18,-94.06 -39.03,-18.01 -82.3,-19.94 -122.82,-5.37 -19.1,8.05 -35.4,18.27 -51,32 -1.89,1.65 -3.79,3.3 -5.74,5 -21.2,20.18 -37.32,47.53 -44.26,76 l -3,9 c -9.59,49.8 -2.47,99.02 23,143 2.55,3.75 5.2,7.44 8,11 1.37,1.75 2.73,3.5 4.13,5.31 30.06,35.06 68.6,53.03 113.87,58.69 47.69,0.99 89.76,-15.37 124.57,-48.19 16.71,-17.68 28.52,-38.2 37.43,-60.81 73.66,-5.17 73.66,-5.17 96,-5 -12.42,61.82 -49.02,117.96 -100,155 -0.87,0.67 -0.87,0.67 -5.31,4.06 -54.72,37.88 -118.74,53.36 -184.63,43.26 -73.78,-13.86 -133.32,-56.08 -175.62,-117.39 -16.88,-26.57 -28.4,-54.64 -36.44,-84.93 -0.72,-2.66 -1.44,-5.32 -2.18,-8.07 -7.69,-37.91 -6.8,-77.16 1.18,-114.93 0.34,-0.33 0.66,-0.66 1,-1 0.26,-1.69 0.51,-3.38 0.76,-5.12 1.39,-7.67 3.62,-14.69 6.12,-22.07 0.86,-2.57 1.73,-5.14 2.62,-7.79 9.56,-26.76 23.51,-52.29 40.5,-75.02 1.63,-2.19 3.26,-4.38 4.94,-6.63 5.09,-6.41 10.48,-12.39 16.06,-18.37 l 5,-6 h 2 c 0.34,-0.66 0.34,-0.66 2,-4 3.27,-3.08 6.62,-6.06 10,-9 1.08,-0.95 1.08,-0.95 6.5,-5.75 41.2,-34.34 91.26,-57.91 144.5,-65.25 2.18,-0.35 4.36,-0.71 6.61,-1.07 13.6,-1.35 27.12,-1.19 40.77,-1.16 z" fill="#fb8002"/>
     <path d="m 612,368 c -18.34356,14.91069 -34.48087,27.76384 -49.81454,43.87043 -15.71918,9.91078 -24.06658,35.75092 -41.90421,37.02832 C 467.57122,428.45501 403.24638,439.4414 362.39281,479.21766 325.9182,511.55586 307.73145,561.34283 310.68,609.6 c -0.2187,27.80007 -0.4615,55.59993 -0.68,83.4 -38.00555,-27.90503 -72.96708,-59.80633 -110,-89 -7.44222,-14.92914 -1.28169,-34.16253 -3.11813,-50.77906 -1.20891,-11.50375 -1.04162,-21.41743 12.84237,-15.39026 C 244.24988,541.34594 278.39956,548.72146 313,551 274.02181,526.33991 235.84515,500.29712 198,474 196.00963,428.34084 229.8369,385.80586 272.77998,372.51877 282.13736,368.78218 291.98895,367.32347 302,368 c 0.0191,25.08479 -0.0381,51.49349 0.0285,75.75356 23.47545,-36.57652 52.93279,-71.51576 93.24665,-90.0914 63.42927,-30.96295 141.0793,-25.81407 203.0677,6.14335 4.67321,2.52288 9.23786,5.24877 13.65715,8.19449 z" fill="#fc8a07"/>
     <path d="m 1015,701 c -12.43,61.82 -49.03,117.97 -100,155 -1.75,1.34 -3.51,2.68 -5.31,4.06 -54.72,37.89 -118.74,53.37 -184.64,43.26 C 667.23,892.46 617.77,864.17 577,822 c -1.34,-1.38 -2.68,-2.76 -4.06,-4.19 -0.97,-1.26 -1.94,-2.51 -2.94,-3.81 1.48,-7.4 6.13,-11.31 11,-17 3.35,-4.32 6.68,-8.66 10,-13 5.9,-7.44 11.9,-14.8 17.89,-22.16 5.22,-6.44 10.39,-12.92 15.49,-19.46 1.19,-1.45 2.39,-2.89 3.62,-4.38 0.66,0 1.32,0 2,0 0.57,0.86 0.57,0.86 3.44,5.19 22.46,33.54 58.52,59.77 98.45,68.03 47.34,8.39 89.83,-0.47 130.11,-27.22 26.69,-21.2 44.52,-46.33 57,-78 73.65,-5.16 73.65,-5.16 96,-5 z" fill="#f87b02"/>
@@ -72,21 +89,24 @@
   </g>
 
   <!-- title -->
-  <text x="74" y="28" font-size="17" font-weight="bold" fill="#0f172a">RSigma</text>
-  <text x="140" y="28" font-size="13" fill="#64748b">detection engineering loop</text>
+  <text class="title" fill="#0f172a" x="74" y="28" font-size="17" font-weight="bold">RSigma</text>
+  <text class="sub" fill="#64748b" x="140" y="28" font-size="13">detection engineering loop</text>
 
   <!-- ===================== leader lines (under everything) ===================== -->
-  <path d="M250,108 L400,108 L400,206" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M250,236 L268,236 L268,310 L280,310" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M250,364 L290,364 L290,450 L400,450 L400,414" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M730,108 L580,108 L580,206" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M730,236 L712,236 L712,310 L700,310" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M730,364 L690,364 L690,450 L580,450 L580,414" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <g fill="none" stroke-width="1.5">
+    <path class="leader" stroke="#e2e8f0" d="M250,108 L400,108 L400,206"/>
+    <path class="leader" stroke="#e2e8f0" d="M250,236 L268,236 L268,310 L272,310"/>
+    <path class="leader" stroke="#e2e8f0" d="M250,364 L290,364 L290,450 L400,450 L400,414"/>
+    <path class="leader" stroke="#e2e8f0" d="M730,108 L580,108 L580,206"/>
+    <path class="leader" stroke="#e2e8f0" d="M730,236 L722,236 L722,310 L714,310"/>
+    <path class="leader" stroke="#e2e8f0" d="M730,364 L690,364 L690,450 L580,450 L580,414"/>
+  </g>
 
-  <!-- loop <-> Hunt (round trip) -->
+  <!-- loop <-> Hunt (bidirectional convert / reverse) -->
   <path d="M484,386 L484,470" fill="none" stroke="#94a3b8" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
   <path d="M496,470 L496,386" fill="none" stroke="#94a3b8" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
-  <text x="504" y="440" font-size="11" fill="#64748b">backend convert</text>
+  <text class="annot" fill="#64748b" x="478" y="431" font-size="11" text-anchor="end">convert</text>
+  <text class="annot" fill="#64748b" x="502" y="431" font-size="11" text-anchor="start">reverse</text>
 
   <!-- ===================== lemniscate ribbon ===================== -->
   <!-- One continuous figure-8: Author > Test > Deploy crosses the center up to
@@ -113,95 +133,112 @@
   </g>
 
   <!-- lobe labels -->
-  <text x="400" y="306" font-size="19" font-weight="bold" text-anchor="middle" fill="#1e3a8a">Engineer</text>
-  <text x="400" y="324" font-size="10.5" text-anchor="middle" fill="#94a3b8">detection-as-code</text>
-  <text x="580" y="306" font-size="19" font-weight="bold" text-anchor="middle" fill="#9a3412">Operate</text>
-  <text x="580" y="324" font-size="10.5" text-anchor="middle" fill="#94a3b8">security operations</text>
+  <text class="lobeL" fill="#1e3a8a" x="400" y="306" font-size="19" font-weight="bold" text-anchor="middle">Engineer</text>
+  <text class="sub" fill="#64748b" x="400" y="324" font-size="10.5" text-anchor="middle">detection-as-code</text>
+  <text class="lobeR" fill="#9a3412" x="580" y="306" font-size="19" font-weight="bold" text-anchor="middle">Operate</text>
+  <text class="sub" fill="#64748b" x="580" y="324" font-size="10.5" text-anchor="middle">security operations</text>
 
   <!-- center badge over the crossing -->
-  <rect x="452" y="296" width="76" height="28" rx="14" fill="url(#badge)" filter="url(#soft)"/>
+  <rect x="452" y="296" width="76" height="28" rx="14" fill="url(#badge)" stroke="#64748b" stroke-width="1" filter="url(#soft)"/>
   <text x="490" y="315" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#ffffff">RSigma</text>
 
   <!-- ===================== stage pills ===================== -->
   <g filter="url(#soft)">
-    <rect x="361" y="208" width="78" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="282" y="298" width="56" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="365" y="388" width="70" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="547" y="208" width="66" height="24" rx="12" fill="url(#hdrOrange)"/>
-    <rect x="638" y="292" width="64" height="36" rx="12" fill="url(#hdrOrange)"/>
-    <rect x="541" y="388" width="78" height="24" rx="12" fill="url(#hdrOrange)"/>
+    <rect x="352" y="208" width="96" height="24" rx="12" fill="url(#hdrBlue)"/>
+    <rect x="272" y="298" width="76" height="24" rx="12" fill="url(#hdrBlue)"/>
+    <rect x="354" y="388" width="92" height="24" rx="12" fill="url(#hdrBlue)"/>
+    <rect x="532" y="208" width="96" height="24" rx="12" fill="url(#hdrOrange)"/>
+    <rect x="628" y="292" width="86" height="36" rx="12" fill="url(#hdrOrange)"/>
+    <rect x="532" y="388" width="96" height="24" rx="12" fill="url(#hdrOrange)"/>
+  </g>
+  <!-- pill step-number badges -->
+  <g>
+    <circle cx="367" cy="220" r="7.5" fill="#ffffff" opacity="0.95"/>
+    <circle cx="287" cy="310" r="7.5" fill="#ffffff" opacity="0.95"/>
+    <circle cx="369" cy="400" r="7.5" fill="#ffffff" opacity="0.95"/>
+    <circle cx="547" cy="220" r="7.5" fill="#ffffff" opacity="0.95"/>
+    <circle cx="643" cy="310" r="7.5" fill="#ffffff" opacity="0.95"/>
+    <circle cx="547" cy="400" r="7.5" fill="#ffffff" opacity="0.95"/>
+  </g>
+  <g font-size="10" font-weight="bold" text-anchor="middle">
+    <text x="367" y="223.6" fill="#1e3a8a">1</text>
+    <text x="287" y="313.6" fill="#1e3a8a">2</text>
+    <text x="369" y="403.6" fill="#1e3a8a">3</text>
+    <text x="547" y="223.6" fill="#9a3412">4</text>
+    <text x="643" y="313.6" fill="#9a3412">5</text>
+    <text x="547" y="403.6" fill="#9a3412">6</text>
   </g>
   <g font-size="12" font-weight="bold" text-anchor="middle" fill="#ffffff">
-    <text x="400" y="224">Author</text>
-    <text x="310" y="314">Test</text>
-    <text x="400" y="404">Deploy</text>
-    <text x="580" y="224">Detect</text>
-    <text x="670" y="307">Alert &#38;</text>
-    <text x="670" y="321">Triage</text>
-    <text x="580" y="404">Measure</text>
+    <text x="411" y="224">Author</text>
+    <text x="323" y="314">Test</text>
+    <text x="411" y="404">Deploy</text>
+    <text x="591" y="224">Detect</text>
+    <text x="683" y="307">Alert &#38;</text>
+    <text x="683" y="321">Triage</text>
+    <text x="591" y="404">Measure</text>
   </g>
 
   <!-- ===================== left callouts (engineering, blue) ===================== -->
   <g filter="url(#soft)">
-    <rect x="40" y="56" width="210" height="104" rx="8" fill="#ffffff"/>
-    <rect x="40" y="184" width="210" height="104" rx="8" fill="#ffffff"/>
-    <rect x="40" y="312" width="210" height="104" rx="8" fill="#ffffff"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="56" width="210" height="104" rx="8"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="184" width="210" height="104" rx="8"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="312" width="210" height="104" rx="8"/>
   </g>
   <path d="M40,64 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
   <path d="M40,192 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
   <path d="M40,320 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
   <text x="145" y="74" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Author</text>
-  <text x="52" y="102" font-size="10.5" fill="#374151">&#8226; rule draft: rules from exemplars</text>
-  <text x="52" y="118" font-size="10.5" fill="#374151">&#8226; rule lint: 85 checks &#183; --fix</text>
-  <text x="52" y="134" font-size="10.5" fill="#374151">&#8226; rule doc: ADS metadata</text>
-  <text x="52" y="150" font-size="10.5" fill="#9ca3af">&#8226; LSP editors &#183; MCP for AI agents</text>
+  <text class="ink" fill="#374151" x="52" y="102" font-size="10.5">&#8226; rule draft: rules from exemplar logs</text>
+  <text class="ink" fill="#374151" x="52" y="118" font-size="10.5">&#8226; rule reverse: Lucene query &#8594; Sigma</text>
+  <text class="ink" fill="#374151" x="52" y="134" font-size="10.5">&#8226; rule lint: 85 checks &#183; --fix</text>
+  <text class="muted" fill="#6b7280" x="52" y="150" font-size="10.5">&#8226; rule doc &#183; LSP &#183; MCP for AI agents</text>
 
   <text x="145" y="202" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Test</text>
-  <text x="52" y="230" font-size="10.5" fill="#374151">&#8226; engine explain: why (no) match</text>
-  <text x="52" y="246" font-size="10.5" fill="#374151">&#8226; rule backtest: corpus regression</text>
-  <text x="52" y="262" font-size="10.5" fill="#374151">&#8226; pipeline diff: transform preview</text>
-  <text x="52" y="278" font-size="10.5" fill="#9ca3af">&#8226; engine eval: one-shot evaluation</text>
+  <text class="ink" fill="#374151" x="52" y="230" font-size="10.5">&#8226; engine explain: why (no) match</text>
+  <text class="ink" fill="#374151" x="52" y="246" font-size="10.5">&#8226; rule backtest: corpus regression</text>
+  <text class="ink" fill="#374151" x="52" y="262" font-size="10.5">&#8226; pipeline diff: transform preview</text>
+  <text class="muted" fill="#6b7280" x="52" y="278" font-size="10.5">&#8226; engine eval: one-shot evaluation</text>
 
   <text x="145" y="330" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Deploy</text>
-  <text x="52" y="358" font-size="10.5" fill="#374151">&#8226; rsigma-action: PR gate in CI</text>
-  <text x="52" y="374" font-size="10.5" fill="#374151">&#8226; layered config &#183; rsigma config</text>
-  <text x="52" y="390" font-size="10.5" fill="#374151">&#8226; hot-reload: rules + pipelines</text>
-  <text x="52" y="406" font-size="10.5" fill="#9ca3af">&#8226; Docker &#183; signed release binaries</text>
+  <text class="ink" fill="#374151" x="52" y="358" font-size="10.5">&#8226; rsigma-action: PR gate in CI</text>
+  <text class="ink" fill="#374151" x="52" y="374" font-size="10.5">&#8226; rsigma config: layered defaults</text>
+  <text class="ink" fill="#374151" x="52" y="390" font-size="10.5">&#8226; hot-reload: rules + pipelines</text>
+  <text class="muted" fill="#6b7280" x="52" y="406" font-size="10.5">&#8226; Docker &#183; signed release binaries</text>
 
   <!-- ===================== right callouts (operations, orange) ===================== -->
   <g filter="url(#soft)">
-    <rect x="730" y="56" width="210" height="104" rx="8" fill="#ffffff"/>
-    <rect x="730" y="184" width="210" height="104" rx="8" fill="#ffffff"/>
-    <rect x="730" y="312" width="210" height="104" rx="8" fill="#ffffff"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="56" width="210" height="104" rx="8"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="184" width="210" height="104" rx="8"/>
+    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="312" width="210" height="104" rx="8"/>
   </g>
   <path d="M730,64 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
   <path d="M730,192 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
   <path d="M730,320 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
   <text x="835" y="74" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Detect</text>
-  <text x="742" y="102" font-size="10.5" fill="#374151">&#8226; engine daemon: streaming engine</text>
-  <text x="742" y="118" font-size="10.5" fill="#374151">&#8226; correlation: windows &#183; chains</text>
-  <text x="742" y="134" font-size="10.5" fill="#374151">&#8226; JSON &#183; syslog &#183; CEF &#183; EVTX &#183; OTLP</text>
-  <text x="742" y="150" font-size="10.5" fill="#9ca3af">&#8226; schema + logsource routing</text>
+  <text class="ink" fill="#374151" x="742" y="102" font-size="10.5">&#8226; engine daemon: streaming &#183; RBAC API</text>
+  <text class="ink" fill="#374151" x="742" y="118" font-size="10.5">&#8226; correlation: windows &#183; chains</text>
+  <text class="ink" fill="#374151" x="742" y="134" font-size="10.5">&#8226; JSON &#183; syslog &#183; CEF &#183; EVTX &#183; OTLP</text>
+  <text class="muted" fill="#6b7280" x="742" y="150" font-size="10.5">&#8226; schema routing &#183; discovery &#183; cloud</text>
 
   <text x="835" y="202" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Alert &#38; Triage</text>
-  <text x="742" y="230" font-size="10.5" fill="#374151">&#8226; enrichment: GeoIP &#183; intel &#183; asset</text>
-  <text x="742" y="246" font-size="10.5" fill="#374151">&#8226; risk-based alerting: entity score</text>
-  <text x="742" y="262" font-size="10.5" fill="#374151">&#8226; dedup &#183; silence &#183; inhibit &#183; group</text>
-  <text x="742" y="278" font-size="10.5" fill="#9ca3af">&#8226; webhooks: Slack &#183; PagerDuty &#183; ...</text>
+  <text class="ink" fill="#374151" x="742" y="230" font-size="10.5">&#8226; enrichment: GeoIP &#183; intel &#183; asset</text>
+  <text class="ink" fill="#374151" x="742" y="246" font-size="10.5">&#8226; risk-based alerting: entity score</text>
+  <text class="ink" fill="#374151" x="742" y="262" font-size="10.5">&#8226; dedup &#183; silence &#183; inhibit &#183; group</text>
+  <text class="muted" fill="#6b7280" x="742" y="278" font-size="10.5">&#8226; webhooks: Slack &#183; PagerDuty &#183; ...</text>
 
   <text x="835" y="330" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Measure</text>
-  <text x="742" y="358" font-size="10.5" fill="#374151">&#8226; rule coverage: ATT&#38;CK Navigator</text>
-  <text x="742" y="374" font-size="10.5" fill="#374151">&#8226; rule visibility: DeTT&#38;CT export</text>
-  <text x="742" y="390" font-size="10.5" fill="#374151">&#8226; field observability: gap signals</text>
-  <text x="742" y="406" font-size="10.5" fill="#9ca3af">&#8226; scorecard &#183; hygiene verdicts</text>
+  <text class="ink" fill="#374151" x="742" y="358" font-size="10.5">&#8226; rule coverage: ATT&#38;CK Navigator</text>
+  <text class="ink" fill="#374151" x="742" y="374" font-size="10.5">&#8226; rule visibility: DeTT&#38;CT export</text>
+  <text class="ink" fill="#374151" x="742" y="390" font-size="10.5">&#8226; field observability: gap signals</text>
+  <text class="muted" fill="#6b7280" x="742" y="406" font-size="10.5">&#8226; scorecard &#183; FP ratio &#183; dispositions</text>
 
   <!-- ===================== Hunt (bottom center) ===================== -->
-  <rect x="380" y="474" width="220" height="100" rx="8" fill="#ffffff" filter="url(#soft)"/>
+  <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="380" y="474" width="220" height="100" rx="8" filter="url(#soft)"/>
   <path d="M380,482 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v18 h-220 Z" fill="url(#hdrSlate)"/>
   <text x="490" y="492" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Hunt</text>
-  <text x="392" y="520" font-size="10.5" fill="#374151">&#8226; backend convert: PostgreSQL SQL</text>
-  <text x="392" y="536" font-size="10.5" fill="#374151">&#8226; sigma-cli delegation: Splunk &#183; 30+</text>
-  <text x="392" y="552" font-size="10.5" fill="#374151">&#8226; rule fields: mapping catalog</text>
-  <text x="392" y="568" font-size="10.5" fill="#9ca3af">findings feed new rules</text>
+  <text class="ink" fill="#374151" x="392" y="520" font-size="10.5">&#8226; backend convert: PostgreSQL SQL</text>
+  <text class="ink" fill="#374151" x="392" y="536" font-size="10.5">&#8226; sigma-cli delegation: Splunk &#183; 30+</text>
+  <text class="ink" fill="#374151" x="392" y="552" font-size="10.5">&#8226; rule fields: mapping catalog</text>
+  <text class="muted" fill="#6b7280" x="392" y="568" font-size="10.5">findings feed new rules</text>
 
 </svg>
