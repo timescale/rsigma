@@ -19,7 +19,7 @@ use crate::value::{SigmaValue, Timespan};
 /// Rule maturity status.
 ///
 /// Reference: pySigma rule.py SigmaStatus
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     Stable,
@@ -81,7 +81,7 @@ impl FromStr for Level {
 }
 
 /// Relationship type for the `related` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RelationType {
     Correlation,
@@ -256,7 +256,7 @@ impl FieldSpec {
 /// `selection and not filter` or `1 of selection_* and not 1 of filter_*`.
 ///
 /// Reference: pySigma conditions.py ConditionItem hierarchy
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConditionExpr {
     /// Logical AND of sub-expressions.
     And(Vec<ConditionExpr>),
@@ -295,7 +295,7 @@ impl fmt::Display for ConditionExpr {
 }
 
 /// Quantifier in a selector expression.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Quantifier {
     /// Match any (at least one): `1 of ...` or `any of ...`
     Any,
@@ -316,7 +316,7 @@ impl fmt::Display for Quantifier {
 }
 
 /// Target pattern in a selector expression.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SelectorPattern {
     /// All detection identifiers: `... of them`
     Them,
@@ -346,7 +346,7 @@ impl fmt::Display for SelectorPattern {
 ///
 /// Reference: proposed Sigma array-matching extension (sigma-specification
 /// Discussion #106).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArrayQuantifier {
     /// At least one array member must satisfy the nested detection.
@@ -473,7 +473,7 @@ pub struct Detections {
 /// Log source specification.
 ///
 /// Reference: Sigma schema `logsource` object
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogSource {
     pub category: Option<String>,
     pub product: Option<String>,
@@ -489,7 +489,7 @@ pub struct LogSource {
 // =============================================================================
 
 /// A reference to a related Sigma rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Related {
     pub id: String,
     pub relation_type: RelationType,
@@ -556,7 +556,7 @@ pub struct SigmaRule {
 /// Correlation rule type.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationType
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CorrelationType {
     EventCount,
@@ -613,7 +613,7 @@ impl FromStr for CorrelationType {
 ///   `timespan`.
 /// - `Session`: dynamic window that extends while consecutive in-group events
 ///   stay within `gap`, capped by `timespan` as the maximum total span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowMode {
     #[default]
@@ -647,7 +647,7 @@ impl FromStr for WindowMode {
 /// Comparison operator in a correlation condition.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationConditionOperator
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConditionOperator {
     Lt,
     Lte,
@@ -675,7 +675,7 @@ impl FromStr for ConditionOperator {
 /// Condition for a correlation rule.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationCondition
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CorrelationCondition {
     /// Threshold condition with one or more predicates (supports ranges).
     ///
@@ -700,7 +700,7 @@ pub enum CorrelationCondition {
 /// Maps a canonical alias name to per-rule field name mappings.
 ///
 /// Reference: pySigma correlations.py SigmaCorrelationFieldAlias
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldAlias {
     pub alias: String,
     /// Maps rule reference (ID or name) → field name in that rule's events.
@@ -768,7 +768,7 @@ pub struct CorrelationRule {
 // =============================================================================
 
 /// Which rules a filter applies to.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FilterRuleTarget {
     /// The filter applies to every loaded rule.
     Any,

@@ -38,6 +38,16 @@ The crate is sync-only (no tokio/reqwest).
 | `LowerOptions` | Strict (default) vs placeholder-preserving lowering. |
 | `optimize_rule` / `flatten_condition` / `eliminate_dead_detections` | Opt-in, semantics-preserving HIR passes. |
 | `common_subexpressions` / `CseReport` | Non-mutating analysis of repeated detection items. |
+| `encode_rules` / `decode_rules` / `HirCacheHeader` | Versioned HIR cache (CBOR) with a schema-version check. |
+
+## HIR cache
+
+`cache::*` serializes lowered rules to a versioned, self-describing blob, the on-disk HIR cache. It is what [`rsigma-eval`](eval.md)'s `Engine::save_hir` / `load_hir` use for a daemon restart cache that skips parse, pipeline, and lowering.
+
+- The blob is a `HirCacheHeader` (schema version + producing crate version) followed by the rules. `decode_rules` reads and version-checks the header before decoding the rules, rejecting a blob written under an incompatible `HIR_SCHEMA_VERSION`.
+- CBOR is the binary format: the HIR embeds `LogSource`, whose `#[serde(flatten)]` custom-key map serializes with an unknown length that fixed-layout encoders reject.
+- `cache::to_json` gives a human-readable debug export of the same header-plus-rules shape.
+- All HIR types derive `serde::{Serialize, Deserialize}`; the embedded `rsigma-parser` types gained `Deserialize` so the HIR round-trips.
 
 ## Optimization passes
 
@@ -58,5 +68,5 @@ Each pass preserves the match decision and the set of matched selections and fie
 
 ## Related
 
-- [`rsigma-eval`](eval.md) — `compile_rule` (IR path) and `compile_rule_legacy` (dual-path differential).
+- [`rsigma-eval`](eval.md) — `compile_rule` (IR path), `compile_rule_legacy` (dual-path differential), and `Engine::save_hir` / `load_hir` (HIR restart cache).
 - [`rsigma-parser`](parser.md) — source AST.

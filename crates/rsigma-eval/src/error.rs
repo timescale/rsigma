@@ -52,6 +52,16 @@ pub enum EvalError {
     /// An error from the IR lowering pipeline that has no more specific mapping.
     #[error("IR lowering error: {0}")]
     Ir(String),
+
+    /// A HIR cache (de)serialization error.
+    #[error("HIR cache error: {0}")]
+    HirCache(String),
+}
+
+impl From<rsigma_ir::CacheError> for EvalError {
+    fn from(err: rsigma_ir::CacheError) -> Self {
+        EvalError::HirCache(err.to_string())
+    }
 }
 
 impl From<rsigma_ir::IrError> for EvalError {

@@ -46,11 +46,13 @@
 //!   `DynamicSourceRef` values are produced only when
 //!   [`lower::LowerOptions::permissive_placeholders`] is enabled.
 
+pub mod cache;
 pub mod error;
 pub mod hir;
 pub mod lower;
 pub mod optimize;
 
+pub use cache::{CacheError, HIR_SCHEMA_VERSION, HirCacheHeader, decode_rules, encode_rules};
 pub use error::IrError;
 pub use hir::*;
 pub use lower::{LowerOptions, lower_conditions, lower_rule};

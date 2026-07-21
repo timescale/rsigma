@@ -24,6 +24,7 @@ use rsigma_parser::{
     ArrayQuantifier, CorrelationCondition, CorrelationType, FieldAlias, FilterRuleTarget, Level,
     LogSource, Quantifier, Related, SelectorPattern, Status, Timespan, WindowMode,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // =============================================================================
@@ -31,7 +32,7 @@ use serde_json::Value;
 // =============================================================================
 
 /// Top-level detection rule in the intermediate representation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrRule {
     pub metadata: IrRuleMetadata,
     pub logsource: LogSource,
@@ -49,7 +50,7 @@ pub struct IrRule {
 ///
 /// Superset of `rsigma_eval::result::RuleHeader` plus the rest of the Sigma
 /// rule metadata convert and offline tools need.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct IrRuleMetadata {
     pub title: String,
     pub id: Option<String>,
@@ -80,7 +81,7 @@ pub struct IrRuleMetadata {
 // =============================================================================
 
 /// Detection definition — semantic shape, independent of compiled matchers.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrDetection {
     AllOf(Vec<IrDetectionItem>),
     AnyOf(Vec<IrDetection>),
@@ -102,7 +103,7 @@ pub enum IrDetection {
 // IrDetectionItem
 // =============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrDetectionItem {
     pub field: Option<String>,
     pub matcher: IrMatcher,
@@ -117,7 +118,7 @@ pub struct IrDetectionItem {
 ///
 /// The comparison is decided here rather than re-derived from modifiers by
 /// each consumer. `Exact` is full-value equality.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrStrOp {
     Exact,
     Contains,
@@ -132,7 +133,7 @@ pub enum IrStrOp {
 /// case-insensitive matching) and compiles wildcards into a regex at compile
 /// time; convert renders the wildcards into backend-native tokens. Neither
 /// transform happens during lowering, so the pattern round-trips exactly.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrPatternPart {
     Literal(String),
     /// `*` — matches any run of characters.
@@ -141,7 +142,7 @@ pub enum IrPatternPart {
     WildcardSingle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct IrPattern {
     pub parts: Vec<IrPatternPart>,
 }
@@ -178,7 +179,7 @@ impl IrPattern {
 ///
 /// Kept explicit rather than pre-expanded so consumers can either replay the
 /// transform (eval) or reject it as inexpressible (convert backends).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrEncoding {
     Wide,
     Utf16,
@@ -190,7 +191,7 @@ pub enum IrEncoding {
 
 /// Resolved match operation. Grow by appending variants and bumping the pack
 /// IR schema major. No `Unknown` catch-all.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrMatcher {
     /// Structured string match (equality/substring/prefix/suffix) over a
     /// wildcard-aware, original-case [`IrPattern`].
@@ -250,7 +251,7 @@ pub enum IrMatcher {
     AllOf(Vec<IrMatcher>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrExpandPart {
     Literal(String),
     /// Deferred `${source.*}` token awaiting specialization.
@@ -258,7 +259,7 @@ pub enum IrExpandPart {
 }
 
 /// Mirrors `rsigma_eval::matcher::TimePart`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrTimePart {
     Minute,
     Hour,
@@ -273,7 +274,7 @@ pub enum IrTimePart {
 // =============================================================================
 
 /// Numeric literal or deferred source reference.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrNumber {
     Literal(f64),
     DynamicSourceRef {
@@ -282,7 +283,7 @@ pub enum IrNumber {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrExtractExpr {
     Jq(String),
     JsonPath(String),
@@ -300,7 +301,7 @@ pub enum IrExtractExpr {
 /// count-based semantics (evaluate every matching detection, report all that
 /// match) and avoids the combinatorial blow-up of expanding `N of` into an
 /// `Or` of `And`s.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrCondition {
     Detection(String),
     And(Vec<IrCondition>),
@@ -318,7 +319,7 @@ pub enum IrCondition {
 
 /// Correlation rule shape. Field set mirrors [`rsigma_parser::CorrelationRule`]
 /// (no logsource on correlations).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrCorrelation {
     pub metadata: IrRuleMetadata,
     pub sigma_version: Option<u32>,
@@ -337,7 +338,7 @@ pub struct IrCorrelation {
 // IrFilter
 // =============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrFilter {
     pub metadata: IrRuleMetadata,
     pub sigma_version: Option<u32>,
