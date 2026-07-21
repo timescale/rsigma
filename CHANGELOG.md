@@ -8,7 +8,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 The engine's per-field substring bloom pre-filter seeded its hasher from ahash's runtime RNG, so its exact bit layout, and therefore which non-matching values landed as false positives, varied across process runs (surfacing as a flaky `bloom_index` unit test). The filter now uses fixed seeds and is deterministic across runs and platforms. Correctness is unchanged: the bloom only ever over-approximates, never producing a false negative, regardless of seed.
 
-### Intermediate representation crate and IR-backed compile (#360, #362, #363, #364)
+### Intermediate representation crate and IR-backed compile (#360, #362, #363, #364, #368)
 
 - **`rsigma-ir`** — new sync-only crate with HIR types (`IrRule`, `IrDetection`, `IrMatcher`, `IrCondition`, `IrCorrelation`, `IrFilter`) and `lower_rule` / `lower_*` that resolve modifiers before eval. Quantified selectors are preserved so evaluation stays count-based. The matcher model is faithful and lossless: string matches keep a wildcard-aware, original-case `IrPattern` and encoding modifiers stay explicit as `IrEncoding` steps, so lowering never lowercases, compiles regexes, or expands encodings.
 - **`rsigma-eval`** — `compile_rule` routes through `lower_rule` → `compile_to_compiled`, which performs the physical work (lowercasing, regex/aho-corasick, encoding expansion). `compile_rule_legacy` remains for dual-path differential tests. Public physical API (`CompiledRule`, `evaluate_rule`, `Engine`) is unchanged.
