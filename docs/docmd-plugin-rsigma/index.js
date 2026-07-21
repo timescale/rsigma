@@ -268,6 +268,8 @@ function injectSidebarLogoText(html, text) {
 /** Legacy generated/copied brand files to remove when refreshing assets. */
 const STALE_BRAND_FILES = [
   "sidebar-logo.svg",
+  "logo-dark.png",
+  "favicon-dark.png",
   "favicon.svg",
   "rsigma-logotype.svg",
   "rsigma-logo.svg",
@@ -275,27 +277,44 @@ const STALE_BRAND_FILES = [
 ];
 
 /**
+ * Render the brand image set from the logo SVG: the sidebar logo (one image
+ * serves both themes; the mark's orange facets carry it on any background, and
+ * the dark theme adds a darker backing in CSS) plus a square PNG favicon.
+ *
  * @param {string} destDir
- * @param {string} logoPng
+ * @param {string} logoSvgPath
  */
-async function writeBrandImages(destDir, logoPng) {
+async function writeBrandImages(destDir, logoSvgPath) {
   fs.mkdirSync(destDir, { recursive: true });
-  const trimmed = sharp(logoPng).trim();
-  await trimmed.clone().png().toFile(path.join(destDir, "logo.png"));
-  const { data, info } = await trimmed
-    .clone()
+  const svg = fs.readFileSync(logoSvgPath, "utf8");
+  const mark = await sharp(Buffer.from(svg), { density: 192 })
+    .trim()
+    .png()
     .toBuffer({ resolveWithObject: true });
-  const square = Math.max(info.width, info.height);
-  await sharp(data)
+
+  await sharp(mark.data)
+    .resize({ height: 512, withoutEnlargement: true })
+    .png()
+    .toFile(path.join(destDir, "logo.png"));
+
+  // Pad to a square in one pipeline, then resize in another: sharp applies
+  // resize before extend within a single pipeline, so they must be separate.
+  const square = Math.max(mark.info.width, mark.info.height);
+  const squareBuf = await sharp(mark.data)
     .extend({
-      top: Math.floor((square - info.height) / 2),
-      bottom: Math.ceil((square - info.height) / 2),
-      left: Math.floor((square - info.width) / 2),
-      right: Math.ceil((square - info.width) / 2),
+      top: Math.floor((square - mark.info.height) / 2),
+      bottom: Math.ceil((square - mark.info.height) / 2),
+      left: Math.floor((square - mark.info.width) / 2),
+      right: Math.ceil((square - mark.info.width) / 2),
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .png()
+    .toBuffer();
+  await sharp(squareBuf)
+    .resize(256, 256)
+    .png()
     .toFile(path.join(destDir, "favicon.png"));
+
   for (const stale of STALE_BRAND_FILES) {
     const stalePath = path.join(destDir, stale);
     if (fs.existsSync(stalePath)) {
@@ -305,20 +324,20 @@ async function writeBrandImages(destDir, logoPng) {
 }
 
 /**
- * Copy canonical brand assets from `{repoRoot}/assets/` into
- * `{docsRoot}/assets/images/`. Keeps a single source of truth at the repo root
- * without git symlinks (which break on many Windows clones and are unreliable
- * on static hosts).
+ * Generate brand images from the canonical theme-aware logo SVG at the repo
+ * root into `{docsRoot}/assets/images/`. Keeps a single source of truth at the
+ * repo root without git symlinks (which break on many Windows clones and are
+ * unreliable on static hosts).
  *
  * @param {string} repoRoot
  * @param {string} docsRoot
  */
 async function syncBrandAssets(repoRoot, docsRoot) {
-  const logoPng = path.join(repoRoot, "assets", "rsigma-logo.png");
-  if (!fs.existsSync(logoPng)) {
-    throw new Error(`docmd-plugin-rsigma: missing brand asset ${logoPng}`);
+  const logoSvg = path.join(repoRoot, "assets", "rsigma-logo.svg");
+  if (!fs.existsSync(logoSvg)) {
+    throw new Error(`docmd-plugin-rsigma: missing brand asset ${logoSvg}`);
   }
-  await writeBrandImages(path.join(docsRoot, "assets", "images"), logoPng);
+  await writeBrandImages(path.join(docsRoot, "assets", "images"), logoSvg);
 }
 
 /**
@@ -385,9 +404,9 @@ export default {
     const log = typeof ctx?.log === "function" ? ctx.log : () => {};
     const docsRoot = process.cwd();
     const root = repoRoot ?? findRepoRoot(docsRoot);
-    const logoPng = path.join(root, "assets", "rsigma-logo.png");
-    await writeBrandImages(path.join(outputDir, "assets", "images"), logoPng);
-    await writeBrandImages(path.join(docsRoot, "assets", "images"), logoPng);
+    const logoSvg = path.join(root, "assets", "rsigma-logo.svg");
+    await writeBrandImages(path.join(outputDir, "assets", "images"), logoSvg);
+    await writeBrandImages(path.join(docsRoot, "assets", "images"), logoSvg);
     let stripped = 0;
     let logoTextInjected = 0;
     let titlesRendered = 0;

@@ -14,6 +14,14 @@
   margin: 0;
 }
 
+/* On the dark theme, sit the mark on a darker rounded backing so the orange
+   "tiger claw" facets read against it instead of the near-black sidebar. */
+html[data-theme="dark"] .sidebar-header .logo-link img {
+  background: #05070d;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.6rem;
+}
+
 .sidebar-header .logo-text {
   font-size: 2rem;
   font-weight: 800;
