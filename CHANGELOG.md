@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Reverse conversion: SIEM queries to Sigma YAML (#348)
+### Reverse conversion: SIEM queries to Sigma YAML (#348, #371)
 
 A pluggable reverse-conversion framework, the mirror of the forward `Backend` engine: a query dialect is parsed into the intermediate representation, raised to a Sigma rule, and emitted as YAML. Elastic Lucene ships as the reference frontend.
 
