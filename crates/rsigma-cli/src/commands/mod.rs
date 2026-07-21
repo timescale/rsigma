@@ -11,6 +11,7 @@ mod eval;
 mod eval_stream;
 mod explain;
 mod fields;
+mod from_lucene;
 mod hygiene;
 mod lint;
 #[cfg(feature = "mcp")]
@@ -48,6 +49,7 @@ pub(crate) use draft::{DraftArgs, cmd_draft};
 pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};
 pub(crate) use explain::{ExplainArgs, cmd_explain};
 pub(crate) use fields::{FieldsArgs, cmd_fields};
+pub(crate) use from_lucene::{FromLuceneArgs, cmd_from_lucene};
 pub(crate) use hygiene::{HygieneArgs, apply_hygiene_config, cmd_hygiene};
 pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
 #[cfg(feature = "mcp")]
