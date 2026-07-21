@@ -1,6 +1,6 @@
 # Architecture
 
-RSigma is a workspace of eight crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
+RSigma is a workspace of nine crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.
 
 For operator-facing material see the [User Guide](../guide/evaluating-rules.md). For per-crate API docs see [docs.rs/rsigma](https://docs.rs/rsigma).
 
@@ -32,11 +32,19 @@ flowchart TD
         PARSE --> AST["ast.rs<br/>AST types · modifiers · enums"]
     end
 
+    subgraph rsigma-ir
+        direction TB
+        LOWER["lower_rule<br/>AST → HIR · modifier resolution<br/>quantified selectors preserved"]
+        LOWER --> IRHIR["hir: IrRule · IrDetection · IrCondition<br/>IrMatcher (faithful: IrPattern + IrEncoding)"]
+        IRHIR --> IROPT["optimize (opt-in)<br/>flatten · dead-detection · CSE"]
+        IRHIR --> IRCACHE["cache (CBOR)<br/>HirCacheHeader · encode_rules / decode_rules<br/>backs Engine save_hir / load_hir"]
+    end
+
     subgraph rsigma-eval
         direction TB
         ETRAIT["Event trait<br/>JsonEvent · KvEvent · PlainEvent<br/>schema classify (content signatures)"]
         ETRAIT --> EPIPE["pipeline/<br/>Pipeline · conditions · transformations<br/>state · finalizers<br/>builtin: ecs_windows · sysmon<br/>dynamic: ${source.*} template expansion"]
-        EPIPE --> ECOMP["compiler/<br/>compile_rule → CompiledRule<br/>matcher optimizer (AnyOf):<br/>Aho-Corasick batching (|contains)<br/>RegexSet batching (|re)<br/>CaseInsensitiveGroup"]
+        ECOMP["compiler/<br/>compile_to_compiled → CompiledRule<br/>materialize matchers from HIR<br/>matcher optimizer (AnyOf):<br/>Aho-Corasick batching (|contains)<br/>RegexSet batching (|re)<br/>CaseInsensitiveGroup"]
         ECOMP --> EENG["engine/<br/>Engine (stateless)<br/>prefilters:<br/>RuleIndex (exact-value pruning)<br/>bloom trigram filter* (substring)<br/>cross-rule AC index** (daachorse)<br/>logsource pruning (conflict-based, product-partitioned)"]
         EENG --> ECORR["correlation/<br/>sliding windows · group-by<br/>chaining · suppression · introspect snapshot"]
         ECORR --> ECUST["rsigma.* custom attributes"]
@@ -44,9 +52,9 @@ flowchart TD
 
     subgraph rsigma-convert
         direction TB
-        CBACK["Backend trait<br/>pluggable query generation"]
+        CBACK["Backend trait<br/>IR-native query generation"]
         CBACK --> CTQC["TextQueryConfig<br/>~90 fields for text query backends"]
-        CTQC --> CWALK["Condition walker<br/>deferred exprs · conversion state"]
+        CTQC --> CWALK["IR walker<br/>IrDetection · IrCondition<br/>deferred exprs · conversion state"]
         CWALK --> CENDS["backends/<br/>native: PostgreSQL/TimescaleDB · LynxDB · Fibratus<br/>TextQueryTest (test)<br/>else → sigma-cli delegation (splunk · elastic · kusto · ...)"]
     end
 
@@ -77,8 +85,10 @@ flowchart TD
 
     YAML -->|"Raw YAML Value"| SERDE
     SERDE --> PARSE
-    PEST --> ETRAIT
-    PEST --> CBACK
+    PEST -->|"AST"| LOWER
+    EPIPE -.->|"transforms applied before lowering"| LOWER
+    LOWER -->|"IrRule (HIR)"| ECOMP
+    LOWER -->|"IrRule (HIR)"| CBACK
     PEST --> LSERV
     ECUST --> RENG
     EVENTS --> RINPUT
@@ -108,15 +118,16 @@ The dependency direction goes left to right in the diagram above. Higher crates 
 | Crate | Role | Key types | Feature gates |
 |-------|------|-----------|---------------|
 | [`rsigma-parser`](https://docs.rs/rsigma-parser) | YAML → AST. The only crate that touches Sigma source. | `SigmaCollection`, `SigmaRule`, `CorrelationRule`, `FilterRule`, `Condition`, `SigmaStr`, `Modifier` | — |
-| [`rsigma-eval`](https://docs.rs/rsigma-eval) | Compile AST to a matcher tree, evaluate events. Detection and correlation engine. Processing pipeline machinery. | `Engine`, `CorrelationEngine`, `Pipeline`, `Transformation`, `CompiledRule`, `Event`, `JsonEvent`, `MatchResult`, `CorrelationResult` | `parallel`, `daachorse-index` |
-| [`rsigma-convert`](https://docs.rs/rsigma-convert) | Lower the parser AST into backend-native queries. Non-native targets are delegated to sigma-cli. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `FibratusBackend`, `TestBackend` | — |
+| [`rsigma-ir`](https://docs.rs/rsigma-ir) | Lower the AST into a shared, modifier-resolved HIR consumed by both eval and convert. Faithful, lossless matchers; opt-in optimization passes; a versioned CBOR cache. | `IrRule`, `IrDetection`, `IrCondition`, `IrMatcher`, `IrPattern`, `lower_rule`, `optimize_rule`, `HirCacheHeader`, `encode_rules`, `decode_rules` | — |
+| [`rsigma-eval`](https://docs.rs/rsigma-eval) | Lower rules to HIR, then materialize a matcher tree and evaluate events. Detection and correlation engine. Processing pipeline machinery. HIR restart cache. | `Engine`, `CorrelationEngine`, `Pipeline`, `Transformation`, `CompiledRule`, `Event`, `JsonEvent`, `MatchResult`, `CorrelationResult` | `parallel`, `daachorse-index` |
+| [`rsigma-convert`](https://docs.rs/rsigma-convert) | Render backend-native queries from the HIR. Non-native targets are delegated to sigma-cli. | `Backend` trait, `TextQueryConfig`, `PostgresBackend`, `LynxDbBackend`, `FibratusBackend`, `TestBackend` | — |
 | [`rsigma-runtime`](https://docs.rs/rsigma-runtime) | Streaming runtime. Input adapters, post-evaluation enrichment, sinks, dynamic-source resolver, NATS/OTLP plumbing, hot-reload. | `LogProcessor`, `RuntimeEngine`, `EventSource`, `Sink`, `EnrichmentPipeline`, `SourceResolver`, `SourceCache`, `TemplateExpander`, `EvtxFileReader` | `nats`, `otlp`, `logfmt`, `cef`, `evtx`, `daachorse-index` |
 | [`rsigma-lsp`](https://docs.rs/rsigma-lsp) | Language Server Protocol for editors. Diagnostics from the linter + parser + compiler, plus completions, hovers, and symbols. | `Backend` (tower-lsp impl), `Diagnostic` mapping | — |
 | [`rsigma-mcp`](https://docs.rs/rsigma-mcp) | Model Context Protocol server. Exposes the parser, linter, fixer, evaluator, converter, field extraction, and pipeline resolution as MCP tools and resources for AI agents, returning structured JSON. | `RsigmaMcp` handler, `serve_stdio` | `http` |
 | `rstix` | STIX 2.1 library crate. **Data Model + Serialization** complete (`serde`, default; wire MUST at parse [**DD-DM-001**](../library/rstix.md#dd-dm-001--wire-must-at-parse); [conformance notes](../library/rstix.md#conformance-notes-stix-21)). **Pattern Engine** complete (`pattern`). **Validation Pipeline** complete (`validate`, all twelve checks, conformance corpus + per-code diagnostic coverage). **Graph + Marking + Store** complete (`graph`, `marking`, `store`, `store-fs`). | `Bundle::parse` / `parse_reader`, `Bundle::validate`, `ParseOptions` + typed `TypeRegistry`, 42 typed object families (`serde`); `Pattern::parse` / `evaluate` / … (`pattern`); `Validator` / structured `STIX-E/W/I/H` diagnostics (`validate`); `StixGraph`, `MarkingResolver`, `MemoryStore` / `StixStore` / `FsStore` (`graph` / `marking` / `store` / `store-fs`); deterministic SCO IDs, vocabulary tables | `serde` (default), `pattern`, `validate`, `graph`, `marking`, `store`, `store-fs` |
 | `rsigma-cli` | The `rsigma` binary. Wires the other crates into a CLI and the streaming daemon. | `engine eval`, `engine daemon`, `rule *`, `backend *`, `pipeline resolve` | `daemon`, `daemon-nats`, `daemon-otlp`, plus all eval/runtime feature flags. |
 
-`rsigma-parser` has no Rust dependencies on the others. `rsigma-eval`, `rsigma-convert`, and `rsigma-lsp` depend on `rsigma-parser` and nothing else above it. `rsigma-runtime` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-mcp` depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, and `rsigma-runtime`. `rsigma-cli` depends on everything.
+`rsigma-parser` has no Rust dependencies on the others. `rsigma-ir` depends only on `rsigma-parser`. `rsigma-eval` and `rsigma-convert` depend on `rsigma-parser` and `rsigma-ir` (both consume the HIR); `rsigma-lsp` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-runtime` depends on `rsigma-parser` and `rsigma-eval`. `rsigma-mcp` depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, and `rsigma-runtime`. `rsigma-cli` depends on everything.
 
 ## The four execution shapes
 
@@ -160,7 +171,7 @@ See [Streaming Detection](../guide/streaming-detection.md) and the [`engine daem
 
 ### 4. Backend conversion (`backend convert`)
 
-`rsigma-convert`'s `Backend` trait drives a recursive walk over the parser AST and emits backend-native queries (SQL, SPL2) or rule documents. The trait uses `TextQueryConfig` (around 90 fields mirroring pySigma's `TextQueryBackend` configuration) to keep backend implementations declarative.
+`rsigma-convert` lowers each rule to HIR and its `Backend` trait walks the resulting `IrDetection` / `IrCondition`, emitting backend-native queries (SQL, SPL2) or rule documents. The value leaves consume the faithful HIR (`IrPattern`, `IrStrOp`, `IrNumber`, `RegexFlags`, `CompareOp`) rather than parser types, so a backend never touches `rsigma-parser`. The trait uses `TextQueryConfig` (around 90 fields mirroring pySigma's `TextQueryBackend` configuration) to keep backend implementations declarative.
 
 PostgreSQL/TimescaleDB, LynxDB, and Fibratus (rule YAML for Windows EDR sensors) are the native targets today. `backend convert` resolves targets native-first: any target without a native backend is delegated to an installed [sigma-cli](https://github.com/SigmaHQ/sigma-cli), so the wider pySigma backend ecosystem (Splunk, Elasticsearch, Microsoft Sentinel/KQL, QRadar, and 30+ more) is reachable from the same command. See [`backend convert`](../cli/backend/convert.md), [PostgreSQL backend](backends/postgres.md), [LynxDB backend](backends/lynxdb.md).
 
@@ -188,9 +199,13 @@ PostgreSQL/TimescaleDB, LynxDB, and Fibratus (rule YAML for Windows EDR sensors)
 - Conditions go through a separate Pratt parser (`condition.rs`) that consumes the [Sigma condition expression grammar](https://sigmahq.io/docs/basics/conditions.html) with `not > and > or` precedence.
 - The parser is strict on the spec: unknown top-level keys fail compilation; unrecognised modifiers fail compilation. (Linting is a separate pass that surfaces best-practice issues without failing compilation.)
 
-### AST to compiled rules (`rsigma-eval::compiler`)
+### AST to HIR (`rsigma-ir`)
 
-`Engine::add_collection` first runs every loaded pipeline against each rule, in priority order, then compiles the rewritten rules into `CompiledRule`. Compilation builds the matcher tree: a tree of nodes per detection item, with the matcher optimizer transforming subtrees in-place.
+Both evaluation and conversion route through a shared intermediate representation. `lower_rule` walks the (post-pipeline) parser AST and resolves each field modifier into an explicit `IrMatcher`, producing an `IrRule` whose detections, conditions, and matchers are backend-neutral. Lowering is purely structural: it decides *which* comparison applies but keeps the value faithful (original case, wildcards, encodings recorded as explicit steps) and preserves quantified selectors, so the same HIR compiles to physical matchers for eval and renders to query strings for convert. The HIR is `serde`-serializable; `rsigma-ir::cache` writes a versioned CBOR blob (a `HirCacheHeader` plus the rules) that backs the engine restart cache.
+
+### HIR to compiled rules (`rsigma-eval::compiler`)
+
+`Engine::add_collection` first runs every loaded pipeline against each rule, in priority order, then lowers each rewritten rule to HIR (`lower_rule`) and materializes it into a `CompiledRule` via `compile_to_compiled`. Materialization builds the matcher tree, a tree of nodes per detection item with the concrete `Regex` / Aho-Corasick / `IpNet` matchers, and the matcher optimizer transforms subtrees in-place. `Engine::save_hir` / `load_hir` persist and reload that lowered rule set through the HIR cache, so a warm process skips parse, pipeline, and lowering on restart.
 
 The matcher optimizer makes three transparent rewrites:
 

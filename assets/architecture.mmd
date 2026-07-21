@@ -16,11 +16,19 @@ flowchart TD
         PARSE --> AST["ast.rs\nAST types · modifiers · enums"]
     end
 
+    subgraph rsigma-ir
+        direction TB
+        LOWER["lower_rule\nAST → HIR · modifier resolution\nquantified selectors preserved"]
+        LOWER --> IRHIR["hir: IrRule · IrDetection · IrCondition\nIrMatcher (faithful: IrPattern + IrEncoding)"]
+        IRHIR --> IROPT["optimize (opt-in)\nflatten · dead-detection · CSE"]
+        IRHIR --> IRCACHE["cache (CBOR)\nHirCacheHeader · encode_rules / decode_rules\nbacks Engine save_hir / load_hir"]
+    end
+
     subgraph rsigma-eval
         direction TB
         ETRAIT["Event trait\nJsonEvent · KvEvent · PlainEvent\nschema classify (content signatures)"]
         ETRAIT --> EPIPE["pipeline/\nPipeline · conditions · transformations\nstate · finalizers\nbuiltin: ecs_windows · sysmon\ndynamic: ${source.*} template expansion"]
-        EPIPE --> ECOMP["compiler/\ncompile_rule → CompiledRule\nmatcher optimizer (AnyOf):\nAho-Corasick batching (|contains)\nRegexSet batching (|re)\nCaseInsensitiveGroup"]
+        ECOMP["compiler/\ncompile_to_compiled → CompiledRule\nmaterialize matchers from HIR\nmatcher optimizer (AnyOf):\nAho-Corasick batching (|contains)\nRegexSet batching (|re)\nCaseInsensitiveGroup"]
         ECOMP --> EENG["engine/\nEngine (stateless)\nprefilters:\nRuleIndex (exact-value pruning)\nbloom trigram filter* (substring)\ncross-rule AC index** (daachorse)\nlogsource pruning (conflict-based, product-partitioned)"]
         EENG --> ECORR["correlation/\nsliding windows · group-by\nchaining · suppression · introspect snapshot"]
         ECORR --> ECUST["rsigma.* custom attributes"]
@@ -28,9 +36,9 @@ flowchart TD
 
     subgraph rsigma-convert
         direction TB
-        CBACK["Backend trait\npluggable query generation"]
+        CBACK["Backend trait\nIR-native query generation"]
         CBACK --> CTQC["TextQueryConfig\n~90 fields for text query backends"]
-        CTQC --> CWALK["Condition walker\ndeferred exprs · conversion state"]
+        CTQC --> CWALK["IR walker\nIrDetection · IrCondition\ndeferred exprs · conversion state"]
         CWALK --> CENDS["backends/\nnative: PostgreSQL/TimescaleDB · LynxDB · Fibratus\nTextQueryTest (test)\nelse → sigma-cli delegation (splunk · elastic · kusto · ...)"]
     end
 
@@ -61,8 +69,10 @@ flowchart TD
 
     YAML -->|"Raw YAML Value"| SERDE
     SERDE --> PARSE
-    PEST --> ETRAIT
-    PEST --> CBACK
+    PEST -->|"AST"| LOWER
+    EPIPE -.->|"transforms applied before lowering"| LOWER
+    LOWER -->|"IrRule (HIR)"| ECOMP
+    LOWER -->|"IrRule (HIR)"| CBACK
     PEST --> LSERV
     ECUST --> RENG
     EVENTS --> RINPUT

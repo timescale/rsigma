@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1120" height="810" viewBox="0 0 1120 810" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1120" height="985" viewBox="0 0 1120 985" font-family="Helvetica, Arial, sans-serif">
   <defs>
     <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,0 L7,3 L0,6 Z" fill="#4d4d4d"/>
@@ -9,7 +9,7 @@
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1120" height="810" fill="#ffffff"/>
+  <rect x="0" y="0" width="1120" height="985" fill="#ffffff"/>
 
   <!-- title -->
   <text x="24" y="30" font-size="16" font-weight="bold" fill="#1a1a1a">rsigma</text>
@@ -18,31 +18,37 @@
   <!-- ===================== EDGES ===================== -->
   <!-- Sigma YAML -> parser -->
   <path d="M660,96 L660,118" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <!-- parser fan-out -->
-  <path d="M660,232 L660,242 L345,242 L345,248" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <path d="M660,232 L660,248" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <path d="M660,242 L935,242 L935,248" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <text x="350" y="238" font-size="10.5" fill="#808080">AST</text>
-  <text x="912" y="238" font-size="10.5" fill="#808080">AST</text>
+  <!-- parser -> rsigma-ir -->
+  <path d="M660,232 L660,252" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="668" y="247" font-size="10.5" fill="#808080">AST</text>
+  <!-- parser -> lsp (AST, bypasses IR) -->
+  <path d="M660,232 L660,240 L935,240 L935,378" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="900" y="236" font-size="10.5" fill="#808080">AST</text>
+  <!-- rsigma-ir -> eval -->
+  <path d="M660,348 L660,360 L345,360 L345,378" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="352" y="356" font-size="10.5" fill="#808080">IrRule (HIR)</text>
+  <!-- rsigma-ir -> convert -->
+  <path d="M660,348 L660,378" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="668" y="372" font-size="10.5" fill="#808080">IrRule (HIR)</text>
 
   <!-- eval -> runtime -->
-  <path d="M345,430 L345,468" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <text x="352" y="452" font-size="10.5" fill="#4d4d4d">embeds Engine + CorrelationEngine</text>
+  <path d="M345,560 L345,598" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="352" y="582" font-size="10.5" fill="#4d4d4d">embeds Engine + CorrelationEngine</text>
   <!-- runtime -> results -->
-  <path d="M345,682 L345,698" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <path d="M345,812 L345,828" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
   <!-- convert -> queries -->
-  <path d="M640,412 L640,698" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <text x="646" y="560" font-size="10.5" fill="#4d4d4d">backend convert</text>
+  <path d="M640,542 L640,828" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="646" y="690" font-size="10.5" fill="#4d4d4d">backend convert</text>
   <!-- lsp -> editors -->
-  <path d="M935,412 L935,698" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <text x="941" y="560" font-size="10.5" fill="#4d4d4d">diagnostics</text>
+  <path d="M935,542 L935,828" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="941" y="690" font-size="10.5" fill="#4d4d4d">diagnostics</text>
 
   <!-- dynamic sources -> eval (dashed) -->
-  <path d="M186,330 L208,330" fill="none" stroke="#808080" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
-  <text x="60" y="322" font-size="10.5" fill="#4d4d4d">resolve ${source.*}</text>
+  <path d="M186,460 L208,460" fill="none" stroke="#808080" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
+  <text x="60" y="452" font-size="10.5" fill="#4d4d4d">resolve ${source.*}</text>
   <!-- log events -> runtime -->
-  <path d="M186,544 L208,544" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
-  <text x="92" y="536" font-size="10.5" fill="#4d4d4d">ingest</text>
+  <path d="M186,674 L208,674" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
+  <text x="92" y="666" font-size="10.5" fill="#4d4d4d">ingest</text>
 
   <!-- ===================== Sigma YAML input ===================== -->
   <rect x="560" y="48" width="200" height="48" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
@@ -57,51 +63,58 @@
   <text x="518" y="199" font-size="10.5" fill="#4d4d4d">value.rs &#183; ast.rs (types &#183; modifiers)</text>
   <text x="518" y="217" font-size="10.5" fill="#808080">SigmaRule &#183; CorrelationRule &#183; FilterRule</text>
 
+  <!-- ===================== rsigma-ir ===================== -->
+  <rect x="500" y="252" width="320" height="96" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
+  <text x="518" y="276" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-ir</text>
+  <text x="518" y="297" font-size="10.5" fill="#4d4d4d">lower_rule: AST &#8594; HIR (modifiers resolved)</text>
+  <text x="518" y="315" font-size="10.5" fill="#4d4d4d">IrRule &#183; IrDetection &#183; IrCondition &#183; IrMatcher</text>
+  <text x="518" y="333" font-size="10" fill="#808080">faithful IrPattern / IrEncoding &#183; optimize* &#183; cache (CBOR)</text>
+
   <!-- ===================== rsigma-eval ===================== -->
-  <rect x="210" y="248" width="270" height="182" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
-  <text x="228" y="272" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-eval</text>
-  <text x="228" y="293" font-size="10.5" fill="#4d4d4d">Event trait: Json &#183; Kv &#183; Plain</text>
-  <text x="228" y="311" font-size="10.5" fill="#4d4d4d">pipeline/: field mapping &#183; transforms</text>
-  <text x="228" y="329" font-size="10.5" fill="#4d4d4d">compiler/: CompiledRule + optimizer</text>
-  <text x="240" y="345" font-size="10" fill="#808080">Aho-Corasick &#183; RegexSet &#183; CI group</text>
-  <text x="228" y="363" font-size="10.5" fill="#4d4d4d">engine/: Engine (stateless) + RuleIndex</text>
-  <text x="240" y="379" font-size="10" fill="#808080">bloom prefilter* &#183; cross-rule AC**</text>
-  <text x="228" y="397" font-size="10.5" fill="#4d4d4d">correlation/: windows &#183; group-by &#183; chain</text>
-  <text x="228" y="415" font-size="10" fill="#808080">logsource prune &#183; schema classify</text>
+  <rect x="210" y="378" width="270" height="182" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
+  <text x="228" y="402" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-eval</text>
+  <text x="228" y="423" font-size="10.5" fill="#4d4d4d">Event trait: Json &#183; Kv &#183; Plain</text>
+  <text x="228" y="441" font-size="10.5" fill="#4d4d4d">pipeline/: field mapping &#183; transforms</text>
+  <text x="228" y="459" font-size="10.5" fill="#4d4d4d">compiler/: HIR &#8594; CompiledRule + optimizer</text>
+  <text x="240" y="475" font-size="10" fill="#808080">Aho-Corasick &#183; RegexSet &#183; CI group</text>
+  <text x="228" y="493" font-size="10.5" fill="#4d4d4d">engine/: Engine (stateless) + RuleIndex</text>
+  <text x="240" y="509" font-size="10" fill="#808080">bloom prefilter* &#183; cross-rule AC** &#183; save_hir</text>
+  <text x="228" y="527" font-size="10.5" fill="#4d4d4d">correlation/: windows &#183; group-by &#183; chain</text>
+  <text x="240" y="543" font-size="10" fill="#808080">logsource prune &#183; schema classify</text>
 
   <!-- ===================== rsigma-convert ===================== -->
-  <rect x="520" y="248" width="240" height="164" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
-  <text x="538" y="272" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-convert</text>
-  <text x="538" y="296" font-size="10.5" fill="#4d4d4d">Backend trait (pluggable)</text>
-  <text x="538" y="318" font-size="10.5" fill="#4d4d4d">TextQueryConfig (~90 fields)</text>
-  <text x="538" y="338" font-size="10.5" fill="#4d4d4d">condition walker &#183; deferred exprs</text>
-  <text x="538" y="358" font-size="10.5" fill="#4d4d4d">backends/ (native):</text>
-  <text x="550" y="374" font-size="10" fill="#808080">PostgreSQL / TimescaleDB &#183; LynxDB</text>
-  <text x="550" y="388" font-size="10" fill="#808080">Fibratus (EDR rule YAML)</text>
-  <text x="538" y="404" font-size="10.5" fill="#4d4d4d">else &#8594; sigma-cli delegation</text>
+  <rect x="520" y="378" width="240" height="164" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
+  <text x="538" y="402" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-convert</text>
+  <text x="538" y="426" font-size="10.5" fill="#4d4d4d">Backend trait (IR-native)</text>
+  <text x="538" y="448" font-size="10.5" fill="#4d4d4d">TextQueryConfig (~90 fields)</text>
+  <text x="538" y="468" font-size="10.5" fill="#4d4d4d">IR walker &#183; deferred exprs</text>
+  <text x="538" y="488" font-size="10.5" fill="#4d4d4d">backends/ (native):</text>
+  <text x="550" y="504" font-size="10" fill="#808080">PostgreSQL / TimescaleDB &#183; LynxDB</text>
+  <text x="550" y="518" font-size="10" fill="#808080">Fibratus (EDR rule YAML)</text>
+  <text x="538" y="534" font-size="10.5" fill="#4d4d4d">else &#8594; sigma-cli delegation</text>
 
   <!-- ===================== rsigma-lsp ===================== -->
-  <rect x="810" y="248" width="250" height="164" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
-  <text x="828" y="272" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-lsp</text>
-  <text x="828" y="296" font-size="10.5" fill="#4d4d4d">LSP server over stdio (tower-lsp)</text>
-  <text x="828" y="318" font-size="10.5" fill="#4d4d4d">diagnostics:</text>
-  <text x="840" y="336" font-size="10" fill="#808080">lint + parse + compile</text>
-  <text x="828" y="358" font-size="10.5" fill="#4d4d4d">completions &#183; hover</text>
-  <text x="828" y="380" font-size="10.5" fill="#4d4d4d">document symbols &#183; code actions</text>
+  <rect x="810" y="378" width="250" height="164" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
+  <text x="828" y="402" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-lsp</text>
+  <text x="828" y="426" font-size="10.5" fill="#4d4d4d">LSP server over stdio (tower-lsp)</text>
+  <text x="828" y="448" font-size="10.5" fill="#4d4d4d">diagnostics:</text>
+  <text x="840" y="466" font-size="10" fill="#808080">lint + parse + compile</text>
+  <text x="828" y="488" font-size="10.5" fill="#4d4d4d">completions &#183; hover</text>
+  <text x="828" y="510" font-size="10.5" fill="#4d4d4d">document symbols &#183; code actions</text>
 
   <!-- ===================== rsigma-runtime ===================== -->
-  <rect x="210" y="468" width="270" height="214" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
-  <text x="228" y="492" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-runtime</text>
-  <text x="228" y="513" font-size="10.5" fill="#4d4d4d">input/: JSON &#183; syslog &#183; logfmt*</text>
-  <text x="240" y="529" font-size="10" fill="#808080">CEF* &#183; EVTX* &#183; OTLP* &#183; auto-detect</text>
-  <text x="228" y="547" font-size="10.5" fill="#4d4d4d">sources/: SourceResolver &#183; cache</text>
-  <text x="240" y="563" font-size="10" fill="#808080">RefreshScheduler &#183; TemplateExpander</text>
-  <text x="228" y="581" font-size="10.5" fill="#4d4d4d">LogProcessor: batch &#183; ArcSwap reload</text>
-  <text x="228" y="599" font-size="10.5" fill="#4d4d4d">RuntimeEngine: Engine + Correlation</text>
-  <text x="228" y="617" font-size="10.5" fill="#4d4d4d">enrichment/: template &#183; lookup</text>
-  <text x="240" y="633" font-size="10" fill="#808080">http &#183; command</text>
-  <text x="228" y="651" font-size="10.5" fill="#4d4d4d">io/: EventSource &#183; Sink &#183; DLQ &#183; TLS* &#183; unix*</text>
-  <text x="228" y="669" font-size="10" fill="#808080">post-engine: risk* &#183; alert pipeline*</text>
+  <rect x="210" y="598" width="270" height="214" rx="8" fill="#ffeccf" stroke="#b3873a" stroke-dasharray="4 4"/>
+  <text x="228" y="622" font-size="14" font-weight="bold" fill="#1a1a1a">rsigma-runtime</text>
+  <text x="228" y="643" font-size="10.5" fill="#4d4d4d">input/: JSON &#183; syslog &#183; logfmt*</text>
+  <text x="240" y="659" font-size="10" fill="#808080">CEF* &#183; EVTX* &#183; OTLP* &#183; auto-detect</text>
+  <text x="228" y="677" font-size="10.5" fill="#4d4d4d">sources/: SourceResolver &#183; cache</text>
+  <text x="240" y="693" font-size="10" fill="#808080">RefreshScheduler &#183; TemplateExpander</text>
+  <text x="228" y="711" font-size="10.5" fill="#4d4d4d">LogProcessor: batch &#183; ArcSwap reload</text>
+  <text x="228" y="729" font-size="10.5" fill="#4d4d4d">RuntimeEngine: Engine + Correlation</text>
+  <text x="228" y="747" font-size="10.5" fill="#4d4d4d">enrichment/: template &#183; lookup</text>
+  <text x="240" y="763" font-size="10" fill="#808080">http &#183; command</text>
+  <text x="228" y="781" font-size="10.5" fill="#4d4d4d">io/: EventSource &#183; Sink &#183; DLQ &#183; TLS* &#183; unix*</text>
+  <text x="228" y="799" font-size="10" fill="#808080">post-engine: risk* &#183; alert pipeline*</text>
 
   <!-- ===================== rsigma-mcp ===================== -->
   <path d="M186,150 L208,150" fill="none" stroke="#4d4d4d" marker-end="url(#arrow)"/>
@@ -125,48 +138,48 @@
 
   <!-- ===================== side inputs ===================== -->
   <!-- dynamic sources -->
-  <rect x="26" y="290" width="160" height="80" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
-  <text x="106" y="310" font-size="12" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Dynamic sources</text>
-  <rect x="30" y="318" width="152" height="48" fill="#e6f2ff" stroke="none"/>
-  <text x="106" y="335" font-size="10" text-anchor="middle" fill="#4d4d4d">HTTP &#183; command &#183; file</text>
-  <text x="106" y="350" font-size="10" text-anchor="middle" fill="#4d4d4d">NATS &#183; jq / JSONPath / CEL</text>
-  <text x="106" y="363" font-size="10" text-anchor="middle" fill="#808080">threat intel &#183; allow / deny</text>
+  <rect x="26" y="420" width="160" height="80" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
+  <text x="106" y="440" font-size="12" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Dynamic sources</text>
+  <rect x="30" y="448" width="152" height="48" fill="#e6f2ff" stroke="none"/>
+  <text x="106" y="465" font-size="10" text-anchor="middle" fill="#4d4d4d">HTTP &#183; command &#183; file</text>
+  <text x="106" y="480" font-size="10" text-anchor="middle" fill="#4d4d4d">NATS &#183; jq / JSONPath / CEL</text>
+  <text x="106" y="493" font-size="10" text-anchor="middle" fill="#808080">threat intel &#183; allow / deny</text>
 
   <!-- log events (stacked) -->
-  <rect x="34" y="494" width="160" height="90" rx="3" fill="#cfe3fb" stroke="#4d4d4d"/>
-  <rect x="30" y="498" width="160" height="90" rx="3" fill="#dcebfc" stroke="#4d4d4d"/>
-  <rect x="26" y="500" width="160" height="90" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
-  <text x="106" y="520" font-size="12" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Log events</text>
-  <rect x="30" y="527" width="152" height="59" fill="#e6f2ff" stroke="none"/>
-  <text x="106" y="544" font-size="10" text-anchor="middle" fill="#4d4d4d">JSON &#183; syslog</text>
-  <text x="106" y="559" font-size="10" text-anchor="middle" fill="#4d4d4d">CEF* &#183; EVTX* &#183; OTLP*</text>
-  <text x="106" y="574" font-size="10" text-anchor="middle" fill="#808080">stdin &#183; HTTP &#183; NATS &#183; unix*</text>
+  <rect x="34" y="624" width="160" height="90" rx="3" fill="#cfe3fb" stroke="#4d4d4d"/>
+  <rect x="30" y="628" width="160" height="90" rx="3" fill="#dcebfc" stroke="#4d4d4d"/>
+  <rect x="26" y="630" width="160" height="90" rx="3" fill="#99ccff" stroke="#4d4d4d"/>
+  <text x="106" y="650" font-size="12" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Log events</text>
+  <rect x="30" y="657" width="152" height="59" fill="#e6f2ff" stroke="none"/>
+  <text x="106" y="674" font-size="10" text-anchor="middle" fill="#4d4d4d">JSON &#183; syslog</text>
+  <text x="106" y="689" font-size="10" text-anchor="middle" fill="#4d4d4d">CEF* &#183; EVTX* &#183; OTLP*</text>
+  <text x="106" y="704" font-size="10" text-anchor="middle" fill="#808080">stdin &#183; HTTP &#183; NATS &#183; unix*</text>
 
   <!-- ===================== outputs ===================== -->
   <!-- detection results -->
-  <rect x="210" y="698" width="270" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
-  <text x="345" y="719" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">EvaluationResult</text>
-  <text x="345" y="737" font-size="10.5" text-anchor="middle" fill="#4d4d4d">RuleHeader + Detection / Correlation</text>
-  <text x="345" y="752" font-size="10" text-anchor="middle" fill="#808080">sinks: stdout &#183; file &#183; NATS &#183; OTLP* &#183; webhook &#183; unix*</text>
+  <rect x="210" y="828" width="270" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
+  <text x="345" y="849" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">EvaluationResult</text>
+  <text x="345" y="867" font-size="10.5" text-anchor="middle" fill="#4d4d4d">RuleHeader + Detection / Correlation</text>
+  <text x="345" y="882" font-size="10" text-anchor="middle" fill="#808080">sinks: stdout &#183; file &#183; NATS &#183; OTLP* &#183; webhook &#183; unix*</text>
 
   <!-- queries -->
-  <rect x="520" y="698" width="240" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
-  <text x="640" y="719" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">SIEM queries</text>
-  <text x="640" y="737" font-size="10.5" text-anchor="middle" fill="#4d4d4d">SQL &#183; SPL &#183; KQL &#183; Lucene &#183; EDR rules</text>
-  <text x="640" y="752" font-size="10" text-anchor="middle" fill="#808080">native + 30+ targets via sigma-cli</text>
+  <rect x="520" y="828" width="240" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
+  <text x="640" y="849" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">SIEM queries</text>
+  <text x="640" y="867" font-size="10.5" text-anchor="middle" fill="#4d4d4d">SQL &#183; SPL &#183; KQL &#183; Lucene &#183; EDR rules</text>
+  <text x="640" y="882" font-size="10" text-anchor="middle" fill="#808080">native + 30+ targets via sigma-cli</text>
 
   <!-- editors -->
-  <rect x="810" y="698" width="250" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
-  <text x="935" y="719" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Editors</text>
-  <text x="935" y="737" font-size="10.5" text-anchor="middle" fill="#4d4d4d">VS Code &#183; Neovim &#183; Helix &#183; Zed</text>
-  <text x="935" y="752" font-size="10" text-anchor="middle" fill="#808080">real-time diagnostics + actions</text>
+  <rect x="810" y="828" width="250" height="62" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
+  <text x="935" y="849" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Editors</text>
+  <text x="935" y="867" font-size="10.5" text-anchor="middle" fill="#4d4d4d">VS Code &#183; Neovim &#183; Helix &#183; Zed</text>
+  <text x="935" y="882" font-size="10" text-anchor="middle" fill="#808080">real-time diagnostics + actions</text>
 
   <!-- ===================== rsigma-cli bar ===================== -->
-  <rect x="210" y="776" width="850" height="28" rx="3" fill="#e6e6e6" stroke="#808080"/>
-  <text x="224" y="794" font-size="11" fill="#4d4d4d"><tspan font-weight="bold">rsigma-cli</tspan>  wires every crate into the rsigma binary:  engine eval  &#183;  engine daemon  &#183;  backend convert  &#183;  rule / pipeline subcommands</text>
+  <rect x="210" y="936" width="850" height="28" rx="3" fill="#e6e6e6" stroke="#808080"/>
+  <text x="224" y="954" font-size="11" fill="#4d4d4d"><tspan font-weight="bold">rsigma-cli</tspan>  wires every crate into the rsigma binary:  engine eval  &#183;  engine daemon  &#183;  backend convert  &#183;  rule / pipeline subcommands</text>
 
   <!-- ===================== legend ===================== -->
-  <text x="24" y="729" font-size="11" fill="#4d4d4d">*  feature-gated</text>
-  <text x="24" y="746" font-size="11" fill="#4d4d4d">**  requires the daachorse-index feature</text>
-  <text x="24" y="769" font-size="10.5" fill="#808080">Dependency direction: rsigma-parser has no internal deps; eval / convert / lsp depend on parser; runtime depends on parser + eval; mcp wraps parser + eval + convert + runtime; cli depends on all.</text>
+  <text x="24" y="859" font-size="11" fill="#4d4d4d">*  feature-gated</text>
+  <text x="24" y="876" font-size="11" fill="#4d4d4d">**  requires the daachorse-index feature</text>
+  <text x="24" y="916" font-size="10.5" fill="#808080">Dependency direction: parser has no internal deps; ir depends on parser; eval / convert depend on parser + ir; lsp / runtime depend on parser + eval; mcp wraps parser + eval + convert + runtime; cli depends on all.</text>
 </svg>
