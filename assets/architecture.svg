@@ -71,8 +71,8 @@
   <!-- Eval -->
   <rect x="490" y="206" width="120" height="70" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
   <text x="550" y="227" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#1a1a1a">Eval engine</text>
-  <text x="550" y="244" font-size="10.5" text-anchor="middle" fill="#4d4d4d">compile &#183; match</text>
-  <text x="550" y="259" font-size="10.5" text-anchor="middle" fill="#808080">matcher optimizer</text>
+  <text x="550" y="244" font-size="10.5" text-anchor="middle" fill="#4d4d4d">lower &#8594; HIR &#8594; compile</text>
+  <text x="550" y="259" font-size="10.5" text-anchor="middle" fill="#808080">match &#183; matcher optimizer</text>
 
   <!-- Runtime -->
   <rect x="350" y="300" width="260" height="82" rx="3" fill="#ffffff" stroke="#4d4d4d"/>
@@ -180,5 +180,5 @@
 
   <!-- ===================== legend ===================== -->
   <text x="22" y="566" font-size="11" fill="#4d4d4d">*  feature-gated</text>
-  <text x="22" y="582" font-size="11" fill="#808080">The runtime wraps the stateless library Engine. The same engine also powers the CLI, library API, backend conversion, and the rsigma-mcp server (see internal_architecture.svg).</text>
+  <text x="22" y="582" font-size="11" fill="#808080">The runtime wraps the stateless Engine; rules lower to a shared HIR (rsigma-ir) before compile. It powers the CLI, library, and rsigma-mcp (see internal_architecture.svg).</text>
 </svg>
