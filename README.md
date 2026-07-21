@@ -1,6 +1,9 @@
 <p align="center">
     <a href="https://github.com/timescale/rsigma">
-        <img src="https://github.com/timescale/rsigma/blob/main/assets/rsigma-logotype.png" alt="RSigma logotype" width="200"/>
+        <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="https://github.com/timescale/rsigma/blob/main/assets/rsigma-logotype-dark.png" />
+            <img src="https://github.com/timescale/rsigma/blob/main/assets/rsigma-logotype.png" alt="RSigma logotype" width="200"/>
+        </picture>
     </a>
     <p align="center">A complete Sigma detection engineering toolkit</p>
 </p>
