@@ -43,10 +43,6 @@ No environment variables. URLs and cert paths are defined in `tests/taxii_live.r
 cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
 ```
 
-```bash
-cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
-```
-
 ## Manual equivalent
 
 ```bash

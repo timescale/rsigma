@@ -23,7 +23,7 @@ rstix = "{{ rsigma.version }}"
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs` — property graph, TLP resolution, in-memory and filesystem store) | **Complete** |
-| **TAXII Client** (`taxii` — HTTP client for all TAXII 2.1 endpoint groups) | **Complete** |
+| **TAXII Client** (`taxii` — HTTP client for all TAXII 2.1 endpoint groups - except Channels (out of scope)) | **Complete** |
 
 ## Quick start
 
