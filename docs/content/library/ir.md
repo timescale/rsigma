@@ -68,5 +68,5 @@ Each pass preserves the match decision and the set of matched selections and fie
 
 ## Related
 
-- [`rsigma-eval`](eval.md) — `compile_rule` (IR path), `compile_rule_legacy` (dual-path differential), and `Engine::save_hir` / `load_hir` (HIR restart cache).
+- [`rsigma-eval`](eval.md) — `compile_rule` (IR path) and `Engine::save_hir` / `load_hir` (HIR restart cache).
 - [`rsigma-parser`](parser.md) — source AST.

@@ -111,8 +111,8 @@ pub mod schema_discovery;
 
 // Re-export the most commonly used types and functions at crate root
 pub use compiler::{
-    CompiledDetection, CompiledDetectionItem, CompiledRule, compile_rule, compile_rule_legacy,
-    compile_to_compiled, evaluate_rule,
+    CompiledDetection, CompiledDetectionItem, CompiledRule, compile_rule, compile_to_compiled,
+    evaluate_rule,
 };
 pub use correlation::{
     CompiledCondition, CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupByField,
