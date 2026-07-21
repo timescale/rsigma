@@ -48,10 +48,7 @@ pub struct TaxiiClientConfig {
     user_agent: String,
     retry: RetryPolicy,
     preflight: PreflightPolicy,
-    tls_native: bool,
     client_certificate: Option<ClientCertificate>,
-    /// Accept invalid server certificates when using the native TLS backend (local test harnesses only).
-    danger_accept_invalid_server_certs: bool,
     allow_insecure_http: bool,
     max_response_bytes: usize,
     parse_options: ParseOptions,
@@ -74,9 +71,7 @@ impl TaxiiClientConfig {
             user_agent: default_user_agent(),
             retry: RetryPolicy::default(),
             preflight: PreflightPolicy::default(),
-            tls_native: false,
             client_certificate: None,
-            danger_accept_invalid_server_certs: false,
             allow_insecure_http: false,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             parse_options: ParseOptions::default(),
@@ -123,21 +118,6 @@ impl TaxiiClientConfig {
     /// Set preflight read/write checks.
     pub fn preflight(mut self, policy: PreflightPolicy) -> Self {
         self.preflight = policy;
-        self
-    }
-
-    /// Use the native TLS backend (requires `taxii-native-tls` feature).
-    pub fn tls_native(mut self, enabled: bool) -> Self {
-        self.tls_native = enabled;
-        self
-    }
-
-    /// Skip server certificate validation on the native TLS backend only.
-    ///
-    /// Ignored when using the default rustls backend. Intended for local test harnesses
-    /// with self-signed certificates; do not enable in production.
-    pub fn danger_accept_invalid_server_certs(mut self, allowed: bool) -> Self {
-        self.danger_accept_invalid_server_certs = allowed;
         self
     }
 
@@ -228,19 +208,6 @@ pub struct TaxiiClient {
 impl TaxiiClient {
     /// Build a client from `config`.
     pub fn new(config: TaxiiClientConfig) -> Result<Self, TaxiiError> {
-        if config.tls_native {
-            #[cfg(not(feature = "taxii-native-tls"))]
-            {
-                return Err(TaxiiError::NativeTlsUnavailable);
-            }
-        }
-
-        if config.tls_native && !matches!(config.server_trust, ServerTrustPolicy::SystemRoots) {
-            return Err(TaxiiError::InvalidServerTrust {
-                reason: "certificate pinning and DANE require the rustls backend".into(),
-            });
-        }
-
         let https_policy = if config.allow_insecure_http {
             HttpsPolicy::Allowed
         } else {
@@ -251,43 +218,16 @@ impl TaxiiClient {
             Url::parse(&config.base_url).map_err(|err| TaxiiError::InvalidUrl(err.to_string()))?;
         super::url::ensure_https(&base_url, https_policy)?;
 
-        #[cfg(feature = "taxii-native-tls")]
-        let client_builder = {
-            let mut builder = reqwest::Client::builder().timeout(config.timeout);
-            if config.tls_native {
-                if config.danger_accept_invalid_server_certs {
-                    builder = builder.danger_accept_invalid_certs(true);
-                }
-                if let Some(identity) = config
-                    .client_certificate
-                    .as_ref()
-                    .and_then(|cert| cert.identity())
-                {
-                    builder = builder.identity(identity);
-                }
-                builder.use_native_tls()
-            } else {
-                let tls = build_rustls_config(
-                    &config.server_trust,
-                    &config.tlsa_cache,
-                    config.client_certificate.as_ref(),
-                )?;
-                builder.use_preconfigured_tls(tls)
-            }
-        };
-        #[cfg(not(feature = "taxii-native-tls"))]
-        let client_builder = {
-            let tls = build_rustls_config(
-                &config.server_trust,
-                &config.tlsa_cache,
-                config.client_certificate.as_ref(),
-            )?;
-            reqwest::Client::builder()
-                .timeout(config.timeout)
-                .use_preconfigured_tls(tls)
-        };
-
-        let client = client_builder.build().map_err(TaxiiError::NetworkError)?;
+        let tls = build_rustls_config(
+            &config.server_trust,
+            &config.tlsa_cache,
+            config.client_certificate.as_ref(),
+        )?;
+        let client = reqwest::Client::builder()
+            .timeout(config.timeout)
+            .use_preconfigured_tls(tls)
+            .build()
+            .map_err(TaxiiError::NetworkError)?;
 
         Ok(Self {
             base_url,

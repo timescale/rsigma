@@ -11,10 +11,9 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 - **Pagination** — `TaxiiPaged<T>` returns page bodies plus `X-TAXII-Date-Added-First` / `Last` headers; cursor + header fallback on objects, manifest, object-by-id, and versions streams.
 - **Auth** — `BearerAuth`, `BasicAuth`, `ApiKeyHeader` via `TaxiiAuthProvider`; secrets use `secrecy::SecretString` with redacted `Debug`.
 - **Resilience** — `RetryPolicy` (503/429/network with backoff, honoring `Retry-After` on 503/429); full `TaxiiError` mapping including HTTP 415; optional `PreflightPolicy` for client-side permission guards.
-- **mTLS** — `ClientCertificate::from_pem` on rustls (client cert embedded in `build_rustls_config`); PKCS#12 via `taxii-native-tls`.
-- **`taxii-native-tls`** — optional native TLS backend via `TaxiiClientConfig::tls_native` (rstix's private `reqwest` 0.13 with `native-tls`; default uses rustls; does not enable workspace `reqwest/native-tls`).
-- **Tests** — `cargo test -p rstix --features taxii --test taxii_client`. Optional live harness: [`tests/taxii-live/README.md`](crates/rstix/tests/taxii-live/README.md) (TLS, mTLS, SRV, TLS 1.3, DANE, native TLS / PKCS#12).
-- **Live harness fixes** — DANE TLSA prefetch honors `dns_nameserver()`; `danger_accept_invalid_server_certs()` for native TLS with self-signed harness certs.
+- **mTLS** — `ClientCertificate::from_pem` and `ClientCertificate::from_pkcs12_der` (pure-Rust PKCS#12 via `p12-keystore`) embedded in `build_rustls_config`; single rustls TLS stack.
+- **Live harness fixes** — DANE TLSA prefetch honors `dns_nameserver()`.
+- **Tests** — `cargo test -p rstix --features taxii --test taxii_client`. Optional live harness: [`tests/taxii-live/README.md`](crates/rstix/tests/taxii-live/README.md) (TLS, mTLS, PKCS#12 mTLS, SRV, TLS 1.3, DANE).
 - **Conformance** — TLS 1.2+, required success `Content-Type`, strict pagination headers, RFC 2782 SRV weighted selection, HTTP 416 stream recovery, HTTP `Date` clock skew for `added_after`, `WWW-Authenticate` parsing, API Root/collection capability checks, POST auto-poll (`PostSubmitPolicy`), optional SPKI pinning and DANE (`ServerTrustPolicy`), `TaxiiDiscovery::default_api_root()`, optional `StatusDetail.version`.
 
 ### Deterministic bloom pre-filter seeding

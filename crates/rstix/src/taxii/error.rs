@@ -181,9 +181,6 @@ pub enum TaxiiError {
         /// Configured poll limit.
         max_polls: u32,
     },
-    /// TLS native backend requested but not enabled.
-    #[error("native TLS requested but the taxii-native-tls feature is disabled")]
-    NativeTlsUnavailable,
     /// Authentication provider failure.
     #[error("authentication error: {0}")]
     Auth(#[from] super::auth::AuthError),

@@ -23,7 +23,7 @@ rstix = "{{ rsigma.version }}"
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs` — property graph, TLP resolution, in-memory and filesystem store) | **Complete** |
-| **TAXII Client** (`taxii`, `taxii-native-tls` — HTTP client for all TAXII 2.1 endpoint groups) | **Complete** |
+| **TAXII Client** (`taxii` — HTTP client for all TAXII 2.1 endpoint groups) | **Complete** |
 
 ## Quick start
 
@@ -118,12 +118,11 @@ Later workspace phases may index indicators by `Pattern::observed_types()` but d
 
 ## TAXII Client
 
-Two optional feature flags (`taxii` implies `serde`; `taxii-native-tls` implies `taxii`):
+Optional **`taxii`** feature — TAXII 2.1 HTTP client for all normative endpoint groups **except Channels (spec §6, RESERVED — not implemented)**:
 
 | Feature | Module | Highlights |
 | ------- | ------ | ---------- |
-| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), TLS 1.2+1.3 via rustls, SPKI pin / DANE, auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
-| `taxii-native-tls` | (client TLS) | Native TLS via `TaxiiClientConfig::tls_native` (rstix pins its own `reqwest` 0.13 with `native-tls`; PKCS#12 client certificates). Incompatible with pinning/DANE. Does not flip workspace `reqwest` 0.12 to native TLS. |
+| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin / DANE, auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
 
 ```rust
 use rstix::taxii::{BearerAuth, TaxiiClient, TaxiiClientConfig, TaxiiFilter};
@@ -497,8 +496,7 @@ All twelve pipeline checks are implemented. The conformance harness (`tests/fixt
 | `marking` | TLP and statement marking resolution (`MarkingResolver`, granular selectors). |
 | `store` | In-memory STIX store (`MemoryStore`, `StixQuery`, `ImportReport`). |
 | `store-fs` | Filesystem-backed durable store (`FsStore`; implies `store`). |
-| `taxii` | TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, auth, pagination, retry). |
-| `taxii-native-tls` | Native TLS for `TaxiiClient` (implies `taxii`; default uses rustls). |
+| `taxii` | TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, auth, pagination, retry, rustls TLS with PEM and PKCS#12 mTLS). |
 
 ## Related docs
 

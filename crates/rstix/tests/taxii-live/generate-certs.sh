@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate a local CA, server cert (taxii.test + localhost + dane.taxii.test), client cert
-# for mTLS tests, PKCS#12 for native TLS, and CoreDNS TLSA records for DANE tests.
+# for mTLS tests (PEM and PKCS#12), and CoreDNS TLSA records for DANE tests.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"

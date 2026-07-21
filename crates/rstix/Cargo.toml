@@ -44,8 +44,8 @@ taxii = [
   "dep:rustls_webpki",
   "dep:webpki-roots",
   "dep:sha2",
+  "dep:p12-keystore",
 ]
-taxii-native-tls = ["taxii"]
 
 [dependencies]
 phf = { version = "0.14", features = ["macros"] }
@@ -66,7 +66,7 @@ ipnet = { version = "2", optional = true }
 regex = { version = "1", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
 
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "native-tls", "json", "stream", "query"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "query"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
 secrecy = { version = "0.8", optional = true }
 futures = { version = "0.3", optional = true }
@@ -76,6 +76,7 @@ rustls-pki-types = { version = "1.9", features = ["std"], optional = true }
 rustls_webpki = { package = "rustls-webpki", version = "0.103", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 sha2 = { version = "0.10", optional = true }
+p12-keystore = { version = "0.3", optional = true }
 
 [dev-dependencies]
 wiremock = "0.6"

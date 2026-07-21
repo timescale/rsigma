@@ -12,8 +12,7 @@ Six optional Cargo features extend the default `serde` bundle model (each implie
 - `marking` — effective TLP and statement marking resolution (object-level and granular property selectors).
 - `store` — in-memory STIX store with typed queries, SCO fingerprint reporting, and bundle import.
 - `store-fs` — filesystem-backed durable store (`FsStore`; implies `store`).
-- `taxii` — TAXII 2.1 HTTP client: discovery, collections, object CRUD, manifest, status polling, auth providers, pagination, retry (`TaxiiClient`; implies `serde`).
-- `taxii-native-tls` — native TLS for `TaxiiClient` via `TaxiiClientConfig::tls_native` (implies `taxii`; rstix uses its own `reqwest` 0.13 with `native-tls`, not workspace `reqwest/native-tls`).
+- `taxii` — TAXII 2.1 HTTP client: discovery, collections, object CRUD, manifest, status polling, auth providers, pagination, retry, rustls TLS (PEM and PKCS#12 mTLS via `ClientCertificate`; `TaxiiClient`; implies `serde`).
 
 ## Install
 
@@ -74,8 +73,7 @@ This library is part of [rsigma].
 - `marking`: TLP and statement marking resolution (`MarkingResolver`, `TlpV2Level`, granular selectors). Implies `serde`.
 - `store`: in-memory STIX object store (`MemoryStore`, `StixQuery`, `ImportReport`). Implies `serde`.
 - `store-fs`: filesystem-backed durable store (`FsStore`). Implies `store`.
-- `taxii`: TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, Bearer/Basic/API-key auth, cursor + header pagination, retry). Implies `serde`.
-- `taxii-native-tls`: native TLS for `TaxiiClient` (implies `taxii`). Default `taxii` uses rustls.
+- `taxii`: TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, Bearer/Basic/API-key auth, cursor + header pagination, retry, rustls TLS with PEM and PKCS#12 mTLS). Implies `serde`.
 
 ## Current status
 
@@ -86,7 +84,7 @@ This library is part of [rsigma].
 | **Pattern Engine** (`pattern`) | Level 1–3 parse, type-check, evaluation, canonical printer, Indicator wiring |
 | **Validation Pipeline** (`validate`) | Twelve phases, four profiles, 39 structured diagnostics, conformance corpus + per-code coverage tests |
 | **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs`) | Property graph, TLP/granular resolution, in-memory and filesystem store (each feature implies `serde`) |
-| **TAXII Client** (`taxii`, `taxii-native-tls`) | All seven TAXII 2.1 endpoint groups, auth providers, dual pagination, retry, full HTTP error mapping |
+| **TAXII Client** (`taxii`) | All seven TAXII 2.1 endpoint groups, auth providers, dual pagination, retry, rustls TLS (PEM + PKCS#12 mTLS), full HTTP error mapping |
 | **Optional corpus** | MITRE ATT&CK via `RSTIX_ATTCK_BUNDLE`; CI uses synthetic 5 000-object streaming tests |
 
 Phase delivery is **complete** for the above surfaces. **STIX 2.1 wire conformance** is [substantially met](#conformance-notes-stix-21) with documented exceptions in vocabulary tables and selected reference rules.
@@ -424,7 +422,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 
 | Method | HTTP / behavior |
 | ------ | ---------------- |
-| `new(config)` | Build client; configures rustls (TLS 1.2 **and** 1.3) unless `taxii-native-tls`. |
+| `new(config)` | Build client with rustls (TLS 1.2 **and** 1.3). |
 | `discover()` | `GET /taxii2/` |
 | `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery |
 | `api_root(url)` | `GET {api_root}/` |
@@ -453,9 +451,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `server_trust(p)` | `SystemRoots` | [`ServerTrustPolicy`](taxii::ServerTrustPolicy) — PKIX, SPKI pin, or DANE. |
 | `tlsa_cache(c)` | empty | [`TlsaCache`](taxii::TlsaCache) — shared TLSA store for DANE. |
 | `dns_nameserver(addr)` | system resolver | Override DNS for SRV/TLSA lookups (local CoreDNS). |
-| `tls_native(b)` | `false` | Native TLS (`taxii-native-tls` feature); **incompatible** with pinning/DANE. |
-| `danger_accept_invalid_server_certs(b)` | `false` | Skip server cert validation on the native TLS backend only (local harnesses). |
-| `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate) — mTLS (PEM on rustls; PKCS#12 on native TLS). |
+| `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate) — mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
 | `max_response_bytes(n)` | 512 MiB | Reject oversized bodies → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
 | `parse_options(o)` | default | STIX parse options for envelope objects. |
@@ -534,7 +530,6 @@ Optional live TLS / DNS / mTLS harness ([`tests/taxii-live/README.md`](tests/tax
 ```bash
 ./crates/rstix/tests/taxii-live/run-live-tests.sh
 cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
-cargo test -p rstix --features taxii-native-tls --test taxii_live -- --ignored --nocapture
 ```
 
 ```rust
@@ -592,7 +587,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | DELETE preflight | Requires both `can_read` and `can_write` | Spec section 5.7 |
 | Manifest Accept | TAXII + STIX media types | Spec section 5.3 |
 | DNS SRV discovery | `resolve_taxii_srv` + `TaxiiClient::discover_via_srv` | `_taxii2._tcp` records |
-| mTLS | PEM via `ClientCertificate::from_pem` embedded in `build_rustls_config` (rustls default); PKCS#12 with `taxii-native-tls` only | reqwest `.identity()` is **not** used with preconfigured rustls |
+| mTLS | PEM or PKCS#12 via [`ClientCertificate`](taxii::ClientCertificate), embedded in `build_rustls_config` | Pure-Rust PKCS#12 parse (`p12-keystore`); no OpenSSL TLS backend |
 | Channels | **Not implemented** | Spec §6 RESERVED |
 | Filter validation | `limit > 0`; `all` version rules enforced | Invalid filters rejected before HTTP |
 
