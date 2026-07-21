@@ -51,6 +51,7 @@ pub mod error;
 pub mod hir;
 pub mod lower;
 pub mod optimize;
+pub mod raise;
 
 pub use cache::{CacheError, HIR_SCHEMA_VERSION, HirCacheHeader, decode_rules, encode_rules};
 pub use error::IrError;
@@ -60,3 +61,4 @@ pub use optimize::{
     CseReport, RepeatedItem, common_subexpressions, eliminate_dead_detections, flatten_condition,
     optimize_rule,
 };
+pub use raise::{RaiseOptions, ir_pattern_to_sigma, raise_rule};

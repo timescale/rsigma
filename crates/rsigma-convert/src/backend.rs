@@ -60,33 +60,12 @@ pub struct RegexFlags {
     pub cased: bool,
 }
 
-/// Reconstruct a parser [`SigmaString`] from a faithful [`IrPattern`].
+/// Reconstruct a parser `SigmaString` from a faithful [`IrPattern`].
 ///
-/// Bridges the IR-native leaf defaults to the existing parser-typed leaves
-/// during the migration; the pattern round-trips exactly (same literal parts
-/// and wildcards), so delegation is byte-identical.
-pub(crate) fn ir_pattern_to_sigma(pattern: &IrPattern) -> SigmaString {
-    let mut original = String::new();
-    let parts = pattern
-        .parts
-        .iter()
-        .map(|p| match p {
-            IrPatternPart::Literal(t) => {
-                original.push_str(t);
-                StringPart::Plain(t.clone())
-            }
-            IrPatternPart::WildcardMulti => {
-                original.push('*');
-                StringPart::Special(SpecialChar::WildcardMulti)
-            }
-            IrPatternPart::WildcardSingle => {
-                original.push('?');
-                StringPart::Special(SpecialChar::WildcardSingle)
-            }
-        })
-        .collect();
-    SigmaString { parts, original }
-}
+/// The canonical implementation lives in `rsigma-ir` (shared with the reverse
+/// raise path); it is re-exported here so backends keep referring to
+/// `crate::backend::ir_pattern_to_sigma`.
+pub(crate) use rsigma_ir::ir_pattern_to_sigma;
 
 // =============================================================================
 // Backend trait
