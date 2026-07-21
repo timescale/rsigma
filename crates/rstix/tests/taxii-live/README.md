@@ -61,11 +61,18 @@ cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
 
 ## After updating harness files
 
-If `Caddyfile`, `docker-compose.yml`, or the CoreDNS zone changed, recreate Caddy:
+If `Caddyfile`, `docker-compose.yml`, CoreDNS config, or the zone changed, recreate the stack so CoreDNS reloads TLSA answers:
+
+```bash
+./crates/rstix/tests/taxii-live/run-live-tests.sh
+```
+
+Or manually:
 
 ```bash
 cd crates/rstix/tests/taxii-live
-docker compose up -d --force-recreate caddy
+./generate-certs.sh
+docker compose up -d --force-recreate caddy coredns
 ```
 
 ## Same machine vs remote Docker

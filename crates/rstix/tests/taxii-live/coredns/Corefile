@@ -1,5 +1,10 @@
 taxii.test {
-	file /etc/coredns/taxii.test.zone
+	file /etc/coredns/taxii.test.zone fallthrough
+	template IN TLSA {
+		match ^_8443\._tcp\.dane\.taxii\.test\.$
+		answer "_8443._tcp.dane.taxii.test. 3600 IN TLSA 3 1 1 0000000000000000000000000000000000000000000000000000000000000000"
+	}
+	reload 5s
 	log
 	errors
 }

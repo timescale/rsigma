@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Generate a local CA, server cert (taxii.test + localhost + dane.taxii.test), client cert
-# for mTLS tests, PKCS#12 for native TLS, and CoreDNS TLSA records for DANE tests.
+# for mTLS tests, PKCS#12 for native TLS, and CoreDNS TLSA answers for DANE tests.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 CERT_DIR="$ROOT/fixtures/certs"
 ZONE_FILE="$ROOT/coredns/taxii.test.zone"
+COREFILE="$ROOT/coredns/Corefile"
 mkdir -p "$CERT_DIR"
 
 CA_KEY="$CERT_DIR/ca-key.pem"
@@ -18,13 +19,13 @@ CLIENT_P12="$CERT_DIR/client.p12"
 PKCS12_PASSWORD="rstix-live"
 
 write_zone() {
-  local tlsa_hex="$1"
-  cat >"$ZONE_FILE" <<'EOF'
-$ORIGIN taxii.test.
-$TTL 3600
+  local serial="$1"
+  cat >"$ZONE_FILE" <<EOF
+\$ORIGIN taxii.test.
+\$TTL 3600
 
 @       IN  SOA  ns.taxii.test. admin.taxii.test. (
-                2026072101 ; serial
+                ${serial} ; serial
                 3600       ; refresh
                 600        ; retry
                 86400      ; expire
@@ -35,7 +36,24 @@ ns      IN  A    127.0.0.1
 dane    IN  A    127.0.0.1
 _taxii2._tcp  IN  SRV  10 100 8443 localhost.
 EOF
-  echo "_8443._tcp.dane  IN  TLSA  3 1 1 ${tlsa_hex}" >>"$ZONE_FILE"
+}
+
+write_corefile() {
+  local tlsa_hex="$1"
+  cat >"$COREFILE" <<'COREEOF'
+taxii.test {
+	file /etc/coredns/taxii.test.zone fallthrough
+	template IN TLSA {
+		match ^_8443\._tcp\.dane\.taxii\.test\.$
+COREEOF
+  echo "		answer \"_8443._tcp.dane.taxii.test. 3600 IN TLSA 3 1 1 ${tlsa_hex}\"" >>"$COREFILE"
+  cat >>"$COREFILE" <<'COREEOF'
+	}
+	reload 5s
+	log
+	errors
+}
+COREEOF
 }
 
 compute_tlsa_hex() {
@@ -97,6 +115,8 @@ if [[ ! -f "$SERVER_PEM" ]]; then
 fi
 
 TLSA_HEX="$(compute_tlsa_hex)"
-write_zone "$TLSA_HEX"
+SOA_SERIAL="$(date -u +%Y%m%d%H)"
+write_zone "$SOA_SERIAL"
+write_corefile "$TLSA_HEX"
 write_pkcs12
-echo "Updated CoreDNS zone ($ZONE_FILE) and PKCS#12 ($CLIENT_P12)"
+echo "Updated CoreDNS zone ($ZONE_FILE), Corefile ($COREFILE), and PKCS#12 ($CLIENT_P12)"
