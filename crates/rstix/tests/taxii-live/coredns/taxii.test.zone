@@ -10,4 +10,6 @@ $TTL 3600
 @       IN  NS   ns.taxii.test.
 @       IN  A    127.0.0.1
 ns      IN  A    127.0.0.1
+dane    IN  A    127.0.0.1
 _taxii2._tcp  IN  SRV  10 100 8443 localhost.
+_8443._tcp.dane  IN  TLSA  3 1 1 0000000000000000000000000000000000000000000000000000000000000000

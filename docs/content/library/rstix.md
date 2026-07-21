@@ -122,7 +122,7 @@ Two optional feature flags (`taxii` implies `serde`; `taxii-native-tls` implies 
 
 | Feature | Module | Highlights |
 | ------- | ------ | ---------- |
-| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), TLS 1.2+1.3 via rustls, SPKI pin / DANE **config**, auth, pagination, SRV + `dns_nameserver()`). **Channels §6 not implemented.** See [test coverage](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#taxii-test-coverage). |
+| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), TLS 1.2+1.3 via rustls, SPKI pin / DANE, auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
 | `taxii-native-tls` | (client TLS) | Native TLS via `reqwest/native-tls`; PKCS#12 client certificates (default rustls uses PEM). Incompatible with pinning/DANE. |
 
 ```rust
@@ -139,11 +139,13 @@ while let Some(obj) = stream.next().await {
 }
 ```
 
-Acceptance: `cargo test -p rstix --features taxii --test taxii_client` (**59** wiremock tests).
+```bash
+cargo test -p rstix --features taxii --test taxii_client
+```
 
-Optional live harness (manual, not CI): `./crates/rstix/tests/taxii-live/run-live-tests.sh` then `cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture`. Covers TLS, mTLS (`localhost:8444`), and SRV. **Not** live-tested: DANE, TLS 1.3 version assertion, PKCS#12, `taxii-native-tls`, Channels §6.
+Optional live harness: see [`tests/taxii-live/README.md`](https://github.com/timescale/rsigma/blob/main/crates/rstix/tests/taxii-live/README.md).
 
-Full **API surface tables**, invariant decisions, and **test coverage matrix**: [crate README — TAXII Client](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#taxii-client).
+Full **API surface tables** and **invariant decisions**: [crate README — TAXII Client](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#taxii-client).
 
 ## Graph + Marking + Store
 

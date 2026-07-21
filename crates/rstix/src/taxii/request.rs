@@ -1,5 +1,6 @@
 //! Internal HTTP request execution with retries.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,6 +28,7 @@ pub(crate) struct TaxiiHttp {
     pub clock_skew: Arc<std::sync::RwLock<Option<i64>>>,
     pub server_trust: ServerTrustPolicy,
     pub tlsa_cache: TlsaCache,
+    pub dns_nameserver: Option<SocketAddr>,
 }
 
 pub(crate) struct TaxiiResponse {
@@ -195,7 +197,7 @@ impl TaxiiHttp {
             return Ok(());
         };
         let port = url.port().unwrap_or(443);
-        let records = super::dns::resolve_tlsa(host, port).await?;
+        let records = super::dns::resolve_tlsa_with(host, port, self.dns_nameserver).await?;
         self.tlsa_cache.insert(host.to_owned(), records);
         Ok(())
     }

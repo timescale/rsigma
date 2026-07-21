@@ -15,3 +15,10 @@ https://localhost:8444 {
 	}
 	reverse_proxy wiremock:8080
 }
+
+https://:8445 {
+	tls /certs/server.pem /certs/server-key.pem {
+		protocols tls1.3
+	}
+	reverse_proxy wiremock:8080
+}

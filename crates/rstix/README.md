@@ -409,7 +409,7 @@ Acceptance tests: `store::memory::dedup`, `store::memory::fingerprint`, `store::
 
 ## TAXII Client
 
-The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all normative endpoint groups **except Channels (spec §6, RESERVED — not implemented)**. Wire payloads use [`TaxiiEnvelope`](taxii::TaxiiEnvelope) — **not** [`Bundle`](model::Bundle). Never POST a STIX Bundle to `add_objects`. See [test coverage](#taxii-test-coverage) for what is verified in CI vs the optional live Docker harness.
+The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all normative endpoint groups **except Channels (spec §6, RESERVED — not implemented)**. Wire payloads use [`TaxiiEnvelope`](taxii::TaxiiEnvelope) — **not** [`Bundle`](model::Bundle). Never POST a STIX Bundle to `add_objects`.
 
 ### Public API surface (`rstix::taxii`)
 
@@ -426,7 +426,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | ------ | ---------------- |
 | `new(config)` | Build client; configures rustls (TLS 1.2 **and** 1.3) unless `taxii-native-tls`. |
 | `discover()` | `GET /taxii2/` |
-| `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery (see [test coverage](#taxii-test-coverage)). |
+| `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery |
 | `api_root(url)` | `GET {api_root}/` |
 | `collections(url)` / `collection(url, id)` | List / get collection |
 | `objects` / `objects_stream` | Paginated GET objects |
@@ -454,6 +454,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `tlsa_cache(c)` | empty | [`TlsaCache`](taxii::TlsaCache) — shared TLSA store for DANE. |
 | `dns_nameserver(addr)` | system resolver | Override DNS for SRV/TLSA lookups (local CoreDNS). |
 | `tls_native(b)` | `false` | Native TLS (`taxii-native-tls` feature); **incompatible** with pinning/DANE. |
+| `danger_accept_invalid_server_certs(b)` | `false` | Skip server cert validation on the native TLS backend only (local harnesses). |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate) — mTLS (PEM on rustls; PKCS#12 on native TLS). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
 | `max_response_bytes(n)` | 512 MiB | Reject oversized bodies → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
@@ -522,45 +523,19 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | `Unauthorized { challenges, .. }` | HTTP 401 with parsed auth challenges. |
 | `RequestedRangeNotSatisfiable` | HTTP 416 (streams recover automatically). |
 
-### TAXII test coverage
-
-Run: `cargo test -p rstix --features taxii --test taxii_client`
-
-**Live TLS / DNS / mTLS** (optional, not in default CI): [`tests/taxii-live/README.md`](tests/taxii-live/README.md)
+### Testing
 
 ```bash
-./crates/rstix/tests/taxii-live/run-live-tests.sh   # start Docker stack only
-cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
+cargo test -p rstix --features taxii --test taxii_client
 ```
 
-**Wiremock (CI-style):** `cargo test -p rstix --features taxii --test taxii_client` — **59** tests on plain HTTP.
+Optional live TLS / DNS / mTLS harness ([`tests/taxii-live/README.md`](tests/taxii-live/README.md)):
 
-**Live (optional, manual):** three `#[ignore]` tests in `tests/taxii_live.rs` after the stack script above. Requires Docker on the same machine as the test runner. TLS uses `127.0.0.1:8443`; mTLS uses `localhost:8444` (Caddy strict SNI — IP Host returns HTTP 421); SRV uses CoreDNS at `127.0.0.1:5353` via `dns_nameserver()`. Not run in default workspace CI.
-
-| Area | Wiremock E2E | Live (Docker) | Unit / other |
-| ---- | ------------ | ------------- | ------------ |
-| Bearer / Basic / API-key auth injection | yes (`auth_tests`, `coverage_tests`) | — | Debug redaction unit tests |
-| ReadNotPermitted / WriteNotPermitted | yes (`coverage_tests`) | — | — |
-| InvalidContentType | yes (`coverage_tests`) | — | — |
-| MissingContentType | — (wiremock always sets a type) | — | yes (`request.rs` unit test) |
-| ResponseTooLarge | yes (`coverage_tests`) | — | — |
-| StatusPollTimeout | yes (`coverage_tests`) | — | — |
-| `objects_stream` / `object_stream` | yes (`pagination_tests`, `coverage_tests`) | — | — |
-| 416 stream recovery | yes (`coverage_tests`) | — | HTTP 416 mapping in `error_tests` |
-| Missing pagination headers | yes (`coverage_tests`) | — | `pagination.rs` unit test |
-| POST auto-poll | yes (`coverage_tests`) | — | `status_tests` poll helper |
-| Capability / API Root version | yes (`gap_tests`) | — | — |
-| `WWW-Authenticate` on 401 | yes (`gap_tests`) | — | `www_authenticate.rs` unit test |
-| TLS 1.2 + 1.3 enabled in rustls config | — | — | yes (`server_trust.rs`, `tls_tests`) |
-| HTTPS + SPKI pin handshake | — | yes (`live_https_discovery_over_tls`, `:8443`) | — |
-| mTLS PEM handshake | — | yes (`live_mtls_discovery`, `localhost:8444`) | PEM + rustls client auth in `tls_tests` |
-| `discover_via_srv` / DNS SRV | — | yes (`live_discover_via_srv`) | `dns.rs` unit tests; `dns_nameserver()` |
-| SPKI pin / DANE config build | — | — | yes (`tls_tests`, `dane.rs`) |
-| TLS 1.3 version negotiated | — | **Not asserted** | TLS 1.2+1.3 enabled; use `openssl s_client` manually if needed |
-| DANE over the wire | — | **Not tested** | `dane.rs` unit tests only |
-| PKCS#12 mTLS | — | **Not tested** | needs `taxii-native-tls` + manual setup |
-| Native TLS backend | — | **Not tested** | needs `taxii-native-tls` + HTTPS server |
-| Channels (§6) | — | — | **Not implemented** (RESERVED in spec) |
+```bash
+./crates/rstix/tests/taxii-live/run-live-tests.sh
+cargo test -p rstix --features taxii --test taxii_live -- --ignored --nocapture
+cargo test -p rstix --features taxii-native-tls --test taxii_live -- --ignored --nocapture
+```
 
 ```rust
 use futures::StreamExt;
@@ -592,8 +567,6 @@ let status = client
 ```
 
 Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `User-Agent: rstix/{VERSION}` (override via config), trailing slash on endpoint URLs, discovery at fixed `{base}/taxii2/`.
-
-Acceptance tests: `cargo test -p rstix --features taxii --test taxii_client` (**59** wiremock integration tests; see [TAXII test coverage](#taxii-test-coverage)).
 
 ### TAXII Client invariant decisions
 

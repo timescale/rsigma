@@ -1,9 +1,9 @@
 //! TAXII 2.1 HTTP client.
 
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use std::net::SocketAddr;
 
 use futures::Stream;
 use url::Url;
@@ -50,6 +50,8 @@ pub struct TaxiiClientConfig {
     preflight: PreflightPolicy,
     tls_native: bool,
     client_certificate: Option<ClientCertificate>,
+    /// Accept invalid server certificates when using the native TLS backend (local test harnesses only).
+    danger_accept_invalid_server_certs: bool,
     allow_insecure_http: bool,
     max_response_bytes: usize,
     parse_options: ParseOptions,
@@ -74,6 +76,7 @@ impl TaxiiClientConfig {
             preflight: PreflightPolicy::default(),
             tls_native: false,
             client_certificate: None,
+            danger_accept_invalid_server_certs: false,
             allow_insecure_http: false,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             parse_options: ParseOptions::default(),
@@ -126,6 +129,15 @@ impl TaxiiClientConfig {
     /// Use the native TLS backend (requires `taxii-native-tls` feature).
     pub fn tls_native(mut self, enabled: bool) -> Self {
         self.tls_native = enabled;
+        self
+    }
+
+    /// Skip server certificate validation on the native TLS backend only.
+    ///
+    /// Ignored when using the default rustls backend. Intended for local test harnesses
+    /// with self-signed certificates; do not enable in production.
+    pub fn danger_accept_invalid_server_certs(mut self, allowed: bool) -> Self {
+        self.danger_accept_invalid_server_certs = allowed;
         self
     }
 
@@ -239,20 +251,25 @@ impl TaxiiClient {
             Url::parse(&config.base_url).map_err(|err| TaxiiError::InvalidUrl(err.to_string()))?;
         super::url::ensure_https(&base_url, https_policy)?;
 
-        let client_builder = reqwest::Client::builder().timeout(config.timeout);
         #[cfg(feature = "taxii-native-tls")]
-        let client_builder = if config.tls_native {
-            if let Some(cert) = &config.client_certificate {
-                client_builder = client_builder.identity(cert.identity());
+        let client_builder = {
+            let mut builder = reqwest::Client::builder().timeout(config.timeout);
+            if config.tls_native {
+                if config.danger_accept_invalid_server_certs {
+                    builder = builder.danger_accept_invalid_certs(true);
+                }
+                if let Some(cert) = &config.client_certificate {
+                    builder = builder.identity(cert.identity());
+                }
+                builder.use_native_tls()
+            } else {
+                let tls = build_rustls_config(
+                    &config.server_trust,
+                    &config.tlsa_cache,
+                    config.client_certificate.as_ref(),
+                )?;
+                builder.use_preconfigured_tls(tls)
             }
-            client_builder.use_native_tls()
-        } else {
-            let tls = build_rustls_config(
-                &config.server_trust,
-                &config.tlsa_cache,
-                config.client_certificate.as_ref(),
-            )?;
-            client_builder.use_preconfigured_tls(tls)
         };
         #[cfg(not(feature = "taxii-native-tls"))]
         let client_builder = {
@@ -261,7 +278,9 @@ impl TaxiiClient {
                 &config.tlsa_cache,
                 config.client_certificate.as_ref(),
             )?;
-            client_builder.use_preconfigured_tls(tls)
+            reqwest::Client::builder()
+                .timeout(config.timeout)
+                .use_preconfigured_tls(tls)
         };
 
         let client = client_builder.build().map_err(TaxiiError::NetworkError)?;
@@ -279,6 +298,7 @@ impl TaxiiClient {
                     clock_skew: Arc::new(std::sync::RwLock::new(None)),
                     server_trust: config.server_trust,
                     tlsa_cache: config.tlsa_cache,
+                    dns_nameserver: config.dns_nameserver,
                 },
                 preflight: config.preflight,
                 status_poll_interval: config.status_poll_interval,

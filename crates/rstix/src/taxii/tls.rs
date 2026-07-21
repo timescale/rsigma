@@ -1,8 +1,8 @@
 //! Client TLS identity (mTLS) configuration.
 
 use reqwest::Identity;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 #[cfg(not(feature = "taxii-native-tls"))]
 use secrecy::SecretString;
 #[cfg(feature = "taxii-native-tls")]
@@ -20,9 +20,10 @@ impl Clone for ClientCertificate {
     fn clone(&self) -> Self {
         Self {
             identity: self.identity.clone(),
-            rustls_auth: self.rustls_auth.as_ref().map(|(certs, key)| {
-                (certs.clone(), key.clone_key())
-            }),
+            rustls_auth: self
+                .rustls_auth
+                .as_ref()
+                .map(|(certs, key)| (certs.clone(), key.clone_key())),
         }
     }
 }
@@ -58,10 +59,9 @@ impl ClientCertificate {
 
     /// Load a PEM certificate + private key pair (concatenated for rustls).
     pub fn from_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<Self, TaxiiError> {
-        let certs: Vec<CertificateDer<'static>> =
-            CertificateDer::pem_slice_iter(cert_pem)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?;
+        let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?;
         if certs.is_empty() {
             return Err(TaxiiError::InvalidClientCertificate(
                 "PEM client certificate chain is empty".into(),
@@ -87,7 +87,9 @@ impl ClientCertificate {
         self.identity.clone()
     }
 
-    pub(crate) fn rustls_auth(&self) -> Option<&(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    pub(crate) fn rustls_auth(
+        &self,
+    ) -> Option<&(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         self.rustls_auth.as_ref()
     }
 }

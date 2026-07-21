@@ -98,11 +98,7 @@ fn build_resolver(nameserver: Option<SocketAddr>) -> Result<TokioResolver, Taxii
         let mut tcp = ConnectionConfig::tcp();
         tcp.port = addr.port();
         let mut config = ResolverConfig::from_parts(None, vec![], vec![]);
-        config.add_name_server(NameServerConfig::new(
-            addr.ip(),
-            true,
-            vec![udp, tcp],
-        ));
+        config.add_name_server(NameServerConfig::new(addr.ip(), true, vec![udp, tcp]));
         TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
     } else {
         TokioResolver::builder_tokio().map_err(|err| TaxiiError::DnsDiscovery(err.to_string()))?

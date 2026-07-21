@@ -29,7 +29,9 @@ pub mod auth;
 pub use auth::{ApiKeyHeader, AuthError, BasicAuth, BearerAuth, TaxiiAuthProvider};
 pub use client::{TaxiiClient, TaxiiClientConfig};
 pub use dane::TlsaRecord;
-pub use dns::{TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with, resolve_tlsa, resolve_tlsa_with};
+pub use dns::{
+    TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with, resolve_tlsa, resolve_tlsa_with,
+};
 pub use envelope::{
     ManifestRecord, ManifestResponse, StatusDetail, StatusState, TaxiiEnvelope, TaxiiStatus,
 };

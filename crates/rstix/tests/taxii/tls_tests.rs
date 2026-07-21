@@ -29,16 +29,17 @@ fn spki_pin_parses_valid_hex() {
 
 #[test]
 fn build_rustls_config_with_pem_client_auth() {
-    let cert_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/taxii-live/fixtures/certs");
+    let cert_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/taxii-live/fixtures/certs");
     let cert_pem = std::fs::read(cert_dir.join("client.pem")).ok();
     let key_pem = std::fs::read(cert_dir.join("client-key.pem")).ok();
     if cert_pem.is_none() || key_pem.is_none() {
         eprintln!("skip build_rustls_config_with_pem_client_auth: live harness certs missing");
         return;
     }
-    let client_cert = rstix::taxii::ClientCertificate::from_pem(&cert_pem.unwrap(), &key_pem.unwrap())
-        .expect("client cert");
+    let client_cert =
+        rstix::taxii::ClientCertificate::from_pem(&cert_pem.unwrap(), &key_pem.unwrap())
+            .expect("client cert");
     build_rustls_config(
         &ServerTrustPolicy::PinnedSpkiOnly(vec![SpkiPin::from_hex(&"ab".repeat(32)).expect("pin")]),
         &TlsaCache::default(),
