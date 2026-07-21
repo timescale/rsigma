@@ -56,7 +56,6 @@
         .title { fill: #f1f5f9; }
         .sub { fill: #94a3b8; }
         .leader { stroke: #2a3a57; }
-        .logo { fill: #e2e8f0; }
         .lobeL { fill: #93c5fd; }
         .lobeR { fill: #fdba74; }
         .annot { fill: #94a3b8; }
