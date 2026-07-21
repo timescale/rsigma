@@ -16,6 +16,8 @@ YAML → parser(AST) → static pipelines → lower(HIR) → compile(CompiledRul
 
 The HIR is modifier-resolved. Quantified selectors keep their quantifier and name pattern so evaluation stays count-based. Compiled artifacts (`Regex`, `IpNet`, Aho-Corasick automata) are materialised later in `rsigma-eval`.
 
+Because the matcher model is faithful and lossless, lowering is reversible: [`raise_rule`] turns an `IrRule` back into a parser `SigmaRule` (reconstructing the `field|modifier` surface each `IrMatcher` implies), the inverse of [`lower_rule`]. This is the pivot the `rsigma-convert` reverse conversion uses to raise a query into Sigma YAML.
+
 ## Public API
 
 | Item | Description |
@@ -24,6 +26,7 @@ The HIR is modifier-resolved. Quantified selectors keep their quantifier and nam
 | [`IrCorrelation`] / [`IrFilter`] | Correlation and filter HIR shapes |
 | [`lower_rule`] / [`lower_detection`] / [`lower_condition`] | AST → HIR |
 | [`lower_correlation`] / [`lower_filter`] | Parallel walkers for those shapes |
+| [`raise_rule`] / [`RaiseOptions`] / [`ir_pattern_to_sigma`] | HIR → AST, the inverse of `lower_rule` (used by reverse conversion) |
 | [`LowerOptions`] | Strict vs placeholder-preserving lowering |
 | [`optimize_rule`] / [`flatten_condition`] / [`eliminate_dead_detections`] | Opt-in, semantics-preserving HIR passes |
 | [`common_subexpressions`] | Non-mutating analysis of repeated detection items |
@@ -59,6 +62,9 @@ MIT. See the repository root.
 [`lower_condition`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/lower/fn.lower_condition.html
 [`lower_correlation`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/lower/fn.lower_correlation.html
 [`lower_filter`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/lower/fn.lower_filter.html
+[`raise_rule`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/fn.raise_rule.html
+[`RaiseOptions`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/struct.RaiseOptions.html
+[`ir_pattern_to_sigma`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/fn.ir_pattern_to_sigma.html
 [`LowerOptions`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/struct.LowerOptions.html
 [`optimize_rule`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.optimize_rule.html
 [`flatten_condition`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.flatten_condition.html

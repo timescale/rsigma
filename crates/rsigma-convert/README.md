@@ -30,6 +30,10 @@ The crate provides a generic conversion framework that any backend can plug into
 
 The optional `sigma-cli` feature (std-only, no extra dependencies) adds the `sigma_cli` module: discovery of an external [sigma-cli](https://github.com/SigmaHQ/sigma-cli), the `sigma convert` argument mapping (`build_convert_args`), and subprocess output classification (`classify_output`). It is the shared helper behind `rsigma backend convert` delegation and the MCP server's opt-in `--allow-sigma-cli`; the conversion API itself (`convert_collection`, the `Backend` trait) always converts natively and never spawns a subprocess.
 
+## Reverse conversion (query to Sigma)
+
+The `reverse` module is the mirror of the `Backend` engine: it parses a SIEM query into the intermediate representation, raises a Sigma rule (via `rsigma_ir::raise_rule`), and emits YAML (via `rsigma_parser::emit_rule_yaml`). A `Frontend` trait plus a `QueryDialect` table drive a shared tokenizer and a precedence-climbing boolean parser (`NOT > AND > OR`); `assemble_rule` turns the boolean tree of leaves into named selections and a condition (AND-merged selections, same-field OR value lists, negated branches as filters), and `reverse_collection` converts a batch, collecting per-query errors. `LuceneFrontend` is the reference target, parsing the Lucene / Elasticsearch `query_string` subset (`field:value` with wildcards, quoted phrases, `/regex/`, `[a TO b]` and `{a TO b}` ranges, `field:>=N` comparison shorthand, `field:(a OR b)` value groups, `_exists_`, keyword terms, and `AND`/`OR`/`NOT` with grouping); constructs with no Sigma equivalent (boosting `^`, fuzzy/proximity `~`, non-numeric ranges) are rejected with a structured `ConvertError`. Adding a target is a new `QueryDialect` plus a `Frontend::parse_atom`. The CLI surface is [`rsigma rule from-lucene`](https://timescale.github.io/rsigma/cli/rule/from-lucene/).
+
 ## Usage
 
 ### Test backend

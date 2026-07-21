@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Reverse conversion: SIEM queries to Sigma YAML (#348)
+
+A pluggable reverse-conversion framework, the mirror of the forward `Backend` engine: a query dialect is parsed into the intermediate representation, raised to a Sigma rule, and emitted as YAML. Elastic Lucene ships as the reference frontend.
+
+- **`rsigma-parser`** — new `emit_rule_yaml` / `emit_collection_yaml`, the inverse of `parse_sigma_yaml`. The emitter is a deterministic canonical form (named detections, logsource custom fields, and custom attributes are sorted), reconstructs `field|modifier` keys, escapes literal wildcards in values while leaving `re`/`cidr`/`fieldref` values raw, and renders the condition from `ConditionExpr`. An empty logsource is emitted as `{}` so it re-parses.
+- **`rsigma-ir`** — new `raise_rule` (`IrRule` to `SigmaRule`), the inverse of `lower_rule`: it reconstructs the modifiers each `IrMatcher` variant implies, collapses homogeneous value lists, keeps conditions selector-preserving, and rejects numeric dynamic-source references. The canonical `ir_pattern_to_sigma` moved here (re-exported from `rsigma-convert`).
+- **`rsigma-convert`** — new `reverse` module: a `Frontend` trait plus a `QueryDialect` table drive a shared tokenizer and precedence-climbing boolean parser, and `assemble_rule` turns a boolean tree of leaves into named Sigma selections and a condition (AND-merged selections, same-field OR value lists, negated branches as filters). `reverse_collection` converts a batch, collecting per-query errors. The `LuceneFrontend` parses the Lucene / Elasticsearch `query_string` subset (`field:value` with wildcards, quoted phrases, `/regex/`, `[a TO b]` / `{a TO b}` ranges, comparison shorthand, `field:(a OR b)` groups, `_exists_`, keyword terms, and `AND`/`OR`/`NOT` with grouping) and rejects boosting, fuzzy/proximity, and non-numeric ranges with a structured error.
+- **`rsigma` CLI** — new `rsigma rule from-lucene` reads a query from an argument, `--file`, or stdin, takes `--title`/`--id`/`--level`/`--status` and `--logsource-*` hints a query cannot carry, and prints Sigma YAML (or writes it with `-o`). The emitted rule is parsed back before printing, so a rule that would not round-trip never reaches the operator.
+- **`rsigma-mcp`** — new `from_lucene` tool exposes reverse conversion over MCP, returning the drafted YAML or an error envelope for inexpressible constructs (13 tools total).
+
 ### Deterministic bloom pre-filter seeding
 
 The engine's per-field substring bloom pre-filter seeded its hasher from ahash's runtime RNG, so its exact bit layout, and therefore which non-matching values landed as false positives, varied across process runs (surfacing as a flaky `bloom_index` unit test). The filter now uses fixed seeds and is deterministic across runs and platforms. Correctness is unchanged: the bloom only ever over-approximates, never producing a false negative, regardless of seed.

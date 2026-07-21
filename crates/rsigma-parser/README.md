@@ -18,6 +18,15 @@ This library is part of [rsigma].
 | `parse_condition(input: &str)` | Parse a condition expression string into a `ConditionExpr` |
 | `parse_field_spec(key: &str)` | Parse a field specification like `"CommandLine\|contains\|all"` into a `FieldSpec` |
 
+### Emitting
+
+| Function | Description |
+|----------|-------------|
+| `emit_rule_yaml(rule: &SigmaRule)` | Emit a rule as canonical Sigma YAML (the inverse of `parse_sigma_yaml`) |
+| `emit_collection_yaml(collection: &SigmaCollection)` | Emit every detection rule in a collection, separated by `---` |
+
+The emitter is a deterministic canonical form: named detections, logsource custom fields, and custom attributes are emitted in sorted order, `field|modifier` keys are reconstructed from the `FieldSpec`, and literal wildcards in values are escaped so a re-parse reproduces the same `SigmaString` (while `re`/`cidr`/`fieldref` values stay raw). It powers `rsigma-convert`'s reverse conversion (query to Sigma YAML).
+
 ### Linting
 
 | Function | Description |

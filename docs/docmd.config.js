@@ -153,6 +153,7 @@ export default {
             { title: "lint", path: "/cli/rule/lint" },
             { title: "fields", path: "/cli/rule/fields" },
             { title: "draft", path: "/cli/rule/draft" },
+            { title: "from-lucene", path: "/cli/rule/from-lucene" },
             { title: "doc", path: "/cli/rule/doc" },
             { title: "backtest", path: "/cli/rule/backtest" },
             { title: "coverage", path: "/cli/rule/coverage" },
