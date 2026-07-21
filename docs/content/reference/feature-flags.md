@@ -74,7 +74,7 @@ STIX 2.1 library crate. **Data Model + Serialization** is complete with `serde` 
 | `store` | no | `serde` | `StixStore`, `MemoryStore`, `StixQuery` (typed + full-text search), `ImportReport`. |
 | `store-fs` | no | `store` | `FsStore` — filesystem-backed durable store. |
 | `taxii` | no | `serde`, `reqwest`, `tokio`, `secrecy`, `futures`, `hickory-resolver` | `TaxiiClient`, `TaxiiEnvelope`, auth providers, pagination, retry, DNS SRV — OASIS TAXII 2.1 HTTP client. See [TAXII Client](../library/rstix.md#taxii-client). |
-| `taxii-native-tls` | no | `taxii`, `reqwest/native-tls` | Native TLS backend for `TaxiiClient` (default `taxii` uses rustls). |
+| `taxii-native-tls` | no | `taxii` | Native TLS backend for `TaxiiClient` (`TaxiiClientConfig::tls_native`). Uses rstix's own `reqwest` 0.13 dependency with `native-tls`; does **not** enable `reqwest/native-tls` on workspace `reqwest` 0.12. |
 
 Without `serde`, only `core`, `id`, `vocab`, and programmatic `model` types are available (no bundle parsing). Enable `pattern` for STIX patterning (implies `serde`). Enable `validate` for the profile-based Validation Pipeline (`cargo build -p rstix --features validate`).
 

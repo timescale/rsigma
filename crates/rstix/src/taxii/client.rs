@@ -258,8 +258,12 @@ impl TaxiiClient {
                 if config.danger_accept_invalid_server_certs {
                     builder = builder.danger_accept_invalid_certs(true);
                 }
-                if let Some(cert) = &config.client_certificate {
-                    builder = builder.identity(cert.identity());
+                if let Some(identity) = config
+                    .client_certificate
+                    .as_ref()
+                    .and_then(|cert| cert.identity())
+                {
+                    builder = builder.identity(identity);
                 }
                 builder.use_native_tls()
             } else {

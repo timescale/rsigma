@@ -123,7 +123,7 @@ Two optional feature flags (`taxii` implies `serde`; `taxii-native-tls` implies 
 | Feature | Module | Highlights |
 | ------- | ------ | ---------- |
 | `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), TLS 1.2+1.3 via rustls, SPKI pin / DANE, auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
-| `taxii-native-tls` | (client TLS) | Native TLS via `reqwest/native-tls`; PKCS#12 client certificates (default rustls uses PEM). Incompatible with pinning/DANE. |
+| `taxii-native-tls` | (client TLS) | Native TLS via `TaxiiClientConfig::tls_native` (rstix pins its own `reqwest` 0.13 with `native-tls`; PKCS#12 client certificates). Incompatible with pinning/DANE. Does not flip workspace `reqwest` 0.12 to native TLS. |
 
 ```rust
 use rstix::taxii::{BearerAuth, TaxiiClient, TaxiiClientConfig, TaxiiFilter};

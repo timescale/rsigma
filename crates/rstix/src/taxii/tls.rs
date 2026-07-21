@@ -12,7 +12,7 @@ use super::TaxiiError;
 
 /// Client certificate for mutual TLS (spec section 8.3.1).
 pub struct ClientCertificate {
-    identity: Identity,
+    identity: Option<Identity>,
     rustls_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
 }
 
@@ -40,7 +40,7 @@ impl ClientCertificate {
         let password = password.into();
         Identity::from_pkcs12_der(&der.into(), password.expose_secret())
             .map(|identity| Self {
-                identity,
+                identity: Some(identity),
                 rustls_auth: None,
             })
             .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))
@@ -70,11 +70,13 @@ impl ClientCertificate {
         let key = PrivateKeyDer::from_pem_slice(key_pem)
             .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?;
 
-        let mut buf = Vec::with_capacity(cert_pem.len() + key_pem.len());
-        buf.extend_from_slice(cert_pem);
-        buf.extend_from_slice(key_pem);
-        let identity = Identity::from_pem(&buf)
-            .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?;
+        #[cfg(feature = "taxii-native-tls")]
+        let identity = Some(
+            Identity::from_pkcs8_pem(cert_pem, key_pem)
+                .map_err(|err| TaxiiError::InvalidClientCertificate(err.to_string()))?,
+        );
+        #[cfg(not(feature = "taxii-native-tls"))]
+        let identity = None;
 
         Ok(Self {
             identity,
@@ -83,7 +85,7 @@ impl ClientCertificate {
     }
 
     #[cfg(feature = "taxii-native-tls")]
-    pub(crate) fn identity(&self) -> Identity {
+    pub(crate) fn identity(&self) -> Option<Identity> {
         self.identity.clone()
     }
 

@@ -13,7 +13,7 @@ Six optional Cargo features extend the default `serde` bundle model (each implie
 - `store` — in-memory STIX store with typed queries, SCO fingerprint reporting, and bundle import.
 - `store-fs` — filesystem-backed durable store (`FsStore`; implies `store`).
 - `taxii` — TAXII 2.1 HTTP client: discovery, collections, object CRUD, manifest, status polling, auth providers, pagination, retry (`TaxiiClient`; implies `serde`).
-- `taxii-native-tls` — native TLS backend for the TAXII client (`reqwest/native-tls`; implies `taxii`).
+- `taxii-native-tls` — native TLS for `TaxiiClient` via `TaxiiClientConfig::tls_native` (implies `taxii`; rstix uses its own `reqwest` 0.13 with `native-tls`, not workspace `reqwest/native-tls`).
 
 ## Install
 
