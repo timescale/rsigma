@@ -18,7 +18,7 @@ use rstix::taxii::{
 use sha2::{Digest, Sha256};
 
 const LIVE_BASE_URL: &str = "https://127.0.0.1:8443";
-const LIVE_MTLS_URL: &str = "https://127.0.0.1:8444";
+const LIVE_MTLS_URL: &str = "https://localhost:8444";
 const LIVE_SRV_DOMAIN: &str = "taxii.test";
 const LIVE_DNS_NAMESERVER: &str = "127.0.0.1:5353";
 

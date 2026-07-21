@@ -25,7 +25,7 @@ No environment variables required. Paths, URLs, and CoreDNS (`127.0.0.1:5353`) a
 | Test | Proves |
 | ---- | ------ |
 | `live_https_discovery_over_tls` | HTTPS to `:8443`, SPKI pin, discovery JSON |
-| `live_mtls_discovery` | Client cert to `:8444`, discovery JSON |
+| `live_mtls_discovery` | Client cert to `localhost:8444`, discovery JSON |
 | `live_discover_via_srv` | SRV via CoreDNS `:5353` → `https://localhost:8443/taxii2/` |
 
 **Not covered:** DANE live, TLS 1.3 version assertion in Rust, PKCS#12, default CI.
