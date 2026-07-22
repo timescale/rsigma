@@ -10,7 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.19.0", default-features = false }
+rsigma-parser = { path = "../rsigma-parser", version = "0.20.0", default-features = false }
 ciborium = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -18,4 +18,4 @@ thiserror = "2"
 yaml_serde = "0.10"
 
 [dev-dependencies]
-rsigma-eval = { path = "../rsigma-eval", version = "0.19.0" }
+rsigma-eval = { path = "../rsigma-eval", version = "0.20.0" }
