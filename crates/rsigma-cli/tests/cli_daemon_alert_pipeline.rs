@@ -141,29 +141,32 @@ fn grouping_annotates_incident_id_and_exposes_open_incidents() {
         assert_eq!(status, 200);
     }
 
-    // Both pass-through lines carry the same incident_id.
-    let lines = poll_until(Duration::from_secs(5), || {
+    // Both pass-through detections carry the same incident_id under
+    // `enrichments`. Because `group_wait` is 0s, the 1s tick also emits a
+    // `group_wait` incident line to the same file sink; that line carries a
+    // top-level `incident_id` (not one under `enrichments`) and can interleave
+    // between the two detections, so select the detection lines by their
+    // `enrichments.incident_id` annotation rather than assuming the first two
+    // lines are the detections.
+    let ids = poll_until(Duration::from_secs(5), || {
         let text = std::fs::read_to_string(&output_path).ok()?;
-        let lines: Vec<String> = text
+        let ids: Vec<String> = text
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .map(|l| l.to_string())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter_map(|v| {
+                v.get("enrichments")
+                    .and_then(|e| e.get("incident_id"))
+                    .and_then(|id| id.as_str())
+                    .map(str::to_string)
+            })
             .collect();
-        (lines.len() >= 2).then_some(lines)
+        (ids.len() >= 2).then_some(ids)
     })
     .expect("two grouped detections never landed in the file sink");
 
-    let id0 =
-        serde_json::from_str::<serde_json::Value>(&lines[0]).unwrap()["enrichments"]["incident_id"]
-            .as_str()
-            .expect("first detection must carry incident_id")
-            .to_string();
-    let id1 =
-        serde_json::from_str::<serde_json::Value>(&lines[1]).unwrap()["enrichments"]["incident_id"]
-            .as_str()
-            .expect("second detection must carry incident_id")
-            .to_string();
-    assert_eq!(id0, id1, "both detections share one incident");
+    let id0 = ids[0].clone();
+    assert_eq!(ids[0], ids[1], "both detections share one incident");
 
     // The admin endpoint reports the open incident with two contributing
     // results.
