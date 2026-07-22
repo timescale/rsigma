@@ -66,7 +66,7 @@ jobs:
       # release event runs the real publish.
       - name: Publish rsigma-parser
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-parser
+        run: ./ci/publish-crate.sh rsigma-parser
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -80,7 +80,7 @@ jobs:
       # it and before rsigma-eval and rsigma-convert, which both depend on it.
       - name: Publish rsigma-ir
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-ir
+        run: ./ci/publish-crate.sh rsigma-ir
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -90,7 +90,7 @@ jobs:
 
       - name: Publish rsigma-eval
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-eval
+        run: ./ci/publish-crate.sh rsigma-eval
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -100,7 +100,7 @@ jobs:
 
       - name: Publish rsigma-convert
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-convert
+        run: ./ci/publish-crate.sh rsigma-convert
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -110,7 +110,7 @@ jobs:
 
       - name: Publish rsigma-runtime
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-runtime
+        run: ./ci/publish-crate.sh rsigma-runtime
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -120,7 +120,7 @@ jobs:
 
       - name: Publish rsigma-mcp
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-mcp
+        run: ./ci/publish-crate.sh rsigma-mcp
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -130,13 +130,13 @@ jobs:
 
       - name: Publish rsigma
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma
+        run: ./ci/publish-crate.sh rsigma
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Publish rsigma-lsp
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rsigma-lsp
+        run: ./ci/publish-crate.sh rsigma-lsp
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -144,6 +144,6 @@ jobs:
       # on no workspace crate, so no index-wait step is required afterward.
       - name: Publish rstix
         if: github.event_name != 'workflow_dispatch'
-        run: cargo publish --locked -p rstix
+        run: ./ci/publish-crate.sh rstix
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
