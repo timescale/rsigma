@@ -34,6 +34,12 @@ multiple-versions = "warn"
 # undermines lockfile reproducibility and makes supply-chain review
 # impossible. Use a concrete version or version range.
 wildcards = "deny"
+# Exempt path dependencies inside the workspace from the wildcard ban. This
+# covers version-less path dev-dependencies used to break publish-time
+# dependency cycles (e.g. rsigma-ir's dev-dependency on rsigma-eval, which
+# depends on rsigma-ir); cargo strips dev-dependencies when packaging, so the
+# published crate carries no wildcard.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
