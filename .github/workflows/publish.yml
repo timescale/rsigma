@@ -76,6 +76,18 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         run: sleep 30
 
+      # rsigma-ir depends only on rsigma-parser, so it publishes right after
+      # it and before rsigma-eval and rsigma-convert, which both depend on it.
+      - name: Publish rsigma-ir
+        if: github.event_name != 'workflow_dispatch'
+        run: cargo publish --locked -p rsigma-ir
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Wait for crates.io index update (rsigma-ir)
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
       - name: Publish rsigma-eval
         if: github.event_name != 'workflow_dispatch'
         run: cargo publish --locked -p rsigma-eval
