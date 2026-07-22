@@ -17,5 +17,10 @@ serde_json = "1"
 thiserror = "2"
 yaml_serde = "0.10"
 
+# Path-only (no version): rsigma-eval depends on rsigma-ir, so a versioned
+# dev-dependency here forms a publish-time cycle (cargo would require
+# rsigma-eval to already be on the registry). Cargo strips version-less path
+# dev-dependencies when packaging, so this keeps the tests working locally
+# without blocking `cargo publish`.
 [dev-dependencies]
-rsigma-eval = { path = "../rsigma-eval", version = "0.20.0" }
+rsigma-eval = { path = "../rsigma-eval" }
