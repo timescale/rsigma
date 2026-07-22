@@ -474,7 +474,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rsigma-eval"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "ciborium",
  "rsigma-parser",
@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "globset",
  "log",

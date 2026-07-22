@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-22
+
+**TL;DR**
+RSigma v0.20.0 is the "intermediate representation, reverse conversion, and rstix STIX closure" release: a new HIR crate becomes the compile and convert backbone, SIEM queries convert back to Sigma YAML, `rstix` gains a TAXII 2.1 client alongside graph, marking, and store modules, and the schema classifier learns the major cloud log sources.
+* Intermediate representation: a new `rsigma-ir` HIR crate with `lower_rule`, a serializable HIR restart cache, and opt-in optimization passes, with `rsigma-eval` compile and the `rsigma-convert` `Backend` trait now IR-native end to end while backend output stays byte-identical (#360, #362, #363, #364, #368, #370).
+* Reverse conversion: a pluggable framework that parses a SIEM query dialect into the IR, raises it to a Sigma rule, and emits canonical YAML, with Elastic Lucene as the reference frontend, exposed through `rsigma rule reverse` and the MCP `reverse_convert` tool (#348, #371).
+* `rstix` threat intel: an async TAXII 2.1 client with mTLS, pagination, auth, and resilience (#373); spec-exact STIX 2.1 closure with graph traversal, TLP marking resolution, and an object store (#327); and serde-gated wire-format validator dependencies (#352).
+* Detection routing: a built-in cloud schema signature bundle covering AWS CloudTrail and VPC Flow, Azure, GCP, Microsoft 365, GitHub, Okta, OneLogin, Kubernetes, Docker, and osquery (#318).
+* Reliability: deterministic bloom pre-filter seeding, so the per-field substring pre-filter's bit layout is stable across runs and platforms with correctness unchanged.
+* Dependencies: two rolled-up Dependabot batches across the Rust workspace, CI actions, and the VS Code extension (#354, #357).
+
 ### rstix: TAXII 2.1 Client (`taxii` feature) (#373)
 
 - **`taxii`** — async HTTP client for TAXII 2.1 endpoint groups (discovery, API Root, collections, objects, manifest, versions, status). **Channels (§6) are RESERVED in the spec and not implemented.** Includes DNS SRV via `_taxii2._tcp` and `TaxiiClientConfig::dns_nameserver()` for custom resolvers.
@@ -86,6 +97,8 @@ Adds three independent modules for Graph + Marking + Store:
 ### Cloud Schema Signature Bundle (#318)
 
 Built-in schema signatures cover AWS CloudTrail (`aws_cloudtrail`), AWS VPC Flow Logs (`aws_vpcflow`), Azure Activity/SignIn/Audit logs (`azure_activitylogs`, `azure_signinlogs`, `azure_auditlogs`), GCP Cloud Audit (`gcp_audit`), Microsoft 365 unified audit log (`m365_audit`), GitHub Audit (`github_audit`), Okta System Log (`okta_system_log`), OneLogin (`onelogin_events`), Kubernetes audit (`k8s_audit`), Docker events (`docker_events`), and osquery (`osquery_result`). Each signature uses multi-field markers (high specificity, no misfires) and implies a SigmaHQ taxonomy-compatible `product`/`service` logsource for conflict-based pruning. Off-taxonomy sources (k8s, docker, osquery) ship as `logsource.custom` dimensions to stay within the no-blessed-vocabulary line, and AWS VPC Flow Logs ships as `product: aws` plus `custom: {source: vpcflow}`. A `gcp_audit.yml` pipeline strips the `data.` prefix that SigmaHQ's `gcp.audit` rules use (`data.protoPayload.*`) so they match native Cloud Logging events (`protoPayload.*`). Per-source golden fixtures (`test_event.json` + `expected_classification.yaml`) with a walk test, an end-to-end GCP routing test, and specificity-ordering unit tests guard correctness and prevent regressions. A new cloud collection recipes guide covers Vector, OTel, and Fluent Bit configs per source.
+
+[v0.19.0...v0.20.0](https://github.com/timescale/rsigma/compare/v0.19.0...v0.20.0)
 
 ## [0.19.0] - 2026-07-13
 
@@ -2500,6 +2513,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.20.0]: https://github.com/timescale/rsigma/releases/tag/v0.20.0
 [0.19.0]: https://github.com/timescale/rsigma/releases/tag/v0.19.0
 [0.18.0]: https://github.com/timescale/rsigma/releases/tag/v0.18.0
 [0.17.0]: https://github.com/timescale/rsigma/releases/tag/v0.17.0
