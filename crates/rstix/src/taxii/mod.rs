@@ -30,7 +30,8 @@ pub use auth::{ApiKeyHeader, AuthError, BasicAuth, BearerAuth, TaxiiAuthProvider
 pub use client::{TaxiiClient, TaxiiClientConfig};
 pub use dane::TlsaRecord;
 pub use dns::{
-    TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with, resolve_tlsa, resolve_tlsa_with,
+    DnsLookupOptions, TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with,
+    resolve_taxii_srv_with_options, resolve_tlsa, resolve_tlsa_with, resolve_tlsa_with_options,
 };
 pub use envelope::{
     ManifestRecord, ManifestResponse, StatusDetail, StatusState, TaxiiEnvelope, TaxiiStatus,
