@@ -41,7 +41,7 @@ jobs:
           rustup override set stable
       # Pull `cargo-audit` from prebuilt artifacts rather than building
       # it from source every run; saves ~30s per audit invocation.
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+      - uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           tool: cargo-audit
       - run: cargo audit
@@ -55,4 +55,4 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
