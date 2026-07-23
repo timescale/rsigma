@@ -59,6 +59,7 @@ pub struct TaxiiClientConfig {
     server_trust: ServerTrustPolicy,
     tlsa_cache: TlsaCache,
     dns_nameserver: Option<SocketAddr>,
+    dane_require_dnssec: bool,
 }
 
 impl TaxiiClientConfig {
@@ -82,6 +83,7 @@ impl TaxiiClientConfig {
             server_trust: ServerTrustPolicy::default(),
             tlsa_cache: TlsaCache::default(),
             dns_nameserver: None,
+            dane_require_dnssec: true,
         }
     }
 
@@ -186,6 +188,13 @@ impl TaxiiClientConfig {
         self.dns_nameserver = Some(nameserver);
         self
     }
+
+    /// When [`ServerTrustPolicy::Dane`] is active: require DNSSEC-validated TLSA and SRV answers
+    /// (TAXII 2.1 section 8.5.2 SHOULD). Default `true`. Set `false` only for unsigned lab DNS.
+    pub fn dane_require_dnssec(mut self, required: bool) -> Self {
+        self.dane_require_dnssec = required;
+        self
+    }
 }
 
 struct TaxiiClientInner {
@@ -243,6 +252,7 @@ impl TaxiiClient {
                     server_trust: config.server_trust,
                     tlsa_cache: config.tlsa_cache,
                     dns_nameserver: config.dns_nameserver,
+                    dane_require_dnssec: config.dane_require_dnssec,
                 },
                 preflight: config.preflight,
                 status_poll_interval: config.status_poll_interval,
@@ -261,7 +271,12 @@ impl TaxiiClient {
     ) -> Result<TaxiiDiscovery, TaxiiError> {
         let mut last_err = None;
         let nameserver = config.dns_nameserver;
-        for base in dns::resolve_taxii_srv_with(domain, nameserver).await? {
+        let dns_options = if matches!(config.server_trust, ServerTrustPolicy::Dane) {
+            dns::DnsLookupOptions::for_dane(config.dane_require_dnssec)
+        } else {
+            dns::DnsLookupOptions::default()
+        };
+        for base in dns::resolve_taxii_srv_with_options(domain, nameserver, dns_options).await? {
             match Self::new(config.clone().base_url(base.to_string())) {
                 Ok(client) => match client.discover().await {
                     Ok(discovery) => return Ok(discovery),

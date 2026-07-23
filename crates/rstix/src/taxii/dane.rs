@@ -83,7 +83,7 @@ fn chain_associates(
         .any(|cert| record.association_matches(cert))
 }
 
-/// Outcome of evaluating DNSSEC-validated TLSA records for the presented chain.
+/// Outcome of evaluating TLSA records for the presented chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DaneDecision {
     /// Usage 3 (DANE-EE) or verified usage 2 (DANE-TA): accept without PKIX (RFC 7671 §5.1).

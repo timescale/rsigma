@@ -4,6 +4,11 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: TAXII DANE DNSSEC validation (`taxii` feature)
+
+- **`TaxiiClientConfig::dane_require_dnssec`** — default `true` when `ServerTrustPolicy::Dane`; DNSSEC-validates TLSA prefetch and SRV discovery (TAXII §8.5.2 SHOULD). Set `false` for unsigned lab DNS only.
+- **`DnsLookupOptions`** — `validate_dnssec` on `resolve_*_with_options` helpers (default `false` for standalone calls).
+
 ## [0.20.0] - 2026-07-22
 
 **TL;DR**

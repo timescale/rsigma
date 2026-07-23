@@ -11,6 +11,7 @@ use url::Url;
 use crate::model::ParseOptions;
 
 use super::TaxiiError;
+use super::dns::DnsLookupOptions;
 use super::envelope::parse_envelope;
 use super::error::{parse_error_body, parse_retry_after};
 use super::media::{TAXII_ACCEPT, TAXII_CONTENT_TYPE, is_taxii_content_type};
@@ -30,6 +31,7 @@ pub(crate) struct TaxiiHttp {
     pub server_trust: ServerTrustPolicy,
     pub tlsa_cache: TlsaCache,
     pub dns_nameserver: Option<SocketAddr>,
+    pub dane_require_dnssec: bool,
 }
 
 pub(crate) struct TaxiiResponse {
@@ -193,7 +195,10 @@ impl TaxiiHttp {
             return Ok(());
         };
         let port = url.port().unwrap_or(443);
-        let records = super::dns::resolve_tlsa_with(host, port, self.dns_nameserver).await?;
+        let dns_options = DnsLookupOptions::for_dane(self.dane_require_dnssec);
+        let records =
+            super::dns::resolve_tlsa_with_options(host, port, self.dns_nameserver, dns_options)
+                .await?;
         if records.is_empty() {
             return Err(TaxiiError::InvalidServerTrust {
                 reason: format!("DANE: no TLSA records for {host}:{port}"),

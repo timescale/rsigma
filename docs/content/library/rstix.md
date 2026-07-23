@@ -19,7 +19,7 @@ rstix = "{{ rsigma.version }}"
 | Area | Status |
 | ----- | ------ |
 | **Core Foundation** (`core`, `id`, `vocab`) | Complete |
-| **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete — see [Validation tiers](#validation-tiers), [Conformance notes](#conformance-notes-stix-21), and [Model invariants](#model-invariants-summary) |
+| **Data Model + Serialization** (`model`, `Bundle`, `parse_reader`, `Bundle::validate`) | Complete — see [Validation tiers](#rstix-validation-tiers), [Conformance notes](#rstix-conformance-notes-stix-21), and [Model invariants](#rstix-model-invariants-summary) |
 | **Pattern Engine** (`pattern` — parse, type-check, full Level 3 evaluation, canonical printer, Indicator wiring, `IndicatorBuilder`) | **Complete** |
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs` — property graph, TLP resolution, in-memory and filesystem store) | **Complete** |
@@ -122,7 +122,7 @@ Optional **`taxii`** feature — TAXII 2.1 HTTP client for all normative endpoin
 
 | Feature | Module | Highlights |
 | ------- | ------ | ---------- |
-| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin / DANE, auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
+| `taxii` | `rstix::taxii` | TAXII 2.1 HTTP client ([`TaxiiClient`](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#public-api-surface-rstixtaxii), rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin / DANE (`dane_require_dnssec`), auth, pagination, SRV + `dns_nameserver()`). Channels §6 not implemented. |
 
 ```rust
 use rstix::taxii::{BearerAuth, TaxiiClient, TaxiiClientConfig, TaxiiFilter};
@@ -178,8 +178,6 @@ Full API and invariant tables: [crate README](https://github.com/timescale/rsigm
 
 Formal record of engineering choices for the Pattern Engine. Full text: [crate README — Pattern Engine design decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#pattern-engine-design-decisions).
 
-<a id="dd-pe-001--indicatorbuilder-validates-at-build-not-in-setters"></a>
-
 #### DD-PE-001 — `IndicatorBuilder` validates at `build()`, not in setters
 
 | | |
@@ -212,7 +210,7 @@ Formal record of engineering choices for the Pattern Engine. Full text: [crate R
 | `StixObject` | Top-level enum: SDO / SCO / SRO / Meta / Custom. |
 | `ParseOptions`, `TypeRegistry` | Limits, custom type registration. |
 | `ValidationReport`, `ValidationCode`, `ValidationFinding` | Semantic validation output. |
-| `ParseError`, `model::ModelError` | Parse-time failures for rules enforced at T0 (see [Validation tiers](#validation-tiers)). |
+| `ParseError`, `model::ModelError` | Parse-time failures for rules enforced at T0 (see [Validation tiers](#rstix-validation-tiers)). |
 | `Pattern`, `PatternAst`, `PatternScoType`, `PatternError`, `PatternMatchError` | STIX pattern parse and type-check at crate root (`pattern` feature). |
 | `pattern::ObservationContext`, `pattern::TimestampedObservation` | Pattern evaluation context (`pattern` feature). |
 
@@ -238,7 +236,7 @@ Deterministic SCO UUIDv5: `select_id_contributing_properties`, JCS canonicalizat
 
 ### `vocab`
 
-Closed vocabulary tables (`encryption-algorithm-enum`, `opinion-enum`, …), a reference `HASH_ALGORITHM_ENUM` set (hash keys are not validated at parse — see [Conformance notes](#conformance-notes-stix-21)), and open vocabulary tables (`REGION_OV`, malware types, …) used by the Validation Pipeline.
+Closed vocabulary tables (`encryption-algorithm-enum`, `opinion-enum`, …), a reference `HASH_ALGORITHM_ENUM` set (hash keys are not validated at parse — see [Conformance notes](#rstix-conformance-notes-stix-21)), and open vocabulary tables (`REGION_OV`, malware types, …) used by the Validation Pipeline.
 
 ## Bundle parsing
 
@@ -300,7 +298,7 @@ let bundle = Bundle::parse_with_options(json, &opts)?;
 
 ## Semantic validation (`Bundle::validate`)
 
-Default **`serde` parse** enforces MUST rules wired at the deserialize boundary (see [Validation tiers](#validation-tiers)). **`Bundle::validate()`** collects **SHOULD**-level and advisory findings without rejecting the bundle. Stricter gates use the optional **`validate`** feature (`Validator` profiles).
+Default **`serde` parse** enforces MUST rules wired at the deserialize boundary (see [Validation tiers](#rstix-validation-tiers)). **`Bundle::validate()`** collects **SHOULD**-level and advisory findings without rejecting the bundle. Stricter gates use the optional **`validate`** feature (`Validator` profiles).
 
 | `ValidationCode` | Meaning |
 | ---------------- | ------- |
@@ -324,8 +322,6 @@ There is no `strict` parse flag on `Bundle::parse`. Use **`Validator`** profiles
 
 Formal record of wire-parse engineering choices. Full text: [crate README — Data Model + Serialization design decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#data-model--serialization-design-decisions).
 
-<a id="dd-dm-001--wire-must-at-parse"></a>
-
 #### DD-DM-001 — Wire MUST at parse (`domain-name`, `email-addr`, `url`)
 
 | | |
@@ -334,7 +330,7 @@ Formal record of wire-parse engineering choices. Full text: [crate README — Da
 | **Applies to** | `serde` feature (default), `domain-name`, `email-addr`, `url` SCO types |
 | **Spec** | STIX 2.1 §6.4, §6.5, §6.15 |
 
-**Decision.** Malformed `domain-name`, `email-addr`, and `url` values are **rejected at default `serde` parse**. URL schemes are limited to `http`, `https`, and `ftp`. Other wire-format checks use T1 (`Bundle::validate()`) or T2 (Validation Pipeline) as documented in [Validation tiers](#validation-tiers).
+**Decision.** Malformed `domain-name`, `email-addr`, and `url` values are **rejected at default `serde` parse**. URL schemes are limited to `http`, `https`, and `ftp`. Other wire-format checks use T1 (`Bundle::validate()`) or T2 (Validation Pipeline) as documented in [Validation tiers](#rstix-validation-tiers).
 
 ## Wire-format validation (DD-DM-001)
 
@@ -388,8 +384,6 @@ cargo test -p rstix --features serde
 cargo test -p rstix --features pattern   # Pattern Engine
 ```
 
-<a id="local-mitre-attck-corpus-test"></a>
-
 ### Local MITRE ATT&CK corpus
 
 The full MITRE ATT&CK STIX bundle (~50 MiB) is available for download and parsing. CI uses a synthetic 5000-object streaming test. For local verification, download a bundle (for example MITRE ATT&CK 19.1) and point the integration test at it:
@@ -415,8 +409,6 @@ A STIX **2.1** bundle can contain `marking-definition` objects that still use th
 
 Full developer guide: [crate README — STIX version vs TLP marking encoding](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#stix-version-vs-tlp-marking-encoding).
 
-<a id="validation-tiers"></a>
-
 ## Validation tiers
 
 | Tier | API | Severity | Examples |
@@ -426,8 +418,6 @@ Full developer guide: [crate README — STIX version vs TLP marking encoding](ht
 | **T2 — pipeline** | `Validator` (`validate` feature) | Structured diagnostics | All twelve validation phases, conformance corpus |
 
 Full detail: [crate README — Validation tiers](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#validation-tiers).
-
-<a id="conformance-notes-stix-21"></a>
 
 ## Conformance notes (STIX 2.1)
 
@@ -447,18 +437,16 @@ rstix **phase delivery is complete** for bundle parse, patterning, validation pi
 
 Full table: [crate README — Conformance notes](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#conformance-notes-stix-21).
 
-<a id="model-invariants-summary"></a>
-
 ## Model invariants (summary)
 
 Full table: [crate README — Model invariant decisions](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#model-invariant-decisions-modelcommon).
 
 - **T0 (parse):** id/type match, in-bundle ref resolution, extension routing, SCO forbidden common props, SDO/SRO time ordering, DD-DM-001 domain/email/url format, `_enc` IANA charset + pairing, and type-specific MUST rules documented in `ModelError`.
 - **T1 (`Bundle::validate()`):** relationship matrix, CAPEC/CVE, encryption algorithm, TLP v1 warnings (STIX-W0031), granular selector semantics, language-content rules, location country/region vocabularies, SCO deterministic id.
-- **Partial T0:** report/grouping/note/opinion `object_refs` (SDO/SCO kind only; empty lists allowed); see [Conformance notes](#conformance-notes-stix-21).
+- **Partial T0:** report/grouping/note/opinion `object_refs` (SDO/SCO kind only; empty lists allowed); see [Conformance notes](#rstix-conformance-notes-stix-21).
 - **Map types:** wire-facing property bags use `BTreeMap` for deterministic JSON key order; internal id indexes use `HashMap`.
 
-Pattern Engine engineering choices (separate from STIX spec invariants): [Pattern Engine design decisions](#pattern-engine-design-decisions).
+Pattern Engine engineering choices (separate from STIX spec invariants): [Pattern Engine design decisions](#rstix-graph-marking-store-pattern-engine-design-decisions).
 
 ## Validation Pipeline
 
@@ -496,12 +484,12 @@ All twelve pipeline checks are implemented. The conformance harness (`tests/fixt
 | `marking` | TLP and statement marking resolution (`MarkingResolver`, granular selectors). |
 | `store` | In-memory STIX store (`MemoryStore`, `StixQuery`, `ImportReport`). |
 | `store-fs` | Filesystem-backed durable store (`FsStore`; implies `store`). |
-| `taxii` | TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, auth, pagination, retry, rustls TLS with PEM and PKCS#12 mTLS). |
+| `taxii` | TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, auth, pagination, retry, rustls TLS, DANE, DNS SRV). |
 
 ## Related docs
 
-- [Architecture — crate map](../reference/architecture.md#rstix)
-- [Feature flags — rstix](../reference/feature-flags.md#rstix)
+- [Architecture — crate map](../reference/architecture.md#architecture-rstix)
+- [Feature flags — rstix](../reference/feature-flags.md#feature-flags-rstix)
 - [Fuzzing — `fuzz_rstix_parse_bundle`](../developers/fuzzing.md)
 - [Fuzzing — `fuzz_rstix_validate_json`](../developers/fuzzing.md)
 - [Crate README](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md)

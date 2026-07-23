@@ -9,6 +9,8 @@
 //! - **DANE** — [`ServerTrustPolicy::Dane`] is fail-closed (RFC 7671): missing TLSA data or
 //!   non-matching usable records reject the handshake. Usage 3 (DANE-EE) and verified usage 2
 //!   (DANE-TA) bypass PKIX and therefore also skip hostname and expiry checks (RFC 7671 §5.1).
+//!   TLSA (and SRV during [`TaxiiClient::discover_via_srv`]) lookups use DNSSEC validation by
+//!   default via [`TaxiiClientConfig::dane_require_dnssec`] (TAXII spec section 8.5.2 SHOULD).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -54,7 +56,7 @@ impl SpkiPin {
     }
 }
 
-/// Server certificate trust policy (spec section 8.5.2).
+/// Server certificate trust policy (TAXII 2.1 section 8.5.2; RFC 7671 for DANE).
 #[derive(Clone, Default)]
 pub enum ServerTrustPolicy {
     /// System/Web PKI roots (default).
@@ -62,8 +64,8 @@ pub enum ServerTrustPolicy {
     SystemRoots,
     /// Require SPKI SHA-256 pins (checked in addition to PKIX).
     PinnedSpki(Vec<SpkiPin>),
-    /// Validate using DNSSEC TLSA records (RFC 7671). Fail-closed when TLSA is missing or no
-    /// record matches.
+    /// Validate via TLSA (RFC 7671). Fail-closed when TLSA is missing or no record matches.
+    /// DNSSEC on TLSA prefetch: [`TaxiiClientConfig::dane_require_dnssec`] (default `true`).
     Dane,
     /// SPKI pins without PKIX fallback. Accepts a matching pin without hostname or expiry
     /// checks (spec section 8.5.2 certificate pinning for non-PKIX deployments).

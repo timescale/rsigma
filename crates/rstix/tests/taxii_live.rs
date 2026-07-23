@@ -198,6 +198,7 @@ async fn live_dane_discovery() {
     let client = TaxiiClient::new(
         TaxiiClientConfig::new(LIVE_DANE_URL)
             .server_trust(ServerTrustPolicy::Dane)
+            .dane_require_dnssec(false) // live CoreDNS zone is unsigned
             .dns_nameserver(live_dns_nameserver()),
     )
     .expect("dane client");

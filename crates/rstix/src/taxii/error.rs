@@ -150,7 +150,7 @@ pub enum TaxiiError {
     /// URL must use HTTPS (spec section 8.5.1).
     #[error("TAXII requires HTTPS: {0}")]
     InsecureUrl(String),
-    /// DNS SRV discovery failure.
+    /// DNS SRV or TLSA lookup failure (non-DNSSEC path, or SRV when not using DANE).
     #[error("DNS SRV discovery failed: {0}")]
     DnsDiscovery(String),
     /// Client certificate could not be loaded.
@@ -199,7 +199,8 @@ pub enum TaxiiError {
     /// Paginated response missing required headers (spec section 3.2).
     #[error("missing pagination headers while more=true")]
     MissingPaginationHeaders,
-    /// Invalid server trust / TLS configuration.
+    /// Invalid server trust / TLS configuration, DANE TLSA mismatch, or DNSSEC-validated DNS
+    /// lookup failure when [`TaxiiClientConfig::dane_require_dnssec`] is enabled.
     #[error("invalid server trust configuration: {reason}")]
     InvalidServerTrust {
         /// Failure reason.

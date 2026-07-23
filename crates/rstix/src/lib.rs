@@ -140,13 +140,14 @@ pub use model::{
 #[cfg(feature = "taxii")]
 pub use taxii::{
     ApiKeyHeader, AuthChallenge, BasicAuth, BearerAuth, CapabilityPolicy, ClientCertificate,
-    DeleteObjectFilter, HttpsPolicy, ManifestRecord, ManifestResponse, ObjectByIdFilter,
-    ObjectVersion, PostSubmitPolicy, PreflightPolicy, RetryPolicy, ServerTrustPolicy, SpkiPin,
-    StatusDetail, StatusState, TAXII2_SRV_SERVICE, TaxiiApiRoot, TaxiiAuthProvider, TaxiiClient,
-    TaxiiClientConfig, TaxiiCollection, TaxiiDiscovery, TaxiiEnvelope, TaxiiError, TaxiiFilter,
-    TaxiiPageHeaders, TaxiiPaged, TaxiiStatus, TlsaCache, TlsaRecord, VersionFilter,
-    VersionSelector, VersionsQueryFilter, VersionsResponse, build_rustls_config,
-    parse_www_authenticate, resolve_taxii_srv, resolve_tlsa,
+    DeleteObjectFilter, DnsLookupOptions, HttpsPolicy, ManifestRecord, ManifestResponse,
+    ObjectByIdFilter, ObjectVersion, PostSubmitPolicy, PreflightPolicy, RetryPolicy,
+    ServerTrustPolicy, SpkiPin, StatusDetail, StatusState, TAXII2_SRV_SERVICE, TaxiiApiRoot,
+    TaxiiAuthProvider, TaxiiClient, TaxiiClientConfig, TaxiiCollection, TaxiiDiscovery,
+    TaxiiEnvelope, TaxiiError, TaxiiFilter, TaxiiPageHeaders, TaxiiPaged, TaxiiStatus, TlsaCache,
+    TlsaRecord, VersionFilter, VersionSelector, VersionsQueryFilter, VersionsResponse,
+    build_rustls_config, parse_www_authenticate, resolve_taxii_srv, resolve_taxii_srv_with_options,
+    resolve_tlsa, resolve_tlsa_with_options,
 };
 
 /// Parse a STIX bundle from a JSON string using default options.

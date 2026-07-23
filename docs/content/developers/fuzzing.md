@@ -21,7 +21,7 @@ The workspace ships 17 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_template_expand` | The `${source.X}` template expander. | 4096 |
 | `fuzz_include_parse` | Include-directive resolution. | 8192 |
 | `fuzz_http_response` | The dynamic-pipeline HTTP-response parsing path. | 65536 |
-| `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` STIX bundle parse entrypoint. Seed locally from `tests/fixtures/spec/` or a downloaded ATT&CK bundle (see [rstix — Local MITRE ATT&CK corpus test](../library/rstix.md#local-mitre-attck-corpus-test)). | 65536 |
+| `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` STIX bundle parse entrypoint. Seed locally from `tests/fixtures/spec/` or a downloaded ATT&CK bundle (see [rstix — Local MITRE ATT&CK corpus test](../library/rstix.md#rstix-testing-local-mitre-attck-corpus)). | 65536 |
 | `fuzz_rstix_validate_json` | The `rstix::Validator::validate_json_str` Validation Pipeline raw JSON entry (`validate` feature). Seeds in `fuzz/seeds/fuzz_rstix_validate_json/`. | 65536 |
 
 All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, and `rsigma-runtime` (with `logfmt` and `cef` features).

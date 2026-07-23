@@ -451,6 +451,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `server_trust(p)` | `SystemRoots` | [`ServerTrustPolicy`](taxii::ServerTrustPolicy) — PKIX, SPKI pin, or DANE. |
 | `tlsa_cache(c)` | empty | [`TlsaCache`](taxii::TlsaCache) — shared TLSA store for DANE. |
 | `dns_nameserver(addr)` | system resolver | Override DNS for SRV/TLSA lookups (local CoreDNS). |
+| `dane_require_dnssec(b)` | `true` | When `server_trust` is `Dane`: DNSSEC-validate TLSA prefetch and SRV; set `false` for unsigned lab DNS only. |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate) — mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
 | `max_response_bytes(n)` | 512 MiB | Reject oversized bodies (`Content-Length` or streaming cap) → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
@@ -469,6 +470,21 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | [`build_rustls_config`](taxii::build_rustls_config) | Build rustls `ClientConfig` (TLS 1.2+1.3 only; optional `ClientCertificate` for mTLS on the rustls path). |
 | [`resolve_tlsa(host, port)`](taxii::resolve_tlsa) | DNS TLSA lookup via system resolver (`_{port}._tcp.{host}`). |
 | [`resolve_tlsa_with(host, port, nameserver)`](taxii::resolve_tlsa_with) | TLSA lookup via optional custom nameserver. |
+| [`resolve_tlsa_with_options(...)`](taxii::resolve_tlsa_with_options) | TLSA lookup with [`DnsLookupOptions`](taxii::DnsLookupOptions). |
+| [`DnsLookupOptions`](taxii::DnsLookupOptions) | `validate_dnssec` for `*_with_options` helpers (default `false`; TAXII client sets from `dane_require_dnssec` when `Dane`). |
+
+[`ServerTrustPolicy::Dane`](taxii::ServerTrustPolicy::Dane) prefetches TLSA into [`TlsaCache`](taxii::TlsaCache) before HTTPS, then matches the server certificate at handshake (RFC 7671, fail-closed, usages 0–3). With default [`dane_require_dnssec(true)`](taxii::TaxiiClientConfig::dane_require_dnssec), those TLSA lookups and SRV records in [`discover_via_srv`](taxii::TaxiiClient::discover_via_srv) are DNSSEC-validated (TAXII §8.5.2 SHOULD). Set `dane_require_dnssec(false)` only for unsigned lab DNS. [`dns_nameserver`](taxii::TaxiiClientConfig::dns_nameserver) overrides the resolver target; it does not disable DNSSEC.
+
+```mermaid
+flowchart LR
+    TRUST["server_trust: Dane"] --> TLSA["TLSA prefetch"]
+    TLSA --> DNSSEC{"dane_require_dnssec"}
+    DNSSEC -->|true| VAL["DNSSEC validate"]
+    DNSSEC -->|false| RAW["plain DNS"]
+    VAL --> HS["TLS handshake"]
+    RAW --> HS
+    HS --> MATCH["evaluate_dane"]
+```
 
 TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. Negotiation prefers the highest mutually supported version (typically TLS 1.3). TLS 1.0/1.1 are not enabled.
 
@@ -479,6 +495,7 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | [`TaxiiDiscovery`](taxii::TaxiiDiscovery) | Discovery resource; `resolved_api_roots`, **`default_api_root()`**. |
 | [`resolve_taxii_srv(domain)`](taxii::resolve_taxii_srv) | SRV lookup (system resolver) with RFC 2782 weighted random; skips `"."` targets. |
 | [`resolve_taxii_srv_with(domain, nameserver)`](taxii::resolve_taxii_srv_with) | SRV lookup via optional custom nameserver (e.g. local CoreDNS). |
+| [`resolve_taxii_srv_with_options(...)`](taxii::resolve_taxii_srv_with_options) | SRV lookup with [`DnsLookupOptions`](taxii::DnsLookupOptions). |
 | [`TAXII2_SRV_SERVICE`](taxii::TAXII2_SRV_SERVICE) | Constant `"_taxii2._tcp"`. |
 | [`HttpsPolicy`](taxii::HttpsPolicy) | HTTPS enforcement for URL resolution. |
 
@@ -515,7 +532,7 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | `MissingPaginationHeaders` | `more=true` without `next` or `X-TAXII-Date-Added-Last`. |
 | `StatusPollTimeout` | Status polling exceeded `status_max_polls`. |
 | `UnsupportedApiRoot` / `UnsupportedCollectionMedia` | Capability checks failed. |
-| `InvalidServerTrust` | Pinning/DANE/TLS config error. |
+| `InvalidServerTrust` | Pinning/DANE/TLS config error; DANE TLSA missing/mismatch; DNSSEC-validated DNS failure when `dane_require_dnssec(true)`. |
 | `Unauthorized { challenges, .. }` | HTTP 401 with parsed auth challenges. |
 | `RequestedRangeNotSatisfiable` | HTTP 416 (streams recover automatically). |
 
@@ -570,7 +587,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Envelope vs Bundle | POST/GET object pages deserialize `TaxiiEnvelope` | Bundle rejected at API boundary |
 | Response media type | Success responses must include TAXII JSON `Content-Type` | `MissingContentType` / `InvalidContentType` |
 | TLS | rustls with **TLS 1.2 and TLS 1.3** (no 1.0/1.1); optional SPKI pinning and DANE | `ServerTrustPolicy`, `build_rustls_config`, `SpkiPin`, `TlsaCache`, `resolve_tlsa` |
-| DANE (`ServerTrustPolicy::Dane`) | Fail-closed (RFC 7671): missing/non-matching TLSA rejects; usage 3 (DANE-EE) and verified usage 2 (DANE-TA) bypass PKIX (no hostname/expiry); usage 0/1 require PKIX after association match | `evaluate_dane`, TLSA prefetch in `TaxiiHttp` |
+| DANE (`ServerTrustPolicy::Dane`) | Fail-closed TLSA association (RFC 7671 usages 0–3); default `dane_require_dnssec(true)` DNSSEC-validates TLSA prefetch and SRV | `evaluate_dane`, `dane_require_dnssec`, TLSA prefetch in `TaxiiHttp` |
 | SPKI pin-only | `PinnedSpkiOnly` accepts matching pin without hostname or expiry checks (spec section 8.5.2 pinning) | Documented on `ServerTrustPolicy::PinnedSpkiOnly` |
 | Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
 | Capability checks | API Root `versions` and collection `media_types` verified before use | `CapabilityPolicy::Enforce` (default); disable for interop |

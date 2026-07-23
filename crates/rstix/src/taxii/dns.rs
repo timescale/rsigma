@@ -3,7 +3,8 @@
 use std::net::SocketAddr;
 
 use hickory_resolver::TokioResolver;
-use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
+use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::net::NetError;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RData;
 use url::Url;
@@ -14,6 +15,29 @@ use super::url::{DISCOVERY_PATH, ensure_trailing_slash};
 
 /// Service name for TAXII 2.1 DNS SRV records (`_taxii2._tcp`).
 pub const TAXII2_SRV_SERVICE: &str = "_taxii2._tcp";
+
+/// Options for DNS SRV and TLSA lookups.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DnsLookupOptions {
+    /// When `true`, require DNSSEC validation (hickory-resolver, ICANN root anchor).
+    pub validate_dnssec: bool,
+}
+
+impl DnsLookupOptions {
+    /// Require DNSSEC-validated answers.
+    pub const fn require_dnssec() -> Self {
+        Self {
+            validate_dnssec: true,
+        }
+    }
+
+    /// DNS lookup options for DANE TLSA/SRV prefetch on [`TaxiiClient`](super::TaxiiClient).
+    pub fn for_dane(dane_require_dnssec: bool) -> Self {
+        Self {
+            validate_dnssec: dane_require_dnssec,
+        }
+    }
+}
 
 /// Resolve TAXII discovery base URLs from `_taxii2._tcp.{domain}` SRV records.
 ///
@@ -28,14 +52,23 @@ pub async fn resolve_taxii_srv_with(
     domain: &str,
     nameserver: Option<SocketAddr>,
 ) -> Result<Vec<Url>, TaxiiError> {
+    resolve_taxii_srv_with_options(domain, nameserver, DnsLookupOptions::default()).await
+}
+
+/// Like [`resolve_taxii_srv_with`], with explicit DNS lookup options.
+pub async fn resolve_taxii_srv_with_options(
+    domain: &str,
+    nameserver: Option<SocketAddr>,
+    options: DnsLookupOptions,
+) -> Result<Vec<Url>, TaxiiError> {
     let domain = domain.trim().trim_end_matches('.');
     let lookup = format!("{TAXII2_SRV_SERVICE}.{domain}");
 
-    let resolver = build_resolver(nameserver)?;
+    let resolver = build_resolver(nameserver, options)?;
     let response = resolver
         .srv_lookup(lookup)
         .await
-        .map_err(|err| TaxiiError::DnsDiscovery(err.to_string()))?;
+        .map_err(|err| map_dns_error(err, options.validate_dnssec))?;
 
     let mut records = Vec::new();
     for answer in response.answers() {
@@ -67,14 +100,24 @@ pub async fn resolve_tlsa_with(
     port: u16,
     nameserver: Option<SocketAddr>,
 ) -> Result<Vec<TlsaRecord>, TaxiiError> {
+    resolve_tlsa_with_options(host, port, nameserver, DnsLookupOptions::default()).await
+}
+
+/// Like [`resolve_tlsa_with`], with explicit DNS lookup options.
+pub async fn resolve_tlsa_with_options(
+    host: &str,
+    port: u16,
+    nameserver: Option<SocketAddr>,
+    options: DnsLookupOptions,
+) -> Result<Vec<TlsaRecord>, TaxiiError> {
     let host = host.trim().trim_end_matches('.');
     let lookup = format!("_{port}._tcp.{host}");
 
-    let resolver = build_resolver(nameserver)?;
+    let resolver = build_resolver(nameserver, options)?;
     let response = resolver
         .tlsa_lookup(lookup)
         .await
-        .map_err(|err| TaxiiError::DnsDiscovery(err.to_string()))?;
+        .map_err(|err| map_dns_error(err, options.validate_dnssec))?;
 
     let mut records = Vec::new();
     for answer in response.answers() {
@@ -91,8 +134,11 @@ pub async fn resolve_tlsa_with(
     Ok(records)
 }
 
-fn build_resolver(nameserver: Option<SocketAddr>) -> Result<TokioResolver, TaxiiError> {
-    let resolver = if let Some(addr) = nameserver {
+fn build_resolver(
+    nameserver: Option<SocketAddr>,
+    options: DnsLookupOptions,
+) -> Result<TokioResolver, TaxiiError> {
+    let mut builder = if let Some(addr) = nameserver {
         let mut udp = ConnectionConfig::udp();
         udp.port = addr.port();
         let mut tcp = ConnectionConfig::tcp();
@@ -103,9 +149,25 @@ fn build_resolver(nameserver: Option<SocketAddr>) -> Result<TokioResolver, Taxii
     } else {
         TokioResolver::builder_tokio().map_err(|err| TaxiiError::DnsDiscovery(err.to_string()))?
     };
-    resolver
+    apply_dns_lookup_options(builder.options_mut(), options);
+    builder
         .build()
         .map_err(|err| TaxiiError::DnsDiscovery(err.to_string()))
+}
+
+fn apply_dns_lookup_options(opts: &mut ResolverOpts, options: DnsLookupOptions) {
+    opts.validate = options.validate_dnssec;
+}
+
+fn map_dns_error(err: NetError, validate_dnssec: bool) -> TaxiiError {
+    let message = err.to_string();
+    if validate_dnssec {
+        TaxiiError::InvalidServerTrust {
+            reason: format!("DNSSEC-validated DNS lookup failed: {message}"),
+        }
+    } else {
+        TaxiiError::DnsDiscovery(message)
+    }
 }
 
 fn order_srv_records(mut records: Vec<(u16, u16, Url)>) -> Vec<Url> {
@@ -169,6 +231,25 @@ mod tests {
     #[test]
     fn srv_service_constant_matches_spec() {
         assert_eq!(TAXII2_SRV_SERVICE, "_taxii2._tcp");
+    }
+
+    #[test]
+    fn dns_lookup_options_default_is_opportunistic() {
+        assert!(!DnsLookupOptions::default().validate_dnssec);
+        assert!(DnsLookupOptions::require_dnssec().validate_dnssec);
+    }
+
+    #[test]
+    fn build_resolver_sets_validate_when_requested() {
+        let resolver =
+            build_resolver(None, DnsLookupOptions::require_dnssec()).expect("system resolver");
+        assert!(resolver.options().validate);
+    }
+
+    #[test]
+    fn build_resolver_leaves_validate_off_by_default() {
+        let resolver = build_resolver(None, DnsLookupOptions::default()).expect("system resolver");
+        assert!(!resolver.options().validate);
     }
 
     #[test]
