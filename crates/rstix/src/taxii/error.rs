@@ -200,7 +200,7 @@ pub enum TaxiiError {
     #[error("missing pagination headers while more=true")]
     MissingPaginationHeaders,
     /// Invalid server trust / TLS configuration, DANE TLSA mismatch, or DNSSEC-validated DNS
-    /// lookup failure when [`TaxiiClientConfig::dane_require_dnssec`] is enabled.
+    /// lookup failure when [`TaxiiClientConfig::dane_require_dnssec`](super::client::TaxiiClientConfig::dane_require_dnssec) is enabled.
     #[error("invalid server trust configuration: {reason}")]
     InvalidServerTrust {
         /// Failure reason.
