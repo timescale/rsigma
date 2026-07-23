@@ -225,7 +225,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate coverage
         run: |
-          cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
+          # Stale or partially-written profraw files from rust-cache restores can
+          # make llvm-profdata merge fail with "file header is corrupt".
+          rm -rf target/llvm-cov-target
+          cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info -- --test-threads=1
           echo '## Coverage Report' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov report --summary-only 2>&1 >> "$GITHUB_STEP_SUMMARY"
