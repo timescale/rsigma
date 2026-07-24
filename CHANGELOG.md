@@ -7,7 +7,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 ### rstix: TAXII collection ingest (`taxii-store` feature) (#387)
 
 - **`taxii-store`** — meta-feature (`taxii` + `store`).
-- **`ingest_collection`** / **`ingest_collection_with_bundle_id`** — paginated `objects_stream` → synthetic `Bundle` → `StixStore::import_bundle`; returns `ImportReport`.
+- **`ingest_collection`** / **`ingest_collection_with_bundle_id`** — paginated fetch with per-page `StixStore::import_objects` (bounded memory); merged `ImportReport` with final ref audit against the store.
 - **`IngestError`** — wraps `TaxiiError` and `StoreError`.
 - **TAXII capability checks** — with `CapabilityPolicy::Enforce`, collection `media_types` may include `application/taxii+json` or STIX 2.1 types; absent `media_types` defaults to `application/stix+json` (TAXII §5.2.1); API Root `max_content_length` must be a JSON integer > 0 (strict parse, no string coercion).
 - **`StixStore::import_bundle`** — unresolved refs are reported only when the target id is missing from both the imported bundle and the store (incremental TAXII ingest).

@@ -749,7 +749,7 @@ impl TaxiiClient {
         ))
     }
 
-    async fn fetch_objects_page(
+    pub(crate) async fn fetch_objects_page(
         &self,
         api_root_url: &str,
         collection_id: &str,

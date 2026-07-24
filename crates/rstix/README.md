@@ -597,8 +597,8 @@ let report = ingest_collection(&client, &store, api_root_url, "col1", TaxiiFilte
 
 Notes:
 
-- Collects **all pages in memory** before import (no page-by-page store streaming yet).
-- Reference checks use the **fetched set plus objects already in the store** (incremental sync).
+- Each TAXII page is imported separately (memory bounded by page size).
+- Reference checks run **after all pages** against the full store (forward refs across pages resolve correctly).
 - Re-ingest is **idempotent** (`ImportReport::objects_deduplicated`).
 
 **Offline test:** `cargo test -p rstix --features taxii-store --test taxii_store`

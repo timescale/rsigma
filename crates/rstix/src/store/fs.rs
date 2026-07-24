@@ -139,6 +139,14 @@ impl StixStore for FsStore {
         Ok(report)
     }
 
+    fn import_objects(&self, objects: &[StixObject]) -> Result<ImportReport, StoreError> {
+        let report = self.memory.import_objects(objects)?;
+        for object in objects {
+            self.persist_object(object.id())?;
+        }
+        Ok(report)
+    }
+
     fn delete(&self, id: &StixId) -> Result<bool, StoreError> {
         let removed = self.memory.delete(id)?;
         if removed {

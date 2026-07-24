@@ -13,6 +13,7 @@ pub use memory::{MemoryStore, StoredSco};
 
 use crate::core::{StixId, StixObjectKind, StixTimestamp};
 use crate::model::Bundle;
+use crate::model::ref_paths::collect_ref_paths;
 use crate::model::stix_object::StixObject;
 
 /// Cross-producer SCO fingerprint collision.
@@ -142,11 +143,35 @@ pub trait StixStore: Send + Sync {
     /// Import all objects from `bundle`.
     fn import_bundle(&self, bundle: &Bundle) -> Result<ImportReport, StoreError>;
 
+    /// Upsert `objects` and return import counts (no reference audit).
+    fn import_objects(&self, objects: &[StixObject]) -> Result<ImportReport, StoreError>;
+
     /// Remove an object and all of its versions from the store.
     fn delete(&self, id: &StixId) -> Result<bool, StoreError>;
 
     /// Export the latest version of every stored object into a bundle.
     fn export_bundle(&self, bundle_id: StixId) -> Result<Bundle, StoreError>;
+}
+
+/// Audit references from `source_ids` against objects currently in `store`.
+pub(crate) fn audit_unresolved_refs(
+    store: &impl StixStore,
+    source_ids: &[StixId],
+) -> Result<Vec<(StixId, String, StixId)>, StoreError> {
+    let mut unresolved = Vec::new();
+    for source_id in source_ids {
+        let Some(object) = store.get(source_id)? else {
+            continue;
+        };
+        let mut paths = Vec::new();
+        collect_ref_paths(&object, &mut paths);
+        for (path, target) in paths {
+            if store.get(&target)?.is_none() {
+                unresolved.push((object.id().clone(), path, target));
+            }
+        }
+    }
+    Ok(unresolved)
 }
 
 #[cfg(test)]

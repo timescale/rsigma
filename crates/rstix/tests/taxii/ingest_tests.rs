@@ -105,3 +105,60 @@ async fn ingest_collection_is_idempotent() {
         .expect("second ingest");
     assert_eq!(second.objects_deduplicated, 1);
 }
+
+#[tokio::test]
+async fn ingest_collection_resolves_forward_refs_across_pages() {
+    let server = wiremock::MockServer::start().await;
+    let api = api_root_url(&server);
+    let indicator_id = "indicator--8e2e2d2b-17d4-4cbf-938f-98ee46b3cd3f";
+
+    Mock::given(method("GET"))
+        .and(path(format!("{API_ROOT}collections/col1/objects/")))
+        .and(query_param("limit", "1"))
+        .and(query_param_is_missing("next"))
+        .respond_with(taxii_json(
+            200,
+            serde_json::json!({
+                "more": true,
+                "next": "cursor-2",
+                "objects": [{
+                    "type": "report",
+                    "spec_version": "2.1",
+                    "id": "report--84e4d88f-44ea-4bcd-bbf3-b2c1c320bcb3",
+                    "created": "2015-12-21T19:59:11.000Z",
+                    "modified": "2015-12-21T19:59:11.000Z",
+                    "name": "Forward ref report",
+                    "published": "2016-01-20T17:00:00.000Z",
+                    "report_types": ["threat-report"],
+                    "object_refs": [indicator_id]
+                }]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(format!("{API_ROOT}collections/col1/objects/")))
+        .and(query_param("next", "cursor-2"))
+        .respond_with(taxii_json(
+            200,
+            serde_json::json!({
+                "more": false,
+                "objects": [minimal_indicator()]
+            }),
+        ))
+        .mount(&server)
+        .await;
+
+    let client = wiremock_client_no_preflight(&server);
+    let store = MemoryStore::new();
+    let report = ingest_collection(&client, &store, &api, "col1", TaxiiFilter::new().limit(1))
+        .await
+        .expect("ingest");
+
+    assert!(
+        report.unresolved_references.is_empty(),
+        "forward ref to indicator on page 2 must resolve after full ingest: {:?}",
+        report.unresolved_references
+    );
+}
