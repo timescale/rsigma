@@ -37,7 +37,7 @@ pub struct ImportReport {
     pub objects_deduplicated: usize,
     /// SCO fingerprint collisions across producers.
     pub fingerprint_conflicts: Vec<FingerprintConflict>,
-    /// References to objects absent from the imported bundle.
+    /// References to objects absent from the imported bundle and not already stored.
     pub unresolved_references: Vec<(StixId, String, StixId)>,
 }
 

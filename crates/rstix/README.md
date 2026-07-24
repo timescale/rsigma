@@ -13,6 +13,7 @@ Six optional Cargo features extend the default `serde` bundle model (each implie
 - `store` — in-memory STIX store with typed queries, SCO fingerprint reporting, and bundle import.
 - `store-fs` — filesystem-backed durable store (`FsStore`; implies `store`).
 - `taxii` — TAXII 2.1 HTTP client: discovery, collections, object CRUD, manifest, status polling, auth providers, pagination, retry, rustls TLS (PEM and PKCS#12 mTLS via `ClientCertificate`; `TaxiiClient`; implies `serde`).
+- `taxii-store` — TAXII collection ingest into [`StixStore`](store::StixStore) via [`ingest_collection`](taxii::ingest_collection) (implies `taxii` and `store`).
 
 ## Install
 
@@ -74,6 +75,7 @@ This library is part of [rsigma].
 - `store`: in-memory STIX object store (`MemoryStore`, `StixQuery`, `ImportReport`). Implies `serde`.
 - `store-fs`: filesystem-backed durable store (`FsStore`). Implies `store`.
 - `taxii`: TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, Bearer/Basic/API-key auth, cursor + header pagination, retry, rustls TLS with PEM and PKCS#12 mTLS). Implies `serde`.
+- `taxii-store`: paginated collection fetch into `MemoryStore` / `FsStore` via `ingest_collection`. Implies `taxii` and `store`.
 
 ## Current status
 
@@ -402,6 +404,7 @@ Acceptance tests: `store::memory::dedup`, `store::memory::fingerprint`, `store::
 | Marking disclosure | `permits_disclosure(audience)` uses `created_by_ref` vs audience for SameOrganization vs ThirdParty. | Amber+Strict blocks third parties per TLP 2.0 rules. |
 | Store object-safety | `StixStore::get` returns owned clones; `MemoryStore::get_sco` returns owned `StoredSco`. | Required for `dyn StixStore` vtable safety. |
 | Store SCO keys | Asserted source id is always the store key; UUIDv5 fingerprint is reporting-only. | Never silently rewrite SCO ids. |
+| Store import refs | `ImportReport::unresolved_references` lists targets missing from **both** the imported bundle and the store. | Supports incremental TAXII ingest (`taxii-store`). |
 | Store search | Full-text index updated on upsert; `StixQuery::text_search` is case-insensitive substring match. | Typed filters compose with text search. |
 | FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. | `store-fs` feature implies `store`. |
 
@@ -540,6 +543,7 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 
 ```bash
 cargo test -p rstix --features taxii --test taxii_client
+cargo test -p rstix --features taxii-store --test taxii_store
 ```
 
 Optional live TLS / DNS / mTLS harness ([`tests/taxii-live/README.md`](tests/taxii-live/README.md)):
@@ -578,6 +582,27 @@ let status = client
     .await?; // HTTP 202 → TaxiiStatus
 ```
 
+#### Collection ingest (`taxii-store`)
+
+[`ingest_collection`](taxii::ingest_collection) paginates [`TaxiiClient::objects_stream`](taxii::TaxiiClient::objects_stream), wraps the objects in a synthetic [`Bundle`](model::Bundle), and calls [`StixStore::import_bundle`](store::StixStore::import_bundle). Requires **`taxii-store`** (`taxii` + `store`). Works with [`MemoryStore`](store::MemoryStore) or [`FsStore`](store::FsStore).
+
+```rust
+use rstix::store::{MemoryStore, StixStore};
+use rstix::taxii::{ingest_collection, TaxiiClient, TaxiiClientConfig, TaxiiFilter};
+
+let client = TaxiiClient::new(TaxiiClientConfig::new("https://taxii.example.com"))?;
+let store = MemoryStore::new();
+let report = ingest_collection(&client, &store, api_root_url, "col1", TaxiiFilter::new()).await?;
+```
+
+Notes:
+
+- Collects **all pages in memory** before import (no page-by-page store streaming yet).
+- Reference checks use the **fetched set plus objects already in the store** (incremental sync).
+- Re-ingest is **idempotent** (`ImportReport::objects_deduplicated`).
+
+**Offline test:** `cargo test -p rstix --features taxii-store --test taxii_store`
+
 Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `User-Agent: rstix/{VERSION}` (override via config), trailing slash on endpoint URLs, discovery at fixed `{base}/taxii2/`.
 
 ### TAXII Client invariant decisions
@@ -590,7 +615,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | DANE (`ServerTrustPolicy::Dane`) | Fail-closed TLSA association (RFC 7671 usages 0–3); default `dane_require_dnssec(true)` DNSSEC-validates TLSA prefetch and SRV | `evaluate_dane`, `dane_require_dnssec`, TLSA prefetch in `TaxiiHttp` |
 | SPKI pin-only | `PinnedSpkiOnly` accepts matching pin without hostname or expiry checks (spec section 8.5.2 pinning) | Documented on `ServerTrustPolicy::PinnedSpkiOnly` |
 | Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
-| Capability checks | API Root `versions` and collection `media_types` verified before use | `CapabilityPolicy::Enforce` (default); disable for interop |
+| Capability checks | With `Enforce`: collection `media_types` must include TAXII 2.1 and/or STIX 2.1 object types; API Root `versions` must include TAXII 2.1; `max_content_length` must be integer **> 0** | `CapabilityPolicy::Disabled` skips checks (interop only); wire JSON is never coerced |
 | POST status | Poll until complete by default (`PostSubmitPolicy`) | `ReturnInitial` for one-shot 202 |
 | Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last` | `MissingPaginationHeaders` |
 | HTTP 416 recovery | Streams reset cursor and restore baseline `added_after` | Pagination streams |
@@ -607,6 +632,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | DELETE preflight | Requires both `can_read` and `can_write` | Spec section 5.7 |
 | Manifest Accept | TAXII + STIX media types | Spec section 5.3 |
 | DNS SRV discovery | `resolve_taxii_srv` + `TaxiiClient::discover_via_srv` | `_taxii2._tcp` records |
+| Collection ingest | `ingest_collection` streams objects → synthetic `Bundle` → `StixStore::import_bundle` | `taxii-store` feature |
 | mTLS | PEM or PKCS#12 via [`ClientCertificate`](taxii::ClientCertificate), embedded in `build_rustls_config` | Pure-Rust PKCS#12 parse (`p12-keystore`); no OpenSSL TLS backend |
 | Channels | **Not implemented** | Spec §6 RESERVED |
 | Filter validation | `limit > 0`; `all` version rules enforced | Invalid filters rejected before HTTP |

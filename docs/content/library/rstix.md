@@ -24,6 +24,7 @@ rstix = "{{ rsigma.version }}"
 | **Validation Pipeline** (`validate` — `Validator`, profiles, `STIX-E/W/I/H` diagnostics, all twelve checks, raw JSON entry) | **Complete** |
 | **Graph + Marking + Store** (`graph`, `marking`, `store`, `store-fs` — property graph, TLP resolution, in-memory and filesystem store) | **Complete** |
 | **TAXII Client** (`taxii` — HTTP client for all TAXII 2.1 endpoint groups - except Channels (out of scope)) | **Complete** |
+| **TAXII collection ingest** (`taxii-store` — `ingest_collection` into `StixStore`) | **Complete** (library) |
 
 ## Quick start
 
@@ -485,6 +486,7 @@ All twelve pipeline checks are implemented. The conformance harness (`tests/fixt
 | `store` | In-memory STIX store (`MemoryStore`, `StixQuery`, `ImportReport`). |
 | `store-fs` | Filesystem-backed durable store (`FsStore`; implies `store`). |
 | `taxii` | TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, auth, pagination, retry, rustls TLS, DANE, DNS SRV). |
+| `taxii-store` | TAXII collection ingest into `StixStore` (`ingest_collection`; implies `taxii` + `store`). |
 
 ## Related docs
 

@@ -46,6 +46,7 @@ taxii = [
   "dep:sha2",
   "dep:p12-keystore",
 ]
+taxii-store = ["taxii", "store"]
 
 [dependencies]
 phf = { version = "0.14", features = ["macros"] }
@@ -147,3 +148,7 @@ required-features = ["taxii"]
 [[test]]
 name = "taxii_live"
 required-features = ["taxii"]
+
+[[test]]
+name = "taxii_store"
+required-features = ["taxii-store"]

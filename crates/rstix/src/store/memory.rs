@@ -238,7 +238,7 @@ impl StixStore for MemoryStore {
             let mut paths = Vec::new();
             collect_ref_paths(object, &mut paths);
             for (path, target) in paths {
-                if !node_ids.contains(target.as_str()) {
+                if !ref_target_resolved(self, &node_ids, &target)? {
                     report
                         .unresolved_references
                         .push((object.id().clone(), path, target));
@@ -264,6 +264,17 @@ enum UpsertOutcome {
     Updated,
     Deduplicated,
     Unchanged,
+}
+
+fn ref_target_resolved(
+    store: &MemoryStore,
+    bundle_ids: &HashSet<String>,
+    target: &StixId,
+) -> Result<bool, StoreError> {
+    if bundle_ids.contains(target.as_str()) {
+        return Ok(true);
+    }
+    Ok(store.get(target)?.is_some())
 }
 
 fn index_kind(store: &MemoryStore, obj: &StixObject) -> Result<(), StoreError> {
