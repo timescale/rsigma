@@ -182,7 +182,7 @@ The full PEG grammar is defined in [`src/sigma.pest`](src/sigma.pest). It implem
 - **YAML list of plain values** → `Detection::Keywords` (keyword search across all fields)
 - **Condition as list** (`condition: [s1, s2]`) → multiple `ConditionExpr` parsed independently
 - **Empty field name** (`parse_field_spec("")`) → `FieldSpec { name: None, modifiers: [] }` (keyword)
-- **Array selectors** (`field[any]`, `field[all]`, `field[N]`) → desugared on the field path only when the document targets `sigma-version: 3` or higher; below that they are literal field-name characters. See the [Array Matching guide](https://timescale.github.io/rsigma/guide/array-matching/)
+- **Array selectors** (`field[any]`, `field[all]`, `field[N]`) → desugared on the field path only when the document targets `sigma-version: 3` or higher; below that they are literal field-name characters. See the [Array Matching guide](https://rsigma.io/guide/array-matching/)
 
 ## Field Modifiers (30)
 

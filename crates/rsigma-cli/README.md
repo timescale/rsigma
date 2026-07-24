@@ -54,7 +54,7 @@ rsigma backend targets
 
 ## Global flags
 
-These flags work with every subcommand, mirroring how `--log-format` does, and they also resolve from the YAML config and the `RSIGMA_*` env layer (see [Output Formats](https://timescale.github.io/rsigma/reference/output/)).
+These flags work with every subcommand, mirroring how `--log-format` does, and they also resolve from the YAML config and the `RSIGMA_*` env layer (see [Output Formats](https://rsigma.io/reference/output/)).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -94,7 +94,7 @@ rsigma config reload
 
 `engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, `rule visibility`, `rule doc`, and `rule hygiene` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
-Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://timescale.github.io/rsigma/reference/configuration/).
+Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://rsigma.io/reference/configuration/).
 
 ### `rule parse`: Parse a single rule
 
@@ -188,7 +188,7 @@ Register it in your agent's config, e.g. Cursor `mcp.json`:
 { "mcpServers": { "rsigma": { "command": "rsigma", "args": ["mcp", "serve"] } } }
 ```
 
-The command is gated behind the opt-in `mcp` Cargo feature (build with `--features mcp`; the prebuilt binaries and Docker image, built with `--all-features`, include it). See the [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/).
+The command is gated behind the opt-in `mcp` Cargo feature (build with `--features mcp`; the prebuilt binaries and Docker image, built with `--all-features`, include it). See the [MCP server guide](https://rsigma.io/guide/mcp-server/).
 
 ### `engine daemon`: Run as a long-running detection service
 
@@ -832,7 +832,7 @@ rsigma rule doc rules/ --fail-on-missing            # CI gate: exit 1 if any rul
 rsigma rule doc --scaffold rules/windows/whoami.yml --in-place  # fill the missing rsigma.ads.* sections
 ```
 
-The ADS bar (enforced statuses and required sections) is read from the `ads:` block in a discovered or `--lint-config` `.rsigma-lint.yml`, defaulting to enforce `stable` and require every section. Exit codes: `0` met or plain render, `1` under `--fail-on-missing` when a rule is below the bar, `2` unreadable rule, `3` bad flag. See the [`rule doc` reference](https://timescale.github.io/rsigma/cli/rule/doc/) and the [Detection Strategy guide](https://timescale.github.io/rsigma/guide/detection-strategy/).
+The ADS bar (enforced statuses and required sections) is read from the `ads:` block in a discovered or `--lint-config` `.rsigma-lint.yml`, defaulting to enforce `stable` and require every section. Exit codes: `0` met or plain render, `1` under `--fail-on-missing` when a rule is below the bar, `2` unreadable rule, `3` bad flag. See the [`rule doc` reference](https://rsigma.io/cli/rule/doc/) and the [Detection Strategy guide](https://rsigma.io/guide/detection-strategy/).
 
 ### `rule backtest`: Replay a corpus and diff per-rule fires against expectations
 
@@ -860,7 +860,7 @@ rsigma rule backtest -r rules/ --corpus ci/benign/ \
 rsigma rule backtest -r rules/ --corpus samples/ --output-format json | jq '.rules'
 ```
 
-Exit codes: `0` all expectations met, `1` a failed expectation (or an uncovered fire under `--unexpected fail`), `2` unreadable rules, `3` a bad expectations file or missing corpus path. The full flag table, expectations schema, and report shape are in the [`rule backtest` reference](https://timescale.github.io/rsigma/cli/rule/backtest/).
+Exit codes: `0` all expectations met, `1` a failed expectation (or an uncovered fire under `--unexpected fail`), `2` unreadable rules, `3` a bad expectations file or missing corpus path. The full flag table, expectations schema, and report shape are in the [`rule backtest` reference](https://rsigma.io/cli/rule/backtest/).
 
 ### `rule coverage`: Map a ruleset onto MITRE ATT&CK
 
@@ -886,7 +886,7 @@ rsigma rule coverage -r rules/ --atomics --output-format json | jq '.atomics.ato
 rsigma rule coverage -r rules/ --targets threat-model.txt --fail-on-gaps
 ```
 
-Exit codes: `0` success, `1` uncovered techniques under `--fail-on-gaps`, `2` unreadable rules, `3` an unfetchable cross-reference input. The full flag table and report shape are in the [`rule coverage` reference](https://timescale.github.io/rsigma/cli/rule/coverage/).
+Exit codes: `0` success, `1` uncovered techniques under `--fail-on-gaps`, `2` unreadable rules, `3` an unfetchable cross-reference input. The full flag table and report shape are in the [`rule coverage` reference](https://rsigma.io/cli/rule/coverage/).
 
 ### `rule scorecard`: Fuse the rule-side reports into keep/tune/retire verdicts
 
@@ -915,7 +915,7 @@ rsigma rule scorecard --backtest backtest.json --coverage coverage.json \
 rsigma rule scorecard --backtest backtest.json --coverage coverage.json --fail-on retire
 ```
 
-A retire candidate that is the sole coverage for an ATT&CK technique is downgraded to tune, so the program never silently drops coverage. Exit codes: `0` success or under `--fail-on`, `1` verdicts hit `--fail-on`, `2` an input is missing or unfetchable, `3` a bad flag or a malformed/version-mismatched report. The full reference is in the [`rule scorecard` reference](https://timescale.github.io/rsigma/cli/rule/scorecard/).
+A retire candidate that is the sole coverage for an ATT&CK technique is downgraded to tune, so the program never silently drops coverage. Exit codes: `0` success or under `--fail-on`, `1` verdicts hit `--fail-on`, `2` an input is missing or unfetchable, `3` a bad flag or a malformed/version-mismatched report. The full reference is in the [`rule scorecard` reference](https://rsigma.io/cli/rule/scorecard/).
 
 ### `rule visibility`: Score telemetry visibility against ATT&CK data sources
 
@@ -944,7 +944,7 @@ rsigma rule visibility -r rules/ --observed fields.json \
 rsigma rule visibility -r rules/ --observed fields.json --fail-on-blind-spots
 ```
 
-Exit codes: `0` success, `1` blind spots under `--fail-on-blind-spots`, `2` unreadable rules, `3` an unfetchable mapping table or malformed observed report. The full flag table and report shape are in the [`rule visibility` reference](https://timescale.github.io/rsigma/cli/rule/visibility/).
+Exit codes: `0` success, `1` blind spots under `--fail-on-blind-spots`, `2` unreadable rules, `3` an unfetchable mapping table or malformed observed report. The full flag table and report shape are in the [`rule visibility` reference](https://rsigma.io/cli/rule/visibility/).
 
 ### `rule hygiene`: Flag retirement and clean-up candidates
 
@@ -962,7 +962,7 @@ rsigma rule hygiene -r rules/ --metrics metrics.txt --silent-threshold 365d \
     --fail-on silent --fail-on no-owner
 ```
 
-The report renders through the global `--output-format` (TTY table, json/ndjson/csv/tsv) plus a `--report` JSON file. `--fail-on` is repeatable over `silent`, `noisy`, `untagged`, `no-owner`, `incomplete-ads`, `broken-fields`, `deprecated`, or `any`. Exit codes: `0` success or report-only, `1` a selected `--fail-on` condition matched, `2` unreadable rules, `3` a bad flag or an unreadable metrics/fields input. The full reference is in the [`rule hygiene` reference](https://timescale.github.io/rsigma/cli/rule/hygiene/).
+The report renders through the global `--output-format` (TTY table, json/ndjson/csv/tsv) plus a `--report` JSON file. `--fail-on` is repeatable over `silent`, `noisy`, `untagged`, `no-owner`, `incomplete-ads`, `broken-fields`, `deprecated`, or `any`. Exit codes: `0` success or report-only, `1` a selected `--fail-on` condition matched, `2` unreadable rules, `3` a bad flag or an unreadable metrics/fields input. The full reference is in the [`rule hygiene` reference](https://rsigma.io/cli/rule/hygiene/).
 
 ### `pipeline resolve`: Test dynamic source resolution
 

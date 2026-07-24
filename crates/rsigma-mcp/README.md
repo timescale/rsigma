@@ -71,5 +71,5 @@ It is a post-build sanity check; CI correctness is covered by this crate's Rust 
 
 ## See also
 
-- [MCP server guide](https://timescale.github.io/rsigma/guide/mcp-server/) for client setup and the full workflow.
-- [`rsigma mcp serve`](https://timescale.github.io/rsigma/cli/mcp/serve/) for the flag reference.
+- [MCP server guide](https://rsigma.io/guide/mcp-server/) for client setup and the full workflow.
+- [`rsigma mcp serve`](https://rsigma.io/cli/mcp/serve/) for the flag reference.

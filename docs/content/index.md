@@ -104,6 +104,10 @@ RSigma is the only Sigma toolkit that combines pySigma-style conversion with a r
 [DEW #157](https://www.detectionengineering.net/p/dew-157-shai-hulud-goes-open-source)
 :::
 
+::: callout info "Awesome Rust"
+Listed under [Security tools](https://github.com/rust-unofficial/awesome-rust#security-tools) in the Awesome Rust curated list.
+:::
+
 ## Built with RSigma
 
 | Project | Role |

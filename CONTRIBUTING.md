@@ -77,7 +77,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) style:
 Two surfaces must stay in sync with what each release ships:
 
 1. **Crate READMEs** (`README.md` at the workspace root, plus `crates/<crate>/README.md`) — for any public API or behavior change. The root README documents runtime/security features (Docker hardening, signature verification, supported features).
-2. **The docmd site under `docs/`** — the primary user-facing documentation surface, published at `https://timescale.github.io/rsigma/`. The whole docmd project (config, `package.json`, local plugin, assets, and Markdown under `docs/content/`) lives in `docs/`. A PR that adds or changes:
+2. **The docmd site under `docs/`** — the primary user-facing documentation surface, published at `https://rsigma.io/`. The whole docmd project (config, `package.json`, local plugin, assets, and Markdown under `docs/content/`) lives in `docs/`. A PR that adds or changes:
    - A user-facing capability → add or update the relevant `docs/content/guide/<topic>.md` page and an entry in `docs/docmd.config.js` navigation (under the appropriate User Guide sub-category)
    - A CLI subcommand or flag → update the matching `docs/content/cli/<group>/<command>.md` page (e.g. `docs/content/cli/engine/daemon.md`)
    - A daemon config key → update `docs/content/cli/engine/daemon.md` and any cross-referenced guide page

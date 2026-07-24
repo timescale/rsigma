@@ -32,7 +32,7 @@ The `~/.config/rsigma` location is computed by honouring `XDG_CONFIG_HOME` expli
 A minimal example, with every supported top-level section:
 
 ```yaml
-# yaml-language-server: $schema=https://timescale.github.io/rsigma/rsigma.schema.json
+# yaml-language-server: $schema=https://rsigma.io/rsigma.schema.json
 version: 1
 
 global:
