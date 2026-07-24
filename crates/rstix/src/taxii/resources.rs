@@ -57,7 +57,7 @@ pub struct TaxiiApiRoot {
     pub description: Option<String>,
     /// Supported TAXII media types (must include 2.1).
     pub versions: Vec<String>,
-    /// Maximum POST body size in octets.
+    /// Maximum POST body size in octets (TAXII 2.1 §4.2.1 — MUST be a positive integer).
     pub max_content_length: u64,
     /// Unmodeled API Root properties.
     #[serde(flatten)]
@@ -82,10 +82,33 @@ pub struct TaxiiCollection {
     /// Whether the authenticated client may write.
     pub can_write: bool,
     /// Supported media types for objects in this collection.
+    ///
+    /// When omitted on the wire, TAXII 2.1 §5.2.1 treats the collection as if this were
+    /// `["application/stix+json"]`.
+    #[serde(default = "default_collection_media_types")]
     pub media_types: Vec<String>,
     /// Unmodeled collection properties.
     #[serde(flatten)]
     pub custom: BTreeMap<String, serde_json::Value>,
+}
+
+/// Default collection `media_types` when the property is absent (TAXII 2.1 §5.2.1).
+pub(crate) fn default_collection_media_types() -> Vec<String> {
+    vec!["application/stix+json".to_string()]
+}
+
+impl TaxiiCollection {
+    /// Media types used for capability checks and POST validation.
+    ///
+    /// When the wire value is absent or an empty list, returns `["application/stix+json"]`
+    /// (TAXII 2.1 §5.2.1).
+    pub fn effective_media_types(&self) -> Vec<String> {
+        if self.media_types.is_empty() {
+            default_collection_media_types()
+        } else {
+            self.media_types.clone()
+        }
+    }
 }
 
 /// Versions resource (spec section 5.8.1).

@@ -4,7 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rstix: TAXII DANE DNSSEC validation (`taxii` feature)
+### rstix: TAXII collection ingest (`taxii-store` feature) (#387)
+
+- **`taxii-store`** — meta-feature (`taxii` + `store`).
+- **`ingest_collection`** / **`ingest_collection_with_bundle_id`** — paginated fetch with per-page `StixStore::import_objects` (bounded memory); merged `ImportReport` with final ref audit against the store.
+- **`IngestError`** — wraps `TaxiiError` and `StoreError`.
+- **TAXII capability checks** — with `CapabilityPolicy::Enforce`, collection `media_types` may include `application/taxii+json` or STIX 2.1 types; absent `media_types` defaults to `application/stix+json` (TAXII §5.2.1); API Root `max_content_length` must be a JSON integer > 0 (strict parse, no string coercion).
+- **`StixStore::import_bundle`** — unresolved refs are reported only when the target id is missing from both the imported bundle and the store (incremental TAXII ingest).
+
+### rstix: TAXII DANE DNSSEC validation (`taxii` feature) (#381)
 
 - **`TaxiiClientConfig::dane_require_dnssec`** — default `true` when `ServerTrustPolicy::Dane`; DNSSEC-validates TLSA prefetch and SRV discovery (TAXII §8.5.2 SHOULD). Set `false` for unsigned lab DNS only.
 - **`DnsLookupOptions`** — `validate_dnssec` on `resolve_*_with_options` helpers (default `false` for standalone calls).

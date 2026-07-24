@@ -1,5 +1,6 @@
 //! Store errors.
 
+#[cfg(feature = "store-fs")]
 use std::path::Path;
 
 /// Errors from the STIX object store.
@@ -26,6 +27,7 @@ pub enum StoreError {
 }
 
 impl StoreError {
+    #[cfg(feature = "store-fs")]
     pub(crate) fn io(path: impl AsRef<Path>, err: std::io::Error) -> Self {
         Self::Io {
             path: path.as_ref().display().to_string(),

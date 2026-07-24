@@ -5,13 +5,14 @@ use std::sync::RwLock;
 
 use crate::core::{QueryableStixObject, ScoKind, StixId, StixObjectKind};
 use crate::id::generate_sco_id;
-use crate::model::ref_paths::collect_ref_paths;
 use crate::model::stix_object::StixObject;
 use crate::model::{Bundle, ScoObject};
 
 use super::error::StoreError;
 use super::search::{object_search_text, query_matches};
-use super::{FingerprintConflict, ImportReport, QueryResult, StixQuery, StixStore};
+use super::{
+    FingerprintConflict, ImportReport, QueryResult, StixQuery, StixStore, audit_unresolved_refs,
+};
 
 /// Consumer-path SCO storage model.
 #[derive(Clone, Debug, PartialEq)]
@@ -218,14 +219,19 @@ impl StixStore for MemoryStore {
     }
 
     fn import_bundle(&self, bundle: &Bundle) -> Result<ImportReport, StoreError> {
-        let mut report = ImportReport::default();
-        let node_ids: HashSet<String> = bundle
+        let source_ids: Vec<StixId> = bundle
             .objects()
             .iter()
-            .map(|object| object.id().as_str().to_owned())
+            .map(|object| object.id().clone())
             .collect();
+        let mut report = self.import_objects(bundle.objects())?;
+        report.unresolved_references = audit_unresolved_refs(self, &source_ids)?;
+        Ok(report)
+    }
 
-        for object in bundle.objects() {
+    fn import_objects(&self, objects: &[StixObject]) -> Result<ImportReport, StoreError> {
+        let mut report = ImportReport::default();
+        for object in objects {
             let existed = self.get(object.id())?.is_some();
             match upsert_tracked(self, object)? {
                 UpsertOutcome::Added => report.objects_added += 1,
@@ -234,18 +240,7 @@ impl StixStore for MemoryStore {
                 UpsertOutcome::Unchanged if existed => report.objects_deduplicated += 1,
                 UpsertOutcome::Unchanged => report.objects_added += 1,
             }
-
-            let mut paths = Vec::new();
-            collect_ref_paths(object, &mut paths);
-            for (path, target) in paths {
-                if !node_ids.contains(target.as_str()) {
-                    report
-                        .unresolved_references
-                        .push((object.id().clone(), path, target));
-                }
-            }
         }
-
         report.fingerprint_conflicts = collect_fingerprint_conflicts(self)?;
         Ok(report)
     }

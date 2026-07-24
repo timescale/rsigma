@@ -13,6 +13,8 @@ mod envelope;
 mod error;
 mod filter;
 mod headers;
+#[cfg(feature = "store")]
+mod ingest;
 mod media;
 mod pagination;
 mod policy;
@@ -42,6 +44,10 @@ pub use filter::{
     VersionSelector, VersionsQueryFilter,
 };
 pub use headers::{TaxiiPageHeaders, TaxiiPaged};
+#[cfg(feature = "store")]
+pub use ingest::{
+    DEFAULT_INGEST_BUNDLE_ID, IngestError, ingest_collection, ingest_collection_with_bundle_id,
+};
 pub use policy::{CapabilityPolicy, PostSubmitPolicy, PreflightPolicy};
 pub use resources::{TaxiiApiRoot, TaxiiCollection, TaxiiDiscovery, VersionsResponse};
 pub use retry::RetryPolicy;

@@ -149,6 +149,10 @@ pub use taxii::{
     build_rustls_config, parse_www_authenticate, resolve_taxii_srv, resolve_taxii_srv_with_options,
     resolve_tlsa, resolve_tlsa_with_options,
 };
+#[cfg(all(feature = "taxii", feature = "store"))]
+pub use taxii::{
+    DEFAULT_INGEST_BUNDLE_ID, IngestError, ingest_collection, ingest_collection_with_bundle_id,
+};
 
 /// Parse a STIX bundle from a JSON string using default options.
 #[cfg(feature = "serde")]

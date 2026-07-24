@@ -1,6 +1,7 @@
 //! Integration tests for the `store` feature.
 
-use rstix::core::{QueryableStixObject, SdoKind, StixObjectKind};
+use rstix::core::{QueryableStixObject, SdoKind, StixId, StixObjectKind};
+use rstix::model::Bundle;
 use rstix::parse_bundle;
 use rstix::store::{MemoryStore, QueryCursor, StixQuery, StixStore, StoreError};
 
@@ -64,6 +65,116 @@ fn store_invalid_cursor_integration() {
         )
         .expect_err("invalid");
     assert!(matches!(err, StoreError::InvalidQuery(_)));
+}
+
+#[test]
+fn store_import_resolves_refs_against_existing_store() {
+    let combined = parse_bundle(
+        r#"{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000099",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--8e2e2d2b-17d4-4cbf-938f-98ee46b3cd3f",
+      "created": "2016-04-06T20:03:48.000Z",
+      "modified": "2016-04-06T20:03:48.000Z",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '192.0.2.1']",
+      "pattern_type": "stix",
+      "valid_from": "2016-01-01T00:00:00Z"
+    },
+    {
+      "type": "report",
+      "spec_version": "2.1",
+      "id": "report--84e4d88f-44ea-4bcd-bbf3-b2c1c320bcb3",
+      "created": "2015-12-21T19:59:11.000Z",
+      "modified": "2015-12-21T19:59:11.000Z",
+      "name": "Follow-on report",
+      "published": "2016-01-20T17:00:00.000Z",
+      "report_types": ["threat-report"],
+      "object_refs": ["indicator--8e2e2d2b-17d4-4cbf-938f-98ee46b3cd3f"]
+    }
+  ]
+}"#,
+    )
+    .expect("combined bundle");
+
+    let indicator_id = StixId::parse("indicator--8e2e2d2b-17d4-4cbf-938f-98ee46b3cd3f").unwrap();
+    let report_id = StixId::parse("report--84e4d88f-44ea-4bcd-bbf3-b2c1c320bcb3").unwrap();
+    let indicator = combined.get(&indicator_id).unwrap().clone();
+    let report = combined.get(&report_id).unwrap().clone();
+
+    let store = MemoryStore::new();
+    store
+        .import_bundle(&Bundle::from_objects(
+            StixId::parse("bundle--00000000-0000-0000-0000-000000000001").unwrap(),
+            vec![indicator],
+        ))
+        .expect("first import");
+    let report = store
+        .import_bundle(&Bundle::from_objects(
+            StixId::parse("bundle--00000000-0000-0000-0000-000000000002").unwrap(),
+            vec![report],
+        ))
+        .expect("second import");
+    assert!(
+        report.unresolved_references.is_empty(),
+        "ref to indicator already in store should resolve: {:?}",
+        report.unresolved_references
+    );
+}
+
+#[test]
+fn store_import_reports_refs_missing_from_bundle_and_store() {
+    let combined = parse_bundle(
+        r#"{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-0000-0000-000000000099",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--22222222-2222-2222-2222-222222222222",
+      "created": "2016-04-06T20:03:48.000Z",
+      "modified": "2016-04-06T20:03:48.000Z",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '192.0.2.3']",
+      "pattern_type": "stix",
+      "valid_from": "2016-01-01T00:00:00Z"
+    },
+    {
+      "type": "report",
+      "spec_version": "2.1",
+      "id": "report--11111111-1111-1111-1111-111111111111",
+      "created": "2015-12-21T19:59:11.000Z",
+      "modified": "2015-12-21T19:59:11.000Z",
+      "name": "Dangling ref report",
+      "published": "2016-01-20T17:00:00.000Z",
+      "report_types": ["threat-report"],
+      "object_refs": ["indicator--22222222-2222-2222-2222-222222222222"]
+    }
+  ]
+}"#,
+    )
+    .expect("combined bundle");
+
+    let report_id = StixId::parse("report--11111111-1111-1111-1111-111111111111").unwrap();
+    let report = combined.get(&report_id).unwrap().clone();
+
+    let store = MemoryStore::new();
+    let report = store
+        .import_bundle(&Bundle::from_objects(
+            StixId::parse("bundle--00000000-0000-0000-0000-000000000003").unwrap(),
+            vec![report],
+        ))
+        .expect("import");
+    assert_eq!(report.unresolved_references.len(), 1);
+    assert_eq!(
+        report.unresolved_references[0].2.as_str(),
+        "indicator--22222222-2222-2222-2222-222222222222"
+    );
 }
 
 #[test]
