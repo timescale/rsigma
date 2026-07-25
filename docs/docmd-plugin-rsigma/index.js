@@ -265,6 +265,56 @@ function injectSidebarLogoText(html, text) {
   );
 }
 
+/**
+ * Set Google Consent Mode before docmd's GA4 script runs, then connect it to
+ * docmd's cookie-consent event. Advertising consent remains denied because the
+ * site only uses analytics.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function injectAnalyticsConsentMode(html) {
+  const ga4Marker = "    <!-- GA4 -->";
+  let out = html.replace(
+    /(<script async src="https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=)"(G-[A-Z0-9]{6,12})"("><\/script>)/,
+    "$1$2$3",
+  );
+  if (!out.includes(ga4Marker) || out.includes("RSigma GA4 consent mode")) {
+    return out;
+  }
+  const consentScript = `    <!-- RSigma GA4 consent mode -->
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = window.gtag || function(){dataLayer.push(arguments);};
+      (function() {
+        var analyticsConsent = 'denied';
+        try {
+          var raw = localStorage.getItem('docmd-cookie-consent');
+          var choice = raw ? JSON.parse(raw) : null;
+          if (choice && choice.value === 'accept' && choice.expires > Date.now()) {
+            analyticsConsent = 'granted';
+          }
+        } catch (_) {}
+        gtag('consent', 'default', {
+          ad_storage: 'denied',
+          ad_user_data: 'denied',
+          ad_personalization: 'denied',
+          analytics_storage: analyticsConsent
+        });
+        window.addEventListener('docmd:cookie-consent', function(event) {
+          gtag('consent', 'update', {
+            ad_storage: 'denied',
+            ad_user_data: 'denied',
+            ad_personalization: 'denied',
+            analytics_storage: event.detail.value === 'accept' ? 'granted' : 'denied'
+          });
+        });
+      })();
+    </script>
+`;
+  return out.replace(ga4Marker, `${consentScript}${ga4Marker}`);
+}
+
 /** Legacy generated/copied brand files to remove when refreshing assets. */
 const STALE_BRAND_FILES = [
   "sidebar-logo.svg",
@@ -427,6 +477,7 @@ export default {
           next = withLogoText;
         }
       }
+      next = injectAnalyticsConsentMode(next);
       const withTitles = renderMarkdownTitles(next);
       if (withTitles !== next) {
         titlesRendered += 1;

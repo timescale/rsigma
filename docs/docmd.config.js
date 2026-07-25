@@ -29,7 +29,22 @@ export default {
       },
     },
   },
+  cookie: {
+    enabled: true,
+    message: "We use optional analytics cookies to understand how this documentation is used.",
+    acceptText: "Accept analytics",
+    declineText: "Decline",
+    policyUrl: "/privacy",
+    position: "bottom-right",
+  },
   plugins: {
+    analytics: {
+      googleV4: {
+        measurementId: "G-6XM09PXCEY",
+      },
+      autoEvents: true,
+      trackSearch: true,
+    },
     git: {
       repo: "https://github.com/timescale/rsigma",
       branch: "main",
