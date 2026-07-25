@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Fix fuzz CI rustc ICE on floating nightly
+
+- Pin the fuzz workflow to `nightly-2026-07-23` so AddressSanitizer builds no longer hit the rustc ICE compiling `tokio` that started on `nightly-2026-07-24` ([rust-lang/rust#159815](https://github.com/rust-lang/rust/issues/159815)).
+
 ### CI: harden coverage against corrupt LLVM profraw files (#393)
 
 - Daemon integration tests now prefer SIGINT (with SIGKILL fallback) when tearing down instrumented `rsigma` children so LLVM coverage counters can flush.

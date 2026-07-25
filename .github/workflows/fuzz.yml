@@ -19,6 +19,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  # Pin past floating `nightly`: rustc 1.99.0-nightly 2026-07-24+ ICEs compiling
+  # tokio under -Zsanitizer=address (rust-lang/rust#159815). Last known-good for
+  # cargo-fuzz+ASan is 2026-07-23; bump when the fix lands in a published nightly.
+  FUZZ_TOOLCHAIN: nightly-2026-07-23
 
 jobs:
   fuzz:
@@ -73,19 +77,19 @@ jobs:
 
       - name: Install nightly toolchain
         run: |
-          rustup toolchain install nightly --profile minimal --component llvm-tools-preview
-          rustup default nightly
+          rustup toolchain install "${FUZZ_TOOLCHAIN}" --profile minimal --component llvm-tools-preview
+          rustup default "${FUZZ_TOOLCHAIN}"
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: fuzz -> target
 
       - name: Install cargo-fuzz
-        # Build cargo-fuzz with the nightly toolchain explicitly. The repo's
+        # Build cargo-fuzz with the pinned nightly explicitly. The repo's
         # rust-toolchain.toml pins ambient `cargo` to the MSRV, which is too
-        # old to compile recent cargo-fuzz dependencies, so select nightly with
-        # `+nightly` to match the toolchain used for the fuzz run below.
-        run: cargo +nightly install cargo-fuzz --locked
+        # old to compile recent cargo-fuzz dependencies, so select the fuzz
+        # toolchain with `+${FUZZ_TOOLCHAIN}` to match the run below.
+        run: cargo "+${FUZZ_TOOLCHAIN}" install cargo-fuzz --locked
 
       - name: Restore corpus cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -103,7 +107,7 @@ jobs:
           FUZZ_DURATION: ${{ github.event.inputs.duration || '180' }}
         run: |
           mkdir -p "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}"
-          cargo +nightly fuzz run "${FUZZ_TARGET}" \
+          cargo "+${FUZZ_TOOLCHAIN}" fuzz run "${FUZZ_TARGET}" \
             "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}" -- \
             -max_total_time="${FUZZ_DURATION}" \
             -timeout=10 \
