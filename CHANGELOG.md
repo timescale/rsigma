@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Fix fuzz CI rustc ICE on floating nightly
+### Fix fuzz CI rustc ICE on floating nightly (#395)
 
 - Pin the fuzz workflow to `nightly-2026-07-23` so AddressSanitizer builds no longer hit the rustc ICE compiling `tokio` that started on `nightly-2026-07-24` ([rust-lang/rust#159815](https://github.com/rust-lang/rust/issues/159815)).
 
