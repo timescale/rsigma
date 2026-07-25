@@ -405,16 +405,28 @@ fn is_pattern_whitespace(c: char) -> bool {
 }
 
 fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
-    if !raw.len().is_multiple_of(2) {
+    // Walk bytes, not char indices: multi-byte UTF-8 in a hex literal must
+    // return an error, never panic on a mid-character slice (fuzz finding).
+    let bytes = raw.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return Err("hex literal must have an even number of digits".into());
     }
-    (0..raw.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&raw[i..i + 2], 16)
-                .map_err(|_| format!("invalid hex digit in {raw:?}"))
-        })
-        .collect()
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        let hi = hex_nibble(chunk[0]).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
+        let lo = hex_nibble(chunk[1]).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
+        out.push((hi << 4) | lo);
+    }
+    Ok(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn decode_base64(raw: &str) -> Result<Vec<u8>, String> {
@@ -474,6 +486,19 @@ mod security {
     fn lex_rejects_unterminated_string() {
         let err = lex("[x = 'oops]").unwrap_err();
         assert!(matches!(err, PatternError::LexError { .. }));
+    }
+
+    #[test]
+    fn lex_rejects_non_ascii_hex_without_panic() {
+        // Regression: slicing hex by byte indices panicked on multi-byte UTF-8
+        // (libFuzzer crash-bbdb035e4d7fb4447623bb8927a85ef9804d60c5).
+        let err = lex("h'ɞ'").unwrap_err();
+        assert!(matches!(err, PatternError::LexError { .. }));
+        assert!(decode_hex("ɞ").is_err());
+        assert!(decode_hex("^ɞ").is_err());
+        let crash =
+            "[lfi h'^ɞȚ^[gfile:hashes.'SHA-256' = 'bf0b31fcf8a3feeaf7092761e18c859ee52a9c']";
+        assert!(crate::Pattern::parse(crash).is_err());
     }
 
     #[test]

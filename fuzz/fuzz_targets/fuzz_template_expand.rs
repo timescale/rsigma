@@ -5,7 +5,9 @@ use rsigma_runtime::TemplateExpander;
 use std::collections::HashMap;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(s) = std::str::from_utf8(data) else { return };
+    let Ok(s) = std::str::from_utf8(data) else {
+        return;
+    };
 
     let Some((template, json_str)) = s.split_once('\0') else {
         return;
@@ -29,7 +31,6 @@ fuzz_target!(|data: &[u8]| {
         vars,
         transformations: vec![],
         finalizers: vec![],
-        sources: vec![],
         source_refs: vec![],
     };
 

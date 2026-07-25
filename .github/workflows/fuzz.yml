@@ -102,7 +102,7 @@ jobs:
           FUZZ_MAX_LEN: ${{ matrix.max_len }}
           FUZZ_DURATION: ${{ github.event.inputs.duration || '180' }}
         run: |
-          mkdir -p "corpus/${FUZZ_TARGET}"
+          mkdir -p "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}"
           cargo +nightly fuzz run "${FUZZ_TARGET}" \
             "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}" -- \
             -max_total_time="${FUZZ_DURATION}" \
