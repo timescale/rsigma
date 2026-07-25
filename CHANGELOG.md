@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Fix scheduled fuzz failures
+### Fix scheduled fuzz failures (#394)
 
 - **rstix pattern lexer:** `decode_hex` walks ASCII nibbles by byte instead of slicing the `&str` at fixed offsets, so multi-byte UTF-8 in an `h'…'` literal returns a lex error instead of panicking on a mid-character boundary.
 - **fuzz_template_expand:** drop removed `Pipeline::sources` field after source declarations moved out of pipeline structs.
