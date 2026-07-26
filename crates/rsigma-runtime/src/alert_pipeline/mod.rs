@@ -30,7 +30,9 @@ pub use config::{
     load_alert_pipeline_file, parse_alert_pipeline_config,
 };
 pub use dedup::DedupStore;
-pub use grouping::{GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode};
+pub use grouping::{
+    GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, SampleMode,
+};
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
     Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView,

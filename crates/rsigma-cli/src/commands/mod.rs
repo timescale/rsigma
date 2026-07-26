@@ -12,6 +12,7 @@ mod eval_stream;
 mod explain;
 mod fields;
 mod hygiene;
+mod incidents;
 mod lint;
 #[cfg(feature = "mcp")]
 mod mcp;
@@ -50,6 +51,7 @@ pub(crate) use eval::{EvalArgs, apply_eval_config, cmd_eval};
 pub(crate) use explain::{ExplainArgs, cmd_explain};
 pub(crate) use fields::{FieldsArgs, cmd_fields};
 pub(crate) use hygiene::{HygieneArgs, apply_hygiene_config, cmd_hygiene};
+pub(crate) use incidents::{IncidentsCommands, dispatch_incidents};
 pub(crate) use lint::{LintArgs, LintCounts, cmd_lint};
 #[cfg(feature = "mcp")]
 pub(crate) use mcp::{McpCommands, dispatch_mcp};

@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Query, State};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -16,11 +16,14 @@ use rsigma_eval::{
 use rsigma_runtime::{
     AckToken, AlertPipeline, AlertPipelineState, DeliveryConfig, DeliveryFailure, Dispatcher,
     EnrichmentPipeline, FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope,
-    IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
-    RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceOrigin,
-    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
-    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
+    IncidentResult, IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent,
+    RiskLayer, RiskState, RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence,
+    SilenceOrigin, SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline,
+    build_risk_layer, load_alert_pipeline_file, load_risk_file, load_schema_signatures,
+    spawn_source,
 };
+
+use super::bundle::BundleFormat;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::trace::TraceLayer;
@@ -924,6 +927,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/correlations", get(list_correlations))
         .route("/api/v1/correlations/state", get(correlations_state))
         .route("/api/v1/incidents", get(list_incidents))
+        .route("/api/v1/incidents/{id}", get(get_incident))
+        .route("/api/v1/incidents/{id}/bundle", get(get_incident_bundle))
         .route("/api/v1/risk", get(list_risk_entities))
         .route("/api/v1/silences", get(list_silences).post(create_silence))
         .route("/api/v1/silences/{id}", delete(delete_silence))
@@ -2641,6 +2646,151 @@ async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
     };
     let count = incidents.len();
     Json(serde_json::json!({ "incidents": incidents, "count": count }))
+}
+
+/// The 503 body returned by the per-incident routes when grouping is off.
+///
+/// Grouping is an optional stage, so an unconfigured daemon has no incidents to
+/// address rather than an incident that is missing. Reserving 404 for the
+/// latter keeps "you asked for the wrong id" apart from "this daemon does not
+/// do incidents".
+fn grouping_disabled() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "incident grouping disabled",
+            "hint": "configure an alert pipeline with a `group:` stage to enable the per-incident routes",
+        })),
+    )
+        .into_response()
+}
+
+/// The include mode of the configured grouping stage, or `None` when the alert
+/// pipeline has no grouping stage.
+fn incident_include(state: &AppState) -> Option<IncludeMode> {
+    state
+        .alert_pipeline_swap
+        .load_full()
+        .as_ref()
+        .as_ref()
+        .and_then(|p| p.incident_include())
+}
+
+/// `GET /api/v1/incidents/{id}` — one open incident, in the same shape as a
+/// list entry.
+async fn get_incident(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(include) = incident_include(&state) else {
+        return grouping_disabled();
+    };
+    match snapshot_incident(&state, &id, include) {
+        Some(incident) => Json(incident).into_response(),
+        None => incident_not_found(&id),
+    }
+}
+
+/// Query parameters for `GET /api/v1/incidents/{id}/bundle`.
+#[derive(serde::Deserialize)]
+struct BundleQuery {
+    /// `json` (default) or `markdown`.
+    format: Option<String>,
+}
+
+/// `GET /api/v1/incidents/{id}/bundle` — the incident joined to its rules'
+/// documentation and the risk entities it overlaps.
+async fn get_incident_bundle(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Query(query): Query<BundleQuery>,
+) -> Response {
+    let format = match query.format.as_deref() {
+        None => BundleFormat::Json,
+        Some(requested) => match BundleFormat::parse(requested) {
+            Some(format) => format,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("unknown bundle format `{requested}`"),
+                        "hint": "supported formats are `json` and `markdown`",
+                    })),
+                )
+                    .into_response();
+            }
+        },
+    };
+
+    let Some(include) = incident_include(&state) else {
+        return grouping_disabled();
+    };
+    let Some(incident) = snapshot_incident(&state, &id, include) else {
+        return incident_not_found(&id);
+    };
+    if incident.bundle_ready == Some(false) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "incident is still batching",
+                "hint": "the incident has not cleared `group_wait`, so its contents can still \
+                         change; retry once it has been reported",
+                "incident_id": id,
+            })),
+        )
+            .into_response();
+    }
+
+    // Each component is read in turn and released before the next is taken, so
+    // assembling a bundle can never hold two of the daemon's locks at once.
+    let keys: Vec<&str> = incident.rule_counts.keys().map(String::as_str).collect();
+    let metadata = state.processor.rule_metadata_batch(keys);
+
+    let risk_snapshot = state.risk_swap.load_full();
+    let risk = risk_snapshot
+        .as_ref()
+        .as_ref()
+        .and_then(|l| l.incident_config())
+        .map(|cfg| {
+            let now = chrono::Utc::now().timestamp();
+            let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
+            st.views(cfg, now)
+        });
+
+    let generated_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let bundle = super::bundle::build(incident, &metadata, risk.as_deref(), generated_at);
+
+    let body = match format {
+        BundleFormat::Json => match serde_json::to_string_pretty(&bundle) {
+            Ok(json) => json,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("failed to render bundle: {e}") })),
+                )
+                    .into_response();
+            }
+        },
+        BundleFormat::Markdown => super::bundle::render_markdown(&bundle),
+    };
+    ([(header::CONTENT_TYPE, format.content_type())], body).into_response()
+}
+
+fn snapshot_incident(state: &AppState, id: &str, include: IncludeMode) -> Option<IncidentResult> {
+    let st = state.alert_state.read().unwrap_or_else(|e| e.into_inner());
+    st.incidents.snapshot_one(id, include)
+}
+
+fn incident_not_found(id: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "no such open incident",
+            "hint": "the id is unknown, or the incident has already resolved and been evicted",
+            "incident_id": id,
+        })),
+    )
+        .into_response()
 }
 
 /// `GET /api/v1/risk` — open entities tracked by the risk accumulator, with

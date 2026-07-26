@@ -75,9 +75,20 @@ rsigma rule doc rules/ --fail-on-missing
 
 It exits 1 when any rule whose status is enforced is below the bar, and `--missing-only` narrows the report to exactly those rules. A section whose `rsigma.ads.*` key is present but blank counts as undocumented here (the Markdown render shows "_Not documented._"), whereas `rule lint` reports it as the `info`-level `ads_empty_section`; run `rule lint --fail-level info` to make the lint step fail on blanks too.
 
+## At response time
+
+ADS content written for review is worth more when it reaches the person handling the alert. An [incident bundle](alert-pipeline.md#incident-bundles) carries the same nine sections for every rule that contributed to an incident, resolved from the rules the daemon has loaded, so the response plan and the blind spots arrive with the incident rather than waiting to be looked up:
+
+```bash
+rsigma engine incidents export f8bcd62a829b1126 --bundle-format markdown
+```
+
+The sections come out of the compiled rule, so anything a [processing pipeline](processing-pipelines.md) rewrote is reflected as the daemon actually ran it.
+
 ## See also
 
 - [`rule doc`](../cli/rule/doc.md) for every flag and exit code.
+- [`engine incidents export`](../cli/engine/incidents-export.md) for shipping these sections with an incident.
 - [Lint Rules: ADS detection-strategy metadata](../reference/lint-rules.md#ads-detection-strategy-metadata-11) for the enforcement checks and config.
 - [Custom Attributes: `rsigma.ads.*`](../reference/custom-attributes.md#ads-detection-strategy-attributes-rsigmaads) for the attribute reference.
 - [CI/CD](ci-cd.md) for wiring the gate into a pipeline.

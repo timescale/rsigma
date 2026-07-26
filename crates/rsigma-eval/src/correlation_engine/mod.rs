@@ -35,6 +35,7 @@ use crate::error::{EvalError, Result};
 use crate::event::{Event, EventValue};
 use crate::pipeline::{Pipeline, apply_pipelines, apply_pipelines_to_correlation};
 use crate::result::{CorrelationBody, EvaluationResult, ResultBody, RuleHeader};
+use crate::rule_metadata::{RuleBundleMetadata, RuleMetadataLookup};
 
 // =============================================================================
 // Correlation Engine
@@ -1204,6 +1205,20 @@ impl CorrelationEngine {
     /// Access the inner stateless engine.
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// Resolve a rule key (an id, or a title for a rule without one) to the
+    /// documentation of every loaded rule that carries it, across both the
+    /// detection rules and the correlations.
+    pub fn rule_metadata(&self, key: &str) -> RuleMetadataLookup {
+        let mut variants = Vec::new();
+        self.collect_rule_metadata(key, &mut variants);
+        RuleMetadataLookup::from_variants(variants)
+    }
+
+    pub(crate) fn collect_rule_metadata(&self, key: &str, out: &mut Vec<RuleBundleMetadata>) {
+        self.engine.collect_rule_metadata(key, out);
+        crate::rule_metadata::matching_correlations(&self.correlations, key, out);
     }
 
     /// Export all mutable correlation state as a serializable snapshot.

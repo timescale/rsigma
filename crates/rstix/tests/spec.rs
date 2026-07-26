@@ -589,8 +589,7 @@ fn observed_data_deprecated_objects_sro_parses_in_bundle() {
     use rstix::parse_bundle;
     let object_json = load_spec_fixture("sdo/observed-data-deprecated-objects-sro.json");
     let bundle_json = format!(
-        r#"{{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000001","objects":[{}]}}"#,
-        object_json
+        r#"{{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000001","objects":[{object_json}]}}"#
     );
     let bundle = parse_bundle(&bundle_json).expect("bundle with embedded SRO should parse");
     assert_eq!(bundle.objects().len(), 1);

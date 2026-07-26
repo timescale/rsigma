@@ -15,6 +15,11 @@ pub struct CompiledCorrelation {
     pub title: String,
     pub level: Option<Level>,
     pub tags: Vec<String>,
+    /// The correlation's `description`, retained as the ADS goal carrier.
+    pub description: Option<String>,
+    /// The correlation's `falsepositives`, retained as the ADS
+    /// false-positives carrier.
+    pub falsepositives: Vec<String>,
     pub correlation_type: CorrelationType,
     /// IDs or names of referenced rules (detection or other correlations).
     pub rule_refs: Vec<String>,

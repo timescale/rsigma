@@ -1,0 +1,165 @@
+{
+  "generated_at": "2026-07-26T12:00:00Z",
+  "incident": {
+    "bundle_ready": true,
+    "first_seen": 1767225000,
+    "group_by": {
+      "match.User": "alice"
+    },
+    "incident_id": "f8bcd62a829b1126",
+    "last_seen": 1767225600,
+    "max_level": "high",
+    "result_count": 3,
+    "results": [
+      {
+        "enrichments": {
+          "risk.objects": [
+            {
+              "type": "user",
+              "value": "alice"
+            }
+          ],
+          "risk.score": 60
+        },
+        "level": "high",
+        "matched_fields": [
+          {
+            "field": "User",
+            "value": "alice"
+          }
+        ],
+        "rule_id": "rule-whoami",
+        "rule_title": "rule-whoami"
+      }
+    ],
+    "rule_counts": {
+      "rule-retired": 1,
+      "rule-whoami": 2
+    },
+    "sample_mode": "results",
+    "state": "open",
+    "trigger": "snapshot"
+  },
+  "risk": [
+    {
+      "entity_type": "user",
+      "entity_value": "alice",
+      "matched_on": "risk_object",
+      "result_count": 3,
+      "score": 120,
+      "source_count": 2,
+      "tactic_count": 2,
+      "window_end": 1767225600,
+      "window_start": 1767225000
+    }
+  ],
+  "rules": [
+    {
+      "count": 1,
+      "documents": [],
+      "key": "rule-retired",
+      "resolution": "missing"
+    },
+    {
+      "count": 2,
+      "documents": [
+        {
+          "ads": {
+            "sections": [
+              {
+                "carrier": "description",
+                "content": "Detects whoami execution, a common discovery step.",
+                "id": "goal",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "tags",
+                "content": [
+                  "attack.discovery",
+                  "attack.t1033"
+                ],
+                "id": "categorization",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.strategy",
+                "content": "Watch process creation for the whoami binary.",
+                "id": "strategy",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.technical_context",
+                "content": "Requires process_creation telemetry with CommandLine.",
+                "id": "technical_context",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.blind_spots",
+                "content": [
+                  "A renamed binary evades the command-line match."
+                ],
+                "id": "blind_spots",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "falsepositives",
+                "content": [
+                  "Administrators enumerating their own privileges"
+                ],
+                "id": "false_positives",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.validation",
+                "content": "Run whoami in a lab and confirm the rule fires.",
+                "id": "validation",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.priority",
+                "content": "High because discovery precedes lateral movement.",
+                "id": "priority",
+                "present": true,
+                "required": true
+              },
+              {
+                "carrier": "rsigma.ads.response",
+                "content": [
+                  "Confirm the user and host.",
+                  "Correlate with other discovery."
+                ],
+                "id": "response",
+                "present": true,
+                "required": true
+              }
+            ]
+          },
+          "identity": {
+            "id": "rule-whoami",
+            "kind": "detection",
+            "title": "Whoami execution"
+          },
+          "level": "high",
+          "tags": [
+            "attack.discovery",
+            "attack.t1033"
+          ]
+        }
+      ],
+      "key": "rule-whoami",
+      "resolution": "unique"
+    }
+  ],
+  "schema_version": 1,
+  "sources": {
+    "risk": true,
+    "rules": true
+  }
+}

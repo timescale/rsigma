@@ -37,6 +37,7 @@ use crate::pipeline::Pipeline;
 use crate::pipeline::transformations::Transformation;
 use crate::result::EvaluationResult;
 use crate::result::MatchDetailLevel;
+use crate::rule_metadata::RuleMetadataLookup;
 use crate::schema::{OnUnknown, RouteDecision, RoutingPlan, SchemaClassifier};
 
 /// Per-schema logsource pruning summary: how many rules a schema's events
@@ -370,6 +371,25 @@ impl SchemaRouter {
             .as_ref()
             .map(|c| c.state_count())
             .unwrap_or(0)
+    }
+
+    /// Resolve a rule key (an id, or a title for a rule without one) to the
+    /// documentation of every loaded rule that carries it.
+    ///
+    /// A rule set is compiled once per pipeline-set, so the same rule usually
+    /// yields one candidate per schema. Candidates whose post-pipeline metadata
+    /// is identical collapse to a single answer; a rule whose pipelines rewrite
+    /// its documentation differently per schema stays
+    /// [`Ambiguous`](RuleMetadataLookup::Ambiguous).
+    pub fn rule_metadata(&self, key: &str) -> RuleMetadataLookup {
+        let mut variants = Vec::new();
+        for engine in &self.engines {
+            engine.collect_rule_metadata(key, &mut variants);
+        }
+        if let Some(correlation) = &self.correlation {
+            correlation.collect_rule_metadata(key, &mut variants);
+        }
+        RuleMetadataLookup::from_variants(variants)
     }
 
     /// Introspect the shared correlation store, if any (id/group filtered).

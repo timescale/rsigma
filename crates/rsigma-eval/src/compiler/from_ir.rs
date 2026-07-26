@@ -44,6 +44,8 @@ pub fn compile_to_compiled(ir: &IrRule) -> Result<CompiledRule> {
         id: ir.metadata.id.clone(),
         level: ir.metadata.level,
         tags: ir.metadata.tags.clone(),
+        description: ir.metadata.description.clone(),
+        falsepositives: ir.metadata.falsepositives.clone(),
         logsource: ir.logsource.clone(),
         detections,
         conditions,

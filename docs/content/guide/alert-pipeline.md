@@ -197,7 +197,21 @@ group:
 
 An `IncidentResult` is one flat NDJSON object, disambiguated downstream by the presence of an `incident_id` key. It carries the `state` (`open` / `resolved`), the `trigger` (`group_wait` / `group_interval` / `repeat` / `resolved`), the window bounds, the `max_level`, the `result_count`, per-rule `rule_counts`, the `group_by` key (group_by mode) or `entities` map (entity_graph mode), and the `refs` or `results`. Incidents are delivered to stdout/file/NATS sinks; with `nats_subject` set, incidents publish to that dedicated subject instead of the detection stream. OTLP and webhook sinks do not receive incidents.
 
-Open incidents are also readable at `GET /api/v1/incidents`.
+Open incidents are also readable at `GET /api/v1/incidents`, and one at a time at `GET /api/v1/incidents/{id}`.
+
+### Incident bundles
+
+An incident names the rules that contributed to it by key and counts them, which is enough to route and dedupe but not enough to act on: nothing in it says what those rules look for, how confident they are, or which entities were already accumulating risk. A **bundle** answers that. It is the incident joined to the [ADS](detection-strategy.md) documentation of every contributing rule and the [risk entities](risk-based-alerting.md) it overlaps, rendered as one self-contained JSON document or Markdown report.
+
+```bash
+rsigma engine incidents export f8bcd62a829b1126 --bundle-format markdown -o incident.md
+```
+
+Because the join happens at read time against the currently loaded rule set, each rule in a bundle also reports how its key resolved: `unique`, `ambiguous` when several loaded rules carry that key with differing documentation, or `missing` when the rule set changed while the incident was open. A bundle says which of the three happened rather than quietly dropping a rule it could not document.
+
+A bundle is only served once the incident has cleared `group_wait` and been reported at least once, since until then its contents can still change. The snapshot routes report that as `bundle_ready`, and the bundle route returns `409` before it.
+
+See [`engine incidents export`](../cli/engine/incidents-export.md) and [HTTP API: incident bundles](../reference/http-api.md#get-apiv1incidentsidbundle).
 
 ### Metrics
 

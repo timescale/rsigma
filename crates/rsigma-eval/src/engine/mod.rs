@@ -28,6 +28,7 @@ use crate::logsource::LogSourceExtractor;
 use crate::pipeline::{Pipeline, apply_pipelines};
 use crate::result::{EvaluationResult, MatchDetailLevel};
 use crate::rule_index::RuleIndex;
+use crate::rule_metadata::{RuleBundleMetadata, RuleMetadataLookup};
 
 use bloom_index::{BloomCache, FieldBloomIndex};
 
@@ -944,6 +945,18 @@ impl Engine {
     /// Access the compiled rules.
     pub fn rules(&self) -> &[CompiledRule] {
         &self.rules
+    }
+
+    /// Resolve a rule key (an id, or a title for a rule without one) to the
+    /// documentation of every loaded rule that carries it.
+    pub fn rule_metadata(&self, key: &str) -> RuleMetadataLookup {
+        let mut variants = Vec::new();
+        self.collect_rule_metadata(key, &mut variants);
+        RuleMetadataLookup::from_variants(variants)
+    }
+
+    pub(crate) fn collect_rule_metadata(&self, key: &str, out: &mut Vec<RuleBundleMetadata>) {
+        crate::rule_metadata::matching_detections(&self.rules, key, out);
     }
 }
 

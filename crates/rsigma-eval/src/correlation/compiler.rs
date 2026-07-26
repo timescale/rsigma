@@ -104,6 +104,8 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         title: rule.title.clone(),
         level: rule.level,
         tags: rule.tags.clone(),
+        description: rule.description.clone(),
+        falsepositives: rule.falsepositives.clone(),
         correlation_type: rule.correlation_type,
         rule_refs: rule.rules.clone(),
         group_by,

@@ -495,6 +495,23 @@ impl LogProcessor {
         engine.introspect_correlations(id, group)
     }
 
+    /// Resolve several rule keys to their documentation in one pass.
+    ///
+    /// Batched because a caller documenting an aggregate needs every key
+    /// resolved against the *same* rule set: reloading between two single-key
+    /// lookups would mix documentation from two generations of rules. Holds the
+    /// engine lock only for the lookups.
+    pub fn rule_metadata_batch<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a str>,
+    ) -> std::collections::BTreeMap<String, rsigma_eval::RuleMetadataLookup> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.lock();
+        keys.into_iter()
+            .map(|key| (key.to_string(), engine.rule_metadata(key)))
+            .collect()
+    }
+
     /// Total rule candidates pruned by logsource on the current engine.
     pub fn logsource_pruned_total(&self) -> u64 {
         let snapshot = self.engine.load();

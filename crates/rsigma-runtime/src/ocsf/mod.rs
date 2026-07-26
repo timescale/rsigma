@@ -657,6 +657,8 @@ mod tests {
             entities: Map::new(),
             refs: None,
             results: None,
+            sample_mode: None,
+            bundle_ready: None,
         }
     }
 

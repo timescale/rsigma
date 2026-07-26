@@ -163,6 +163,12 @@ enum EngineCommands {
     /// Query a running daemon's status (GET /api/v1/status)
     Status(StatusArgs),
 
+    /// Work with a running daemon's open incidents
+    Incidents {
+        #[command(subcommand)]
+        cmd: commands::IncidentsCommands,
+    },
+
     /// Record a running daemon's live event stream to a replayable fixture
     /// (GET /api/v1/tap)
     Tap(TapArgs),
@@ -355,6 +361,7 @@ fn dispatch_engine(cmd: EngineCommands, matches: &ArgMatches, ctx: output::Outpu
         EngineCommands::Classify(args) => commands::cmd_classify(args, ctx),
         EngineCommands::DiscoverSchemas(args) => commands::cmd_discover(args, ctx),
         EngineCommands::Status(args) => commands::cmd_status(args, ctx),
+        EngineCommands::Incidents { cmd } => commands::dispatch_incidents(cmd, ctx),
         EngineCommands::Tap(args) => commands::cmd_tap(args, ctx),
         EngineCommands::Tail(args) => commands::cmd_tail(args, ctx),
         #[cfg(feature = "daemon")]

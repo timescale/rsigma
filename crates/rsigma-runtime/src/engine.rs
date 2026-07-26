@@ -7,7 +7,7 @@ use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
-    SchemaClassifier, SchemaPruning, SchemaRouter, parse_pipeline_file,
+    RuleMetadataLookup, SchemaClassifier, SchemaPruning, SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 
@@ -556,6 +556,19 @@ impl RuntimeEngine {
                 correlation_rules: router.correlation_rule_count(),
                 state_entries: router.state_count(),
             },
+        }
+    }
+
+    /// Resolve a rule key (an id, or a title for a rule without one) to the
+    /// documentation of every loaded rule that carries it.
+    ///
+    /// Aggregated output such as an incident's `rule_counts` records only the
+    /// key, so this is how a consumer recovers what the rule was for.
+    pub fn rule_metadata(&self, key: &str) -> RuleMetadataLookup {
+        match &self.engine {
+            EngineVariant::DetectionOnly(engine) => engine.rule_metadata(key),
+            EngineVariant::WithCorrelations(engine) => engine.rule_metadata(key),
+            EngineVariant::Routed(router) => router.rule_metadata(key),
         }
     }
 

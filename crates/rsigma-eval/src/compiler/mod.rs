@@ -62,6 +62,12 @@ pub struct CompiledRule {
     pub id: Option<String>,
     pub level: Option<Level>,
     pub tags: Vec<String>,
+    /// The rule's `description`. Retained because it carries the ADS goal
+    /// section, which downstream consumers surface alongside a match.
+    pub description: Option<String>,
+    /// The rule's `falsepositives`, retained as the ADS false-positives
+    /// section carrier.
+    pub falsepositives: Vec<String>,
     pub logsource: LogSource,
     /// Compiled named detections, keyed by detection name.
     pub detections: HashMap<String, CompiledDetection>,

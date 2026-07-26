@@ -227,6 +227,8 @@ fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
             level: Some("high".to_string()),
         }]),
         results: None,
+        sample_mode: None,
+        bundle_ready: None,
     }
 }
 

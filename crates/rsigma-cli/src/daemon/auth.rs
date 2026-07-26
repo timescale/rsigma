@@ -133,7 +133,11 @@ pub fn required_access(method: &Method, path: &str) -> Access {
         (&Method::GET, "/api/v1/correlations" | "/api/v1/correlations/state") => {
             req("correlations", "read")
         }
-        (&Method::GET, "/api/v1/incidents") => req("incidents", "read"),
+        (&Method::GET, "/api/v1/incidents" | "/api/v1/incidents/{id}") => req("incidents", "read"),
+        // The bundle joins incidents to rule documentation and risk entities,
+        // so it hands out more than `incidents:read` names. It gets its own
+        // resource rather than widening what an incident reader can see.
+        (&Method::GET, "/api/v1/incidents/{id}/bundle") => req("incident-bundles", "read"),
         (&Method::GET, "/api/v1/risk") => req("risk", "read"),
         (&Method::GET, "/api/v1/silences") => req("silences", "read"),
         (&Method::POST, "/api/v1/silences") => req("silences", "write"),
@@ -569,6 +573,8 @@ mod tests {
             (Method::GET, "/api/v1/correlations"),
             (Method::GET, "/api/v1/correlations/state"),
             (Method::GET, "/api/v1/incidents"),
+            (Method::GET, "/api/v1/incidents/{id}"),
+            (Method::GET, "/api/v1/incidents/{id}/bundle"),
             (Method::GET, "/api/v1/risk"),
             (Method::GET, "/api/v1/silences"),
             (Method::POST, "/api/v1/silences"),
@@ -602,6 +608,28 @@ mod tests {
                 "route {method} {path} fell through to the fail-closed catch-all"
             );
         }
+    }
+
+    #[test]
+    fn the_bundle_route_needs_more_than_incident_access() {
+        // A bundle joins incidents to rule documentation and risk entities, so
+        // granting someone the incident list must not also hand them that.
+        assert_eq!(
+            required_access(&Method::GET, "/api/v1/incidents/{id}"),
+            Access::Require(Permission::required("incidents", "read"))
+        );
+        let Access::Require(bundle) =
+            required_access(&Method::GET, "/api/v1/incidents/{id}/bundle")
+        else {
+            panic!("the bundle route must require a permission");
+        };
+        assert!(!Permission::parse("incidents:read").unwrap().grants(&bundle));
+        assert!(
+            Permission::parse("incident-bundles:read")
+                .unwrap()
+                .grants(&bundle)
+        );
+        assert!(Permission::parse("*:read").unwrap().grants(&bundle));
     }
 
     #[test]

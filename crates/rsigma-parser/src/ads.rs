@@ -197,14 +197,24 @@ impl AdsSection {
     /// Extract this section's content from a rule, or `None` when the section
     /// is absent or blank.
     pub fn content(&self, rule: &SigmaRule) -> Option<AdsContent> {
+        self.content_of(rule)
+    }
+
+    /// Extract this section's content from any [`AdsCarriers`] source.
+    pub fn content_of<C: AdsCarriers + ?Sized>(&self, carriers: &C) -> Option<AdsContent> {
         match self {
-            AdsSection::Goal => rule
-                .description
-                .as_deref()
+            AdsSection::Goal => carriers
+                .ads_description()
                 .and_then(non_blank)
                 .map(|s| AdsContent::Text(s.to_string())),
             AdsSection::Categorization => {
-                let tags: Vec<String> = attack_tags(rule).map(str::to_string).collect();
+                let tags: Vec<String> = carriers
+                    .ads_tags()
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|t| t.starts_with("attack."))
+                    .map(str::to_string)
+                    .collect();
                 if tags.is_empty() {
                     None
                 } else {
@@ -212,8 +222,8 @@ impl AdsSection {
                 }
             }
             AdsSection::FalsePositives => {
-                let items: Vec<String> = rule
-                    .falsepositives
+                let items: Vec<String> = carriers
+                    .ads_falsepositives()
                     .iter()
                     .filter_map(|s| non_blank(s).map(str::to_string))
                     .collect();
@@ -223,16 +233,51 @@ impl AdsSection {
                     Some(AdsContent::List(items))
                 }
             }
-            other => {
-                let key = other.carrier_field();
-                rule.custom_attributes.get(key).and_then(content_from_value)
-            }
+            other => carriers.ads_custom_attribute(other.carrier_field()),
         }
     }
 
     /// Whether this section's content is present and non-blank on the rule.
     pub fn is_present(&self, rule: &SigmaRule) -> bool {
         self.content(rule).is_some()
+    }
+}
+
+/// A source of the rule fields ADS sections are carried on.
+///
+/// The section vocabulary is the same wherever a rule is read from, but the
+/// representations are not: a parsed [`SigmaRule`] holds YAML custom attributes
+/// while a compiled rule holds JSON ones. Implementing this trait lets both go
+/// through [`AdsSection::content_of`] and [`AdsDocument::from_carriers`]
+/// instead of reimplementing the carrier mapping.
+pub trait AdsCarriers {
+    /// The `description` field (the goal carrier).
+    fn ads_description(&self) -> Option<&str>;
+    /// The `tags` field (the categorization carrier, filtered to `attack.*`).
+    fn ads_tags(&self) -> &[String];
+    /// The `falsepositives` field (the false-positives carrier).
+    fn ads_falsepositives(&self) -> &[String];
+    /// One `rsigma.ads.*` custom attribute, already rendered to content.
+    fn ads_custom_attribute(&self, key: &str) -> Option<AdsContent>;
+}
+
+impl AdsCarriers for SigmaRule {
+    fn ads_description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    fn ads_tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    fn ads_falsepositives(&self) -> &[String] {
+        &self.falsepositives
+    }
+
+    fn ads_custom_attribute(&self, key: &str) -> Option<AdsContent> {
+        self.custom_attributes
+            .get(key)
+            .and_then(AdsContent::from_yaml)
     }
 }
 
@@ -260,6 +305,26 @@ impl AdsContent {
         match self {
             AdsContent::Text(s) => vec![s.clone()],
             AdsContent::List(items) => items.clone(),
+        }
+    }
+
+    /// Render a YAML custom-attribute value as section content, or `None` when
+    /// it is blank or not a scalar (or sequence of scalars).
+    pub fn from_yaml(v: &yaml_serde::Value) -> Option<AdsContent> {
+        use yaml_serde::Value;
+        match v {
+            Value::Sequence(seq) => list_content(seq.iter().filter_map(yaml_scalar_text)),
+            other => yaml_scalar_text(other).map(AdsContent::Text),
+        }
+    }
+
+    /// Render a JSON custom-attribute value as section content, matching
+    /// [`AdsContent::from_yaml`]'s scalar and sequence handling.
+    pub fn from_json(v: &serde_json::Value) -> Option<AdsContent> {
+        use serde_json::Value;
+        match v {
+            Value::Array(items) => list_content(items.iter().filter_map(json_scalar_text)),
+            other => json_scalar_text(other).map(AdsContent::Text),
         }
     }
 }
@@ -324,10 +389,16 @@ impl AdsDocument {
     /// Assemble the ADS document for a rule from its reused fields and
     /// `rsigma.ads.*` sections.
     pub fn from_rule(rule: &SigmaRule) -> Self {
+        Self::from_carriers(rule)
+    }
+
+    /// Assemble the ADS document from any [`AdsCarriers`] source, so a compiled
+    /// rule produces the same nine-section document as a parsed one.
+    pub fn from_carriers<C: AdsCarriers + ?Sized>(carriers: &C) -> Self {
         let sections = AdsSection::all()
             .iter()
             .map(|s| {
-                let content = s.content(rule);
+                let content = s.content_of(carriers);
                 AdsSectionStatus {
                     id: s.id(),
                     required: s.default_required(),
@@ -338,6 +409,11 @@ impl AdsDocument {
             })
             .collect();
         AdsDocument { sections }
+    }
+
+    /// Whether any section carries content.
+    pub fn is_empty(&self) -> bool {
+        self.sections.iter().all(|s| !s.present)
     }
 
     /// The ids of required sections missing from the rule.
@@ -417,23 +493,27 @@ fn non_blank(s: &str) -> Option<&str> {
     if t.is_empty() { None } else { Some(t) }
 }
 
-fn content_from_value(v: &yaml_serde::Value) -> Option<AdsContent> {
-    use yaml_serde::Value;
-    match v {
-        Value::Sequence(seq) => {
-            let items: Vec<String> = seq.iter().filter_map(scalar_text).collect();
-            if items.is_empty() {
-                None
-            } else {
-                Some(AdsContent::List(items))
-            }
-        }
-        other => scalar_text(other).map(AdsContent::Text),
+fn list_content(items: impl Iterator<Item = String>) -> Option<AdsContent> {
+    let items: Vec<String> = items.collect();
+    if items.is_empty() {
+        None
+    } else {
+        Some(AdsContent::List(items))
     }
 }
 
-fn scalar_text(v: &yaml_serde::Value) -> Option<String> {
+fn yaml_scalar_text(v: &yaml_serde::Value) -> Option<String> {
     use yaml_serde::Value;
+    match v {
+        Value::String(s) => non_blank(s).map(str::to_string),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn json_scalar_text(v: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
     match v {
         Value::String(s) => non_blank(s).map(str::to_string),
         Value::Bool(b) => Some(b.to_string()),
@@ -564,6 +644,66 @@ detection:
         // Every section is missing: no description, no tags, no falsepositives,
         // no rsigma.ads.* keys.
         assert_eq!(missing.len(), 9);
+    }
+
+    /// A JSON-backed carrier source, standing in for a compiled rule.
+    struct JsonCarriers {
+        description: Option<String>,
+        tags: Vec<String>,
+        falsepositives: Vec<String>,
+        custom_attributes: std::collections::HashMap<String, serde_json::Value>,
+    }
+
+    impl AdsCarriers for JsonCarriers {
+        fn ads_description(&self) -> Option<&str> {
+            self.description.as_deref()
+        }
+        fn ads_tags(&self) -> &[String] {
+            &self.tags
+        }
+        fn ads_falsepositives(&self) -> &[String] {
+            &self.falsepositives
+        }
+        fn ads_custom_attribute(&self, key: &str) -> Option<AdsContent> {
+            self.custom_attributes
+                .get(key)
+                .and_then(AdsContent::from_json)
+        }
+    }
+
+    #[test]
+    fn json_carriers_produce_the_same_document_as_the_parsed_rule() {
+        let parsed = rule(FULL_RULE);
+        let json = JsonCarriers {
+            description: parsed.description.clone(),
+            tags: parsed.tags.clone(),
+            falsepositives: parsed.falsepositives.clone(),
+            custom_attributes: parsed
+                .custom_attributes
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap()))
+                .collect(),
+        };
+
+        let from_yaml = AdsDocument::from_rule(&parsed);
+        let from_json = AdsDocument::from_carriers(&json);
+
+        assert!(from_yaml.missing_required().is_empty());
+        assert_eq!(
+            serde_json::to_value(&from_yaml).unwrap(),
+            serde_json::to_value(&from_json).unwrap()
+        );
+    }
+
+    #[test]
+    fn an_undocumented_rule_yields_an_empty_document() {
+        let carriers = JsonCarriers {
+            description: Some("   ".to_string()),
+            tags: vec!["tlp.clear".to_string()],
+            falsepositives: Vec::new(),
+            custom_attributes: std::collections::HashMap::new(),
+        };
+        assert!(AdsDocument::from_carriers(&carriers).is_empty());
     }
 
     #[test]

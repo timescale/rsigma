@@ -137,6 +137,35 @@ pub struct IncidentResult {
     /// stored as serialized JSON values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Vec<Value>>,
+    /// Which sample kinds the incident actually retained. Snapshot-only: the
+    /// emission path omits it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_mode: Option<SampleMode>,
+    /// Whether the incident has passed `group_wait` and been emitted at least
+    /// once. Snapshot-only, and `false` means the incident is still batching
+    /// and its contents may still change before it is first reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_ready: Option<bool>,
+}
+
+/// Which sample kinds an incident actually retained.
+///
+/// Normally this mirrors the configured [`IncludeMode`], but samples are
+/// retained at absorb time while the mode is read at emission time. A hot
+/// reload that flips `include` mid-incident leaves both kinds behind, and
+/// `Mixed` says so rather than hiding whichever kind the new mode does not
+/// name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SampleMode {
+    /// Nothing was retained (the per-incident sample cap is zero).
+    None,
+    /// Lightweight references only.
+    Refs,
+    /// Full contributing results only.
+    Results,
+    /// Both kinds, from an `include` change while the incident was open.
+    Mixed,
 }
 
 /// Internal per-incident state.
@@ -201,8 +230,15 @@ impl IncidentStore {
     pub fn snapshot(&self, include: IncludeMode) -> Vec<IncidentResult> {
         self.incidents
             .values()
-            .map(|inc| inc.to_result("open", "snapshot", include))
+            .map(|inc| inc.to_snapshot(include))
             .collect()
+    }
+
+    /// A snapshot of one open incident, or `None` when no incident carries the
+    /// id. A resolved incident is evicted, so it is indistinguishable from one
+    /// that never existed.
+    pub fn snapshot_one(&self, id: &str, include: IncludeMode) -> Option<IncidentResult> {
+        self.incidents.get(id).map(|inc| inc.to_snapshot(include))
     }
 
     /// Assign a result to an incident, returning the incident id to annotate
@@ -506,10 +542,14 @@ impl Incident {
                 )
             })
             .collect();
-        let (refs, results) = match include {
-            IncludeMode::Refs => (Some(self.refs.clone()), None),
-            IncludeMode::Results => (None, Some(self.results.clone())),
-        };
+        // The configured kind is always reported, even when empty, so the wire
+        // shape does not depend on how much an incident has absorbed. The other
+        // kind appears only when the incident actually retained some, which
+        // happens when `include` changed while the incident was open.
+        let refs =
+            (include == IncludeMode::Refs || !self.refs.is_empty()).then(|| self.refs.clone());
+        let results = (include == IncludeMode::Results || !self.results.is_empty())
+            .then(|| self.results.clone());
         IncidentResult {
             incident_id: self.id.clone(),
             state,
@@ -523,6 +563,26 @@ impl Incident {
             entities,
             refs,
             results,
+            sample_mode: None,
+            bundle_ready: None,
+        }
+    }
+
+    /// The read-only view served by the admin API: the emitted shape plus the
+    /// retention and lifecycle facts a caller needs to interpret it.
+    fn to_snapshot(&self, include: IncludeMode) -> IncidentResult {
+        let mut out = self.to_result("open", "snapshot", include);
+        out.sample_mode = Some(self.sample_mode());
+        out.bundle_ready = Some(self.opened);
+        out
+    }
+
+    fn sample_mode(&self) -> SampleMode {
+        match (self.refs.is_empty(), self.results.is_empty()) {
+            (false, false) => SampleMode::Mixed,
+            (false, true) => SampleMode::Refs,
+            (true, false) => SampleMode::Results,
+            (true, true) => SampleMode::None,
         }
     }
 }
@@ -639,6 +699,122 @@ mod tests {
         assert_eq!(a, b, "same SourceIp groups together across rules");
         assert_ne!(a, c, "different SourceIp is a separate incident");
         assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn snapshot_one_returns_only_the_requested_incident() {
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        let id = store
+            .assign(
+                &cfg,
+                &detection("r1", "10.0.0.1", "alice", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+        store.assign(
+            &cfg,
+            &detection("r1", "10.0.0.2", "bob", Level::Low),
+            0,
+            |_| {},
+        );
+
+        let one = store.snapshot_one(&id, cfg.include).unwrap();
+        assert_eq!(one.incident_id, id);
+        assert_eq!(one.result_count, 1);
+        assert!(store.snapshot_one("nosuchincident", cfg.include).is_none());
+    }
+
+    #[test]
+    fn a_snapshot_reports_readiness_and_a_resolved_incident_is_gone() {
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        let id = store
+            .assign(
+                &cfg,
+                &detection("r1", "10.0.0.1", "alice", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+
+        // Still inside group_wait: nothing has been emitted yet.
+        let pending = store.snapshot_one(&id, cfg.include).unwrap();
+        assert_eq!(pending.bundle_ready, Some(false));
+
+        store.tick(&cfg, 30);
+        let ready = store.snapshot_one(&id, cfg.include).unwrap();
+        assert_eq!(ready.bundle_ready, Some(true));
+
+        // Past resolve_timeout the incident is emitted once more and evicted,
+        // so a later lookup cannot tell it apart from an unknown id.
+        store.tick(&cfg, 30 + 3600);
+        assert!(store.snapshot_one(&id, cfg.include).is_none());
+    }
+
+    #[test]
+    fn an_include_change_mid_incident_keeps_both_sample_kinds() {
+        let refs_cfg = group_by_cfg();
+        let results_cfg = GroupConfig {
+            include: IncludeMode::Results,
+            ..group_by_cfg()
+        };
+        let mut store = IncidentStore::default();
+        let id = store
+            .assign(
+                &refs_cfg,
+                &detection("r1", "10.0.0.1", "alice", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+        // A reload flips `include` while the incident is open.
+        store.assign(
+            &results_cfg,
+            &detection("r2", "10.0.0.1", "bob", Level::Low),
+            1,
+            |_| {},
+        );
+
+        let snap = store.snapshot_one(&id, results_cfg.include).unwrap();
+        assert_eq!(snap.sample_mode, Some(SampleMode::Mixed));
+        assert_eq!(snap.refs.as_ref().map(Vec::len), Some(1));
+        assert_eq!(snap.results.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn a_steady_state_snapshot_reports_only_the_configured_kind() {
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        let id = store
+            .assign(
+                &cfg,
+                &detection("r1", "10.0.0.1", "alice", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+
+        let snap = store.snapshot_one(&id, cfg.include).unwrap();
+        assert_eq!(snap.sample_mode, Some(SampleMode::Refs));
+        assert!(snap.results.is_none());
+    }
+
+    #[test]
+    fn emissions_carry_no_snapshot_only_fields() {
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        store.assign(
+            &cfg,
+            &detection("r1", "10.0.0.1", "alice", Level::High),
+            0,
+            |_| {},
+        );
+        let emissions = store.tick(&cfg, 30);
+        let emitted = serde_json::to_value(&emissions[0].result).unwrap();
+        assert!(emitted.get("sample_mode").is_none());
+        assert!(emitted.get("bundle_ready").is_none());
     }
 
     #[test]

@@ -154,6 +154,7 @@ Design properties:
 - **Constant-time comparison.** Every presented token is compared against every configured secret in constant time, so timing cannot leak a matched prefix.
 - **Least privilege by role.** Built-in roles `reader`/`operator`/`ingest`/`admin` plus custom roles as permission lists with `*` wildcards. A log shipper's `ingest` token carries only `events:ingest` and cannot create silences or trigger reloads; `reload:execute` is deliberately excluded from `operator` so config-changing control stays with `admin` tokens.
 - **Fail-closed route table.** A route added without a permission mapping requires the full `*` grant rather than defaulting open.
+- **Aggregating routes get their own resource.** An [incident bundle](http-api.md#get-apiv1incidentsidbundle) joins an incident to rule documentation and risk entities, so it requires `incident-bundles:read` rather than the `incidents:read` that gates the incident list. A custom role can hand out the incident list without handing out what the detections look for or which entities are accumulating risk. The built-in `reader` role (`*:read`) covers both.
 - **No anonymous fallback for bad tokens.** `anonymous_permissions` applies only to requests with no `Authorization` header; a presented-but-unrecognized token is always rejected with 401.
 - **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged.
 

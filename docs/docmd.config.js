@@ -155,6 +155,10 @@ export default {
             { title: "classify", path: "/cli/engine/classify" },
             { title: "discover-schemas", path: "/cli/engine/discover-schemas" },
             { title: "status", path: "/cli/engine/status" },
+            {
+              title: "incidents export",
+              path: "/cli/engine/incidents-export",
+            },
             { title: "tap", path: "/cli/engine/tap" },
             { title: "tail", path: "/cli/engine/tail" },
             { title: "daemon", path: "/cli/engine/daemon" },
