@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Reject unknown alert-pipeline fields
+### Reject unknown alert-pipeline fields (#401)
 
 - Alert-pipeline YAML now fails to load when any mapping contains an unknown field, including nested scope, dedup, grouping, caps, inhibition, silence, and matcher blocks. A misspelling such as `group.wait` previously selected the default `group_wait: 30s` without warning, making the daemon run with different timing than the operator configured.
 
