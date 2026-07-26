@@ -38,6 +38,7 @@ pub enum SilenceState {
 
 /// A silence input from config or the API.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SilenceSpec {
     /// Optional client-supplied id; a UUID is assigned when absent.
     #[serde(default)]

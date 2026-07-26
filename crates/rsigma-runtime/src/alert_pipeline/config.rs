@@ -61,6 +61,7 @@ pub const DEFAULT_MAX_DYNAMIC_SILENCES: usize = 1_000;
 ///   resolve_timeout: 30m
 /// ```
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AlertPipelineFile {
     /// Retain the event for selector resolution but drop raw event payloads
     /// before sink delivery.
@@ -91,6 +92,7 @@ pub struct AlertPipelineFile {
 
 /// `inhibit_rules:` entry.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InhibitRuleFile {
     /// Stable name (used as the metric label); defaults to `inhibit_rule_<i>`.
     #[serde(default)]
@@ -111,6 +113,7 @@ pub struct InhibitRuleFile {
 
 /// `scope:` block, mirroring the enrichers config.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeConfig {
     /// Rule-id exact matches or rule-title globs.
     #[serde(default)]
@@ -125,6 +128,7 @@ pub struct ScopeConfig {
 
 /// `dedup:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DedupFile {
     /// Selectors hashed (with the rule identity) into the fingerprint.
     #[serde(default)]
@@ -167,6 +171,7 @@ pub enum IncludeLabel {
 
 /// `group.caps:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapsFile {
     #[serde(default)]
     pub max_open_incidents: Option<usize>,
@@ -180,6 +185,7 @@ pub struct CapsFile {
 
 /// `group:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GroupFile {
     #[serde(default)]
     pub mode: GroupModeLabel,
@@ -582,5 +588,37 @@ dedup:
         let file: AlertPipelineFile = yaml_serde::from_str(yaml).unwrap();
         let err = build_alert_pipeline(file).unwrap_err();
         assert!(matches!(err, AlertPipelineConfigError::Scope(_)));
+    }
+
+    #[test]
+    fn unknown_fields_are_rejected_at_every_config_level() {
+        let cases = [
+            ("top_levle", "top_levle: true"),
+            ("levles", "scope:\n  levles: [high]"),
+            (
+                "intervall",
+                "dedup:\n  fingerprint: [rule]\n  intervall: 1m",
+            ),
+            ("wait", "group:\n  by: [rule]\n  wait: 1s"),
+            (
+                "max_result_per_incident",
+                "group:\n  by: [rule]\n  caps:\n    max_result_per_incident: 10",
+            ),
+            (
+                "duraton",
+                "inhibit_rules:\n  - duraton: 5m\n    source_match: []\n    target_match: []",
+            ),
+            ("coment", "silences:\n  - coment: maintenance"),
+            (
+                "operatr",
+                "silences:\n  - matchers:\n      - selector: rule\n        value: noisy\n        operatr: '='",
+            ),
+        ];
+
+        for (field, yaml) in cases {
+            let err = parse_alert_pipeline_config(yaml).unwrap_err().to_string();
+            assert!(err.contains("unknown field"), "{field}: {err}");
+            assert!(err.contains(field), "{field}: {err}");
+        }
     }
 }

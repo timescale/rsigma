@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Reject unknown alert-pipeline fields
+
+- Alert-pipeline YAML now fails to load when any mapping contains an unknown field, including nested scope, dedup, grouping, caps, inhibition, silence, and matcher blocks. A misspelling such as `group.wait` previously selected the default `group_wait: 30s` without warning, making the daemon run with different timing than the operator configured.
+
 ### Support list values in `add_condition` pipeline transformation (#399)
 
 - `add_condition` accepts YAML sequences for field values (`conditions: {EventID: [12, 13, 14]}`), and the values of one field are OR-linked, matching pySigma's `AddConditionTransformation`. Pipelines no longer need one transformation per value.

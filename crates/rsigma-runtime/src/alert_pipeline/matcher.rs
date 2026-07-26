@@ -35,6 +35,7 @@ pub enum MatchOp {
 
 /// One matcher as written in config / the API (serializable both ways).
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MatcherSpec {
     /// Left-hand selector (e.g. `match.SourceIp`, `rule`, `level`).
     pub selector: String,

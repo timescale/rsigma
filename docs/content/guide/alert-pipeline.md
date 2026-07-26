@@ -4,6 +4,8 @@ The alert pipeline is an optional post-engine stage in the daemon's output path,
 
 It is configured with a separate YAML file via `--alert-pipeline <path>` (or the `daemon.alert_pipeline` config key) and is hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous pipeline active.
 
+The schema is strict: an unknown field at any level is a load error naming the field and the valid alternatives. This keeps a misspelling such as `group.wait` from silently selecting the default `group_wait`.
+
 This page covers silencing, inhibition, deduplication, and incident grouping. The stages run in that order (the mute stages first): a muted result never dedups or opens an incident.
 
 ## Silencing
