@@ -19,6 +19,13 @@ Lanes:
   low_match          structured_windows with ~1% suspicious command lines.
   match_heavy        Mostly suspicious command lines; stresses the match and
                      serialization paths.
+  cisco_syslog       Raw Cisco AAA syslog command-accounting lines in a single
+                     `message` field with `product`/`service` hint fields, the
+                     shape network collectors forward from IOS devices. SigmaHQ
+                     covers this with fieldless keyword rules.
+  sysmon_file_event  Sysmon EventID 11 (FileCreate) JSON with `Channel`,
+                     `Provider_Name`, and `TargetFilename`; `EventID` is a
+                     string, as some forwarders emit it.
 
 Only the Python standard library is used.
 """
@@ -203,6 +210,106 @@ def no_match_event(rng):
     return {f"f{i}": hexes(rng, 24) for i in range(8)} | {"product": "synthetic"}
 
 
+# Cisco command accounting, modeled on a vendor-supplied sample:
+#   <189>Jan 15 10:23:41 router-a %AAA-5-USER_LOGGED: User netadmin executed:
+#   set span source interface GigabitEthernet0/1 destination interface
+#   GigabitEthernet0/2 both
+CISCO_HOSTS = ["router-a", "router-b", "core-sw01", "edge-fw02", "dist-sw03"]
+
+CISCO_USERS = ["netadmin", "ops-jsmith", "backup-svc", "noc-user", "auditor"]
+
+CISCO_BENIGN_COMMANDS = [
+    "show version",
+    "show ip interface brief",
+    "show interface status",
+    "ping 10.20.30.1 repeat 5",
+    "show vlan brief",
+    "show cdp neighbors detail",
+    "show environment all",
+    "traceroute 192.0.2.10",
+]
+
+# Operations SigmaHQ's fieldless cisco keyword rules look for
+# (sniffing, config collection, log clearing, crypto key handling).
+CISCO_SUSPICIOUS_COMMANDS = [
+    "set span source interface GigabitEthernet0/1 destination interface GigabitEthernet0/2 both",
+    "monitor capture point ip cef cap1 GigabitEthernet0/1 both",
+    "show running-config",
+    "copy running-config tftp://198.51.100.9/rc.cfg",
+    "clear logging",
+    "crypto key generate rsa modulus 2048",
+    "no logging console",
+    "show ip bgp summary",
+]
+
+
+def cisco_syslog_event(rng, suspicious_rate):
+    if rng.random() < suspicious_rate:
+        cmd = rng.choice(CISCO_SUSPICIOUS_COMMANDS)
+    else:
+        cmd = rng.choice(CISCO_BENIGN_COMMANDS)
+    message = (
+        f"<189>Jan {rng.randrange(1, 29)} "
+        f"{rng.randrange(24):02d}:{rng.randrange(60):02d}:{rng.randrange(60):02d} "
+        f"{rng.choice(CISCO_HOSTS)} %AAA-5-USER_LOGGED: "
+        f"User {rng.choice(CISCO_USERS)} executed: {cmd}"
+    )
+    return {"message": message, "product": "cisco", "service": "aaa"}
+
+
+# Sysmon FileCreate, modeled on a vendor-supplied sample:
+#   {"EventID": "11", "Channel": "Microsoft-Windows-Sysmon/Operational", ...,
+#    "TargetFilename": "C:\\Users\\user1\\Downloads\\document.pdf.exe", ...}
+FILE_WRITER_IMAGES = [
+    r"C:\Windows\explorer.exe",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",
+    r"C:\Windows\System32\svchost.exe",
+    r"C:\Program Files\Mozilla Firefox\firefox.exe",
+]
+
+BENIGN_TARGET_FILENAMES = [
+    r"C:\Users\user1\Downloads\report-q3.pdf",
+    r"C:\Users\user1\Documents\notes.docx",
+    r"C:\Users\user1\AppData\Local\Temp\chrome_installer.log",
+    r"C:\ProgramData\Microsoft\Windows Defender\Support\MPLog.log",
+    r"C:\Users\user1\AppData\Roaming\Mozilla\Firefox\Profiles\a1b2.default\places.sqlite",
+    r"C:\Windows\Temp\MpCmdRun.log",
+]
+
+SUSPICIOUS_TARGET_FILENAMES = [
+    r"C:\Users\user1\Downloads\document.pdf.exe",
+    r"C:\Users\user1\Downloads\invoice.docx.scr",
+    r"C:\Users\Public\payload.exe",
+    r"C:\Users\user1\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\upd.exe",
+    r"C:\Windows\Temp\svch0st.exe",
+]
+
+FILE_EVENT_HOSTS = ["HOST-A", "HOST-B", "ws-0042", "srv-file01"]
+
+
+def sysmon_file_event(rng, suspicious_rate):
+    if rng.random() < suspicious_rate:
+        target = rng.choice(SUSPICIOUS_TARGET_FILENAMES)
+    else:
+        target = rng.choice(BENIGN_TARGET_FILENAMES)
+    host = rng.choice(FILE_EVENT_HOSTS)
+    return {
+        "EventID": "11",
+        "Channel": "Microsoft-Windows-Sysmon/Operational",
+        "Provider_Name": "Microsoft-Windows-Sysmon",
+        "Computer": host,
+        "Image": rng.choice(FILE_WRITER_IMAGES),
+        "TargetFilename": target,
+        "CreationUtcTime": f"2026-01-15 10:{rng.randrange(60):02d}:{rng.randrange(60):02d}.{rng.randrange(1000):03d}",
+        "ProcessGuid": guid(rng),
+        "ProcessId": rng.randrange(1000, 65000),
+        "User": f"{host}\\user1",
+        "product": "windows",
+        "category": "file_event",
+    }
+
+
 LANES = {
     # name: (seed, generator)
     "raw_windows": (11, lambda rng: raw_windows_event(rng, 0.10)),
@@ -210,6 +317,8 @@ LANES = {
     "no_match": (47, no_match_event),
     "low_match": (59, lambda rng: structured_windows_event(rng, 0.01)),
     "match_heavy": (61, lambda rng: structured_windows_event(rng, 0.80)),
+    "cisco_syslog": (101, lambda rng: cisco_syslog_event(rng, 0.10)),
+    "sysmon_file_event": (103, lambda rng: sysmon_file_event(rng, 0.05)),
 }
 
 

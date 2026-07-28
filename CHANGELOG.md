@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Vendor-shape performance lanes and prefilter composition guidance
+
+- Two new deterministic event lanes in `scripts/perf/gen_events.py`, modeled on real collector output: `cisco_syslog` (raw Cisco AAA command accounting in a single `message` field with `product`/`service` hint fields) and `sysmon_file_event` (Sysmon EventID 11 FileCreate with `product`/`category` hints and a string `EventID`, as some forwarders emit it).
+- The new lanes show that `--logsource-routing` and `--cross-rule-ac` do not always compose: events whose logsource hints route to a small rule subset are faster with routing alone (21.3k vs 14.8k events/s per core on the Cisco lane, 269k vs 219.5k end-to-end in the daemon). `BENCHMARKS.md` and the performance tuning guide carry the measured rows and the guidance to benchmark routing without AC on narrowly tagged traffic.
+- Fixed the executable bit on `scripts/perf/baseline-eval.sh`, which was committed non-executable.
+
 ### OASIS STIX 2.1 Interop golden harness (#403)
 
 - Adds the golden test harness for OASIS STIX 2.1 Interoperability (`stix-2.1-interop-v1.0-csd01`): `tests/interop/` target with a custom runner (`harness = false`; `validate` + `marking` + `graph`), `tests/interop_sentinel.rs` silent-skip guard, `tests/fixtures/interop/manifest.toml`, provenance-aware fixture loader, overlay on `Validator::interop_strict()` (SHOULD-level `STIX-I0002` downgrade), bundle-closure checker with TLP exemption, containment helpers, `linkme` self-registration inventory, and certification report generation to `target/interop-report/`. Harness smoke checks for §2.3 cross-cutting layout are recorded separately from OASIS-verified requirements; full normative test-case fixtures follow in subsequent interop work.
