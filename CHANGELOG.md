@@ -10,16 +10,20 @@ The candidate index could only pre-filter on exact field values, so any rule bui
 
 Rules are now analyzed into witnesses: necessary conditions, at least one of which holds on every event the rule can match. The index inverts that relation across a presence list and an exact-value map per field, one Aho-Corasick automaton per field over that field's substring needles, and one automaton over keyword needles matched against every string value in the event. Rules whose conditions admit no witness, principally anything negated, remain always-evaluated.
 
-Measured on the SigmaHQ corpus at the pinned CI SHA (3,132 rules, Apple M4 Pro, single thread, `scripts/perf/baseline-eval.sh`), with match counts byte-identical to the previous release on every lane and variant:
+Measured on the SigmaHQ corpus at the pinned CI SHA (3,132 rules, Apple M4 Pro), with match counts identical before and after in every cell. Offline figures are single core over 100,000 events and net of the ~0.3 s rule load; daemon figures are HTTP end-to-end at `--batch-size 512` with four concurrent posters, read from `rsigma_events_processed_total`:
 
-| Lane | Variant | Before | After |
-|---|---|---:|---:|
-| raw_windows | default | 2,645 | 7,707 |
-| raw_windows | `--logsource-routing` | 3,576 | 23,359 |
-| structured_windows | default | 1,175 | 11,740 |
-| structured_windows | `--logsource-routing` | 1,738 | 14,785 |
-| cisco_syslog | default | 2,876 | 20,921 |
-| sysmon_file_event | default | 1,987 | 14,489 |
+| Lane | Offline before | Offline after | Daemon before | Daemon after |
+|---|---:|---:|---:|---:|
+| raw_windows | 2,601 | 33,884 | 20,193 | 195,639 |
+| raw_windows `--logsource-routing` | 3,556 | 98,836 | 25,904 | 342,070 |
+| structured_windows | 1,112 | 19,358 | 8,868 | 87,704 |
+| structured_windows `--logsource-routing` | 1,695 | 29,800 | 12,550 | 113,601 |
+| cisco_syslog | 2,917 | 66,434 | 21,715 | 287,000 |
+| sysmon_file_event | 1,954 | 26,836 | 14,647 | 126,001 |
+
+`--cross-rule-ac` changed sides. It used to earn its keep on top of `--logsource-routing`; now routing alone beats every AC configuration on all four lanes both offline and end-to-end, and adding AC costs 20-35%. The candidate index does the same substring work over a smaller rule population. The flag stays correct and feature-gated but is no longer recommended, and the tuning guide says so.
+
+`scripts/perf/baseline-eval.sh` now reports throughput net of rule load and runs 100,000 events per lane instead of 10,000. Load is a fixed ~0.3 s startup cost that accounted for roughly half the wall time of a single 10k pass, so including it understated real throughput by about 2x and compressed the apparent improvement. `scripts/perf/baseline-daemon.sh` gained an `RSIGMA` override so a pre-change build can be measured with the same harness, and `scripts/perf/daemon-matrix.sh` walks the lane and flag matrix end-to-end.
 
 Three behavior changes:
 
@@ -50,7 +54,7 @@ Fixes four cases where a pre-filter silently dropped a rule that should have mat
 
 - New reproducible performance fixtures: `scripts/perf/fetch-fixtures.sh` pins the SigmaHQ corpus to the CI SHA and `scripts/perf/gen_events.py` deterministically generates six event lanes (raw Windows blobs, structured Windows, mixed schema, no-match, low-match, match-heavy). `scripts/perf/baseline-eval.sh` runs the offline eval flag/thread matrix and `scripts/perf/baseline-daemon.sh` measures daemon HTTP end-to-end throughput from the daemon's own processed-events counter.
 - New `witness_audit` example in `rsigma-eval` (`cargo run --release -p rsigma-eval --example witness_audit`): analyzes a rule corpus at the HIR level and reports what fraction carries a sound required-positive witness (exact value, substring, keyword, regex or encoded literal, field presence), the fail-open remainder, and simulated per-lane candidate rates. On SigmaHQ at the pinned SHA: 20.8% of rules are indexable under the current exact-only index, 99.6% carry a sound witness, and simulated candidate rates are 2-3% of loaded rules on Windows-shaped traffic.
-- `BENCHMARKS.md` now separates synthetic microbenchmarks from representative corpus numbers: a new "SigmaHQ corpus baseline" section records measured offline and daemon throughput (roughly 1-4k events/s per core offline and 9-40k events/s for the daemon on a 12-core machine, depending on lane and flags), and the synthetic single-event table now says why its flat rule-count scaling does not transfer to real corpora. The performance-tuning and testing docs pages carry the same correction.
+- `BENCHMARKS.md` now separates synthetic microbenchmarks from representative corpus numbers: a new "SigmaHQ corpus baseline" section records measured offline and daemon throughput (roughly 1-4k events/s per core offline and 9-40k events/s for the daemon on a 12-core machine, depending on lane and flags), and the synthetic single-event table now says why its flat rule-count scaling does not transfer to real corpora. The performance-tuning and testing docs pages carry the same correction. Those first offline figures included the fixed ~0.3 s rule load in a 10k-event pass, which understated per-event throughput by roughly 2x; the harness and the published numbers were corrected as part of the witness indexing work below.
 
 ### Dependency bumps (#402)
 

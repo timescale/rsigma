@@ -7,7 +7,8 @@
 #
 # Usage:
 #   scripts/perf/baseline-daemon.sh [FIXTURES_DIR] [LANE] [EXTRA_DAEMON_FLAGS...]
-# Environment: BATCH (500), VUS (4), DURATION (30s), BATCH_SIZE (512)
+# Environment: BATCH (500), VUS (4), DURATION (30s), BATCH_SIZE (512),
+#              RSIGMA (binary under test, default target/release/rsigma)
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +17,7 @@ fixtures="$(cd "${1:-${repo_root}/target/perf-fixtures}" && pwd)"
 lane="${2:-raw_windows}"
 shift 2 2>/dev/null || shift $# || true
 
-bin="${repo_root}/target/release/rsigma"
+bin="${RSIGMA:-${repo_root}/target/release/rsigma}"
 rules="${fixtures}/sigma/rules"
 lane_file="${fixtures}/events/${lane}.ndjson"
 addr="127.0.0.1:19090"

@@ -2,9 +2,9 @@
 
 How fast RSigma evaluates depends on how much of your corpus the candidate index can prune. The index works from rule witnesses: necessary conditions, at least one of which must hold on any event the rule can match. Exact field values, substring needles, keywords, mandatory regex literals, and bare field presence all yield witnesses, so most of a real corpus is prunable and an event is only evaluated against the rules it could plausibly match. Rules whose conditions admit no witness, in practice the ones whose only required branch is negated, are evaluated against every event and cost time linear in their count.
 
-On the full SigmaHQ ruleset (~3,100 rules) expect roughly 8-21k events/s per core for offline `engine eval`, rising to 15-24k with `--logsource-routing`. The [SigmaHQ corpus baseline](../benchmarks.md#sigmahq-corpus-baseline-representative) in Benchmarks documents the measured matrix per event shape. Small or exact-match-heavy rulesets are considerably faster still.
+On the full SigmaHQ ruleset (~3,100 rules) expect roughly 19-66k events/s per core for offline `engine eval`, rising to 30-106k with `--logsource-routing`, and 88-287k end-to-end through the daemon (342-401k with routing) on a 12-core machine. Where a workload lands in those ranges depends on event shape: wide structured events are the slow end, narrowly tagged syslog the fast end. The [SigmaHQ corpus baseline](../benchmarks.md#sigmahq-corpus-baseline-representative) in Benchmarks documents the full matrix with before-and-after numbers. Small or exact-match-heavy rulesets are considerably faster still.
 
-This page covers the cases where the defaults stop being optimal: very large rule sets, substring-heavy threat-intel feeds, high-throughput daemon ingestion, and memory-constrained deployments. For SigmaHQ-scale corpora the single biggest lever is `--logsource-routing`, which is also a correctness filter because it stops cross-product keyword false positives. `--cross-rule-ac` is no longer worth enabling alongside it: the candidate index already does that substring work over a smaller rule population, and layering the cross-rule automaton on top of routing costs 27-35% on every measured lane. The bloom pre-filter (`--bloom-prefilter`) is off by default for a reason and should be benchmarked before flipping it on.
+This page covers the cases where the defaults stop being optimal: very large rule sets, substring-heavy threat-intel feeds, high-throughput daemon ingestion, and memory-constrained deployments. For SigmaHQ-scale corpora the single biggest lever is `--logsource-routing`, which is also a correctness filter because it stops cross-product keyword false positives. `--cross-rule-ac` is no longer worth enabling alongside it: the candidate index already does that substring work over a smaller rule population, and layering the cross-rule automaton on top of routing costs 20-35% on every measured lane, offline and end-to-end. The second lever is `--batch-size`: the default of 1 leaves detection on a single core, because a batch is what `Engine::evaluate_batch` fans across rayon. The bloom pre-filter (`--bloom-prefilter`) is off by default for a reason and should be benchmarked before flipping it on.
 
 ## Always-on: the matcher optimizer
 
@@ -120,7 +120,7 @@ These two only matter for the streaming daemon, not for `engine eval`.
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--buffer-size N` | `10000` | Bounded mpsc capacity for both source→engine and engine→sink queues. Higher values absorb burstier input; lower values apply back-pressure sooner. Watch `rsigma_back_pressure_events_total` to see whether the queues are filling. |
-| `--batch-size N` | `1` | Maximum events to process per engine lock acquisition. The default processes one at a time. Raise to 64 or 128 under load to amortize mutex overhead. |
+| `--batch-size N` | `1` | Maximum events to process per engine lock acquisition. The default processes one at a time, which also means detection runs on a single core: the batch is the unit `Engine::evaluate_batch` fans across rayon. Raise to 64 or 128 under load, or higher on SigmaHQ-scale corpora (the published baseline uses 512). |
 
 A typical high-throughput configuration:
 
@@ -130,7 +130,7 @@ rsigma engine daemon -r rules/ \
     --batch-size 128
 ```
 
-The trade-off: a higher `--batch-size` increases tail latency (an event waits up to `batch_size - 1` peers ahead of it before getting evaluated) in exchange for amortizing the per-batch mutex acquisition. Below ~10 k events/s the default `1` is fine; above 50 k/s you typically want 64-128.
+The trade-off: a higher `--batch-size` increases tail latency (an event waits for the rest of its batch to be collected) in exchange for amortizing the per-batch mutex acquisition and, more importantly, for parallelism across cores. Below ~10k events/s the default `1` is fine; above 50k/s you want 64-128, and on a large corpus where per-event evaluation is the dominant cost, 512 measured best.
 
 ## Memory pressure and correlation state
 
@@ -185,7 +185,7 @@ cargo bench -p rsigma-runtime --bench dynamic_pipelines
 
 Replace the synthetic Criterion inputs with rules and events that mirror your own corpus. Both the bloom and cross-rule AC wins are workload-shaped: the published numbers above are the upper bound, not what you should expect on mixed data.
 
-For an end-to-end measurement on a real corpus rather than synthetic inputs, `scripts/perf/fetch-fixtures.sh` pins the SigmaHQ ruleset and generates deterministic event lanes, and `scripts/perf/baseline-eval.sh` walks the flag matrix over them. Point them at your own rules and events to get the same table for your workload.
+For an end-to-end measurement on a real corpus rather than synthetic inputs, `scripts/perf/fetch-fixtures.sh` pins the SigmaHQ ruleset and generates deterministic event lanes, and `scripts/perf/baseline-eval.sh` and `scripts/perf/daemon-matrix.sh` walk the flag matrix over them offline and through the daemon. Point them at your own rules and events to get the same table for your workload.
 
 ## Quick decision matrix
 

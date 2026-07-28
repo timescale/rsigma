@@ -196,7 +196,7 @@ cargo bench -p rsigma-eval --bench correlation_memory
 
 Benchmarks are not gated in CI. The numbers in [Benchmarks](../benchmarks.md) come from a manual run on the development workstation; if a PR makes a hot-path change, attach a before/after Criterion summary in the PR description.
 
-The Criterion suites use synthetic, mostly exact-match-indexable rules, so they measure hot paths, not representative corpus throughput. For a representative before/after, materialize the pinned SigmaHQ workload with `scripts/perf/fetch-fixtures.sh` and run `scripts/perf/baseline-eval.sh` (offline eval matrix) and `scripts/perf/baseline-daemon.sh` (daemon HTTP end to end); the corpus witness audit behind the candidate-index numbers is `cargo run --release -p rsigma-eval --example witness_audit`. See the [SigmaHQ corpus baseline](../benchmarks.md#sigmahq-corpus-baseline-representative) for the recorded matrix.
+The Criterion suites use synthetic, mostly exact-match-indexable rules, so they measure hot paths, not representative corpus throughput. For a representative before/after, materialize the pinned SigmaHQ workload with `scripts/perf/fetch-fixtures.sh` and run `scripts/perf/baseline-eval.sh` (offline eval matrix, single core, net of rule load) and `scripts/perf/daemon-matrix.sh` (daemon HTTP end to end across lanes and flag variants, wrapping `scripts/perf/baseline-daemon.sh`). Both take an `RSIGMA` override, so a pre-change build can be measured through the same harness for an honest before-and-after; the corpus witness audit behind the candidate-index numbers is `cargo run --release -p rsigma-eval --example witness_audit`. See the [SigmaHQ corpus baseline](../benchmarks.md#sigmahq-corpus-baseline-representative) for the recorded matrix.
 
 ## Tips
 

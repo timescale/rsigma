@@ -651,7 +651,7 @@ let result = engine.process_event_at(&event, timestamp_secs);
 ## Benchmarks
 
 Criterion.rs benchmarks with synthetic rules and events (Apple M-series, single-threaded unless noted).
-Rules are pre-filtered at evaluation time by the witness-based candidate index. The tables below were captured against the earlier exact-value-only index, so the `Indexed` column understates current throughput on the wildcard-heavy and regex-heavy scenarios, which the witness index prunes and its predecessor did not. For measured numbers on a real corpus see the [SigmaHQ corpus baseline](../../BENCHMARKS.md#sigmahq-corpus-baseline-representative).
+Rules are pre-filtered at evaluation time by the witness-based candidate index. The tables below were captured against the earlier exact-value-only index, so the `Indexed` column understates current throughput on the wildcard-heavy and regex-heavy scenarios, which the witness index prunes and its predecessor did not. For measured numbers on a real corpus see the [SigmaHQ corpus baseline](../../BENCHMARKS.md#sigmahq-corpus-baseline-representative), which records single-core and daemon throughput before and after witness indexing on four event shapes.
 
 ### Detection Evaluation
 
