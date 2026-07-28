@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Vendor-shape performance lanes and prefilter composition guidance
+### Vendor-shape performance lanes and prefilter composition guidance (#405)
 
 - Two new deterministic event lanes in `scripts/perf/gen_events.py`, modeled on real collector output: `cisco_syslog` (raw Cisco AAA command accounting in a single `message` field with `product`/`service` hint fields) and `sysmon_file_event` (Sysmon EventID 11 FileCreate with `product`/`category` hints and a string `EventID`, as some forwarders emit it).
 - The new lanes show that `--logsource-routing` and `--cross-rule-ac` do not always compose: events whose logsource hints route to a small rule subset are faster with routing alone (21.3k vs 14.8k events/s per core on the Cisco lane, 269k vs 219.5k end-to-end in the daemon). `BENCHMARKS.md` and the performance tuning guide carry the measured rows and the guidance to benchmark routing without AC on narrowly tagged traffic.
