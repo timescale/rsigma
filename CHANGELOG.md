@@ -23,7 +23,7 @@ Measured on the SigmaHQ corpus at the pinned CI SHA (3,132 rules, Apple M4 Pro),
 
 `--cross-rule-ac` changed sides. It used to earn its keep on top of `--logsource-routing`; now routing alone beats every AC configuration on all four lanes both offline and end-to-end, and adding AC costs 20-35%. The candidate index does the same substring work over a smaller rule population. The flag stays correct and feature-gated but is no longer recommended, and the tuning guide says so.
 
-`scripts/perf/baseline-eval.sh` now reports throughput net of rule load and runs 100,000 events per lane instead of 10,000. Load is a fixed ~0.3 s startup cost that accounted for roughly half the wall time of a single 10k pass, so including it understated real throughput by about 2x and compressed the apparent improvement. `scripts/perf/baseline-daemon.sh` gained an `RSIGMA` override so a pre-change build can be measured with the same harness, and `scripts/perf/daemon-matrix.sh` walks the lane and flag matrix end-to-end.
+`scripts/perf/baseline-eval.sh` now reports throughput net of rule load (#407) and runs 100,000 events per lane instead of 10,000. Load is a fixed ~0.3 s startup cost that accounted for roughly half the wall time of a single 10k pass, so including it understated real throughput by about 2x and compressed the apparent improvement. `scripts/perf/baseline-daemon.sh` gained an `RSIGMA` override so a pre-change build can be measured with the same harness, and `scripts/perf/daemon-matrix.sh` walks the lane and flag matrix end-to-end.
 
 Three behavior changes:
 
