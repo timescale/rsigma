@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Cased substring bloom soundness
+### Cased substring bloom soundness (#411)
 
 The bloom prefilter now normalizes ASCII `|cased` substring needles into the same comparison space used for event probes, preventing uppercase patterns such as `CMD.EXE` from being rejected before evaluation. Non-ASCII cased needles conservatively disable the field's bloom filter because context-sensitive Unicode lowercasing cannot preserve every substring relation.
 
