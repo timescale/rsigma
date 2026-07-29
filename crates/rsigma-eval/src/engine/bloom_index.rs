@@ -543,19 +543,35 @@ fn extract_from_matcher(
         return;
     }
     match m {
-        CompiledMatcher::Contains { value, .. }
-        | CompiledMatcher::StartsWith { value, .. }
-        | CompiledMatcher::EndsWith { value, .. } => {
+        CompiledMatcher::Contains {
+            value,
+            case_insensitive,
+        }
+        | CompiledMatcher::StartsWith {
+            value,
+            case_insensitive,
+        }
+        | CompiledMatcher::EndsWith {
+            value,
+            case_insensitive,
+        } => {
             out.entry(field.to_string())
                 .or_default()
-                .push(value.clone());
+                .push(bloom_needle(value, *case_insensitive));
         }
-        CompiledMatcher::AhoCorasickSet { needles, .. } => {
-            // The optimizer stores the pre-lowered needles on the variant so
-            // the bloom builder can recover them without inspecting the
-            // automaton's private state.
+        CompiledMatcher::AhoCorasickSet {
+            needles,
+            case_insensitive,
+            ..
+        } => {
+            // Case-insensitive needles are already lowered by the optimizer,
+            // while `|cased` needles retain their original spelling.
             let entry = out.entry(field.to_string()).or_default();
-            entry.extend(needles.iter().cloned());
+            entry.extend(
+                needles
+                    .iter()
+                    .map(|needle| bloom_needle(needle, *case_insensitive)),
+            );
         }
         CompiledMatcher::AnyOf(children) | CompiledMatcher::AllOf(children) => {
             for child in children {
@@ -575,6 +591,24 @@ fn extract_from_matcher(
         // is excluded deliberately so the rule index keeps its monopoly
         // there.
         _ => {}
+    }
+}
+
+/// Convert a matcher needle into the bloom's lowered comparison space.
+///
+/// Lowering an ASCII cased needle is a sound necessary condition: an exact
+/// cased match remains present after both strings are ASCII-lowered. Unicode
+/// lowercasing is context-sensitive, so separately lowering a cased needle
+/// and its containing haystack can change a character such as Greek sigma
+/// differently. Return an unrepresentable sentinel in that case, which makes
+/// [`needles_are_representable`] disable the field's filter.
+fn bloom_needle(value: &str, case_insensitive: bool) -> String {
+    if case_insensitive {
+        value.to_string()
+    } else if value.is_ascii() {
+        value.to_ascii_lowercase()
+    } else {
+        String::new()
     }
 }
 
@@ -875,6 +909,36 @@ detection:
             bloom.probe("CommandLine", "execute WHOAMI /all"),
             BloomVerdict::MaybeMatch
         );
+    }
+
+    #[test]
+    fn cased_uppercase_probe_cannot_be_rejected() {
+        let yaml = r#"
+title: Cased
+detection:
+    selection:
+        CommandLine|contains|cased: 'CMD.EXE'
+    condition: selection
+"#;
+        let bloom = bloom_from(yaml);
+        assert_eq!(
+            bloom.probe("CommandLine", "CMD.EXE"),
+            BloomVerdict::MaybeMatch
+        );
+    }
+
+    #[test]
+    fn cased_unicode_needle_disables_field_filter() {
+        let yaml = r#"
+title: UnicodeCased
+detection:
+    selection:
+        CommandLine|contains|cased: 'AΣ'
+    condition: selection
+"#;
+        let bloom = bloom_from(yaml);
+        assert_eq!(bloom.field_count(), 0);
+        assert_eq!(bloom.probe("CommandLine", "AΣX"), BloomVerdict::MaybeMatch);
     }
 
     #[test]

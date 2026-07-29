@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Cased substring bloom soundness
+
+The bloom prefilter now normalizes ASCII `|cased` substring needles into the same comparison space used for event probes, preventing uppercase patterns such as `CMD.EXE` from being rejected before evaluation. Non-ASCII cased needles conservatively disable the field's bloom filter because context-sensitive Unicode lowercasing cannot preserve every substring relation.
+
 ### Representative performance regression gates (#409)
 
 Representative SigmaHQ performance now has a checked-in CI contract. Pull requests that touch the evaluator or performance harness build the PR and its base revision on the same runner, run the same load-corrected median-of-three offline matrix, verify match counts, and reject a head/base throughput ratio below 0.5. The deliberately coarse floor catches roughly 2x regressions without treating shared-runner variance as a precise benchmark. Weekly and manually dispatched runs report bootstrap 95% confidence intervals over five samples and retain the full offline/daemon matrices and raw environment data for 90 days.

@@ -400,6 +400,16 @@ detection:
 "#,
     ),
     (
+        "all-uppercase-cased-modifier",
+        r#"
+title: AllUppercaseCased
+detection:
+    selection:
+        CommandLine|contains|cased: 'CMD.EXE'
+    condition: selection
+"#,
+    ),
+    (
         "unicode-values",
         r#"
 title: Unicode
@@ -434,6 +444,7 @@ fn battery_events() -> Vec<Value> {
         json!({"CommandLine": "nothing interesting here"}),
         json!({"CommandLine": "PowerShell.exe -Command x"}),
         json!({"CommandLine": "powershell.exe -command x"}),
+        json!({"CommandLine": "CMD.EXE"}),
         json!({"EventID": 4688}),
         json!({"EventID": "4688"}),
         json!({"EventID": 1}),
