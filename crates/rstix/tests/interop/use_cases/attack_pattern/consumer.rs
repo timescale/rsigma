@@ -105,9 +105,11 @@ pub fn assert_resolves_created_by_ref() {
 
 /// REQ-3.1-C-04 — Consumer processes Attack Pattern fields via query + leaf validate.
 ///
-/// Distinct from C-01 (wire re-serialize preservation + non-empty producer props): uses
-/// [`QueryableStixObject::get_field`] and runs [`KillChainPhase::validate`] /
-/// [`ExternalReference::validate`] on typed members.
+/// Distinct from C-01 (full wire re-serialize preservation): uses
+/// [`QueryableStixObject::get_field`] for `name` / `created_by_ref`, then runs
+/// [`KillChainPhase::validate`] / [`ExternalReference::validate`] on each typed
+/// member present on this fixture (cardinality taken from the wire object, not a
+/// generic non-empty producer-prop check).
 pub fn assert_processes_fields() {
     let relative = FIXTURE_TARGETS;
     let fixture = load_fixture(relative);
@@ -122,6 +124,10 @@ pub fn assert_processes_fields() {
     );
     let object_id = &use_case_ids[0];
     let stix_id = StixId::parse(object_id).expect("attack-pattern id");
+    let wire = objects
+        .iter()
+        .find(|obj| obj.get("id").and_then(Value::as_str) == Some(object_id.as_str()))
+        .unwrap_or_else(|| panic!("{relative}: wire attack-pattern {object_id}"));
     let ap = bundle
         .get_typed::<AttackPattern>(&stix_id)
         .unwrap_or_else(|| panic!("{relative}: typed attack-pattern {object_id}"));
@@ -132,6 +138,11 @@ pub fn assert_processes_fields() {
                 name,
                 ap.name.as_str(),
                 "{relative}: get_field(name) mismatch"
+            );
+            assert_eq!(
+                Some(name),
+                wire.get("name").and_then(Value::as_str),
+                "{relative}: get_field(name) must match wire"
             );
         }
         other => panic!("{relative}: expected QueryValue::Str for name, got {other:?}"),
@@ -148,22 +159,40 @@ pub fn assert_processes_fields() {
                 created_by.as_stix_id(),
                 "{relative}: get_field(created_by_ref) mismatch"
             );
+            assert_eq!(
+                Some(id.as_str()),
+                wire.get("created_by_ref").and_then(Value::as_str),
+                "{relative}: get_field(created_by_ref) must match wire"
+            );
         }
         other => panic!("{relative}: expected QueryValue::Id for created_by_ref, got {other:?}"),
     }
 
-    assert!(
-        !ap.kill_chain_phases.is_empty(),
-        "{relative}: kill_chain_phases required for leaf processing"
+    let wire_phase_len = wire
+        .get("kill_chain_phases")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    assert_eq!(
+        ap.kill_chain_phases.len(),
+        wire_phase_len,
+        "{relative}: typed kill_chain_phases length must match wire"
     );
     for phase in &ap.kill_chain_phases {
         phase
             .validate()
             .unwrap_or_else(|err| panic!("{relative}: kill_chain_phase.validate: {err}"));
     }
-    assert!(
-        !ap.common.external_references.is_empty(),
-        "{relative}: external_references required for leaf processing"
+
+    let wire_ref_len = wire
+        .get("external_references")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    assert_eq!(
+        ap.common.external_references.len(),
+        wire_ref_len,
+        "{relative}: typed external_references length must match wire"
     );
     for reference in &ap.common.external_references {
         reference

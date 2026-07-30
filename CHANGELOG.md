@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: tighten §3.1 Attack Pattern interop evidence
+
+Closes soft gaps left after #413 / #414 : `EX-4.2` pins wire `objects[1].id` / `objects[2].id` and requires bundle parse to equal the malware id's `StixIdError`; `P-04` scopes Zero diagnostics by structured `object_id` only; `C-04` matches query/typed field cardinality to the wire object instead of a non-empty overlap with `C-01`.
+
 ### Parallel daemon parsing and single-parse DLQ routing (#415)
 
 The daemon now parses each formatted input batch in parallel before taking the engine mutex. A separate ordering lock keeps exactly one batch in flight, so raw taps still see every line before parsing, decoded taps and observers retain input order, correlations run in order, output order is unchanged, and an in-flight batch remains attached to the engine snapshot it started with. Hot reload and correlation-state import/export coordinate with the same boundary.
@@ -13,7 +17,6 @@ The processor now reports failed input indices with its batch result. DLQ-enable
 On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, and 16 k6 VUs, the median of three same-build runs moved from 306,351 to 384,906 events/s at eight threads while one-thread throughput remained near 90,000 events/s. Eight-core scaling improved from 3.39x to 4.19x, or from 42% to 52% efficiency, and the measured parse share fell from about 40% to 27%. A zero-copy request-body span prototype did not improve throughput and was not retained.
 
 `rsigma_batch_phase_duration_seconds{phase="parse"|"evaluate"}` exposes cumulative batch time for the two measured regions. `scripts/perf/baseline-daemon.sh` reports their deltas and parse share after each run.
-
 ### jemalloc as the musl global allocator (#412)
 
 The released static binary is built against musl, whose mallocng serializes the concurrent allocation that `Engine::evaluate_batch` performs on every batch. That erased the daemon's multicore scaling in the released artifact: on the pinned SigmaHQ corpus with `--logsource-routing` the daemon reached 53,435 events/s across six cores while the same binary evaluated 57,463 events/s on one, so the fan-out returned less than nothing. musl targets now use jemalloc as the global allocator, which raises that daemon figure to 160,238 events/s on fewer cores (3.00x) and 95,505 from 36,875 without routing (2.59x). Single-threaded throughput moves only ~14%, and that disproportion is what identifies the cost as allocator contention rather than per-event work. Match counts are identical either way. Rule loading, being allocation-heavy, drops from 0.86 s to 0.49 s. glibc and macOS builds keep the system allocator since neither shows the contention, so nothing changes for a native build. Building the musl target now needs a C toolchain for `jemalloc-sys`, so the Docker builder installs `build-base`. Measured with `scripts/perf/baseline-eval.sh` and the new `scripts/perf/image-compare.sh`, which sees a class of change the native harnesses cannot.

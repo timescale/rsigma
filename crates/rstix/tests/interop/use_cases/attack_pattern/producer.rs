@@ -136,12 +136,11 @@ pub fn assert_spec_conformance() {
         "{relative}: MUST Error diagnostics present: {errors:?}"
     );
 
+    // Scoped Zero failures only via structured `object_id` (no Display/message matching).
     let scoped_zero_failures: Vec<_> = report
         .diagnostics()
         .filter(|d| {
-            let on_ap =
-                d.object_id.as_ref() == Some(&ap_id) || d.message.contains(object_id.as_str());
-            on_ap && Leniency::Zero.fails_validation(d.severity)
+            d.object_id.as_ref() == Some(&ap_id) && Leniency::Zero.fails_validation(d.severity)
         })
         .collect();
     assert!(
