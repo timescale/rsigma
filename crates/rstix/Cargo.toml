@@ -82,7 +82,7 @@ p12-keystore = { version = "0.3", optional = true }
 [dev-dependencies]
 linkme = "0.3"
 pastey = "0.2"
-toml = "0.8"
+toml = "1.1"
 wiremock = "0.6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
