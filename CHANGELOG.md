@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Sustained-throughput tuning walkthrough
+### Sustained-throughput tuning walkthrough (#430)
 
 The performance guide now provides one end-to-end recipe for sizing rayon, enabling logsource routing, batching sustained traffic, selecting the detection in-flight depth, generating representative HTTP load, and distinguishing engine-only benchmarks from production sink capacity. It also consolidates the measured gains and the final 61.7% eight-worker efficiency result.
 
