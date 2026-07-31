@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Sustained-throughput tuning walkthrough
+
+The performance guide now provides one end-to-end recipe for sizing rayon, enabling logsource routing, batching sustained traffic, selecting the detection in-flight depth, generating representative HTTP load, and distinguishing engine-only benchmarks from production sink capacity. It also consolidates the measured gains and the final 61.7% eight-worker efficiency result.
+
 ### Cross-architecture artifact scaling gate (#429)
 
 The weekly/manual performance workflow now compares detection depths 4 and 5 on dedicated eight-core amd64 and arm64 runners for both native glibc release binaries and static musl image binaries. Alternating five-run samples gate on a 0.98 throughput ratio and no more than a 0.8 percentage-point increase in backpressure. The first four-row validation retained depth 5 with throughput ratios from 0.9985x to 1.0201x and lower backpressure in every row.

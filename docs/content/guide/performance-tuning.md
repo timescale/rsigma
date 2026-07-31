@@ -126,9 +126,17 @@ These two only matter for the streaming daemon, not for `engine eval`.
 A typical high-throughput configuration:
 
 ```bash
-rsigma engine daemon -r rules/ \
+RAYON_NUM_THREADS=8 \
+RSIGMA_DETECT_INFLIGHT=5 \
+RUST_LOG=warn \
+rsigma engine daemon \
+    --rules rules/ \
+    --input http \
+    --api-addr 127.0.0.1:19090 \
+    --logsource-routing \
+    --batch-size 512 \
     --buffer-size 50000 \
-    --batch-size 128
+    --output 'file:///var/lib/rsigma/detections.ndjson'
 ```
 
 The daemon does not wait for a batch to fill: it blocks for the first event, then drains up to `--batch-size` events already waiting in the queue. A larger value therefore increases the maximum processing quantum rather than adding a batch-fill timer. Lower it when short bursts need the smallest tail latency, or raise it when sustained load and a large corpus justify more parallel work per lock acquisition. The effective value never exceeds `--buffer-size`; the published SigmaHQ baseline found 512 best on sustained load.
@@ -136,6 +144,41 @@ The daemon does not wait for a batch to fill: it blocks for the first event, the
 Formatted input parsing fans across the same rayon pool before engine evaluation. When there are no correlation rules, several batches may be in flight so one batch's serial merge can overlap another's rayon work; set `RSIGMA_DETECT_INFLIGHT=1` to force the older single-batch path. Correlation engines stay one batch at a time. Raising `RAYON_NUM_THREADS` beyond the physical performance-core count should not be expected to scale linearly. Use `rsigma_batch_phase_duration_seconds` (`parse`, `decode_merge`, `observe`, `evaluate`, `result_merge`, `dispatch`) to rank where batch time goes on your workload.
 
 `--include-event` clones the complete input event into every detection result. Its cost scales with matches rather than inputs: the raw Windows baseline produces about 3 matches per event without routing and about 0.02 with routing, so measure this option on the actual match volume. The checked-in daemon matrix includes both forms, a match-heavy lane, and a handcrafted lane covering event-count, value-count, value-sum, and ordered-temporal correlations; the pinned SigmaHQ tree itself contains no correlation rules.
+
+### Walkthrough: maximize sustained detection throughput
+
+This recipe targets a detection-only daemon under sustained load. Correlation rules force one batch in flight because their state updates are ordered, while enrichment, serialization, and durable sinks can become the bottleneck on match-heavy workloads.
+
+1. **Use a release artifact.** Native glibc builds and the released static musl image both scale correctly; the musl artifact selects jemalloc automatically. Debug builds are not representative.
+2. **Size rayon to the performance cores.** Start with one rayon worker per physical performance core, such as `RAYON_NUM_THREADS=8` on an eight-core machine. More workers can help on SMT-only servers, but benchmark them rather than assuming logical CPU count is optimal.
+3. **Enable logsource routing.** `--logsource-routing` is both a performance optimization and a correctness filter when events carry `product`, `service`, or `category`. Configure `--event-logsource` or `--logsource-field-map` when those hints do not use the default event fields.
+4. **Keep enough work ready.** Use `--batch-size 512` for sustained SigmaHQ-shaped traffic and a larger bounded queue such as `--buffer-size 50000`. The default batch size of 128 remains the latency-conscious general default.
+5. **Keep five detection batches in flight at eight or more workers.** Five is already the default at that size; setting `RSIGMA_DETECT_INFLIGHT=5` makes a benchmark reproducible. Do not raise it for correlation rules, and retune before carrying five to a substantially different worker count or workload.
+6. **Avoid optional work you do not need.** Keep `--include-event`, `--bloom-prefilter`, and `--cross-rule-ac` off unless workload-specific measurements justify them. In particular, adding `--cross-rule-ac` to routing reduced measured SigmaHQ throughput by 27-35%.
+7. **Drive the daemon hard enough to fill batches.** A checkout can reproduce the sustained HTTP lane with:
+
+```bash
+LANE=target/perf-fixtures/events/raw_windows.ndjson \
+URL=http://127.0.0.1:19090/api/v1/events \
+BATCH=500 \
+VUS=16 \
+DURATION=30s \
+k6 run scripts/perf/daemon-load.js
+```
+
+For an engine-only ceiling, temporarily replace the production sink with `--output 'file:///dev/null'`. Do not use `/dev/null` to estimate end-to-end capacity for a durable NATS, OTLP, or file sink.
+
+Watch `rsigma_input_queue_depth`, `rsigma_back_pressure_events_total`, process CPU, and the batch phase durations while testing. Full queues plus low CPU indicate an upstream or scheduling limit; high CPU plus rising backpressure means the engine has reached its current capacity; low engine pressure plus a growing sink queue points to delivery rather than detection.
+
+### What the tuning work improved
+
+The improvements below are separate same-build comparisons on the pinned SigmaHQ raw Windows workload, not numbers that should be multiplied together:
+
+- Witness-based candidate indexing raised the four representative default lanes by 13.0-22.8x over full residual evaluation and kept p95 candidate sets at 0.29-3.86% of loaded rules.
+- Raising the daemon batch size from 1 to 128 moved sustained throughput from 28.6k to 157.4k events/s, a 5.5x gain.
+- Allowing four correlation-free batches in flight moved the eight-worker routed lane from about 520k to 654k events/s, a 26% gain over one batch in flight while preserving sink and acknowledgment order.
+- Retuning four in-flight batches to five moved the same-host median from about 665k to 708k events/s, a 6.5% gain. Native Linux artifact validation measured depth-five/depth-four ratios of 1.0201 on amd64 glibc, 0.9985 on amd64 musl, 1.0166 on arm64 glibc, and 1.0095 on arm64 musl, with lower backpressure in every row.
+- The final routed operating point measured 152.8k events/s at one worker and 754.8k at eight workers, or 61.7% multicore efficiency. This is a substantial throughput improvement, but it did not meet the 70% target.
 
 ## Memory pressure and correlation state
 
