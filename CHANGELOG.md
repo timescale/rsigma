@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Deeper concurrent detection pipeline
+### Deeper concurrent detection pipeline (#428)
 
 Detection-only daemons with eight or more rayon workers now keep five batches in flight by default instead of four. The sequence-numbered reducer continues to restore sink and ack order, correlation engines remain single-batch, and `RSIGMA_DETECT_INFLIGHT` still overrides the default up to 8. On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, eight rayon threads, and 16 k6 VUs, order-balanced same-machine runs improved median throughput from about 665k to 708k events/s.
 
