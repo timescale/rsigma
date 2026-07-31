@@ -45,10 +45,6 @@ count_processed() {
     curl -sf "${metrics}" | awk '/^rsigma_events_processed_total/ {sum += $2} END {printf "%d", sum}'
 }
 
-count_backpressure() {
-    curl -sf "${metrics}" | awk '/^rsigma_back_pressure_events_total/ {sum += $2} END {printf "%d", sum}'
-}
-
 phase_seconds() {
     curl -sf "${metrics}" | awk -v phase="$1" '
         $1 == "rsigma_batch_phase_duration_seconds_sum{phase=\"" phase "\"}" {
@@ -60,7 +56,6 @@ phase_seconds() {
 }
 
 before="$(count_processed)"
-backpressure_before="$(count_backpressure)"
 phase_before=()
 for phase in "${phases[@]}"; do
     phase_before+=("$(phase_seconds "${phase}")")
@@ -100,22 +95,18 @@ for _ in $(seq 1 60); do
 done
 end="$(python3 -c 'import time; print(time.time())')"
 after="$(count_processed)"
-backpressure_after="$(count_backpressure)"
 phase_after=()
 for phase in "${phases[@]}"; do
     phase_after+=("$(phase_seconds "${phase}")")
 done
 
-python3 - "$before" "$after" "$backpressure_before" "$backpressure_after" \
-    "$start" "$end" "$lane" "${phases[@]}" -- \
+python3 - "$before" "$after" "$start" "$end" "$lane" "${phases[@]}" -- \
     "${phase_before[@]}" -- "${phase_after[@]}" <<'PY'
 import sys
 
 args = sys.argv[1:]
 before = int(args.pop(0))
 after = int(args.pop(0))
-backpressure_before = int(args.pop(0))
-backpressure_after = int(args.pop(0))
 start = float(args.pop(0))
 end = float(args.pop(0))
 lane = args.pop(0)
@@ -128,7 +119,6 @@ before_vals = [float(v) for v in args[:sep]]
 after_vals = [float(v) for v in args[sep + 1 :]]
 
 n = after - before
-backpressure = backpressure_after - backpressure_before
 secs = end - start
 deltas = [after_vals[i] - before_vals[i] for i in range(len(phases))]
 measured = sum(deltas)
@@ -140,7 +130,7 @@ phase_parts = " ".join(
     for phase, delta, share in zip(phases, deltas, shares)
 )
 print(
-    f"lane={lane} processed={n} backpressure={backpressure} "
-    f"wall={secs:.1f}s eps={n / max(secs, 1e-9):.0f} {phase_parts}"
+    f"lane={lane} processed={n} wall={secs:.1f}s eps={n / max(secs, 1e-9):.0f} "
+    f"{phase_parts}"
 )
 PY
