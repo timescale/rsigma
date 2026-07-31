@@ -174,7 +174,7 @@ jobs:
             runner: ubuntu-latest-8-cores-TJ
             target: x86_64-unknown-linux-gnu
           - arch: arm64
-            runner: cloud-image-runner-ubuntu-24-arm64
+            runner: cloud-image-runner-arm64
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
