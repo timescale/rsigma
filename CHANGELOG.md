@@ -4,13 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Deeper concurrent detection pipeline
+
+Detection-only daemons with eight or more rayon workers now keep five batches in flight by default instead of four. The sequence-numbered reducer continues to restore sink and ack order, correlation engines remain single-batch, and `RSIGMA_DETECT_INFLIGHT` still overrides the default up to 8. On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, eight rayon threads, and 16 k6 VUs, order-balanced same-machine runs improved median throughput from about 665k to 708k events/s.
+
 ### Short-circuit nonmatching condition evaluation (#427)
 
 Rule evaluation now decides the condition result before collecting matched-selection details. `any` and threshold selectors stop once their result is known, while the detail pass runs only for matching rules. On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, and 16 k6 VUs, order-balanced same-machine runs improved median throughput from about 128k to 129k events/s at one thread and from about 643k to 650k events/s at eight threads.
 
 ### Concurrent detection for correlation-free engines (#426)
 
-When the loaded rule set has no correlation rules, the daemon may evaluate more than one input batch at a time. Detection-only and routed engines share the engine under a read lock; a sequence-numbered reducer restores sink and ack order before dispatch. Correlation engines stay single-batch and exclusive. The default in-flight depth scales with the rayon pool (1 on a single worker, up to 4 on eight or more) and can be overridden with `RSIGMA_DETECT_INFLIGHT` (capped at 8).
+When the loaded rule set has no correlation rules, the daemon may evaluate more than one input batch at a time. Detection-only and routed engines share the engine under a read lock; a sequence-numbered reducer restores sink and ack order before dispatch. Correlation engines stay single-batch and exclusive. The default in-flight depth scales with the rayon pool (1 on a single worker, up to 5 on eight or more) and can be overridden with `RSIGMA_DETECT_INFLIGHT` (capped at 8).
 
 On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, and 16 k6 VUs, the median of three same-machine runs at eight threads moved from about 520k events/s with one in-flight batch to about 615k with two and about 654k with four, against a one-thread median of about 138k events/s on the same build.
 

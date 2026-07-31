@@ -298,6 +298,15 @@ pub struct DaemonConfig {
     pub tls_state: Option<super::tls::TlsState>,
 }
 
+fn default_detect_inflight(workers: usize) -> usize {
+    match workers {
+        0 | 1 => 1,
+        2..=3 => 2,
+        4..=7 => 3,
+        _ => 5,
+    }
+}
+
 pub async fn run_daemon(config: DaemonConfig) {
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
@@ -1485,12 +1494,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                     .map(|n| n.get())
                     .unwrap_or(1)
             });
-        let default = match workers {
-            0 | 1 => 1,
-            2..=3 => 2,
-            4..=7 => 3,
-            _ => 4,
-        };
+        let default = default_detect_inflight(workers);
         std::env::var("RSIGMA_DETECT_INFLIGHT")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -4289,6 +4293,15 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detection_inflight_default_scales_to_five() {
+        assert_eq!(default_detect_inflight(1), 1);
+        assert_eq!(default_detect_inflight(2), 2);
+        assert_eq!(default_detect_inflight(4), 3);
+        assert_eq!(default_detect_inflight(8), 5);
+        assert_eq!(default_detect_inflight(16), 5);
+    }
 
     #[cfg(feature = "daemon-otlp")]
     mod otlp_grpc_auth {
