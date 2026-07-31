@@ -343,6 +343,60 @@ fn test_eval_condition_and() {
 }
 
 #[test]
+fn boolean_condition_pass_agrees_with_detail_pass() {
+    use rsigma_parser::SelectorPattern;
+
+    let mut detections = HashMap::new();
+    for (name, field, value) in [
+        ("selection_a", "a", "one"),
+        ("selection_b", "b", "two"),
+        ("filter", "blocked", "yes"),
+    ] {
+        detections.insert(
+            name.to_string(),
+            compile_detection(&Detection::AllOf(vec![make_item(
+                field,
+                &[],
+                vec![SigmaValue::String(SigmaString::new(value))],
+            )]))
+            .unwrap(),
+        );
+    }
+
+    let selector = |quantifier| ConditionExpr::Selector {
+        quantifier,
+        pattern: SelectorPattern::Pattern("selection_*".to_string()),
+    };
+    let conditions = [
+        selector(Quantifier::Any),
+        selector(Quantifier::All),
+        selector(Quantifier::Count(2)),
+        selector(Quantifier::Count(0)),
+        ConditionExpr::Not(Box::new(selector(Quantifier::Any))),
+    ];
+    let events = [
+        json!({}),
+        json!({"a": "one"}),
+        json!({"a": "one", "b": "two"}),
+        json!({"a": "no", "b": "two", "blocked": "yes"}),
+    ];
+
+    for condition in &conditions {
+        for value in &events {
+            let event = JsonEvent::borrow(value);
+            let fast = eval_condition_matches_with_bloom(
+                condition,
+                &detections,
+                &event,
+                &crate::engine::bloom_index::NoBloom,
+            );
+            let detailed = eval_condition(condition, &detections, &event, &mut Vec::new());
+            assert_eq!(fast, detailed, "condition={condition:?}, event={value}");
+        }
+    }
+}
+
+#[test]
 fn test_compile_expand_modifier() {
     let items = vec![make_item(
         "path",

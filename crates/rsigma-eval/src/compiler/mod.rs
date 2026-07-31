@@ -292,14 +292,16 @@ where
     B: crate::engine::bloom_index::BloomLookup,
 {
     for condition in &rule.conditions {
-        let mut matched_selections = Vec::new();
-        if eval_condition_with_bloom(
-            condition,
-            &rule.detections,
-            event,
-            &mut matched_selections,
-            bloom,
-        ) {
+        if eval_condition_matches_with_bloom(condition, &rule.detections, event, bloom) {
+            let mut matched_selections = Vec::new();
+            let matched = eval_condition_with_bloom(
+                condition,
+                &rule.detections,
+                event,
+                &mut matched_selections,
+                bloom,
+            );
+            debug_assert!(matched, "detail pass must agree with boolean pass");
             let matched_fields =
                 collect_field_matches(&matched_selections, &rule.detections, event, level);
 
@@ -990,6 +992,65 @@ pub fn eval_condition(
         matched_selections,
         &crate::engine::bloom_index::NoBloom,
     )
+}
+
+/// Evaluate a condition without collecting match details.
+///
+/// This is the production fast path for the common nonmatch case. Selectors
+/// can stop as soon as their quantifier is decided; matching rules run the
+/// detail-collecting evaluator once afterward.
+fn eval_condition_matches_with_bloom<E, B>(
+    expr: &ConditionExpr,
+    detections: &HashMap<String, CompiledDetection>,
+    event: &E,
+    bloom: &B,
+) -> bool
+where
+    E: Event,
+    B: crate::engine::bloom_index::BloomLookup,
+{
+    match expr {
+        ConditionExpr::Identifier(name) => detections
+            .get(name)
+            .is_some_and(|det| eval_detection_with_bloom(det, event, bloom)),
+        ConditionExpr::And(exprs) => exprs
+            .iter()
+            .all(|e| eval_condition_matches_with_bloom(e, detections, event, bloom)),
+        ConditionExpr::Or(exprs) => exprs
+            .iter()
+            .any(|e| eval_condition_matches_with_bloom(e, detections, event, bloom)),
+        ConditionExpr::Not(inner) => {
+            !eval_condition_matches_with_bloom(inner, detections, event, bloom)
+        }
+        ConditionExpr::Selector {
+            quantifier,
+            pattern,
+        } => {
+            let mut matching = detections
+                .iter()
+                .filter(|(name, _)| pattern.matches_detection_name(name));
+            match quantifier {
+                Quantifier::Any => {
+                    matching.any(|(_, det)| eval_detection_with_bloom(det, event, bloom))
+                }
+                Quantifier::All => {
+                    matching.all(|(_, det)| eval_detection_with_bloom(det, event, bloom))
+                }
+                Quantifier::Count(required) => {
+                    if *required == 0 {
+                        return true;
+                    }
+                    let mut matched = 0u64;
+                    matching.any(|(_, det)| {
+                        if eval_detection_with_bloom(det, event, bloom) {
+                            matched += 1;
+                        }
+                        matched >= *required
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// Bloom-aware version of [`eval_condition`].
