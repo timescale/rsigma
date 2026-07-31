@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Short-circuit nonmatching condition evaluation
+### Short-circuit nonmatching condition evaluation (#427)
 
 Rule evaluation now decides the condition result before collecting matched-selection details. `any` and threshold selectors stop once their result is known, while the detail pass runs only for matching rules. On the pinned SigmaHQ raw Windows workload with `--logsource-routing`, `--batch-size 512`, and 16 k6 VUs, order-balanced same-machine runs improved median throughput from about 128k to 129k events/s at one thread and from about 643k to 650k events/s at eight threads.
 
