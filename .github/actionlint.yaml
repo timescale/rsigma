@@ -2,7 +2,7 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - ubuntu-latest-8-cores-TJ
-    - cloud-image-runner-arm64
+    - cloud-image-runner-ubuntu-24-arm64
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.
