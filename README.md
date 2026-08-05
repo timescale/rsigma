@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Ftimescale%2Frsigma.svg)](https://mcptoplist.com/server/glama%2Ftimescale%2Frsigma)
+
 <p align="center">
     <a href="https://github.com/timescale/rsigma">
         <picture>
