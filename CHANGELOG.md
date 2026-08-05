@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-05
+
+**TL;DR**
+RSigma v0.21.0 is the "daemon throughput and STIX interop" release: the evaluation and daemon path gain witness-based candidate indexing, parallel parsing, multicore batching, and jemalloc on musl; `rstix` completes OASIS STIX 2.1 Interoperability use-case coverage with a self-certification CI gate; and detection engineering gains verified rule tuning, OCSF findings, and post-pipeline rule inspection.
+* Daemon throughput: jemalloc for the musl allocator (#412, thanks to @alltilla), parallel batch parsing and single-parse DLQ (#415), default multicore batching (#408), witness-based candidate indexing with pre-filter soundness fixes (#406), concurrent multi-batch detection (#426, #428), short-circuit condition evaluation (#427), ASCII case-insensitive Aho-Corasick and top-level key probes (#420, #419), plus representative performance baselines and cross-architecture gates (#404, #409, #429).
+* `rstix` STIX interop: OASIS CSD01 golden harness through all 21 use cases (#403, #410, #413, #433, #438), self-certification CI gate (#440), STIX 2.1 wire conformance (#388), and TAXII collection ingest with DANE DNSSEC (#387, #381), thanks to @SecurityEnthusiast.
+* Detection engineering: verified false-positive-driven `rule tune` (#431), post-pipeline rule retrieval for embedders (#437), OCSF Detection Finding output (#397), incident bundle export (#400), and list-valued `add_condition` (#399, thanks to @frack113).
+* Operator surfaces: per-sink output formats (#396), complete `--output-format` coverage (#389), and a documentation accuracy overhaul (#435).
+* Dependencies: Dependabot batches across Rust, CI actions, and the VS Code extension (#402, #432, #444).
+
 ### Dependency batch (Aug 2026 vscode) (#444)
 
 VS Code extension transitive security updates in `editors/vscode`: `undici` 7.29.0, `brace-expansion` 5.0.9, and `fast-uri` 3.1.5, with npm overrides floors raised to match.
@@ -290,6 +300,8 @@ Rolls up six open Dependabot PRs into a single merge. Rust (workspace `Cargo.loc
 
 - **`TaxiiClientConfig::dane_require_dnssec`** — default `true` when `ServerTrustPolicy::Dane`; DNSSEC-validates TLSA prefetch and SRV discovery (TAXII §8.5.2 SHOULD). Set `false` for unsigned lab DNS only.
 - **`DnsLookupOptions`** — `validate_dnssec` on `resolve_*_with_options` helpers (default `false` for standalone calls).
+
+[v0.20.0...v0.21.0](https://github.com/timescale/rsigma/compare/v0.20.0...v0.21.0)
 
 ## [0.20.0] - 2026-07-22
 
@@ -2800,6 +2812,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.21.0]: https://github.com/timescale/rsigma/releases/tag/v0.21.0
 [0.20.0]: https://github.com/timescale/rsigma/releases/tag/v0.20.0
 [0.19.0]: https://github.com/timescale/rsigma/releases/tag/v0.19.0
 [0.18.0]: https://github.com/timescale/rsigma/releases/tag/v0.18.0
