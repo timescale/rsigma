@@ -41,7 +41,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: false
       - name: Prepare artifact directory
@@ -105,7 +105,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prepare artifact directory
@@ -177,7 +177,7 @@ jobs:
             runner: rsigma-perf-arm64-8
             target: aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust stable and target
@@ -187,7 +187,7 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup override set stable
           rustup target add "${TARGET}"
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Verify performance runner
