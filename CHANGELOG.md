@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### rsigma-mcp: rmcp 3.0
+### rsigma-mcp: rmcp 3.0 (#467)
 
 Migrates `rsigma-mcp` from `rmcp` 2.2 to 3.0.1 (#448). The SDK models MCP 2026-07-28 (MRTR-aware `read_resource` responses, cache hints on list results). `#[tool]` methods keep their signatures; the manual `ServerHandler` resource methods wrap `ReadResourceResponse` and build list results with `ListResourcesResult::with_all_items`. `serve()` and Streamable HTTP still use the legacy `initialize` handshake, so existing clients keep the 2025-11-25 wire shape.
 
