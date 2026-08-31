@@ -127,10 +127,11 @@ A workspace build produces every binary: the CLI (`target/release/rsigma`) and t
 
 ```bash
 rsigma --version
+rsigma --features
 rsigma --help
 ```
 
-You should see `rsigma {{ rsigma.version }}` and a list of the top-level command groups (`engine`, `rule`, `backend`, `pipeline`, `config`, and `mcp` when built with the `mcp` feature).
+You should see `rsigma {{ rsigma.version }}`, the Cargo features compiled into that binary, and a list of the top-level command groups (`engine`, `rule`, `backend`, `pipeline`, `config`, and `mcp` when built with the `mcp` feature).
 
 ## Next steps
 

@@ -92,7 +92,7 @@ The flag is feature-gated. The default `cargo install rsigma` does NOT include i
 cargo install --locked rsigma --features daachorse-index
 ```
 
-The released archives (`x86_64-unknown-linux-gnu.tar.gz` and friends) and the GHCR Docker image are built with `--all-features`, so they already include the flag. Run `rsigma engine eval --help | grep cross-rule-ac` to confirm.
+The released archives (`x86_64-unknown-linux-gnu.tar.gz` and friends) and the GHCR Docker image are built with `--all-features`, so they already include the flag. Run `rsigma --features | grep -qx daachorse-index` to confirm.
 
 ```bash
 rsigma engine eval -r rules/ --cross-rule-ac -e @events.ndjson
