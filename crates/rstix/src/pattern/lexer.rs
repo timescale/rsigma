@@ -412,9 +412,9 @@ fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
         return Err("hex literal must have an even number of digits".into());
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = hex_nibble(chunk[0]).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
-        let lo = hex_nibble(chunk[1]).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
+    for &[hi_byte, lo_byte] in bytes.as_chunks::<2>().0 {
+        let hi = hex_nibble(hi_byte).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
+        let lo = hex_nibble(lo_byte).ok_or_else(|| format!("invalid hex digit in {raw:?}"))?;
         out.push((hi << 4) | lo);
     }
     Ok(out)

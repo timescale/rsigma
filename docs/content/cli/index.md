@@ -31,6 +31,8 @@ Every subcommand accepts five global flags. They share the same layered preceden
 
 `--log-format` adds the diagnostic-log stream alongside the existing stdout/stderr output; it never replaces them. See [Observability](../guide/observability.md) for the full RUST_LOG target catalog. For the output formats and color resolution model see the [Output reference](../reference/output.md).
 
+`--version` and `--features` are top-level introspection flags, not per-command globals. `--features` prints the Cargo features compiled into this binary, one name per line. `--version` and the `--help` footer carry the same list. See [Feature Flags](../reference/feature-flags.md#detecting-features-at-runtime).
+
 ## Command tree
 
 ```text

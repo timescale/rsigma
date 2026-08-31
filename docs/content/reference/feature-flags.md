@@ -116,17 +116,19 @@ If a feature combination matters to you (and especially if a build with `--no-de
 
 ## Detecting features at runtime
 
-The binary's `--help` enumerates only the flags compiled in. If a NATS flag is missing from `rsigma engine daemon --help`, the binary was built without `daemon-nats`. Equivalent shells for the other gated surfaces:
+The binary embeds the `rsigma` crate's enabled Cargo features at compile time. `--help` is not a detector: several features have no unique flag (`evtx`, `logfmt`, `cef`, `daemon-otlp`), and `--input-format` is a free string so clap never lists the gated values.
 
 ```bash
-# daachorse-index?
-rsigma engine daemon --help | grep -q cross-rule-ac && echo on || echo off
+# One enabled feature per line (script-friendly).
+rsigma --features
+rsigma --features | grep -qx daemon-nats && echo on || echo off
 
-# evtx?
-echo "" | rsigma engine eval -r /dev/null -e @/dev/null --input-format json 2>&1 | grep -q "evtx" || echo "evtx feature not required for JSON inputs"
+# Same list on the version line and at the bottom of `--help`.
+rsigma --version
+rsigma --help
 ```
 
-There is no first-class `rsigma --features` introspection flag. Use `--help` presence checks as above.
+`rsigma --features` prints only the optional features of the `rsigma` binary (`rsigma-cli` table above), sorted, one name per line. Library-crate features (`rsigma-eval`, `rsigma-runtime`, `rstix`, and the rest) are not listed; they matter at compile time for embedders, not for an installed CLI. Prebuilt release archives and the GHCR Docker image print every `rsigma-cli` feature. A default `cargo install rsigma` prints `daemon` only.
 
 ## See also
 

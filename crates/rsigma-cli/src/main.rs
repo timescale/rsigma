@@ -10,6 +10,7 @@ mod config;
 #[cfg(feature = "daemon")]
 mod daemon;
 pub(crate) mod exit_code;
+mod features;
 mod fix;
 pub(crate) mod logsource_opts;
 pub(crate) mod metrics_source;
@@ -91,6 +92,10 @@ struct Cli {
     /// summary footer but the operator still wants to see what happened.
     #[arg(long = "no-stats", global = true)]
     no_stats: bool,
+
+    /// Print compiled-in Cargo features and exit.
+    #[arg(long = "features")]
+    list_features: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -263,14 +268,28 @@ enum PipelineCommands {
 }
 
 fn main() {
+    // `rsigma --features` has no subcommand, so clap would reject it. Detect
+    // that invocation before `get_matches` and print the compile-time list.
+    if features::requested(std::env::args().skip(1)) {
+        features::print_enabled();
+        return;
+    }
+
     // Parse into `ArgMatches` (not just the typed `Cli`) so commands can ask
     // clap which flags were set explicitly on the command line. That drives
     // the config precedence (CLI flag > env > file > default).
-    let matches = Cli::command().get_matches();
+    let matches = Cli::command()
+        .long_version(features::long_version())
+        .after_help(features::help_footer())
+        .get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
+    if cli.list_features {
+        features::print_enabled();
+        return;
+    }
 
     // Daemon installs its own JSON subscriber unconditionally; only init for
     // other subcommands when the user opts in via --log-format.

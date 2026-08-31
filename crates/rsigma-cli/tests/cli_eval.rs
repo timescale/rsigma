@@ -751,7 +751,9 @@ fn version_flag() {
         .args(["--version"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("rsigma"));
+        .stdout(predicate::str::contains("rsigma"))
+        .stdout(predicate::str::contains("features:"))
+        .stdout(predicate::str::contains("rsigma rsigma").not());
 }
 
 #[test]
@@ -760,7 +762,30 @@ fn help_flag() {
         .args(["--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Parse, validate, and evaluate"));
+        .stdout(predicate::str::contains("Parse, validate, and evaluate"))
+        .stdout(predicate::str::contains("--features"))
+        .stdout(predicate::str::contains("Compiled-in features:"));
+}
+
+#[test]
+fn features_flag_prints_sorted_compiled_in_features() {
+    let output = rsigma().args(["--features"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|line| !line.is_empty()).collect();
+    let mut sorted = lines.clone();
+    sorted.sort_unstable();
+    assert_eq!(lines, sorted);
+    for name in &lines {
+        assert!(
+            name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+            "unexpected feature name {name}"
+        );
+    }
+    #[cfg(feature = "daemon")]
+    assert!(lines.contains(&"daemon"));
+    #[cfg(feature = "mcp")]
+    assert!(lines.contains(&"mcp"));
 }
 
 // ---------------------------------------------------------------------------

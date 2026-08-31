@@ -4,9 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs
+### rstix: clippy `chunks_exact_to_as_chunks`
 
-* Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page (#462).
+`Pattern` hex decoding walks pairs with `as_chunks::<2>()` so workspace clippy on Rust 1.98 (`-D warnings`) stays clean.
+
+### Compiled-in feature introspection (`rsigma --features`)
+
+`--help` is not a detector for Cargo features: several of them have no unique flag (`evtx`, `logfmt`, `cef`, `daemon-otlp`), and `--input-format` is a free string so clap never lists the gated values. The binary now embeds the enabled `rsigma` features at compile time. `rsigma --features` prints them one per line, `rsigma --version` includes the same list, and `rsigma --help` shows a "Compiled-in features" footer.
+
+### Docs (#462)
+
+* Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page.
 
 ### rstix: TAXII 2.1 TXC interop self-certification (C-1) (#451)
 

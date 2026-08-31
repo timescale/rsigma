@@ -67,6 +67,8 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 | `--no-stats` | off | Suppress only the trailing summary; progress messages still appear. |
 | `--log-format <FORMAT>` | unset | When set, initialises a stderr `tracing` subscriber in `text` or `json`. Diagnostic logs only; does not affect stdout. |
 
+`--version` and `--features` are top-level introspection flags (not per-command globals). `--features` prints the Cargo features compiled into this binary, one name per line; `--version` and the `--help` footer carry the same list.
+
 ## Subcommands
 
 Commands are grouped into four noun-led groups: `engine` (eval/daemon), `rule` (parse/validate/lint/fields/draft/tune/doc/backtest/coverage/scorecard/visibility/hygiene/condition/stdin), `backend` (convert/targets/formats), and `pipeline` (resolve).
