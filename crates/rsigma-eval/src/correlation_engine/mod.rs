@@ -44,6 +44,13 @@ use crate::rule_metadata::{RuleBundleMetadata, RuleMetadataLookup};
 /// Current snapshot schema version. Bump when the serialized format changes.
 const SNAPSHOT_VERSION: u32 = 1;
 
+/// Parent hops evaluated after a first-level correlation fire in one event.
+/// The first-level result is produced by `feed_detections`; each loop
+/// iteration here walks one parent. A chain longer than this is updated
+/// and emitted through this many hops, then leftover parents are dropped
+/// with a `WARN`.
+const MAX_CHAIN_DEPTH: usize = 10;
+
 /// Stateful correlation engine.
 ///
 /// Wraps the stateless `Engine` for detection rules and adds time-windowed
@@ -927,7 +934,6 @@ impl CorrelationEngine {
         ts: i64,
         out: &mut Vec<EvaluationResult>,
     ) {
-        const MAX_CHAIN_DEPTH: usize = 10;
         let mut pending: Vec<EvaluationResult> = fired.to_vec();
         let mut depth = 0;
 

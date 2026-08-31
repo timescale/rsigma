@@ -2838,6 +2838,117 @@ level: high
     );
 }
 
+/// Linear `event_count` chain of `levels` correlations, each `gte: 1`.
+/// `corr-0` references the detection; `corr-i` references `corr-(i-1)`.
+fn nested_event_count_chain_yaml(levels: usize) -> String {
+    let mut yaml = String::from(
+        r#"title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+"#,
+    );
+    for i in 0..levels {
+        let parent = if i == 0 {
+            "det-rule".to_string()
+        } else {
+            format!("corr-{}", i - 1)
+        };
+        yaml.push_str(&format!(
+            r#"---
+title: level {i}
+id: corr-{i}
+correlation:
+    type: event_count
+    rules:
+        - {parent}
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+"#
+        ));
+    }
+    yaml
+}
+
+fn process_one_click(engine: &mut CorrelationEngine) -> Vec<String> {
+    let v = json!({"action": "click", "User": "alice"});
+    let event = JsonEvent::borrow(&v);
+    engine
+        .process_event_at(&event, 1_000)
+        .correlations()
+        .map(|c| c.header.rule_title.clone())
+        .collect()
+}
+
+#[test]
+fn test_chaining_ten_levels_all_emit() {
+    let levels = MAX_CHAIN_DEPTH;
+    let collection = parse_sigma_yaml(&nested_event_count_chain_yaml(levels)).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    assert_eq!(engine.correlation_rule_count(), levels);
+
+    let titles = process_one_click(&mut engine);
+    let expected: Vec<String> = (0..levels).map(|i| format!("level {i}")).collect();
+    for title in &expected {
+        assert!(
+            titles.contains(title),
+            "10-deep chain must emit {title}: {titles:?}"
+        );
+    }
+    assert_eq!(titles.len(), levels, "exactly {levels} firings: {titles:?}");
+}
+
+#[test]
+fn test_chaining_eleventh_hop_is_dropped() {
+    // First-level fire + 10 parent hops emit corr-0 .. corr-10.
+    // corr-11 is the leftover hop past MAX_CHAIN_DEPTH: no emit, no window.
+    let levels = MAX_CHAIN_DEPTH + 2;
+    let collection = parse_sigma_yaml(&nested_event_count_chain_yaml(levels)).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    assert_eq!(engine.correlation_rule_count(), levels);
+
+    let titles = process_one_click(&mut engine);
+    for i in 0..=MAX_CHAIN_DEPTH {
+        let title = format!("level {i}");
+        assert!(
+            titles.contains(&title),
+            "hop {i} must still emit: {titles:?}"
+        );
+    }
+    assert!(
+        !titles.iter().any(|t| t == "level 11"),
+        "11th hop must not be emitted: {titles:?}"
+    );
+
+    let snap = engine.introspect();
+    let info = |id: &str| {
+        snap.correlations
+            .iter()
+            .find(|c| c.id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    assert_eq!(
+        info("corr-10").active_groups,
+        1,
+        "last in-cap hop has state"
+    );
+    assert_eq!(
+        info("corr-11").active_groups,
+        0,
+        "hop past the cap must not update window state"
+    );
+}
+
 #[test]
 fn test_correlation_cycle_transitive() {
     // Transitive cycle: A -> B -> C -> A
