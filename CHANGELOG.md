@@ -4,9 +4,9 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Emit nested correlation results
+### Emit nested correlation results (#468)
 
-A temporal (or any parent correlation) whose `rules:` list other correlations already updated window state and marked the parent `met`, but `chain_correlations` never appended those firings to the eval result. `engine eval` and the daemon therefore showed the inner `event_count` / `value_count` alerts and omitted the parent. Chained firings are now emitted, with the same suppression and reset action as first-level correlations. Parents that reference a child by `name` rather than `id` are resolved as well. Fixes issue 458.
+A temporal (or any parent correlation) whose `rules:` list other correlations already updated window state and marked the parent `met`, but `chain_correlations` never appended those firings to the eval result. `engine eval` and the daemon therefore showed the inner `event_count` / `value_count` alerts and omitted the parent. Chained firings are now emitted, with the same suppression and reset action as first-level correlations. Parents that reference a child by `name` rather than `id` are resolved as well. Fixes #458.
 
 ### rsigma-mcp: rmcp 3.0 (#467)
 
