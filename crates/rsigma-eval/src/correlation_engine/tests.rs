@@ -1379,6 +1379,12 @@ level: critical
                     .any(|c| c.header.rule_title == "Multiple failed logins"),
                 "Expected event_count correlation to fire"
             );
+            // temporal_ordered still needs the successful-login detection
+            assert!(
+                r.correlations()
+                    .all(|c| c.header.rule_title != "Brute Force Followed by Login"),
+                "temporal_ordered must not fire before the success detection"
+            );
         }
     }
 
@@ -1397,6 +1403,11 @@ level: critical
     assert_eq!(
         r.detections().next().unwrap().header.rule_title,
         "Successful login"
+    );
+    assert!(
+        r.correlations()
+            .any(|c| c.header.rule_title == "Brute Force Followed by Login"),
+        "chained temporal_ordered must be emitted, not only stored"
     );
 }
 
@@ -2593,6 +2604,348 @@ level: high
     assert!(
         result.is_ok(),
         "valid chain should not be rejected: {result:?}"
+    );
+}
+
+#[test]
+fn test_chaining_temporal_of_two_correlations() {
+    // Reproduces issue #458: a temporal whose rules are other correlations
+    // must emit when both children fire. The port-scan child groups by an
+    // extra field; the parent projects down to src_ip.
+    let yaml = r#"
+title: Firewall Drop Event
+id: drop-det
+logsource:
+    category: firewall
+detection:
+    selection:
+        action: block
+    condition: selection
+---
+title: Multiple Firewall Drops
+id: drop-corr
+correlation:
+    type: event_count
+    rules:
+        - drop-det
+    group-by:
+        - src_ip
+    timespan: 10m
+    condition:
+        gte: 3
+level: medium
+---
+title: Firewall Port Event
+id: port-det
+logsource:
+    category: firewall
+detection:
+    selection:
+        dst_port|exists: true
+    condition: selection
+---
+title: Port Scan
+id: port-corr
+correlation:
+    type: value_count
+    rules:
+        - port-det
+    group-by:
+        - src_ip
+        - dst_ip
+    timespan: 1m
+    condition:
+        gte: 3
+        field: dst_port
+level: medium
+---
+title: Firewall Temporal Correlation
+id: nest-temporal
+correlation:
+    type: temporal
+    rules:
+        - port-corr
+        - drop-corr
+    group-by:
+        - src_ip
+    timespan: 1h
+    condition:
+        gte: 2
+level: medium
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let ts = 1_000i64;
+    let ports = [21, 22, 23];
+    let mut last = None;
+    for (i, port) in ports.iter().enumerate() {
+        let v = json!({
+            "action": "block",
+            "src_ip": "10.1.1.1",
+            "dst_ip": "10.1.1.2",
+            "dst_port": port,
+        });
+        let event = JsonEvent::borrow(&v);
+        last = Some(engine.process_event_at(&event, ts + i as i64));
+    }
+    let r = last.expect("processed events");
+    let titles: Vec<_> = r
+        .correlations()
+        .map(|c| c.header.rule_title.as_str())
+        .collect();
+    assert!(
+        titles.contains(&"Multiple Firewall Drops"),
+        "inner event_count should fire: {titles:?}"
+    );
+    assert!(
+        titles.contains(&"Port Scan"),
+        "inner value_count should fire: {titles:?}"
+    );
+    assert!(
+        titles.contains(&"Firewall Temporal Correlation"),
+        "temporal of two correlations must be emitted: {titles:?}"
+    );
+}
+
+#[test]
+fn test_chaining_event_count_of_event_count() {
+    // detection -> corr-A (gte 2) -> corr-B (gte 2). Both parents must emit.
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let ts = 1_000i64;
+    for i in 0..3 {
+        let v = json!({"action": "click", "User": "alice"});
+        let event = JsonEvent::borrow(&v);
+        let r = engine.process_event_at(&event, ts + i);
+        if i == 1 {
+            let titles: Vec<_> = r
+                .correlations()
+                .map(|c| c.header.rule_title.as_str())
+                .collect();
+            assert_eq!(titles, ["correlation A"], "A fires once, B still at 1");
+        }
+        if i == 2 {
+            let titles: Vec<_> = r
+                .correlations()
+                .map(|c| c.header.rule_title.as_str())
+                .collect();
+            assert!(
+                titles.contains(&"correlation A") && titles.contains(&"correlation B"),
+                "second A fire must emit chained B: {titles:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_chaining_parent_referenced_by_child_name() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+name: corr_a_name
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr_a_name
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let ts = 1_000i64;
+    let mut last = None;
+    for i in 0..2 {
+        let v = json!({"action": "click", "User": "alice"});
+        let event = JsonEvent::borrow(&v);
+        last = Some(engine.process_event_at(&event, ts + i));
+    }
+    let r = last.expect("processed events");
+    let titles: Vec<_> = r
+        .correlations()
+        .map(|c| c.header.rule_title.as_str())
+        .collect();
+    assert!(
+        titles.contains(&"correlation A") && titles.contains(&"correlation B"),
+        "parent referenced by child name must emit: {titles:?}"
+    );
+}
+
+/// Linear `event_count` chain of `levels` correlations, each `gte: 1`.
+/// `corr-0` references the detection; `corr-i` references `corr-(i-1)`.
+fn nested_event_count_chain_yaml(levels: usize) -> String {
+    let mut yaml = String::from(
+        r#"title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+"#,
+    );
+    for i in 0..levels {
+        let parent = if i == 0 {
+            "det-rule".to_string()
+        } else {
+            format!("corr-{}", i - 1)
+        };
+        yaml.push_str(&format!(
+            r#"---
+title: level {i}
+id: corr-{i}
+correlation:
+    type: event_count
+    rules:
+        - {parent}
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+"#
+        ));
+    }
+    yaml
+}
+
+fn process_one_click(engine: &mut CorrelationEngine) -> Vec<String> {
+    let v = json!({"action": "click", "User": "alice"});
+    let event = JsonEvent::borrow(&v);
+    engine
+        .process_event_at(&event, 1_000)
+        .correlations()
+        .map(|c| c.header.rule_title.clone())
+        .collect()
+}
+
+#[test]
+fn test_chaining_ten_levels_all_emit() {
+    let levels = MAX_CHAIN_DEPTH;
+    let collection = parse_sigma_yaml(&nested_event_count_chain_yaml(levels)).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    assert_eq!(engine.correlation_rule_count(), levels);
+
+    let titles = process_one_click(&mut engine);
+    let expected: Vec<String> = (0..levels).map(|i| format!("level {i}")).collect();
+    for title in &expected {
+        assert!(
+            titles.contains(title),
+            "10-deep chain must emit {title}: {titles:?}"
+        );
+    }
+    assert_eq!(titles.len(), levels, "exactly {levels} firings: {titles:?}");
+}
+
+#[test]
+fn test_chaining_eleventh_hop_is_dropped() {
+    // First-level fire + 10 parent hops emit corr-0 .. corr-10.
+    // corr-11 is the leftover hop past MAX_CHAIN_DEPTH: no emit, no window.
+    let levels = MAX_CHAIN_DEPTH + 2;
+    let collection = parse_sigma_yaml(&nested_event_count_chain_yaml(levels)).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    assert_eq!(engine.correlation_rule_count(), levels);
+
+    let titles = process_one_click(&mut engine);
+    for i in 0..=MAX_CHAIN_DEPTH {
+        let title = format!("level {i}");
+        assert!(
+            titles.contains(&title),
+            "hop {i} must still emit: {titles:?}"
+        );
+    }
+    assert!(
+        !titles.iter().any(|t| t == "level 11"),
+        "11th hop must not be emitted: {titles:?}"
+    );
+
+    let snap = engine.introspect();
+    let info = |id: &str| {
+        snap.correlations
+            .iter()
+            .find(|c| c.id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    assert_eq!(
+        info("corr-10").active_groups,
+        1,
+        "last in-cap hop has state"
+    );
+    assert_eq!(
+        info("corr-11").active_groups,
+        0,
+        "hop past the cap must not update window state"
     );
 }
 
