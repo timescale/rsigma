@@ -91,7 +91,7 @@ jobs:
             "${RUNNER_TEMP}/wasm-smoke-target/wasm32-unknown-unknown/release/rsigma_wasm_smoke.wasm"
 
   msrv:
-    name: MSRV (1.88.0)
+    name: MSRV (1.95.0)
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo
@@ -100,11 +100,11 @@ jobs:
         with:
           persist-credentials: false
       # Install MSRV inline. No `rustup override set` here because the
-      # workspace's `rust-toolchain.toml` already pins to 1.88.0, so
+      # workspace's `rust-toolchain.toml` already pins to 1.95.0, so
       # `cargo` will pick that toolchain automatically once it is
       # installed.
-      - name: Install Rust 1.88.0
-        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
+      - name: Install Rust 1.95.0
+        run: rustup toolchain install 1.95.0 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}

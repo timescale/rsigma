@@ -16,7 +16,7 @@ exclude = ["fuzz", "ci/wasm-smoke"]
 [workspace.package]
 version = "0.21.0"
 edition = "2024"
-rust-version = "1.88.0"
+rust-version = "1.95.0"
 license = "MIT"
 repository = "https://github.com/timescale/rsigma"
 homepage = "https://github.com/timescale/rsigma"

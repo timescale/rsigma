@@ -8,6 +8,6 @@
 # (`stable`, `nightly`, …) via `dtolnay/rust-toolchain`, so this file
 # only affects ambient invocations.
 [toolchain]
-channel = "1.88.0"
+channel = "1.95.0"
 components = ["rustfmt", "clippy", "rust-analyzer"]
 profile = "minimal"

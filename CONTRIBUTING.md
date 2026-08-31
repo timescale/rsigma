@@ -6,7 +6,7 @@ Thank you for considering a contribution to rsigma! This document covers the bas
 
 ### Prerequisites
 
-- Rust toolchain (MSRV: 1.88.0). Install via [rustup](https://rustup.rs/).
+- Rust toolchain (MSRV: 1.95.0). Install via [rustup](https://rustup.rs/).
 - Docker (optional, required for integration tests that use testcontainers).
 - Node.js 20+ (optional, only for building the documentation site under `docs/`; not needed for the Rust workspace).
 
