@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Emit nested correlation results
+
+A temporal (or any parent correlation) whose `rules:` list other correlations already updated window state and marked the parent `met`, but `chain_correlations` never appended those firings to the eval result. `engine eval` and the daemon therefore showed the inner `event_count` / `value_count` alerts and omitted the parent. Chained firings are now emitted, with the same suppression and reset action as first-level correlations. Parents that reference a child by `name` rather than `id` are resolved as well. Fixes issue 458.
+
 ### rsigma-mcp: rmcp 3.0 (#467)
 
 Migrates `rsigma-mcp` from `rmcp` 2.2 to 3.0.1 (#448). The SDK models MCP 2026-07-28 (MRTR-aware `read_resource` responses, cache hints on list results). `#[tool]` methods keep their signatures; the manual `ServerHandler` resource methods wrap `ReadResourceResponse` and build list results with `ListResourcesResult::with_all_items`. `serve()` and Streamable HTTP still use the legacy `initialize` handshake, so existing clients keep the 2025-11-25 wire shape.

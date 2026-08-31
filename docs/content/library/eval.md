@@ -173,7 +173,7 @@ for raw in events {
 }
 ```
 
-`process_with_detections(event, Vec<EvaluationResult>)` is the lower-overhead variant for hot loops (pre-compute detections in parallel, feed sequentially to correlation). `CorrelationConfig` enforces `max_state_entries` (default 100,000) and the 10-deep correlation-chain limit; see [Security Hardening](../reference/security.md#input-size-and-depth-caps).
+`process_with_detections(event, Vec<EvaluationResult>)` is the lower-overhead variant for hot loops (pre-compute detections in parallel, feed sequentially to correlation). `CorrelationConfig` enforces `max_state_entries` (default 100,000) and the 10-deep correlation-chain limit; see [Security Hardening](../reference/security.md#input-size-and-depth-caps). A correlation whose `rules:` list other correlations (for example a `temporal` of two `event_count` rules) emits the parent result when the chain condition is met, the same way a temporal of detections does.
 
 ## Custom attributes
 

@@ -500,8 +500,11 @@ impl CorrelationEngine {
         let mut correlations: Vec<EvaluationResult> = Vec::new();
         self.feed_detections(event, &all_detections, timestamp_secs, &mut correlations);
 
-        // Chain — correlation results may trigger higher-level correlations
-        self.chain_correlations(&correlations, timestamp_secs);
+        // Chain — parent firings go into a separate vec so we do not
+        // alias `correlations` as both the input slice and the output.
+        let mut chained = Vec::new();
+        self.chain_correlations(&correlations, timestamp_secs, &mut chained);
+        correlations.extend(chained);
 
         // Filter detections by generate flag, then append the correlations.
         let mut out = self.filter_detections(all_detections);
@@ -891,11 +894,39 @@ impl CorrelationEngine {
         }
     }
 
+    /// IDs and names a fired correlation can be referenced by.
+    ///
+    /// Parents index `rule_refs` as written in YAML (id or name). The
+    /// emitted result only carries `rule_id`, so name-based parents need
+    /// this extra key or they never see the child.
+    fn chain_lookup_keys(&self, result: &EvaluationResult) -> Vec<String> {
+        let Some(id) = result.header.rule_id.as_deref() else {
+            return Vec::new();
+        };
+        let mut keys = vec![id.to_string()];
+        if let Some(name) = self
+            .correlations
+            .iter()
+            .find(|c| c.id.as_deref() == Some(id))
+            .and_then(|c| c.name.as_deref())
+            && name != id
+        {
+            keys.push(name.to_string());
+        }
+        keys
+    }
+
     /// Propagate correlation results to higher-level correlations (chaining).
     ///
     /// When a correlation fires, any correlation that references it (by ID or name)
-    /// is updated. Limits chain depth to 10 to prevent infinite loops.
-    fn chain_correlations(&mut self, fired: &[EvaluationResult], ts: i64) {
+    /// is updated. Newly fired parents are appended to `out` and become the next
+    /// `pending` set. Limits chain depth to 10 to prevent infinite loops.
+    fn chain_correlations(
+        &mut self,
+        fired: &[EvaluationResult],
+        ts: i64,
+        out: &mut Vec<EvaluationResult>,
+    ) {
         const MAX_CHAIN_DEPTH: usize = 10;
         let mut pending: Vec<EvaluationResult> = fired.to_vec();
         let mut depth = 0;
@@ -906,22 +937,19 @@ impl CorrelationEngine {
             // Collect work items: (corr_idx, group_key_pairs, fired_ref)
             #[allow(clippy::type_complexity)]
             let mut work: Vec<(usize, Vec<(String, String)>, String)> = Vec::new();
+            let mut seen = std::collections::HashSet::<(usize, String)>::new();
             for result in &pending {
                 // Only correlation results chain. Detections never reach here.
                 let Some(body) = result.as_correlation() else {
                     continue;
                 };
-                if let Some(ref id) = result.header.rule_id
-                    && let Some(indices) = self.rule_index.get(id)
-                {
-                    let fired_ref = result
-                        .header
-                        .rule_id
-                        .as_deref()
-                        .unwrap_or(&result.header.rule_title)
-                        .to_string();
-                    for &corr_idx in indices {
-                        work.push((corr_idx, body.group_key.clone(), fired_ref.clone()));
+                for key in self.chain_lookup_keys(result) {
+                    if let Some(indices) = self.rule_index.get(&key) {
+                        for &corr_idx in indices {
+                            if seen.insert((corr_idx, key.clone())) {
+                                work.push((corr_idx, body.group_key.clone(), key.clone()));
+                            }
+                        }
                     }
                 }
             }
@@ -934,12 +962,14 @@ impl CorrelationEngine {
                 let window_mode = corr.window_mode;
                 let gap_secs = corr.gap_secs;
                 let level = corr.level;
+                let suppress_secs = corr.suppress_secs.or(self.config.suppress);
+                let action = corr.action.unwrap_or(self.config.action_on_match);
 
                 let group_key = GroupKey::from_pairs(&group_key_pairs, &corr.group_by);
                 let state_key = (corr_idx, group_key.clone());
                 let state = self
                     .state
-                    .entry(state_key)
+                    .entry(state_key.clone())
                     .or_insert_with(|| WindowState::new_for(corr_type));
 
                 // Late arrivals in an earlier tumbling bucket are discarded;
@@ -977,8 +1007,20 @@ impl CorrelationEngine {
                 );
 
                 if let Some(agg_value) = fired {
+                    let alert_key = state_key;
+                    let suppressed = if let Some(suppress) = suppress_secs {
+                        self.last_alert
+                            .get(&alert_key)
+                            .is_some_and(|&last_ts| (ts - last_ts) < suppress as i64)
+                    } else {
+                        false
+                    };
+                    if suppressed {
+                        continue;
+                    }
+
                     let corr = &self.correlations[corr_idx];
-                    next_pending.push(EvaluationResult {
+                    let result = EvaluationResult {
                         header: RuleHeader {
                             rule_title: corr.title.clone(),
                             rule_id: corr.id.clone(),
@@ -998,7 +1040,16 @@ impl CorrelationEngine {
                             events: None,
                             event_refs: None,
                         }),
-                    });
+                    };
+                    next_pending.push(result.clone());
+                    out.push(result);
+                    self.last_alert.insert(alert_key.clone(), ts);
+
+                    if action == CorrelationAction::Reset
+                        && let Some(state) = self.state.get_mut(&alert_key)
+                    {
+                        state.clear();
+                    }
                 }
             }
 
