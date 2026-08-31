@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: clippy `chunks_exact_to_as_chunks`
+
+`Pattern` hex decoding walks pairs with `as_chunks::<2>()` so workspace clippy on Rust 1.98 (`-D warnings`) stays clean.
+
 ### Compiled-in feature introspection (`rsigma --features`)
 
 `--help` is not a detector for Cargo features: several of them have no unique flag (`evtx`, `logfmt`, `cef`, `daemon-otlp`), and `--input-format` is a free string so clap never lists the gated values. The binary now embeds the enabled `rsigma` features at compile time. `rsigma --features` prints them one per line, `rsigma --version` includes the same list, and `rsigma --help` shows a "Compiled-in features" footer.
