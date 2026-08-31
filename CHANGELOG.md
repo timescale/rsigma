@@ -6,7 +6,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ### Docs
 
-* Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page.
+* Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page (#462).
 
 ### rstix: TAXII 2.1 TXC interop self-certification (C-1) (#451)
 
