@@ -88,8 +88,11 @@ RSigma combines pySigma-style conversion with a streaming evaluator in one self-
 | Project | Role |
 |---|---|
 | [detection.studio](https://github.com/northsh/detection.studio) | Browser-based Sigma playground with real-time evaluation via RSigma compiled to WebAssembly |
+| [Garmr](https://github.com/hentorp/garmr) | Self-hosted application-audit and insider-risk platform using RSigma for per-event Sigma detection |
 | [LocalObserve](https://github.com/JJediny/LocalObserve) | Local-first Linux security observability stack using RSigma for edge Sigma detection and webhook alerting |
 | [Rustinel](https://github.com/Karib0u/rustinel) | Cross-platform endpoint detection engine with RSigma as an opt-in Sigma backend for live telemetry |
+| [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma) | Converts Sagan rules to Sigma and verifies them with RSigma |
+| [Sheut](https://github.com/PerceptraHQ/sheut-community) | Local-first cyber threat intelligence workbench using RSigma for STIX 2.1 validation and interchange |
 | [Sigmacatch](https://github.com/frack113/sigmacatch) | Captures live Windows Event Log events, matches them with RSigma, and writes SigmaHQ-ready regression data |
 
 ## Read the deep dives

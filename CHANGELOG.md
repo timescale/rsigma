@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs
+
+* Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page (#462).
+
 ### rstix: TAXII 2.1 TXC interop self-certification (C-1) (#451)
 
 Adds an OASIS TAXII 2.1 Interoperability CSD01 (2022-03-30) **TXC** self-certification suite: all **39 Mandatory** §4.1 Table 51 rows as automated scenarios (wiremock mock TXS + local rustls mTLS for §3.1.3), with the **5 Optional** §3.13.2 rows as `REPORT_ONLY`. Scenarios assert CSD01 Tables 2–50 depth (`User-Agent`, `WWW-Authenticate` challenges, absolute/relative `api_roots`, collection id ordering, date-added headers, versions pagination via `added_after`, Status Table 28, envelope/Status `x_*` via `TaxiiEnvelope::with_custom`). Three-layer report gate matches STIX interop (export invariants, committed `gate-expectations.json`, `scripts/taxii-interop-report-gate.py`). CI job `rstix TAXII TXC interop self-certification` gates the package. Also fixes bugs the suite surfaced: preserve `added_after` when clock skew is unset (all three `with_clock_skew_*` helpers); pin rustls `ring` for mTLS when `ring` and `aws-lc-rs` are both linked; run scenarios in registry/section order (not lexicographic `test_id`); mint §3.1.3 PEMs in-process with `rcgen` so CI does not depend on gitignored `taxii-live` certs. Channels (TAXII §6 RESERVED) and TXS persona remain out of scope.
