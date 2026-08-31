@@ -22,7 +22,8 @@ use rmcp::{
     handler::server::router::tool::ToolRouter,
     model::{
         Implementation, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
-        ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerInfo,
+        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
+        ServerInfo,
     },
     service::RequestContext,
     tool_handler,
@@ -175,18 +176,14 @@ impl ServerHandler for RsigmaMcp {
             Resource::new(RESOURCE_MODIFIERS, "Sigma field modifiers"),
             Resource::new(RESOURCE_MITRE_TACTICS, "MITRE ATT&CK tactics"),
         ];
-        Ok(ListResourcesResult {
-            resources,
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListResourcesResult::with_all_items(resources))
     }
 
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, McpError> {
+    ) -> Result<ReadResourceResponse, McpError> {
         let value = match request.uri.as_str() {
             RESOURCE_LINT_CATALOGUE => to_value(&catalogue()),
             RESOURCE_ADS_SCHEMA => to_value(&ads_catalogue()),
@@ -200,10 +197,7 @@ impl ServerHandler for RsigmaMcp {
             }
         };
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-        Ok(ReadResourceResult::new(vec![ResourceContents::text(
-            text,
-            &request.uri,
-        )]))
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(text, &request.uri)]).into())
     }
 }
 

@@ -53,7 +53,7 @@ Four read-only resources expose reference data: `rsigma://lint/catalogue` (the 8
 
 ## Design
 
-- Built on [`rmcp`](https://crates.io/crates/rmcp) 1.7 (the official Rust MCP SDK).
+- Built on [`rmcp`](https://crates.io/crates/rmcp) 3.0 (the official Rust MCP SDK).
 - `RsigmaMcp` is the cloneable handler; the tool methods are thin wrappers over the underlying rsigma crates.
 - The CLI owns the tokio runtime entry point (`serve_stdio`), mirroring how the daemon is wired.
 - sigma-cli delegation is opt-in (`--allow-sigma-cli`) and hardened: `path` and file-based pipeline inputs are confined to `--rules-dir` when set, inline YAML is staged to a temp file, the subprocess is killed after 60s, and at most two delegations run concurrently.
