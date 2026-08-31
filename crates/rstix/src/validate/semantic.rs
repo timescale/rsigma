@@ -77,29 +77,29 @@ pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut Validatio
 
         if let StixObject::Sdo(sdo) = object {
             match sdo {
-                SdoObject::AttackPattern(AttackPattern { common, .. }) => {
-                    if validate_capec_external_refs(&common.external_references).is_err() {
-                        report.push(
-                            Diagnostic::new(
-                                DiagnosticCode::W0010,
-                                "CAPEC external reference should use source_name `capec` with external_id prefixed `CAPEC-`",
-                            )
-                            .with_object_id(object_id.clone())
-                            .with_property_path(EXTERNAL_REF_CAPEC),
-                        );
-                    }
+                SdoObject::AttackPattern(AttackPattern { common, .. })
+                    if validate_capec_external_refs(&common.external_references).is_err() =>
+                {
+                    report.push(
+                        Diagnostic::new(
+                            DiagnosticCode::W0010,
+                            "CAPEC external reference should use source_name `capec` with external_id prefixed `CAPEC-`",
+                        )
+                        .with_object_id(object_id.clone())
+                        .with_property_path(EXTERNAL_REF_CAPEC),
+                    );
                 }
-                SdoObject::Vulnerability(Vulnerability { common, .. }) => {
-                    if validate_cve_external_refs(&common.external_references).is_err() {
-                        report.push(
-                            Diagnostic::new(
-                                DiagnosticCode::W0010,
-                                "CVE external reference should use source_name `cve` with external_id prefixed `CVE-`",
-                            )
-                            .with_object_id(object_id.clone())
-                            .with_property_path(EXTERNAL_REF_CVE),
-                        );
-                    }
+                SdoObject::Vulnerability(Vulnerability { common, .. })
+                    if validate_cve_external_refs(&common.external_references).is_err() =>
+                {
+                    report.push(
+                        Diagnostic::new(
+                            DiagnosticCode::W0010,
+                            "CVE external reference should use source_name `cve` with external_id prefixed `CVE-`",
+                        )
+                        .with_object_id(object_id.clone())
+                        .with_property_path(EXTERNAL_REF_CVE),
+                    );
                 }
                 SdoObject::Location(Location {
                     country, region, ..

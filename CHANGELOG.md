@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### MSRV 1.95.0 (#464)
+
+Workspace `rust-version` and `rust-toolchain.toml` move from 1.88.0 to 1.95.0. The MSRV CI job, README badge, and CONTRIBUTING prerequisites follow. Cargo's MSRV-aware resolver can now select transitive crate versions that require Rust 1.89 through 1.95. `rstix` CAPEC/CVE external-ref checks use match guards so `clippy::collapsible_match` stays clean on the new MSRV. The workspace lockfile moves `h2` 0.4.15 to 0.4.19 (RUSTSEC-2026-0258).
+
 ### rstix: clippy `chunks_exact_to_as_chunks` (#463)
 
 `Pattern` hex decoding walks pairs with `as_chunks::<2>()` so workspace clippy on Rust 1.98 (`-D warnings`) stays clean.
