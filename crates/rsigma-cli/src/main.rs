@@ -25,7 +25,7 @@ use commands::{
     BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
     DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, HygieneArgs, LintArgs, LintCounts,
     ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ReverseArgs, ScorecardArgs,
-    StatusArgs, StdinArgs, TailArgs, TapArgs, TuneArgs, ValidateArgs, VisibilityArgs,
+    StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs, ValidateArgs, VisibilityArgs,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -219,6 +219,9 @@ enum RuleCommands {
 
     /// Report or scaffold the ADS detection-strategy document for rules
     Doc(DocArgs),
+
+    /// Replay embedded rsigma.exemplars against their host rules
+    Test(TestArgs),
 
     /// Replay an event corpus and diff per-rule fires against expectations
     Backtest(BacktestArgs),
@@ -419,6 +422,10 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
                 .and_then(|m| m.subcommand_matches("doc"))
                 .expect("rule doc submatches present");
             run_doc(args, dm, ctx);
+        }
+        RuleCommands::Test(args) => {
+            let code = commands::cmd_test(args, ctx);
+            process::exit(code);
         }
         RuleCommands::Backtest(args) => {
             let bm = matches

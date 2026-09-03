@@ -1,0 +1,19 @@
+title: Whoami
+id: 11111111-2222-3333-4444-555555555555
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+custom_attributes:
+    rsigma.exemplars:
+        - name: whoami fires
+          expect: match
+          event:
+              CommandLine: whoami /all
+        - name: benign hostname
+          expect: no-match
+          event:
+              CommandLine: hostname

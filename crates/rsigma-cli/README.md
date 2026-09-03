@@ -71,7 +71,7 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 
 ## Subcommands
 
-Commands are grouped into four noun-led groups: `engine` (eval/daemon), `rule` (parse/validate/lint/fields/draft/tune/doc/backtest/coverage/scorecard/visibility/hygiene/condition/stdin), `backend` (convert/targets/formats), and `pipeline` (resolve).
+Commands are grouped into four noun-led groups: `engine` (eval/daemon), `rule` (parse/validate/lint/fields/draft/tune/doc/test/backtest/coverage/scorecard/visibility/hygiene/condition/stdin), `backend` (convert/targets/formats), and `pipeline` (resolve).
 
 ### `config`: YAML configuration
 
@@ -839,6 +839,18 @@ rsigma rule doc --scaffold rules/windows/whoami.yml --in-place  # fill the missi
 ```
 
 The ADS bar (enforced statuses and required sections) is read from the `ads:` block in a discovered or `--lint-config` `.rsigma-lint.yml`, defaulting to enforce `stable` and require every section. Exit codes: `0` met or plain render, `1` under `--fail-on-missing` when a rule is below the bar, `2` unreadable rule, `3` bad flag. See the [`rule doc` reference](https://rsigma.io/cli/rule/doc/) and the [Detection Strategy guide](https://rsigma.io/guide/detection-strategy/).
+
+### `rule test`: Replay embedded `rsigma.exemplars`
+
+Runs the example events stored on each detection or correlation rule and asserts the expected `match` / `no-match` outcome. Detection exemplars isolate the target rule plus collection filters; correlation exemplars replay timestamped sequences against the full collection. Use `--fail-on-missing` in CI so every rule carries at least one exemplar.
+
+```bash
+rsigma rule test -r rules/windows/whoami.yml
+rsigma rule test -r rules/ --fail-on-missing
+rsigma rule test -r rules/ --output-format json
+```
+
+Exit codes: `0` all assertions passed, `1` a failed assertion or `--fail-on-missing`, `2` unreadable or uncompilable rules, `3` invalid shape, ambiguous title, pipeline, or missing correlation reference. See the [`rule test` reference](https://rsigma.io/cli/rule/test/).
 
 ### `rule backtest`: Replay a corpus and diff per-rule fires against expectations
 
