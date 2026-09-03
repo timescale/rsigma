@@ -80,7 +80,7 @@ async fn tools_list_exposes_all_core_tools() {
             "missing tool {expected}"
         );
     }
-    assert_eq!(tools.len(), 14, "expected exactly 14 tools, got {names:?}");
+    assert_eq!(tools.len(), 15, "expected exactly 15 tools, got {names:?}");
 
     // parse_rule advertises an input schema with the `yaml` property.
     let parse_rule = tools.iter().find(|t| t.name == "parse_rule").unwrap();
@@ -152,7 +152,7 @@ async fn resources_list_and_read_round_trip() {
         })
         .expect("text resource");
     let catalogue: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(catalogue.as_array().unwrap().len(), 86);
+    assert_eq!(catalogue.as_array().unwrap().len(), 88);
 
     let ads = client
         .read_resource(ReadResourceRequestParams::new("rsigma://ads/schema"))
