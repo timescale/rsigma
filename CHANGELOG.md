@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Embedded rule exemplars
+### Embedded rule exemplars (#469)
 
 Sigma rules can carry `rsigma.exemplars`: example events that should or should not match the host detection or correlation. `rsigma rule test` replays them through the production engines with fresh state per exemplar. Lint adds `exemplar_shape` and `exemplar_wrong_rule_kind`. A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent; only `rule test` proves the current rule still matches. The MCP server exposes the same runner as `test_exemplars`.
 
