@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use rsigma_parser::{
-    Exemplar, ExemplarPayload, ExemplarRuleKind, ExemplarShapeError, Expect, SigmaCollection,
-    SigmaRule, correlation_exemplars, exemplars, filter_exemplars,
+    Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind, ExemplarShapeError, Expect,
+    SigmaCollection, SigmaRule, correlation_exemplars, exemplars, filter_exemplars,
 };
 use serde::Serialize;
 
@@ -40,9 +40,6 @@ pub struct ExemplarResult {
     pub actual: Expect,
     /// Whether `actual` matches `expect`.
     pub passed: bool,
-    /// Optional diagnostic.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostic: Option<String>,
 }
 
 /// A detection or correlation rule that carried no exemplars.
@@ -271,6 +268,7 @@ fn run_detection(
             errors: vec![ExemplarShapeError {
                 path: format!("/custom_attributes/rsigma.exemplars/{}", exemplar.index),
                 message: "detection exemplars must use 'event'".to_string(),
+                kind: ExemplarErrorKind::WrongRuleKind,
             }],
         });
     };
@@ -290,7 +288,7 @@ fn run_detection(
     let je = JsonEvent::borrow(&json);
     let matches = engine.evaluate(&je);
     let fired = matches.iter().any(|r| identity.matches(r));
-    Ok(outcome(identity, exemplar, fired, None))
+    Ok(outcome(identity, exemplar, fired))
 }
 
 fn run_correlation(
@@ -305,6 +303,7 @@ fn run_correlation(
             errors: vec![ExemplarShapeError {
                 path: format!("/custom_attributes/rsigma.exemplars/{}", exemplar.index),
                 message: "correlation exemplars must use 'events'".to_string(),
+                kind: ExemplarErrorKind::WrongRuleKind,
             }],
         });
     };
@@ -323,15 +322,10 @@ fn run_correlation(
             fired = true;
         }
     }
-    Ok(outcome(identity, exemplar, fired, None))
+    Ok(outcome(identity, exemplar, fired))
 }
 
-fn outcome(
-    identity: &TargetIdentity,
-    exemplar: &Exemplar,
-    fired: bool,
-    diagnostic: Option<String>,
-) -> ExemplarResult {
+fn outcome(identity: &TargetIdentity, exemplar: &Exemplar, fired: bool) -> ExemplarResult {
     let actual = if fired {
         Expect::Match
     } else {
@@ -346,7 +340,6 @@ fn outcome(
         expect: exemplar.expect,
         actual,
         passed: actual == exemplar.expect,
-        diagnostic,
     }
 }
 

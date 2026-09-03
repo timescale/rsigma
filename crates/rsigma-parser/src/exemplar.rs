@@ -102,6 +102,16 @@ pub struct Exemplar {
     pub payload: ExemplarPayload,
 }
 
+/// Classification of an exemplar shape error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExemplarErrorKind {
+    /// The list or an entry is structurally invalid.
+    Structural,
+    /// The payload does not match the host rule kind.
+    WrongRuleKind,
+}
+
 /// A structural problem in an exemplar list or entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExemplarShapeError {
@@ -109,6 +119,8 @@ pub struct ExemplarShapeError {
     pub path: String,
     /// Human-readable description.
     pub message: String,
+    /// Structural vs payload/kind mismatch.
+    pub kind: ExemplarErrorKind,
 }
 
 impl fmt::Display for ExemplarShapeError {
@@ -120,9 +132,7 @@ impl fmt::Display for ExemplarShapeError {
 impl ExemplarShapeError {
     /// True when the error is a payload/kind mismatch rather than a structural one.
     pub fn is_wrong_rule_kind(&self) -> bool {
-        self.message.contains("must use 'event'")
-            || self.message.contains("must use 'events'")
-            || self.message.contains("filter rules must not")
+        self.kind == ExemplarErrorKind::WrongRuleKind
     }
 }
 
@@ -241,7 +251,7 @@ pub fn parse_exemplars(
         return Err(vec![err(path, "rsigma.exemplars must not be empty")]);
     }
     if kind == ExemplarRuleKind::Filter {
-        errors.push(err(
+        errors.push(wrong_kind(
             path.clone(),
             "filter rules must not carry rsigma.exemplars",
         ));
@@ -362,14 +372,14 @@ fn parse_entry(
             ExemplarPayload::Event(Value::Null)
         }
         (true, false, ExemplarRuleKind::Correlation) => {
-            errors.push(err(
+            errors.push(wrong_kind(
                 format!("{path}/event"),
                 "correlation exemplars must use 'events'",
             ));
             ExemplarPayload::Event(Value::Null)
         }
         (false, true, ExemplarRuleKind::Detection) => {
-            errors.push(err(
+            errors.push(wrong_kind(
                 format!("{path}/events"),
                 "detection exemplars must use 'event'",
             ));
@@ -490,7 +500,6 @@ fn parse_timed_event(item: &Value, path: &str) -> Result<TimedEvent, Vec<Exempla
                 None
             }
         },
-        Some(Value::Number(n)) if n.as_u64() == Some(0) => Timespan::parse("0s").ok(),
         Some(_) => {
             errors.push(err(
                 format!("{path}/offset"),
@@ -522,6 +531,15 @@ fn err(path: impl Into<String>, message: impl Into<String>) -> ExemplarShapeErro
     ExemplarShapeError {
         path: path.into(),
         message: message.into(),
+        kind: ExemplarErrorKind::Structural,
+    }
+}
+
+fn wrong_kind(path: impl Into<String>, message: impl Into<String>) -> ExemplarShapeError {
+    ExemplarShapeError {
+        path: path.into(),
+        message: message.into(),
+        kind: ExemplarErrorKind::WrongRuleKind,
     }
 }
 
@@ -750,6 +768,43 @@ custom_attributes:
         ))
         .unwrap_err();
         assert!(err.iter().any(|e| e.message.contains("non-decreasing")));
+    }
+
+    #[test]
+    fn rejects_bare_numeric_offsets() {
+        let err = correlation_exemplars(&corr(
+            r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Burst
+correlation:
+    type: event_count
+    rules: [login-rule]
+    group-by: [User]
+    timespan: 1m
+    condition: { gte: 2 }
+custom_attributes:
+    rsigma.exemplars:
+        - expect: match
+          events:
+              - offset: 0
+                event: { EventType: login }
+              - offset: 30s
+                event: { EventType: login }
+"#,
+        ))
+        .unwrap_err();
+        assert!(
+            err.iter()
+                .any(|e| e.message.contains("duration string") && !e.is_wrong_rule_kind())
+        );
     }
 
     #[test]

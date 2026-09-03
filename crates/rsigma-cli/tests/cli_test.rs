@@ -15,10 +15,6 @@ fn fixture(name: &str) -> String {
     fixtures().join(name).to_string_lossy().into_owned()
 }
 
-fn normalize_eol(s: &str) -> String {
-    s.replace("\r\n", "\n")
-}
-
 fn mask_source(json: &str) -> String {
     const KEY: &str = "\"source\":\"";
     let Some(start) = json.find(KEY) else {
@@ -172,9 +168,4 @@ fn test_missing_path_exits_rule_error() {
         .assert()
         .failure()
         .code(2);
-}
-
-#[test]
-fn normalize_keeps_lf() {
-    assert_eq!(normalize_eol("a\r\nb"), "a\nb");
 }

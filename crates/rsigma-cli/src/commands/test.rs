@@ -152,7 +152,6 @@ mod tests {
             expect: rsigma_parser::Expect::Match,
             actual: rsigma_parser::Expect::Match,
             passed: true,
-            diagnostic: None,
         };
         assert_eq!(row.row()[0], "abc");
         assert_eq!(row.row()[6], "pass");
