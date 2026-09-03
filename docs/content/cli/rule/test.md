@@ -16,7 +16,7 @@ Detection exemplars run in a synthetic collection of the target rule plus the so
 
 A structurally valid `expect: match` exemplar satisfies ADS validation *presence* when `rsigma.ads.validation` prose is absent. Presence is not proof: only a passing `rule test` shows that the current rule still matches the recipe.
 
-Output uses the global `--output-format` layer. Without an explicit format the command prints a table.
+Output uses the global `--output-format` layer. Without an explicit format the command prints a table. In the JSON and NDJSON output a failed assertion carries a `diagnostic` explaining why, such as `the rule did not match the event` or `the correlation fired at event index 1 (offset 30s)`.
 
 ## Flags
 

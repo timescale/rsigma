@@ -40,6 +40,9 @@ pub struct ExemplarResult {
     pub actual: Expect,
     /// Whether `actual` matches `expect`.
     pub passed: bool,
+    /// Why the assertion failed. Absent on passing exemplars.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
 
 /// A detection or correlation rule that carried no exemplars.
@@ -288,7 +291,12 @@ fn run_detection(
     let je = JsonEvent::borrow(&json);
     let matches = engine.evaluate(&je);
     let fired = matches.iter().any(|r| identity.matches(r));
-    Ok(outcome(identity, exemplar, fired))
+    let diagnostic = match (fired, exemplar.expect) {
+        (true, Expect::NoMatch) => Some("the rule matched the event".to_string()),
+        (false, Expect::Match) => Some("the rule did not match the event".to_string()),
+        _ => None,
+    };
+    Ok(outcome(identity, exemplar, fired, diagnostic))
 }
 
 fn run_correlation(
@@ -313,19 +321,35 @@ fn run_correlation(
     }
     engine.add_collection(collection)?;
     let owned: Vec<serde_json::Value> = events.iter().map(|e| yaml_to_json(&e.event)).collect();
-    let mut fired = false;
-    for (timed, json) in events.iter().zip(owned.iter()) {
+    let mut first_fire: Option<(usize, String)> = None;
+    for (index, (timed, json)) in events.iter().zip(owned.iter()).enumerate() {
         let je = JsonEvent::borrow(json);
         let ts = BASE_TIMESTAMP.saturating_add(timed.offset.seconds as i64);
         let results = engine.process_event_at(&je, ts);
-        if results.iter().any(|r| identity.matches(r)) {
-            fired = true;
+        if first_fire.is_none() && results.iter().any(|r| identity.matches(r)) {
+            first_fire = Some((index, timed.offset.original.clone()));
         }
     }
-    Ok(outcome(identity, exemplar, fired))
+    let fired = first_fire.is_some();
+    let diagnostic = match (first_fire, exemplar.expect) {
+        (Some((index, offset)), Expect::NoMatch) => Some(format!(
+            "the correlation fired at event index {index} (offset {offset})"
+        )),
+        (None, Expect::Match) => Some(format!(
+            "the correlation never fired across {} events",
+            events.len()
+        )),
+        _ => None,
+    };
+    Ok(outcome(identity, exemplar, fired, diagnostic))
 }
 
-fn outcome(identity: &TargetIdentity, exemplar: &Exemplar, fired: bool) -> ExemplarResult {
+fn outcome(
+    identity: &TargetIdentity,
+    exemplar: &Exemplar,
+    fired: bool,
+    diagnostic: Option<String>,
+) -> ExemplarResult {
     let actual = if fired {
         Expect::Match
     } else {
@@ -340,6 +364,7 @@ fn outcome(identity: &TargetIdentity, exemplar: &Exemplar, fired: bool) -> Exemp
         expect: exemplar.expect,
         actual,
         passed: actual == exemplar.expect,
+        diagnostic,
     }
 }
 
@@ -408,6 +433,103 @@ custom_attributes:
         let report = run(yaml);
         assert!(!report.all_passed());
         assert_eq!(report.results[0].actual, Expect::NoMatch);
+        assert_eq!(
+            report.results[0].diagnostic.as_deref(),
+            Some("the rule did not match the event")
+        );
+    }
+
+    #[test]
+    fn passing_exemplars_carry_no_diagnostic() {
+        let report = run(DETECTION);
+        assert!(report.results.iter().all(|r| r.diagnostic.is_none()));
+    }
+
+    #[test]
+    fn failed_correlation_no_match_names_the_firing_event() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+custom_attributes:
+    rsigma.exemplars:
+        - expect: no-match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+              - offset: 30s
+                event: { EventType: login, User: alice }
+"#;
+        let report = run(yaml);
+        assert!(!report.all_passed());
+        assert_eq!(
+            report.results[0].diagnostic.as_deref(),
+            Some("the correlation fired at event index 1 (offset 30s)")
+        );
+    }
+
+    #[test]
+    fn suppression_and_reset_do_not_mask_the_first_fire() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+custom_attributes:
+    rsigma.suppress: 5m
+    rsigma.action: reset
+    rsigma.exemplars:
+        - name: fires despite suppression
+          expect: match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+              - offset: 1s
+                event: { EventType: login, User: alice }
+              - offset: 2s
+                event: { EventType: login, User: alice }
+              - offset: 3s
+                event: { EventType: login, User: alice }
+        - name: single event stays quiet
+          expect: no-match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: bob }
+"#;
+        let report = run(yaml);
+        assert!(report.all_passed(), "{report:?}");
+        assert_eq!(report.results.len(), 2);
     }
 
     #[test]
