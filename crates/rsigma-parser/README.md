@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/timescale/rsigma/actions/workflows/ci.yml/badge.svg)](https://github.com/timescale/rsigma/actions/workflows/ci.yml)
 
-`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes an 85-rule linter derived from the Sigma v2.1.0 spec.
+`rsigma-parser` is a parser for [Sigma](https://github.com/SigmaHQ/sigma) detection rules, correlations, and filters. It parses Sigma YAML into a strongly-typed AST covering the full Sigma 2.0 specification, and includes an 87-rule linter derived from the Sigma v2.1.0 spec.
 
 This library is part of [rsigma].
 
@@ -25,7 +25,16 @@ This library is part of [rsigma].
 | `emit_rule_yaml(rule: &SigmaRule)` | Emit a rule as canonical Sigma YAML (the inverse of `parse_sigma_yaml`) |
 | `emit_collection_yaml(collection: &SigmaCollection)` | Emit every detection rule in a collection, separated by `---` |
 
-The emitter is a deterministic canonical form: named detections, logsource custom fields, and custom attributes are emitted in sorted order, `field|modifier` keys are reconstructed from the `FieldSpec`, and literal wildcards in values are escaped so a re-parse reproduces the same `SigmaString` (while `re`/`cidr`/`fieldref` values stay raw). It powers `rsigma-convert`'s reverse conversion (query to Sigma YAML).
+The emitter is a deterministic canonical form: named detections, logsource custom fields, and custom attributes are emitted in sorted order, `field|modifier` keys are reconstructed from the `FieldSpec`, and literal wildcards in values are escaped so a re-parse reproduces the same `SigmaString` (while `re`/`cidr`/`fieldref` values stay raw). It powers `rsigma-convert`'s reverse conversion (query to Sigma YAML). Sequences of mappings, including `rsigma.exemplars`, round-trip through emit.
+
+### Exemplars
+
+| Function | Description |
+|----------|-------------|
+| `exemplars(rule)` / `correlation_exemplars(rule)` / `filter_exemplars(rule)` | Extract typed `rsigma.exemplars` from a parsed rule |
+| `parse_exemplars(value, kind, path)` | Parse a raw YAML value with kind-specific payload rules |
+| `raw_exemplar_values(mapping)` | Both nested and top-level placements, with JSON-pointer paths for lint |
+| `match_exemplar_count(attrs)` | Count structurally valid `expect: match` exemplars (ADS validation presence) |
 
 ### Linting
 
@@ -273,9 +282,9 @@ filter:
 
 The string must be at least 2 characters (e.g. `1h`). The last character is the unit; the prefix must be a positive integer.
 
-## Linter (85 rules)
+## Linter (87 rules)
 
-85 built-in lint rules (plus the reserved `empty_filter_rules`, declared but not emitted) derived from the Sigma v2.1.0 specification, including the opt-in ADS detection-strategy checks. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
+87 built-in lint rules (plus the reserved `empty_filter_rules`, declared but not emitted) derived from the Sigma v2.1.0 specification, including the opt-in ADS detection-strategy checks. Four severity levels: **Error** (spec violation), **Warning** (best-practice issue), **Info** (soft suggestion), **Hint** (stylistic). Info/Hint findings don't cause lint failure.
 
 The linter operates on raw YAML values to catch issues the parser silently ignores.
 
@@ -388,6 +397,13 @@ The linter operates on raw YAML values to catch issues the parser silently ignor
 | `array_matching_without_version` | Warning | | Array-matching bracket syntax used below `sigma-version: 3` (brackets read literally) |
 | `sigma_version_mismatch` | Warning | | A correlation/filter and a rule it references declare different majors |
 | `unknown_rule_reference` | Warning | | A `correlation.rules`/`filter.rules` entry resolves to no rule (directory linting only, where the index is complete) |
+
+### Exemplars (2)
+
+| Rule | Severity | Fix | Trigger |
+|------|----------|-----|---------|
+| `exemplar_shape` | Warning | | Invalid `rsigma.exemplars` structure |
+| `exemplar_wrong_rule_kind` | Warning | | `event`/`events` does not match the host rule kind, or a filter carries exemplars |
 
 ### Rule Suppression
 

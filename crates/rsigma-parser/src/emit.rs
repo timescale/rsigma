@@ -337,11 +337,40 @@ fn emit_yaml_value(out: &mut String, key: &str, value: &yaml_serde::Value, inden
         yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
             let _ = writeln!(out, "{indent}{key}:");
             for v in seq {
-                let _ = writeln!(out, "{indent}{STEP}- {}", yaml_scalar(v));
+                emit_yaml_seq_item(out, v, &deeper(indent));
             }
         }
         scalar => {
             let _ = writeln!(out, "{indent}{key}: {}", yaml_scalar(scalar));
+        }
+    }
+}
+
+/// Emit one YAML sequence item, including nested mappings and sequences.
+fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str) {
+    match value {
+        yaml_serde::Value::Mapping(map) if !map.is_empty() => {
+            let mut buf = String::new();
+            for (k, v) in map {
+                let child_key = k.as_str().map(key_token).unwrap_or_else(|| "?".to_string());
+                emit_yaml_value(&mut buf, &child_key, v, "");
+            }
+            for (i, line) in buf.lines().enumerate() {
+                if i == 0 {
+                    let _ = writeln!(out, "{indent}- {line}");
+                } else {
+                    let _ = writeln!(out, "{indent}  {line}");
+                }
+            }
+        }
+        yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
+            let _ = writeln!(out, "{indent}-");
+            for v in seq {
+                emit_yaml_seq_item(out, v, &deeper(indent));
+            }
+        }
+        scalar => {
+            let _ = writeln!(out, "{indent}- {}", yaml_scalar(scalar));
         }
     }
 }
@@ -672,6 +701,39 @@ mod tests {
             "title: No Logsource\nlogsource: {}\ndetection:\n    selection:\n        Field: value\n    condition: selection\n",
         );
         assert!(emitted.contains("logsource: {}"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_detection_exemplars() {
+        let emitted = assert_round_trips(
+            "title: Whoami\nid: 11111111-2222-3333-4444-555555555555\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        CommandLine|contains: whoami\n    condition: selection\ncustom_attributes:\n    rsigma.exemplars:\n        - name: whoami fires\n          expect: match\n          event:\n              CommandLine: whoami /all\n        - name: benign hostname\n          expect: no-match\n          event:\n              CommandLine: hostname\n",
+        );
+        assert!(
+            emitted.contains("rsigma.exemplars:"),
+            "expected exemplars in emit:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("whoami fires"),
+            "expected exemplar name:\n{emitted}"
+        );
+        let reparsed = parse_sigma_yaml(&emitted).unwrap();
+        let attrs = &reparsed.rules[0].custom_attributes;
+        let list = crate::exemplar::exemplars_from_attrs(
+            attrs,
+            crate::exemplar::ExemplarRuleKind::Detection,
+        )
+        .expect("emitted exemplars re-parse");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].expect, crate::exemplar::Expect::Match);
+        assert_eq!(list[1].expect, crate::exemplar::Expect::NoMatch);
+    }
+
+    #[test]
+    fn emit_preserves_correlation_shaped_exemplar_sequence() {
+        let emitted = assert_round_trips(
+            "title: Burst host\nlogsource:\n    category: auth\ndetection:\n    selection:\n        EventType: login\n    condition: selection\ncustom_attributes:\n    rsigma.exemplars:\n        - name: burst\n          expect: match\n          event:\n              EventType: login\n              User: alice\n",
+        );
+        assert!(emitted.contains("User:"), "{emitted}");
     }
 
     #[test]
