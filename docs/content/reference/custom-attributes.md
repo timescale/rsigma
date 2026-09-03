@@ -61,7 +61,18 @@ custom_attributes:
               CommandLine: hostname
 ```
 
-Correlation rules use a timestamped `events` sequence. Offsets are relative durations parsed by the existing timespan parser and applied from a fixed base timestamp:
+Each entry accepts exactly these keys:
+
+| Key | Required | Value |
+|-----|----------|-------|
+| `name` | no | Display name, unique within the rule. Defaults to the 0-based list index. |
+| `expect` | yes | `match` or `no-match`. |
+| `event` | detection rules | The example event as a mapping. |
+| `events` | correlation rules | A sequence of `{ offset, event }` entries. |
+
+Exactly one of `event` or `events` must be present, and the payload must match the host rule kind. The list itself must not be empty, and unknown keys are rejected. All of these constraints are checked statically by the [`exemplar_shape` and `exemplar_wrong_rule_kind`](lint-rules.md) lint rules and again by `rule test` before execution.
+
+Correlation rules use a timestamped `events` sequence. Each `offset` is a relative duration string (`0s`, `30s`, `5m`) parsed by the existing timespan parser and applied from a fixed base timestamp; offsets must be non-decreasing:
 
 ```yaml
 custom_attributes:
