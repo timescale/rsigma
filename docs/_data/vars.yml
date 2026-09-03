@@ -10,10 +10,10 @@ rsigma:
   # sync with the enum in crates/rsigma-parser/src/lint and the per-severity
   # breakdown table in docs/reference/lint-rules.md.
   lint:
-    rules: 85 # built-in checks emitted in production
+    rules: 87 # built-in checks emitted in production
     autofix: 14 # built-in checks with a safe --fix
     reserved: 1 # enum values declared but not emitted (empty_filter_rules)
-    total: 86 # rules + reserved
+    total: 88 # rules + reserved
   # Prometheus metric catalogue sizes for `engine daemon` under `--all-features`.
   # Referenced as {{ rsigma.metrics.names }} etc. Keep in sync with
   # crates/rsigma-cli/src/daemon/metrics.rs and docs/content/reference/metrics.md.

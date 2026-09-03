@@ -20,7 +20,7 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 | Severity | Rules |
 |----------|------:|
 | `error` | 38 |
-| `warning` | 41 |
+| `warning` | 43 |
 | `info` | 6 |
 | `hint` | 0 |
 | Reserved (no production emission) | {{ rsigma.lint.reserved }} |
@@ -183,11 +183,20 @@ Optional [Alerting and Detection Strategy](https://github.com/palantir/alerting-
 | `ads_missing_technical_context` | `warning` | none | No `rsigma.ads.technical_context`. |
 | `ads_missing_blind_spots` | `warning` | none | No `rsigma.ads.blind_spots` list. |
 | `ads_missing_false_positives` | `warning` | none | An enforced rule has no false-positive notes (`falsepositives`). |
-| `ads_missing_validation` | `warning` | none | No `rsigma.ads.validation` recipe. |
+| `ads_missing_validation` | `warning` | none | No `rsigma.ads.validation` recipe and no structurally valid `expect: match` exemplar. |
 | `ads_missing_priority` | `info` | none | No `rsigma.ads.priority` rationale (the `level` field still covers severity). |
 | `ads_missing_response` | `warning` | none | No `rsigma.ads.response` plan. |
 | `ads_empty_section` | `info` | none | A present `rsigma.ads.*` section is blank or too short. |
 | `ads_unknown_section` | `info` | yes | An unrecognized `rsigma.ads.*` key (likely a typo). The fix renames it to the closest known section. |
+
+## Embedded exemplars (2)
+
+Static shape checks for [`rsigma.exemplars`](custom-attributes.md#rsigmaexemplars). Lint never executes events. Presence of a valid `expect: match` exemplar also satisfies ADS validation (see above); only `rsigma rule test` proves the current rule still matches.
+
+| Rule | Severity | Fix | Description |
+|------|----------|-----|-------------|
+| `exemplar_shape` | `warning` | none | The attribute is not a sequence, an entry is not a mapping, a key is unknown, a name is blank or duplicated, `expect` is missing or invalid, `event`/`events` is missing or both are set, an event is not a mapping, an offset is invalid or decreasing, or the list is empty. |
+| `exemplar_wrong_rule_kind` | `warning` | none | A detection rule uses `events`, a correlation rule uses `event`, or a filter rule carries any exemplars. |
 
 Configure the bar with an `ads:` block in `.rsigma-lint.yml`:
 
@@ -409,6 +418,7 @@ Every lint rule's emission lives under [`crates/rsigma-parser/src/lint/rules/`](
 | `filter.rs` | Filter-block rules. |
 | `version.rs` | `unsupported_sigma_version`, `array_matching_without_version`. |
 | `ads.rs` | ADS detection-strategy presence checks (`ads_missing_*`, `ads_empty_section`, `ads_unknown_section`). |
+| `exemplar.rs` | Embedded exemplar shape checks (`exemplar_shape`, `exemplar_wrong_rule_kind`). |
 | `shared.rs` | `unknown_key`. |
 | `mod.rs` | Module wiring for the rule packages above. |
 

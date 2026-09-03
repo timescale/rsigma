@@ -16,7 +16,7 @@
 //! use rsigma_parser::lint::catalogue::catalogue;
 //!
 //! let entries = catalogue();
-//! assert_eq!(entries.len(), 86);
+//! assert_eq!(entries.len(), 88);
 //! let invalid_status = entries.iter().find(|e| e.name == "invalid_status").unwrap();
 //! assert!(invalid_status.fix.is_some()); // has a safe auto-fix
 //! ```
@@ -156,11 +156,15 @@ lint_catalogue! {
     AdsMissingTechnicalContext => (Severity::Warning, NONE, "An enforced rule has no ADS technical context."),
     AdsMissingBlindSpots => (Severity::Warning, NONE, "An enforced rule states no ADS blind spots or assumptions."),
     AdsMissingFalsePositives => (Severity::Warning, NONE, "An enforced rule has no ADS false-positive notes (falsepositives)."),
-    AdsMissingValidation => (Severity::Warning, NONE, "An enforced rule has no ADS validation recipe."),
+    AdsMissingValidation => (Severity::Warning, NONE, "An enforced rule has no ADS validation recipe (prose or expect-match exemplar)."),
     AdsMissingPriority => (Severity::Info, NONE, "An enforced rule has no ADS priority rationale."),
     AdsMissingResponse => (Severity::Warning, NONE, "An enforced rule has no ADS response plan."),
     AdsEmptySection => (Severity::Info, NONE, "A present rsigma.ads.* section is blank or too short."),
     AdsUnknownSection => (Severity::Info, SAFE, "An unknown rsigma.ads.* section (likely a typo)."),
+
+    // ── Embedded exemplars ───────────────────────────────────────────────
+    ExemplarShape => (Severity::Warning, NONE, "An rsigma.exemplars list is structurally invalid."),
+    ExemplarWrongRuleKind => (Severity::Warning, NONE, "An rsigma.exemplars payload does not match the host rule kind."),
 }
 
 /// Return metadata for every [`LintRule`] variant, in declaration order.
@@ -329,6 +333,8 @@ const LINT_RULE_NAMES: &[(LintRule, &str)] = &[
     (LintRule::AdsMissingResponse, "ads_missing_response"),
     (LintRule::AdsEmptySection, "ads_empty_section"),
     (LintRule::AdsUnknownSection, "ads_unknown_section"),
+    (LintRule::ExemplarShape, "exemplar_shape"),
+    (LintRule::ExemplarWrongRuleKind, "exemplar_wrong_rule_kind"),
 ];
 
 #[cfg(test)]
@@ -338,13 +344,13 @@ mod tests {
 
     #[test]
     fn catalogue_covers_every_rule() {
-        // 86 LintRule variants. The exhaustive `describe` match guarantees a
+        // 88 LintRule variants. The exhaustive `describe` match guarantees a
         // metadata entry per variant at compile time; this asserts the count
         // and the `ALL_LINT_RULES`/`LINT_RULE_NAMES` lists stay in sync.
         let entries = catalogue();
-        assert_eq!(entries.len(), 86, "expected 86 catalogue entries");
-        assert_eq!(ALL_LINT_RULES.len(), 86);
-        assert_eq!(LINT_RULE_NAMES.len(), 86);
+        assert_eq!(entries.len(), 88, "expected 88 catalogue entries");
+        assert_eq!(ALL_LINT_RULES.len(), 88);
+        assert_eq!(LINT_RULE_NAMES.len(), 88);
     }
 
     #[test]
