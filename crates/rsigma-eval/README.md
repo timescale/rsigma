@@ -131,6 +131,16 @@ Turns exemplar events into a complete draft Sigma rule, verified end-to-end thro
 | `DraftReport` | `rule_yaml` (parse- and lint-checked), ranked `fields` (`DraftFieldReport` with score, `Stability` class, chosen modifier, values, baseline prevalence), `exemplar_matched`, `baseline_hits`/`baseline_hit_rate`, warnings |
 | `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped) |
 
+### Rule exemplars (`exemplar` module)
+
+Replays embedded `rsigma.exemplars` through the production `Engine` / `CorrelationEngine` collection-loading APIs. Backs `rsigma rule test` and the MCP `test_exemplars` tool.
+
+| Type / function | Description |
+|-----------------|-------------|
+| `run_exemplars(collection, pipelines)` | Fresh engine state per exemplar; detection targets isolate to the host rule plus filters; correlations load the full collection and replay `process_event_at` from a fixed base timestamp |
+| `ExemplarReport` | Per-exemplar pass/fail plus rules with no exemplars (for `--fail-on-missing`) |
+| `ExemplarRunError` | Shape, ambiguous title, missing correlation reference, or compile failure |
+
 ### Rule tuning (`rule_tune` module)
 
 Contrasts false-positive events with required true-positive exemplars and emits a standard Sigma filter rule only after closed before/after verification through the real engine.

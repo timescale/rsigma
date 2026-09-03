@@ -45,11 +45,11 @@ use crate::result::{
     RuleHeader,
 };
 
-pub(crate) use helpers::yaml_to_json_map;
 use helpers::{
     base64_offset_patterns, build_regex, expand_windash, sigma_string_to_bytes, to_utf16_bom_bytes,
     to_utf16be_bytes, to_utf16le_bytes, value_to_f64, value_to_plain_string,
 };
+pub(crate) use helpers::{yaml_to_json, yaml_to_json_map};
 
 // =============================================================================
 // Compiled types

@@ -97,6 +97,7 @@ pub mod correlation_engine;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod exemplar;
 pub mod explain;
 pub mod field_observer;
 pub mod fields;
@@ -129,6 +130,9 @@ pub use correlation_engine::{
 pub use engine::Engine;
 pub use error::{EvalError, Result};
 pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, MappedEvent, PlainEvent};
+pub use exemplar::{
+    ExemplarReport, ExemplarResult, ExemplarRunError, MissingExemplars, run_exemplars,
+};
 pub use explain::{
     ConditionTrace, DetectionTrace, ItemTrace, MatchReason, RuleExplanation, SelectionBranch,
     explain_rule,

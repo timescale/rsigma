@@ -7,7 +7,7 @@ use rsigma_parser::SigmaValue;
 use crate::error::{EvalError, Result};
 
 /// Convert a `yaml_serde::Value` to a `serde_json::Value`.
-pub(super) fn yaml_to_json(value: &yaml_serde::Value) -> serde_json::Value {
+pub(crate) fn yaml_to_json(value: &yaml_serde::Value) -> serde_json::Value {
     match value {
         yaml_serde::Value::Null => serde_json::Value::Null,
         yaml_serde::Value::Bool(b) => serde_json::Value::Bool(*b),
