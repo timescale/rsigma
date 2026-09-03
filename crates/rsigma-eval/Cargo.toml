@@ -28,7 +28,7 @@ thiserror = "2"
 flate2 = "1"
 log = "0.4"
 rayon = { version = "1", optional = true }
-daachorse = { version = "3", optional = true }
+daachorse = { version = "5", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
