@@ -1,0 +1,1 @@
+{"source":"FIXTURE","summary":{"rules":1,"exemplars":1,"passed":0,"failed":1,"missing":0},"results":[{"rule_id":"11111111-2222-3333-4444-555555555555","rule_title":"Whoami","rule_kind":"detection","index":0,"name":"should fire","expect":"match","actual":"no-match","passed":false,"diagnostic":"the rule did not match the event"}]}

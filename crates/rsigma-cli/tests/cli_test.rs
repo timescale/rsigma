@@ -7,12 +7,26 @@ use std::path::{Path, PathBuf};
 use common::rsigma;
 use predicates::prelude::*;
 
+const JSON_GOLDEN: &str = include_str!("golden/test_report.json");
+const FAILING_JSON_GOLDEN: &str = include_str!("golden/test_failing.json");
+const NDJSON_GOLDEN: &str = include_str!("golden/test_report.ndjson");
+const CSV_GOLDEN: &str = include_str!("golden/test_report.csv");
+const TSV_GOLDEN: &str = include_str!("golden/test_report.tsv");
+const TABLE_GOLDEN: &str = include_str!("golden/test_table.txt");
+
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test")
 }
 
 fn fixture(name: &str) -> String {
     fixtures().join(name).to_string_lossy().into_owned()
+}
+
+/// Normalize line endings (CRLF -> LF) so the committed goldens compare equal
+/// regardless of checkout: on Windows, git may rewrite the LF golden files to
+/// CRLF, which `include_str!` then embeds, while the binary always writes LF.
+fn normalize_eol(s: &str) -> String {
+    s.replace("\r\n", "\n")
 }
 
 fn mask_source(json: &str) -> String {
@@ -28,62 +42,55 @@ fn mask_source(json: &str) -> String {
     format!("{}FIXTURE{}", &json[..value_start], &json[end..])
 }
 
-#[test]
-fn test_json_report_passes() {
-    let out = rsigma()
-        .args([
-            "rule",
-            "test",
-            "--rules",
-            &fixture("whoami.yml"),
-            "--output-format",
-            "json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let actual = mask_source(&String::from_utf8(out).unwrap());
-    let value: serde_json::Value = serde_json::from_str(&actual).unwrap();
-    assert_eq!(value["summary"]["passed"], 2);
-    assert_eq!(value["summary"]["failed"], 0);
-    assert_eq!(value["results"].as_array().unwrap().len(), 2);
-    assert_eq!(value["results"][0]["passed"], true);
-    assert_eq!(value["source"], "FIXTURE");
+fn run_format(rules: &str, format: Option<&str>) -> String {
+    let mut cmd = rsigma();
+    cmd.args(["rule", "test", "--rules", rules]);
+    if let Some(format) = format {
+        cmd.args(["--output-format", format]);
+    }
+    let out = cmd.assert().success().get_output().stdout.clone();
+    String::from_utf8(out).unwrap()
 }
 
 #[test]
-fn test_table_default_contains_headers() {
-    rsigma()
-        .args(["rule", "test", "--rules", &fixture("whoami.yml")])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("RULE"))
-        .stdout(predicate::str::contains("whoami fires"))
-        .stdout(predicate::str::contains("pass"));
+fn test_json_report_matches_golden() {
+    let actual = mask_source(&run_format(&fixture("whoami.yml"), Some("json")));
+    assert_eq!(
+        actual.trim_end(),
+        normalize_eol(JSON_GOLDEN).trim_end(),
+        "JSON report drifted from golden"
+    );
 }
 
 #[test]
-fn test_csv_and_tsv_and_ndjson() {
-    for format in ["csv", "tsv", "ndjson"] {
-        rsigma()
-            .args([
-                "rule",
-                "test",
-                "--rules",
-                &fixture("whoami.yml"),
-                "--output-format",
-                format,
-            ])
-            .assert()
-            .success();
+fn test_table_default_matches_golden() {
+    let actual = run_format(&fixture("whoami.yml"), None);
+    assert_eq!(
+        normalize_eol(&actual).trim_end(),
+        normalize_eol(TABLE_GOLDEN).trim_end(),
+        "table output drifted from golden"
+    );
+}
+
+#[test]
+fn test_ndjson_csv_tsv_match_goldens() {
+    for (format, golden) in [
+        ("ndjson", NDJSON_GOLDEN),
+        ("csv", CSV_GOLDEN),
+        ("tsv", TSV_GOLDEN),
+    ] {
+        let actual = run_format(&fixture("whoami.yml"), Some(format));
+        assert_eq!(
+            normalize_eol(&actual).trim_end(),
+            normalize_eol(golden).trim_end(),
+            "{format} output drifted from golden"
+        );
     }
 }
 
 #[test]
-fn test_failed_assertion_exits_findings() {
-    rsigma()
+fn test_failed_assertion_exits_findings_with_diagnostic() {
+    let out = rsigma()
         .args([
             "rule",
             "test",
@@ -94,7 +101,16 @@ fn test_failed_assertion_exits_findings() {
         ])
         .assert()
         .failure()
-        .code(1);
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let actual = mask_source(&String::from_utf8(out).unwrap());
+    assert_eq!(
+        actual.trim_end(),
+        normalize_eol(FAILING_JSON_GOLDEN).trim_end(),
+        "failing JSON report drifted from golden"
+    );
 }
 
 #[test]
