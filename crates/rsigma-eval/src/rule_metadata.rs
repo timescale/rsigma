@@ -101,6 +101,10 @@ impl AdsCarriers for RuleBundleMetadata {
             .get(key)
             .and_then(AdsContent::from_json)
     }
+
+    fn ads_match_exemplar_count(&self) -> usize {
+        rsigma_parser::match_exemplar_count_json(&self.custom_attributes)
+    }
 }
 
 /// The outcome of resolving a rule key to metadata.

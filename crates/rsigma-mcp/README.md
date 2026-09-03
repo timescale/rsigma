@@ -44,12 +44,13 @@ async fn main() -> anyhow::Result<()> {
 | `author_ads` | Report each rule's ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 | `reverse_convert` | Reverse-convert a SIEM query (`dialect: lucene` today) into a draft Sigma rule (YAML); takes the metadata and logsource a query cannot carry as parameters. |
 | `tune_rules` | Propose a verified Sigma filter from inline false-positive and true-positive event arrays; path inputs and pipeline files are confined to `--rules-dir`. |
+| `test_exemplars` | Replay embedded `rsigma.exemplars` and return the shared pass/fail report; `path` is confined to `--rules-dir`. |
 
 Every tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path`, and returns structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
 
 ## Resources
 
-Four read-only resources expose reference data: `rsigma://lint/catalogue` (the 86-rule lint catalogue), `rsigma://ads/schema` (the ADS section catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
+Four read-only resources expose reference data: `rsigma://lint/catalogue` (the 88-rule lint catalogue), `rsigma://ads/schema` (the ADS section catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
 
 ## Design
 

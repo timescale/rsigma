@@ -164,6 +164,10 @@ pub enum LintRule {
     AdsMissingResponse,
     AdsEmptySection,
     AdsUnknownSection,
+
+    // ── Embedded exemplars ───────────────────────────────────────────────
+    ExemplarShape,
+    ExemplarWrongRuleKind,
 }
 
 impl fmt::Display for LintRule {
@@ -255,6 +259,8 @@ impl fmt::Display for LintRule {
             LintRule::AdsMissingResponse => "ads_missing_response",
             LintRule::AdsEmptySection => "ads_empty_section",
             LintRule::AdsUnknownSection => "ads_unknown_section",
+            LintRule::ExemplarShape => "exemplar_shape",
+            LintRule::ExemplarWrongRuleKind => "exemplar_wrong_rule_kind",
         };
         write!(f, "{s}")
     }
@@ -719,7 +725,9 @@ fn lint_yaml_value_ext(
     };
 
     if is_action_fragment(m) {
-        return Vec::new();
+        let mut warnings = Vec::new();
+        rules::exemplar::lint_exemplars(m, None, &mut warnings);
+        return warnings;
     }
 
     let mut warnings = Vec::new();
@@ -735,6 +743,7 @@ fn lint_yaml_value_ext(
 
     rules::version::lint_sigma_version(m, doc_type, &mut warnings);
     rules::shared::lint_unknown_keys(m, doc_type, &mut warnings);
+    rules::exemplar::lint_exemplars(m, Some(doc_type), &mut warnings);
 
     // ADS enforcement applies to detection rules only and only when an `ads:`
     // block is configured.

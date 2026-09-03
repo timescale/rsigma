@@ -16,11 +16,13 @@ Four ADS sections reuse standard Sigma fields; the rest live under the [`rsigma.
 | Technical context | `rsigma.ads.technical_context` | new |
 | Blind spots and assumptions | `rsigma.ads.blind_spots` | new |
 | False positives | `falsepositives` | reused |
-| Validation | `rsigma.ads.validation` | new |
+| Validation | `rsigma.ads.validation`, or at least one structurally valid `expect: match` [exemplar](../reference/custom-attributes.md#rsigmaexemplars) | new |
 | Priority | `level` plus `rsigma.ads.priority` (rationale) | reused plus new |
 | Response | `rsigma.ads.response` | new |
 
 The new values are plain YAML scalars and sequences written inline under `custom_attributes:`, exactly like the other `rsigma.*` engine attributes. They are pure documentation: the engine never interprets them, so they carry zero runtime cost.
+
+Validation has an executable half. Embed events under [`rsigma.exemplars`](../reference/custom-attributes.md#rsigmaexemplars) with `expect: match` or `expect: no-match`, then run [`rule test`](../cli/rule/test.md). A structurally valid match exemplar satisfies ADS validation *presence* when the prose field is absent. Presence means a recipe exists; only a passing `rule test` proves the current rule still matches it. ADS lint stays static and never executes events.
 
 ## Authoring
 

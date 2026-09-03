@@ -233,6 +233,18 @@ impl AdsSection {
                     Some(AdsContent::List(items))
                 }
             }
+            AdsSection::Validation => {
+                if let Some(content) = carriers.ads_custom_attribute(self.carrier_field()) {
+                    Some(content)
+                } else {
+                    let n = carriers.ads_match_exemplar_count();
+                    if n == 0 {
+                        None
+                    } else {
+                        Some(AdsContent::Text(format!("{n} executable exemplar(s)")))
+                    }
+                }
+            }
             other => carriers.ads_custom_attribute(other.carrier_field()),
         }
     }
@@ -259,6 +271,11 @@ pub trait AdsCarriers {
     fn ads_falsepositives(&self) -> &[String];
     /// One `rsigma.ads.*` custom attribute, already rendered to content.
     fn ads_custom_attribute(&self, key: &str) -> Option<AdsContent>;
+    /// Count of structurally valid `expect: match` exemplars. Defaults to zero
+    /// so JSON-backed carriers that do not surface exemplars stay compiling.
+    fn ads_match_exemplar_count(&self) -> usize {
+        0
+    }
 }
 
 impl AdsCarriers for SigmaRule {
@@ -278,6 +295,10 @@ impl AdsCarriers for SigmaRule {
         self.custom_attributes
             .get(key)
             .and_then(AdsContent::from_yaml)
+    }
+
+    fn ads_match_exemplar_count(&self) -> usize {
+        crate::exemplar::match_exemplar_count(&self.custom_attributes)
     }
 }
 
@@ -773,5 +794,60 @@ custom_attributes:
 "#,
         );
         assert!(is_exempt(&rule));
+    }
+
+    #[test]
+    fn match_exemplars_satisfy_validation_when_prose_is_absent() {
+        let rule = rule(
+            r#"
+title: Whoami
+status: stable
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+custom_attributes:
+    rsigma.exemplars:
+        - expect: match
+          event:
+              field: value
+        - expect: no-match
+          event:
+              field: other
+"#,
+        );
+        assert!(AdsSection::Validation.is_present(&rule));
+        assert_eq!(
+            AdsSection::Validation.content(&rule),
+            Some(AdsContent::Text("1 executable exemplar(s)".to_string()))
+        );
+    }
+
+    #[test]
+    fn validation_prose_wins_over_exemplars() {
+        let rule = rule(
+            r#"
+title: Whoami
+status: stable
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection
+custom_attributes:
+    rsigma.ads.validation: Run whoami in a lab.
+    rsigma.exemplars:
+        - expect: match
+          event:
+              field: value
+"#,
+        );
+        assert_eq!(
+            AdsSection::Validation.content(&rule),
+            Some(AdsContent::Text("Run whoami in a lab.".to_string()))
+        );
     }
 }

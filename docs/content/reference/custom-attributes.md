@@ -18,6 +18,7 @@ CLI flags and library API calls always take precedence over `custom_attributes` 
 | `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). | `--correlation-event-mode` | Per-correlation |
 | `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. | `--max-correlation-events` | Per-correlation |
 | `rsigma.max_group_entries` | Cap on retained entries within a single group's window state for this rule (timestamps, value pairs, or per-rule hits). Oldest entries are dropped; session windows keep their span anchor. Integer, quoted. | `--max-group-entries` | Per-correlation |
+| `rsigma.exemplars` | Embedded example events that should or should not match this rule. The engine never interprets them at match time; [`rule test`](../cli/rule/test.md) executes them. | `rule test` | Per-rule |
 
 ### Example: keep full events for a brute-force rule, default for everything else
 
@@ -42,6 +43,41 @@ title: PowerShell execution
 custom_attributes:
     rsigma.suppress: 30m
 ```
+
+## `rsigma.exemplars`
+
+A list of machine-verifiable example events on a detection or correlation rule. Nested `custom_attributes.rsigma.exemplars` wins over a top-level dotted `rsigma.exemplars` key, matching the parser's existing custom-attribute precedence. Filter rules must not carry exemplars.
+
+```yaml
+custom_attributes:
+    rsigma.exemplars:
+        - name: whoami fires
+          expect: match
+          event:
+              CommandLine: whoami /all
+        - name: benign hostname
+          expect: no-match
+          event:
+              CommandLine: hostname
+```
+
+Correlation rules use a timestamped `events` sequence. Offsets are relative durations parsed by the existing timespan parser and applied from a fixed base timestamp:
+
+```yaml
+custom_attributes:
+    rsigma.exemplars:
+        - name: burst of failures
+          expect: match
+          events:
+              - offset: 0s
+                event: { EventType: failed_login, User: alice }
+              - offset: 30s
+                event: { EventType: failed_login, User: alice }
+```
+
+Every exemplar runs with fresh engine state. Detection exemplars evaluate the target rule plus the source collection's filters. Correlation exemplars load the full collection, including referenced detections and filters. Results are attributed by rule `id` when present and by title otherwise; an ambiguous fallback title is a configuration error. Optional `-p` pipelines use the production collection-loading APIs. No logsource routing is enabled implicitly.
+
+A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent (`N executable exemplar(s)`). That is metadata presence, not execution proof. Only a passing [`rule test`](../cli/rule/test.md) proves the current rule still matches.
 
 ## ADS detection-strategy attributes (`rsigma.ads.*`)
 

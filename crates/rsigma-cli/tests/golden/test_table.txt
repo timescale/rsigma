@@ -1,0 +1,4 @@
+RULE                                  KIND       INDEX  NAME             EXPECT    ACTUAL    RESULT
+------------------------------------  ---------  -----  ---------------  --------  --------  ------
+11111111-2222-3333-4444-555555555555  detection      0  whoami fires     match     match     pass  
+11111111-2222-3333-4444-555555555555  detection      1  benign hostname  no-match  no-match  pass  

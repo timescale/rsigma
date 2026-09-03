@@ -57,6 +57,7 @@ pub mod ast;
 pub mod condition;
 pub mod emit;
 pub mod error;
+pub mod exemplar;
 pub mod fieldpath;
 pub mod lint;
 pub mod parser;
@@ -79,6 +80,12 @@ pub use ast::{
 pub use condition::parse_condition;
 pub use emit::{emit_collection_yaml, emit_rule_yaml};
 pub use error::{Result, SigmaParserError, SourceLocation};
+pub use exemplar::{
+    EXEMPLARS_KEY, Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind,
+    ExemplarShapeError, Expect, TimedEvent, correlation_exemplars, exemplars, exemplars_from_attrs,
+    filter_exemplars, match_exemplar_count, match_exemplar_count_json, parse_exemplars,
+    raw_exemplar_values, raw_match_exemplar_count, raw_winning_exemplars,
+};
 pub use lint::catalogue::{LintRuleInfo, catalogue};
 #[cfg(feature = "fix")]
 pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};

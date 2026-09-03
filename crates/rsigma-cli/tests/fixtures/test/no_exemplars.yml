@@ -1,0 +1,8 @@
+title: Bare
+id: 22222222-3333-4444-5555-666666666666
+logsource:
+    category: test
+detection:
+    selection:
+        field: value
+    condition: selection

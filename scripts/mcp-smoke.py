@@ -2,7 +2,7 @@
 """Smoke-test a built ``rsigma mcp serve`` binary end to end.
 
 Drives the MCP server over stdio (default) or Streamable HTTP (``--http``),
-runs the full surface (all 14 tools and 4 resources), and prints a pass/fail
+runs the full surface (all 15 tools and 4 resources), and prints a pass/fail
 summary. This is a quick post-build sanity check against a real binary; CI
 correctness is covered by the crate's Rust tests (``crates/rsigma-mcp/tests``
 and the per-tool unit tests).
@@ -92,6 +92,19 @@ TOOL_CALLS = [
             ],
             "true_positives": [{**EVENT, "User": "attacker"}],
             "filter_id": "33333333-3333-4333-8333-333333333333",
+        },
+    ),
+    (
+        "test_exemplars",
+        {
+            "yaml": VALID_RULE
+            + """
+custom_attributes:
+    rsigma.exemplars:
+        - expect: match
+          event:
+              Image: C:\\\\Windows\\\\System32\\\\whoami.exe
+"""
         },
     ),
 ]

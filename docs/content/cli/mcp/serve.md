@@ -1,6 +1,6 @@
 # `rsigma mcp serve`
 
-Run the [Model Context Protocol](https://modelcontextprotocol.io) server, exposing the RSigma Sigma toolchain (parse, lint, validate, evaluate, convert, reverse-convert, tune, fields, pipelines) as MCP tools to AI agents such as Cursor and Claude Code.
+Run the [Model Context Protocol](https://modelcontextprotocol.io) server, exposing the RSigma Sigma toolchain (parse, lint, validate, evaluate, convert, reverse-convert, tune, test exemplars, fields, pipelines) as MCP tools to AI agents such as Cursor and Claude Code.
 
 ## Synopsis
 
@@ -53,6 +53,7 @@ The global flags (`--log-format`, `--quiet`, …) are accepted but stdout stays 
 | `fix_rules` | Apply safe auto-fixes; optionally persist with `write: true`. |
 | `author_ads` | Scaffold or render ADS detection metadata for a rule. |
 | `tune_rules` | Propose a verified Sigma filter from false-positive and true-positive event arrays. |
+| `test_exemplars` | Replay embedded `rsigma.exemplars` and return the pass/fail report. |
 
 Plus four read-only resources: `rsigma://lint/catalogue`, `rsigma://ads/schema`, `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
 
