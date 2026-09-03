@@ -176,6 +176,7 @@ export default {
             { title: "tune", path: "/cli/rule/tune" },
             { title: "reverse", path: "/cli/rule/reverse" },
             { title: "doc", path: "/cli/rule/doc" },
+            { title: "test", path: "/cli/rule/test" },
             { title: "backtest", path: "/cli/rule/backtest" },
             { title: "coverage", path: "/cli/rule/coverage" },
             { title: "scorecard", path: "/cli/rule/scorecard" },

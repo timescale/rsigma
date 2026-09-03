@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Embedded rule exemplars
+
+Sigma rules can carry `rsigma.exemplars`: example events that should or should not match the host detection or correlation. `rsigma rule test` replays them through the production engines with fresh state per exemplar. Lint adds `exemplar_shape` and `exemplar_wrong_rule_kind`. A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent; only `rule test` proves the current rule still matches. The MCP server exposes the same runner as `test_exemplars`.
+
 ### Emit nested correlation results (#468)
 
 A temporal (or any parent correlation) whose `rules:` list other correlations already updated window state and marked the parent `met`, but `chain_correlations` never appended those firings to the eval result. `engine eval` and the daemon therefore showed the inner `event_count` / `value_count` alerts and omitted the parent. Chained firings are now emitted, with the same suppression and reset action as first-level correlations. Parents that reference a child by `name` rather than `id` are resolved as well. Fixes #458.
