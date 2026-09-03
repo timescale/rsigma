@@ -80,6 +80,10 @@ fn section_present(
                 .filter_map(|v| v.as_str())
                 .any(|s| !s.trim().is_empty())
         }),
+        AdsSection::Validation => {
+            ads_attr(m, section.carrier_field()).is_some()
+                || crate::exemplar::raw_match_exemplar_count(m) > 0
+        }
         // Custom-attribute sections: present iff the key exists at all. A
         // present-but-blank value is left to the empty-section check.
         other => ads_attr(m, other.carrier_field()).is_some(),
@@ -452,5 +456,15 @@ custom_attributes:
         // No `ads:` block: the plain (no-config) lint path emits no ADS findings.
         let w = super::super::super::lint_yaml_str(BARE_STABLE);
         assert!(!w.iter().any(|x| x.rule.to_string().starts_with("ads_")));
+    }
+
+    #[test]
+    fn match_exemplars_satisfy_validation_presence() {
+        let yaml = format!(
+            "{BARE_STABLE}custom_attributes:\n    rsigma.exemplars:\n        - expect: match\n          event:\n              CommandLine: whoami\n"
+        );
+        let w = lint_with_ads(&yaml, ads_config());
+        assert!(!has_rule(&w, LintRule::AdsMissingValidation));
+        assert!(has_rule(&w, LintRule::AdsMissingGoal));
     }
 }
