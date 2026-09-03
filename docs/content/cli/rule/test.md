@@ -30,8 +30,39 @@ Output uses the global `--output-format` layer. Without an explicit format the c
 
 ### Test a rule file
 
+Given a rule that carries one positive and one negative exemplar:
+
+```yaml
+title: Whoami
+id: 11111111-2222-3333-4444-555555555555
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+custom_attributes:
+    rsigma.exemplars:
+        - name: whoami fires
+          expect: match
+          event:
+              CommandLine: whoami /all
+        - name: benign hostname
+          expect: no-match
+          event:
+              CommandLine: hostname
+```
+
 ```bash
 rsigma rule test -r rules/windows/whoami.yml
+```
+
+```text
+RULE                                  KIND       INDEX  NAME             EXPECT    ACTUAL    RESULT
+------------------------------------  ---------  -----  ---------------  --------  --------  ------
+11111111-2222-3333-4444-555555555555  detection      0  whoami fires     match     match     pass
+11111111-2222-3333-4444-555555555555  detection      1  benign hostname  no-match  no-match  pass
 ```
 
 ### Gate a ruleset in CI
@@ -43,7 +74,29 @@ rsigma rule test -r rules/ --fail-on-missing
 ### JSON report
 
 ```bash
-rsigma rule test -r rules/ --output-format json
+rsigma rule test -r rules/windows/whoami.yml --output-format json
+```
+
+A failed assertion carries a `diagnostic` and the command exits `1`:
+
+```json
+{
+  "source": "rules/windows/whoami.yml",
+  "summary": { "rules": 1, "exemplars": 1, "passed": 0, "failed": 1, "missing": 0 },
+  "results": [
+    {
+      "rule_id": "11111111-2222-3333-4444-555555555555",
+      "rule_title": "Whoami",
+      "rule_kind": "detection",
+      "index": 0,
+      "name": "should fire",
+      "expect": "match",
+      "actual": "no-match",
+      "passed": false,
+      "diagnostic": "the rule did not match the event"
+    }
+  ]
+}
 ```
 
 ## Exit codes
