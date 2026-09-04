@@ -43,6 +43,7 @@
 //! ```
 
 pub mod alert_pipeline;
+pub mod capture;
 pub mod dispositions;
 pub mod egress;
 pub mod engine;
@@ -62,11 +63,14 @@ pub mod tap;
 
 pub use alert_pipeline::{
     AlertPipeline, AlertPipelineConfigError, AlertPipelineFile, AlertPipelineSnapshot,
-    AlertPipelineState, DEFAULT_MAX_DYNAMIC_SILENCES, DedupStore, GroupMode, IncidentRef,
+    AlertPipelineState, Caps, DEFAULT_MAX_DYNAMIC_SILENCES, DedupStore, GroupMode, IncidentRef,
     IncidentResult, IncidentStore, IncludeMode, MatchOp, Matcher, MatcherError, MatcherSet,
     MatcherSpec, SNAPSHOT_VERSION, Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState,
-    SilenceStore, SilenceView, TickOutput, build_alert_pipeline, load_alert_pipeline_file,
-    parse_alert_pipeline_config,
+    SilenceStore, SilenceView, TickOutput, build_alert_pipeline, group_fingerprint,
+    load_alert_pipeline_file, parse_alert_pipeline_config, strip_event_payloads,
+};
+pub use capture::{
+    AdmittedEvent, AdmittedMatch, CaptureIncompatibility, CaptureReject, CaptureSink,
 };
 pub use dispositions::{
     Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,
