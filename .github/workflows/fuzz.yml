@@ -72,6 +72,8 @@ jobs:
             max_len: 65536
           - target: fuzz_stix_pattern
             max_len: 4096
+          - target: fuzz_capture_spool
+            max_len: 65536
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
