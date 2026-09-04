@@ -278,6 +278,31 @@ The tuning keys are config-file-only under `daemon.dispositions`:
 
 See the [Triage Feedback Loop](../../guide/triage-feedback.md) guide.
 
+## Verdict-driven capture
+
+The daemon can retain admitted detection events for `group_by` incidents and write TP/FP corpus bundles after an accepted disposition. It is **disabled by default** and **startup-only**: changing any `daemon.capture.*` key requires a restart. Enabling it requires dispositions, a `group.mode: group_by` alert pipeline, and `daemon.capture.spool_dir`. See [Verdict-Driven Corpora](../../guide/verdict-to-corpus.md).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--enable-capture` | off | Enable the capture ring and disposition spool for this run. Equivalent to `daemon.capture.enabled: true`. Bounds and `spool_dir` stay config-file-only. |
+
+The remaining keys are config-file-only under `daemon.capture`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.capture.enabled` | `false` | Retain admitted detections and spool accepted verdicts. Also enabled by `--enable-capture`. |
+| `daemon.capture.spool_dir` | none | Required when enabled. Destination for `tp/` and `fp/` bundles. |
+| `daemon.capture.max_captured_incidents` | `1000` | Open incidents held in the ring. |
+| `daemon.capture.max_events_per_incident` | `1000` | Events retained per incident. |
+| `daemon.capture.max_event_bytes` | `1048576` | Encoded size of one event. Oversized events are dropped whole. |
+| `daemon.capture.max_bytes_per_incident` | `16777216` | Encoded size of one incident. |
+| `daemon.capture.max_capture_bytes` | `268435456` | Encoded size of the whole ring. |
+| `daemon.capture.ttl` | `24h` | How long a ring generation is kept after last admission. |
+| `daemon.capture.max_spool_bytes` | `10737418240` | Completed-bundle disk budget. A larger bundle fails before commit. |
+| `daemon.capture.spool_queue_capacity` | `128` | In-flight spool jobs. |
+
+When capture is enabled, detection event payloads are retained internally even without `--include-event`, then stripped before sink delivery unless `--include-event` was also set.
+
 ## Examples
 
 ### Minimal daemon: HTTP ingest + curl

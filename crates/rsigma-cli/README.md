@@ -51,6 +51,9 @@ rsigma rule fields -r rules/ -p ecs_windows
 # Propose a verified filter from classified false-positive and true-positive events
 rsigma rule tune -r rules/ --rule <RULE_ID> --fp @false-positives.ndjson --tp @true-positives.ndjson
 
+# Or derive those corpora from accepted daemon dispositions
+rsigma rule tune -r rules/ --from-dispositions /var/lib/rsigma/capture
+
 # List available conversion backends
 rsigma backend targets
 ```

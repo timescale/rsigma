@@ -182,13 +182,24 @@ The live event tap ([`GET /api/v1/tap`](http-api.md#live-event-tap), [`rsigma en
 
 The tap can never apply backpressure to detection: each session owns a bounded buffer and drops (and counts) events when full, so opening a tap cannot stall or slow the engine. A dropped client connection tears the session down automatically, so a closed terminal cannot leave a tap recording. The concurrent-session count and capture window are bounded by `daemon.tap.max_sessions` and `daemon.tap.max_duration`.
 
+## Verdict-driven capture
+
+Verdict-driven capture ([Verdict-Driven Corpora](../guide/verdict-to-corpus.md)) retains admitted detection event payloads in memory and writes them to `daemon.capture.spool_dir` after an accepted disposition. Treat that directory as sensitive data at rest: raw events may contain PII, secrets, tokens, or customer payloads, and the feature does not redact them.
+
+- **It is off by default and startup-only.** Enable it with `daemon.capture.enabled: true` or `--enable-capture`. Changing the block requires a restart.
+- **HTTP ingest is permission-gated.** When authentication and capture are both enabled, `POST /api/v1/dispositions` requires `dispositions:write` and `capture:write`. Configured pull sources are trusted operator input.
+- **Filesystem policy.** On Unix, spool directories/files are created as `0700`/`0600`. Staging is under the same parent, symlink traversal is refused, abandoned staging is removed at startup, and completed-bundle eviction never follows links.
+- **The ring is not persisted.** A restart loses capture for open incidents rather than writing raw payloads into `--state-db`.
+- **No read or search API.** The spool is write-only from the daemon.
+
 ## Filesystem footprint
 
 The daemon never writes outside the paths it is explicitly given:
 
-- `--state-db <PATH>`: SQLite file written periodically and on shutdown (correlation state, alert pipeline, dispositions, risk, and the control-plane audit log when enabled).
+- `--state-db <PATH>`: SQLite file written periodically and on shutdown (correlation state, alert pipeline, dispositions, risk, and the control-plane audit log when enabled). Capture ring contents are never stored here.
 - `--dlq file://<PATH>`: append-only NDJSON.
 - `--output file://<PATH>`: append-only NDJSON of detections.
+- `daemon.capture.spool_dir`: versioned TP/FP corpus bundles. Sensitive; classify and protect the path.
 
 Rules and pipeline files are read-only. The `notify` file-watcher does not write. The MkDocs documentation build is local and never touches `~/`.
 

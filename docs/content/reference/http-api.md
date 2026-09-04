@@ -20,7 +20,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/risk` | GET | `risk:read` | Open entities tracked by the risk accumulator, with their window score, tactic count, source count, and window bounds. |
 | `/api/v1/silences` | GET, POST | `silences:read`, `silences:write` | List silences, or create one (returns its id). |
 | `/api/v1/silences/{id}` | DELETE | `silences:write` | Remove a silence by id. |
-| `/api/v1/dispositions` | GET, POST | `dispositions:read`, `dispositions:write` | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. |
+| `/api/v1/dispositions` | GET, POST | `dispositions:read`, `dispositions:write` | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. When capture is enabled, POST also requires `capture:write`. There is no read endpoint for the capture ring or spool. |
 | `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | `reload:execute` | Trigger an immediate rules + pipelines reload. |
 | `/api/v1/events` | POST | `events:ingest` | NDJSON event ingest. Only enabled with `--input http`. |
@@ -66,7 +66,7 @@ daemon:
           token_env: RSIGMA_API_TOKEN_CI
 ```
 
-Clients send `Authorization: Bearer <token>`. Each route requires the `resource:action` permission in the summary table above; a token's permission set comes from its role. The built-in roles are `reader` (`*:read`), `operator` (`*:read` plus every control-plane write except reload), `ingest` (`events:ingest` only, so a log shipper's token cannot create silences), and `admin` (`*`). Custom roles are permission lists with `*` wildcards (`"*:read"`, `"silences:*"`); a token can also carry an inline `permissions` list instead of a `role`.
+Clients send `Authorization: Bearer <token>`. Each route requires the `resource:action` permission in the summary table above; a token's permission set comes from its role. The built-in roles are `reader` (`*:read`), `operator` (`*:read` plus every control-plane write except reload, including `capture:write`), `ingest` (`events:ingest` only, so a log shipper's token cannot create silences), and `admin` (`*`). Custom roles are permission lists with `*` wildcards (`"*:read"`, `"silences:*"`); a token can also carry an inline `permissions` list instead of a `role`.
 
 Token secrets never live in YAML: `token_env` names an environment variable, resolved once at startup, and a missing or empty variable fails startup. Token comparison is constant time. `GET /healthz` and `GET /readyz` are always unauthenticated so liveness probes need no secrets; `anonymous_permissions` grants a permission set to requests without an `Authorization` header (for example `["metrics:read"]` keeps Prometheus scraping token-free, and `["*:read"]` protects only the mutating endpoints).
 
@@ -409,7 +409,7 @@ The triage feedback loop. Disabled by default; both routes return `503` unless t
 
 ### `POST /api/v1/dispositions`
 
-Ingest one or more analyst dispositions. The body is a single JSON object, a JSON array of objects, or NDJSON. Each object carries `rule_id` (required for `detection` scope, with a title fallback), `verdict` (`true_positive` / `false_positive` / `benign_true_positive`), an optional `scope` (`detection` default, or `incident` with an `incident_id`), optional `fingerprint` / `incident_id` alert identities, an optional RFC 3339 `timestamp`, and optional `analyst` / `note` (`note` max 2048 bytes). Returns `200` with an ingest summary; a whole-body parse failure returns `400`. Requires `dispositions:write` when API authentication is enabled.
+Ingest one or more analyst dispositions. The body is a single JSON object, a JSON array of objects, or NDJSON. Each object carries `rule_id` (required for `detection` scope, with a title fallback), `verdict` (`true_positive` / `false_positive` / `benign_true_positive`), an optional `scope` (`detection` default, or `incident` with an `incident_id`), optional `fingerprint` / `incident_id` alert identities, an optional RFC 3339 `timestamp`, and optional `analyst` / `note` (`note` max 2048 bytes). Returns `200` with an ingest summary; a whole-body parse failure returns `400`. Requires `dispositions:write` when API authentication is enabled. When capture is also enabled, POST additionally requires `capture:write` and the summary may include a `capture` array (`queued`, `exists`, `miss`, `queue_full`). Disposition accounting stays accepted even if corpus spooling misses. There is no API to read the capture ring or the spool. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md).
 
 ```bash
 curl -sS -X POST http://127.0.0.1:9090/api/v1/dispositions \

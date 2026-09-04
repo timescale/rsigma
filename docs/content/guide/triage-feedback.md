@@ -4,7 +4,7 @@ The triage feedback loop captures an analyst's verdict on the alerts a ruleset p
 
 It is a measurement loop, not a case manager: it ingests a verdict and emits a ratio. It deliberately does not add an alert queue, ownership, an investigation timeline, ticketing, or any UI. The durable record of every alert stays in NATS, files, or your downstream SIEM.
 
-It is opt-in and off by default. Enable it with `--enable-dispositions` or `daemon.dispositions.enabled: true`.
+It is opt-in and off by default. Enable it with `--enable-dispositions` or `daemon.dispositions.enabled: true`. To retain the admitted events behind a verdict as a backtest or tune corpus, see [Verdict-Driven Corpora](verdict-to-corpus.md).
 
 ## Concepts
 
@@ -94,6 +94,7 @@ See [Triage feedback loop](../reference/metrics.md#triage-feedback-loop-4-metric
 
 ## See also
 
+- [Verdict-Driven Corpora](verdict-to-corpus.md)
 - [Rule Tuning](rule-tuning.md)
 - [Disposition Source Recipes](disposition-recipes.md)
 - [HTTP API: Dispositions](../reference/http-api.md#dispositions)

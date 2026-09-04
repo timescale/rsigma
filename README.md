@@ -73,7 +73,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 * **[NATS JetStream](https://rsigma.io/guide/nats-streaming/):** Consumes and publishes over JetStream with authentication (credentials, mTLS), replay, consumer groups, and dead-letter queues
 * **[OTLP integration](https://rsigma.io/guide/otlp-integration/):** Receives logs from any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) via HTTP or gRPC, and exports detections to an OTLP collector
 * **[TLS termination](https://rsigma.io/reference/security/):** Terminates TLS in-process on the daemon API listener with optional mutual TLS and cross-platform certificate hot-reload
-* **[State persistence](https://rsigma.io/guide/streaming-detection/):** Persists correlation, alert-pipeline, risk, and disposition state to SQLite with `--state-db` and restores it across restarts
+* **[State persistence](https://rsigma.io/guide/streaming-detection/):** Persists correlation, alert-pipeline, risk, and disposition state to SQLite with `--state-db` and restores it across restarts. The capture ring is not persisted.
 * **Live operations:** Inspects a running daemon with [`engine status`](https://rsigma.io/cli/engine/status/), records replayable fixtures with [`engine tap`](https://rsigma.io/cli/engine/tap/), and streams live detections with [`engine tail`](https://rsigma.io/cli/engine/tail/)
 
 ### Alert & Triage
@@ -83,6 +83,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 * **[Alert pipeline](https://rsigma.io/guide/alert-pipeline/):** Silences, inhibits, and deduplicates results, then groups the survivors into incidents, modeled on Alertmanager
 * **[Webhook alerts](https://rsigma.io/guide/webhooks/):** Delivers detections to Slack, Teams, Discord, PagerDuty, or any HTTP endpoint with templated payloads, HMAC request signing, per-webhook retry, rate limiting, and DLQ
 * **[Triage feedback](https://rsigma.io/guide/triage-feedback/):** Ingests analyst dispositions into a per-rule false-positive ratio that feeds the detection scorecard
+* **[Verdict-driven corpora](https://rsigma.io/guide/verdict-to-corpus/):** Retains admitted `group_by` detection events and writes TP/FP bundles after an accepted disposition for `rule backtest` and `rule tune --from-dispositions`
 
 ### Measure
 

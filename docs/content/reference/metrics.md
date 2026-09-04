@@ -198,6 +198,20 @@ Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: 
 | `rsigma_disposition_ingest_total` | counter | `source`, `result` | Ingest outcomes by source (`api`, `file`, `http`, `nats`) and result (`accepted`, `duplicate`, `rejected`). |
 | `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). |
 
+## Verdict-driven capture (7 metrics)
+
+Exposed when capture is compiled into the daemon. Counters pre-register their fixed label sets so they render with zeroed series on the first scrape. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_capture_incidents_open` | gauge | none | Incidents currently held in the capture ring. |
+| `rsigma_capture_events_held` | gauge | none | Events currently held in the capture ring. |
+| `rsigma_capture_bytes_held` | gauge | none | Encoded event bytes currently held in the capture ring. |
+| `rsigma_capture_evictions_total` | counter | `reason` | Ring incident evictions (`ring_full`, `ttl`). |
+| `rsigma_capture_events_dropped_total` | counter | `reason` | Event drops (`event_too_large`, `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, `unsupported_result_kind`). |
+| `rsigma_capture_spool_jobs_total` | counter | `result` | Disposition-bundle outcomes (`queued`, `written`, `exists`, `miss`, `queue_full`, `io_error`). |
+| `rsigma_capture_spool_evictions_total` | counter | `reason` | Completed-bundle evictions from the disk budget (`budget`). |
+
 ## Scrape configuration
 
 Minimum Prometheus scrape config:
