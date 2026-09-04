@@ -44,6 +44,7 @@
 
 pub mod alert_pipeline;
 pub mod capture;
+pub mod capture_spool;
 pub mod dispositions;
 pub mod egress;
 pub mod engine;
@@ -73,6 +74,10 @@ pub use capture::{
     AdmittedEvent, AdmittedMatch, CaptureConfig, CaptureConfigError, CaptureIncompatibility,
     CaptureReject, CaptureRing, CaptureRingSink, CaptureSink, CaptureSnapshot, CaptureStats,
     CapturedEvent, event_digest,
+};
+pub use capture_spool::{
+    BUNDLE_FORMAT_VERSION, BundleKind, BundleManifest, BundleRule, ProvenanceLine, SpoolReadError,
+    bundle_id, disposition_identity, parse_corpus_events, parse_manifest, parse_provenance,
 };
 pub use dispositions::{
     Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,

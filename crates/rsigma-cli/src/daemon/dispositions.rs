@@ -17,6 +17,7 @@ use rsigma_runtime::{
 use serde::Serialize;
 use serde_json::json;
 
+use super::capture::CaptureSpool;
 use super::metrics::Metrics;
 
 /// How often the background pruner rolls the window forward for idle rules.
@@ -28,6 +29,7 @@ pub struct DispositionState {
     store: Arc<RwLock<DispositionStore>>,
     metrics: Arc<Metrics>,
     alert_state: Arc<RwLock<AlertPipelineState>>,
+    capture: Option<CaptureSpool>,
 }
 
 /// The result of ingesting a batch of dispositions, returned by the endpoint
@@ -39,21 +41,35 @@ pub struct IngestSummary {
     pub rejected: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capture: Vec<String>,
 }
 
 impl DispositionState {
     /// Create the shared state with the given store config, sharing the
     /// alert-pipeline state so `scope: incident` verdicts can resolve to their
     /// contributing rules.
+    #[cfg(test)]
     pub fn new(
         config: DispositionConfig,
         metrics: Arc<Metrics>,
         alert_state: Arc<RwLock<AlertPipelineState>>,
     ) -> Self {
+        Self::with_capture(config, metrics, alert_state, None)
+    }
+
+    /// Same as [`Self::new`], with an optional capture spool.
+    pub fn with_capture(
+        config: DispositionConfig,
+        metrics: Arc<Metrics>,
+        alert_state: Arc<RwLock<AlertPipelineState>>,
+        capture: Option<CaptureSpool>,
+    ) -> Self {
         Self {
             store: Arc::new(RwLock::new(DispositionStore::new(config))),
             metrics,
             alert_state,
+            capture,
         }
     }
 
@@ -113,6 +129,7 @@ impl DispositionState {
     /// Apply one validated disposition, expanding an unresolved incident-scoped
     /// record into one verdict per contributing rule.
     fn apply(&self, disp: Disposition, now: i64, source: &str, summary: &mut IngestSummary) {
+        let original = disp.clone();
         let targets = if disp.scope == DispositionScope::Incident && disp.rule_id.is_none() {
             let rules = disp
                 .incident_id
@@ -140,6 +157,9 @@ impl DispositionState {
             vec![disp]
         };
 
+        let mut accepted_rules = Vec::new();
+        let mut accepted = 0u64;
+        let mut any_duplicate = false;
         for d in targets {
             let outcome = self
                 .store
@@ -148,19 +168,25 @@ impl DispositionState {
                 .unwrap_or_else(|_| IngestOutcome::Rejected("store lock poisoned".to_string()));
             match outcome {
                 IngestOutcome::Accepted => {
+                    accepted += 1;
                     summary.accepted += 1;
                     self.count_ingest(source, "accepted");
-                    if let Some(rid) = d.rule_id.as_deref() {
+                    if let Some(rid) = d.rule_id.clone() {
                         self.metrics
                             .dispositions_total
-                            .with_label_values(&[rid, d.verdict.as_str()])
+                            .with_label_values(&[&rid, d.verdict.as_str()])
                             .inc();
-                        self.refresh_gauge(rid);
+                        self.refresh_gauge(&rid);
+                        accepted_rules.push(rid);
                     }
                 }
                 IngestOutcome::Duplicate => {
                     summary.duplicate += 1;
                     self.count_ingest(source, "duplicate");
+                    any_duplicate = true;
+                    if let Some(rid) = d.rule_id {
+                        accepted_rules.push(rid);
+                    }
                 }
                 IngestOutcome::Rejected(reason) => {
                     summary.rejected += 1;
@@ -168,6 +194,14 @@ impl DispositionState {
                     summary.errors.push(reason);
                 }
             }
+        }
+
+        if let Some(spool) = &self.capture
+            && !accepted_rules.is_empty()
+            && (accepted > 0 || any_duplicate)
+        {
+            let status = spool.enqueue(&original, &accepted_rules);
+            summary.capture.push(status.as_str().to_string());
         }
     }
 

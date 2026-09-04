@@ -94,6 +94,8 @@ pub struct Metrics {
     pub capture_bytes_held: IntGauge,
     pub capture_evictions_total: IntCounterVec,
     pub capture_events_dropped_total: IntCounterVec,
+    pub capture_spool_jobs_total: IntCounterVec,
+    pub capture_spool_evictions_total: IntCounterVec,
     pub risk_annotations_total: IntCounterVec,
     pub risk_annotation_score: Histogram,
     pub risk_objects_total: IntCounter,
@@ -974,6 +976,44 @@ impl Metrics {
             .register(Box::new(capture_events_dropped_total.clone()))
             .unwrap();
 
+        let capture_spool_jobs_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_spool_jobs_total",
+                "Disposition-bundle spool outcomes",
+            ),
+            &["result"],
+        )
+        .unwrap();
+        let capture_spool_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_spool_evictions_total",
+                "Completed-bundle evictions from the spool disk budget",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        for result in [
+            "queued",
+            "written",
+            "exists",
+            "miss",
+            "queue_full",
+            "io_error",
+        ] {
+            capture_spool_jobs_total
+                .with_label_values(&[result])
+                .inc_by(0);
+        }
+        capture_spool_evictions_total
+            .with_label_values(&["budget"])
+            .inc_by(0);
+        registry
+            .register(Box::new(capture_spool_jobs_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_spool_evictions_total.clone()))
+            .unwrap();
+
         // Risk-based alerting (#65). Annotation outcomes, the per-detection
         // score distribution, the risk-object count, and the stage duration.
         let risk_annotations_total = IntCounterVec::new(
@@ -1184,6 +1224,8 @@ impl Metrics {
             capture_bytes_held,
             capture_evictions_total,
             capture_events_dropped_total,
+            capture_spool_jobs_total,
+            capture_spool_evictions_total,
             risk_annotations_total,
             risk_annotation_score,
             risk_objects_total,

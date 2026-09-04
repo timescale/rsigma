@@ -1,6 +1,7 @@
 pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod bundle;
+pub(crate) mod capture;
 pub(crate) mod dispositions;
 pub(crate) mod enrichment;
 mod health;

@@ -29,6 +29,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -49,7 +50,7 @@ pub struct AdmittedEvent {
 }
 
 /// A single rule match contributing to an [`AdmittedEvent`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdmittedMatch {
     /// Rule id, falling back to the rule title.
     pub rule_id: String,

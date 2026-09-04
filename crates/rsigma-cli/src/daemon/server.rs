@@ -696,6 +696,35 @@ pub async fn run_daemon(config: DaemonConfig) {
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
+    let capture_ring: Option<Arc<std::sync::Mutex<CaptureRing>>> =
+        config.capture.enabled.then(|| {
+            Arc::new(std::sync::Mutex::new(CaptureRing::new(
+                config.capture.ring.clone(),
+            )))
+        });
+    let capture_spool = match (
+        config.capture.enabled,
+        config.capture.spool_dir.clone(),
+        capture_ring.clone(),
+    ) {
+        (true, Some(dir), Some(ring)) => {
+            match super::capture::CaptureSpool::start(
+                dir,
+                config.capture.max_spool_bytes,
+                config.capture.spool_queue_capacity,
+                ring,
+                metrics.clone(),
+            ) {
+                Ok(spool) => Some(spool),
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to initialize capture spool");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        _ => None,
+    };
+
     // Build the risk layer. Failures exit cleanly because no I/O has started yet.
     if let Some(path) = config.risk_path.as_ref() {
         match load_risk_file(path).and_then(build_risk_layer) {
@@ -853,10 +882,11 @@ pub async fn run_daemon(config: DaemonConfig) {
     // their contributing rules through the live incident map.
     let disposition_state = if config.dispositions.enabled {
         tracing::info!("Triage feedback loop enabled (POST/GET /api/v1/dispositions)");
-        let state = super::dispositions::DispositionState::new(
+        let state = super::dispositions::DispositionState::with_capture(
             config.dispositions.config.clone(),
             metrics.clone(),
             alert_state.clone(),
+            capture_spool,
         );
         // Roll the window forward for idle rules on a timer.
         state.spawn_pruner();
@@ -1032,9 +1062,14 @@ pub async fn run_daemon(config: DaemonConfig) {
     let app = match config.api_auth.as_ref() {
         Some(auth) => {
             tracing::info!("API authentication enabled");
+            let extra_disposition_perm = config
+                .capture
+                .enabled
+                .then_some(super::auth::Permission::required("capture", "write"));
             let state = Arc::new(super::auth::AuthLayerState {
                 auth: auth.clone(),
                 metrics: metrics.clone(),
+                extra_disposition_perm,
             });
             app.route_layer(axum::middleware::from_fn_with_state(
                 state,
@@ -1953,12 +1988,6 @@ pub async fn run_daemon(config: DaemonConfig) {
     // dispatcher's ack-join releases ack tokens only once every sink has
     // committed the result (delivered or DLQ-parked), preserving at-least-once
     // across fan-out. On shutdown it drains the worker queues.
-    let capture_ring: Option<Arc<std::sync::Mutex<CaptureRing>>> =
-        config.capture.enabled.then(|| {
-            Arc::new(std::sync::Mutex::new(CaptureRing::new(
-                config.capture.ring.clone(),
-            )))
-        });
     if config.capture.enabled {
         tracing::info!(
             spool_dir = %config.capture.spool_dir.as_ref().expect("validated at startup").display(),
