@@ -116,7 +116,7 @@ jobs:
         id: resolve
         run: echo "digest=sha256:$(ls /tmp/digests)" >> "${GITHUB_OUTPUT}"
 
-      - uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+      - uses: anchore/scan-action@8964e60c6fabdb85fdbbbfd9834d8f19c97a3086 # v7.4.1
         id: grype
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.resolve.outputs.digest }}
@@ -128,7 +128,7 @@ jobs:
           # so pin grype to the matrix arch instead of the host default.
           GRYPE_PLATFORM: linux/${{ matrix.arch }}
 
-      - uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         if: always()
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}

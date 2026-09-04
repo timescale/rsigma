@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Dependency batch (Sep 2026) (#479)
+
+Rolls up the open Dependabot PRs into a single merge, regenerated against current `main` rather than replaying stale lockfile bases. Rust (workspace `Cargo.lock`, with `fuzz/Cargo.lock` and `ci/wasm-smoke/Cargo.lock` synced): the patch group (#472) updates `log` 0.4.33 to 0.4.34, `jsonpath-rust` 1.0.8 to 1.0.10, `cel` 0.14.3 to 0.14.4, and `rustls-webpki` 0.103.14 to 0.103.15; standalone updates move `daachorse` 3.0.3 to 5.0.0 (#475) and `webpki-roots` 0.26.11 to 1.0.9 (#473). `yamlpath` 1.26.1 to 1.27.0 with `tree-sitter-iter` 1.26.1 to 1.27.0 (#474 requested 1.29.0; 1.28+ pulls `tree-sitter-iter` 1.28+ which requires rustc 1.97). `yamlpatch` stays at 1.26.1 (no 1.27 release; 1.28+ requires `yamlpath` ^1.28). CI (all repinned by commit SHA, batched via the `actions-updates` group, #471): `taiki-e/install-action` v2.86.4 to v2.87.0, `anchore/scan-action` v7.4.0 to v7.4.1, and `github/codeql-action/upload-sarif` v4.37.7 to v4.37.9. Held back: `tikv-jemallocator` 0.7.0 (#425, jemalloc 5.3.1) still regresses musl routed daemon throughput about 4-7% versus 0.6.1.
+
 ### Fire name-referenced temporal correlations (#477)
 
 A `temporal` or `temporal_ordered` correlation that referenced a detection rule by `name` never fired when that rule also carried an `id`: the engine tracked the id in the temporal window while the condition compared against the referenced name. The engine now tracks whichever identity the correlation actually references.
