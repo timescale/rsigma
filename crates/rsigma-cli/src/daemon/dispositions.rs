@@ -46,9 +46,7 @@ pub struct IngestSummary {
 }
 
 impl DispositionState {
-    /// Create the shared state with the given store config, sharing the
-    /// alert-pipeline state so `scope: incident` verdicts can resolve to their
-    /// contributing rules.
+    /// Test-only constructor without a capture spool.
     #[cfg(test)]
     pub fn new(
         config: DispositionConfig,
@@ -58,7 +56,9 @@ impl DispositionState {
         Self::with_capture(config, metrics, alert_state, None)
     }
 
-    /// Same as [`Self::new`], with an optional capture spool.
+    /// Create the shared state with the given store config and an optional
+    /// capture spool, sharing the alert-pipeline state so `scope: incident`
+    /// verdicts can resolve to their contributing rules.
     pub fn with_capture(
         config: DispositionConfig,
         metrics: Arc<Metrics>,

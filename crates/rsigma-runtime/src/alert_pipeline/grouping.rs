@@ -231,7 +231,7 @@ impl IncidentStore {
         self.incidents.contains_key(id)
     }
 
-    /// True when [`Self::assign`] would accept a result for this deterministic
+    /// True when `assign` would accept a result for this deterministic
     /// group id: the incident is already open, or the store still has room.
     pub fn can_assign(&self, id: &str, max_open_incidents: usize) -> bool {
         self.incidents.contains_key(id) || self.incidents.len() < max_open_incidents
