@@ -22,6 +22,21 @@ const SYSMON_EXEMPLARS: &str = concat!(
     "\n",
 );
 
+const CORRELATION_GROUPS: &str = concat!(
+    r#"{"group":"g1","offset":"0s","event":{"kind":"reset","user":"alice","factor":"totp","reset_reason":"recovery"}}"#,
+    "\n",
+    r#"{"group":"g1","offset":"20s","event":{"kind":"session","user":"alice","new_asn":true,"asn":64512,"session_type":"web"}}"#,
+    "\n",
+    r#"{"group":"g2","offset":"0s","event":{"kind":"reset","user":"bob","factor":"totp","reset_reason":"recovery"}}"#,
+    "\n",
+    r#"{"group":"g2","offset":"25s","event":{"kind":"session","user":"bob","new_asn":true,"asn":64512,"session_type":"web"}}"#,
+    "\n",
+    r#"{"group":"g3","offset":"0s","event":{"kind":"reset","user":"carol","factor":"totp","reset_reason":"recovery"}}"#,
+    "\n",
+    r#"{"group":"g3","offset":"30s","event":{"kind":"session","user":"carol","new_asn":true,"asn":64512,"session_type":"web"}}"#,
+    "\n",
+);
+
 /// Replace the volatile `id:` (random UUIDv4) and `date:` (today) lines with
 /// placeholders so the draft compares byte-for-byte against the golden.
 /// Splitting on `lines()` also normalizes CRLF to LF.
@@ -291,4 +306,93 @@ fn all_volatile_exemplars_fail_with_guidance() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("no candidate fields"));
+}
+
+#[test]
+fn grouped_draft_emits_reparseable_temporal_collection() {
+    let groups = temp_file(".ndjson", CORRELATION_GROUPS);
+    let output = rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", groups.path().display()),
+        ])
+        .output()
+        .expect("run grouped draft");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    assert!(yaml.contains("type: temporal_ordered"));
+    assert!(yaml.contains("rsigma.exemplars:"));
+    let rule = temp_file(".yml", &yaml);
+    rsigma()
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
+        .assert()
+        .success();
+    rsigma()
+        .args(["rule", "test", "--rules", rule.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn grouped_directory_uses_file_stems_as_group_ids() {
+    let directory = tempfile::tempdir().unwrap();
+    for (id, user) in [("g1", "alice"), ("g2", "bob"), ("g3", "carol")] {
+        let contents = format!(
+            "{{\"offset\":\"0s\",\"event\":{{\"kind\":\"reset\",\"user\":\"{user}\",\"factor\":\"totp\",\"reset_reason\":\"recovery\"}}}}\n{{\"offset\":\"20s\",\"event\":{{\"kind\":\"session\",\"user\":\"{user}\",\"new_asn\":true,\"asn\":64512,\"session_type\":\"web\"}}}}\n"
+        );
+        std::fs::write(directory.path().join(format!("{id}.ndjson")), contents).unwrap();
+    }
+    rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", directory.path().display()),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("type: temporal_ordered"));
+}
+
+#[test]
+fn grouped_draft_reports_malformed_line_context() {
+    let groups = temp_file(
+        ".ndjson",
+        "{\"group\":\"g1\",\"offset\":\"0s\",\"event\":{}}\nnot-json\n",
+    );
+    rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", groups.path().display()),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(":2: invalid JSON"));
+}
+
+#[test]
+fn grouped_auto_mode_downgrades_inverted_order() {
+    let input = CORRELATION_GROUPS.replace(
+        r#"{"group":"g3","offset":"0s","event":{"kind":"reset""#,
+        r#"{"group":"g3","offset":"40s","event":{"kind":"reset""#,
+    );
+    let groups = temp_file(".ndjson", &input);
+    rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", groups.path().display()),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("type: temporal\n"));
 }

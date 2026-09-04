@@ -14,10 +14,14 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::{Args, ValueEnum};
+use rsigma_eval::rule_draft::correlation::{
+    CorrelationDraftConfig, CorrelationDraftReport, CorrelationDraftType, GroupedExemplar,
+    SourceLocation, TimedEvent, draft_correlation,
+};
 use rsigma_eval::{DraftConfig, DraftReport, JsonEvent, draft_rule};
 use serde::Serialize;
 
@@ -34,6 +38,24 @@ pub(crate) enum EmitMode {
     Report,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub(crate) enum CorrelationTypeArg {
+    #[default]
+    Auto,
+    Temporal,
+    TemporalOrdered,
+}
+
+impl From<CorrelationTypeArg> for CorrelationDraftType {
+    fn from(value: CorrelationTypeArg) -> Self {
+        match value {
+            CorrelationTypeArg::Auto => Self::Auto,
+            CorrelationTypeArg::Temporal => Self::Temporal,
+            CorrelationTypeArg::TemporalOrdered => Self::TemporalOrdered,
+        }
+    }
+}
+
 /// Arguments for `rsigma rule draft`.
 #[derive(Args, Debug)]
 pub(crate) struct DraftArgs {
@@ -42,6 +64,30 @@ pub(crate) struct DraftArgs {
     /// NDJSON from stdin.
     #[arg(short, long)]
     pub event: Option<String>,
+
+    /// Grouped, timed exemplars from an envelope NDJSON file or directory.
+    #[arg(long, value_name = "@PATH")]
+    pub groups: Option<String>,
+
+    /// Grouped negative examples that the drafted correlation must not match.
+    #[arg(long, value_name = "@PATH")]
+    pub negative: Option<String>,
+
+    /// Correlation grouping field (repeatable for an explicit composite key).
+    #[arg(long = "group-by", value_name = "FIELD")]
+    pub group_by: Vec<String>,
+
+    /// Correlation ordering behavior.
+    #[arg(long, value_enum, default_value_t = CorrelationTypeArg::Auto)]
+    pub correlation_type: CorrelationTypeArg,
+
+    /// Minimum number of positive groups.
+    #[arg(long, default_value_t = 3)]
+    pub min_groups: usize,
+
+    /// Margin applied to the maximum observed group span.
+    #[arg(long, default_value_t = 1.5)]
+    pub window_margin: f64,
 
     /// Baseline corpus of normal traffic (@path to NDJSON, or .evtx with the
     /// evtx feature). Used to score fields by rarity and to estimate the
@@ -93,6 +139,14 @@ pub(crate) struct DraftArgs {
 }
 
 pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
+    if args.groups.is_some() {
+        cmd_correlation_draft(args, ctx);
+        return;
+    }
+    if args.negative.is_some() || !args.group_by.is_empty() {
+        eprintln!("--negative and --group-by require --groups");
+        process::exit(crate::exit_code::CONFIG_ERROR);
+    }
     let exemplars = match read_events(args.event.as_deref(), "exemplar") {
         Ok(c) => c,
         Err(e) => {
@@ -202,6 +256,114 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
     }
 }
 
+fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
+    if args.event.is_some() {
+        eprintln!("--event cannot be combined with --groups");
+        process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    let groups = match read_grouped(args.groups.as_deref().unwrap(), "group") {
+        Ok(groups) => groups,
+        Err(error) => {
+            eprintln!("{error}");
+            process::exit(crate::exit_code::RULE_ERROR);
+        }
+    };
+    let negatives = match args.negative.as_deref() {
+        Some(spec) => match read_grouped(spec, "negative group") {
+            Ok(groups) => groups,
+            Err(error) => {
+                eprintln!("{error}");
+                process::exit(crate::exit_code::RULE_ERROR);
+            }
+        },
+        None => Vec::new(),
+    };
+    let baseline = match args.baseline.as_deref() {
+        Some(spec) if spec.starts_with('@') => match read_events(Some(spec), "baseline") {
+            Ok(corpus) => corpus.events,
+            Err(error) => {
+                eprintln!("{error}");
+                process::exit(crate::exit_code::RULE_ERROR);
+            }
+        },
+        Some(_) => {
+            eprintln!("--baseline expects @path to an NDJSON file");
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        None => Vec::new(),
+    };
+    let detection = DraftConfig {
+        max_fields: args.max_fields,
+        min_prevalence: args.min_prevalence,
+        include_fields: args.include_fields,
+        exclude_fields: args.exclude_fields,
+        title: args.title.clone(),
+        logsource_category: args.logsource_category,
+        logsource_product: args.logsource_product,
+        logsource_service: args.logsource_service,
+        evaluate_baseline: false,
+        ..DraftConfig::default()
+    };
+    let config = CorrelationDraftConfig {
+        min_groups: args.min_groups,
+        window_margin: args.window_margin,
+        correlation_type: args.correlation_type.into(),
+        group_by: args.group_by,
+        title: args.title,
+        correlation_id: Some(new_uuid_v4()),
+        slot_ids: (0..64).map(|_| new_uuid_v4()).collect(),
+        detection,
+        ..CorrelationDraftConfig::default()
+    };
+    let report = match draft_correlation(&groups, &negatives, &baseline, &config) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Error drafting correlation: {error}");
+            process::exit(crate::exit_code::RULE_ERROR);
+        }
+    };
+    match args.emit {
+        EmitMode::Yaml => {
+            if ctx.explicit_format {
+                ctx.warn_unsupported("rule draft --groups", "Sigma YAML");
+            }
+            print!("{}", report.rule_yaml);
+            if ctx.show_stats() {
+                print_correlation_summary(&report);
+            }
+        }
+        EmitMode::Report => match ctx.format {
+            OutputFormat::Json => render_json(&report, true),
+            OutputFormat::Ndjson => render_json(&report, false),
+            OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
+                print_correlation_summary(&report);
+                print!("{}", report.rule_yaml);
+            }
+        },
+    }
+}
+
+fn print_correlation_summary(report: &CorrelationDraftReport) {
+    eprintln!(
+        "Drafted {} correlation with {} slots, group-by {}, timespan {}",
+        report.correlation_type,
+        report.slots.len(),
+        report.group_by.join(", "),
+        report.timespan
+    );
+    for slot in &report.slots {
+        eprintln!(
+            "  {}: {} events, fields {}",
+            slot.name,
+            slot.support,
+            slot.selected_fields.join(", ")
+        );
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // UUIDv4 (kept out of rsigma-eval so the core stays deterministic)
 // ---------------------------------------------------------------------------
@@ -209,6 +371,117 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
 /// A random version-4 UUID for the draft's `id`.
 fn new_uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+fn read_grouped(spec: &str, label: &str) -> Result<Vec<GroupedExemplar>, String> {
+    let Some(raw_path) = spec.strip_prefix('@') else {
+        return Err(format!(
+            "--{label}s expects @path to an NDJSON file or directory"
+        ));
+    };
+    let path = PathBuf::from(raw_path);
+    if !path.exists() {
+        return Err(format!("{label} path not found: {}", path.display()));
+    }
+    if path.is_dir() {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&path)
+            .map_err(|error| format!("Error reading {}: {error}", path.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        files.sort();
+        let mut groups = Vec::with_capacity(files.len());
+        for file in files {
+            let id = file
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| format!("Invalid group filename: {}", file.display()))?
+                .to_string();
+            let mut parsed = read_grouped_file(&file, Some(&id))?;
+            groups.append(&mut parsed);
+        }
+        Ok(groups)
+    } else {
+        read_grouped_file(&path, None)
+    }
+}
+
+fn read_grouped_file(
+    path: &Path,
+    directory_group: Option<&str>,
+) -> Result<Vec<GroupedExemplar>, String> {
+    let file =
+        File::open(path).map_err(|error| format!("Error opening '{}': {error}", path.display()))?;
+    let mut groups: std::collections::BTreeMap<String, Vec<TimedEvent>> =
+        std::collections::BTreeMap::new();
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line_number = index + 1;
+        let line = line.map_err(|error| format!("Error reading '{}': {error}", path.display()))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| format!("{}:{line_number}: invalid JSON: {error}", path.display()))?;
+        let object = value.as_object().ok_or_else(|| {
+            format!(
+                "{}:{line_number}: grouped envelope must be a JSON object",
+                path.display()
+            )
+        })?;
+        let group = match directory_group {
+            Some(group) => group.to_string(),
+            None => object
+                .get("group")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!(
+                        "{}:{line_number}: grouped envelope requires string 'group'",
+                        path.display()
+                    )
+                })?
+                .to_string(),
+        };
+        let timestamp = optional_string(object, "timestamp", path, line_number)?;
+        let offset = optional_string(object, "offset", path, line_number)?;
+        let event = object
+            .get("event")
+            .filter(|event| event.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "{}:{line_number}: grouped envelope requires object 'event'",
+                    path.display()
+                )
+            })?;
+        groups.entry(group).or_default().push(TimedEvent {
+            timestamp,
+            offset,
+            event,
+            source: SourceLocation {
+                file: Some(path.display().to_string()),
+                line: Some(line_number),
+            },
+        });
+    }
+    Ok(groups
+        .into_iter()
+        .map(|(id, events)| GroupedExemplar { id, events })
+        .collect())
+}
+
+fn optional_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    path: &Path,
+    line: usize,
+) -> Result<Option<String>, String> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| format!("{}:{line}: '{key}' must be a string", path.display())),
+    }
 }
 
 // ---------------------------------------------------------------------------
