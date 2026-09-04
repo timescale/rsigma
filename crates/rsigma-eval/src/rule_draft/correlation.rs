@@ -664,6 +664,10 @@ fn validate_slot_counts(
     Ok(())
 }
 
+/// Infer the expected slot order from the majority of groups so that the
+/// disagreeing list names the actual outliers, not everyone who differs from
+/// whichever group happens to sort first. Ties break to the smallest order
+/// for determinism.
 fn infer_order(
     groups: &[NormalizedGroup],
     retained: &BTreeSet<usize>,
@@ -679,7 +683,15 @@ fn infer_order(
                 .collect()
         })
         .collect();
-    let expected = orders.first().cloned().unwrap_or_default();
+    let mut counts: BTreeMap<&Vec<usize>, usize> = BTreeMap::new();
+    for order in &orders {
+        *counts.entry(order).or_default() += 1;
+    }
+    let expected = counts
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(order, _)| (*order).clone())
+        .unwrap_or_default();
     let disagreeing: Vec<String> = groups
         .iter()
         .zip(&orders)
@@ -1471,6 +1483,19 @@ mod tests {
             draft_correlation(&values, &[], &[], &forced),
             Err(CorrelationDraftError::OrderInversion { .. })
         ));
+    }
+
+    #[test]
+    fn majority_order_blames_the_actual_outlier() {
+        // g1 is the inverted group; the warning must name g1 alone, not the
+        // majority that happens to differ from the first-sorted group.
+        let mut values = groups();
+        values[0] = group("g1", "alice", true);
+        let report = draft_correlation(&values, &[], &[], &config()).unwrap();
+        assert_eq!(report.correlation_type, "temporal");
+        assert!(report.warnings.iter().any(|warning| {
+            warning.contains("g1") && !warning.contains("g2") && !warning.contains("g3")
+        }));
     }
 
     #[test]
