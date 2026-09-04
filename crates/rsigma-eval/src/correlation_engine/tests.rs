@@ -926,6 +926,66 @@ level: high
     );
 }
 
+#[test]
+fn test_temporal_referenced_by_name_when_rule_also_has_id() {
+    // Regression: when a rule carries both `id` and `name` and the temporal
+    // correlation references it by `name`, the tracked identity must be the
+    // referenced name; tracking the id means the window never satisfies the
+    // condition and the correlation silently never fires.
+    let yaml = r#"
+title: Recon A
+id: recon-a
+name: recon_a
+logsource:
+    category: process
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+---
+title: Recon B
+id: recon-b
+name: recon_b
+logsource:
+    category: process
+detection:
+    selection:
+        CommandLine|contains: 'ipconfig'
+    condition: selection
+---
+title: Recon Combo By Name
+id: corr-temporal-by-name
+correlation:
+    type: temporal
+    rules:
+        - recon_a
+        - recon_b
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let ts = 1000i64;
+    let v1 = json!({"CommandLine": "whoami", "User": "admin"});
+    let ev1 = JsonEvent::borrow(&v1);
+    assert_eq!(engine.process_event_at(&ev1, ts).correlation_count(), 0);
+
+    let v2 = json!({"CommandLine": "ipconfig /all", "User": "admin"});
+    let ev2 = JsonEvent::borrow(&v2);
+    let r2 = engine.process_event_at(&ev2, ts + 10);
+    assert_eq!(
+        r2.correlation_count(),
+        1,
+        "temporal correlation referencing rules by name must fire when the rules also carry ids"
+    );
+}
+
 // =========================================================================
 // Temporal ordered correlation
 // =========================================================================
