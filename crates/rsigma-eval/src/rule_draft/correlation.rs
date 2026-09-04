@@ -1526,6 +1526,23 @@ mod tests {
     }
 
     #[test]
+    fn clean_negative_group_isolated_replay_stays_clear() {
+        let mut negative = group("benign", "mallory", false);
+        negative.events[0].event["factor"] = json!("webauthn");
+        negative.events[0].event["reset_reason"] = json!("admin");
+        negative.events[1].event["asn"] = json!(64496);
+        negative.events[1].event["new_asn"] = json!(false);
+        negative.events[1].event["session_type"] = json!("mobile");
+        let report = draft_correlation(&groups(), &[negative], &[], &config()).unwrap();
+        assert!(
+            report
+                .verification
+                .iter()
+                .any(|row| { row.group == "benign" && row.negative && !row.fired })
+        );
+    }
+
+    #[test]
     fn verification_ignores_unrelated_correlation_results() {
         let report = draft_correlation(&groups(), &[], &[], &config()).unwrap();
         let collection = rsigma_parser::parse_sigma_yaml(&report.rule_yaml).unwrap();
