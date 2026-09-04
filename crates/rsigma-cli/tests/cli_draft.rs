@@ -396,3 +396,24 @@ fn grouped_auto_mode_downgrades_inverted_order() {
         .success()
         .stdout(predicate::str::contains("type: temporal\n"));
 }
+
+#[test]
+fn grouped_forced_order_uses_sigma_spelling_and_rejects_inversion() {
+    let input = CORRELATION_GROUPS.replace(
+        r#"{"group":"g3","offset":"0s","event":{"kind":"reset""#,
+        r#"{"group":"g3","offset":"40s","event":{"kind":"reset""#,
+    );
+    let groups = temp_file(".ndjson", &input);
+    rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", groups.path().display()),
+            "--correlation-type",
+            "temporal_ordered",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("groups disagree on slot order"));
+}

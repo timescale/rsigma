@@ -43,6 +43,7 @@ pub(crate) enum CorrelationTypeArg {
     #[default]
     Auto,
     Temporal,
+    #[value(name = "temporal_ordered")]
     TemporalOrdered,
 }
 
