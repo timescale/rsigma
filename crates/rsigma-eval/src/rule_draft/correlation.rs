@@ -214,7 +214,7 @@ pub enum CorrelationDraftError {
     #[error("at least {minimum} recurring slots are required, got {actual}")]
     TooFewSlots { minimum: usize, actual: usize },
     /// A recurring slot appears more than once in one group.
-    #[error("group '{group}' repeats slot {slot} at event indexes {events:?}")]
+    #[error("group '{group}' repeats slot {slot} at input events {events:?}")]
     DuplicateSlot {
         group: String,
         slot: usize,
@@ -234,13 +234,18 @@ pub enum CorrelationDraftError {
     AmbiguousEntity { candidates: Vec<String> },
     /// An explicit grouping field is absent or unstable.
     #[error(
-        "group-by field '{field}' is absent or unstable in group '{group}' at retained event {event}"
+        "group-by field '{field}' is absent or unstable in group '{group}' at input event {event}"
     )]
     InvalidEntity {
         field: String,
         group: String,
         event: usize,
     },
+    /// Fewer slot ids than inferred slots and no base rule id to derive from.
+    #[error(
+        "every drafted slot rule needs an id: {slots} slots were inferred but only {provided} slot ids were supplied"
+    )]
+    MissingSlotIds { slots: usize, provided: usize },
     /// A per-slot detection could not be drafted.
     #[error("failed to draft slot {slot}: {source}")]
     SlotDraft {
@@ -430,7 +435,12 @@ pub fn draft_correlation(
             name: slot.name.clone(),
             id: slot.id.clone(),
             support: slot.members.len(),
-            group_support: groups.len(),
+            group_support: slot
+                .members
+                .iter()
+                .map(|(group, _)| group)
+                .collect::<BTreeSet<_>>()
+                .len(),
             selected_fields: selected_forms(slot),
         })
         .collect();
@@ -635,13 +645,13 @@ fn validate_slot_counts(
 ) -> Result<(), CorrelationDraftError> {
     for group in groups {
         for &slot in retained {
-            let events: Vec<usize> = group
+            let mut events: Vec<usize> = group
                 .events
                 .iter()
-                .enumerate()
-                .filter(|(_, event)| event.cluster == slot)
-                .map(|(index, _)| index)
+                .filter(|event| event.cluster == slot)
+                .map(|event| event.input_index)
                 .collect();
+            events.sort_unstable();
             if events.len() > 1 {
                 return Err(CorrelationDraftError::DuplicateSlot {
                     group: group.id.clone(),
@@ -799,11 +809,10 @@ fn validate_entity_field(
 ) -> Result<(), CorrelationDraftError> {
     for group in groups {
         let mut expected = None;
-        for (index, event) in group
+        for event in group
             .events
             .iter()
-            .enumerate()
-            .filter(|(_, event)| retained.contains(&event.cluster))
+            .filter(|event| retained.contains(&event.cluster))
         {
             let value = JsonEvent::borrow(&event.event)
                 .get_field(field)
@@ -816,7 +825,7 @@ fn validate_entity_field(
                 return Err(CorrelationDraftError::InvalidEntity {
                     field: field.to_string(),
                     group: group.id.clone(),
-                    event: index,
+                    event: event.input_index,
                 });
             }
             expected = value;
@@ -853,6 +862,15 @@ fn build_slots(
     slot_ids: &[String],
     detection_config: &DraftConfig,
 ) -> Result<Vec<Slot>, CorrelationDraftError> {
+    // Identity verification keys on slot rule ids, so a slot without one can
+    // never pass and would grind through relaxation into a misleading
+    // floor error. Refuse up front instead.
+    if slot_ids.len() < order.len() && detection_config.rule_id.is_none() {
+        return Err(CorrelationDraftError::MissingSlotIds {
+            slots: order.len(),
+            provided: slot_ids.len(),
+        });
+    }
     let mut slots = Vec::with_capacity(order.len());
     let mut used_names = BTreeMap::new();
     for (position, &cluster) in order.iter().enumerate() {
@@ -1180,7 +1198,7 @@ fn verify_identity(
                 }
                 return Err(CorrelationDraftError::CrossSlotMatch {
                     group: group.id.clone(),
-                    event: event_index,
+                    event: event.input_index,
                     assigned: slots[assigned].name.clone(),
                     colliding,
                     forms,
@@ -1499,13 +1517,29 @@ mod tests {
             None,
             json!({"kind": "reset", "user": "alice", "factor": "totp", "reset_reason": "recovery"}),
         ));
+        // Input positions, not time-sorted positions: the duplicate reset was
+        // appended as input event 2 even though it sorts between the others.
         assert!(matches!(
             draft_correlation(&values, &[], &[], &config()),
             Err(CorrelationDraftError::DuplicateSlot {
                 group,
                 slot: _,
                 events
-            }) if group == "g1" && events == vec![0, 1]
+            }) if group == "g1" && events == vec![0, 2]
+        ));
+    }
+
+    #[test]
+    fn missing_slot_ids_error_before_verification() {
+        let mut cfg = config();
+        cfg.slot_ids.truncate(1);
+        cfg.detection.rule_id = None;
+        assert!(matches!(
+            draft_correlation(&groups(), &[], &[], &cfg),
+            Err(CorrelationDraftError::MissingSlotIds {
+                slots: 2,
+                provided: 1
+            })
         ));
     }
 
@@ -1570,6 +1604,26 @@ mod tests {
         assert!(matches!(
             draft_correlation(&groups(), &[group("bad", "mallory", false)], &[], &config()),
             Err(CorrelationDraftError::NegativeGroupMatched { .. })
+        ));
+    }
+
+    #[test]
+    fn invalid_entity_reports_input_position() {
+        // g1 arrives in reverse input order, so input event 1 sorts first.
+        // Dropping the group-by field there must blame input position 1.
+        let mut values = groups();
+        values[0] = group("g1", "alice", true);
+        values[0].events[1]
+            .event
+            .as_object_mut()
+            .unwrap()
+            .remove("user");
+        let mut cfg = config();
+        cfg.group_by = vec!["user".to_string()];
+        assert!(matches!(
+            draft_correlation(&values, &[], &[], &cfg),
+            Err(CorrelationDraftError::InvalidEntity { field, group, event })
+                if field == "user" && group == "g1" && event == 1
         ));
     }
 
