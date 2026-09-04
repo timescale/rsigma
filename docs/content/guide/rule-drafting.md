@@ -140,7 +140,7 @@ Use `--groups` when each positive example is a timed sequence rather than one ev
 {"group":"g1","offset":"4m","event":{"eventType":"session.start","user":"alice","newAsn":true}}
 ```
 
-A directory is also accepted. Each filename stem becomes the group id, and each line contains the time key plus `event`. The command requires at least three groups and two events per group by default. Mixed time modes, duplicate times, repeated recurring slots, and malformed envelopes are errors with group and source-line context.
+A directory is also accepted. Each filename stem becomes the group id, and each line contains the time key plus `event`; an embedded `group` key is an error in directory form. The command requires at least three groups and two events per group by default. Mixed time modes, duplicate times, repeated recurring slots, and malformed envelopes are errors with group and source-line context.
 
 Recurring slots are inferred from event field-key shapes. Clusters missing from any positive group are treated as incidental noise and reported. Each retained slot must appear exactly once per group. Slot rules are drafted against their assigned positives while sibling slots and `--baseline` provide contrast. The selected group-by fields are always excluded from slot predicates.
 
