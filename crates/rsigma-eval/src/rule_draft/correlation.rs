@@ -385,32 +385,31 @@ pub fn draft_correlation(
             }
         })?;
 
-        match verify_identity(&collection, &groups, &retained, &slots)? {
-            Some((slot_index, local_event)) => {
-                let slot = &mut slots[slot_index];
-                let floor = slot
-                    .config
-                    .min_fields
-                    .min(slot.candidate.selected.len())
-                    .max(1);
-                if slot.candidate.selected.len() <= floor
-                    || slot
-                        .candidate
-                        .drop_lowest_eligible(Some(&[local_event]))
-                        .is_none()
-                {
-                    return Err(CorrelationDraftError::SlotFloor {
-                        slot: slot.name.clone(),
-                        floor,
-                    });
-                }
-                warnings.push(format!(
-                    "relaxed slot '{}' after an assigned positive failed verification",
-                    slot.name
-                ));
-                continue;
+        if let Some((slot_index, local_event)) =
+            verify_identity(&collection, &groups, &retained, &slots)?
+        {
+            let slot = &mut slots[slot_index];
+            let floor = slot
+                .config
+                .min_fields
+                .min(slot.candidate.selected.len())
+                .max(1);
+            if slot.candidate.selected.len() <= floor
+                || slot
+                    .candidate
+                    .drop_lowest_eligible(Some(&[local_event]))
+                    .is_none()
+            {
+                return Err(CorrelationDraftError::SlotFloor {
+                    slot: slot.name.clone(),
+                    floor,
+                });
             }
-            None => {}
+            warnings.push(format!(
+                "relaxed slot '{}' after an assigned positive failed verification",
+                slot.name
+            ));
+            continue;
         }
 
         let mut verification =
@@ -511,7 +510,7 @@ fn normalize_groups(
                             kind: "offset",
                             value: raw.to_string(),
                         })?;
-                    let seconds = i64::try_from(parsed.seconds).map_err(|_| {
+                    i64::try_from(parsed.seconds).map_err(|_| {
                         CorrelationDraftError::InvalidTime {
                             group: group.id.clone(),
                             event: index,
@@ -519,8 +518,7 @@ fn normalize_groups(
                             kind: "offset",
                             value: raw.to_string(),
                         }
-                    })?;
-                    seconds
+                    })?
                 }
             };
             let json = JsonEvent::borrow(&timed.event);
