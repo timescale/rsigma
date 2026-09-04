@@ -35,6 +35,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::schema::SchemaClassifier;
 
+pub mod correlation;
 pub(crate) mod draft_core;
 use draft_core::*;
 
@@ -299,6 +300,15 @@ impl DraftCandidate {
     }
 
     pub(crate) fn emit<E: Event>(&self, exemplars: &[E], config: &DraftConfig) -> String {
+        self.emit_named(exemplars, config, None)
+    }
+
+    pub(crate) fn emit_named<E: Event>(
+        &self,
+        exemplars: &[E],
+        config: &DraftConfig,
+        name: Option<&str>,
+    ) -> String {
         let detection = build_detection(&self.profiles, &self.selected, exemplars, config);
         emit_rule_yaml(
             &self.profiles,
@@ -306,6 +316,7 @@ impl DraftCandidate {
             &detection,
             &self.logsource,
             config,
+            name,
         )
     }
 
@@ -777,6 +788,7 @@ fn emit_rule_yaml(
     detection: &DetectionBlock,
     logsource: &DraftLogsource,
     config: &DraftConfig,
+    name: Option<&str>,
 ) -> String {
     let title = config.title.clone().unwrap_or_else(|| {
         title_marker(profiles, selected)
@@ -790,6 +802,9 @@ fn emit_rule_yaml(
 
     let mut out = String::new();
     out.push_str(&format!("title: {}\n", yaml_title_str(&title)));
+    if let Some(name) = name {
+        out.push_str(&format!("name: {}\n", yaml_str(name)));
+    }
     if let Some(id) = &config.rule_id {
         out.push_str(&format!("id: {id}\n"));
     }
