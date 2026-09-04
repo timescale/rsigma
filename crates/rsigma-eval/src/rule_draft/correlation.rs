@@ -1471,6 +1471,63 @@ mod tests {
     }
 
     #[test]
+    fn incidental_clusters_are_dropped_with_a_warning() {
+        let mut values = groups();
+        values[0].events.push(timed(
+            Some("10s"),
+            None,
+            json!({"audit_only": true, "trace_marker": "one"}),
+        ));
+        let report = draft_correlation(&values, &[], &[], &config()).unwrap();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("incidental key-shape"))
+        );
+        assert_eq!(report.slots.len(), 2);
+    }
+
+    #[test]
+    fn repeated_retained_slot_is_a_pointed_error() {
+        let mut values = groups();
+        values[0].events.push(timed(
+            Some("10s"),
+            None,
+            json!({"kind": "reset", "user": "alice", "factor": "totp", "reset_reason": "recovery"}),
+        ));
+        assert!(matches!(
+            draft_correlation(&values, &[], &[], &config()),
+            Err(CorrelationDraftError::DuplicateSlot {
+                group,
+                slot: _,
+                events
+            }) if group == "g1" && events == vec![0, 1]
+        ));
+    }
+
+    #[test]
+    fn too_few_recurring_slots_is_an_error() {
+        let values: Vec<GroupedExemplar> = [("g1", "alice"), ("g2", "bob"), ("g3", "carol")]
+            .into_iter()
+            .map(|(id, user)| GroupedExemplar {
+                id: id.to_string(),
+                events: vec![
+                    timed(Some("0s"), None, json!({"kind": "same", "user": user})),
+                    timed(Some("10s"), None, json!({"kind": "other", "user": user})),
+                ],
+            })
+            .collect();
+        assert!(matches!(
+            draft_correlation(&values, &[], &[], &config()),
+            Err(CorrelationDraftError::TooFewSlots {
+                minimum: 2,
+                actual: 1
+            })
+        ));
+    }
+
+    #[test]
     fn explicit_composite_entity_is_excluded_from_slots() {
         let mut values = groups();
         for group in &mut values {
