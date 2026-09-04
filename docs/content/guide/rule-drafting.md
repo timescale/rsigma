@@ -131,9 +131,38 @@ The exemplars are classified with the built-in schema classifier ([schema routin
 
 The rule uses the exemplars' field names as they appear in the events. ECS exemplars produce `process.command_line`, Sysmon exemplars produce `CommandLine`. Evaluate the draft against the same telemetry shape it was mined from, without a mapping pipeline; if you need the generic SigmaHQ field vocabulary, rename the fields as part of your review. Pipelines are out of scope at draft time: map or rename after you accept the draft.
 
+## Drafting correlations
+
+Use `--groups` when each positive example is a timed sequence rather than one event. An envelope NDJSON file identifies every event's group and supplies exactly one RFC3339 `timestamp` or Sigma `offset`:
+
+```json
+{"group":"g1","offset":"0s","event":{"eventType":"factor.reset","user":"alice"}}
+{"group":"g1","offset":"4m","event":{"eventType":"session.start","user":"alice","newAsn":true}}
+```
+
+A directory is also accepted. Each filename stem becomes the group id, and each line contains the time key plus `event`. The command requires at least three groups and two events per group by default. Mixed time modes, duplicate times, repeated recurring slots, and malformed envelopes are errors with group and source-line context.
+
+Recurring slots are inferred from event field-key shapes. Clusters missing from any positive group are treated as incidental noise and reported. Each retained slot must appear exactly once per group. Slot rules are drafted against their assigned positives while sibling slots and `--baseline` provide contrast. The selected group-by fields are always excluded from slot predicates.
+
+Pass repeatable `--group-by` fields for an explicit entity, especially a composite key. Without it, one field must be stable inside every group and distinct across groups. The command reports zero or multiple candidates as an ambiguity instead of choosing one.
+
+The default `--correlation-type auto` emits `temporal_ordered` only when every group agrees on slot order. An inversion downgrades to `temporal` with a warning. Use `--correlation-type temporal_ordered` to make an inversion an error, or `temporal` to request unordered behavior.
+
+The timespan starts from the maximum observed first-to-last retained-slot span, not the median. The maximum is multiplied by `--window-margin` and rounded up. The median-span group is used only as the embedded `rsigma.exemplars` sequence.
+
+Verification uses a fresh correlation engine for every positive and negative group. Every assigned event must match only its slot rule. A positive correlation cannot fire before all slots and must fire by the end. Any `--negative` group that fires is a terminal error. Clean up heterogeneous exemplars, add a representative baseline, or edit the emitted rules manually when slot rules collide.
+
+```bash
+rsigma rule draft --groups @observed.ndjson --negative @benign.ndjson > correlation.yml
+rsigma rule test --rules correlation.yml
+```
+
+The emitted multi-document YAML contains named slot detections, the temporal correlation, and a representative positive sequence under `rsigma.exemplars`. This makes the draft directly testable after metadata edits.
+
 ## What it will not do
 
-- No correlation or filter rules; detection rules only.
+- No aggregate correlation synthesis (`event_count`, `value_count`, or numeric aggregates) and no filter rules.
+- No repeated retained stage within one group.
 - No ATT&CK tags or severity judgment; the metadata placeholders are yours to fill.
 - No regex synthesis; patterns stay within prefix/suffix/token modifiers a reviewer can read at a glance.
 - No online drafting from the daemon: the daemon never retains event values, and presence-only rules are not useful detections. Draft from captured NDJSON or EVTX instead.
