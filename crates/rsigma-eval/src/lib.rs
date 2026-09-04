@@ -101,6 +101,7 @@ pub mod exemplar;
 pub mod explain;
 pub mod field_observer;
 pub mod fields;
+mod key_shape;
 pub mod logsource;
 pub mod matcher;
 pub mod pipeline;
