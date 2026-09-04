@@ -547,6 +547,15 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "disposition-source", value_name = "PATH")]
     pub disposition_source: Option<PathBuf>,
 
+    /// Enable verdict-driven evidence capture.
+    ///
+    /// Disabled by default and startup-only. This flag turns it on for this
+    /// run; it can also be enabled with `daemon.capture.enabled: true`.
+    /// Requires dispositions and a `group_by` alert pipeline. The remaining
+    /// keys, including `spool_dir`, are config-file-only under `daemon.capture`.
+    #[arg(long = "enable-capture")]
+    pub enable_capture: bool,
+
     // ---------------------------------------------------------------
     // TLS (requires the `daemon-tls` build feature)
     // ---------------------------------------------------------------
@@ -649,6 +658,7 @@ pub(crate) fn cmd_daemon(
         args.enable_dispositions,
         args.disposition_source.clone(),
     );
+    let capture = resolve_capture_settings(&base, args.enable_capture, dispositions.enabled);
     let api_auth = resolve_auth_settings(&base, args.api_token_env.clone());
     let state_db_from_config = base
         .daemon
@@ -748,6 +758,7 @@ pub(crate) fn cmd_daemon(
         enable_tail: _,
         enable_dispositions: _,
         disposition_source: _,
+        enable_capture: _,
         #[cfg(feature = "daemon-tls")]
         tls_cert,
         #[cfg(feature = "daemon-tls")]
@@ -888,6 +899,7 @@ pub(crate) fn cmd_daemon(
         tap,
         tail,
         dispositions,
+        capture,
         api_auth,
         audit,
         #[cfg(feature = "daemon-tls")]
@@ -1127,6 +1139,78 @@ fn resolve_disposition_settings(
             min_sample,
             ..Default::default()
         },
+    }
+}
+
+/// Resolve `daemon.capture.*` plus `--enable-capture`. Capture is startup-only
+/// and off by default. When enabled it requires dispositions and a spool directory.
+fn resolve_capture_settings(
+    base: &config::RsigmaConfigPartial,
+    enable_capture: bool,
+    dispositions_enabled: bool,
+) -> daemon::server::CaptureSettings {
+    let c = base.daemon.as_ref().and_then(|d| d.capture.as_ref());
+    let enabled = c
+        .and_then(|c| c.enabled)
+        .unwrap_or(config::defaults::CAPTURE_ENABLED)
+        || enable_capture;
+    let spool_dir = c.and_then(|c| c.spool_dir.clone());
+    let ttl_str = c
+        .and_then(|c| c.ttl.clone())
+        .unwrap_or_else(|| config::defaults::CAPTURE_TTL.to_string());
+    let ttl = humantime::parse_duration(&ttl_str).unwrap_or_else(|e| {
+        eprintln!("Invalid daemon.capture.ttl '{ttl_str}': {e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
+    let ring = rsigma_runtime::CaptureConfig {
+        max_captured_incidents: c
+            .and_then(|c| c.max_captured_incidents)
+            .unwrap_or(config::defaults::CAPTURE_MAX_INCIDENTS),
+        max_events_per_incident: c
+            .and_then(|c| c.max_events_per_incident)
+            .unwrap_or(config::defaults::CAPTURE_MAX_EVENTS_PER_INCIDENT),
+        max_event_bytes: c
+            .and_then(|c| c.max_event_bytes)
+            .unwrap_or(config::defaults::CAPTURE_MAX_EVENT_BYTES),
+        max_bytes_per_incident: c
+            .and_then(|c| c.max_bytes_per_incident)
+            .unwrap_or(config::defaults::CAPTURE_MAX_BYTES_PER_INCIDENT),
+        max_capture_bytes: c
+            .and_then(|c| c.max_capture_bytes)
+            .unwrap_or(config::defaults::CAPTURE_MAX_CAPTURE_BYTES),
+        ttl,
+    };
+    if let Err(e) = ring.validate() {
+        eprintln!("{e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    let max_spool_bytes = c
+        .and_then(|c| c.max_spool_bytes)
+        .unwrap_or(config::defaults::CAPTURE_MAX_SPOOL_BYTES);
+    let spool_queue_capacity = c
+        .and_then(|c| c.spool_queue_capacity)
+        .unwrap_or(config::defaults::CAPTURE_SPOOL_QUEUE_CAPACITY);
+    if enabled && spool_dir.is_none() {
+        eprintln!("daemon.capture.enabled requires daemon.capture.spool_dir");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    if enabled && !dispositions_enabled {
+        eprintln!("daemon.capture.enabled requires daemon.dispositions.enabled");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    if max_spool_bytes == 0 || spool_queue_capacity == 0 {
+        eprintln!(
+            "daemon.capture.max_spool_bytes and spool_queue_capacity must be greater than zero"
+        );
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    daemon::server::CaptureSettings {
+        enabled,
+        spool_dir,
+        ring,
+        max_spool_bytes,
+        spool_queue_capacity,
+        operator_include_event: false,
     }
 }
 
@@ -1566,6 +1650,7 @@ fn run_daemon(
     tap: daemon::server::TapSettings,
     tail: daemon::server::TailSettings,
     dispositions: daemon::server::DispositionSettings,
+    capture: daemon::server::CaptureSettings,
     api_auth: Option<daemon::auth::ApiAuth>,
     audit: daemon::audit::AuditSettings,
     #[cfg(feature = "daemon-tls")] tls_args: TlsCliArgs,
@@ -1664,6 +1749,11 @@ fn run_daemon(
         .parse::<rsigma_eval::MatchDetailLevel>()
         .unwrap_or(rsigma_eval::MatchDetailLevel::Off);
 
+    let operator_include_event = include_event;
+    let include_event = include_event || capture.enabled;
+    let mut capture = capture;
+    capture.operator_include_event = operator_include_event;
+
     let config = daemon::server::DaemonConfig {
         rules_path,
         pipelines,
@@ -1715,6 +1805,7 @@ fn run_daemon(
         tap,
         tail,
         dispositions,
+        capture,
         api_auth,
         audit,
         #[cfg(feature = "daemon-tls")]

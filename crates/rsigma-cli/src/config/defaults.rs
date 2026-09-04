@@ -6,10 +6,10 @@
 //! default is written, and a drift-guard test pins clap to these values.
 
 use super::schema::{
-    ApiPartial, BacktestPartial, CorrelationPartial, DaemonPartial, DispositionsPartial,
-    DocPartial, EnginePartial, EvalPartial, GlobalPartial, HygienePartial, InputPartial,
-    LogsourcePartial, OutputPartial, RsigmaConfigPartial, SchemaPartial, ScorecardPartial,
-    StatePartial, TailPartial, TapPartial,
+    ApiPartial, BacktestPartial, CapturePartial, CorrelationPartial, DaemonPartial,
+    DispositionsPartial, DocPartial, EnginePartial, EvalPartial, GlobalPartial, HygienePartial,
+    InputPartial, LogsourcePartial, OutputPartial, RsigmaConfigPartial, SchemaPartial,
+    ScorecardPartial, StatePartial, TailPartial, TapPartial,
 };
 
 pub(crate) const CONFIG_VERSION: u32 = 1;
@@ -55,6 +55,17 @@ pub(crate) const DISPOSITIONS_ENABLED: bool = false;
 pub(crate) const DISPOSITIONS_WINDOW: &str = "30d";
 pub(crate) const DISPOSITIONS_NUMERATOR: &str = "fp_only";
 pub(crate) const DISPOSITIONS_MIN_SAMPLE: u64 = 5;
+/// Verdict-driven evidence capture (`daemon.capture.*`). Off by default and
+/// startup-only: enabling it or changing bounds requires a daemon restart.
+pub(crate) const CAPTURE_ENABLED: bool = false;
+pub(crate) const CAPTURE_MAX_INCIDENTS: usize = 1_000;
+pub(crate) const CAPTURE_MAX_EVENTS_PER_INCIDENT: usize = 1_000;
+pub(crate) const CAPTURE_MAX_EVENT_BYTES: usize = 1024 * 1024;
+pub(crate) const CAPTURE_MAX_BYTES_PER_INCIDENT: usize = 16 * 1024 * 1024;
+pub(crate) const CAPTURE_MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const CAPTURE_TTL: &str = "24h";
+pub(crate) const CAPTURE_MAX_SPOOL_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+pub(crate) const CAPTURE_SPOOL_QUEUE_CAPACITY: usize = 128;
 /// Schema classification and routing defaults (`daemon.schema.*`,
 /// `eval.schema.*`). Both observation and routing are opt-in. The unknown-schema
 /// policy defaults to `warn` (log and evaluate against every set).
@@ -201,6 +212,18 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 window: Some(DISPOSITIONS_WINDOW.to_string()),
                 numerator: Some(DISPOSITIONS_NUMERATOR.to_string()),
                 min_sample: Some(DISPOSITIONS_MIN_SAMPLE),
+            }),
+            capture: Some(CapturePartial {
+                enabled: Some(CAPTURE_ENABLED),
+                spool_dir: None,
+                max_captured_incidents: Some(CAPTURE_MAX_INCIDENTS),
+                max_events_per_incident: Some(CAPTURE_MAX_EVENTS_PER_INCIDENT),
+                max_event_bytes: Some(CAPTURE_MAX_EVENT_BYTES),
+                max_bytes_per_incident: Some(CAPTURE_MAX_BYTES_PER_INCIDENT),
+                max_capture_bytes: Some(CAPTURE_MAX_CAPTURE_BYTES),
+                ttl: Some(CAPTURE_TTL.to_string()),
+                max_spool_bytes: Some(CAPTURE_MAX_SPOOL_BYTES),
+                spool_queue_capacity: Some(CAPTURE_SPOOL_QUEUE_CAPACITY),
             }),
             schema: Some(SchemaPartial {
                 observe: Some(SCHEMA_OBSERVE),

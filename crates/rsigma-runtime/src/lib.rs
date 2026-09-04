@@ -70,7 +70,9 @@ pub use alert_pipeline::{
     load_alert_pipeline_file, parse_alert_pipeline_config, strip_event_payloads,
 };
 pub use capture::{
-    AdmittedEvent, AdmittedMatch, CaptureIncompatibility, CaptureReject, CaptureSink,
+    AdmittedEvent, AdmittedMatch, CaptureConfig, CaptureConfigError, CaptureIncompatibility,
+    CaptureReject, CaptureRing, CaptureRingSink, CaptureSink, CaptureSnapshot, CaptureStats,
+    CapturedEvent, event_digest,
 };
 pub use dispositions::{
     Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,

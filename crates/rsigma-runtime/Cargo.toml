@@ -93,6 +93,10 @@ name = "alert_pipeline"
 harness = false
 
 [[bench]]
+name = "capture"
+harness = false
+
+[[bench]]
 name = "risk"
 harness = false
 

@@ -15,13 +15,13 @@ use rsigma_eval::{
     load_schema_config,
 };
 use rsigma_runtime::{
-    AckToken, AlertPipeline, AlertPipelineState, BatchProcessOutcome, DeliveryConfig,
-    DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver, FileSink,
+    AckToken, AlertPipeline, AlertPipelineState, BatchProcessOutcome, CaptureRing, CaptureRingSink,
+    DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver, FileSink,
     FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult, IncludeMode, InputFormat,
     LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState, RoutingSpec, RuntimeEngine,
     SchemaClassifier, SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, SinkFormat,
     StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file,
-    load_risk_file, load_schema_signatures, spawn_source,
+    load_risk_file, load_schema_signatures, spawn_source, strip_event_payloads,
 };
 
 use super::bundle::BundleFormat;
@@ -103,6 +103,24 @@ pub struct DispositionSettings {
     pub source: Option<PathBuf>,
     /// The rolling-store configuration (window, numerator, min sample).
     pub config: rsigma_runtime::DispositionConfig,
+}
+
+/// Effective verdict-driven capture settings, resolved from `daemon.capture.*`
+/// plus `--enable-capture`. Startup-only: the daemon never reloads this block.
+#[derive(Debug, Clone)]
+pub struct CaptureSettings {
+    /// Whether the capture ring and disposition spool are active.
+    pub enabled: bool,
+    /// Directory that receives completed bundles. Required when enabled.
+    pub spool_dir: Option<PathBuf>,
+    /// In-memory ring bounds.
+    pub ring: rsigma_runtime::CaptureConfig,
+    /// Disk budget for completed bundles.
+    pub max_spool_bytes: u64,
+    /// Bounded spool-job queue capacity.
+    pub spool_queue_capacity: usize,
+    /// Whether the operator independently requested `--include-event`.
+    pub operator_include_event: bool,
 }
 
 /// Controls whether correlation state is restored from SQLite on startup.
@@ -285,6 +303,9 @@ pub struct DaemonConfig {
     /// Effective triage-feedback settings (`daemon.dispositions.*` +
     /// `--enable-dispositions`).
     pub dispositions: DispositionSettings,
+    /// Effective verdict-driven capture settings (`daemon.capture.*` +
+    /// `--enable-capture`). Startup-only.
+    pub capture: CaptureSettings,
     /// Optional API authentication table (`daemon.api.auth` +
     /// `--api-token-env`). `None` mounts the routes without auth, as before.
     pub api_auth: Option<super::auth::ApiAuth>,
@@ -657,6 +678,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                     }
                 }
+                if config.capture.enabled
+                    && let Some(err) = pipeline.capture_incompatibility()
+                {
+                    tracing::error!(error = %err, "Capture requires a compatible group_by alert pipeline");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
                 alert_pipeline_swap.store(Arc::new(Some(Arc::new(pipeline))));
             }
             Err(e) => {
@@ -664,6 +691,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                 std::process::exit(crate::exit_code::CONFIG_ERROR);
             }
         }
+    } else if config.capture.enabled {
+        tracing::error!("Capture requires --alert-pipeline with group.mode: group_by");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
     // Build the risk layer. Failures exit cleanly because no I/O has started yet.
@@ -1923,10 +1953,28 @@ pub async fn run_daemon(config: DaemonConfig) {
     // dispatcher's ack-join releases ack tokens only once every sink has
     // committed the result (delivered or DLQ-parked), preserving at-least-once
     // across fan-out. On shutdown it drains the worker queues.
+    let capture_ring: Option<Arc<std::sync::Mutex<CaptureRing>>> =
+        config.capture.enabled.then(|| {
+            Arc::new(std::sync::Mutex::new(CaptureRing::new(
+                config.capture.ring.clone(),
+            )))
+        });
+    if config.capture.enabled {
+        tracing::info!(
+            spool_dir = %config.capture.spool_dir.as_ref().expect("validated at startup").display(),
+            max_spool_bytes = config.capture.max_spool_bytes,
+            spool_queue_capacity = config.capture.spool_queue_capacity,
+            "Capture ring enabled"
+        );
+    }
+    let operator_include_event = config.capture.operator_include_event;
+
     let sink_metrics = metrics.clone();
     let enrichment_swap_for_sink = enrichment_swap.clone();
     let alert_pipeline_swap_for_sink = alert_pipeline_swap.clone();
     let alert_state_for_sink = alert_state.clone();
+    let capture_ring_for_sink = capture_ring.clone();
+    let capture_metrics = metrics.clone();
     let alert_pipeline_metrics = metrics.clone() as Arc<dyn MetricsHook>;
     let risk_swap_for_sink = risk_swap.clone();
     let risk_state_for_sink = risk_state.clone();
@@ -2045,12 +2093,34 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let mut st = alert_state_for_sink
                                 .write()
                                 .unwrap_or_else(|e| e.into_inner());
-                            alert_pipeline.process(
-                                result,
-                                &mut st,
-                                now,
-                                alert_pipeline_metrics.as_ref(),
-                            )
+                            match capture_ring_for_sink.as_ref() {
+                                Some(ring) => {
+                                    let mut ring = ring.lock().unwrap_or_else(|e| e.into_inner());
+                                    let mut sink = CaptureRingSink {
+                                        ring: &mut ring,
+                                        metrics: capture_metrics.as_ref(),
+                                    };
+                                    let mut kept = alert_pipeline.process_with_capture(
+                                        result,
+                                        &mut st,
+                                        now,
+                                        alert_pipeline_metrics.as_ref(),
+                                        Some(&mut sink),
+                                    );
+                                    if !operator_include_event {
+                                        for result in &mut kept {
+                                            strip_event_payloads(result);
+                                        }
+                                    }
+                                    kept
+                                }
+                                None => alert_pipeline.process(
+                                    result,
+                                    &mut st,
+                                    now,
+                                    alert_pipeline_metrics.as_ref(),
+                                ),
+                            }
                         };
                         if kept.is_empty() {
                             for token in ack_tokens {
@@ -2083,6 +2153,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let mut st = alert_state_for_sink
                                 .write()
                                 .unwrap_or_else(|e| e.into_inner());
+                            if let Some(ring) = capture_ring_for_sink.as_ref() {
+                                let mut ring = ring.lock().unwrap_or_else(|e| e.into_inner());
+                                ring.expire(now, capture_metrics.as_ref());
+                            }
                             alert_pipeline.tick(&mut st, now, alert_pipeline_metrics.as_ref())
                         };
                         for line in out.dedup_lines {

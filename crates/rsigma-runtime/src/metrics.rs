@@ -148,6 +148,19 @@ pub trait MetricsHook: Send + Sync {
     /// A new entity could not be tracked (store full) or an aged-out entity was
     /// pruned.
     fn on_risk_eviction(&self) {}
+
+    /// A captured event was dropped. `reason` is one of `event_too_large`,
+    /// `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, or
+    /// `unsupported_result_kind`.
+    fn on_capture_event_dropped(&self, _reason: &str) {}
+    /// A ring incident was evicted. `reason` is `ring_full` or `ttl`.
+    fn on_capture_eviction(&self, _reason: &str) {}
+    /// Report the current number of incidents held in the capture ring.
+    fn set_capture_incidents_open(&self, _count: i64) {}
+    /// Report the current number of events held in the capture ring.
+    fn set_capture_events_held(&self, _count: i64) {}
+    /// Report the current encoded-byte occupancy of the capture ring.
+    fn set_capture_bytes_held(&self, _count: i64) {}
 }
 
 /// No-op implementation for use when metrics are disabled (e.g., `rsigma run`).
