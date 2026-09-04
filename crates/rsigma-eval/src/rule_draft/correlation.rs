@@ -1501,13 +1501,27 @@ mod tests {
                 event.event["tenant"] = json!(tenant);
             }
         }
-        assert!(matches!(
-            draft_correlation(&ambiguous, &[], &[], &config()),
-            Err(CorrelationDraftError::AmbiguousEntity { .. })
-        ));
+        match draft_correlation(&ambiguous, &[], &[], &config()) {
+            Err(CorrelationDraftError::AmbiguousEntity { candidates }) => {
+                assert_eq!(candidates, vec!["tenant", "user"]);
+            }
+            other => panic!("expected deterministic entity ambiguity, got {other:?}"),
+        }
         assert!(matches!(
             draft_correlation(&groups(), &[group("bad", "mallory", false)], &[], &config()),
             Err(CorrelationDraftError::NegativeGroupMatched { .. })
+        ));
+    }
+
+    #[test]
+    fn entity_inference_refuses_to_guess_when_no_field_is_group_stable() {
+        let mut values = groups();
+        for group in &mut values {
+            group.events[1].event["user"] = json!(format!("{}-other", group.id));
+        }
+        assert!(matches!(
+            draft_correlation(&values, &[], &[], &config()),
+            Err(CorrelationDraftError::AmbiguousEntity { candidates }) if candidates.is_empty()
         ));
     }
 
