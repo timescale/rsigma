@@ -1223,14 +1223,19 @@ fn verify_groups(
                 stage: "compile",
                 message: error.to_string(),
             })?;
-        let retained_events: Vec<&NormalizedEvent> = group
+        // Positives replay only retained-slot events: incidental clusters are
+        // dropped noise by design. Negatives replay every event, because slot
+        // rules match on field predicates, not key shapes; an event that
+        // clusters away from every retained slot can still satisfy a slot
+        // selection and must not be skipped.
+        let replay_events: Vec<&NormalizedEvent> = group
             .events
             .iter()
-            .filter(|event| retained.contains(&event.cluster))
+            .filter(|event| negative || retained.contains(&event.cluster))
             .collect();
-        let first = retained_events.first().map(|event| event.time).unwrap_or(0);
+        let first = replay_events.first().map(|event| event.time).unwrap_or(0);
         let mut fired = false;
-        for (index, event) in retained_events.iter().enumerate() {
+        for (index, event) in replay_events.iter().enumerate() {
             let json = JsonEvent::borrow(&event.event);
             let timestamp = 1_700_000_000i64
                 .checked_add(event.time - first)
@@ -1244,7 +1249,7 @@ fn verify_groups(
                 });
             if target {
                 fired = true;
-                if !negative && index + 1 < retained_events.len() {
+                if !negative && index + 1 < replay_events.len() {
                     return Err(CorrelationDraftError::PositiveVerification {
                         group: group.id.clone(),
                         reason: format!("fired prematurely at retained event {index}"),
@@ -1595,6 +1600,24 @@ mod tests {
                 .iter()
                 .any(|row| { row.group == "benign" && row.negative && !row.fired })
         );
+    }
+
+    #[test]
+    fn negative_events_outside_retained_clusters_still_replay() {
+        // Slot rules match on field predicates, not key shapes. These negative
+        // events carry enough extra keys to fall below the Jaccard threshold
+        // against every retained slot, yet still satisfy the slot selections,
+        // so skipping them would falsely pass the negative gate.
+        let mut negative = group("shifted", "mallory", false);
+        for (event, extras) in negative.events.iter_mut().zip([3usize, 4]) {
+            for extra in 0..extras {
+                event.event[format!("extra_{extra}")] = json!("noise");
+            }
+        }
+        assert!(matches!(
+            draft_correlation(&groups(), &[negative], &[], &config()),
+            Err(CorrelationDraftError::NegativeGroupMatched { groups }) if groups == vec!["shifted"]
+        ));
     }
 
     #[test]
