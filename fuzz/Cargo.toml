@@ -65,6 +65,11 @@ path = "fuzz_targets/fuzz_rule_tune.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_draft_groups"
+path = "fuzz_targets/fuzz_draft_groups.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_pipeline_sources_yaml"
 path = "fuzz_targets/fuzz_pipeline_sources_yaml.rs"
 doc = false

@@ -1,0 +1,6 @@
+{"group":"g1","offset":"0s","event":{"kind":"reset","user":"alice","factor":"totp","reset_reason":"recovery"}}
+{"group":"g1","offset":"20s","event":{"kind":"session","user":"alice","new_asn":true,"asn":64512,"session_type":"web"}}
+{"group":"g2","offset":"0s","event":{"kind":"reset","user":"bob","factor":"totp","reset_reason":"recovery"}}
+{"group":"g2","offset":"25s","event":{"kind":"session","user":"bob","new_asn":true,"asn":64512,"session_type":"web"}}
+{"group":"g3","offset":"0s","event":{"kind":"reset","user":"carol","factor":"totp","reset_reason":"recovery"}}
+{"group":"g3","offset":"30s","event":{"kind":"session","user":"carol","new_asn":true,"asn":64512,"session_type":"web"}}

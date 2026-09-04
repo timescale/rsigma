@@ -112,4 +112,5 @@ Each contributing rule in the bundle reports how its key resolved (`unique`, `am
 - [Lint Rules: ADS detection-strategy metadata](../reference/lint-rules.md#ads-detection-strategy-metadata-11) for the enforcement checks and config.
 - [Custom Attributes: `rsigma.ads.*`](../reference/custom-attributes.md#ads-detection-strategy-attributes-rsigmaads) for the attribute reference.
 - [Rule Hygiene](rule-hygiene.md) for the `incomplete-ads` retirement signal.
+- [Drafting Rules from Logs](rule-drafting.md#drafting-correlations) to create verified temporal rules with an embedded match exemplar.
 - [CI/CD](ci-cd.md) for wiring the gate into a pipeline.

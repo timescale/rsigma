@@ -48,6 +48,10 @@ rsigma backend convert -r rules/ -t postgres
 # List all fields referenced by rules (with optional pipeline mapping)
 rsigma rule fields -r rules/ -p ecs_windows
 
+# Draft a detection or a grouped temporal correlation
+rsigma rule draft -e @incident.ndjson --baseline @normal.ndjson
+rsigma rule draft --groups @observed.ndjson --negative @benign.ndjson
+
 # Propose a verified filter from classified false-positive and true-positive events
 rsigma rule tune -r rules/ --rule <RULE_ID> --fp @false-positives.ndjson --tp @true-positives.ndjson
 

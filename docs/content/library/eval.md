@@ -47,6 +47,7 @@ serde_json = "1"   # only if you use the JsonEvent shim
 | `ProcessResultExt` | Extension trait on `[EvaluationResult]` exposing `detections()` / `correlations()` iterators and `detection_count()` / `correlation_count()`. Bring this into scope when you want kind-filtered iteration without pattern matching. |
 | `CompiledMatcher`, `CompiledRule` | Internal matcher tree types; consume via the AST conversion or build them yourself for an alternative front-end. |
 | `draft_rule`, `DraftConfig`, `DraftReport` | Profile positive exemplars against an optional baseline and emit a verified detection-rule draft. |
+| `rule_draft::correlation::{draft_correlation, GroupedExemplar, TimedEvent, CorrelationDraftConfig, CorrelationDraftReport}` | Infer recurring slots, entity, order, and window from grouped timed exemplars, then emit and verify a multi-document temporal correlation. |
 | `tune_rule`, `TuneConfig`, `TuneReport` | Contrast false-positive and true-positive exemplars and emit a verified Sigma filter rule that suppresses no TP. |
 
 The full enum of modifiers, the matcher-optimizer constants, the `rsigma.*` custom-attribute table, and the bloom/cross-rule prefilters live in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md).
@@ -174,6 +175,8 @@ for raw in events {
 ```
 
 `process_with_detections(event, Vec<EvaluationResult>)` is the lower-overhead variant for hot loops (pre-compute detections in parallel, feed sequentially to correlation). `CorrelationConfig` enforces `max_state_entries` (default 100,000) and the 10-deep correlation-chain limit; see [Security Hardening](../reference/security.md#input-size-and-depth-caps). A correlation whose `rules:` list other correlations (for example a `temporal` of two `event_count` rules) emits the parent result when the chain condition is met, the same way a temporal of detections does.
+
+`rule_draft::correlation::draft_correlation` accepts positive and negative `GroupedExemplar` collections, an optional flat baseline, and `CorrelationDraftConfig`. Each `TimedEvent` carries exactly one RFC3339 timestamp or Sigma offset plus a JSON event. The result contains paste-ready YAML, inferred grouping/order/window evidence, per-slot support, gap distributions, warnings, and the isolated verification matrix. Caller-supplied ids keep the library deterministic; command-line callers generate UUIDs.
 
 ## Custom attributes
 

@@ -35,6 +35,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::schema::SchemaClassifier;
 
+pub mod correlation;
 pub(crate) mod draft_core;
 use draft_core::*;
 
@@ -226,6 +227,120 @@ pub struct DraftReport {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct DraftCandidate {
+    pub(crate) profiles: Vec<DraftFieldProfile>,
+    pub(crate) selected: Vec<usize>,
+    logsource: DraftLogsource,
+    pub(crate) warnings: Vec<String>,
+}
+
+impl DraftCandidate {
+    pub(crate) fn build<E: Event>(
+        exemplars: &[E],
+        baseline: &[E],
+        config: &DraftConfig,
+    ) -> Result<Self, DraftError> {
+        if exemplars.is_empty() {
+            return Err(DraftError::NoExemplars);
+        }
+        let mut warnings = Vec::new();
+        let mut profiles = profile_fields(exemplars, config, &mut warnings);
+        if profiles.is_empty() {
+            return Err(DraftError::NoCandidateFields(exemplars.len()));
+        }
+        for profile in &mut profiles {
+            infer_form(profile, config);
+        }
+        if !baseline.is_empty() {
+            for profile in &mut profiles {
+                apply_baseline(profile, baseline, config);
+            }
+        }
+        let has_baseline = !baseline.is_empty();
+        for profile in &mut profiles {
+            profile.score = score_field(profile, has_baseline);
+        }
+        profiles.sort_by(|a, b| {
+            b.forced
+                .cmp(&a.forced)
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.field().cmp(b.field()))
+        });
+        let usable: Vec<usize> = profiles
+            .iter()
+            .enumerate()
+            .filter(|(_, profile)| {
+                profile.form.is_some() && profile.stability != Stability::Volatile
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if usable.is_empty() {
+            return Err(DraftError::NoCandidateFields(exemplars.len()));
+        }
+        let selected: Vec<usize> = usable.iter().copied().take(config.max_fields).collect();
+        if selected.len() < config.min_fields {
+            warnings.push(format!(
+                "only {} usable field(s) found (floor is {}); the draft may be broad",
+                selected.len(),
+                config.min_fields
+            ));
+        }
+        let logsource = infer_logsource(exemplars, config, &mut warnings);
+        Ok(Self {
+            profiles,
+            selected,
+            logsource,
+            warnings,
+        })
+    }
+
+    pub(crate) fn emit<E: Event>(&self, exemplars: &[E], config: &DraftConfig) -> String {
+        self.emit_named(exemplars, config, None)
+    }
+
+    pub(crate) fn emit_named<E: Event>(
+        &self,
+        exemplars: &[E],
+        config: &DraftConfig,
+        name: Option<&str>,
+    ) -> String {
+        let detection = build_detection(&self.profiles, &self.selected, exemplars, config);
+        emit_rule_yaml(
+            &self.profiles,
+            &self.selected,
+            &detection,
+            &self.logsource,
+            config,
+            name,
+        )
+    }
+
+    pub(crate) fn drop_lowest_eligible(&mut self, failing: Option<&[usize]>) -> Option<usize> {
+        let absent_in_failing = |index: usize| {
+            failing.is_some_and(|indexes| {
+                indexes
+                    .iter()
+                    .any(|&event| self.profiles[index].values[event].is_none())
+            })
+        };
+        let position = self
+            .selected
+            .iter()
+            .rposition(|&index| !self.profiles[index].forced && absent_in_failing(index))
+            .or_else(|| {
+                self.selected
+                    .iter()
+                    .rposition(|&index| !self.profiles[index].forced)
+            })?;
+        Some(self.selected.remove(position))
+    }
+}
+
 // =============================================================================
 // Entry point
 // =============================================================================
@@ -240,74 +355,12 @@ pub fn draft_rule<E: Event>(
     baseline: &[E],
     config: &DraftConfig,
 ) -> Result<DraftReport, DraftError> {
-    if exemplars.is_empty() {
-        return Err(DraftError::NoExemplars);
-    }
-    let mut warnings: Vec<String> = Vec::new();
-
-    // ---- Profile ----------------------------------------------------------
-    let mut profiles = profile_fields(exemplars, config, &mut warnings);
-    if profiles.is_empty() {
-        return Err(DraftError::NoCandidateFields(exemplars.len()));
-    }
-
-    // ---- Infer value forms -------------------------------------------------
-    for p in &mut profiles {
-        infer_form(p, config);
-    }
-
-    // ---- Baseline prevalence + token guard ---------------------------------
-    if !baseline.is_empty() {
-        for p in &mut profiles {
-            apply_baseline(p, baseline, config);
-        }
-    }
-
-    // ---- Score -------------------------------------------------------------
-    let has_baseline = !baseline.is_empty();
-    for p in &mut profiles {
-        p.score = score_field(p, has_baseline);
-    }
-    // Rank: forced first, then score descending, then field name ascending
-    // (the deterministic tie-break).
-    profiles.sort_by(|a, b| {
-        b.forced
-            .cmp(&a.forced)
-            .then_with(|| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| a.field().cmp(b.field()))
-    });
-
-    // ---- Select ------------------------------------------------------------
-    let usable: Vec<usize> = profiles
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| p.form.is_some() && p.stability != Stability::Volatile)
-        .map(|(i, _)| i)
-        .collect();
-    if usable.is_empty() {
-        return Err(DraftError::NoCandidateFields(exemplars.len()));
-    }
-    let mut selected: Vec<usize> = usable.iter().copied().take(config.max_fields).collect();
-    if selected.len() < config.min_fields {
-        warnings.push(format!(
-            "only {} usable field(s) found (floor is {}); the draft may be broad",
-            selected.len(),
-            config.min_fields
-        ));
-    }
-
-    // ---- Logsource ---------------------------------------------------------
-    let logsource = infer_logsource(exemplars, config, &mut warnings);
+    let mut candidate = DraftCandidate::build(exemplars, baseline, config)?;
+    let floor = config.min_fields.min(candidate.selected.len()).max(1);
 
     // ---- Emit + verify (bounded relaxation) --------------------------------
-    let floor = config.min_fields.min(selected.len()).max(1);
     let (yaml, matched, failing) = loop {
-        let detection = build_detection(&profiles, &selected, exemplars, config);
-        let yaml = emit_rule_yaml(&profiles, &selected, &detection, &logsource, config);
+        let yaml = candidate.emit(exemplars, config);
         let engine = compile_draft(&yaml)?;
         let failing: Vec<usize> = exemplars
             .iter()
@@ -322,16 +375,20 @@ pub fn draft_rule<E: Event>(
         // A field is a provable culprit when it is absent from a failing
         // exemplar (the common case: partial-prevalence fields admitted by
         // `min_prevalence`).
-        let absent_in_failing =
-            |i: usize| failing.iter().any(|&idx| profiles[i].values[idx].is_none());
+        let absent_in_failing = |i: usize| {
+            failing
+                .iter()
+                .any(|&idx| candidate.profiles[i].values[idx].is_none())
+        };
 
         // A forced field that provably breaks the match is a user decision we
         // refuse to override; dropping other fields could never fix it, so
         // error out immediately with the culprit named.
-        let forced_culprits: Vec<String> = selected
+        let forced_culprits: Vec<String> = candidate
+            .selected
             .iter()
-            .filter(|&&i| profiles[i].forced && absent_in_failing(i))
-            .map(|&i| profiles[i].field().to_string())
+            .filter(|&&i| candidate.profiles[i].forced && absent_in_failing(i))
+            .map(|&i| candidate.profiles[i].field().to_string())
             .collect();
         if !forced_culprits.is_empty() {
             return Err(DraftError::ForcedFieldMismatch {
@@ -340,7 +397,7 @@ pub fn draft_rule<E: Event>(
             });
         }
 
-        if selected.len() <= floor {
+        if candidate.selected.len() <= floor {
             return Err(DraftError::CannotMatchExemplars {
                 matched: exemplars.len() - failing.len(),
                 total: exemplars.len(),
@@ -351,11 +408,7 @@ pub fn draft_rule<E: Event>(
 
         // Drop the lowest-ranked non-forced culprit; when no field is provably
         // at fault (a value-form edge case), shed the weakest non-forced field.
-        let drop_pos = selected
-            .iter()
-            .rposition(|&i| !profiles[i].forced && absent_in_failing(i))
-            .or_else(|| selected.iter().rposition(|&i| !profiles[i].forced));
-        let Some(pos) = drop_pos else {
+        let Some(dropped) = candidate.drop_lowest_eligible(Some(&failing)) else {
             return Err(DraftError::CannotMatchExemplars {
                 matched: exemplars.len() - failing.len(),
                 total: exemplars.len(),
@@ -363,10 +416,9 @@ pub fn draft_rule<E: Event>(
                 failing,
             });
         };
-        let dropped = selected.remove(pos);
-        warnings.push(format!(
+        candidate.warnings.push(format!(
             "relaxed: dropped field '{}' because the draft did not match every exemplar with it",
-            profiles[dropped].field()
+            candidate.profiles[dropped].field()
         ));
     };
     debug_assert!(failing.is_empty());
@@ -380,7 +432,7 @@ pub fn draft_rule<E: Event>(
             .count();
         let rate = hits as f64 / baseline.len() as f64;
         if hits > 0 {
-            warnings.push(format!(
+            candidate.warnings.push(format!(
                 "draft matches {hits}/{} baseline events ({:.1}%); consider a tighter field",
                 baseline.len(),
                 rate * 100.0
@@ -393,12 +445,15 @@ pub fn draft_rule<E: Event>(
 
     // ---- Lint ----------------------------------------------------------------
     for w in rsigma_parser::lint_yaml_str(&yaml) {
-        warnings.push(format!("lint {}: {}", w.rule, w.message));
+        candidate
+            .warnings
+            .push(format!("lint {}: {}", w.rule, w.message));
     }
 
     // ---- Report ---------------------------------------------------------------
-    let selected_set: BTreeSet<usize> = selected.iter().copied().collect();
-    let fields = profiles
+    let selected_set: BTreeSet<usize> = candidate.selected.iter().copied().collect();
+    let fields = candidate
+        .profiles
         .iter()
         .enumerate()
         .map(|(i, p)| DraftFieldReport {
@@ -434,7 +489,7 @@ pub fn draft_rule<E: Event>(
         baseline_total: baseline.len(),
         baseline_hits,
         baseline_hit_rate,
-        warnings,
+        warnings: candidate.warnings,
     })
 }
 
@@ -733,6 +788,7 @@ fn emit_rule_yaml(
     detection: &DetectionBlock,
     logsource: &DraftLogsource,
     config: &DraftConfig,
+    name: Option<&str>,
 ) -> String {
     let title = config.title.clone().unwrap_or_else(|| {
         title_marker(profiles, selected)
@@ -746,6 +802,9 @@ fn emit_rule_yaml(
 
     let mut out = String::new();
     out.push_str(&format!("title: {}\n", yaml_title_str(&title)));
+    if let Some(name) = name {
+        out.push_str(&format!("name: {}\n", yaml_str(name)));
+    }
     if let Some(id) = &config.rule_id {
         out.push_str(&format!("id: {id}\n"));
     }
@@ -950,6 +1009,54 @@ mod tests {
         let a = draft(&exemplars, &[], &fixed_config()).unwrap().rule_yaml;
         let b = draft(&exemplars, &[], &fixed_config()).unwrap().rule_yaml;
         assert_eq!(a, b, "draft output must be byte-identical across runs");
+    }
+
+    #[test]
+    fn structured_candidate_reemits_deterministically_after_drop() {
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"vendor": "acme", "action": "alert", "kind": "auth"}))
+            .collect();
+        let events = events(&exemplars);
+        let mut candidate = DraftCandidate::build(&events, &[], &fixed_config()).unwrap();
+        assert!(candidate.drop_lowest_eligible(None).is_some());
+        let first = candidate.emit(&events, &fixed_config());
+        let second = candidate.emit(&events, &fixed_config());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn structured_candidate_never_drops_forced_fields() {
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"forced": "keep", "action": "alert"}))
+            .collect();
+        let events = events(&exemplars);
+        let config = DraftConfig {
+            include_fields: vec!["forced".to_string()],
+            max_fields: 1,
+            ..fixed_config()
+        };
+        let mut candidate = DraftCandidate::build(&events, &[], &config).unwrap();
+        assert!(candidate.drop_lowest_eligible(None).is_none());
+        assert_eq!(candidate.profiles[candidate.selected[0]].field(), "forced");
+    }
+
+    #[test]
+    fn structured_candidate_excludes_all_grouping_fields() {
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"tenant": "one", "user": "alice", "action": "alert"}))
+            .collect();
+        let events = events(&exemplars);
+        let config = DraftConfig {
+            exclude_fields: vec!["tenant".to_string(), "user".to_string()],
+            ..fixed_config()
+        };
+        let candidate = DraftCandidate::build(&events, &[], &config).unwrap();
+        assert!(
+            candidate
+                .profiles
+                .iter()
+                .all(|profile| !matches!(profile.field(), "tenant" | "user"))
+        );
     }
 
     // ---- Modifier inference ---------------------------------------------------

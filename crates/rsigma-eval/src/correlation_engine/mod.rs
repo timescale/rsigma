@@ -723,7 +723,11 @@ impl CorrelationEngine {
         if let Some(name) = rule_name.as_deref() {
             ref_strs.push(name);
         }
-        let rule_ref = rule_id.as_deref().or(rule_name.as_deref()).unwrap_or("");
+        let rule_ref = ref_strs
+            .iter()
+            .copied()
+            .find(|identity| corr.rule_refs.iter().any(|rule_ref| rule_ref == identity))
+            .unwrap_or("");
 
         // Extract group key
         let group_key = GroupKey::extract(event, &corr.group_by, &ref_strs);

@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Fire name-referenced temporal correlations (#477)
+
+A `temporal` or `temporal_ordered` correlation that referenced a detection rule by `name` never fired when that rule also carried an `id`: the engine tracked the id in the temporal window while the condition compared against the referenced name. The engine now tracks whichever identity the correlation actually references.
+
+### Correlation drafting (#477)
+
+`rsigma rule draft --groups` turns grouped timestamped or offset exemplar sequences into verified multi-document `temporal`/`temporal_ordered` Sigma rules. It infers recurring event slots, an unambiguous grouping entity, conservative ordering, and a rounded evidence-based window; drafts disjoint named detection rules for the slots; embeds a representative positive group under `rsigma.exemplars`; and verifies every positive/negative group in a fresh correlation engine. Strict envelope validation, repeated-slot rejection, target-id filtering, field floors, and terminal cross-slot/negative failures prevent broad or state-contaminated drafts.
+
 ### Verdict-driven corpora (#476)
 
 Opt-in, byte-bounded capture of detection results admitted by a `group_by` alert pipeline. Capture runs after inhibition/silencing and before dedup, retains payloads internally at startup, and strips them before sink delivery unless `--include-event` was also set. Accepted dispositions enqueue one versioned bundle per original verdict: TP/BTP directories contain a bare-event backtest corpus, full `expectations.yml`, provenance, and manifest; FP directories feed `rule tune --from-dispositions`. The ring is not persisted to SQLite, not readable through the API, and gated by `capture:write` on HTTP ingest. Correlation results and `entity_graph` grouping are rejected. Closes #345.

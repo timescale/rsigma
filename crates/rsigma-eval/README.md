@@ -122,13 +122,15 @@ Opt-in counter that records every observed field name and surfaces gap and broke
 
 ### Rule drafting (`rule_draft` module)
 
-Turns exemplar events into a complete draft Sigma rule, verified end-to-end through the real parse/compile/evaluate path. Backs `rsigma rule draft`.
+Turns exemplar events into complete draft Sigma detection and temporal correlation rules, verified end-to-end through the real parse/compile/evaluate path. Backs `rsigma rule draft`.
 
 | Type / function | Description |
 |-----------------|-------------|
 | `draft_rule(exemplars, baseline, &DraftConfig)` | Profile the exemplars, drop volatile fields (timestamps, GUIDs, counters, high-entropy uniques), score by stability times baseline rarity, infer value forms and modifiers (equals, OR list, `endswith`/`startswith`/`contains` with Sigma wildcard escaping), infer the logsource via `SchemaClassifier`, and emit + verify the rule (every exemplar must match; bounded relaxation with a minimum-field floor) |
 | `DraftConfig` | Tunables: `max_fields`, `min_fields`, `min_prevalence`, `max_value_cardinality`, `min_token_len`, `max_baseline_token_prevalence`, include/exclude fields, title/logsource overrides, `rule_id` (caller-supplied; the core is deterministic and never generates one), `date`, `evaluate_baseline` |
 | `DraftReport` | `rule_yaml` (parse- and lint-checked), ranked `fields` (`DraftFieldReport` with score, `Stability` class, chosen modifier, values, baseline prevalence), `exemplar_matched`, `baseline_hits`/`baseline_hit_rate`, warnings |
+| `rule_draft::correlation::draft_correlation(groups, negatives, baseline, &CorrelationDraftConfig)` | Validate grouped timed events, infer recurring slots, grouping entity, order, and window, emit named detection documents plus a temporal correlation, and verify every group in an isolated `CorrelationEngine` |
+| `CorrelationDraftReport` | Multi-document YAML, correlation type, group-by fields, chosen timespan, observed spans/gaps, per-slot support and selected forms, isolated verification rows, warnings |
 | `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped) |
 
 ### Rule exemplars (`exemplar` module)

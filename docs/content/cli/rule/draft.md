@@ -1,6 +1,6 @@
 # `rsigma rule draft`
 
-Draft a Sigma detection rule from exemplar events, optionally contrasted against a baseline corpus.
+Draft a Sigma detection rule or temporal correlation from exemplar events, optionally contrasted against a baseline corpus.
 
 ## Synopsis
 
@@ -23,6 +23,12 @@ Two things stay yours: the metadata (title, description, tags, level are placeho
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-e, --event <EVENT>` | stdin | Exemplars: a single event as a JSON string, or `@path` to an NDJSON file (or `.evtx` in builds with the `evtx` feature). If omitted, reads NDJSON from stdin. |
+| `--groups <@PATH>` | unset | Grouped, timed exemplars from one envelope NDJSON file or a directory containing one NDJSON file per group. |
+| `--negative <@PATH>` | unset | Grouped examples that the drafted correlation must not match. Requires `--groups`. |
+| `--group-by <FIELD>` | inferred | Correlation entity field. Repeatable for an explicit composite key. |
+| `--correlation-type <auto\|temporal\|temporal_ordered>` | `auto` | Infer consistent ordering, force unordered temporal behavior, or require consistent ordering. |
+| `--min-groups <N>` | `3` | Minimum positive groups required for correlation drafting. |
+| `--window-margin <F>` | `1.5` | Multiplier applied to the maximum observed positive-group span before rounding up. |
 | `--baseline <@PATH>` | unset | Baseline corpus of normal traffic (NDJSON or `.evtx`). Used for contrastive field scoring and the final false-positive estimate. |
 | `--max-fields <N>` | `4` | Maximum fields in the drafted selection. |
 | `--min-prevalence <F>` | `1.0` | Fraction of exemplars a field must appear in to be a candidate. |
@@ -91,12 +97,38 @@ rsigma engine eval --rules draft.yml -e @incident.ndjson
 
 The command already runs this loop internally (the draft is guaranteed to parse, lint findings surface as warnings, and every exemplar matches), but re-running it after your metadata edits catches typos.
 
+### Draft a temporal correlation
+
+Envelope NDJSON carries a group id, exactly one time key, and an event:
+
+```json
+{"group":"incident-1","offset":"0s","event":{"eventType":"factor.reset","user":"alice"}}
+{"group":"incident-1","offset":"4m","event":{"eventType":"session.start","user":"alice","newAsn":true}}
+```
+
+Provide at least three observed groups by default:
+
+```bash
+rsigma rule draft --groups @observed.ndjson --negative @benign.ndjson > correlation.yml
+rsigma rule test --rules correlation.yml
+```
+
+Absolute RFC3339 `timestamp` values can replace offsets, but one group cannot mix the two modes. Directory input uses each filename stem as the group id, so each line contains only `timestamp`/`offset` and `event`.
+
+The command clusters recurring event key shapes into slots, drops incidental clusters missing from any positive group, and rejects repeated retained slots. `auto` emits `temporal_ordered` only when every group has the same slot order. Otherwise it emits `temporal` and reports the disagreeing groups. A forced `temporal_ordered` request errors on an inversion.
+
+The window is the maximum positive first-to-last retained-slot span multiplied by `--window-margin`, rounded up to a human-readable duration. Each slot rule is contrasted against sibling slots and the optional baseline. Grouping fields are excluded from slot predicates.
+
+Without `--group-by`, exactly one field must be present and stable within every positive group and distinct across groups. Zero or multiple candidates return an ambiguity error. Composite keys always require repeated `--group-by`.
+
+Each group is verified in a fresh correlation engine. Positive groups must fire only after all slots are consumed, and negative groups must never fire. The correlation document embeds a median-span positive group under `rsigma.exemplars`, so `rule test` replays the draft directly.
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | A verified draft was emitted. |
-| `2` | Exemplars could not be read, or no rule could honestly cover them (all fields volatile, a forced `--include-field` absent from some exemplars, or the exemplars are too heterogeneous to match at the minimum-field floor). |
+| `2` | Exemplars could not be read, no rule could honestly cover them, grouped input was invalid, entity/slot inference was ambiguous, or isolated verification failed. |
 | `3` | A `--baseline` value without the `@path` prefix. |
 
 ## See also

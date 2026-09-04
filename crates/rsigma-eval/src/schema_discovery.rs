@@ -39,6 +39,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde::Serialize;
 
 use crate::event::Event;
+use crate::key_shape::cluster_by_key_shape;
 use crate::schema::{
     SchemaClassifier, SchemaPredicate, SchemaSignature, UnknownShapeEntry, validate_schema_config,
 };
@@ -529,23 +530,15 @@ fn build_report(
 /// `shapes` already ordered most-frequent-first (the merge anchor is the first
 /// shape of each cluster), so the result is deterministic.
 fn cluster_shapes(shapes: &[ShapeStat], config: &DiscoveryConfig) -> Vec<Cluster> {
-    let mut clusters: Vec<Cluster> = Vec::new();
-    for shape in shapes {
-        let mut placed = false;
-        for cluster in &mut clusters {
-            if jaccard(&shape.keys, &cluster.seed_keys) >= config.similarity
-                && diversity_ok(cluster, shape)
-            {
-                cluster.merge(shape);
-                placed = true;
-                break;
-            }
-        }
-        if !placed {
-            clusters.push(Cluster::from_shape(shape));
-        }
-    }
-    clusters
+    cluster_by_key_shape(
+        shapes,
+        config.similarity,
+        |shape| &shape.keys,
+        |cluster| &cluster.seed_keys,
+        Cluster::from_shape,
+        diversity_ok,
+        Cluster::merge,
+    )
 }
 
 /// Refuse to merge a shape into a cluster when they disagree on a single
@@ -791,21 +784,6 @@ fn unique_name(name: String, used: &mut BTreeMap<String, u32>) -> String {
 // =============================================================================
 // Small helpers
 // =============================================================================
-
-fn jaccard(a: &[String], b: &[String]) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
-    }
-    let sa: BTreeSet<&String> = a.iter().collect();
-    let sb: BTreeSet<&String> = b.iter().collect();
-    let inter = sa.intersection(&sb).count();
-    let union = sa.union(&sb).count();
-    if union == 0 {
-        0.0
-    } else {
-        inter as f64 / union as f64
-    }
-}
 
 fn truncate_keys(keys: &[String]) -> Vec<String> {
     keys.iter().take(MAX_SAMPLE_KEYS_PER_SET).cloned().collect()
