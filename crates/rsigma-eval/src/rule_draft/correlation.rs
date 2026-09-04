@@ -1414,11 +1414,26 @@ mod tests {
         let first = draft_correlation(&groups(), &[], &[], &config()).unwrap();
         let second = draft_correlation(&groups(), &[], &[], &config()).unwrap();
         assert_eq!(first.rule_yaml, second.rule_yaml);
+        assert_eq!(
+            first.rule_yaml,
+            include_str!("golden/correlation_ordered.yaml")
+        );
         assert_eq!(first.correlation_type, "temporal_ordered");
         assert_eq!(first.group_by, vec!["user"]);
         assert!(first.rule_yaml.contains("rsigma.exemplars:"));
         assert!(rsigma_parser::parse_sigma_yaml(&first.rule_yaml).is_ok());
         assert!(first.verification.iter().all(|row| row.fired));
+    }
+
+    #[test]
+    fn unordered_collection_matches_golden() {
+        let mut cfg = config();
+        cfg.correlation_type = CorrelationDraftType::Temporal;
+        let report = draft_correlation(&groups(), &[], &[], &cfg).unwrap();
+        assert_eq!(
+            report.rule_yaml,
+            include_str!("golden/correlation_unordered.yaml")
+        );
     }
 
     #[test]

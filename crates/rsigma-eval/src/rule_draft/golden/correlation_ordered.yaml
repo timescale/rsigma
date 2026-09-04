@@ -1,0 +1,71 @@
+title: 'Draft: totp (factor)'
+name: slot_totp
+id: 00000000-0000-4000-8000-000000000001
+status: experimental
+description: 'TODO: describe what this rule detects and why it matters.'
+author: 'TODO: your name'
+date: 2026-09-04
+logsource:
+    product: todo
+detection:
+    selection:
+        factor: totp
+        kind: reset
+        reset_reason: recovery
+    condition: selection
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium
+---
+title: 'Draft: 64512 (asn)'
+name: slot_64512
+id: 00000000-0000-4000-8000-000000000002
+status: experimental
+description: 'TODO: describe what this rule detects and why it matters.'
+author: 'TODO: your name'
+date: 2026-09-04
+logsource:
+    product: todo
+detection:
+    selection:
+        asn: 64512
+        kind: session
+        new_asn: true
+        session_type: web
+    condition: selection
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium
+---
+title: Draft temporal correlation
+id: 00000000-0000-4000-8000-000000000003
+status: experimental
+correlation:
+    type: temporal_ordered
+    rules:
+        - slot_totp
+        - slot_64512
+    group-by:
+        - user
+    timespan: 30s
+    condition:
+        gte: 2
+custom_attributes:
+    rsigma.exemplars:
+        - name: 'observed group g2'
+          expect: match
+          events:
+              - offset: 0s
+                event:
+                    factor: totp
+                    kind: reset
+                    reset_reason: recovery
+                    user: bob
+              - offset: 20s
+                event:
+                    asn: 64512
+                    kind: session
+                    new_asn: true
+                    session_type: web
+                    user: bob
+level: medium
