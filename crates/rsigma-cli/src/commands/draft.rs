@@ -281,7 +281,15 @@ fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
     };
     let baseline = match args.baseline.as_deref() {
         Some(spec) if spec.starts_with('@') => match read_events(Some(spec), "baseline") {
-            Ok(corpus) => corpus.events,
+            Ok(corpus) => {
+                if corpus.parse_errors > 0 {
+                    eprintln!(
+                        "warning: {} baseline line(s) failed to parse as JSON and were skipped",
+                        corpus.parse_errors
+                    );
+                }
+                corpus.events
+            }
             Err(error) => {
                 eprintln!("{error}");
                 process::exit(crate::exit_code::RULE_ERROR);
@@ -430,7 +438,15 @@ fn read_grouped_file(
             )
         })?;
         let group = match directory_group {
-            Some(group) => group.to_string(),
+            Some(group) => {
+                if object.contains_key("group") {
+                    return Err(format!(
+                        "{}:{line_number}: 'group' is not allowed in directory input; the filename stem is the group id",
+                        path.display()
+                    ));
+                }
+                group.to_string()
+            }
             None => object
                 .get("group")
                 .and_then(serde_json::Value::as_str)

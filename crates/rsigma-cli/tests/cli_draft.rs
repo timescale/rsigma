@@ -361,6 +361,28 @@ fn grouped_directory_uses_file_stems_as_group_ids() {
 }
 
 #[test]
+fn grouped_directory_rejects_embedded_group_key() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("g1.ndjson"),
+        "{\"group\":\"other\",\"offset\":\"0s\",\"event\":{\"kind\":\"reset\"}}\n",
+    )
+    .unwrap();
+    rsigma()
+        .args([
+            "rule",
+            "draft",
+            "--groups",
+            &format!("@{}", directory.path().display()),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "'group' is not allowed in directory input",
+        ));
+}
+
+#[test]
 fn grouped_draft_reports_malformed_line_context() {
     let groups = temp_file(
         ".ndjson",
