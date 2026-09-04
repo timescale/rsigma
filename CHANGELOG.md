@@ -4,9 +4,9 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Verdict-driven corpora (#345)
+### Verdict-driven corpora (#476)
 
-Opt-in, byte-bounded capture of detection results admitted by a `group_by` alert pipeline. Capture runs after inhibition/silencing and before dedup, retains payloads internally at startup, and strips them before sink delivery unless `--include-event` was also set. Accepted dispositions enqueue one versioned bundle per original verdict: TP/BTP directories contain a bare-event backtest corpus, full `expectations.yml`, provenance, and manifest; FP directories feed `rule tune --from-dispositions`. The ring is not persisted to SQLite, not readable through the API, and gated by `capture:write` on HTTP ingest. Correlation results and `entity_graph` grouping are rejected.
+Opt-in, byte-bounded capture of detection results admitted by a `group_by` alert pipeline. Capture runs after inhibition/silencing and before dedup, retains payloads internally at startup, and strips them before sink delivery unless `--include-event` was also set. Accepted dispositions enqueue one versioned bundle per original verdict: TP/BTP directories contain a bare-event backtest corpus, full `expectations.yml`, provenance, and manifest; FP directories feed `rule tune --from-dispositions`. The ring is not persisted to SQLite, not readable through the API, and gated by `capture:write` on HTTP ingest. Correlation results and `entity_graph` grouping are rejected. Closes #345.
 
 ### Embedded rule exemplars (#469)
 
