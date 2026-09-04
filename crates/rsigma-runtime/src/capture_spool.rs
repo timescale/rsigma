@@ -1,7 +1,7 @@
 //! Versioned disposition-bundle format.
 //!
-//! The daemon writes these documents; offline readers validate them strictly.
-//! Unknown major versions and malformed documents fail closed.
+//! The daemon writes these documents; `rule tune --from-dispositions` validates
+//! them strictly. Unknown major versions and malformed documents fail closed.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
