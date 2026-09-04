@@ -1510,4 +1510,50 @@ mod tests {
             Err(CorrelationDraftError::NegativeGroupMatched { .. })
         ));
     }
+
+    #[test]
+    fn verification_ignores_unrelated_correlation_results() {
+        let report = draft_correlation(&groups(), &[], &[], &config()).unwrap();
+        let collection = rsigma_parser::parse_sigma_yaml(&report.rule_yaml).unwrap();
+        let mut normalized = normalize_groups(&groups(), 3).unwrap();
+        assign_clusters(&mut normalized, 0.6);
+        let (retained, _) = retained_clusters(&normalized, 2).unwrap();
+        assert!(matches!(
+            verify_groups(
+                &collection,
+                &normalized,
+                &retained,
+                "unrelated-correlation",
+                false
+            ),
+            Err(CorrelationDraftError::PositiveVerification { .. })
+        ));
+    }
+
+    #[test]
+    fn verification_rejects_premature_target_firing() {
+        let report = draft_correlation(&groups(), &[], &[], &config()).unwrap();
+        let yaml = report
+            .rule_yaml
+            .replace(
+                "        - slot_totp\n        - slot_64512\n",
+                "        - slot_totp\n",
+            )
+            .replace("        gte: 2\n", "        gte: 1\n");
+        let collection = rsigma_parser::parse_sigma_yaml(&yaml).unwrap();
+        let mut normalized = normalize_groups(&groups(), 3).unwrap();
+        assign_clusters(&mut normalized, 0.6);
+        let (retained, _) = retained_clusters(&normalized, 2).unwrap();
+        assert!(matches!(
+            verify_groups(
+                &collection,
+                &normalized,
+                &retained,
+                "00000000-0000-4000-8000-000000000003",
+                false
+            ),
+            Err(CorrelationDraftError::PositiveVerification { reason, .. })
+                if reason.contains("prematurely")
+        ));
+    }
 }
