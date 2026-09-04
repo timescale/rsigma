@@ -63,7 +63,7 @@ jobs:
 
       - name: Archive release
         id: archive-release
-        run: ./support/archive-release.sh
+        run: ./scripts/archive-release.sh
         env:
           TARGET: ${{ matrix.target }}
         shell: bash
