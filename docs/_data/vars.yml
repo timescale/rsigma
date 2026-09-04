@@ -18,8 +18,8 @@ rsigma:
   # Referenced as {{ rsigma.metrics.names }} etc. Keep in sync with
   # crates/rsigma-cli/src/daemon/metrics.rs and docs/content/reference/metrics.md.
   metrics:
-    names: 87 # total metric names in the definition catalogue
-    always: 82 # registered without feature gates (names - otlp - tls)
+    names: 94 # total metric names in the definition catalogue
+    always: 89 # registered without feature gates (names - otlp - tls)
     otlp: 3 # daemon-otlp
     tls: 2 # daemon-tls
   crates:

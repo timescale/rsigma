@@ -23,12 +23,25 @@ pub(crate) struct TuneArgs {
 
     /// False-positive events as inline JSON or @path to NDJSON/EVTX.
     /// Reads NDJSON from stdin when omitted.
-    #[arg(long, value_name = "JSON|@PATH")]
+    #[arg(long, value_name = "JSON|@PATH", conflicts_with = "from_dispositions")]
     pub fp: Option<String>,
 
     /// True-positive events as inline JSON or @path to NDJSON/EVTX.
-    #[arg(long, value_name = "JSON|@PATH")]
-    pub tp: String,
+    #[arg(
+        long,
+        value_name = "JSON|@PATH",
+        required_unless_present = "from_dispositions",
+        conflicts_with = "from_dispositions"
+    )]
+    pub tp: Option<String>,
+
+    /// Versioned disposition-capture spool written by `engine daemon`.
+    #[arg(
+        long = "from-dispositions",
+        value_name = "SPOOL_DIR",
+        conflicts_with_all = ["fp", "tp"]
+    )]
+    pub from_dispositions: Option<PathBuf>,
 
     /// Processing pipeline(s) applied before tuning and verification.
     #[arg(short = 'p', long = "pipeline", value_name = "PATH|NAME")]
@@ -76,8 +89,13 @@ pub(crate) struct TuneArgs {
 }
 
 pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
+    if args.from_dispositions.is_some() {
+        cmd_tune_from_dispositions(args, ctx);
+        return;
+    }
+
     let false_positives = read_corpus(args.fp.as_deref(), "false-positive");
-    let true_positives = read_corpus(Some(args.tp.as_str()), "true-positive");
+    let true_positives = read_corpus(args.tp.as_deref(), "true-positive");
 
     let collection = crate::load_collection(&args.rules);
     let mut rule = match select_rule(&collection.rules, args.rule.as_deref()) {
@@ -96,28 +114,12 @@ pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
         process::exit(crate::exit_code::RULE_ERROR);
     }
 
-    let config = TuneConfig {
-        max_fields: args.max_fields,
-        min_fields: args.min_fields,
-        max_value_cardinality: args.max_value_cardinality,
-        min_cluster_support: args.min_cluster_support,
-        max_clusters: args.max_clusters,
-        allow_partial: args.allow_partial,
-        filter_id: Some(uuid::Uuid::new_v4().to_string()),
-        ..TuneConfig::default()
-    };
-    let mut report = match tune_rule(
+    let mut report = tune_one(
         &rule,
         &false_positives.events,
         &true_positives.events,
-        &config,
-    ) {
-        Ok(report) => report,
-        Err(error) => {
-            eprintln!("error tuning rule: {error}");
-            process::exit(crate::exit_code::RULE_ERROR);
-        }
-    };
+        &args,
+    );
     if let Some(path) = &args.expectations {
         let resolved = match super::backtest::expectations::load_and_resolve(path, &collection) {
             Ok(resolved) => resolved,
@@ -131,23 +133,161 @@ pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
             &rule,
             &resolved,
             args.fp.as_deref(),
-            &args.tp,
+            args.tp.as_deref().unwrap_or(""),
             args.fp_corpus.as_deref(),
             args.tp_corpus.as_deref(),
         ));
     }
 
+    emit_reports(&[(rule, report)], &args, &ctx);
+}
+
+fn cmd_tune_from_dispositions(args: TuneArgs, ctx: OutputCtx) {
+    let spool = args
+        .from_dispositions
+        .as_ref()
+        .expect("clap requires the spool");
+    let evidence =
+        match super::disposition_spool::load_disposition_evidence(spool, args.rule.as_deref()) {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                eprintln!("error: {error}");
+                process::exit(crate::exit_code::RULE_ERROR);
+            }
+        };
+
+    let collection = crate::load_collection(&args.rules);
+    let pipelines = crate::load_pipelines(&args.pipelines);
+    let resolved_expectations =
+        args.expectations.as_ref().map(
+            |path| match super::backtest::expectations::load_and_resolve(path, &collection) {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            },
+        );
+
+    let mut reports = Vec::new();
+    for item in evidence {
+        let mut rule = match select_rule(&collection.rules, Some(&item.rule_id)) {
+            Ok(rule) => rule.clone(),
+            Err(error) => {
+                eprintln!("error: {error}");
+                process::exit(crate::exit_code::RULE_ERROR);
+            }
+        };
+        if !pipelines.is_empty()
+            && let Err(error) = apply_pipelines(&pipelines, &mut rule)
+        {
+            eprintln!("error applying pipeline to {:?}: {error}", rule.title);
+            process::exit(crate::exit_code::RULE_ERROR);
+        }
+        let mut report = tune_one(&rule, &item.false_positives, &item.true_positives, &args);
+        if let Some(resolved) = &resolved_expectations {
+            report.expectation_diff = Some(expectation_diff(
+                &report,
+                &rule,
+                resolved,
+                None,
+                "",
+                args.fp_corpus.as_deref(),
+                args.tp_corpus.as_deref(),
+            ));
+        }
+        reports.push((rule, report));
+    }
+
+    emit_reports(&reports, &args, &ctx);
+}
+
+fn tune_one(
+    rule: &rsigma_parser::SigmaRule,
+    false_positives: &[serde_json::Value],
+    true_positives: &[serde_json::Value],
+    args: &TuneArgs,
+) -> TuneReport {
+    let config = TuneConfig {
+        max_fields: args.max_fields,
+        min_fields: args.min_fields,
+        max_value_cardinality: args.max_value_cardinality,
+        min_cluster_support: args.min_cluster_support,
+        max_clusters: args.max_clusters,
+        allow_partial: args.allow_partial,
+        filter_id: Some(uuid::Uuid::new_v4().to_string()),
+        ..TuneConfig::default()
+    };
+    match tune_rule(rule, false_positives, true_positives, &config) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("error tuning rule: {error}");
+            process::exit(crate::exit_code::RULE_ERROR);
+        }
+    }
+}
+
+fn emit_reports(
+    reports: &[(rsigma_parser::SigmaRule, TuneReport)],
+    args: &TuneArgs,
+    ctx: &OutputCtx,
+) {
     match args.emit {
         EmitMode::Yaml => {
             if ctx.explicit_format {
                 ctx.warn_unsupported("rule tune", "Sigma YAML");
             }
-            print!("{}", report.filter_yaml);
-            if ctx.show_stats() {
-                print_summary_stderr(&report);
+            for (i, (_, report)) in reports.iter().enumerate() {
+                if i > 0 {
+                    println!("---");
+                }
+                print!("{}", report.filter_yaml);
+                if ctx.show_stats() {
+                    print_summary_stderr(report);
+                }
             }
         }
-        EmitMode::Report => render_report(&report, &ctx),
+        EmitMode::Report if reports.len() == 1 => render_report(&reports[0].1, ctx),
+        EmitMode::Report => render_disposition_reports(reports, ctx),
+    }
+}
+
+fn render_disposition_reports(reports: &[(rsigma_parser::SigmaRule, TuneReport)], ctx: &OutputCtx) {
+    #[derive(serde::Serialize)]
+    struct NamedReport<'a> {
+        rule_id: String,
+        #[serde(flatten)]
+        report: &'a TuneReport,
+    }
+    let named: Vec<NamedReport<'_>> = reports
+        .iter()
+        .map(|(rule, report)| NamedReport {
+            rule_id: rule.id.clone().unwrap_or_else(|| rule.title.clone()),
+            report,
+        })
+        .collect();
+    match ctx.format {
+        OutputFormat::Json => render_json(&named, true),
+        OutputFormat::Ndjson => {
+            for item in &named {
+                render_json(item, false);
+            }
+        }
+        OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
+            if !matches!(ctx.format, OutputFormat::Table) {
+                ctx.warn_unsupported("rule tune --emit report", "human report");
+            }
+            for (i, (rule, report)) in reports.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                println!(
+                    "# rule: {}",
+                    rule.id.as_deref().unwrap_or(rule.title.as_str())
+                );
+                render_report(report, ctx);
+            }
+        }
     }
 }
 

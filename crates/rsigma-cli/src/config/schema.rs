@@ -155,6 +155,9 @@ pub(crate) struct DaemonPartial {
     /// Triage feedback loop (analyst dispositions + per-rule false-positive ratio).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispositions: Option<DispositionsPartial>,
+    /// Verdict-driven evidence capture. Startup-only; changing it requires a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CapturePartial>,
     /// Schema classification and routing settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<SchemaPartial>,
@@ -182,6 +185,7 @@ impl Merge for DaemonPartial {
             tap: merge_opt(self.tap, over.tap),
             tail: merge_opt(self.tail, over.tail),
             dispositions: merge_opt(self.dispositions, over.dispositions),
+            capture: merge_opt(self.capture, over.capture),
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
         }
@@ -642,6 +646,60 @@ impl Merge for DispositionsPartial {
             window: over.window.or(self.window),
             numerator: over.numerator.or(self.numerator),
             min_sample: over.min_sample.or(self.min_sample),
+        }
+    }
+}
+
+/// Verdict-driven evidence capture (`daemon.capture.*`).
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct CapturePartial {
+    /// Retain admitted detection events for later spooling. Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Directory that receives completed disposition bundles. Required when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spool_dir: Option<PathBuf>,
+    /// Maximum simultaneously-retained incidents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_captured_incidents: Option<usize>,
+    /// Maximum events retained per incident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_events_per_incident: Option<usize>,
+    /// Maximum encoded JSON size of one event, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_event_bytes: Option<usize>,
+    /// Maximum encoded JSON bytes retained for one incident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_incident: Option<usize>,
+    /// Maximum encoded JSON bytes retained across the ring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_capture_bytes: Option<usize>,
+    /// Idle lifetime after last admission (humantime, e.g. `24h`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+    /// Maximum bytes of completed bundles kept under `spool_dir`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_spool_bytes: Option<u64>,
+    /// Bounded queue of pending spool jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spool_queue_capacity: Option<usize>,
+}
+
+impl Merge for CapturePartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            spool_dir: over.spool_dir.or(self.spool_dir),
+            max_captured_incidents: over.max_captured_incidents.or(self.max_captured_incidents),
+            max_events_per_incident: over
+                .max_events_per_incident
+                .or(self.max_events_per_incident),
+            max_event_bytes: over.max_event_bytes.or(self.max_event_bytes),
+            max_bytes_per_incident: over.max_bytes_per_incident.or(self.max_bytes_per_incident),
+            max_capture_bytes: over.max_capture_bytes.or(self.max_capture_bytes),
+            ttl: over.ttl.or(self.ttl),
+            max_spool_bytes: over.max_spool_bytes.or(self.max_spool_bytes),
+            spool_queue_capacity: over.spool_queue_capacity.or(self.spool_queue_capacity),
         }
     }
 }

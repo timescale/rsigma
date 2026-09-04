@@ -226,6 +226,17 @@ impl IncidentStore {
         self.incidents.is_empty()
     }
 
+    /// True when an incident with this id is currently open.
+    pub fn contains(&self, id: &str) -> bool {
+        self.incidents.contains_key(id)
+    }
+
+    /// True when `assign` would accept a result for this deterministic
+    /// group id: the incident is already open, or the store still has room.
+    pub fn can_assign(&self, id: &str, max_open_incidents: usize) -> bool {
+        self.incidents.contains_key(id) || self.incidents.len() < max_open_incidents
+    }
+
     /// A snapshot of every open incident, for the admin API.
     pub fn snapshot(&self, include: IncludeMode) -> Vec<IncidentResult> {
         self.incidents
@@ -590,7 +601,7 @@ impl Incident {
 /// The deterministic group fingerprint and the resolved key values for a
 /// `group_by`-mode result. The rule identity is deliberately excluded so an
 /// incident can span rules that share the group key.
-pub(crate) fn group_fingerprint(
+pub fn group_fingerprint(
     selectors: &[Selector],
     result: &EvaluationResult,
 ) -> (String, Vec<(String, Value)>) {

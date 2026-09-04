@@ -173,6 +173,7 @@ pub const BUILTIN_ROLES: &[(&str, &[&str])] = &[
             "*:read",
             "silences:write",
             "dispositions:write",
+            "capture:write",
             "sources:write",
             "fields:write",
             "schemas:write",
@@ -393,6 +394,8 @@ impl ApiAuth {
 pub struct AuthLayerState {
     pub auth: ApiAuth,
     pub metrics: Arc<Metrics>,
+    /// When capture is enabled, `POST /api/v1/dispositions` also requires this.
+    pub extra_disposition_perm: Option<RequiredPermission>,
 }
 
 /// Axum middleware enforcing [`ApiAuth`] on every matched route. Mounted via
@@ -419,6 +422,43 @@ pub async fn api_auth_middleware(
         .and_then(|v| v.to_str().ok());
     match state.auth.check(authorization, required) {
         Decision::Allowed(identity) => {
+            if path == "/api/v1/dispositions"
+                && request.method() == Method::POST
+                && let Some(extra) = state.extra_disposition_perm
+            {
+                match state.auth.check(authorization, extra) {
+                    Decision::Allowed(_) => {}
+                    Decision::Unauthorized => {
+                        state
+                            .metrics
+                            .api_auth_failures
+                            .with_label_values(&["unauthorized"])
+                            .inc();
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            [("www-authenticate", "Bearer")],
+                            axum::Json(serde_json::json!({
+                                "error": "missing or invalid bearer token"
+                            })),
+                        )
+                            .into_response();
+                    }
+                    Decision::Forbidden { token } => {
+                        state
+                            .metrics
+                            .api_auth_failures
+                            .with_label_values(&["forbidden"])
+                            .inc();
+                        return (
+                            StatusCode::FORBIDDEN,
+                            axum::Json(serde_json::json!({
+                                "error": format!("token '{token}' is not permitted to capture:write")
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
             request.extensions_mut().insert(identity);
             next.run(request).await
         }
@@ -805,6 +845,10 @@ mod tests {
         .unwrap();
         assert!(matches!(
             auth.check(Some("Bearer s"), Permission::required("silences", "write")),
+            Decision::Allowed(_)
+        ));
+        assert!(matches!(
+            auth.check(Some("Bearer s"), Permission::required("capture", "write")),
             Decision::Allowed(_)
         ));
         assert!(matches!(

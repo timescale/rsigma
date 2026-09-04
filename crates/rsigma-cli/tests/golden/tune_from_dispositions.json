@@ -1,0 +1,100 @@
+[
+  {
+    "false_positive_coverage": 1.0,
+    "fields": [
+      {
+        "disposition": "selected",
+        "field": "Image",
+        "modifier": "",
+        "score": 3.0,
+        "stability": "constant",
+        "true_positive_hits": 0,
+        "values": [
+          "C:\\Program Files\\Veeam\\backup.exe"
+        ]
+      },
+      {
+        "disposition": "selected",
+        "field": "User",
+        "modifier": "",
+        "score": 3.0,
+        "stability": "constant",
+        "true_positive_hits": 0,
+        "values": [
+          "svc_backup"
+        ]
+      }
+    ],
+    "filter_yaml": "title: Tuning filter for Suspicious Backup Tool\nid: <ID>\ndescription: 'Suppresses 2 observed false-positive exemplars; verified against 1 true-positive exemplars.'\nauthor: 'rsigma rule tune'\nlogsource:\n    category: process_creation\n    product: windows\nfilter:\n    rules:\n        - 929a690e-bef0-4204-a928-ef5e620d6fcc\n    selection:\n        Image: 'C:\\Program Files\\Veeam\\backup.exe'\n        User: svc_backup\n    condition: not selection",
+    "rule_id": "929a690e-bef0-4204-a928-ef5e620d6fcc",
+    "selections": [
+      {
+        "false_positive_indexes": [
+          0,
+          1
+        ],
+        "fields": [
+          "Image",
+          "User"
+        ],
+        "name": "selection"
+      }
+    ],
+    "verification": {
+      "false_positives_after": 0,
+      "false_positives_before": 2,
+      "true_positives_after": 1,
+      "true_positives_before": 1
+    },
+    "warnings": []
+  },
+  {
+    "false_positive_coverage": 1.0,
+    "fields": [
+      {
+        "disposition": "selected",
+        "field": "Image",
+        "modifier": "",
+        "score": 3.0,
+        "stability": "constant",
+        "true_positive_hits": 0,
+        "values": [
+          "C:\\Windows\\System32\\notepad.exe"
+        ]
+      },
+      {
+        "disposition": "selected",
+        "field": "User",
+        "modifier": "",
+        "score": 3.0,
+        "stability": "constant",
+        "true_positive_hits": 0,
+        "values": [
+          "analyst"
+        ]
+      }
+    ],
+    "filter_yaml": "title: Tuning filter for Suspicious Notepad\nid: <ID>\ndescription: 'Suppresses 2 observed false-positive exemplars; verified against 1 true-positive exemplars.'\nauthor: 'rsigma rule tune'\nlogsource:\n    category: process_creation\n    product: windows\nfilter:\n    rules:\n        - notepad-rule\n    selection:\n        Image: 'C:\\Windows\\System32\\notepad.exe'\n        User: analyst\n    condition: not selection",
+    "rule_id": "notepad-rule",
+    "selections": [
+      {
+        "false_positive_indexes": [
+          0,
+          1
+        ],
+        "fields": [
+          "Image",
+          "User"
+        ],
+        "name": "selection"
+      }
+    ],
+    "verification": {
+      "false_positives_after": 0,
+      "false_positives_before": 2,
+      "true_positives_after": 1,
+      "true_positives_before": 1
+    },
+    "warnings": []
+  }
+]

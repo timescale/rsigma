@@ -222,6 +222,7 @@ See [`engine incidents export`](../cli/engine/incidents-export.md) and [HTTP API
 
 ## See also
 
+- [Verdict-Driven Corpora](verdict-to-corpus.md) for capturing admitted `group_by` detections after a disposition.
 - [CLI reference: `engine daemon`](../cli/engine/daemon.md) for `--alert-pipeline` and state flags.
 - [Enrichers](enrichers.md) for the stage that runs immediately before this one (or before risk).
 - [Risk-Based Alerting](risk-based-alerting.md) for the optional stage between enrichment and the alert pipeline.

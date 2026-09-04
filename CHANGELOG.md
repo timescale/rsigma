@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Verdict-driven corpora (#476)
+
+Opt-in, byte-bounded capture of detection results admitted by a `group_by` alert pipeline. Capture runs after inhibition/silencing and before dedup, retains payloads internally at startup, and strips them before sink delivery unless `--include-event` was also set. Accepted dispositions enqueue one versioned bundle per original verdict: TP/BTP directories contain a bare-event backtest corpus, full `expectations.yml`, provenance, and manifest; FP directories feed `rule tune --from-dispositions`. The ring is not persisted to SQLite, not readable through the API, and gated by `capture:write` on HTTP ingest. Correlation results and `entity_graph` grouping are rejected. Closes #345.
+
 ### Embedded rule exemplars (#469)
 
 Sigma rules can carry `rsigma.exemplars`: example events that should or should not match the host detection or correlation. `rsigma rule test` replays them through the production engines with fresh state per exemplar, and failed assertions carry a `diagnostic` explaining why in the JSON and NDJSON output. Lint adds `exemplar_shape` and `exemplar_wrong_rule_kind`. A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent; only `rule test` proves the current rule still matches. The MCP server exposes the same runner as `test_exemplars`.

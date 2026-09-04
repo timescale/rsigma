@@ -13,6 +13,10 @@
 //! built from a YAML file and swapped atomically on hot-reload; the mutable
 //! [`DedupStore`] and [`IncidentStore`] are owned by the sink task (the
 //! incident store behind an `RwLock` so the admin API can read open incidents).
+//!
+//! An optional [`CaptureSink`](crate::capture::CaptureSink) can observe
+//! detections after inhibition/silencing and before dedup. When the sink is
+//! absent, process output is unchanged.
 
 mod config;
 mod dedup;
@@ -31,7 +35,8 @@ pub use config::{
 };
 pub use dedup::DedupStore;
 pub use grouping::{
-    GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, SampleMode,
+    Caps, GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, SampleMode,
+    group_fingerprint,
 };
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
@@ -120,6 +125,56 @@ impl AlertPipeline {
         self.group.as_ref().and_then(|g| g.nats_subject.as_deref())
     }
 
+    /// The configured grouping mode, if grouping is enabled.
+    pub fn group_mode(&self) -> Option<GroupMode> {
+        self.group.as_ref().map(|g| g.mode)
+    }
+
+    /// The `group.by` selectors when grouping is `group_by`.
+    pub fn group_by_selectors(&self) -> Option<&[Selector]> {
+        self.group
+            .as_ref()
+            .and_then(|g| (g.mode == GroupMode::GroupBy).then_some(g.by.as_slice()))
+    }
+
+    /// The dedup fingerprint selectors, if dedup is enabled.
+    pub fn dedup_selectors(&self) -> Option<&[Selector]> {
+        self.dedup.as_ref().map(|d| d.fingerprint.as_slice())
+    }
+
+    /// Ceiling on concurrently-open incidents, if grouping is enabled.
+    pub fn max_open_incidents(&self) -> Option<usize> {
+        self.group.as_ref().map(|g| g.caps.max_open_incidents)
+    }
+
+    /// Why this pipeline cannot host capture, or `None` when it can.
+    ///
+    /// Capture requires `group.mode: group_by`. When dedup is also configured,
+    /// every `group.by` selector must appear in `dedup.fingerprint` so a folded
+    /// alert cannot span incident identities.
+    pub fn capture_incompatibility(&self) -> Option<crate::capture::CaptureIncompatibility> {
+        use crate::capture::CaptureIncompatibility;
+        match &self.group {
+            None => Some(CaptureIncompatibility::MissingGroupBy),
+            Some(g) if g.mode == GroupMode::EntityGraph => {
+                Some(CaptureIncompatibility::EntityGraph)
+            }
+            Some(g) => {
+                if let Some(d) = &self.dedup {
+                    let missing: Vec<String> =
+                        g.by.iter()
+                            .filter(|sel| !d.fingerprint.contains(*sel))
+                            .map(Selector::as_str)
+                            .collect();
+                    if !missing.is_empty() {
+                        return Some(CaptureIncompatibility::DedupSelectorsMissing(missing));
+                    }
+                }
+                None
+            }
+        }
+    }
+
     /// Process the results produced from one input event: dedup folds
     /// duplicates into `dedup_store`, grouping assigns survivors to incidents
     /// in `incident_store` and annotates them with `incident_id`. Out-of-scope
@@ -131,8 +186,25 @@ impl AlertPipeline {
         now: i64,
         metrics: &dyn MetricsHook,
     ) -> ProcessResult {
+        self.process_with_capture(results, state, now, metrics, None)
+    }
+
+    /// [`Self::process`] plus an optional capture sink that observes detections
+    /// after inhibition/silencing and before dedup. Process output is unchanged
+    /// relative to [`Self::process`] regardless of whether a sink is attached.
+    pub fn process_with_capture(
+        &self,
+        results: ProcessResult,
+        state: &mut AlertPipelineState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+        mut capture: Option<&mut dyn crate::capture::CaptureSink>,
+    ) -> ProcessResult {
         let start = std::time::Instant::now();
         let mut kept = Vec::with_capacity(results.len());
+        let mut pending = Vec::new();
+        let capturing = capture.is_some();
+        let capture_ok = capturing && self.capture_incompatibility().is_none();
 
         for mut result in results {
             if !self.scope.matches(&result) {
@@ -156,6 +228,10 @@ impl AlertPipeline {
             if state.silences.active_match(&result, now).is_some() {
                 metrics.on_alert_pipeline_silenced();
                 continue;
+            }
+
+            if capturing {
+                self.offer_capture(&result, &state.incidents, capture_ok, &mut pending);
             }
 
             // Dedup: fold duplicates into the active alert. When the store is at
@@ -199,6 +275,10 @@ impl AlertPipeline {
             kept.push(result);
         }
 
+        if let Some(sink) = capture.as_mut() {
+            crate::capture::flush_pending(pending, *sink, now);
+        }
+
         if self.dedup.is_some() {
             metrics.set_alert_pipeline_store_entries(state.dedup.len() as i64);
         }
@@ -207,6 +287,55 @@ impl AlertPipeline {
         }
         metrics.observe_alert_pipeline_duration(start.elapsed().as_secs_f64());
         kept
+    }
+
+    fn offer_capture(
+        &self,
+        result: &EvaluationResult,
+        incidents: &IncidentStore,
+        capture_ok: bool,
+        pending: &mut Vec<crate::capture::PendingCapture>,
+    ) {
+        use crate::capture::{AdmittedMatch, CaptureReject, PendingAdmit, PendingCapture};
+
+        if !result.is_detection() {
+            pending.push(PendingCapture::Reject(CaptureReject::UnsupportedResultKind));
+            return;
+        }
+        if !capture_ok {
+            return;
+        }
+        let Some(event) = result.as_detection().and_then(|d| d.event.clone()) else {
+            pending.push(PendingCapture::Reject(CaptureReject::MissingEvent));
+            return;
+        };
+        let Some(gcfg) = self.group.as_ref() else {
+            return;
+        };
+        let (incident_id, _) = grouping::group_fingerprint(&gcfg.by, result);
+        if !incidents.can_assign(&incident_id, gcfg.caps.max_open_incidents) {
+            pending.push(PendingCapture::Reject(CaptureReject::NotAssignable));
+            return;
+        }
+        let fingerprint = self
+            .dedup
+            .as_ref()
+            .map(|cfg| dedup::fingerprint(&cfg.fingerprint, result));
+        let rule_id = result
+            .header
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| result.header.rule_title.clone());
+        pending.push(PendingCapture::Admit(PendingAdmit {
+            is_fresh_generation: !incidents.contains(&incident_id),
+            incident_id,
+            event,
+            match_: AdmittedMatch {
+                rule_id,
+                rule_title: result.header.rule_title.clone(),
+                fingerprint,
+            },
+        }));
     }
 
     /// Advance time: emit due dedup `repeat` / `resolved` records and incident
@@ -323,7 +452,7 @@ fn guard_label(guard: OvermergeGuard) -> &'static str {
 /// Remove raw event payloads from a result. Used for the long-lived dedup
 /// sample and, when `strip_event` is set, for pass-through results, so the
 /// layer can fingerprint and group on `event.*` without emitting full events.
-pub(crate) fn strip_event_payloads(result: &mut EvaluationResult) {
+pub fn strip_event_payloads(result: &mut EvaluationResult) {
     if let Some(detection) = result.as_detection_mut() {
         detection.event = None;
     }
@@ -536,5 +665,241 @@ mod tests {
         assert_eq!(run(&p, "10.0.0.2", Level::High, &mut st, 0).len(), 1);
         // The silenced result never entered the dedup store.
         assert_eq!(st.dedup.len(), 1);
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        admits: Vec<crate::AdmittedEvent>,
+        rejects: Vec<crate::CaptureReject>,
+    }
+
+    impl crate::CaptureSink for RecordingSink {
+        fn admit(&mut self, event: crate::AdmittedEvent, _now: i64) {
+            self.admits.push(event);
+        }
+        fn reject(&mut self, reason: crate::CaptureReject) {
+            self.rejects.push(reason);
+        }
+    }
+
+    fn capture_pipeline() -> AlertPipeline {
+        pipeline(
+            "dedup:\n  fingerprint: [rule, match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 0s\n",
+        )
+    }
+
+    #[test]
+    fn capture_absent_matches_process_output() {
+        let p = capture_pipeline();
+        let mut with_hook = AlertPipelineState::default();
+        let mut without = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        let a = p.process(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut without,
+            0,
+            &NoopMetrics,
+        );
+        let b = p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut with_hook,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(
+            serde_json::to_value(&a).unwrap(),
+            serde_json::to_value(&b).unwrap()
+        );
+        assert_eq!(sink.admits.len(), 1);
+    }
+
+    #[test]
+    fn capture_skips_silenced_and_inhibited() {
+        let p = pipeline(
+            "silences:\n  - matchers:\n      - selector: match.SourceIp\n        op: \"=\"\n        value: 10.0.0.1\ninhibit_rules:\n  - name: crit\n    source_match:\n      - selector: level\n        op: \"=\"\n        value: critical\n    target_match:\n      - selector: level\n        op: \"=\"\n        value: high\n    equal: [match.SourceIp]\n    duration: 5m\ngroup:\n  by: [match.SourceIp]\n",
+        );
+        let mut st = AlertPipelineState::default();
+        st.silences.set_static(p.static_silences().to_vec());
+        let mut sink = RecordingSink::default();
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert!(
+            sink.admits.is_empty(),
+            "silenced result must not be captured"
+        );
+
+        let mut sink = RecordingSink::default();
+        p.process_with_capture(
+            vec![detection("10.0.0.2", Level::Critical)],
+            &mut st,
+            1,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(sink.admits.len(), 1);
+        p.process_with_capture(
+            vec![detection("10.0.0.2", Level::High)],
+            &mut st,
+            2,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(
+            sink.admits.len(),
+            1,
+            "inhibited result must not be captured"
+        );
+    }
+
+    #[test]
+    fn capture_sees_repeats_before_dedup() {
+        let p = capture_pipeline();
+        let mut st = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            1,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(sink.admits.len(), 2, "folded repeats are still captured");
+        assert!(!sink.admits[1].is_fresh_generation);
+    }
+
+    #[test]
+    fn capture_coalesces_matches_in_one_call() {
+        let p = capture_pipeline();
+        let mut st = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        let mut second = detection("10.0.0.1", Level::High);
+        second.header.rule_id = Some("rule-2".to_string());
+        second.header.rule_title = "Other".to_string();
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High), second],
+            &mut st,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(sink.admits.len(), 1);
+        assert_eq!(sink.admits[0].matches.len(), 2);
+        assert!(sink.admits[0].matches.iter().any(|m| m.rule_id == "rule-1"));
+        assert!(sink.admits[0].matches.iter().any(|m| m.rule_id == "rule-2"));
+    }
+
+    #[test]
+    fn capture_rejects_correlation_results() {
+        let p = capture_pipeline();
+        let mut st = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        let correlation = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Corr".to_string(),
+                rule_id: Some("corr-1".to_string()),
+                level: Some(Level::High),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Correlation(rsigma_eval::CorrelationBody {
+                correlation_type: rsigma_parser::CorrelationType::EventCount,
+                group_key: vec![],
+                aggregated_value: 1.0,
+                timespan_secs: 60,
+                events: None,
+                event_refs: None,
+            }),
+        };
+        p.process_with_capture(vec![correlation], &mut st, 0, &NoopMetrics, Some(&mut sink));
+        assert_eq!(
+            sink.rejects,
+            vec![crate::CaptureReject::UnsupportedResultKind]
+        );
+        assert!(sink.admits.is_empty());
+    }
+
+    #[test]
+    fn capture_incompatibility_requires_group_by_and_dedup_coverage() {
+        let no_group = pipeline("dedup:\n  fingerprint: [rule]\n");
+        assert_eq!(
+            no_group.capture_incompatibility(),
+            Some(crate::CaptureIncompatibility::MissingGroupBy)
+        );
+
+        let entity = pipeline("group:\n  mode: entity_graph\n  entities: [match.SourceIp]\n");
+        assert_eq!(
+            entity.capture_incompatibility(),
+            Some(crate::CaptureIncompatibility::EntityGraph)
+        );
+
+        let mismatch = pipeline("dedup:\n  fingerprint: [rule]\ngroup:\n  by: [match.SourceIp]\n");
+        match mismatch.capture_incompatibility() {
+            Some(crate::CaptureIncompatibility::DedupSelectorsMissing(missing)) => {
+                assert_eq!(missing, vec!["match.SourceIp".to_string()]);
+            }
+            other => panic!("expected missing selectors, got {other:?}"),
+        }
+
+        assert!(capture_pipeline().capture_incompatibility().is_none());
+    }
+
+    #[test]
+    fn capture_refuses_when_incident_store_is_full() {
+        let p = pipeline("group:\n  by: [match.SourceIp]\n  caps:\n    max_open_incidents: 1\n");
+        let mut st = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        p.process_with_capture(
+            vec![detection("10.0.0.2", Level::High)],
+            &mut st,
+            1,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert_eq!(sink.admits.len(), 1);
+        assert_eq!(sink.rejects, vec![crate::CaptureReject::NotAssignable]);
+    }
+
+    #[test]
+    fn capture_fresh_generation_when_incident_is_not_open() {
+        let p = capture_pipeline();
+        let mut st = AlertPipelineState::default();
+        let mut sink = RecordingSink::default();
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            0,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert!(sink.admits[0].is_fresh_generation);
+        p.process_with_capture(
+            vec![detection("10.0.0.1", Level::High)],
+            &mut st,
+            1,
+            &NoopMetrics,
+            Some(&mut sink),
+        );
+        assert!(!sink.admits[1].is_fresh_generation);
     }
 }

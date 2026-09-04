@@ -268,6 +268,304 @@ fn multiple_rules_require_an_explicit_target() {
         .stderr(predicate::str::contains("pass --rule"));
 }
 
+const NOTEPAD_RULE: &str = r#"
+title: Suspicious Notepad
+id: notepad-rule
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\notepad.exe'
+    condition: selection
+level: medium
+"#;
+
+const NOTEPAD_FPS: [&str; 2] = [
+    r#"{"Image":"C:\\Windows\\System32\\notepad.exe","User":"analyst"}"#,
+    r#"{"Image":"C:\\Windows\\System32\\notepad.exe","User":"analyst"}"#,
+];
+const NOTEPAD_TP: &str = r#"{"Image":"C:\\Temp\\notepad.exe","User":"attacker"}"#;
+
+fn write_disposition_bundle(
+    root: &std::path::Path,
+    kind: &str,
+    name: &str,
+    verdict: &str,
+    rule_id: &str,
+    rule_title: &str,
+    events: &[&str],
+) {
+    let dir = root.join(kind).join(name);
+    std::fs::create_dir_all(dir.join("corpus")).unwrap();
+    std::fs::create_dir_all(dir.join("provenance")).unwrap();
+    let mut bundle_id: String = name.bytes().map(|b| format!("{b:02x}")).collect();
+    while bundle_id.len() < 64 {
+        bundle_id.push('0');
+    }
+    let bundle_id: String = bundle_id.chars().take(64).collect();
+    let manifest = serde_json::json!({
+        "format_version": 1,
+        "bundle_id": bundle_id,
+        "kind": "detection_group_by",
+        "verdict": verdict,
+        "scope": "detection",
+        "rule_ids": [rule_id],
+        "rules": [{"id": rule_id, "title": rule_title}],
+        "first_seen": 1,
+        "last_seen": 2,
+        "event_count": events.len(),
+        "byte_count": 1,
+        "created_at": "2026-01-01T00:00:00Z"
+    });
+    std::fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let mut corpus = String::new();
+    let mut provenance = String::new();
+    for event in events {
+        corpus.push_str(event);
+        corpus.push('\n');
+        let parsed: serde_json::Value = serde_json::from_str(event).unwrap();
+        let line = serde_json::json!({
+            "event_digest": "ab",
+            "captured_at": "2026-01-01T00:00:00Z",
+            "matches": [{"rule_id": rule_id, "rule_title": rule_title}],
+            "event": parsed,
+        });
+        provenance.push_str(&serde_json::to_string(&line).unwrap());
+        provenance.push('\n');
+    }
+    std::fs::write(dir.join("corpus/events.ndjson"), corpus).unwrap();
+    std::fs::write(dir.join("provenance/events.ndjson"), provenance).unwrap();
+}
+
+fn two_rule_spool() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    write_disposition_bundle(
+        root.path(),
+        "fp",
+        "backup-fp",
+        "false_positive",
+        "929a690e-bef0-4204-a928-ef5e620d6fcc",
+        "Suspicious Backup Tool",
+        &[
+            r#"{"Image":"C:\\Program Files\\Veeam\\backup.exe","User":"svc_backup"}"#,
+            r#"{"Image":"C:\\Program Files\\Veeam\\backup.exe","User":"svc_backup"}"#,
+        ],
+    );
+    write_disposition_bundle(
+        root.path(),
+        "tp",
+        "backup-tp",
+        "true_positive",
+        "929a690e-bef0-4204-a928-ef5e620d6fcc",
+        "Suspicious Backup Tool",
+        &[r#"{"Image":"C:\\Temp\\backup.exe","User":"attacker"}"#],
+    );
+    write_disposition_bundle(
+        root.path(),
+        "fp",
+        "notepad-fp",
+        "false_positive",
+        "notepad-rule",
+        "Suspicious Notepad",
+        &NOTEPAD_FPS,
+    );
+    write_disposition_bundle(
+        root.path(),
+        "tp",
+        "notepad-tp",
+        "true_positive",
+        "notepad-rule",
+        "Suspicious Notepad",
+        &[NOTEPAD_TP],
+    );
+    root
+}
+
+#[test]
+fn from_dispositions_matches_multi_rule_goldens() {
+    let rules = temp_file(".yml", &format!("{RULE}\n---\n{NOTEPAD_RULE}"));
+    let spool = two_rule_spool();
+
+    let yaml = rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tune yaml");
+    assert!(
+        yaml.status.success(),
+        "{}",
+        String::from_utf8_lossy(&yaml.stderr)
+    );
+    let yaml_out = normalize_id(&String::from_utf8(yaml.stdout).unwrap());
+    assert_eq!(
+        yaml_out.trim_end(),
+        include_str!("golden/tune_from_dispositions.yaml").trim_end()
+    );
+
+    let report = rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+            "--emit",
+            "report",
+            "--output-format",
+            "json",
+        ])
+        .output()
+        .expect("run tune json");
+    assert!(report.status.success());
+    let json_out = normalize_tune_json(&String::from_utf8(report.stdout).unwrap());
+    assert_eq!(
+        json_out.trim_end(),
+        include_str!("golden/tune_from_dispositions.json").trim_end()
+    );
+
+    let text = rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+            "--emit",
+            "report",
+            "--output-format",
+            "table",
+        ])
+        .output()
+        .expect("run tune text");
+    assert!(text.status.success());
+    let text_out = normalize_id(&String::from_utf8(text.stdout).unwrap());
+    assert_eq!(
+        text_out.trim_end(),
+        include_str!("golden/tune_from_dispositions.txt").trim_end()
+    );
+}
+
+fn normalize_tune_json(raw: &str) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(raw).expect("json report");
+    if let Some(items) = value.as_array_mut() {
+        for item in items {
+            if let Some(yaml) = item.get_mut("filter_yaml").and_then(|v| v.as_str()) {
+                item["filter_yaml"] = serde_json::Value::String(normalize_id(yaml));
+            }
+        }
+    }
+    // The optional `evtx` feature enables serde_json's `preserve_order`, which
+    // flips map serialization from key-sorted to insertion order. Sort keys
+    // recursively so the golden comparison is feature-independent.
+    sort_json_keys(&mut value);
+    serde_json::to_string_pretty(&value).unwrap()
+}
+
+fn sort_json_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> =
+                std::mem::take(map).into_iter().collect();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            for (_, v) in &mut entries {
+                sort_json_keys(v);
+            }
+            map.extend(entries);
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                sort_json_keys(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn from_dispositions_requires_tp_protection() {
+    let rules = temp_file(".yml", RULE);
+    let spool = tempfile::tempdir().unwrap();
+    write_disposition_bundle(
+        spool.path(),
+        "fp",
+        "backup-fp",
+        "false_positive",
+        "929a690e-bef0-4204-a928-ef5e620d6fcc",
+        "Suspicious Backup Tool",
+        &[
+            r#"{"Image":"C:\\Program Files\\Veeam\\backup.exe","User":"svc_backup"}"#,
+            r#"{"Image":"C:\\Program Files\\Veeam\\backup.exe","User":"svc_backup"}"#,
+        ],
+    );
+    rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no true-positive protection set"));
+}
+
+#[test]
+fn from_dispositions_rejects_malformed_bundles() {
+    let rules = temp_file(".yml", RULE);
+    let spool = tempfile::tempdir().unwrap();
+    let dir = spool.path().join("fp/bad");
+    std::fs::create_dir_all(dir.join("provenance")).unwrap();
+    std::fs::write(dir.join("manifest.json"), b"{\"format_version\":99}").unwrap();
+    std::fs::write(dir.join("provenance/events.ndjson"), b"{}\n").unwrap();
+    rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("manifest.json"));
+}
+
+#[test]
+fn from_dispositions_conflicts_with_manual_corpora() {
+    let rules = temp_file(".yml", RULE);
+    let spool = tempfile::tempdir().unwrap();
+    rsigma()
+        .args([
+            "rule",
+            "tune",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--from-dispositions",
+            spool.path().to_str().unwrap(),
+            "--tp",
+            r#"{"Image":"C:\\Temp\\backup.exe"}"#,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
 #[test]
 fn malformed_corpus_record_fails_closed() {
     let rule = temp_file(".yml", RULE);

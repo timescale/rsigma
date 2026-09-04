@@ -1,0 +1,1 @@
+{"format_version":99,"bundle_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"detection_group_by","verdict":"true_positive","scope":"incident","rule_ids":["r1"],"rules":[{"id":"r1","title":"Rule"}],"first_seen":1,"last_seen":2,"event_count":1,"byte_count":1,"created_at":"2026-01-01T00:00:00Z"}

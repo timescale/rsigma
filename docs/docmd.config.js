@@ -108,6 +108,7 @@ export default {
             { title: "OCSF Findings", path: "/guide/ocsf-findings" },
             { title: "Webhooks", path: "/guide/webhooks" },
             { title: "Triage Feedback Loop", path: "/guide/triage-feedback" },
+            { title: "Verdict-Driven Corpora", path: "/guide/verdict-to-corpus" },
             { title: "Disposition Source Recipes", path: "/guide/disposition-recipes" },
           ],
         },

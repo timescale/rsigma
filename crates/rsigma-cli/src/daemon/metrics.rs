@@ -89,6 +89,13 @@ pub struct Metrics {
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
     pub disposition_ingest_errors_total: IntCounterVec,
+    pub capture_incidents_open: IntGauge,
+    pub capture_events_held: IntGauge,
+    pub capture_bytes_held: IntGauge,
+    pub capture_evictions_total: IntCounterVec,
+    pub capture_events_dropped_total: IntCounterVec,
+    pub capture_spool_jobs_total: IntCounterVec,
+    pub capture_spool_evictions_total: IntCounterVec,
     pub risk_annotations_total: IntCounterVec,
     pub risk_annotation_score: Histogram,
     pub risk_objects_total: IntCounter,
@@ -906,6 +913,107 @@ impl Metrics {
             .register(Box::new(disposition_ingest_errors_total.clone()))
             .unwrap();
 
+        let capture_incidents_open = IntGauge::with_opts(Opts::new(
+            "rsigma_capture_incidents_open",
+            "Incidents currently held in the verdict-evidence capture ring",
+        ))
+        .unwrap();
+        let capture_events_held = IntGauge::with_opts(Opts::new(
+            "rsigma_capture_events_held",
+            "Events currently held in the verdict-evidence capture ring",
+        ))
+        .unwrap();
+        let capture_bytes_held = IntGauge::with_opts(Opts::new(
+            "rsigma_capture_bytes_held",
+            "Encoded event bytes currently held in the verdict-evidence capture ring",
+        ))
+        .unwrap();
+        let capture_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_evictions_total",
+                "Capture-ring incident evictions by reason",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        let capture_events_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_events_dropped_total",
+                "Capture-ring event drops by reason",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        for reason in ["ring_full", "ttl"] {
+            capture_evictions_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+        for reason in [
+            "event_too_large",
+            "incident_event_cap",
+            "incident_byte_cap",
+            "global_byte_cap",
+            "unsupported_result_kind",
+        ] {
+            capture_events_dropped_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+        registry
+            .register(Box::new(capture_incidents_open.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_events_held.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_bytes_held.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_events_dropped_total.clone()))
+            .unwrap();
+
+        let capture_spool_jobs_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_spool_jobs_total",
+                "Disposition-bundle spool outcomes",
+            ),
+            &["result"],
+        )
+        .unwrap();
+        let capture_spool_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_capture_spool_evictions_total",
+                "Completed-bundle evictions from the spool disk budget",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        for result in [
+            "queued",
+            "written",
+            "exists",
+            "miss",
+            "queue_full",
+            "io_error",
+        ] {
+            capture_spool_jobs_total
+                .with_label_values(&[result])
+                .inc_by(0);
+        }
+        capture_spool_evictions_total
+            .with_label_values(&["budget"])
+            .inc_by(0);
+        registry
+            .register(Box::new(capture_spool_jobs_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(capture_spool_evictions_total.clone()))
+            .unwrap();
+
         // Risk-based alerting (#65). Annotation outcomes, the per-detection
         // score distribution, the risk-object count, and the stage duration.
         let risk_annotations_total = IntCounterVec::new(
@@ -1111,6 +1219,13 @@ impl Metrics {
             dispositions_total,
             disposition_ingest_total,
             disposition_ingest_errors_total,
+            capture_incidents_open,
+            capture_events_held,
+            capture_bytes_held,
+            capture_evictions_total,
+            capture_events_dropped_total,
+            capture_spool_jobs_total,
+            capture_spool_evictions_total,
             risk_annotations_total,
             risk_annotation_score,
             risk_objects_total,
@@ -1300,6 +1415,30 @@ impl MetricsHook for Metrics {
 
     fn set_inhibit_sources_active(&self, count: i64) {
         self.inhibit_sources_active.set(count);
+    }
+
+    fn on_capture_event_dropped(&self, reason: &str) {
+        self.capture_events_dropped_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    fn on_capture_eviction(&self, reason: &str) {
+        self.capture_evictions_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    fn set_capture_incidents_open(&self, count: i64) {
+        self.capture_incidents_open.set(count);
+    }
+
+    fn set_capture_events_held(&self, count: i64) {
+        self.capture_events_held.set(count);
+    }
+
+    fn set_capture_bytes_held(&self, count: i64) {
+        self.capture_bytes_held.set(count);
     }
 
     fn on_risk_annotation(&self, action: &str) {

@@ -1,0 +1,29 @@
+title: Tuning filter for Suspicious Backup Tool
+id: <ID>
+description: 'Suppresses 2 observed false-positive exemplars; verified against 1 true-positive exemplars.'
+author: 'rsigma rule tune'
+logsource:
+    category: process_creation
+    product: windows
+filter:
+    rules:
+        - 929a690e-bef0-4204-a928-ef5e620d6fcc
+    selection:
+        Image: 'C:\Program Files\Veeam\backup.exe'
+        User: svc_backup
+    condition: not selection
+---
+title: Tuning filter for Suspicious Notepad
+id: <ID>
+description: 'Suppresses 2 observed false-positive exemplars; verified against 1 true-positive exemplars.'
+author: 'rsigma rule tune'
+logsource:
+    category: process_creation
+    product: windows
+filter:
+    rules:
+        - notepad-rule
+    selection:
+        Image: 'C:\Windows\System32\notepad.exe'
+        User: analyst
+    condition: not selection

@@ -5,6 +5,7 @@ mod coverage;
 #[cfg(feature = "daemon")]
 mod daemon;
 mod discover;
+mod disposition_spool;
 mod doc;
 mod draft;
 mod eval;

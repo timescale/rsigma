@@ -28,7 +28,7 @@ rsigma rule lint tuning-filter.yml
 rsigma rule backtest -r rules-with-filter/ --corpus regression-events/
 ```
 
-`--rule` accepts a rule id or an exact title. It is required when the ruleset contains more than one detection rule. The true-positive set is mandatory: a suppression proposal without a do-not-break corpus can reduce noise by silently deleting useful coverage, so an empty TP set is an error.
+`--rule` accepts a rule id or an exact title. It is required when the ruleset contains more than one detection rule, except when `--from-dispositions` supplies the evidence: that mode tunes every represented detection rule unless `--rule` narrows it. The true-positive set is mandatory: a suppression proposal without a do-not-break corpus can reduce noise by silently deleting useful coverage, so an empty TP set is an error. `--from-dispositions` fails the same way when a rule has false-positive bundles and no true-positive protection set.
 
 On success, stderr reports both sides of the contract, for example `suppressed 2/2 false positives; protected 1/1 true positives`. If an FP or TP does not fire the unfiltered target, the command exits `2` with a labeling error such as:
 
@@ -121,6 +121,7 @@ Treat the output as a proposed code change with regression evidence. Review whet
 ## See also
 
 - [`rule tune` reference](../cli/rule/tune.md) for flags and exit codes.
+- [Verdict-Driven Corpora](verdict-to-corpus.md) for building FP/TP sets from accepted dispositions.
 - [Drafting Rules from Logs](rule-drafting.md) for creating new detection rules from positive exemplars.
 - [Triage Feedback Loop](triage-feedback.md) for the analyst dispositions that identify noisy rules.
 - [Detection Scorecard](detection-scorecard.md) for per-rule tune recommendations.
