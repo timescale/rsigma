@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-10
+
+**TL;DR**
+RSigma v0.22.0 is the "detection loop and operate-cycle" release: authors can embed, draft, hunt, and grow corpora around rules; operators can triage a live daemon from MCP; and rstix completes TAXII 2.1 TXC self-certification.
+* Detection loop: embedded rsigma.exemplars and rule test (#469), correlation drafting via rule draft --groups (#477), verdict-driven TP/FP corpora (#476), read-only hunt run against PostgreSQL (#482), and rule coverage --emit atomics-plan (#480).
+* Operate cycle: six read MCP tools against a running daemon, plus create_silence/post_disposition behind --allow-operate-writes (#481).
+* Explain and correlation correctness: per-member array match traces in engine explain (#483), nested correlation results now emit (#468), and name-referenced temporal correlations fire (#477).
+* rstix TAXII 2.1 TXC interop self-certification (39 Mandatory C-1 rows) (#451, thanks to @SecurityEnthusiast).
+* Platform: MSRV 1.95.0 (#464), rsigma --features introspection (#463), rsigma-mcp rmcp 3.0 (#467).
+* Dependencies: Dependabot batches across Rust and CI (#466, #479).
+
 ### Array match detail in `engine explain` and `matched_fields` (#483)
 
 `engine explain` records per-member and per-predicate traces for array object-scope (`field[any]` / `[all]` / `[all_or_empty]` / `[none]`), including nested scopes, extended `condition:` bodies, scalar-as-one-member, vacuous empty/missing, and a 32-member diagnosis cap that keeps the decisive members first (binding members for `any`/`none`, failing members for `all`/`all_or_empty`), with a `matched_count` field counted over the full array so truncation never understates it. `matched_fields` records the binding members with indexed paths (`connections[0].protocol`) instead of the opaque container, capped at 32 members in index order; `[none]` and vacuous `[all_or_empty]` keep the container. A scalar treated as one member uses the un-indexed path so it still resolves through field lookup. CSV/TSV explain output emits one row per leaf with those indexed paths.
@@ -68,13 +79,15 @@ Workspace `rust-version` and `rust-toolchain.toml` move from 1.88.0 to 1.95.0. T
 
 * Added [Garmr](https://github.com/hentorp/garmr), [sagan2sigma](https://github.com/NRGLine4Sec/sagan2sigma), and [Sheut](https://github.com/PerceptraHQ/sheut-community) to the `Built with RSigma` section on the docs home page.
 
-### rstix: TAXII 2.1 TXC interop self-certification (C-1) (#451)
+### rstix: TAXII 2.1 TXC interop self-certification (C-1) (#451, thanks to @SecurityEnthusiast)
 
 Adds an OASIS TAXII 2.1 Interoperability CSD01 (2022-03-30) **TXC** self-certification suite: all **39 Mandatory** §4.1 Table 51 rows as automated scenarios (wiremock mock TXS + local rustls mTLS for §3.1.3), with the **5 Optional** §3.13.2 rows as `REPORT_ONLY`. Scenarios assert CSD01 Tables 2–50 depth (`User-Agent`, `WWW-Authenticate` challenges, absolute/relative `api_roots`, collection id ordering, date-added headers, versions pagination via `added_after`, Status Table 28, envelope/Status `x_*` via `TaxiiEnvelope::with_custom`). Three-layer report gate matches STIX interop (export invariants, committed `gate-expectations.json`, `scripts/taxii-interop-report-gate.py`). CI job `rstix TAXII TXC interop self-certification` gates the package. Also fixes bugs the suite surfaced: preserve `added_after` when clock skew is unset (all three `with_clock_skew_*` helpers); pin rustls `ring` for mTLS when `ring` and `aws-lc-rs` are both linked; run scenarios in registry/section order (not lexicographic `test_id`); mint §3.1.3 PEMs in-process with `rcgen` so CI does not depend on gitignored `taxii-live` certs. Channels (TAXII §6 RESERVED) and TXS persona remain out of scope.
 
 **Public API (breaking vs 0.21.0):**
 - `parse_www_authenticate` now keeps auth-params attached to their challenge (RFC 7235 / CSD01 Table 2). Callers that matched on `challenges.len()` or per-challenge `scheme` for multi-challenge headers will see fewer, correct challenges.
 - `TaxiiEnvelope` gains a public `custom` field (`BTreeMap` of `x_*` properties) plus `with_custom`, matching `TaxiiStatus` / `ManifestResponse`. Struct-literal construction of `TaxiiEnvelope` must include `custom` (or use `TaxiiEnvelope::new` / `with_custom`).
+
+[v0.21.0...v0.22.0](https://github.com/timescale/rsigma/compare/v0.21.0...v0.22.0)
 
 ## [0.21.0] - 2026-08-05
 
@@ -2884,6 +2897,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.22.0]: https://github.com/timescale/rsigma/releases/tag/v0.22.0
 [0.21.0]: https://github.com/timescale/rsigma/releases/tag/v0.21.0
 [0.20.0]: https://github.com/timescale/rsigma/releases/tag/v0.20.0
 [0.19.0]: https://github.com/timescale/rsigma/releases/tag/v0.19.0

@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4559,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-convert"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "insta",
  "log",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -4605,7 +4605,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "ciborium",
  "rsigma-eval",
@@ -4618,7 +4618,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-lsp"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "env_logger",
  "insta",
@@ -4631,7 +4631,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-mcp"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "criterion",
  "globset",
@@ -4676,7 +4676,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-runtime"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "arc-swap",
  "async-nats",
@@ -4742,7 +4742,7 @@ dependencies = [
 
 [[package]]
 name = "rstix"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "base64 0.23.1",
  "email_address",
