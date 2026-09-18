@@ -2,14 +2,10 @@
 # Surface unmaintained-crate advisories as warnings so they are visible
 # in the audit run without breaking CI; we cannot drop transitive
 # unmaintained deps unilaterally but we want to see them.
+# encoding 0.2.33 (RUSTSEC-2021-0153) is unmaintained via evtx; surfaced as a
+# workspace warning below — no safe upgrade yet. Re-evaluate quarterly.
 unmaintained = "workspace"
-ignore = [
-    # encoding 0.2.33 (RUSTSEC-2021-0153) -- unmaintained, pulled
-    # transitively via evtx. No safe upgrade available. Re-evaluate
-    # every quarter; remove this ignore once evtx drops the encoding
-    # dependency. Last reviewed: 2026-06-04.
-    "RUSTSEC-2021-0153",
-]
+ignore = []
 
 [licenses]
 allow = [
