@@ -112,7 +112,7 @@ hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"], 
 tower-service = { version = "0.3", optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 rmcp = { version = "3.0", features = ["client"] }
