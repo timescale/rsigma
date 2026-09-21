@@ -71,7 +71,7 @@ rustls = { version = "0.23", optional = true }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 # Validates the OCSF goldens against the committed class-2004 schema fixture.
-jsonschema = "0.48"
+jsonschema = "0.56"
 rcgen = "0.14"
 time = "0.3"
 criterion = "0.8"
