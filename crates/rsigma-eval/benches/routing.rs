@@ -121,7 +121,7 @@ fn bench_routing(c: &mut Criterion) {
                     .collect()
             })
             .collect();
-        let mut router = SchemaRouter::build(
+        let mut router: SchemaRouter = SchemaRouter::build(
             &collection,
             SchemaClassifier::builtin(),
             plan,

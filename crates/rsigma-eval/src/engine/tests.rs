@@ -207,7 +207,7 @@ fn test_logsource_compatible_matrix() {
 
 #[test]
 fn test_logsource_extractor_reads_fields() {
-    let extractor = crate::logsource::LogSourceExtractor::new();
+    let extractor = crate::logsource::FieldLogSourceExtractor::new();
     let ev = json!({
         "product": "windows",
         "service": "sysmon",
@@ -223,8 +223,11 @@ fn test_logsource_extractor_reads_fields() {
 
 #[test]
 fn test_logsource_extractor_static_default() {
-    let extractor =
-        crate::logsource::LogSourceExtractor::new().with_defaults(ls(Some("windows"), None, None));
+    let extractor = crate::logsource::FieldLogSourceExtractor::new().with_defaults(ls(
+        Some("windows"),
+        None,
+        None,
+    ));
     let ev = json!({"CommandLine": "whoami"});
     let event = JsonEvent::borrow(&ev);
     let extracted = extractor.extract(&event);
@@ -234,7 +237,7 @@ fn test_logsource_extractor_static_default() {
 
 #[test]
 fn test_logsource_extractor_field_overrides_default() {
-    let extractor = crate::logsource::LogSourceExtractor::new().with_defaults(ls(
+    let extractor = crate::logsource::FieldLogSourceExtractor::new().with_defaults(ls(
         Some("linux"),
         None,
         Some("process_creation"),
@@ -250,7 +253,7 @@ fn test_logsource_extractor_field_overrides_default() {
 
 #[test]
 fn test_logsource_extractor_fail_open() {
-    let extractor = crate::logsource::LogSourceExtractor::new();
+    let extractor = crate::logsource::FieldLogSourceExtractor::new();
     // Missing fields and a blank product value all stay unset.
     let ev = json!({"CommandLine": "whoami", "product": "   "});
     let event = JsonEvent::borrow(&ev);
@@ -263,7 +266,7 @@ fn test_logsource_extractor_fail_open() {
 #[test]
 fn test_logsource_extractor_custom_field_names() {
     let extractor =
-        crate::logsource::LogSourceExtractor::new().with_field_names("os", "svc", "cat");
+        crate::logsource::FieldLogSourceExtractor::new().with_field_names("os", "svc", "cat");
     let ev = json!({"os": "windows", "svc": "sysmon", "cat": "process_creation"});
     let event = JsonEvent::borrow(&ev);
     let extracted = extractor.extract(&event);
@@ -314,7 +317,7 @@ level: medium
     // With pruning, the conflicting linux rule is dropped; the windows rule
     // (event has no category, so no conflict) and the product-less generic
     // rule still fire.
-    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+    engine.set_logsource_extractor(Some(crate::logsource::FieldLogSourceExtractor::new()));
     let titles: Vec<String> = engine
         .evaluate(&event)
         .into_iter()
@@ -352,7 +355,7 @@ detection:
 level: medium
 "#;
     let mut engine = make_engine_with_rule(yaml);
-    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+    engine.set_logsource_extractor(Some(crate::logsource::FieldLogSourceExtractor::new()));
 
     // Event carries no logsource fields: pruning fails open, both fire.
     let ev = json!({"CommandLine": "whoami"});
@@ -382,7 +385,7 @@ detection:
 level: medium
 "#;
     let mut engine = make_engine_with_rule(yaml);
-    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+    engine.set_logsource_extractor(Some(crate::logsource::FieldLogSourceExtractor::new()));
 
     let ev1 = json!({"CommandLine": "whoami", "product": "windows"});
     let ev2 = json!({"CommandLine": "whoami", "product": "windows"});
@@ -411,7 +414,7 @@ level: medium
     let collection = parse_sigma_yaml(yaml).unwrap();
     let mut engine = crate::CorrelationEngine::new(crate::CorrelationConfig::default());
     engine.add_collection(&collection).unwrap();
-    engine.set_logsource_extractor(Some(crate::logsource::LogSourceExtractor::new()));
+    engine.set_logsource_extractor(Some(crate::logsource::FieldLogSourceExtractor::new()));
 
     // The linux rule conflicts with a windows event, so correlation's inner
     // detection evaluation prunes it: no detection fires.

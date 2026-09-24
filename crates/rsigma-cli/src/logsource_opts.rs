@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use rsigma_eval::LogSourceExtractor;
+use rsigma_eval::FieldLogSourceExtractor;
 use rsigma_parser::LogSource;
 
 /// A parsed logsource option: the three standard dimensions plus any custom
@@ -95,7 +95,7 @@ pub(crate) fn dims_to_kv(
     }
 }
 
-/// Build a [`LogSourceExtractor`] from the resolved flags. Returns `Ok(None)`
+/// Build a [`FieldLogSourceExtractor`] from the resolved flags. Returns `Ok(None)`
 /// when routing is disabled. `evtx_default_product` supplies the EVTX-only
 /// format default (`product: windows`) when no explicit or static product is
 /// configured.
@@ -104,12 +104,12 @@ pub(crate) fn build_logsource_extractor(
     field_map: Option<&str>,
     event_logsource: Option<&str>,
     evtx_default_product: bool,
-) -> Result<Option<LogSourceExtractor>, String> {
+) -> Result<Option<FieldLogSourceExtractor>, String> {
     if !enabled {
         return Ok(None);
     }
 
-    let mut extractor = LogSourceExtractor::new();
+    let mut extractor = FieldLogSourceExtractor::new();
 
     if let Some(map) = field_map {
         let parsed =
@@ -154,6 +154,7 @@ pub(crate) fn build_logsource_extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsigma_eval::LogSourceExtractor;
 
     #[test]
     fn parses_known_keys() {

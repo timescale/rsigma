@@ -6,7 +6,7 @@ use rsigma_eval::event::Event;
 use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
-    LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
+    FieldLogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
     RuleMetadataLookup, SchemaClassifier, SchemaPruning, SchemaRouter, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
@@ -55,7 +55,7 @@ pub struct RuntimeEngine {
     routing: Option<RoutingSpec>,
     /// Opt-in conflict-based logsource extractor. Forwarded to the inner
     /// detection engine(s) on every rule reload and carried across hot-reload.
-    logsource_extractor: Option<LogSourceExtractor>,
+    logsource_extractor: Option<FieldLogSourceExtractor>,
 }
 
 /// Everything needed to (re)build a [`SchemaRouter`] on rule load. Pipeline
@@ -134,13 +134,13 @@ impl RuntimeEngine {
     /// Set the opt-in logsource extractor. The next `load_rules()` forwards it
     /// to the inner detection engine(s); hot-reload carries it forward. Pass
     /// `None` to disable. Set before `load_rules()`.
-    pub fn set_logsource_extractor(&mut self, extractor: Option<LogSourceExtractor>) {
+    pub fn set_logsource_extractor(&mut self, extractor: Option<FieldLogSourceExtractor>) {
         self.logsource_extractor = extractor;
     }
 
     /// Return the logsource extractor, if any. Used by hot-reload to carry the
     /// configuration across a `RuntimeEngine` swap.
-    pub fn logsource_extractor(&self) -> Option<LogSourceExtractor> {
+    pub fn logsource_extractor(&self) -> Option<FieldLogSourceExtractor> {
         self.logsource_extractor.clone()
     }
 
