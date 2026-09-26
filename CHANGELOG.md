@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: ATT&CK-scale paginated TAXII ingest tests (#507)
+
+- Synthetic **5 000-object** paginated `ingest_collection` test with `IngestOptions::producer_strict()` runs in CI (`taxii-store` + `validate`).
+- Env-gated **`RSTIX_ATTCK_BUNDLE`** corpus test for real MITRE enterprise bundles (`allow_custom` on `TaxiiClient`).
+- Optional **`workflow_dispatch`** job **ATT&CK ingest proof** (`.github/workflows/attck-ingest.yml`); not a PR gate.
+
 ### Field references with contains, startswith, and endswith (#506)
 
 `fieldref` may be followed by one of `contains`, `startswith`, or `endswith`. The comparison is case-insensitive unless `|cased` is also set. A wildcard in the referenced field name is rejected, and a string modifier written before `fieldref` is rejected. Thanks to @Karib0u, who reported these three combinations in #505.

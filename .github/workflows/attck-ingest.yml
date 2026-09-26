@@ -1,0 +1,42 @@
+name: ATT&CK ingest proof
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: attck-ingest-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  attck-ingest:
+    name: ATT&CK paginated ingest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup override set stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: false
+      - name: Download MITRE ATT&CK STIX bundle
+        run: |
+          curl -fsSL -o /tmp/enterprise-attack.json \
+            https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+      - name: Paginated ingest test (real corpus)
+        run: |
+          cargo test -p rstix --features taxii-store,validate --test taxii_store \
+            ingest_attck_corpus_paginated_when_present --locked -- --nocapture
+        env:
+          RSTIX_ATTCK_BUNDLE: /tmp/enterprise-attack.json

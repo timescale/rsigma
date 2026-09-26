@@ -453,6 +453,8 @@ RSTIX_ATTCK_BUNDLE=/path/to/enterprise-attack-19.1.json \
 
 This runs `parse_reader` → serialize → reparse and asserts object count stability. Verified against `enterprise-attack-19.1.json` (~53 MiB) locally.
 
+Paginated TAXII ingest at ATT&CK scale: CI runs a synthetic 5 000-object test; with a local bundle, run `ingest_attck_corpus_paginated_when_present` (`taxii-store` + `validate`, `IngestOptions::producer_strict()`). See [crate README: ATT&CK-scale paginated TAXII ingest](https://github.com/timescale/rsigma/blob/main/crates/rstix/README.md#attack-scale-paginated-taxii-ingest).
+
 ## STIX version vs TLP marking encoding
 
 Three independent ideas: do not mix them:

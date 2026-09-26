@@ -726,6 +726,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Manifest Accept | TAXII + STIX media types | Spec section 5.3 |
 | DNS SRV discovery | `resolve_taxii_srv` + `TaxiiClient::discover_via_srv` | `_taxii2._tcp` records |
 | Collection ingest | `ingest_collection` streams pages → `StixStore::import_objects`; optional per-object `Validator` via `IngestOptions` (`validate` feature; prefer `producer_strict`) | `taxii-store`; validate-on-ingest when `validate` enabled |
+| ATT&CK-scale ingest | Paginated wiremock ingest; synthetic 5 000-object CI test; optional `RSTIX_ATTCK_BUNDLE` corpus (`allow_custom` parse options) | `tests/taxii/ingest_attck_tests.rs`; page size 64 |
 | mTLS / rustls crypto | PEM or PKCS#12 via [`ClientCertificate`](taxii::ClientCertificate); `build_rustls_config` and interop mTLS mock use **`ring` explicitly** | Avoids process-default panic when `ring` and `aws-lc-rs` are both linked (e.g. via reqwest) |
 | Channels | **Not implemented** | Spec §6 RESERVED |
 | Filter validation | `limit > 0`; `all` version rules enforced | Invalid filters rejected before HTTP |
@@ -830,6 +831,22 @@ RSTIX_ATTCK_BUNDLE=/path/to/enterprise-attack-19.1.json \
 
 This runs `parse_reader` → serialize → reparse and asserts object count stability. Verified locally against `enterprise-attack-19.1.json` (~53 MiB).
 
+<a id="attack-scale-paginated-taxii-ingest"></a>
+
+### ATT&CK-scale paginated TAXII ingest
+
+CI runs a **synthetic 5 000-object** paginated ingest (`ingest_attck_scale_synthetic_paginated`) with `IngestOptions::producer_strict()` and a fixed page size of **64** objects (`ATTCK_INGEST_PAGE_SIZE` in `tests/taxii/ingest_support.rs`). Peak working set stays bounded by page size, not corpus size.
+
+With a local ATT&CK bundle, run the env-gated corpus test:
+
+```bash
+RSTIX_ATTCK_BUNDLE=/path/to/enterprise-attack-19.1.json \
+  cargo test -p rstix --features taxii-store,validate --test taxii_store \
+  ingest_attck_corpus_paginated_when_present --locked -- --nocapture
+```
+
+Optional manual CI: workflow **ATT&CK ingest proof** (`.github/workflows/attck-ingest.yml`, `workflow_dispatch`) downloads the current MITRE enterprise bundle and runs the corpus test. It is **not** a PR gate.
+
 ## Development Notes
 
 - `rstix` follows rsigma workspace standards for MSRV, edition, lint policy, and CI checks.
@@ -861,6 +878,7 @@ Two layers, consistent across the Data Model + Serialization phase:
 | **Graph / Marking / Store** | `tests/graph.rs`, `tests/marking.rs`, `tests/store.rs`, `tests/store_fs.rs` | Optional features; `store-fs` for durable backend. |
 | **TAXII Client** | `tests/taxii_client.rs` (`--features taxii`) | wiremock HTTP integration; auth, pagination, POST/DELETE, errors, retry. |
 | **Streaming / custom types / ATT&CK** | `tests/integration.rs` | `parse_reader`, `TypeRegistry`, optional local ATT&CK corpus via `RSTIX_ATTCK_BUNDLE`. |
+| **ATT&CK-scale TAXII ingest** | `tests/taxii/ingest_attck_tests.rs` (`taxii-store` + `validate`) | Synthetic 5 000-object paginated ingest in CI; env-gated real corpus via `RSTIX_ATTCK_BUNDLE`. |
 | **Pattern parse + type-check** | `tests/pattern_parse.rs`, `tests/pattern_eval*.rs`, `tests/pattern_indicator.rs`, `tests/pattern_eval_security.rs` + `tests/fixtures/pattern/` | STIX §9.8 examples and manifest-driven SCO field paths; requires `pattern` feature. |
 | **Unit** | `#[cfg(test)]` in `src/` | Invariants, normative constant pins, and parse smoke tests that do not need a dedicated fixture file (or that use `include_str!` for a single inline read). |
 
