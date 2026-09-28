@@ -9,7 +9,7 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rsigma_eval::{Engine, JsonEvent, LogSourceExtractor};
+use rsigma_eval::{Engine, FieldLogSourceExtractor, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
 
@@ -50,7 +50,7 @@ fn bench_logsource_pruning(c: &mut Criterion) {
 
         let mut engine_on = Engine::new();
         engine_on.add_collection(&collection).unwrap();
-        engine_on.set_logsource_extractor(Some(LogSourceExtractor::new()));
+        engine_on.set_logsource_extractor(Some(FieldLogSourceExtractor::new()));
 
         // A windows-tagged event matching none of the needles: with pruning
         // on, the linux half of the ruleset is never iterated.

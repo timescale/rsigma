@@ -102,7 +102,7 @@ pub struct GroupStateInfo {
     pub window: WindowState,
 }
 
-impl CorrelationEngine {
+impl<L> CorrelationEngine<L> {
     /// Snapshot every compiled correlation and its live per-group window state.
     pub fn introspect(&self) -> CorrelationStateSnapshot {
         self.introspect_filtered(None, None)
