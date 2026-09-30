@@ -64,6 +64,18 @@ jobs:
       # `workflow_dispatch` runs every publish step in dry-run mode for
       # an end-to-end rehearsal without touching crates.io; the actual
       # release event runs the real publish.
+      # rstix depends on no workspace crate, but rsigma-runtime and rsigma
+      # depend on it, so it publishes first.
+      - name: Publish rstix
+        if: github.event_name != 'workflow_dispatch'
+        run: ./scripts/publish-crate.sh rstix
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Wait for crates.io index update (rstix)
+        if: github.event_name != 'workflow_dispatch'
+        run: sleep 30
+
       - name: Publish rsigma-parser
         if: github.event_name != 'workflow_dispatch'
         run: ./scripts/publish-crate.sh rsigma-parser
@@ -137,13 +149,5 @@ jobs:
       - name: Publish rsigma-lsp
         if: github.event_name != 'workflow_dispatch'
         run: ./scripts/publish-crate.sh rsigma-lsp
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-
-      # rstix stands alone: no workspace crate depends on it and it depends
-      # on no workspace crate, so no index-wait step is required afterward.
-      - name: Publish rstix
-        if: github.event_name != 'workflow_dispatch'
-        run: ./scripts/publish-crate.sh rstix
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
