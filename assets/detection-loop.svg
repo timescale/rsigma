@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" style="width:100%;height:100%" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="RSigma detection engineering loop">
   <defs>
     <!-- Lobe gradients are pinned to the handoff points so colors agree at every junction. -->
     <linearGradient id="gradL" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="320">
@@ -36,6 +36,20 @@
       <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
     <style>
+      .lnk { cursor: pointer; }
+      .lnk:hover, .lnk:focus-visible { text-decoration: underline; }
+      .head { cursor: pointer; }
+      .head:focus-visible { outline: none; }
+      .card, .lead, .node, .stage { transition: stroke 120ms ease, fill 120ms ease, opacity 120ms ease; }
+      svg:has(.stage:hover) .stage:not(:hover) { opacity: 0.45; }
+      .stageL:hover .card, .stageL:focus-within .card { stroke: #60a5fa; }
+      .stageR:hover .card, .stageR:focus-within .card { stroke: #fb923c; }
+      .stageS:hover .card, .stageS:focus-within .card { stroke: #94a3b8; }
+      .stageL:hover .lead, .stageL:focus-within .lead { stroke: #3b82f6; }
+      .stageR:hover .lead, .stageR:focus-within .lead { stroke: #f97316; }
+      .stageL:hover .node { fill: #dbeafe; }
+      .stageR:hover .node { fill: #ffedd5; }
+      .stageS:hover .flow { stroke: #475569; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       /* Light values are presentation attributes on each element;
          this block only overrides them when the viewer prefers dark. */
@@ -59,6 +73,9 @@
         .leadL { stroke: #1e40af; }
         .leadR { stroke: #9a3412; }
         .annot { fill: #94a3b8; }
+        .stageL:hover .node { fill: #1e3a8a; }
+        .stageR:hover .node { fill: #7c2d12; }
+        .stageS:hover .flow { stroke: #cbd5e1; }
       }
     </style>
   </defs>
@@ -90,30 +107,6 @@
   <text class="sub" fill="#64748b" x="92" y="51" font-size="12.5">Detection engineering loop</text>
   <path class="divider" d="M26,66 H974" stroke="#eef2f7" stroke-width="1"/>
 
-  <!-- ===================== leader lines ===================== -->
-  <g fill="none" stroke-width="1.5">
-    <path class="leadL" stroke="#bfdbfe" d="M264,136 H372 Q380,136 380,144 V160"/>
-    <path class="leadL" stroke="#bfdbfe" d="M264,260 H280"/>
-    <path class="leadL" stroke="#bfdbfe" d="M264,384 H372 Q380,384 380,376 V360"/>
-    <path class="leadR" stroke="#fed7aa" d="M736,136 H628 Q620,136 620,144 V160"/>
-    <path class="leadR" stroke="#fed7aa" d="M736,260 H720"/>
-    <path class="leadR" stroke="#fed7aa" d="M736,384 H628 Q620,384 620,376 V360"/>
-  </g>
-  <g>
-    <circle cx="264" cy="136" r="3" fill="#60a5fa"/>
-    <circle cx="264" cy="260" r="3" fill="#60a5fa"/>
-    <circle cx="264" cy="384" r="3" fill="#60a5fa"/>
-    <circle cx="736" cy="136" r="3" fill="#fb923c"/>
-    <circle cx="736" cy="260" r="3" fill="#fb923c"/>
-    <circle cx="736" cy="384" r="3" fill="#fb923c"/>
-  </g>
-
-  <!-- loop <-> Hunt -->
-  <path d="M490,308 V394" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
-  <path d="M510,396 V310" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
-  <text class="annot" fill="#64748b" x="482" y="358" font-size="10.5" text-anchor="end">convert</text>
-  <text class="annot" fill="#64748b" x="518" y="358" font-size="10.5">reverse</text>
-
   <!-- ===================== infinity ribbon ===================== -->
   <!-- Author > Test > Deploy runs counterclockwise on the left lobe, crosses up to
        Detect > Alert > Measure clockwise on the right lobe, then crosses back up to Author. -->
@@ -134,23 +127,6 @@
     <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(538.4,298.4) rotate(-135)"/>
   </g>
 
-  <!-- stage nodes -->
-  <g filter="url(#soft)" stroke-width="2.5">
-    <circle class="node" cx="380" cy="175.15" r="14" fill="#ffffff" stroke="#3b82f6"/>
-    <circle class="node" cx="295.15" cy="260" r="14" fill="#ffffff" stroke="#3b82f6"/>
-    <circle class="node" cx="380" cy="344.85" r="14" fill="#ffffff" stroke="#2563eb"/>
-    <circle class="node" cx="620" cy="175.15" r="14" fill="#ffffff" stroke="#fb923c"/>
-    <circle class="node" cx="704.85" cy="260" r="14" fill="#ffffff" stroke="#f97316"/>
-    <circle class="node" cx="620" cy="344.85" r="14" fill="#ffffff" stroke="#ea580c"/>
-  </g>
-  <g font-size="12" font-weight="bold" text-anchor="middle">
-    <text class="numL" fill="#1d4ed8" x="380" y="179.4">1</text>
-    <text class="numL" fill="#1d4ed8" x="295.15" y="264.2">2</text>
-    <text class="numL" fill="#1d4ed8" x="380" y="349.1">3</text>
-    <text class="numR" fill="#c2410c" x="620" y="179.4">4</text>
-    <text class="numR" fill="#c2410c" x="704.85" y="264.2">5</text>
-    <text class="numR" fill="#c2410c" x="620" y="349.1">6</text>
-  </g>
 
   <!-- lobe labels -->
   <text class="lobeL" fill="#1e3a8a" x="380" y="257" font-size="18" font-weight="bold" text-anchor="middle">Engineer</text>
@@ -158,108 +134,161 @@
   <text class="lobeR" fill="#9a3412" x="620" y="257" font-size="18" font-weight="bold" text-anchor="middle">Operate</text>
   <text class="sub" fill="#64748b" x="620" y="275" font-size="10.5" text-anchor="middle">security operations</text>
 
-  <!-- ===================== cards ===================== -->
-  <g filter="url(#soft)" stroke-width="1">
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="82" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="206" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="330" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="82" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="206" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="330" width="238" height="108" rx="10"/>
-    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="392" y="402" width="216" height="108" rx="10"/>
-  </g>
-  <g>
+  <!-- ===================== stages ===================== -->
+  <!-- Each stage groups its card, leader line, and ribbon node so they highlight together.
+       Links use target="_top" so they navigate the host page when embedded with <object>. -->
+  <g class="stage stageL" id="stage-author">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-engineer-cycle-author" target="_top">
+    <title>Author: turn exemplar events into verified Sigma rules and filters</title>
+    <path class="lead leadL" d="M264,136 H372 Q380,136 380,144 V160" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
+    <circle cx="264" cy="136" r="3" fill="#60a5fa"/>
+    <circle class="node nodeL" cx="380" cy="175.15" r="14" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numL" fill="#1d4ed8" x="380" y="179.40" font-size="12" font-weight="bold" text-anchor="middle">1</text>
+    <rect class="card cardL" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="26" y="82" width="238" height="108" rx="10" filter="url(#soft)"/>
     <path class="hdrL" fill="#eff6ff" d="M26.5,92 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrL" fill="#eff6ff" d="M26.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrL" fill="#eff6ff" d="M26.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrR" fill="#fff7ed" d="M736.5,92 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrR" fill="#fff7ed" d="M736.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrR" fill="#fff7ed" d="M736.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
-    <path class="hdrS" fill="#f1f5f9" d="M392.5,412 a9.5,9.5 0 0 1 9.5,-9.5 h196 a9.5,9.5 0 0 1 9.5,9.5 v20 h-215 Z"/>
-  </g>
-
-  <!-- card header badges -->
-  <g>
     <circle cx="46" cy="97" r="9.5" fill="#3b82f6"/>
+    <text x="46" y="101" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">1</text>
+    <text class="tL" fill="#1e3a8a" x="62" y="101.5" font-size="13" font-weight="bold">Author</text>
+    </a>
+    <circle cx="40" cy="127.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="131" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/draft/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule draft</tspan></a> rules from exemplar logs</text>
+    <circle cx="40" cy="142.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/tune/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule tune</tspan></a> FP/TP → verified filter</text>
+    <circle cx="40" cy="157.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="161" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/reverse/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule reverse</tspan></a> Lucene query → Sigma</text>
+    <circle cx="40" cy="172.3" r="2" fill="#93c5fd"/>
+    <text class="muted" fill="#6b7280" x="48" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/linting-rules/" target="_top">lint · doc · LSP · MCP for AI agents</a></text>
+  </g>
+  <g class="stage stageL" id="stage-test">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-engineer-cycle-test" target="_top">
+    <title>Test: prove the rule against history before it ships</title>
+    <path class="lead leadL" d="M264,260 H280" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
+    <circle cx="264" cy="260" r="3" fill="#60a5fa"/>
+    <circle class="node nodeL" cx="295.15" cy="260" r="14" fill="#ffffff" stroke="#3b82f6" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numL" fill="#1d4ed8" x="295.15" y="264.25" font-size="12" font-weight="bold" text-anchor="middle">2</text>
+    <rect class="card cardL" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="26" y="206" width="238" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrL" fill="#eff6ff" d="M26.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
     <circle cx="46" cy="221" r="9.5" fill="#3b82f6"/>
+    <text x="46" y="225" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">2</text>
+    <text class="tL" fill="#1e3a8a" x="62" y="225.5" font-size="13" font-weight="bold">Test</text>
+    </a>
+    <circle cx="40" cy="251.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="255" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/explain/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">engine explain</tspan></a> why (no) match</text>
+    <circle cx="40" cy="266.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="270" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/backtest/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule backtest</tspan></a> corpus regression</text>
+    <circle cx="40" cy="281.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="285" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/pipeline/diff/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">pipeline diff</tspan></a> transform preview</text>
+    <circle cx="40" cy="296.3" r="2" fill="#93c5fd"/>
+    <text class="muted" fill="#6b7280" x="48" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/eval/" target="_top"><tspan class="mono">engine eval</tspan></a> one-shot evaluation</text>
+  </g>
+  <g class="stage stageL" id="stage-deploy">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-engineer-cycle-deploy" target="_top">
+    <title>Deploy: turn a green check into merge policy and a live ruleset</title>
+    <path class="lead leadL" d="M264,384 H372 Q380,384 380,376 V360" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
+    <circle cx="264" cy="384" r="3" fill="#60a5fa"/>
+    <circle class="node nodeL" cx="380" cy="344.85" r="14" fill="#ffffff" stroke="#2563eb" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numL" fill="#1d4ed8" x="380" y="349.10" font-size="12" font-weight="bold" text-anchor="middle">3</text>
+    <rect class="card cardL" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="26" y="330" width="238" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrL" fill="#eff6ff" d="M26.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
     <circle cx="46" cy="345" r="9.5" fill="#2563eb"/>
+    <text x="46" y="349" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">3</text>
+    <text class="tL" fill="#1e3a8a" x="62" y="349.5" font-size="13" font-weight="bold">Deploy</text>
+    </a>
+    <circle cx="40" cy="375.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="379" font-size="10.5"><a class="lnk" href="https://github.com/timescale/rsigma-action" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rsigma-action</tspan></a> PR gate in CI</text>
+    <circle cx="40" cy="390.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="394" font-size="10.5"><a class="lnk" href="https://rsigma.io/reference/configuration/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rsigma config</tspan></a> layered defaults</text>
+    <circle cx="40" cy="405.3" r="2" fill="#93c5fd"/>
+    <text class="ink" fill="#374151" x="48" y="409" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">hot reload</tspan></a> rules + pipelines</text>
+    <circle cx="40" cy="420.3" r="2" fill="#93c5fd"/>
+    <text class="muted" fill="#6b7280" x="48" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/deployment/docker/" target="_top">Docker · signed release binaries</a></text>
+  </g>
+  <g class="stage stageR" id="stage-detect">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-detect" target="_top">
+    <title>Detect: evaluate the live event stream with correlation and schema routing</title>
+    <path class="lead leadR" d="M736,136 H628 Q620,136 620,144 V160" fill="none" stroke="#fed7aa" stroke-width="1.5"/>
+    <circle cx="736" cy="136" r="3" fill="#fb923c"/>
+    <circle class="node nodeR" cx="620" cy="175.15" r="14" fill="#ffffff" stroke="#fb923c" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numR" fill="#c2410c" x="620" y="179.40" font-size="12" font-weight="bold" text-anchor="middle">4</text>
+    <rect class="card cardR" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="736" y="82" width="238" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,92 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
     <circle cx="756" cy="97" r="9.5" fill="#fb923c"/>
+    <text x="756" y="101" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">4</text>
+    <text class="tR" fill="#9a3412" x="772" y="101.5" font-size="13" font-weight="bold">Detect</text>
+    </a>
+    <circle cx="750" cy="127.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="131" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/daemon/" target="_top"><tspan class="mono cmdR" fill="#c2410c">engine daemon</tspan></a> streaming · RBAC API</text>
+    <circle cx="750" cy="142.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">correlation</tspan></a> windows · chains</text>
+    <circle cx="750" cy="157.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="161" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/input-formats/" target="_top">JSON · syslog · CEF · EVTX · OTLP</a></text>
+    <circle cx="750" cy="172.3" r="2" fill="#fdba74"/>
+    <text class="muted" fill="#6b7280" x="758" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/schema-routing/" target="_top">schema routing · discovery · cloud</a></text>
+  </g>
+  <g class="stage stageR" id="stage-alert">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-alert-and-triage" target="_top">
+    <title>Alert and triage: compress raw matches into enriched incidents and ingest verdicts</title>
+    <path class="lead leadR" d="M736,260 H720" fill="none" stroke="#fed7aa" stroke-width="1.5"/>
+    <circle cx="736" cy="260" r="3" fill="#fb923c"/>
+    <circle class="node nodeR" cx="704.85" cy="260" r="14" fill="#ffffff" stroke="#f97316" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numR" fill="#c2410c" x="704.85" y="264.25" font-size="12" font-weight="bold" text-anchor="middle">5</text>
+    <rect class="card cardR" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="736" y="206" width="238" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
     <circle cx="756" cy="221" r="9.5" fill="#f97316"/>
+    <text x="756" y="225" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">5</text>
+    <text class="tR" fill="#9a3412" x="772" y="225.5" font-size="13" font-weight="bold">Alert &amp; Triage</text>
+    </a>
+    <circle cx="750" cy="251.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="255" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/enrichers/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">enrichment</tspan></a> GeoIP · intel · asset</text>
+    <circle cx="750" cy="266.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="270" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/risk-based-alerting/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">risk-based alerting</tspan></a> entity score</text>
+    <circle cx="750" cy="281.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="285" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/alert-pipeline/" target="_top">dedup · silence · inhibit · group</a></text>
+    <circle cx="750" cy="296.3" r="2" fill="#fdba74"/>
+    <text class="muted" fill="#6b7280" x="758" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/webhooks/" target="_top">webhooks: Slack · PagerDuty · ...</a></text>
+  </g>
+  <g class="stage stageR" id="stage-measure">
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-measure" target="_top">
+    <title>Measure: grade the rule portfolio on evidence</title>
+    <path class="lead leadR" d="M736,384 H628 Q620,384 620,376 V360" fill="none" stroke="#fed7aa" stroke-width="1.5"/>
+    <circle cx="736" cy="384" r="3" fill="#fb923c"/>
+    <circle class="node nodeR" cx="620" cy="344.85" r="14" fill="#ffffff" stroke="#ea580c" stroke-width="2.5" filter="url(#soft)"/>
+    <text class="numR" fill="#c2410c" x="620" y="349.10" font-size="12" font-weight="bold" text-anchor="middle">6</text>
+    <rect class="card cardR" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="736" y="330" width="238" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
     <circle cx="756" cy="345" r="9.5" fill="#ea580c"/>
+    <text x="756" y="349" font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">6</text>
+    <text class="tR" fill="#9a3412" x="772" y="349.5" font-size="13" font-weight="bold">Measure</text>
+    </a>
+    <circle cx="750" cy="375.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="379" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/coverage/" target="_top"><tspan class="mono cmdR" fill="#c2410c">rule coverage</tspan></a> ATT&amp;CK Navigator</text>
+    <circle cx="750" cy="390.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="394" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/visibility/" target="_top"><tspan class="mono cmdR" fill="#c2410c">rule visibility</tspan></a> DeTT&amp;CT export</text>
+    <circle cx="750" cy="405.3" r="2" fill="#fdba74"/>
+    <text class="ink" fill="#374151" x="758" y="409" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/visibility-and-data-sources/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">field observability</tspan></a> gap signals</text>
+    <circle cx="750" cy="420.3" r="2" fill="#fdba74"/>
+    <text class="muted" fill="#6b7280" x="758" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/scorecard/" target="_top">scorecard · FP ratio · dispositions</a></text>
+  </g>
+  <g class="stage stageS" id="stage-hunt">
+    <path class="flow" d="M490,308 V394" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+    <path class="flow" d="M510,396 V310" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+    <text class="annot" fill="#64748b" x="482" y="358" font-size="10.5" text-anchor="end">convert</text>
+    <text class="annot" fill="#64748b" x="518" y="358" font-size="10.5">reverse</text>
+    <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-hunt" target="_top">
+    <title>Hunt: compile the same rule for historical stores and feed findings back</title>
+    <rect class="card cardS" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="392" y="402" width="216" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrS" fill="#f1f5f9" d="M392.5,412 a9.5,9.5 0 0 1 9.5,-9.5 h196 a9.5,9.5 0 0 1 9.5,9.5 v20 h-215 Z"/>
     <circle cx="412" cy="417" r="9.5" fill="#475569"/>
-  </g>
-  <g font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">
-    <text x="46" y="101">1</text>
-    <text x="46" y="225">2</text>
-    <text x="46" y="349">3</text>
-    <text x="756" y="101">4</text>
-    <text x="756" y="225">5</text>
-    <text x="756" y="349">6</text>
-  </g>
-  <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round">
-    <circle cx="410.8" cy="415.8" r="3.6"/>
-    <path d="M413.4,418.4 L416.2,421.2"/>
-  </g>
-  <g font-size="13" font-weight="bold">
-    <text class="tL" fill="#1e3a8a" x="62" y="101.5">Author</text>
-    <text class="tL" fill="#1e3a8a" x="62" y="225.5">Test</text>
-    <text class="tL" fill="#1e3a8a" x="62" y="349.5">Deploy</text>
-    <text class="tR" fill="#9a3412" x="772" y="101.5">Detect</text>
-    <text class="tR" fill="#9a3412" x="772" y="225.5">Alert &amp; Triage</text>
-    <text class="tR" fill="#9a3412" x="772" y="349.5">Measure</text>
-    <text class="tS" fill="#334155" x="428" y="421.5">Hunt</text>
-  </g>
-
-  <!-- bullets -->
-  <g fill="#93c5fd">
-    <circle cx="40" cy="127.3" r="2"/><circle cx="40" cy="142.3" r="2"/><circle cx="40" cy="157.3" r="2"/><circle cx="40" cy="172.3" r="2"/>
-    <circle cx="40" cy="251.3" r="2"/><circle cx="40" cy="266.3" r="2"/><circle cx="40" cy="281.3" r="2"/><circle cx="40" cy="296.3" r="2"/>
-    <circle cx="40" cy="375.3" r="2"/><circle cx="40" cy="390.3" r="2"/><circle cx="40" cy="405.3" r="2"/><circle cx="40" cy="420.3" r="2"/>
-  </g>
-  <g fill="#fdba74">
-    <circle cx="750" cy="127.3" r="2"/><circle cx="750" cy="142.3" r="2"/><circle cx="750" cy="157.3" r="2"/><circle cx="750" cy="172.3" r="2"/>
-    <circle cx="750" cy="251.3" r="2"/><circle cx="750" cy="266.3" r="2"/><circle cx="750" cy="281.3" r="2"/><circle cx="750" cy="296.3" r="2"/>
-    <circle cx="750" cy="375.3" r="2"/><circle cx="750" cy="390.3" r="2"/><circle cx="750" cy="405.3" r="2"/><circle cx="750" cy="420.3" r="2"/>
-  </g>
-  <g fill="#cbd5e1">
-    <circle cx="406" cy="447.3" r="2"/><circle cx="406" cy="462.3" r="2"/><circle cx="406" cy="477.3" r="2"/><circle cx="406" cy="492.3" r="2"/>
-  </g>
-
-  <!-- card bodies: monospace spans are CLI commands, bold spans are features -->
-  <g font-size="10.5">
-    <text class="ink" fill="#374151" x="48" y="131"><tspan class="mono cmdL" fill="#1d4ed8">rule draft</tspan> rules from exemplar logs</text>
-    <text class="ink" fill="#374151" x="48" y="146"><tspan class="mono cmdL" fill="#1d4ed8">rule tune</tspan> FP/TP &#8594; verified filter</text>
-    <text class="ink" fill="#374151" x="48" y="161"><tspan class="mono cmdL" fill="#1d4ed8">rule reverse</tspan> Lucene query &#8594; Sigma</text>
-    <text class="muted" fill="#6b7280" x="48" y="176">lint &#183; doc &#183; LSP &#183; MCP for AI agents</text>
-
-    <text class="ink" fill="#374151" x="48" y="255"><tspan class="mono cmdL" fill="#1d4ed8">engine explain</tspan> why (no) match</text>
-    <text class="ink" fill="#374151" x="48" y="270"><tspan class="mono cmdL" fill="#1d4ed8">rule backtest</tspan> corpus regression</text>
-    <text class="ink" fill="#374151" x="48" y="285"><tspan class="mono cmdL" fill="#1d4ed8">pipeline diff</tspan> transform preview</text>
-    <text class="muted" fill="#6b7280" x="48" y="300"><tspan class="mono">engine eval</tspan> one-shot evaluation</text>
-
-    <text class="ink" fill="#374151" x="48" y="379"><tspan class="mono cmdL" fill="#1d4ed8">rsigma-action</tspan> PR gate in CI</text>
-    <text class="ink" fill="#374151" x="48" y="394"><tspan class="mono cmdL" fill="#1d4ed8">rsigma config</tspan> layered defaults</text>
-    <text class="ink" fill="#374151" x="48" y="409"><tspan class="strong" fill="#111827" font-weight="bold">hot reload</tspan> rules + pipelines</text>
-    <text class="muted" fill="#6b7280" x="48" y="424">Docker &#183; signed release binaries</text>
-
-    <text class="ink" fill="#374151" x="758" y="131"><tspan class="mono cmdR" fill="#c2410c">engine daemon</tspan> streaming &#183; RBAC API</text>
-    <text class="ink" fill="#374151" x="758" y="146"><tspan class="strong" fill="#111827" font-weight="bold">correlation</tspan> windows &#183; chains</text>
-    <text class="ink" fill="#374151" x="758" y="161">JSON &#183; syslog &#183; CEF &#183; EVTX &#183; OTLP</text>
-    <text class="muted" fill="#6b7280" x="758" y="176">schema routing &#183; discovery &#183; cloud</text>
-
-    <text class="ink" fill="#374151" x="758" y="255"><tspan class="strong" fill="#111827" font-weight="bold">enrichment</tspan> GeoIP &#183; intel &#183; asset</text>
-    <text class="ink" fill="#374151" x="758" y="270"><tspan class="strong" fill="#111827" font-weight="bold">risk-based alerting</tspan> entity score</text>
-    <text class="ink" fill="#374151" x="758" y="285">dedup &#183; silence &#183; inhibit &#183; group</text>
-    <text class="muted" fill="#6b7280" x="758" y="300">webhooks: Slack &#183; PagerDuty &#183; ...</text>
-
-    <text class="ink" fill="#374151" x="758" y="379"><tspan class="mono cmdR" fill="#c2410c">rule coverage</tspan> ATT&amp;CK Navigator</text>
-    <text class="ink" fill="#374151" x="758" y="394"><tspan class="mono cmdR" fill="#c2410c">rule visibility</tspan> DeTT&amp;CT export</text>
-    <text class="ink" fill="#374151" x="758" y="409"><tspan class="strong" fill="#111827" font-weight="bold">field observability</tspan> gap signals</text>
-    <text class="muted" fill="#6b7280" x="758" y="424">scorecard &#183; FP ratio &#183; dispositions</text>
-
-    <text class="ink" fill="#374151" x="414" y="451"><tspan class="mono cmdS" fill="#334155">backend convert</tspan> PostgreSQL SQL</text>
-    <text class="ink" fill="#374151" x="414" y="466"><tspan class="mono cmdS" fill="#334155">sigma-cli</tspan> Splunk &#183; 30+ backends</text>
-    <text class="ink" fill="#374151" x="414" y="481"><tspan class="mono cmdS" fill="#334155">rule fields</tspan> mapping catalog</text>
-    <text class="muted" fill="#6b7280" x="414" y="496" font-style="italic">findings feed new rules</text>
+    <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"><circle cx="410.8" cy="415.8" r="3.6"/><path d="M413.4,418.4 L416.2,421.2"/></g>
+    <text class="tS" fill="#334155" x="428" y="421.5" font-size="13" font-weight="bold">Hunt</text>
+    </a>
+    <circle cx="406" cy="447.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="414" y="451" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/backend/convert/" target="_top"><tspan class="mono cmdS" fill="#334155">backend convert</tspan></a> PostgreSQL SQL</text>
+    <circle cx="406" cy="462.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="414" y="466" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/rule-conversion/" target="_top"><tspan class="mono cmdS" fill="#334155">sigma-cli</tspan></a> Splunk · 30+ backends</text>
+    <circle cx="406" cy="477.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="414" y="481" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/fields/" target="_top"><tspan class="mono cmdS" fill="#334155">rule fields</tspan></a> mapping catalog</text>
+    <circle cx="406" cy="492.3" r="2" fill="#cbd5e1"/>
+    <text class="muted" fill="#6b7280" x="414" y="496" font-size="10.5" font-style="italic">findings feed new rules</text>
   </g>
 </svg>

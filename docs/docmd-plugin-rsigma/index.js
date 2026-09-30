@@ -7,6 +7,9 @@ import { parse as parseYaml } from "yaml";
 let rsigmaVars = null;
 /** @type {string | null} */
 let repoRoot = null;
+/** Published site origin and base path, from the resolved docmd config. */
+let siteUrl = "https://rsigma.io/";
+let siteBase = "/";
 
 /**
  * Walk up from a starting directory until we find the workspace `Cargo.toml`
@@ -296,6 +299,24 @@ const STALE_BRAND_FILES = [
   "rsigma-logotype.png",
 ];
 
+/** Repo-root `assets/` files copied into the site so pages can embed them. */
+const COPIED_ASSETS = ["detection-loop.svg"];
+
+/**
+ * The repo copy of an SVG links to the published site with absolute URLs so
+ * it still works when opened on its own (GitHub "Raw", a local file). Inside
+ * the docs those links must follow the host serving the build instead, so the
+ * site origin is rewritten to the configured base path.
+ *
+ * @param {Buffer} data
+ * @returns {Buffer}
+ */
+function relinkToSiteBase(data) {
+  const origin = siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`;
+  const base = siteBase.endsWith("/") ? siteBase : `${siteBase}/`;
+  return Buffer.from(data.toString("utf8").replaceAll(`href="${origin}`, `href="${base}`), "utf8");
+}
+
 /** @type {{ svg: string, images: Record<string, Buffer> } | null} */
 let brandImageCache = null;
 
@@ -376,6 +397,15 @@ async function writeBrandImages(destDir, logoSvgPath) {
     writeIfChanged(path.join(destDir, name), data);
   }
 
+  const assetsDir = path.dirname(logoSvgPath);
+  for (const name of COPIED_ASSETS) {
+    const src = path.join(assetsDir, name);
+    if (!fs.existsSync(src)) {
+      throw new Error(`docmd-plugin-rsigma: missing asset ${src}`);
+    }
+    writeIfChanged(path.join(destDir, name), relinkToSiteBase(fs.readFileSync(src)));
+  }
+
   for (const stale of STALE_BRAND_FILES) {
     const stalePath = path.join(destDir, stale);
     if (fs.existsSync(stalePath)) {
@@ -399,6 +429,22 @@ async function syncBrandAssets(repoRoot, docsRoot) {
     throw new Error(`docmd-plugin-rsigma: missing brand asset ${logoSvg}`);
   }
   await writeBrandImages(path.join(docsRoot, "assets", "images"), logoSvg);
+}
+
+/**
+ * Wrap the detection-loop diagram image in an `<object>` so its links and
+ * hover styles work; SVG loaded through `<img>` is inert. docmd escapes raw
+ * HTML in Markdown, so the page keeps a plain image and the swap happens here.
+ * The original `<img>` stays inside as the fallback content.
+ *
+ * @param {string} html
+ */
+function embedInteractiveDiagrams(html) {
+  return html.replace(
+    /(?<!<object[^>]*>)<img src="([^"]*\/assets\/images\/detection-loop\.svg)" alt="([^"]*)">/g,
+    (img, src, alt) =>
+      `<object class="loop-diagram" data="${src}" type="image/svg+xml" aria-label="${alt}">${img}</object>`,
+  );
 }
 
 /**
@@ -429,6 +475,12 @@ export default {
   },
 
   async onConfigResolved(config) {
+    if (typeof config?.url === "string" && config.url) {
+      siteUrl = config.url;
+    }
+    if (typeof config?.base === "string" && config.base) {
+      siteBase = config.base;
+    }
     const docsRoot = process.cwd();
     repoRoot = findRepoRoot(docsRoot);
     rsigmaVars = loadRsigmaVars(repoRoot);
@@ -477,6 +529,7 @@ export default {
         stripped += 1;
       }
       next = injectAnalyticsConsentMode(next);
+      next = embedInteractiveDiagrams(next);
       const withTitles = renderMarkdownTitles(next);
       if (withTitles !== next) {
         titlesRendered += 1;

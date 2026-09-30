@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Interactive detection engineering loop diagram in the docs
+
+On the [Detection Engineering Loop](https://rsigma.io/guide/detection-engineering-loop/) guide, the diagram is now interactive: hovering a stage highlights its card, leader line, and ribbon node while the other stages fade, stage headers and nodes jump to the matching section, and each command or feature links to its CLI reference or guide page. The docs plugin copies `assets/detection-loop.svg` into the site at build time, embeds it with `<object>` (keeping the image as fallback), and rewrites its `https://rsigma.io/` links to the configured base path so they follow the host serving the build. The README keeps rendering the same file as a static image.
+
 ### Redraw the detection engineering loop diagram (#517)
 
 The README and docs diagram now draws the loop as an infinity ribbon with a clean over-under crossing, numbered stage nodes that match numbered card headers, and consistent leader lines on both sides. Cards set CLI commands in monospace so they stand apart from feature names, the logo no longer disappears in dark mode, and `assets/detection-loop.png` is regenerated from the SVG.

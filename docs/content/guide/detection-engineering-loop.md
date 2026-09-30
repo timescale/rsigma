@@ -2,7 +2,7 @@
 
 Detection engineering spans human judgment (what deserves a detection, what the telemetry shows) and repeatable software work (authoring, testing, deployment, detection, alerting, measurement, hunting). RSigma owns the software phases and exposes clean interfaces to the rest. This page is the map: one revolution of the loop, station by station, with links into the detailed guides.
 
-![RSigma detection engineering loop](https://raw.githubusercontent.com/timescale/rsigma/main/assets/detection-loop.svg)
+![RSigma detection engineering loop](../../assets/images/detection-loop.svg)
 
 The **Engineer** cycle (blue) is detection-as-code: turn incident evidence into a linted rule, prove it against history, and ship it through CI. The **Operate** cycle (orange) is security operations: evaluate the live stream, compress raw matches into incidents, and grade what earns its keep. **Hunt** bridges the two: compile the same rule for whatever store holds the archive, find variants the live path missed, and feed new exemplars back into **Author**.
 
