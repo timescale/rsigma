@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-convert"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "log",
  "regex",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "ciborium",
  "rsigma-parser",
@@ -1838,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "globset",
  "log",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "rsigma-runtime"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "rstix"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "email_address",

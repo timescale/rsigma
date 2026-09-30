@@ -24,9 +24,9 @@ daachorse-index = ["rsigma-eval/daachorse-index"]
 stix-enrich = ["dep:rstix", "rstix/store", "rstix/store-fs"]
 
 [dependencies]
-rsigma-parser = { path = "../rsigma-parser", version = "0.22.0" }
-rstix = { path = "../rstix", version = "0.22.0", optional = true, default-features = false, features = ["serde"] }
-rsigma-eval = { path = "../rsigma-eval", version = "0.22.0", features = ["parallel"] }
+rsigma-parser = { path = "../rsigma-parser", version = "0.23.0" }
+rstix = { path = "../rstix", version = "0.23.0", optional = true, default-features = false, features = ["serde"] }
+rsigma-eval = { path = "../rsigma-eval", version = "0.23.0", features = ["parallel"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "io-std", "process", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-30
+
+**TL;DR**
+RSigma v0.23.0 is the "threat intel in the loop" release: rsigma can now pull STIX 2.1 threat intel from TAXII servers or bundle files into a local store and enrich live detections from it, `fieldref` gains string comparisons with pySigma-compatible `|neq`, and two MCP server vulnerabilities are fixed.
+* Security: the MCP server now confines every path argument to `--rules-dir` ([GHSA-8x2w-m5v2-phxr](https://github.com/timescale/rsigma/security/advisories/GHSA-8x2w-m5v2-phxr)) and `evaluate_events` refuses `command` and `http` enrichers ([GHSA-4q23-jm32-fhr9](https://github.com/timescale/rsigma/security/advisories/GHSA-4q23-jm32-fhr9)). Upgrade if you run `rsigma mcp serve`.
+* Threat intel: `taxii sync` (#508) and `taxii store` (#509) import into a local store with validate-on-ingest (#499), the `stix` enricher and `engine daemon --stix-store` enrich detections from it (#509), and paginated ingest is tested at ATT&CK scale (#507) (thanks to @SecurityEnthusiast).
+* Detection correctness: `fieldref` with `contains`, `startswith`, and `endswith`, and `|neq` now negates the whole detection item as pySigma does (#506, thanks to @Karib0u).
+* Agents: an installable agent skill for the CLI and MCP loop (#501).
+* Breaking: `build_enrichers_full` takes `EnricherResources` (#509), rstix `ingest_collection` returns `IngestReport` (#499), the HIR cache schema is 2 (#506), and MCP `evaluate_events` only accepts `template` enrichers.
+* Dependencies: `rustls` 0.23.45 for RUSTSEC-2026-0285 (#498, thanks to @SecurityEnthusiast) and Dependabot batches across Rust, CI, the VS Code extension, and docs (#491, #512).
+
 ### rsigma-mcp: enforce `--rules-dir` confinement and refuse process and network enrichers (security)
 
 Fixes [GHSA-8x2w-m5v2-phxr](https://github.com/timescale/rsigma/security/advisories/GHSA-8x2w-m5v2-phxr) and [GHSA-4q23-jm32-fhr9](https://github.com/timescale/rsigma/security/advisories/GHSA-4q23-jm32-fhr9). With `--rules-dir` set, `parse_rule`, `lint_rules`, `fix_rules`, `evaluate_events`, `list_fields`, `validate_rules`, `author_ads`, `resolve_pipeline`, and `convert_rules` accepted absolute and `../` paths outside the directory, so an MCP caller could read any file the server's OS user could read, and `fix_rules` with `write: true` could rewrite files outside it.
@@ -76,6 +87,8 @@ With the `validate` feature, attach `IngestOptions::producer_strict()` (or a cus
 ### Dependency batch (mid Sep 2026) (#491)
 
 Rolls up the open Dependabot PRs into a single merge, regenerated against current `main` rather than replaying stale lockfile bases. Rust (workspace `Cargo.lock`, with `fuzz/Cargo.lock` and `ci/wasm-smoke/Cargo.lock` synced): the patch group (#487) updates `flate2` 1.1.9 to 1.1.10, `jaq-core` 3.1.0 to 3.1.1, `jaq-json` 2.0.2 to 2.0.3, `jaq-std` 3.0.2 to 3.0.3, `rcgen` 0.14.9 to 0.14.10, `tower-http` 0.7.0 to 0.7.1, `hyper` 1.11.0 to 1.11.1, `hickory-resolver` 0.26.1 to 0.26.3 (#487 requested 0.26.2), and `toml` 1.1.4+spec-1.1.0 to 1.1.6+spec-1.1.0 (#487 requested 1.1.5); standalone updates move `tokio` 1.52.3 to 1.53.1 (#490) and `rmcp` 3.0.1 to 3.3.0 (#489 requested 3.2.0). A follow-up `cargo update` also refreshes `rustls` 0.23.43 to 0.23.44, `uuid` 1.24.1 to 1.26.1, `cel` 0.14.4 to 0.14.5, `pest` 2.8.8 to 2.9.1, `jiff` 0.2.31 to 0.2.37, `tree-sitter` 0.26.10 to 0.26.13, `zerocopy` 0.8.52 to 0.8.57, and `sse-stream` 0.2.4 to 0.2.6. CI (all repinned by commit SHA, batched via the `actions-updates` group, #486): `taiki-e/install-action` v2.87.0 to v2.87.4, `anchore/scan-action` v7.4.1 to v7.4.2, `actions/deploy-pages` v5.0.0 to v5.0.1, and `zizmorcore/zizmor-action` v0.6.2 to v0.6.3. VS Code extension: `@types/node` 26.4.0 to 26.4.1 and `@types/vscode` 1.134.0 to 1.136.0 (#485), then `npm update` brings the lockfile to `@types/node` 26.5.1 and `@types/vscode` 1.137.0. Docs (`docs/docmd-plugin-rsigma`): `sharp` 0.35.3 to 0.35.4 for [GHSA-rgj7-g3m4-5g8c](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c) (libheif RCE in `< 0.35.4`, Dependabot alert 62). Held back: `yamlpatch` 1.30.0 (#488) still pulls `tree-sitter-iter` 1.28+ which requires rustc 1.97, so `yamlpath` stays at 1.27.0 with `yamlpatch` 1.26.1; `tikv-jemallocator` 0.7.0 (#425, jemalloc 5.3.1) still regresses musl routed daemon throughput about 4-7% versus 0.6.1.
+
+[v0.22.0...v0.23.0](https://github.com/timescale/rsigma/compare/v0.22.0...v0.23.0)
 
 ## [0.22.0] - 2026-09-10
 
@@ -2970,6 +2983,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.23.0]: https://github.com/timescale/rsigma/releases/tag/v0.23.0
 [0.22.0]: https://github.com/timescale/rsigma/releases/tag/v0.22.0
 [0.21.0]: https://github.com/timescale/rsigma/releases/tag/v0.21.0
 [0.20.0]: https://github.com/timescale/rsigma/releases/tag/v0.20.0
