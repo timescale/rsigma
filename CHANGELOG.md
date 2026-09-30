@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Publish rstix before the crates that depend on it
+### Publish rstix before the crates that depend on it (#516)
 
 The crates.io publish workflow now publishes `rstix` first, followed by an index wait. Since `rsigma-runtime` and `rsigma` gained an `rstix` dependency, publishing it last made the `rsigma-runtime` upload fail to resolve the new `rstix` version.
 
