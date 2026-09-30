@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Dependency batch (late Sep 2026)
+### Dependency batch (late Sep 2026) (#512)
 
 Rolls up the open Dependabot PRs into a single merge, with `Cargo.lock` regenerated against current `main`. Rust: `jsonschema` 0.48.5 to 0.56.0 (#497, also moving `fancy-regex` 0.18.0 to 0.19.2 and `fraction` 0.15.4 to 0.17.0) and `dirs` 6.0.0 to 7.0.0 (#496). CI (all repinned by commit SHA, batched via the `actions-updates` group, #504): `taiki-e/install-action` v2.87.4 to v2.87.14, `docker/setup-buildx-action` v4.3.0 to v4.4.1, `docker/build-push-action` v7.3.0 to v7.4.0, `github/codeql-action/upload-sarif` v4.37.9 to v4.38.0, and `zizmorcore/zizmor-action` v0.6.3 to v0.6.4. VS Code extension: `@types/node` 26.5.1 to 26.6.1 and `@types/vscode` 1.137.0 to 1.138.0 (#502), `@vscode/vsce` 3.9.2 to 4.0.0 (#503), and the `brace-expansion` override 5.0.9 to 5.0.12 (#510). Docs: `markdown-it` 14.3.0 to 14.3.2 (#511). Held back: `yamlpath` 1.30.1 (#495) and `yamlpatch` 1.30.1 (#494) still pull `tree-sitter-iter` 1.28+ which requires rustc 1.97, above the 1.95.0 MSRV; `tikv-jemallocator` 0.7.0 (#425, jemalloc 5.3.1) still regresses musl routed daemon throughput about 4-7% versus 0.6.1.
 
