@@ -8,7 +8,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 The crates.io publish workflow now publishes `rstix` first, followed by an index wait. Since `rsigma-runtime` and `rsigma` gained an `rstix` dependency, publishing it last made the `rsigma-runtime` upload fail to resolve the new `rstix` version.
 
-### Redraw the detection engineering loop diagram
+### Redraw the detection engineering loop diagram (#517)
 
 The README and docs diagram now draws the loop as an infinity ribbon with a clean over-under crossing, numbered stage nodes that match numbered card headers, and consistent leader lines on both sides. Cards set CLI commands in monospace so they stand apart from feature names, the logo no longer disappears in dark mode, and `assets/detection-loop.png` is regenerated from the SVG.
 
