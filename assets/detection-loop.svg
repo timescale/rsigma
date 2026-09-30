@@ -1,72 +1,72 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="980" height="596" viewBox="0 0 980 596" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" font-family="Helvetica, Arial, sans-serif">
   <defs>
-    <!-- ribbon gradients (vertical, so colors agree at every junction) -->
-    <linearGradient id="gradL" x1="0" y1="0" x2="0" y2="1">
+    <!-- Lobe gradients are pinned to the handoff points so colors agree at every junction. -->
+    <linearGradient id="gradL" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="320">
       <stop offset="0" stop-color="#60a5fa"/>
       <stop offset="1" stop-color="#2563eb"/>
     </linearGradient>
-    <linearGradient id="gradR" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fd9a21"/>
+    <linearGradient id="gradR" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="320">
+      <stop offset="0" stop-color="#fdab4a"/>
       <stop offset="1" stop-color="#fb8002"/>
     </linearGradient>
-    <!-- diagonal handoffs blend one lobe color into the other -->
-    <linearGradient id="gradA" gradientUnits="userSpaceOnUse" x1="463.6" y1="373.6" x2="516.4" y2="246.4">
+    <linearGradient id="gradA" gradientUnits="userSpaceOnUse" x1="440" y1="320" x2="560" y2="200">
       <stop offset="0" stop-color="#2563eb"/>
-      <stop offset="1" stop-color="#fd9a21"/>
+      <stop offset="0.44" stop-color="#3b82f6"/>
+      <stop offset="0.56" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#fdab4a"/>
     </linearGradient>
-    <linearGradient id="gradB" gradientUnits="userSpaceOnUse" x1="516.4" y1="373.6" x2="463.6" y2="246.4">
+    <linearGradient id="gradB" gradientUnits="userSpaceOnUse" x1="560" y1="320" x2="440" y2="200">
       <stop offset="0" stop-color="#fb8002"/>
+      <stop offset="0.44" stop-color="#fb923c"/>
+      <stop offset="0.56" stop-color="#60a5fa"/>
       <stop offset="1" stop-color="#60a5fa"/>
     </linearGradient>
-    <!-- headers, pills, badge -->
-    <linearGradient id="hdrBlue" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#60a5fa"/>
-      <stop offset="1" stop-color="#3b82f6"/>
-    </linearGradient>
-    <linearGradient id="hdrOrange" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#fd9a21"/>
-      <stop offset="1" stop-color="#fb8002"/>
-    </linearGradient>
-    <linearGradient id="hdrSlate" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#64748b"/>
-      <stop offset="1" stop-color="#475569"/>
-    </linearGradient>
-    <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#334155"/>
-      <stop offset="1" stop-color="#0f172a"/>
-    </linearGradient>
-    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.18"/>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
     </filter>
-    <filter id="softBig" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.22"/>
+    <filter id="ribbon" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0f172a" flood-opacity="0.22"/>
     </filter>
-    <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/>
+    <mask id="gap" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="530">
+      <rect x="0" y="0" width="1000" height="530" fill="#ffffff"/>
+      <path d="M476,284 L524,236" stroke="#000000" stroke-width="30"/>
+    </mask>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
     <style>
-      /* Light values are presentation attributes on each element (below);
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      /* Light values are presentation attributes on each element;
          this block only overrides them when the viewer prefers dark. */
       @media (prefers-color-scheme: dark) {
         .bg { fill: #0b1220; }
-        .card { fill: #131f36; stroke: #24324d; }
-        .ink { fill: #cbd5e1; }
-        .muted { fill: #93a1b5; }
+        .node { fill: #0b1220; }
+        .logo { fill: #f1f5f9; }
         .title { fill: #f1f5f9; }
         .sub { fill: #94a3b8; }
-        .leader { stroke: #2a3a57; }
-        .lobeL { fill: #93c5fd; }
-        .lobeR { fill: #fdba74; }
+        .divider { stroke: #1e293b; }
+        .card { fill: #111b2e; stroke: #22314d; }
+        .hdrL { fill: #142647; }
+        .hdrR { fill: #33200f; }
+        .hdrS { fill: #1a2436; }
+        .tL, .cmdL, .lobeL, .numL { fill: #93c5fd; }
+        .tR, .cmdR, .lobeR, .numR { fill: #fdba74; }
+        .tS, .cmdS { fill: #e2e8f0; }
+        .ink { fill: #cbd5e1; }
+        .strong { fill: #e2e8f0; }
+        .muted { fill: #8b9ab0; }
+        .leadL { stroke: #1e40af; }
+        .leadR { stroke: #9a3412; }
         .annot { fill: #94a3b8; }
       }
     </style>
   </defs>
 
-  <rect class="bg" fill="#ffffff" x="0" y="0" width="980" height="596"/>
+  <rect class="bg" fill="#ffffff" x="0" y="0" width="1000" height="530"/>
 
-  <!-- RSigma logo (inlined from rsigma-logo.svg) -->
-  <g transform="translate(20,3) scale(0.04) translate(-53.914588,-194.29212)">
+  <!-- ===================== header ===================== -->
+  <g transform="translate(24,12) scale(0.05) translate(-53.914588,-194.29212)">
     <path class="logo" fill="#0f172a" d="M 503.00834 290.95228 C 445.50878 288.48774 364.45808 302.9678 331.62357 350.05579 C 333.9174 314.13999 331.20656 350.44476 334.1099 313.15735 C 216.48704 311.12198 164.41038 381.58482 158.26029 458.54798 C 156.58941 604.12675 159.97446 790.97481 159.56888 936.59485 C 222.0058 936.95135 260.93804 936.76923 349.51224 936.11439 C 351.26051 858.16832 350.8831 771.91189 351.45951 693.89759 C 355.31256 644.45271 341.96547 591.31345 363.93607 544.80775 C 386.28876 494.82 445.33194 469.44183 497.55326 483.65345 C 487.78502 504.44033 473.80005 550.60733 469.13724 585.47767 C 442.69725 717.88365 513.44554 866.43779 639.1392 920.09095 C 759.82234 979.81901 918.91232 940.14175 998.27982 831.52845 C 1076.3878 731.64733 1081.3431 573.55487 991.90287 479.06751 C 1047.3212 483.79057 1071.762 455.17626 1108.4908 408.60462 C 1126.0097 380.68346 1177.3451 311.70494 1131.4204 312.38001 C 1012.56 312.63356 893.68778 312.02866 774.83451 312.94837 C 728.06602 313.87516 701.91549 317.77526 650.0806 337.91517 C 616.41134 316.3851 567.61969 295.63426 526.00053 292.99915 C 518.9568 292.0011 511.22256 291.30435 503.00834 290.95228 z M 771.77006 501.97376 C 779.14412 502.27657 786.57053 503.27915 794.00053 504.99915 C 796.64053 505.55915 799.28053 506.11056 802.00053 506.69056 C 820.01053 511.89056 835.85053 521.84915 850.00053 533.99915 C 851.71053 535.45915 853.41998 536.93056 855.18998 538.44056 C 879.12998 561.13056 891.96053 592.69915 896.00053 624.99915 C 896.12053 629.74915 896.17998 634.49915 896.18998 639.24915 C 896.19998 641.72915 896.21904 644.21064 896.22904 646.77064 C 895.00904 685.04064 877.90053 720.34915 851.00053 746.99915 C 823.72053 770.44915 790.77053 781.29915 755.00053 778.99915 C 719.05053 772.67915 689.08943 755.50915 666.87943 726.24915 C 643.69943 691.77915 634.28967 651.85025 642.11967 610.62025 C 651.16967 570.97024 674.02967 539.5797 708.11967 517.8097 C 727.99467 506.4697 749.64787 501.06532 771.77006 501.97376 z"/>
     <path d="m 801.375,349.77295 h 9.52 c 8.59,0 17.17,0.01 25.75,0.02 8.98,0.02 17.96,0.02 26.94,0.02 17,0.01 33.99,0.02 50.98,0.04 19.35,0.03 38.7,0.04 58.06,0.05 39.79,0.02 77.5203,2.06286 117.3103,2.11286 l 0.047,0.034 0.013,-0.0468 c -0.65,1.98 -1.32,3.96 -2,6 -18.99,35.11 -41.04,71.04 -81,84 -18.46,4.41 -36.27,4.6 -55.2,4.61 -1.62,0 -1.62,0 -9.8,0.05 -8.53,0.04 -17.05,0.06 -25.58,0.08 -8.73,0.01 -17.46,0.06 -26.19,0.1 -17.07,0.07 -34.15,0.12 -51.23,0.16 4.48,1.76 8.96,3.52 13.44,5.29 2.49,0.98 4.99,1.96 7.55,2.97 5.34,2.09 10.71,4.11 16.08,6.11 6.12,2.32 11.98,4.91 17.93,7.63 3.79,1.6 7.58,3.18 11.38,4.75 2.09,0.87 4.19,1.74 6.34,2.64 3.96,1.64 7.92,3.28 11.88,4.9 40.27,16.81 62.8,42.59 81.4,81.71 v 2 c -6.48,2.88 -12.94,5.63 -19.52,8.26 -2.01,0.81 -4.02,1.62 -6.09,2.45 -4.18,1.68 -8.36,3.35 -12.54,5.03 -35.32,14.21 -35.32,14.21 -36.85,17.26 1.53,0.1 3.05,0.21 4.62,0.32 7,0.74 13.69,2.08 20.57,3.55 10.25,2.17 20.51,4.22 30.81,6.13 22.94,4.48 22.94,4.48 33,7 0.84,6.67 1.11,12.8 1.07,19.5 -0.01,1.97 -0.02,3.94 -0.03,5.97 -0.01,0.74 -0.01,0.74 -0.04,4.53 -1.76,0.81 -3.53,1.62 -5.35,2.45 -41.29,19.06 -41.29,19.06 -58.47,30.2 -6.35,4.11 -12.79,8.07 -19.24,12.03 -2.22,1.37 -4.43,2.73 -6.72,4.14 -5.21,3.18 -5.21,3.18 -7.22,4.18 0.9,-8.04 2.39,-15.55 4.07,-23.44 6.09,-32.03 3.72,-62.67 -6.07,-93.56 -0.66,-2.17 -1.31,-4.33 -2,-6.57 -15.04,-40.91 -45.03,-74.88 -84.18,-94.06 -39.03,-18.01 -82.3,-19.94 -122.82,-5.37 -19.1,8.05 -35.4,18.27 -51,32 -1.89,1.65 -3.79,3.3 -5.74,5 -21.2,20.18 -37.32,47.53 -44.26,76 l -3,9 c -9.59,49.8 -2.47,99.02 23,143 2.55,3.75 5.2,7.44 8,11 1.37,1.75 2.73,3.5 4.13,5.31 30.06,35.06 68.6,53.03 113.87,58.69 47.69,0.99 89.76,-15.37 124.57,-48.19 16.71,-17.68 28.52,-38.2 37.43,-60.81 73.66,-5.17 73.66,-5.17 96,-5 -12.42,61.82 -49.02,117.96 -100,155 -0.87,0.67 -0.87,0.67 -5.31,4.06 -54.72,37.88 -118.74,53.36 -184.63,43.26 -73.78,-13.86 -133.32,-56.08 -175.62,-117.39 -16.88,-26.57 -28.4,-54.64 -36.44,-84.93 -0.72,-2.66 -1.44,-5.32 -2.18,-8.07 -7.69,-37.91 -6.8,-77.16 1.18,-114.93 0.34,-0.33 0.66,-0.66 1,-1 0.26,-1.69 0.51,-3.38 0.76,-5.12 1.39,-7.67 3.62,-14.69 6.12,-22.07 0.86,-2.57 1.73,-5.14 2.62,-7.79 9.56,-26.76 23.51,-52.29 40.5,-75.02 1.63,-2.19 3.26,-4.38 4.94,-6.63 5.09,-6.41 10.48,-12.39 16.06,-18.37 l 5,-6 h 2 c 0.34,-0.66 0.34,-0.66 2,-4 3.27,-3.08 6.62,-6.06 10,-9 1.08,-0.95 1.08,-0.95 6.5,-5.75 41.2,-34.34 91.26,-57.91 144.5,-65.25 2.18,-0.35 4.36,-0.71 6.61,-1.07 13.6,-1.35 27.12,-1.19 40.77,-1.16 z" fill="#fb8002"/>
     <path d="m 612,368 c -18.34356,14.91069 -34.48087,27.76384 -49.81454,43.87043 -15.71918,9.91078 -24.06658,35.75092 -41.90421,37.02832 C 467.57122,428.45501 403.24638,439.4414 362.39281,479.21766 325.9182,511.55586 307.73145,561.34283 310.68,609.6 c -0.2187,27.80007 -0.4615,55.59993 -0.68,83.4 -38.00555,-27.90503 -72.96708,-59.80633 -110,-89 -7.44222,-14.92914 -1.28169,-34.16253 -3.11813,-50.77906 -1.20891,-11.50375 -1.04162,-21.41743 12.84237,-15.39026 C 244.24988,541.34594 278.39956,548.72146 313,551 274.02181,526.33991 235.84515,500.29712 198,474 196.00963,428.34084 229.8369,385.80586 272.77998,372.51877 282.13736,368.78218 291.98895,367.32347 302,368 c 0.0191,25.08479 -0.0381,51.49349 0.0285,75.75356 23.47545,-36.57652 52.93279,-71.51576 93.24665,-90.0914 63.42927,-30.96295 141.0793,-25.81407 203.0677,6.14335 4.67321,2.52288 9.23786,5.24877 13.65715,8.19449 z" fill="#fc8a07"/>
@@ -86,158 +86,180 @@
     <path d="m 263,798 c 15.68,0 31.35,1.02 47,2 0,31.35 0,62.7 0,95 -8.74,-8.74 -13.65,-25.62 -18.94,-36.81 C 283.22,841.61 275.23,825.1 267.15,808.64 264,802 264,802 263,798 Z" fill="#f17f07"/>
     <path d="m 927,597 2,1 v 6 l 5,1 c 2.98,3.95 2.98,3.95 6.19,9.12 1.14,1.83 2.29,3.65 3.47,5.53 1.1,1.76 2.2,3.53 3.34,5.35 0.86,1.28 0.86,1.28 5.19,7.75 7.23,10.9 14.71415,23.03849 21.39415,34.28849 C 967.88642,670.39962 964.98,672.55 959.94,675.5 c -8.71,5.15 -17.28,10.46 -25.8,15.91 -3.66,2.29 -7.39,4.45 -11.14,6.59 0.89,-8.03 2.38,-15.54 4.06,-23.44 4.4,-23.12 4.29,-46.3 0.94,-69.56 z" fill="#fb9115"/>
   </g>
+  <text class="title" fill="#0f172a" x="92" y="33" font-size="20" font-weight="bold">RSigma</text>
+  <text class="sub" fill="#64748b" x="92" y="51" font-size="12.5">Detection engineering loop</text>
+  <path class="divider" d="M26,66 H974" stroke="#eef2f7" stroke-width="1"/>
 
-  <!-- title -->
-  <text class="title" fill="#0f172a" x="74" y="28" font-size="17" font-weight="bold">RSigma</text>
-  <text class="sub" fill="#64748b" x="140" y="28" font-size="13">detection engineering loop</text>
-
-  <!-- ===================== leader lines (under everything) ===================== -->
+  <!-- ===================== leader lines ===================== -->
   <g fill="none" stroke-width="1.5">
-    <path class="leader" stroke="#e2e8f0" d="M250,108 L400,108 L400,206"/>
-    <path class="leader" stroke="#e2e8f0" d="M250,236 L268,236 L268,310 L272,310"/>
-    <path class="leader" stroke="#e2e8f0" d="M250,364 L290,364 L290,450 L400,450 L400,414"/>
-    <path class="leader" stroke="#e2e8f0" d="M730,108 L580,108 L580,206"/>
-    <path class="leader" stroke="#e2e8f0" d="M730,236 L722,236 L722,310 L714,310"/>
-    <path class="leader" stroke="#e2e8f0" d="M730,364 L690,364 L690,450 L580,450 L580,414"/>
+    <path class="leadL" stroke="#bfdbfe" d="M264,136 H372 Q380,136 380,144 V160"/>
+    <path class="leadL" stroke="#bfdbfe" d="M264,260 H280"/>
+    <path class="leadL" stroke="#bfdbfe" d="M264,384 H372 Q380,384 380,376 V360"/>
+    <path class="leadR" stroke="#fed7aa" d="M736,136 H628 Q620,136 620,144 V160"/>
+    <path class="leadR" stroke="#fed7aa" d="M736,260 H720"/>
+    <path class="leadR" stroke="#fed7aa" d="M736,384 H628 Q620,384 620,376 V360"/>
+  </g>
+  <g>
+    <circle cx="264" cy="136" r="3" fill="#60a5fa"/>
+    <circle cx="264" cy="260" r="3" fill="#60a5fa"/>
+    <circle cx="264" cy="384" r="3" fill="#60a5fa"/>
+    <circle cx="736" cy="136" r="3" fill="#fb923c"/>
+    <circle cx="736" cy="260" r="3" fill="#fb923c"/>
+    <circle cx="736" cy="384" r="3" fill="#fb923c"/>
   </g>
 
-  <!-- loop <-> Hunt (bidirectional convert / reverse) -->
-  <path d="M484,386 L484,470" fill="none" stroke="#94a3b8" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
-  <path d="M496,470 L496,386" fill="none" stroke="#94a3b8" stroke-dasharray="4 4" marker-end="url(#arrowg)"/>
-  <text class="annot" fill="#64748b" x="478" y="431" font-size="11" text-anchor="end">convert</text>
-  <text class="annot" fill="#64748b" x="502" y="431" font-size="11" text-anchor="start">reverse</text>
+  <!-- loop <-> Hunt -->
+  <path d="M490,308 V394" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+  <path d="M510,396 V310" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+  <text class="annot" fill="#64748b" x="482" y="358" font-size="10.5" text-anchor="end">convert</text>
+  <text class="annot" fill="#64748b" x="518" y="358" font-size="10.5">reverse</text>
 
-  <!-- ===================== lemniscate ribbon ===================== -->
-  <!-- One continuous figure-8: Author > Test > Deploy crosses the center up to
-       Detect > Alert > Measure, which crosses back up to Author. -->
-  <g filter="url(#softBig)" stroke-linecap="round" fill="none">
-    <!-- left lobe: 270-degree arc, counterclockwise (Author > Test > Deploy) -->
-    <path d="M463.6,246.4 A90,90 0 1 0 463.6,373.6" stroke="url(#gradL)" stroke-width="22"/>
-    <!-- handoff A: Deploy side up through the center to Detect -->
-    <path d="M463.6,373.6 C488.3,348.9 491.7,271.1 516.4,246.4" stroke="url(#gradA)" stroke-width="22"/>
-    <!-- right lobe: 270-degree arc, clockwise (Detect > Alert > Measure) -->
-    <path d="M516.4,246.4 A90,90 0 1 1 516.4,373.6" stroke="url(#gradR)" stroke-width="22"/>
-    <!-- handoff B: Measure side up through the center back to Author -->
-    <path d="M516.4,373.6 C491.7,348.9 488.3,271.1 463.6,246.4" stroke="url(#gradB)" stroke-width="22"/>
+  <!-- ===================== infinity ribbon ===================== -->
+  <!-- Author > Test > Deploy runs counterclockwise on the left lobe, crosses up to
+       Detect > Alert > Measure clockwise on the right lobe, then crosses back up to Author. -->
+  <g filter="url(#ribbon)" fill="none" stroke-width="20">
+    <path d="M440,200 A84.853,84.853 0 1 0 440,320" stroke="url(#gradL)"/>
+    <path d="M560,200 A84.853,84.853 0 1 1 560,320" stroke="url(#gradR)"/>
+    <path d="M561.5,321.5 L438.5,198.5" stroke="url(#gradB)" mask="url(#gap)"/>
+    <path d="M438.5,321.5 L561.5,198.5" stroke="url(#gradA)"/>
   </g>
 
-  <!-- flow chevrons (white, ride on the ribbon) -->
-  <g fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(336.4,246.4) rotate(135)"/>
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(336.4,373.6) rotate(45)"/>
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(643.6,246.4) rotate(45)"/>
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(643.6,373.6) rotate(135)"/>
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(480.5,341.8) rotate(-70)"/>
-    <path d="M-3,-6 L4,0 L-3,6" transform="translate(499.5,341.8) rotate(-110)"/>
+  <!-- flow chevrons -->
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(320,200) rotate(135)"/>
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(320,320) rotate(45)"/>
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(680,200) rotate(45)"/>
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(680,320) rotate(135)"/>
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(461.6,298.4) rotate(-45)"/>
+    <path d="M-3,-5.5 L3.5,0 L-3,5.5" transform="translate(538.4,298.4) rotate(-135)"/>
+  </g>
+
+  <!-- stage nodes -->
+  <g filter="url(#soft)" stroke-width="2.5">
+    <circle class="node" cx="380" cy="175.15" r="14" fill="#ffffff" stroke="#3b82f6"/>
+    <circle class="node" cx="295.15" cy="260" r="14" fill="#ffffff" stroke="#3b82f6"/>
+    <circle class="node" cx="380" cy="344.85" r="14" fill="#ffffff" stroke="#2563eb"/>
+    <circle class="node" cx="620" cy="175.15" r="14" fill="#ffffff" stroke="#fb923c"/>
+    <circle class="node" cx="704.85" cy="260" r="14" fill="#ffffff" stroke="#f97316"/>
+    <circle class="node" cx="620" cy="344.85" r="14" fill="#ffffff" stroke="#ea580c"/>
+  </g>
+  <g font-size="12" font-weight="bold" text-anchor="middle">
+    <text class="numL" fill="#1d4ed8" x="380" y="179.4">1</text>
+    <text class="numL" fill="#1d4ed8" x="295.15" y="264.2">2</text>
+    <text class="numL" fill="#1d4ed8" x="380" y="349.1">3</text>
+    <text class="numR" fill="#c2410c" x="620" y="179.4">4</text>
+    <text class="numR" fill="#c2410c" x="704.85" y="264.2">5</text>
+    <text class="numR" fill="#c2410c" x="620" y="349.1">6</text>
   </g>
 
   <!-- lobe labels -->
-  <text class="lobeL" fill="#1e3a8a" x="400" y="306" font-size="19" font-weight="bold" text-anchor="middle">Engineer</text>
-  <text class="sub" fill="#64748b" x="400" y="324" font-size="10.5" text-anchor="middle">detection-as-code</text>
-  <text class="lobeR" fill="#9a3412" x="580" y="306" font-size="19" font-weight="bold" text-anchor="middle">Operate</text>
-  <text class="sub" fill="#64748b" x="580" y="324" font-size="10.5" text-anchor="middle">security operations</text>
+  <text class="lobeL" fill="#1e3a8a" x="380" y="257" font-size="18" font-weight="bold" text-anchor="middle">Engineer</text>
+  <text class="sub" fill="#64748b" x="380" y="275" font-size="10.5" text-anchor="middle">detection-as-code</text>
+  <text class="lobeR" fill="#9a3412" x="620" y="257" font-size="18" font-weight="bold" text-anchor="middle">Operate</text>
+  <text class="sub" fill="#64748b" x="620" y="275" font-size="10.5" text-anchor="middle">security operations</text>
 
-  <!-- center badge over the crossing -->
-  <rect x="452" y="296" width="76" height="28" rx="14" fill="url(#badge)" stroke="#64748b" stroke-width="1" filter="url(#soft)"/>
-  <text x="490" y="315" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#ffffff">RSigma</text>
-
-  <!-- ===================== stage pills ===================== -->
-  <g filter="url(#soft)">
-    <rect x="352" y="208" width="96" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="272" y="298" width="76" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="354" y="388" width="92" height="24" rx="12" fill="url(#hdrBlue)"/>
-    <rect x="532" y="208" width="96" height="24" rx="12" fill="url(#hdrOrange)"/>
-    <rect x="628" y="292" width="86" height="36" rx="12" fill="url(#hdrOrange)"/>
-    <rect x="532" y="388" width="96" height="24" rx="12" fill="url(#hdrOrange)"/>
+  <!-- ===================== cards ===================== -->
+  <g filter="url(#soft)" stroke-width="1">
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="82" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="206" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="26" y="330" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="82" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="206" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="736" y="330" width="238" height="108" rx="10"/>
+    <rect class="card" fill="#ffffff" stroke="#e5e7eb" x="392" y="402" width="216" height="108" rx="10"/>
   </g>
-  <!-- pill step-number badges -->
   <g>
-    <circle cx="367" cy="220" r="7.5" fill="#ffffff" opacity="0.95"/>
-    <circle cx="287" cy="310" r="7.5" fill="#ffffff" opacity="0.95"/>
-    <circle cx="369" cy="400" r="7.5" fill="#ffffff" opacity="0.95"/>
-    <circle cx="547" cy="220" r="7.5" fill="#ffffff" opacity="0.95"/>
-    <circle cx="643" cy="310" r="7.5" fill="#ffffff" opacity="0.95"/>
-    <circle cx="547" cy="400" r="7.5" fill="#ffffff" opacity="0.95"/>
-  </g>
-  <g font-size="10" font-weight="bold" text-anchor="middle">
-    <text x="367" y="223.6" fill="#1e3a8a">1</text>
-    <text x="287" y="313.6" fill="#1e3a8a">2</text>
-    <text x="369" y="403.6" fill="#1e3a8a">3</text>
-    <text x="547" y="223.6" fill="#9a3412">4</text>
-    <text x="643" y="313.6" fill="#9a3412">5</text>
-    <text x="547" y="403.6" fill="#9a3412">6</text>
-  </g>
-  <g font-size="12" font-weight="bold" text-anchor="middle" fill="#ffffff">
-    <text x="411" y="224">Author</text>
-    <text x="323" y="314">Test</text>
-    <text x="411" y="404">Deploy</text>
-    <text x="591" y="224">Detect</text>
-    <text x="683" y="307">Alert &#38;</text>
-    <text x="683" y="321">Triage</text>
-    <text x="591" y="404">Measure</text>
+    <path class="hdrL" fill="#eff6ff" d="M26.5,92 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrL" fill="#eff6ff" d="M26.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrL" fill="#eff6ff" d="M26.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,92 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,216 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrR" fill="#fff7ed" d="M736.5,340 a9.5,9.5 0 0 1 9.5,-9.5 h218 a9.5,9.5 0 0 1 9.5,9.5 v20 h-237 Z"/>
+    <path class="hdrS" fill="#f1f5f9" d="M392.5,412 a9.5,9.5 0 0 1 9.5,-9.5 h196 a9.5,9.5 0 0 1 9.5,9.5 v20 h-215 Z"/>
   </g>
 
-  <!-- ===================== left callouts (engineering, blue) ===================== -->
-  <g filter="url(#soft)">
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="56" width="210" height="104" rx="8"/>
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="184" width="210" height="104" rx="8"/>
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="40" y="312" width="210" height="104" rx="8"/>
+  <!-- card header badges -->
+  <g>
+    <circle cx="46" cy="97" r="9.5" fill="#3b82f6"/>
+    <circle cx="46" cy="221" r="9.5" fill="#3b82f6"/>
+    <circle cx="46" cy="345" r="9.5" fill="#2563eb"/>
+    <circle cx="756" cy="97" r="9.5" fill="#fb923c"/>
+    <circle cx="756" cy="221" r="9.5" fill="#f97316"/>
+    <circle cx="756" cy="345" r="9.5" fill="#ea580c"/>
+    <circle cx="412" cy="417" r="9.5" fill="#475569"/>
   </g>
-  <path d="M40,64 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
-  <path d="M40,192 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
-  <path d="M40,320 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrBlue)"/>
-  <text x="145" y="74" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Author</text>
-  <text class="ink" fill="#374151" x="52" y="102" font-size="10.5">&#8226; rule draft: rules from exemplar logs</text>
-  <text class="ink" fill="#374151" x="52" y="118" font-size="10.5">&#8226; rule tune: FP / TP &#8594; verified filter</text>
-  <text class="ink" fill="#374151" x="52" y="134" font-size="10.5">&#8226; rule reverse: Lucene query &#8594; Sigma</text>
-  <text class="muted" fill="#6b7280" x="52" y="150" font-size="10.5">&#8226; lint &#183; doc &#183; LSP &#183; MCP for AI agents</text>
-
-  <text x="145" y="202" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Test</text>
-  <text class="ink" fill="#374151" x="52" y="230" font-size="10.5">&#8226; engine explain: why (no) match</text>
-  <text class="ink" fill="#374151" x="52" y="246" font-size="10.5">&#8226; rule backtest: corpus regression</text>
-  <text class="ink" fill="#374151" x="52" y="262" font-size="10.5">&#8226; pipeline diff: transform preview</text>
-  <text class="muted" fill="#6b7280" x="52" y="278" font-size="10.5">&#8226; engine eval: one-shot evaluation</text>
-
-  <text x="145" y="330" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Deploy</text>
-  <text class="ink" fill="#374151" x="52" y="358" font-size="10.5">&#8226; rsigma-action: PR gate in CI</text>
-  <text class="ink" fill="#374151" x="52" y="374" font-size="10.5">&#8226; rsigma config: layered defaults</text>
-  <text class="ink" fill="#374151" x="52" y="390" font-size="10.5">&#8226; hot-reload: rules + pipelines</text>
-  <text class="muted" fill="#6b7280" x="52" y="406" font-size="10.5">&#8226; Docker &#183; signed release binaries</text>
-
-  <!-- ===================== right callouts (operations, orange) ===================== -->
-  <g filter="url(#soft)">
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="56" width="210" height="104" rx="8"/>
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="184" width="210" height="104" rx="8"/>
-    <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="730" y="312" width="210" height="104" rx="8"/>
+  <g font-size="11" font-weight="bold" text-anchor="middle" fill="#ffffff">
+    <text x="46" y="101">1</text>
+    <text x="46" y="225">2</text>
+    <text x="46" y="349">3</text>
+    <text x="756" y="101">4</text>
+    <text x="756" y="225">5</text>
+    <text x="756" y="349">6</text>
   </g>
-  <path d="M730,64 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
-  <path d="M730,192 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
-  <path d="M730,320 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 Z" fill="url(#hdrOrange)"/>
-  <text x="835" y="74" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Detect</text>
-  <text class="ink" fill="#374151" x="742" y="102" font-size="10.5">&#8226; engine daemon: streaming &#183; RBAC API</text>
-  <text class="ink" fill="#374151" x="742" y="118" font-size="10.5">&#8226; correlation: windows &#183; chains</text>
-  <text class="ink" fill="#374151" x="742" y="134" font-size="10.5">&#8226; JSON &#183; syslog &#183; CEF &#183; EVTX &#183; OTLP</text>
-  <text class="muted" fill="#6b7280" x="742" y="150" font-size="10.5">&#8226; schema routing &#183; discovery &#183; cloud</text>
+  <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round">
+    <circle cx="410.8" cy="415.8" r="3.6"/>
+    <path d="M413.4,418.4 L416.2,421.2"/>
+  </g>
+  <g font-size="13" font-weight="bold">
+    <text class="tL" fill="#1e3a8a" x="62" y="101.5">Author</text>
+    <text class="tL" fill="#1e3a8a" x="62" y="225.5">Test</text>
+    <text class="tL" fill="#1e3a8a" x="62" y="349.5">Deploy</text>
+    <text class="tR" fill="#9a3412" x="772" y="101.5">Detect</text>
+    <text class="tR" fill="#9a3412" x="772" y="225.5">Alert &amp; Triage</text>
+    <text class="tR" fill="#9a3412" x="772" y="349.5">Measure</text>
+    <text class="tS" fill="#334155" x="428" y="421.5">Hunt</text>
+  </g>
 
-  <text x="835" y="202" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Alert &#38; Triage</text>
-  <text class="ink" fill="#374151" x="742" y="230" font-size="10.5">&#8226; enrichment: GeoIP &#183; intel &#183; asset</text>
-  <text class="ink" fill="#374151" x="742" y="246" font-size="10.5">&#8226; risk-based alerting: entity score</text>
-  <text class="ink" fill="#374151" x="742" y="262" font-size="10.5">&#8226; dedup &#183; silence &#183; inhibit &#183; group</text>
-  <text class="muted" fill="#6b7280" x="742" y="278" font-size="10.5">&#8226; webhooks: Slack &#183; PagerDuty &#183; ...</text>
+  <!-- bullets -->
+  <g fill="#93c5fd">
+    <circle cx="40" cy="127.3" r="2"/><circle cx="40" cy="142.3" r="2"/><circle cx="40" cy="157.3" r="2"/><circle cx="40" cy="172.3" r="2"/>
+    <circle cx="40" cy="251.3" r="2"/><circle cx="40" cy="266.3" r="2"/><circle cx="40" cy="281.3" r="2"/><circle cx="40" cy="296.3" r="2"/>
+    <circle cx="40" cy="375.3" r="2"/><circle cx="40" cy="390.3" r="2"/><circle cx="40" cy="405.3" r="2"/><circle cx="40" cy="420.3" r="2"/>
+  </g>
+  <g fill="#fdba74">
+    <circle cx="750" cy="127.3" r="2"/><circle cx="750" cy="142.3" r="2"/><circle cx="750" cy="157.3" r="2"/><circle cx="750" cy="172.3" r="2"/>
+    <circle cx="750" cy="251.3" r="2"/><circle cx="750" cy="266.3" r="2"/><circle cx="750" cy="281.3" r="2"/><circle cx="750" cy="296.3" r="2"/>
+    <circle cx="750" cy="375.3" r="2"/><circle cx="750" cy="390.3" r="2"/><circle cx="750" cy="405.3" r="2"/><circle cx="750" cy="420.3" r="2"/>
+  </g>
+  <g fill="#cbd5e1">
+    <circle cx="406" cy="447.3" r="2"/><circle cx="406" cy="462.3" r="2"/><circle cx="406" cy="477.3" r="2"/><circle cx="406" cy="492.3" r="2"/>
+  </g>
 
-  <text x="835" y="330" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Measure</text>
-  <text class="ink" fill="#374151" x="742" y="358" font-size="10.5">&#8226; rule coverage: ATT&#38;CK Navigator</text>
-  <text class="ink" fill="#374151" x="742" y="374" font-size="10.5">&#8226; rule visibility: DeTT&#38;CT export</text>
-  <text class="ink" fill="#374151" x="742" y="390" font-size="10.5">&#8226; field observability: gap signals</text>
-  <text class="muted" fill="#6b7280" x="742" y="406" font-size="10.5">&#8226; scorecard &#183; FP ratio &#183; dispositions</text>
+  <!-- card bodies: monospace spans are CLI commands, bold spans are features -->
+  <g font-size="10.5">
+    <text class="ink" fill="#374151" x="48" y="131"><tspan class="mono cmdL" fill="#1d4ed8">rule draft</tspan> rules from exemplar logs</text>
+    <text class="ink" fill="#374151" x="48" y="146"><tspan class="mono cmdL" fill="#1d4ed8">rule tune</tspan> FP/TP &#8594; verified filter</text>
+    <text class="ink" fill="#374151" x="48" y="161"><tspan class="mono cmdL" fill="#1d4ed8">rule reverse</tspan> Lucene query &#8594; Sigma</text>
+    <text class="muted" fill="#6b7280" x="48" y="176">lint &#183; doc &#183; LSP &#183; MCP for AI agents</text>
 
-  <!-- ===================== Hunt (bottom center) ===================== -->
-  <rect class="card" fill="#ffffff" stroke="#eef2f7" stroke-width="1" x="380" y="474" width="220" height="100" rx="8" filter="url(#soft)"/>
-  <path d="M380,482 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v18 h-220 Z" fill="url(#hdrSlate)"/>
-  <text x="490" y="492" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#ffffff">Hunt</text>
-  <text class="ink" fill="#374151" x="392" y="520" font-size="10.5">&#8226; backend convert: PostgreSQL SQL</text>
-  <text class="ink" fill="#374151" x="392" y="536" font-size="10.5">&#8226; sigma-cli delegation: Splunk &#183; 30+</text>
-  <text class="ink" fill="#374151" x="392" y="552" font-size="10.5">&#8226; rule fields: mapping catalog</text>
-  <text class="muted" fill="#6b7280" x="392" y="568" font-size="10.5">findings feed new rules</text>
+    <text class="ink" fill="#374151" x="48" y="255"><tspan class="mono cmdL" fill="#1d4ed8">engine explain</tspan> why (no) match</text>
+    <text class="ink" fill="#374151" x="48" y="270"><tspan class="mono cmdL" fill="#1d4ed8">rule backtest</tspan> corpus regression</text>
+    <text class="ink" fill="#374151" x="48" y="285"><tspan class="mono cmdL" fill="#1d4ed8">pipeline diff</tspan> transform preview</text>
+    <text class="muted" fill="#6b7280" x="48" y="300"><tspan class="mono">engine eval</tspan> one-shot evaluation</text>
 
+    <text class="ink" fill="#374151" x="48" y="379"><tspan class="mono cmdL" fill="#1d4ed8">rsigma-action</tspan> PR gate in CI</text>
+    <text class="ink" fill="#374151" x="48" y="394"><tspan class="mono cmdL" fill="#1d4ed8">rsigma config</tspan> layered defaults</text>
+    <text class="ink" fill="#374151" x="48" y="409"><tspan class="strong" fill="#111827" font-weight="bold">hot reload</tspan> rules + pipelines</text>
+    <text class="muted" fill="#6b7280" x="48" y="424">Docker &#183; signed release binaries</text>
+
+    <text class="ink" fill="#374151" x="758" y="131"><tspan class="mono cmdR" fill="#c2410c">engine daemon</tspan> streaming &#183; RBAC API</text>
+    <text class="ink" fill="#374151" x="758" y="146"><tspan class="strong" fill="#111827" font-weight="bold">correlation</tspan> windows &#183; chains</text>
+    <text class="ink" fill="#374151" x="758" y="161">JSON &#183; syslog &#183; CEF &#183; EVTX &#183; OTLP</text>
+    <text class="muted" fill="#6b7280" x="758" y="176">schema routing &#183; discovery &#183; cloud</text>
+
+    <text class="ink" fill="#374151" x="758" y="255"><tspan class="strong" fill="#111827" font-weight="bold">enrichment</tspan> GeoIP &#183; intel &#183; asset</text>
+    <text class="ink" fill="#374151" x="758" y="270"><tspan class="strong" fill="#111827" font-weight="bold">risk-based alerting</tspan> entity score</text>
+    <text class="ink" fill="#374151" x="758" y="285">dedup &#183; silence &#183; inhibit &#183; group</text>
+    <text class="muted" fill="#6b7280" x="758" y="300">webhooks: Slack &#183; PagerDuty &#183; ...</text>
+
+    <text class="ink" fill="#374151" x="758" y="379"><tspan class="mono cmdR" fill="#c2410c">rule coverage</tspan> ATT&amp;CK Navigator</text>
+    <text class="ink" fill="#374151" x="758" y="394"><tspan class="mono cmdR" fill="#c2410c">rule visibility</tspan> DeTT&amp;CT export</text>
+    <text class="ink" fill="#374151" x="758" y="409"><tspan class="strong" fill="#111827" font-weight="bold">field observability</tspan> gap signals</text>
+    <text class="muted" fill="#6b7280" x="758" y="424">scorecard &#183; FP ratio &#183; dispositions</text>
+
+    <text class="ink" fill="#374151" x="414" y="451"><tspan class="mono cmdS" fill="#334155">backend convert</tspan> PostgreSQL SQL</text>
+    <text class="ink" fill="#374151" x="414" y="466"><tspan class="mono cmdS" fill="#334155">sigma-cli</tspan> Splunk &#183; 30+ backends</text>
+    <text class="ink" fill="#374151" x="414" y="481"><tspan class="mono cmdS" fill="#334155">rule fields</tspan> mapping catalog</text>
+    <text class="muted" fill="#6b7280" x="414" y="496" font-style="italic">findings feed new rules</text>
+  </g>
 </svg>
