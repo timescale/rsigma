@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Grype scans keep GitHub code scanning current (#538)
+
+The Docker workflow now scans both architectures of the published image weekly and uploads the results against the default branch. Scheduled scans reuse the existing Grype configuration without rebuilding or republishing the image.
+
 ### Filter selectors and rule references follow Sigma semantics (#537)
 
 Filter condition selectors now remain scoped to the filter's own detection items after those items are namespaced and injected into a target rule. Patterns such as `not 1 of selection_*` and `all of them` no longer resolve against similarly named detection items from the target rule. `filter.rules` now resolves rule `name` values as well as `id`. Exact title matching remains available for compatibility and emits the new `filter_reference_by_title` lint warning so rulesets can migrate to stable identities.
