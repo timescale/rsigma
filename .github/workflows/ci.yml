@@ -74,7 +74,7 @@ jobs:
       # a transitive `wasm-bindgen` import would fail instantiation here, and a
       # semantic regression would trap the module.
       - name: Install Wasmtime
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: wasmtime
       - name: Instantiate the WASM module in a host-neutral runtime
@@ -242,7 +242,7 @@ jobs:
       - uses: $/.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
