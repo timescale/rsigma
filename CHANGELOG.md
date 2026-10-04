@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Dependency batch (Oct 2026)
+### Dependency batch (Oct 2026) (#544)
 
 Rolls up the compatible open Dependabot PRs into a single merge, with `Cargo.lock` regenerated against current `main`. Rust: the patch group (#526) updates `pest`/`pest_derive` 2.9.1 to 2.9.2, `thiserror` 2.0.20 to 2.0.21, `rand` 0.10.2 to 0.10.3, `evtx` 0.12.2 to 0.12.3, `clap` 4.6.6 to 4.6.7, `hyper-util` 0.1.20 to 0.1.21, and `encoding_rs` 0.8.41 to 0.8.42; `tokio-postgres-rustls` moves from 0.13.0 to 0.14.0 (#527). CI (all repinned by commit SHA, #525): `taiki-e/install-action` v2.87.19 to v2.87.20 and `github/codeql-action/upload-sarif` v4.38.1 to v4.38.2. The VS Code extension updates `vscode-languageclient` 10.1.1 to 10.1.2 (#529). Held back: `yamlpath` 1.30.1 (#495) and `yamlpatch` 1.30.1 (#494) require rustc 1.97 through `tree-sitter-iter`, above the 1.95.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
 
