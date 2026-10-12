@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### pySigma 2.0.1 as the `test` backend reference
+
+The engine test that compares the `test` backend with pySigma's `TextQueryTestBackend` now runs against pySigma 2.0.1 instead of 1.5.1. All 69 shared cases convert the same way under both releases, so no case or known difference changes. pySigma 2.0 adds `google-re2` and `jq` to the pinned, hash-checked requirements of the test image.
+
 ### Docs site `sharp` security update (#563)
 
 The docs site plugin that renders the favicon and touch icons now requires `sharp` 0.35.5, which bundles `libvips` 1.3.4 with the patched `librsvg` for CVE-2026-96889 ([GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)). The change only affects building the docs. No published crate, binary, or image depends on `sharp`.

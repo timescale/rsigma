@@ -15,7 +15,7 @@ use engines::Problem;
 use rsigma_convert::backends::test::TextQueryTestBackend;
 use serde_json::{Value, json};
 
-const IMAGE: &str = "rsigma-engine-pysigma:1.5.1";
+const IMAGE: &str = "rsigma-engine-pysigma:2.0.1";
 
 #[test]
 #[ignore = "engine test: needs Docker; run by the test backend engine workflow"]
