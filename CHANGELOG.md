@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### pySigma 2.0.1 as the `test` backend reference
+### pySigma 2.0.1 as the `test` backend reference (#564)
 
 The engine test that compares the `test` backend with pySigma's `TextQueryTestBackend` now runs against pySigma 2.0.1 instead of 1.5.1. All 69 shared cases convert the same way under both releases, so no case or known difference changes. pySigma 2.0 adds `google-re2` and `jq` to the pinned, hash-checked requirements of the test image.
 
