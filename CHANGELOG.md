@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs site `sharp` security update
+### Docs site `sharp` security update (#563)
 
 The docs site plugin that renders the favicon and touch icons now requires `sharp` 0.35.5, which bundles `libvips` 1.3.4 with the patched `librsvg` for CVE-2026-96889 ([GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)). The change only affects building the docs. No published crate, binary, or image depends on `sharp`.
 
