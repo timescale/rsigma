@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs site `sharp` security update
+
+The docs site plugin that renders the favicon and touch icons now requires `sharp` 0.35.5, which bundles `libvips` 1.3.4 with the patched `librsvg` for CVE-2026-96889 ([GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)). The change only affects building the docs. No published crate, binary, or image depends on `sharp`.
+
 ### `0 of` selectors are rejected (#562)
 
 A condition such as `0 of selection_*` parsed, compiled, and matched every event, because at least zero of anything is always true. The parser now rejects it with a located condition error that suggests `not 1 of`, which is what such a condition almost always means. No rule in the SigmaHQ corpus uses it. A condition error raised inside a selector or a parenthesized group also no longer repeats `Condition parse error at L:C:` once per nesting level, and `rule condition` no longer prints that prefix twice.
