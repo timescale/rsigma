@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Dependency follow-up
+
+Rolls up the compatible Dependabot PRs that opened after #550, with `Cargo.lock` regenerated against current `main`. Rust: `rmcp` 3.3.0 to 3.5.0 (#555), which renames the deprecated `ServerInfo` alias to `ServerConfig` in the MCP server handler, and `tokio-rustls` 0.26.5 to 0.26.6 (#554). CI: `taiki-e/install-action` v2.87.21 to v2.87.22, repinned by commit SHA (#553). VS Code: `@types/vscode` 1.138.0 to 1.140.0 (#552). Held back: `yamlpath` 1.30.1 (#495) and `yamlpatch` 1.30.1 (#494) require rustc 1.97 through `tree-sitter-iter`, above the 1.96.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
+
 ## [0.24.0] - 2026-10-05
 
 **TL;DR**

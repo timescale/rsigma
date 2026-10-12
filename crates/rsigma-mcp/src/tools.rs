@@ -23,7 +23,7 @@ use rmcp::{
     model::{
         Implementation, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
         ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-        ServerInfo,
+        ServerConfig,
     },
     service::RequestContext,
     tool_handler,
@@ -245,10 +245,10 @@ impl Default for RsigmaMcp {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for RsigmaMcp {
-    fn get_info(&self) -> ServerInfo {
-        // `ServerInfo` and `Implementation` are `#[non_exhaustive]`, so build
+    fn get_info(&self) -> ServerConfig {
+        // `ServerConfig` and `Implementation` are `#[non_exhaustive]`, so build
         // from `default()` and override the fields we care about.
-        let mut info = ServerInfo::default();
+        let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder()
             .enable_tools()
             .enable_resources()
