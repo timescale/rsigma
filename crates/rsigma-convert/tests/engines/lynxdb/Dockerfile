@@ -14,7 +14,7 @@ ADD --checksum=sha256:c68c407ae61badcd8872bbe77036919904014f591a66c4cd1db9b712d8
 ARG TARGETARCH
 FROM fetch-${TARGETARCH} AS fetch
 
-FROM debian:stable-slim@sha256:5bc3287b25407c965a30f38e32603dc253a3869e1b12a21ac09bfc27fd8b13ce
+FROM debian:stable-slim@sha256:eb593cf2c358cacef45ca0a424bbc7d30cfa3466265fc2662b9466a0ca6ba1c5
 COPY --from=fetch /lynxdb.tar.gz /tmp/lynxdb.tar.gz
 RUN tar -xzf /tmp/lynxdb.tar.gz -C /usr/local/bin lynxdb && rm /tmp/lynxdb.tar.gz
 COPY run-cases.sh /usr/local/bin/run-cases.sh
