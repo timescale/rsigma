@@ -211,7 +211,7 @@ The optional `extract:` filter slices the parsed data after `format` parsing. Th
 |----------|---------|----------|
 | `jq` | [`jaq`](https://github.com/01mf02/jaq) | Complex transformations, array iteration, filtering. Familiar to operators. |
 | `jsonpath` | [`serde_json_path`](https://docs.rs/serde_json_path) (RFC 9535) | Simple path queries. Fastest of the three. |
-| `cel` | [`cel-interpreter`](https://docs.rs/cel-interpreter) | Typed expressions with filtering and aggregation. Slower; use for small datasets. |
+| `cel` | [`cel`](https://docs.rs/cel) | Typed expressions with filtering and aggregation. Slower; use for small datasets. |
 
 Plain-string `extract:` defaults to jq. Use the object form for explicit selection:
 

@@ -416,7 +416,7 @@ extract:
 |----------|---------|----------|
 | `jq` | jaq | Complex transformations, array iteration, filtering. |
 | `jsonpath` | jsonpath-rust | Simple path queries into nested JSON. Fastest of the three. |
-| `cel` | cel-interpreter | Typed expressions with filtering and aggregation. Slower; best for small datasets. |
+| `cel` | cel | Typed expressions with filtering and aggregation. Slower; best for small datasets. |
 
 See the [Dynamic Sources reference](../reference/dynamic-sources.md) for benchmarks and tradeoffs.
 
