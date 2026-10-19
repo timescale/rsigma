@@ -31,7 +31,7 @@ With the feature compiled in, the OTLP endpoints are always active, regardless o
 rsigma engine daemon -r rules/ --input http --api-addr 127.0.0.1:9090
 ```
 
-Agents on other hosts need a routable `--api-addr`, which requires TLS (or `--allow-plaintext`) and authentication: a bearer token with `events:ingest`, client certificates, or `--allow-unauthenticated`. {{ added "unreleased" }} See [Daemon network exposure](../reference/security.md#daemon-network-exposure).
+Agents on other hosts need a routable `--api-addr`, which requires TLS (or `--allow-plaintext`) and authentication: a bearer token with `events:ingest`, client certificates, or `--allow-unauthenticated`. {{ added "0.25.0" }} See [Daemon network exposure](../reference/security.md#daemon-network-exposure).
 
 ## Endpoints
 
@@ -45,7 +45,7 @@ OTLP is exposed on the same `--api-addr` port as the rest of the daemon's HTTP A
 
 Both transports support `Content-Encoding: gzip` (HTTP) or gRPC gzip compression for compressed payloads.
 
-Both transports cap a decompressed request at 4 MiB. Over HTTP, a gzip body that inflates past the cap is rejected with `413 Payload Too Large` and counted as `rsigma_otlp_errors_total{reason="body_too_large"}`; uncompressed HTTP bodies are limited to 2 MiB. Keep agent batches under these limits. {{ added "unreleased" }}
+Both transports cap a decompressed request at 4 MiB. Over HTTP, a gzip body that inflates past the cap is rejected with `413 Payload Too Large` and counted as `rsigma_otlp_errors_total{reason="body_too_large"}`; uncompressed HTTP bodies are limited to 2 MiB. Keep agent batches under these limits. {{ added "0.25.0" }}
 
 When no `Content-Type` is provided on a POST to `/v1/logs`, protobuf is assumed, matching the OTLP/HTTP specification default.
 

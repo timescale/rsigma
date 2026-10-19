@@ -9,7 +9,7 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 | Limit | Constant | Value | Scope | Behaviour on overrun |
 |-------|----------|-------|-------|----------------------|
 | Single event size | `MAX_LINE_BYTES` | 1 MiB | `engine daemon` HTTP/stdin event ingest | Line rejected with a `413`-equivalent error in HTTP mode; counted in `rsigma_events_parse_errors_total`. |
-| Decompressed OTLP/HTTP body | `OTLP_HTTP_MAX_DECOMPRESSED_BYTES` | 4 MiB | `POST /v1/logs` with `Content-Encoding: gzip` (`daemon-otlp`) | Request rejected with `413` before decoding; counted as `rsigma_otlp_errors_total{reason="body_too_large"}`. The gRPC transport applies the same 4 MiB decoded-message limit. {{ added "unreleased" }} |
+| Decompressed OTLP/HTTP body | `OTLP_HTTP_MAX_DECOMPRESSED_BYTES` | 4 MiB | `POST /v1/logs` with `Content-Encoding: gzip` (`daemon-otlp`) | Request rejected with `413` before decoding; counted as `rsigma_otlp_errors_total{reason="body_too_large"}`. The gRPC transport applies the same 4 MiB decoded-message limit. {{ added "0.25.0" }} |
 | Condition expression length | `MAX_CONDITION_LEN` | 64 KiB | Rule parser | Rule rejected at parse time with an `InvalidCondition` error. |
 | Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. |
 | JSON event traversal depth | `MAX_NESTING_DEPTH` | 64 | Keyword search inside nested JSON | Traversal stops; deeper fields are not matched against keyword detections. |
@@ -72,7 +72,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | Pipeline YAML | `yaml_serde` 0.10 | Same. |
 | Input event JSON | `serde_json` | Bounded by `MAX_LINE_BYTES` (1 MiB) for streaming sources. |
 | HTTP request bodies | `reqwest` with explicit size limit | Bounded by `MAX_SOURCE_RESPONSE_BYTES` (10 MiB). |
-| OTLP requests | `prost` + `tonic` | The OTLP receiver enforces upstream size limits at the HTTP/gRPC layer. Protobuf decoding stops at prost's 100-message recursion limit, which bounds `AnyValue` nesting at about 49 levels before conversion runs; a unit test fails if a dependency disables that limit, and the `fuzz_otlp_logs_decode` harness covers the decode and conversion path. {{ added "unreleased" }} |
+| OTLP requests | `prost` + `tonic` | The OTLP receiver enforces upstream size limits at the HTTP/gRPC layer. Protobuf decoding stops at prost's 100-message recursion limit, which bounds `AnyValue` nesting at about 49 levels before conversion runs; a unit test fails if a dependency disables that limit, and the `fuzz_otlp_logs_decode` harness covers the decode and conversion path. {{ added "0.25.0" }} |
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
@@ -108,7 +108,7 @@ The `engine daemon` HTTP and gRPC listeners share one socket. With the optional 
 - Bind to a private network segment that the SOC controls.
 - On Unix, bind a domain socket with `--api-addr unix:///run/rsigma/api.sock`. Access is gated by the socket file's permissions (created `0600`), so it never leaves the host and needs no TLS. This is the simplest hardened shape for a co-located admin/metrics client or a sidecar that proxies the socket.
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 To prevent accidental exposure, every build refuses to start on a non-loopback TCP `--api-addr` in two cases:
 
@@ -155,7 +155,7 @@ OTLP receiver authentication has two options: mTLS (`--tls-client-ca`) so every 
 
 ## Daemon API authentication
 
-Bearer-token authentication with `resource:action` permissions gates the daemon API at the application layer. Without a `daemon.api.auth` config block or the `--api-token-env` flag, every route is open. {{ added "unreleased" }} The daemon accepts that only on loopback, on a `unix://` socket, on a listener that requires client certificates, or with an explicit `--allow-unauthenticated` (see [Daemon network exposure](#daemon-network-exposure)). When enabled, every route except the liveness probes (`GET /healthz`, `GET /readyz`) requires a token whose permission set covers the route's permission; the per-route mapping is in the [HTTP API endpoint summary](http-api.md#endpoint-summary).
+Bearer-token authentication with `resource:action` permissions gates the daemon API at the application layer. Without a `daemon.api.auth` config block or the `--api-token-env` flag, every route is open. {{ added "0.25.0" }} The daemon accepts that only on loopback, on a `unix://` socket, on a listener that requires client certificates, or with an explicit `--allow-unauthenticated` (see [Daemon network exposure](#daemon-network-exposure)). When enabled, every route except the liveness probes (`GET /healthz`, `GET /readyz`) requires a token whose permission set covers the route's permission; the per-route mapping is in the [HTTP API endpoint summary](http-api.md#endpoint-summary).
 
 Design properties:
 
@@ -206,7 +206,7 @@ Verdict-driven capture ([Verdict-Driven Corpora](../guide/verdict-to-corpus.md))
 The MCP server ([`rsigma mcp serve`](../cli/mcp/serve.md)) treats every tool argument as untrusted, because an agent can be steered by prompt-injected content it is asked to process (a third-party rule set, an issue being summarized).
 
 - **`--rules-dir` is a confinement boundary.** When it is set, every path argument (`path`, `events_path`, `enrichers_path`, and file-based `pipelines` in every tool) is canonicalized and refused if it leaves the directory, whether it is absolute, uses `../`, or resolves through a symlink. A missing file outside the root is refused the same way as an existing one, so callers cannot probe for files. Directory inputs that contain a symlink anywhere in the tree are refused. `fix_rules` with `write: true` only writes to files inside the root.
-- **Without `--rules-dir`, paths are unconfined.** The server can read any file its OS user can read. Always set `--rules-dir` when the server is reachable by an agent that processes untrusted content. Without a root, `fix_rules` refuses `write: true`, stdio prints a startup warning, and `--http` refuses to start unless `--allow-unconfined-paths` is set. {{ added "unreleased" }}
+- **Without `--rules-dir`, paths are unconfined.** The server can read any file its OS user can read. Always set `--rules-dir` when the server is reachable by an agent that processes untrusted content. Without a root, `fix_rules` refuses `write: true`, stdio prints a startup warning, and `--http` refuses to start unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }}
 - **No process execution or network egress from enrichers.** `evaluate_events` builds only `template` enrichers. `command`, `http`, `lookup`, and `stix` enrichers are refused; configure them on the daemon instead.
 - **sigma-cli delegation** (`--allow-sigma-cli`, off by default) spawns a subprocess with the rules root as its working directory. Only bare identifiers (letters, digits, `_`, `-`) are passed through as sigma-cli pipeline names; anything else is treated as a path and confined.
 

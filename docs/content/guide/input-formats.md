@@ -265,9 +265,9 @@ transformations:
 | Epoch seconds | `1747315800` |
 | Epoch milliseconds | `1747315800000` (auto-detected when value > 10^12) |
 
-The time-part modifiers (`|minute`, `|hour`, `|day`, `|week`, `|month`, `|year`) read a field value with the same formats. {{ added "unreleased" }}
+The time-part modifiers (`|minute`, `|hour`, `|day`, `|week`, `|month`, `|year`) read a field value with the same formats. {{ added "0.25.0" }}
 
-When an event has no parseable timestamp, the correlation engine falls back to the wall clock by default. A value before 1970, a non-finite number, or a date past the representable range is not parseable; the engine tries the next timestamp field instead. {{ added "unreleased" }} Pass `--timestamp-fallback skip` to instead drop the event from correlation state updates (detections still fire). The `skip` mode is the right choice for forensic replay of historical data, where wall-clock substitution would corrupt the temporal windows.
+When an event has no parseable timestamp, the correlation engine falls back to the wall clock by default. A value before 1970, a non-finite number, or a date past the representable range is not parseable; the engine tries the next timestamp field instead. {{ added "0.25.0" }} Pass `--timestamp-fallback skip` to instead drop the event from correlation state updates (detections still fire). The `skip` mode is the right choice for forensic replay of historical data, where wall-clock substitution would corrupt the temporal windows.
 
 ## When to use which format
 

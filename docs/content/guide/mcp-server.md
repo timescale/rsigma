@@ -18,7 +18,7 @@ The server speaks JSON-RPC over **stdio**: stdin and stdout are the transport, s
 rsigma mcp serve --rules-dir /path/to/rules
 ```
 
-`--rules-dir` sets a root so an agent can pass `path` arguments relative to a rules tree, and confines every path argument to it: absolute paths, `../`, and symlinks that leave the root are refused, and so are directory inputs that contain symlinks. Set it whenever the agent processes untrusted content; without it, tools can read any file the server's OS user can read. Without a root, stdio prints a startup warning, `fix_rules` cannot write, and `--http` refuses to start unless `--allow-unconfined-paths` is set. {{ added "unreleased" }} See [Security Hardening](../reference/security.md#mcp-server-tool-surface). `--lint-config` points the `lint_rules` tool at a `.rsigma-lint.yml` (disabled rules, severity overrides, extra tag namespaces).
+`--rules-dir` sets a root so an agent can pass `path` arguments relative to a rules tree, and confines every path argument to it: absolute paths, `../`, and symlinks that leave the root are refused, and so are directory inputs that contain symlinks. Set it whenever the agent processes untrusted content; without it, tools can read any file the server's OS user can read. Without a root, stdio prints a startup warning, `fix_rules` cannot write, and `--http` refuses to start unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }} See [Security Hardening](../reference/security.md#mcp-server-tool-surface). `--lint-config` points the `lint_rules` tool at a `.rsigma-lint.yml` (disabled rules, severity overrides, extra tag namespaces).
 
 ## Client setup
 
@@ -51,10 +51,10 @@ Fifteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemo
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `parse_rule` | `yaml` or `path` | AST as JSON, plus rule/correlation/filter counts, `parse_errors`, and `parse_warnings`. `ok` is false only when a document fails to parse; an ignored invalid value such as `status: draft` is reported in `parse_warnings` instead. {{ added "unreleased" }} |
+| `parse_rule` | `yaml` or `path` | AST as JSON, plus rule/correlation/filter counts, `parse_errors`, and `parse_warnings`. `ok` is false only when a document fails to parse; an ignored invalid value such as `status: draft` is reported in `parse_warnings` instead. {{ added "0.25.0" }} |
 | `parse_condition` | `condition` | The parsed condition expression tree. |
 | `lint_rules` | `yaml` or file/dir `path` | Findings per file: lint rule id, severity, message, 1-indexed line, `fixable`, and the fix title. |
-| `validate_rules` | `yaml` or file/dir `path`, `pipelines`, `resolve_sources`, `fail_level` | Parse + compile + correlation-reference results, with per-rule compile errors and separate `parse_errors` and `parse_warnings`. `fail_level` is `error` (default) or `warning`; at `warning`, a parse warning also sets `ok` to false. {{ added "unreleased" }} |
+| `validate_rules` | `yaml` or file/dir `path`, `pipelines`, `resolve_sources`, `fail_level` | Parse + compile + correlation-reference results, with per-rule compile errors and separate `parse_errors` and `parse_warnings`. `fail_level` is `error` (default) or `warning`; at `warning`, a parse warning also sets `ok` to false. {{ added "0.25.0" }} |
 | `evaluate_events` | rules (`yaml`/`path`), events (`events` array or `events_path` NDJSON), `pipelines`, `match_detail`, `emit_detections`, `enrichers`/`enrichers_path` | Matches with `event_index`, a summary of detection/correlation counts. With `enrichers` the matches are run through an enrichment pipeline first. Rules referenced only by correlations without `generate: true`, detections and correlations alike, produce no matches unless `emit_detections` is `true`. {{ added "0.24.0" }} |
 | `convert_rules` | rules, `target`, `format`, `pipelines`, `options`, `skip_unsupported` | Backend queries per rule, plus errors and warnings. Native targets (`postgres`/`lynxdb`/`fibratus`) convert in-process; with `--allow-sigma-cli`, any other target is delegated to an installed [sigma-cli](../reference/backends/sigma-cli.md) and the result carries `engine: "sigma-cli"`, a per-line `queries` split, the verbatim `raw` output (authoritative for multi-line formats), and sigma-cli's diagnostics as `warnings`. |
 | `reverse_convert` | `query`, optional `dialect` (`lucene`), plus metadata the query cannot carry (`title`, `id`, `level`, `status`, `logsource_product`/`category`/`service`). At least one logsource key is required. | Draft Sigma YAML (or `{ "ok": false, ... }` for constructs with no Sigma equivalent or a missing logsource). Same surface as [`rsigma rule reverse`](../cli/rule/reverse.md). {{ added "0.24.0" }} |
@@ -218,7 +218,7 @@ rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 - **Auth.** `--auth-token <token>` (or `RSIGMA_MCP_AUTH_TOKEN`) requires a static bearer token on every request; requests without `Authorization: Bearer <token>` get `401`. The token is compared in constant time and is flag/env-only (never read from config files).
 - **TLS.** `--tls-cert`/`--tls-key` terminate TLS in-process using the same rustls loader as the daemon (requires a build with the `daemon-tls` feature). Alternatively terminate TLS at a sidecar proxy and bind plaintext with `--allow-plaintext`.
 - **Plaintext safety.** Binding plaintext on a non-loopback address is refused unless `--allow-plaintext` is set.
-- **Path confinement.** `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set. {{ added "unreleased" }}
+- **Path confinement.** `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }}
 
 The `--http`, `--lint-config`, `--rules-dir`, `--allow-unconfined-paths`, `--daemon-url`, `--daemon-ca`, and `--allow-operate-writes` settings also resolve from the layered config (`mcp` section) and the `RSIGMA_MCP__*` environment layer (for example `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100`); the MCP HTTP auth token and the daemon token stay flag/env-only.
 

@@ -35,7 +35,7 @@ The crate is sync-only (no tokio/reqwest).
 | `IrMatcher::Encoded` + `IrEncoding` | Explicit encoding transforms (`base64`, `wide`, `windash`, …) over a wildcard-aware `pattern`. {{ added "0.24.0" }} |
 | `encoding::expand_encoded` / `encoding::expand_encoded_detections` / `encoding::expand_encoded_matcher` | Replay an `Encoded` matcher into the plain string matches its encodings produce (windash variants, UTF-16, base64 and base64offset), for one value, a whole detection map, or one matcher. Eval compiles them and conversion renders them, so both agree on the variants. `encoding::MAX_WINDASH_DASHES` caps windash expansion. {{ added "0.24.0" }} |
 | `IrMatcher::Expand` | A `\|expand` value with placeholders left for match time, with the string operator in `op`. {{ added "0.24.0" }} |
-| `IrNumber` / `NumericLiteral` | A numeric matcher value. `NumericLiteral` keeps a rule integer as an exact `i64` and a fractional value as an `f64`, and its `Display` renders integers digit for digit. {{ added "unreleased" }} |
+| `IrNumber` / `NumericLiteral` | A numeric matcher value. `NumericLiteral` keeps a rule integer as an exact `i64` and a fractional value as an `f64`, and its `Display` renders integers digit for digit. {{ added "0.25.0" }} |
 | `IrCorrelation` / `IrFilter` | Correlation and filter HIR. |
 | `IrRuleMetadata` | Metadata superset used when projecting eval `RuleHeader`. |
 | `lower_rule` / `lower_detection` / `lower_condition` | AST → HIR. |

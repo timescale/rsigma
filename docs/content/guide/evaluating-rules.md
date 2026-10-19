@@ -150,7 +150,7 @@ Each match prints one JSON `EvaluationResult` on stdout. Detection and correlati
 }
 ```
 
-`matched_selections` lists, once each, the selections whose match decides the condition, and `matched_fields` comes from those selections only. A selection that matched but did not make the rule fire is left out: `(s1 and s2) or s3` firing on `s3` reports only `s3` even when `s1` matched, and `a and not b` never reports `b`. {{ added "unreleased" }}
+`matched_selections` lists, once each, the selections whose match decides the condition, and `matched_fields` comes from those selections only. A selection that matched but did not make the rule fire is left out: `(s1 and s2) or s3` firing on `s3` reports only `s3` even when `s1` matched, and `a and not b` never reports `b`. {{ added "0.25.0" }}
 
 ### Including the event body
 

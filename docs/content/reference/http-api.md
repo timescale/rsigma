@@ -51,7 +51,7 @@ Endpoint details are split across three pages:
 
 ## Authentication
 
-Bearer-token authentication is off by default, so loopback and `unix://` deployments are untouched. {{ added "unreleased" }} A non-loopback TCP `--api-addr` refuses to start without it unless the listener requires client certificates (`--tls-client-ca`) or `--allow-unauthenticated` is passed (see [Daemon network exposure](security.md#daemon-network-exposure)). Enable it either with the `--api-token-env <ENV_VAR>` flag (a single token with full `admin` permissions, read from the named environment variable) or with the `daemon.api.auth` config block for per-token roles:
+Bearer-token authentication is off by default, so loopback and `unix://` deployments are untouched. {{ added "0.25.0" }} A non-loopback TCP `--api-addr` refuses to start without it unless the listener requires client certificates (`--tls-client-ca`) or `--allow-unauthenticated` is passed (see [Daemon network exposure](security.md#daemon-network-exposure)). Enable it either with the `--api-token-env <ENV_VAR>` flag (a single token with full `admin` permissions, read from the named environment variable) or with the `daemon.api.auth` config block for per-token roles:
 
 ```yaml
 daemon:
@@ -240,7 +240,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 OTLP log ingestion over HTTP. Accepts `application/x-protobuf` or `application/json`, optionally gzip-encoded. Returns `application/x-protobuf` (or `application/json` matching the request) with the standard OTLP `ExportLogsServiceResponse`. Requires the daemon to be built with `daemon-otlp`.
 
-The request body is limited to 2 MiB as sent. A gzip-encoded body is also limited to 4 MiB after decompression, the same limit the gRPC transport applies, and a larger body is rejected with `413 Payload Too Large`. {{ added "unreleased" }}
+The request body is limited to 2 MiB as sent. A gzip-encoded body is also limited to 4 MiB after decompression, the same limit the gRPC transport applies, and a larger body is rejected with `413 Payload Too Large`. {{ added "0.25.0" }}
 
 ### gRPC `LogsService/Export`
 

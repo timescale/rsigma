@@ -28,7 +28,7 @@ The workspace ships 28 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_scorecard_promtext` | Detection scorecard Prometheus text parser. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_disposition_record` | Disposition record parsing. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_capture_spool` | Disposition capture spool documents (`parse_manifest`, `parse_provenance`, `parse_corpus_events`). | 65536 |
-| `fuzz_otlp_logs_decode` | OTLP log ingestion: protobuf decoding of `ExportLogsServiceRequest` (the body of `POST /v1/logs` and the gRPC `LogsService` message) and `logs_request_to_raw_events`, asserting every converted record is valid JSON. Seeds in `fuzz/seeds/fuzz_otlp_logs_decode/` cover every `AnyValue` variant, many attributes, and nesting on both sides of prost's recursion limit. {{ added "unreleased" }} | 65536 |
+| `fuzz_otlp_logs_decode` | OTLP log ingestion: protobuf decoding of `ExportLogsServiceRequest` (the body of `POST /v1/logs` and the gRPC `LogsService` message) and `logs_request_to_raw_events`, asserting every converted record is valid JSON. Seeds in `fuzz/seeds/fuzz_otlp_logs_decode/` cover every `AnyValue` variant, many attributes, and nesting on both sides of prost's recursion limit. {{ added "0.25.0" }} | 65536 |
 | `fuzz_risk_config` | Risk configuration parsing. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_stix_pattern` | STIX pattern parsing. | 4096 |

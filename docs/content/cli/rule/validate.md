@@ -14,7 +14,7 @@ rsigma rule validate [OPTIONS] <PATH>
 
 Parses a single Sigma file, or walks a directory and parses every `*.yml`/`*.yaml` Sigma file, with `rsigma-parser`, optionally applies one or more processing pipelines, and compiles each rule with the evaluator's compiler. Reports the counts on stdout (human summary by default). Pass `--output-format json|ndjson|table|csv|tsv` for a structured envelope or `PATH,STATUS,ERRORS` rows. Exits with code `2` if any rule fails to parse or compile. See [Output Formats](../../reference/output.md).
 
-The parser reports two kinds of problems. A parse error drops the document: malformed YAML, a missing condition, conflicting modifiers, an unknown detection reference. A parse warning keeps the document but ignores an invalid value: a `status` or `level` outside the allowed set, a malformed `related` entry, or an unreadable `sigma-version`. Parse warnings are reported but do not fail validation unless you pass `--fail-level warning`. {{ added "unreleased" }}
+The parser reports two kinds of problems. A parse error drops the document: malformed YAML, a missing condition, conflicting modifiers, an unknown detection reference. A parse warning keeps the document but ignores an invalid value: a `status` or `level` outside the allowed set, a malformed `related` entry, or an unreadable `sigma-version`. Parse warnings are reported but do not fail validation unless you pass `--fail-level warning`. {{ added "0.25.0" }}
 
 Correlation references are checked as compile errors too. A correlation fails validation when it references a rule `id` or `name` that no detection or correlation rule carries. A reference that resolves to more than one rule also fails validation, which happens when rules share the referenced `id` or `name`, or when one rule's `name` equals another rule's `id`. {{ added "0.24.0" }}
 
@@ -31,7 +31,7 @@ For narrative coverage see [Linting Rules](../../guide/linting-rules.md) and [CI
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable. |
 | `--source <FILE_OR_DIR>` | External source file(s) or directory of source files. Repeatable. Same standalone `sources:` YAML shape as the daemon's `--source`. Required for meaningful `--resolve-sources` runs after the v0.19.0 removal of pipeline-embedded `sources:`. |
 | `--resolve-sources` | Resolve and fetch every loaded dynamic source during validation. Sources must be reachable for validation to pass. |
-| `--fail-level <FAIL_LEVEL>` | Lowest parse diagnostic severity that exits `2`: `error` (default) fails on parse errors and compile errors, and `warning` also fails on parse warnings. Same flag name and default as [`rule lint --fail-level`](lint.md). {{ added "unreleased" }} |
+| `--fail-level <FAIL_LEVEL>` | Lowest parse diagnostic severity that exits `2`: `error` (default) fails on parse errors and compile errors, and `warning` also fails on parse warnings. Same flag name and default as [`rule lint --fail-level`](lint.md). {{ added "0.25.0" }} |
 
 ## Examples
 
@@ -67,7 +67,7 @@ A YAML syntax error in the file counts as a parse error and exits with code `2`,
 
 ### Fail on parse warnings
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 ```bash
 rsigma rule validate rules/ --fail-level warning
@@ -77,7 +77,7 @@ A rule with `status: draft` still parses and compiles, so plain `rule validate` 
 
 ### Structured output
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 With `--output-format json`, the envelope carries `summary` (including `parse_errors` and `parse_warnings` counts), `parse_errors`, `parse_warnings`, and `compile_errors` arrays of messages. With `ndjson`, `table`, `csv`, or `tsv`, each finding is one row whose `status` is `parse_error`, `parse_warning`, or `compile_error`, and a clean run emits a single `ok` row.
 

@@ -18,7 +18,7 @@ detection:
 
 Keyword values are strings in the specification, so a number matches its decimal text: `4624` matches the numeric value `4624` and the string `logon 4624 succeeded`. The evaluator searches numeric event values as their JSON text, so `4624` also matches `46240`.
 
-A YAML boolean keyword is the word: `true` matches `"true"` and `flag is TRUE now`, and converts as the term `true`. {{ added "unreleased" }} Keyword search covers string and numeric event values, not JSON booleans, so neither `true` nor `'true'` matches the boolean value `{"a": true}`; match a boolean field with `a: true` instead.
+A YAML boolean keyword is the word: `true` matches `"true"` and `flag is TRUE now`, and converts as the term `true`. {{ added "0.25.0" }} Keyword search covers string and numeric event values, not JSON booleans, so neither `true` nor `'true'` matches the boolean value `{"a": true}`; match a boolean field with `a: true` instead.
 
 ## Field-less values with modifiers
 
@@ -56,4 +56,4 @@ A selector that matches no detection name, such as `all of zzz*`, or `1 of *` wh
 
 `any of` is accepted as a synonym of `1 of`, as in pySigma. A count above one, such as `2 of selection_*`, is an extension beyond the specification: the evaluator matches when at least that many of the selected detections match. Backends cannot express a count, so conversion rejects the rule with `'2 of' quantifier not supported in conversion`.
 
-`0 of` is a parse error, because it would match every event. Write `not 1 of selection_*` to require that none of the selected detections match. {{ added "unreleased" }}
+`0 of` is a parse error, because it would match every event. Write `not 1 of selection_*` to require that none of the selected detections match. {{ added "0.25.0" }}

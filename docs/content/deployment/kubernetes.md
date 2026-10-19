@@ -60,7 +60,7 @@ COPY rules/ /etc/rsigma/rules/
 
 ## API token
 
-The pod binds a routable address, so the daemon refuses to start without [bearer-token authentication](../reference/security.md#daemon-api-authentication), client certificates, or an explicit `allow_unauthenticated: true`. {{ added "unreleased" }} The token lives in a Secret and reaches the daemon as an environment variable:
+The pod binds a routable address, so the daemon refuses to start without [bearer-token authentication](../reference/security.md#daemon-api-authentication), client certificates, or an explicit `allow_unauthenticated: true`. {{ added "0.25.0" }} The token lives in a Secret and reaches the daemon as an environment variable:
 
 ```bash
 kubectl -n rsigma create secret generic rsigma-api \

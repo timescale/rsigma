@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-19
+
+**TL;DR**
+RSigma v0.25.0 is the "secure defaults and trustworthy results" release: three security advisories are fixed, the daemon and MCP server refuse unsafe exposure unless told otherwise, rules match exactly what they say, and correlation state, alert pipelines, and sinks hold up under reloads, restarts, caps, and delivery failures.
+* Security: OTLP/HTTP gzip bodies are capped at 4 MiB after decompression ([GHSA-vwg6-4q3h-8pvq](https://github.com/timescale/rsigma/security/advisories/GHSA-vwg6-4q3h-8pvq), #597), the MCP server refuses unconfined writes and unconfined HTTP serving ([GHSA-33jj-q567-34gj](https://github.com/timescale/rsigma/security/advisories/GHSA-33jj-q567-34gj), #598), and event values are escaped in enricher and webhook templates ([GHSA-3fh4-8r8j-8xw3](https://github.com/timescale/rsigma/security/advisories/GHSA-3fh4-8r8j-8xw3), #599). Every build now refuses to serve an unauthenticated daemon API on a non-loopback address (#601), `rustls` picks up four RUSTSEC fixes (#577), and OTLP log decoding is fuzzed (#617).
+* Matching correctness: integer literals above 2^53 match exactly (#610), boolean keywords match the word (#609), partly case-insensitive regex pairs match the original text again (#608), time-part modifiers accept space-separated fractional timestamps (#611), match detail reports only the selections that decide the match (#612), `0 of` selectors are rejected (#562), and `value_percentile` thresholds apply (#621).
+* State and delivery: hot-reload no longer rolls back correlation state (#604), state saves are one consistent, atomic cut (#606), restore and alert-pipeline reload enforce the dedup and incident caps (#605), entity-graph grouping no longer leaks join keys or drops live incidents (#603), the inhibit store is capped (#616), alerts dropped without a DLQ sink are logged (#615), OTLP sink exports time out (#600), and file and Unix socket sink retries no longer repeat lines (#621).
+* Diagnostics, API, and performance: parse warnings are reported apart from parse errors (#566), lint and the parser agree on modifiers and conditions (#565), pipeline errors get their own variant (#561), embedders can plug in custom logsource extractors (#578, based on work by John Sonnenschein in #500), `engine eval -o` writes results to a file (#576), match detail costs one evaluation pass (#613), percentile and median checks no longer sort the window (#619), and engines no longer retain rule HIR by default (#620).
+* Breaking: a non-loopback daemon API needs authentication or `--allow-unauthenticated`; `mcp serve --http` needs `--rules-dir` or `--allow-unconfined-paths`; event values in enricher and webhook URLs are encoded as one component each; `HIR_SCHEMA_VERSION` is 4 and `save_hir` requires HIR retention; `SigmaCollection::diagnostics` replaces `errors`; `EvalError` gains `Pipeline` and is `#[non_exhaustive]`; `EventFilter` takes the parsed line by value; numeric matchers and backend methods use `NumericLiteral`; `incompatible_modifiers` is a lint error; and `cel` 0.15 changes how some extract expressions evaluate. See the migration notes in the entries below.
+* Platform and docs: `--no-default-features` builds compile again (#560), the docs are checked against the code on every pull request (#558, #559), the PostgreSQL backend's JSONB and correlation code moves into dedicated modules with byte-identical SQL (#567, #568), the `test` backend is compared against pySigma 2.0.1 (#564), and dependencies are updated, including the docs site's `sharp` security fix (#556, #563, #577).
+
 ### `value_percentile` thresholds apply, sink retries stop repeating lines, and smaller eval and runtime fixes (#621)
 
 `value_percentile` correlations ignored their condition: the percentile was computed and the correlation fired whenever the window held a finite value, so a rule with `lte: 50` fired on a window whose percentile was 50.5. The predicates now apply to the percentile as they do for the other numeric aggregates.
@@ -199,6 +210,8 @@ The docs site publishes the config JSON Schema at `/rsigma.schema.json`, the URL
 ### Dependency follow-up (#556)
 
 Rolls up the compatible Dependabot PRs that opened after #550, with `Cargo.lock` regenerated against current `main`. Rust: `rmcp` 3.3.0 to 3.5.0 (#555), which renames the deprecated `ServerInfo` alias to `ServerConfig` in the MCP server handler, and `tokio-rustls` 0.26.5 to 0.26.6 (#554). CI: `taiki-e/install-action` v2.87.21 to v2.87.22, repinned by commit SHA (#553). VS Code: `@types/vscode` 1.138.0 to 1.140.0 (#552). Held back: `yamlpath` 1.30.1 (#495) and `yamlpatch` 1.30.1 (#494) require rustc 1.97 through `tree-sitter-iter`, above the 1.96.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
+
+[v0.24.0...v0.25.0](https://github.com/timescale/rsigma/compare/v0.24.0...v0.25.0)
 
 ## [0.24.0] - 2026-10-05
 
@@ -3406,6 +3419,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.25.0]: https://github.com/timescale/rsigma/releases/tag/v0.25.0
 [0.24.0]: https://github.com/timescale/rsigma/releases/tag/v0.24.0
 [0.23.0]: https://github.com/timescale/rsigma/releases/tag/v0.23.0
 [0.22.0]: https://github.com/timescale/rsigma/releases/tag/v0.22.0

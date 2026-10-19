@@ -122,7 +122,7 @@ volumes:
   helr-state:
 ```
 
-Events flow Okta -> Helr -> NATS -> rsigma daemon -> stdout (or whatever next sink). Both services expose Prometheus metrics; both ship signed multi-arch images. The Docker hardening flags (`read_only`, `cap_drop: [ALL]`, non-root user `65534`) match the [Docker deployment guidance](../deployment/docker.md) for rsigma. `--allow-plaintext` is required because the compose example binds a non-loopback `--api-addr` without TLS, and the API token is required because a non-loopback bind refuses to serve an unauthenticated API. {{ added "unreleased" }} Events arrive over NATS, so only the metrics and control API use the token.
+Events flow Okta -> Helr -> NATS -> rsigma daemon -> stdout (or whatever next sink). Both services expose Prometheus metrics; both ship signed multi-arch images. The Docker hardening flags (`read_only`, `cap_drop: [ALL]`, non-root user `65534`) match the [Docker deployment guidance](../deployment/docker.md) for rsigma. `--allow-plaintext` is required because the compose example binds a non-loopback `--api-addr` without TLS, and the API token is required because a non-loopback bind refuses to serve an unauthenticated API. {{ added "0.25.0" }} Events arrive over NATS, so only the metrics and control API use the token.
 
 ## Alternatives to NATS as the glue
 

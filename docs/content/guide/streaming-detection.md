@@ -131,8 +131,8 @@ The `--output` flag is repeatable, which gives you fan-out for free. Each match 
 | `stdout` | NDJSON to stdout. Default. Line sinks also accept `?format=ocsf` for [OCSF Detection Finding](ocsf-findings.md) JSON. |
 | `file:///path/to/file.ndjson` | Append NDJSON to a file, rotating only if you wrap it externally (logrotate, etc.). |
 | `nats://host:port/subject` | Publish via JetStream with server-confirmed persistence. Requires `daemon-nats`. |
-| `otlp(s)://host:port` | Export detections over OTLP/gRPC (`s` = TLS). Each attempt has a `10s` deadline, tunable with `?timeout=`. {{ added "unreleased" }} Requires `daemon-otlp`. |
-| `otlphttp(s)://host:port` | Export detections over OTLP/HTTP to `/v1/logs` (`s` = TLS). Each attempt has a `10s` deadline, tunable with `?timeout=`. {{ added "unreleased" }} Requires `daemon-otlp`. |
+| `otlp(s)://host:port` | Export detections over OTLP/gRPC (`s` = TLS). Each attempt has a `10s` deadline, tunable with `?timeout=`. {{ added "0.25.0" }} Requires `daemon-otlp`. |
+| `otlphttp(s)://host:port` | Export detections over OTLP/HTTP to `/v1/logs` (`s` = TLS). Each attempt has a `10s` deadline, tunable with `?timeout=`. {{ added "0.25.0" }} Requires `daemon-otlp`. |
 | `unix:///path/to.sock` | Write NDJSON to a collector listening on a Unix domain socket (Unix only). Reconnects once on a transient write failure. |
 
 Failed deliveries are routed to the dead-letter queue when `--dlq` is configured:
@@ -178,7 +178,7 @@ Without `--state-db`, correlation state lives only in memory and is lost on rest
 rsigma engine daemon -r rules/ --state-db /var/lib/rsigma/state.db
 ```
 
-The daemon loads any existing snapshot on startup, saves periodically (every 30 s by default, tunable with `--state-save-interval`), and saves on graceful shutdown. The database is a single SQLite file in WAL journal mode that holds one JSON snapshot row per kind of state (correlation, alert pipeline, risk, and dispositions). Each save captures all of them back to back and writes them in one transaction, so a crash mid-save leaves the previous save intact rather than a mix of old and new state. {{ added "unreleased" }}
+The daemon loads any existing snapshot on startup, saves periodically (every 30 s by default, tunable with `--state-save-interval`), and saves on graceful shutdown. The database is a single SQLite file in WAL journal mode that holds one JSON snapshot row per kind of state (correlation, alert pipeline, risk, and dispositions). Each save captures all of them back to back and writes them in one transaction, so a crash mid-save leaves the previous save intact rather than a mix of old and new state. {{ added "0.25.0" }}
 
 This means an `event_count` correlation that has seen 4 of 5 required events resumes at 4 after a restart, not 0.
 
@@ -200,7 +200,7 @@ See [NATS Streaming](nats-streaming.md) for the full replay matrix.
 
 ## HTTP API
 
-The daemon binds an HTTP API listener on `--api-addr` (default `0.0.0.0:9090`). It serves both REST and Prometheus endpoints, plus OTLP/gRPC and OTLP/HTTP when the feature is enabled. With the optional `daemon-tls` build feature and `--tls-cert`/`--tls-key`, the same listener terminates HTTPS for every protocol on one socket (ALPN negotiates `h2` and `http/1.1`). Every build refuses to start on a non-loopback TCP `--api-addr` without TLS or `--allow-plaintext`, and without authentication (bearer tokens or `--tls-client-ca`) or `--allow-unauthenticated`. {{ added "unreleased" }} Loopback and `unix://` addresses need neither, for local development. See the [TLS reference](../reference/security.md#tls-termination-for-the-api-listener) for the flag table and hot-reload semantics.
+The daemon binds an HTTP API listener on `--api-addr` (default `0.0.0.0:9090`). It serves both REST and Prometheus endpoints, plus OTLP/gRPC and OTLP/HTTP when the feature is enabled. With the optional `daemon-tls` build feature and `--tls-cert`/`--tls-key`, the same listener terminates HTTPS for every protocol on one socket (ALPN negotiates `h2` and `http/1.1`). Every build refuses to start on a non-loopback TCP `--api-addr` without TLS or `--allow-plaintext`, and without authentication (bearer tokens or `--tls-client-ca`) or `--allow-unauthenticated`. {{ added "0.25.0" }} Loopback and `unix://` addresses need neither, for local development. See the [TLS reference](../reference/security.md#tls-termination-for-the-api-listener) for the flag table and hot-reload semantics.
 
 Auth is off by default. Enable a single admin bearer token with `--api-token-env`, or configure per-token roles in `daemon.api.auth`. Pair non-loopback listeners with TLS or a TLS-terminating proxy so tokens are never sent in cleartext. See [HTTP API: Authentication](../reference/http-api.md#authentication).
 

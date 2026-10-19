@@ -100,7 +100,7 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 
 The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload. Header values are not escaped (CR and LF are rejected).
 
-In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so an event value cannot add path segments, start a query, or reach another path on the host. A value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. `${ENV_VAR}` values are inserted verbatim, so `${SLACK_WEBHOOK_PATH}` can still hold a path with `/`. {{ added "unreleased" }}
+In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so an event value cannot add path segments, start a query, or reach another path on the host. A value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. `${ENV_VAR}` values are inserted verbatim, so `${SLACK_WEBHOOK_PATH}` can still hold a path with `/`. {{ added "0.25.0" }}
 
 Every templated field is validated at startup against the webhook's `kind`: a `${correlation.*}` reference inside a `kind: detection` webhook rejects the daemon with a pointer at the offending field.
 

@@ -71,7 +71,7 @@ sources:
 
 The full Rust type lives at [`rsigma_eval::pipeline::sources::DynamicSource`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/sources.rs). The parser is at [`rsigma_eval::pipeline::parsing`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs).
 
-A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`), which is exactly what a `${source.<id>}` reference can name. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "unreleased" }}
+A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`), which is exactly what a `${source.<id>}` reference can name. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "0.25.0" }}
 
 ### Collision semantics
 

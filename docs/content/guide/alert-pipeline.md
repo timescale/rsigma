@@ -41,9 +41,9 @@ Two behaviors follow Alertmanager:
 - A **self-inhibition guard**: a result matching both `source_match` and `target_match` does not inhibit itself.
 - Inhibition is **non-transitive**: a *silenced* source still inhibits its targets (the source index is updated before silencing), but an *inhibited* target does not become a source.
 
-Tracked sources across all rules are capped by `max_inhibit_sources` (default 100000), so `equal` selectors over high-cardinality values (source IPs, usernames from untrusted logs) cannot grow the store without bound. At the cap, a result that would open a new source is still checked as a target but is not tracked, and already-tracked sources keep refreshing. {{ added "unreleased" }}
+Tracked sources across all rules are capped by `max_inhibit_sources` (default 100000), so `equal` selectors over high-cardinality values (source IPs, usernames from untrusted logs) cannot grow the store without bound. At the cap, a result that would open a new source is still checked as a target but is not tracked, and already-tracked sources keep refreshing. {{ added "0.25.0" }}
 
-Metrics: `rsigma_inhibited_total{rule}` (results muted, by rule name), `rsigma_inhibit_sources_active` (currently-active sources), and `rsigma_inhibit_sources_refused_total{rule}` (new sources not tracked because the cap was reached). {{ added "unreleased" }}
+Metrics: `rsigma_inhibited_total{rule}` (results muted, by rule name), `rsigma_inhibit_sources_active` (currently-active sources), and `rsigma_inhibit_sources_refused_total{rule}` (new sources not tracked because the cap was reached). {{ added "0.25.0" }}
 
 ## Silencing
 
@@ -115,7 +115,7 @@ dedup:
 | `dedup.resolve_timeout` | `1h` | Idle timeout after which an active alert resolves and is evicted (humantime). |
 | `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. The `rsigma_dedup_store_entries` gauge plateauing at this value signals saturation. |
 | `max_silences` | `1000` | Ceiling on concurrently-tracked dynamic (API) silences. `POST /api/v1/silences` returns `429` past this. Static silences from the config do not count against it. |
-| `max_inhibit_sources` | `100000` | Ceiling on tracked inhibition sources across all `inhibit_rules`. Once reached, a result that would open a new source is not tracked (counted on `rsigma_inhibit_sources_refused_total{rule}`); it can still be inhibited, and existing sources keep refreshing. {{ added "unreleased" }} |
+| `max_inhibit_sources` | `100000` | Ceiling on tracked inhibition sources across all `inhibit_rules`. Once reached, a result that would open a new source is not tracked (counted on `rsigma_inhibit_sources_refused_total{rule}`); it can still be inhibited, and existing sources keep refreshing. {{ added "0.25.0" }} |
 
 ### Field selectors
 
@@ -156,7 +156,7 @@ When the daemon runs with `--state-db <PATH>`, the alert pipeline's state is per
 
 Restore is window-aware: dedup alerts past `resolve_timeout`, incidents past their `resolve_timeout`, silences past `ends_at`, and inhibition sources past their rule's `duration` are dropped during restore, so stale state never lingers. Deterministic `group_by` incident ids are preserved across the restart.
 
-Restore and hot-reload also enforce the configured caps, so lowering one takes effect at once instead of when the excess ages out. {{ added "unreleased" }} Beyond `dedup.max_active_alerts`, `group.caps.max_open_incidents`, or `max_inhibit_sources`, the least recently seen alerts, incidents, or inhibition sources are evicted (alerts and incidents without a `resolved` record), and each remaining incident is cut to `max_results_per_incident` samples and `max_entities_per_incident` values per selector. The daemon logs a warning with the eviction counts. A snapshot whose version does not match the current build is ignored with a warning (the daemon starts fresh). `--clear-state` skips the restore (and `--keep-state` forces it), matching the correlation-state flags.
+Restore and hot-reload also enforce the configured caps, so lowering one takes effect at once instead of when the excess ages out. {{ added "0.25.0" }} Beyond `dedup.max_active_alerts`, `group.caps.max_open_incidents`, or `max_inhibit_sources`, the least recently seen alerts, incidents, or inhibition sources are evicted (alerts and incidents without a `resolved` record), and each remaining incident is cut to `max_results_per_incident` samples and `max_entities_per_incident` values per selector. The daemon logs a warning with the eviction counts. A snapshot whose version does not match the current build is ignored with a warning (the daemon starts fresh). `--clear-state` skips the restore (and `--keep-state` forces it), matching the correlation-state flags.
 
 ## Grouping
 

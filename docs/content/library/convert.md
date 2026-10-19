@@ -120,7 +120,7 @@ impl Backend for MyBackend {
 
 The default `convert_rule` lowers the rule to `IrRule`, walks the resulting `IrDetection` and `IrCondition`, and dispatches into `text_*` helpers (e.g. `text_convert_field_str_ir`, `text_convert_ir_pattern`) that consult the config. Only override the leaves that your backend needs to behave differently from pySigma's `TextQueryBackend` default.
 
-The numeric leaves (`convert_field_eq_num`, `convert_field_compare_op`, `convert_keyword_num`) receive a `rsigma_ir::NumericLiteral` rather than an `f64`, so integers above 2^53 reach the backend exactly. Render it with `to_string()` to get the exact digits. {{ added "unreleased" }}
+The numeric leaves (`convert_field_eq_num`, `convert_field_compare_op`, `convert_keyword_num`) receive a `rsigma_ir::NumericLiteral` rather than an `f64`, so integers above 2^53 reach the backend exactly. Render it with `to_string()` to get the exact digits. {{ added "0.25.0" }}
 
 See [Adding Backends](../developers/adding-backends.md) for the step-by-step walkthrough, the testing pattern, and how to wire a new backend into `rsigma backend convert` if you also want CLI integration.
 

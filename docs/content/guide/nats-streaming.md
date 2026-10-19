@@ -78,7 +78,7 @@ What this guarantees:
 
 - If the daemon panics mid-processing, NATS redelivers after `ack_wait` (configured on the JetStream consumer).
 - While a sink is retrying (file write error, NATS publish-ack timeout), the source message stays unacked so a crash still redelivers.
-- After retries are exhausted (or a permanent sink error), the result is handed to the [DLQ](#dead-letter-queue) writer and the source message is acked, so the same failure does not loop forever. With `--dlq` set, the writer then persists it; a failed DLQ write is logged and counted on `rsigma_dlq_write_failures_total`, and the result is lost. Without `--dlq`, the result is dropped with a rate-limited warning. {{ added "unreleased" }}
+- After retries are exhausted (or a permanent sink error), the result is handed to the [DLQ](#dead-letter-queue) writer and the source message is acked, so the same failure does not loop forever. With `--dlq` set, the writer then persists it; a failed DLQ write is logged and counted on `rsigma_dlq_write_failures_total`, and the result is lost. Without `--dlq`, the result is dropped with a rate-limited warning. {{ added "0.25.0" }}
 - If a parse error happens before the engine, the failed event is routed to the DLQ (when configured) and the source message is acked, preventing infinite redelivery of unparseable data.
 
 What this does NOT guarantee:
@@ -110,7 +110,7 @@ rsigma engine daemon -r rules/ --input nats://localhost:4222/events.> \
 
 ### State restore during replay
 
-The daemon stores the last-acked NATS stream sequence and timestamp alongside the SQLite correlation snapshot. It reads the position before taking the snapshots, so the saved state always covers every event up to the stored position; events acked just after it may also be included and are redelivered as duplicates, which the at-least-once model already allows. {{ added "unreleased" }} On restart, `decide_state_restore` compares the replay start point against the stored position:
+The daemon stores the last-acked NATS stream sequence and timestamp alongside the SQLite correlation snapshot. It reads the position before taking the snapshots, so the saved state always covers every event up to the stored position; events acked just after it may also be included and are redelivered as duplicates, which the at-least-once model already allows. {{ added "0.25.0" }} On restart, `decide_state_restore` compares the replay start point against the stored position:
 
 | Situation | Decision |
 |-----------|----------|
@@ -177,7 +177,7 @@ Each DLQ entry is a JSON object:
 }
 ```
 
-The `rsigma_dlq_events_total` Prometheus counter tracks DLQ volume, including delivery failures dropped for lack of a `--dlq` sink. Alert on rate-of-change to catch upstream encoding regressions early, and on `rsigma_dlq_write_failures_total` to catch a DLQ sink that cannot write. {{ added "unreleased" }} See [Prometheus metrics reference](../reference/metrics.md).
+The `rsigma_dlq_events_total` Prometheus counter tracks DLQ volume, including delivery failures dropped for lack of a `--dlq` sink. Alert on rate-of-change to catch upstream encoding regressions early, and on `rsigma_dlq_write_failures_total` to catch a DLQ sink that cannot write. {{ added "0.25.0" }} See [Prometheus metrics reference](../reference/metrics.md).
 
 ## Connection lifecycle and reconnects
 

@@ -57,7 +57,7 @@ daemon:
 rsigma engine daemon --config /etc/rsigma/rsigma.yaml
 ```
 
-The shipper recipes in this guide post to `localhost`, so the daemon binds loopback. {{ added "unreleased" }} To accept shippers on other hosts, bind a routable address and configure TLS (or `tls.allow_plaintext`) and an `ingest` token in `daemon.api.auth`; see [Daemon network exposure](../reference/security.md#daemon-network-exposure).
+The shipper recipes in this guide post to `localhost`, so the daemon binds loopback. {{ added "0.25.0" }} To accept shippers on other hosts, bind a routable address and configure TLS (or `tls.allow_plaintext`) and an `ingest` token in `daemon.api.auth`; see [Daemon network exposure](../reference/security.md#daemon-network-exposure).
 
 `schema-routing.yml`:
 

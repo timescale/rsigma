@@ -171,7 +171,7 @@ daemon:
       key: /etc/rsigma/tls/server.key
 ```
 
-The daemon refuses to start on a non-loopback address without TLS or `--allow-plaintext`, and without authentication or `--allow-unauthenticated`. {{ added "unreleased" }} Renewed certificates are picked up on `systemctl reload rsigma`. See [TLS termination](../reference/security.md#tls-termination-for-the-api-listener).
+The daemon refuses to start on a non-loopback address without TLS or `--allow-plaintext`, and without authentication or `--allow-unauthenticated`. {{ added "0.25.0" }} Renewed certificates are picked up on `systemctl reload rsigma`. See [TLS termination](../reference/security.md#tls-termination-for-the-api-listener).
 
 A routable bind needs [bearer-token authentication](../reference/security.md#daemon-api-authentication) (or client certificates with `tls.client_ca`). Put the secret in the environment file, which only root can read:
 

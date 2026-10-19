@@ -31,7 +31,7 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `parse_sigma_yaml(&str) -> Result<SigmaCollection, SigmaParserError>` | The main entry point. Accepts single-document or multi-document YAML (`---` separator). |
 | `parse_sigma_file(&Path)`, `parse_sigma_directory(&Path)` | File and directory variants. |
 | `SigmaCollection` | A bag of `SigmaRule`, `CorrelationRule`, and `FilterRule` parsed from one input, plus the `diagnostics` found while parsing it. |
-| `CollectionDiagnostic`, `DiagnosticKind`, `DiagnosticSeverity` | One parse error or parse warning, with its kind, severity, message, document index, file path, and source location. See [Error handling](#error-handling). {{ added "unreleased" }} |
+| `CollectionDiagnostic`, `DiagnosticKind`, `DiagnosticSeverity` | One parse error or parse warning, with its kind, severity, message, document index, file path, and source location. See [Error handling](#error-handling). {{ added "0.25.0" }} |
 | `SigmaRule` | A detection rule (`title`, `id`, `sigma_version`, `logsource`, `detection`, `condition`, …). |
 | `CorrelationRule` | A correlation rule (`correlation:` block plus shared metadata). |
 | `FilterRule` | A filter rule (`filter:` block plus shared metadata). |
@@ -151,7 +151,7 @@ assert!(check_regex("(?<!x)y").is_ok());
 
 `SigmaParserError` from `thiserror` (also re-exported as `error::Result<T>`). Variants cover YAML syntax errors, missing required fields, invalid modifiers and modifier combinations (`InvalidModifiers`), invalid values and detections, condition-expression errors, and the size/depth caps above. `Condition` errors carry a `SourceLocation` so callers can highlight the offending location in source, and `kind()` returns the variant as a payload-free `SigmaParserErrorKind`.
 
-The parse functions return `Err` only when they cannot start, for example when a file cannot be read. Problems inside the input are recorded on the returned collection as `CollectionDiagnostic` values in `SigmaCollection::diagnostics`, so one bad document does not hide the others: {{ added "unreleased" }}
+The parse functions return `Err` only when they cannot start, for example when a file cannot be read. Problems inside the input are recorded on the returned collection as `CollectionDiagnostic` values in `SigmaCollection::diagnostics`, so one bad document does not hide the others: {{ added "0.25.0" }}
 
 - `severity` is `Error` when a document, a file, or the rest of the YAML stream was dropped, and `Warning` when a document was kept with an invalid `status`, `level`, `related` entry, or `sigma-version` ignored.
 - `kind` says what failed: `YamlSyntax`, `NotAMapping`, `CollectionAction`, `Document(SigmaParserErrorKind)`, `Metadata`, or `File(SigmaParserErrorKind)`.

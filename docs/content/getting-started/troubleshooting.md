@@ -30,7 +30,7 @@ The [prebuilt binaries](installation.md#prebuilt-binaries) and the Docker image 
 refusing to bind plaintext on non-loopback address 0.0.0.0:9090; pass --tls-cert/--tls-key to enable TLS, or pass --allow-plaintext to opt out (e.g. when terminating TLS at a sidecar reverse proxy)
 ```
 
-The API listens on `0.0.0.0:9090` by default, and every build refuses plaintext on a non-loopback address. {{ added "unreleased" }} Pick one:
+The API listens on `0.0.0.0:9090` by default, and every build refuses plaintext on a non-loopback address. {{ added "0.25.0" }} Pick one:
 
 - Local use: `--api-addr 127.0.0.1:9090`. Loopback always allows plaintext.
 - Serve TLS: `--tls-cert` and `--tls-key` (prebuilt binaries and the image; `cargo install` needs `--features daemon-tls`). See [TLS termination](../reference/security.md#tls-termination-for-the-api-listener).
@@ -40,7 +40,7 @@ The API listens on `0.0.0.0:9090` by default, and every build refuses plaintext 
 refusing to serve the API without authentication on non-loopback address 0.0.0.0:9090; configure bearer tokens (daemon.api.auth or --api-token-env), require client certificates with --tls-client-ca, or pass --allow-unauthenticated to opt out (e.g. when an authenticating proxy fronts the daemon)
 ```
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 A non-loopback bind also needs authentication. Pick one:
 

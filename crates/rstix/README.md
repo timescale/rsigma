@@ -19,11 +19,11 @@ Six optional Cargo features extend the default `serde` bundle model (each implie
 
 ```toml
 [dependencies]
-rstix = "0.24.0"
+rstix = "0.25.0"
 # Pattern Engine + Validation Pipeline:
-# rstix = { version = "0.24.0", features = ["pattern", "validate"] }
+# rstix = { version = "0.25.0", features = ["pattern", "validate"] }
 # Graph, marking, store (combine as needed):
-# rstix = { version = "0.24.0", features = ["graph", "marking", "store"] }
+# rstix = { version = "0.25.0", features = ["graph", "marking", "store"] }
 ```
 
 This library is part of [rsigma].

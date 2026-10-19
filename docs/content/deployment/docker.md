@@ -88,7 +88,7 @@ docker run --rm \
 
 Inside a container the API has to bind a non-loopback address to be reachable through the published port, and the daemon refuses a plaintext non-loopback bind unless you pass `--tls-cert`/`--tls-key` or `--allow-plaintext`. The examples on this page use `--allow-plaintext` and publish the port on the host's loopback or behind a TLS-terminating proxy; see [TLS termination](../reference/security.md#tls-termination-for-the-api-listener) to serve TLS from the daemon itself.
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 A non-loopback bind also needs authentication, so the examples pass `--api-token-env RSIGMA_API_TOKEN` and forward the secret from the host with `-e RSIGMA_API_TOKEN` (generate one with `openssl rand -hex 32`). Clients send it as `Authorization: Bearer <token>`; `GET /healthz` and `GET /readyz` stay open for probes. Use the `daemon.api.auth` config block for per-client roles, `--tls-client-ca` for certificate-based authentication, or `--allow-unauthenticated` only when an authenticating proxy fronts the container. See [Daemon API authentication](../reference/security.md#daemon-api-authentication).
 

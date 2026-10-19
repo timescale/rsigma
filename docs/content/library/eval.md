@@ -38,12 +38,12 @@ serde_json = "1"   # only if you use the JsonEvent shim
 | `Pipeline` | Parsed processing pipeline. Applied to rules at `add_collection` time, in priority order. |
 | `ConditionSet<T>` | One pipeline condition scope: identifier-keyed conditions, `and`/`or` linking, optional negation, and an optional expression. `TransformationItem` has one set each for rule, detection-item, and field-name conditions. {{ added "0.24.0" }} |
 | `pipeline::parse_pipeline(&str) -> Result<Pipeline>` | Parse a pipeline YAML string. |
-| `pipeline::sources::scan_source_templates(&str)` | Find every `${source.<id>}` and `${source.<id>.<path>}` template in a string, with its id, path, and byte offset. It is the single reference grammar shared by pipeline parsing and `rsigma-runtime`'s expansion. `is_valid_source_id` checks the id character set (ASCII letters, digits, `_`, `-`) that source declarations must use. {{ added "unreleased" }} |
+| `pipeline::sources::scan_source_templates(&str)` | Find every `${source.<id>}` and `${source.<id>.<path>}` template in a string, with its id, path, and byte offset. It is the single reference grammar shared by pipeline parsing and `rsigma-runtime`'s expansion. `is_valid_source_id` checks the id character set (ASCII letters, digits, `_`, `-`) that source declarations must use. {{ added "0.25.0" }} |
 | `TransformedRule` + `transform_rule` / `transform_collection` | Apply pipelines and hand back the rewritten rule, the transformation ids that fired, and the merged `PipelineState`, without compiling or loading. `Engine::transform_rule` / `Engine::transform_collection` do the same over an engine's configured pipelines. |
 | `apply_filters(&SigmaCollection) -> Vec<SigmaRule>` | Merge each filter into the detection rules it targets, as pySigma does when a collection loads, and return the rules for pipelines to transform. Filters target rules the same way `Engine::apply_filter` does. Conversion uses it. {{ added "0.24.0" }} |
 | `LogSourceExtractor` | Derives an event's `LogSource` from configurable fields plus optional static defaults, for conflict-based logsource pruning. Pass to `Engine::set_logsource_extractor`. |
-| `ExtractLogSource<E: Event>` | Trait behind logsource pruning, with one method, `extract(&self, &E) -> LogSource`. `LogSourceExtractor` implements it for every event type. Implement it for your own event type to prune by logsource carried outside the matchable fields, such as metadata beside the payload. See [Custom logsource extractors](#custom-logsource-extractors). {{ added "unreleased" }} |
-| `Event` trait + `JsonEvent`, `KvEvent`, `MapEvent`, `PlainEvent` | The event shapes the engine consumes. `JsonEvent::into_value` unwraps the JSON value, cloning only when the event borrows it. {{ added "unreleased" }} |
+| `ExtractLogSource<E: Event>` | Trait behind logsource pruning, with one method, `extract(&self, &E) -> LogSource`. `LogSourceExtractor` implements it for every event type. Implement it for your own event type to prune by logsource carried outside the matchable fields, such as metadata beside the payload. See [Custom logsource extractors](#custom-logsource-extractors). {{ added "0.25.0" }} |
+| `Event` trait + `JsonEvent`, `KvEvent`, `MapEvent`, `PlainEvent` | The event shapes the engine consumes. `JsonEvent::into_value` unwraps the JSON value, cloning only when the event borrows it. {{ added "0.25.0" }} |
 | `EvaluationResult` | One detection match or correlation firing. Composes a `RuleHeader` (rule metadata, custom attributes, optional enrichments) and a `ResultBody::Detection(DetectionBody)` / `ResultBody::Correlation(CorrelationBody)` payload. Serializes to one flat JSON object per result. |
 | `RuleHeader`, `DetectionBody`, `CorrelationBody` | The three composable structs behind `EvaluationResult`. `RuleHeader` carries the fields shared between kinds (`rule_title`, `rule_id`, `level`, `tags`, `custom_attributes`, and an optional `enrichments` map); the body variants carry the kind-specific fields. |
 | `ResultBody` | `#[serde(untagged)]` enum that picks the kind-specific payload. Use `EvaluationResult::as_detection() / as_correlation()` accessors or pattern match on `result.body` to read its fields. |
@@ -198,10 +198,10 @@ Pipeline transformations can write `rsigma.*` attributes that the engine consume
 | `Engine::set_bloom_max_bytes(usize)` | Per-engine bloom budget. Default 1 MiB. |
 | `Engine::set_cross_rule_ac(bool)` | Toggle the cross-rule Aho-Corasick pre-filter. Requires the `daachorse-index` feature. Pays off only on very large pure-substring rule sets. |
 | `Engine::set_logsource_extractor(Option<LogSourceExtractor>)` | Opt into conflict-based logsource pruning: skip rules whose `product`/`service`/`category` (and custom dimensions) conflict with the event's. Off by default, fail-open. Pays off on large mixed-product rule sets. |
-| `Engine::with_logsource_extractor(extractor)` | Create an empty engine that prunes with a custom `ExtractLogSource` implementation. {{ added "unreleased" }} |
+| `Engine::with_logsource_extractor(extractor)` | Create an empty engine that prunes with a custom `ExtractLogSource` implementation. {{ added "0.25.0" }} |
 | `Engine::evaluate_pruned(&event, &LogSource)` | Evaluate with a caller-resolved event logsource for conflict-based pruning, bypassing the engine's own extractor. Used by `SchemaRouter` to feed a per-event logsource resolved from explicit fields plus the recognized schema's implied logsource. |
 | `Engine::evaluate_batch(&[events])` (with `parallel`) | Batch evaluation. With the `parallel` feature, rayon parallelizes across events internally. |
-| `Engine::set_retain_hir(bool)` | Keep each loaded rule's HIR so `save_hir` can write it. Off by default, since nothing on the evaluation path reads it; enable it before loading rules. {{ added "unreleased" }} |
+| `Engine::set_retain_hir(bool)` | Keep each loaded rule's HIR so `save_hir` can write it. Off by default, since nothing on the evaluation path reads it; enable it before loading rules. {{ added "0.25.0" }} |
 | `Engine::save_hir()` / `load_hir(&[u8])` | Serialize the engine's lowered rules to a versioned HIR cache blob and rebuild from one, a restart cache that skips parse, pipeline, and lowering. Captures rules added via the parsed-rule paths in post-pipeline, pre-filter form; re-apply filters after `load_hir`. `save_hir` returns `EvalError::HirCache` unless `set_retain_hir(true)` was on for every such rule. Backed by [`rsigma-ir`](ir.md)'s `cache`. |
 
 Schema classification and routing live alongside the engine: `SchemaClassifier::classify` and `classify_with_ambiguity` recognize an event's schema from declarative `SchemaSignature` predicates, `explain` reports why, and `validate_schema_config` statically checks a config. `SchemaRouter` builds one engine per pipeline-set, routes each event to its schema's engine (deriving the event's logsource from the schema for pruning), feeds one shared correlation store, and reports a per-schema pruning summary via `schema_pruning_summary`. See the [Schema Signatures reference](../reference/schema-signatures.md) and the [Schema Routing](../guide/schema-routing.md) guide.
@@ -212,7 +212,7 @@ Decision matrix in [Performance Tuning](../guide/performance-tuning.md). Verifie
 
 ### Custom logsource extractors
 
-{{ added "unreleased" }}
+{{ added "0.25.0" }}
 
 `LogSourceExtractor` reads the event's logsource from its fields. When your event type carries the logsource somewhere else, such as metadata from a transport envelope, implement `ExtractLogSource` for that type. `Engine`, `CorrelationEngine`, and `SchemaRouter` are generic over the extractor type, which defaults to `LogSourceExtractor`, so existing code keeps compiling. The extractor runs once per event with static dispatch.
 
@@ -244,7 +244,7 @@ Prefer an extractor over computing the logsource yourself and calling `evaluate_
 
 `EvalError` from `thiserror`. Variants include `Parser` (re-exports the parser errors), `InvalidRegex`, `InvalidCidr`, `IncompatibleValue` (a value the modifier cannot use, such as a `cidr` with host bits set), `InvalidModifiers`, `UnknownRuleRef` (correlation references a rule that wasn't added), `CorrelationCycle`, and `Base64`. Each carries enough context to point operators at the offending rule.
 
-Processing pipelines that fail to parse or validate, or that fail while being applied to a rule (including a deliberate `rule_failure` or `detection_item_failure`), return `EvalError::Pipeline`. The enum is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm. {{ added "unreleased" }}
+Processing pipelines that fail to parse or validate, or that fail while being applied to a rule (including a deliberate `rule_failure` or `detection_item_failure`), return `EvalError::Pipeline`. The enum is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm. {{ added "0.25.0" }}
 
 ## See also
 

@@ -58,7 +58,7 @@ The global `--output-format` / `--color` / `--quiet` / `--no-stats` flags apply 
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-o, --output <PATH>` | stdout | Write detection and correlation results to a file instead of stdout. The file is created or truncated at start and flushed on exit, including when `--fail-on-detection` exits with code 1. Results use `--output-format` when set and NDJSON otherwise; `--pretty` still applies. The summary and diagnostics stay on stderr. Config key: `eval.output`. {{ added "unreleased" }} |
+| `-o, --output <PATH>` | stdout | Write detection and correlation results to a file instead of stdout. The file is created or truncated at start and flushed on exit, including when `--fail-on-detection` exits with code 1. Results use `--output-format` when set and NDJSON otherwise; `--pretty` still applies. The summary and diagnostics stay on stderr. Config key: `eval.output`. {{ added "0.25.0" }} |
 | `--pretty` | off | Pretty-print JSON output. Kept for backwards compatibility; equivalent to `--output-format json` with pretty-printing on. |
 | `--emit-detections` | off | Emit output for rules that only feed correlations, including correlations referenced by another correlation. By default, referenced rules are emitted only when a referencing correlation has top-level `generate: true`. {{ added "0.24.0" }} |
 | `--no-detections` | off | Deprecated compatibility flag. Correlation-only detections are suppressed by default. |

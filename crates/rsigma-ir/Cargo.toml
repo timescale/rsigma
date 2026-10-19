@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [dependencies]
 base64 = "0.23"
-rsigma-parser = { path = "../rsigma-parser", version = "0.24.0", default-features = false }
+rsigma-parser = { path = "../rsigma-parser", version = "0.25.0", default-features = false }
 ciborium = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
