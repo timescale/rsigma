@@ -6,7 +6,7 @@ Detection engineering spans human judgment (what deserves a detection, what the 
 
 The **Engineer** cycle (blue) is detection-as-code: turn incident evidence into a linted rule, prove it against history, and ship it through CI. The **Operate** cycle (orange) is security operations: evaluate the live stream, compress raw matches into incidents, and grade what earns its keep. **Hunt** bridges the two: compile the same rule for whatever store holds the archive, find variants the live path missed, and feed new exemplars back into **Author**.
 
-For a hands-on run through every station on sample data, follow [Tutorial: The Detection Loop](../getting-started/detection-loop.md).
+For a hands-on run through every station on sample data, follow [Tutorial: The Detection Loop](detection-loop.md).
 
 ## Before the loop
 

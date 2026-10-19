@@ -60,6 +60,10 @@ export default {
     // still loads.
     "docmd-plugin-rsigma": {},
   },
+  // Pages that moved keep their old URLs working; external links point at them.
+  redirects: {
+    "/getting-started/detection-loop": `${base}guide/detection-loop/`,
+  },
   navigation: [
     { title: "Home", path: "/", icon: "home" },
     {
@@ -69,7 +73,6 @@ export default {
       children: [
         { title: "Installation", path: "/getting-started/installation" },
         { title: "Quick Start", path: "/getting-started/quick-start" },
-        { title: "Tutorial: The Detection Loop", path: "/getting-started/detection-loop" },
         { title: "Core Concepts", path: "/getting-started/concepts" },
         { title: "Troubleshooting", path: "/getting-started/troubleshooting" },
       ],
@@ -80,6 +83,7 @@ export default {
       icon: "book-open",
       collapsible: true,
       children: [
+        { title: "Tutorial: The Detection Loop", path: "/guide/detection-loop" },
         {
           title: "Author and Test",
           collapsible: true,

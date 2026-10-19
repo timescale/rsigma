@@ -1,8 +1,8 @@
 # Tutorial: The Detection Loop
 
-This tutorial takes one detection around the whole loop on a laptop: draft a rule from incident events, test it, deploy it to the daemon, triage its alerts, tune away the false positives the triage surfaced, measure it, and hunt an archive with it. Every step runs on the small sample files created below. The [Detection Engineering Loop](../guide/detection-engineering-loop.md) guide is the map of the stages; this page walks them with real commands.
+This tutorial takes one detection around the whole loop on a laptop: draft a rule from incident events, test it, deploy it to the daemon, triage its alerts, tune away the false positives the triage surfaced, measure it, and hunt an archive with it. Every step runs on the small sample files created below. The [Detection Engineering Loop](detection-engineering-loop.md) guide is the map of the stages; this page walks them with real commands.
 
-You need `rsigma` with the default features (the [prebuilt binaries](installation.md#prebuilt-binaries) and the Docker image have them), `curl`, and `jq`. The last step also uses Docker for a throwaway PostgreSQL. If you have not seen RSigma before, the [Quick Start](quick-start.md) is a shorter introduction.
+You need `rsigma` with the default features (the [prebuilt binaries](../getting-started/installation.md#prebuilt-binaries) and the Docker image have them), `curl`, and `jq`. The last step also uses Docker for a throwaway PostgreSQL. If you have not seen RSigma before, the [Quick Start](../getting-started/quick-start.md) is a shorter introduction.
 
 ## 0. Sample data
 
@@ -135,11 +135,11 @@ The per-rule fire counts print on stdout as NDJSON, followed by the summary on s
 Backtest: 2 corpus files, 9 events, 2/2 expectations passed, 0 unexpected fires across 0 rules (policy: fail).
 ```
 
-These three commands are what a [CI pipeline](../guide/ci-cd.md) runs on every rule change.
+These three commands are what a [CI pipeline](ci-cd.md) runs on every rule change.
 
 ## 3. Deploy: run the daemon
 
-Run the rule in the streaming daemon with the pieces the next step needs: an [alert pipeline](../guide/alert-pipeline.md) that groups detections into one incident per rule and host, [dispositions](../guide/triage-feedback.md) for analyst verdicts, and [capture](../guide/verdict-to-corpus.md), which keeps the events behind each verdict as tuning evidence.
+Run the rule in the streaming daemon with the pieces the next step needs: an [alert pipeline](alert-pipeline.md) that groups detections into one incident per rule and host, [dispositions](triage-feedback.md) for analyst verdicts, and [capture](verdict-to-corpus.md), which keeps the events behind each verdict as tuning evidence.
 
 ```bash
 cat > alert-pipeline.yml <<'EOF'
@@ -217,7 +217,7 @@ Incident ids are a fingerprint of the grouping values, so you get the same ids.
 
 ## 5. Alert and triage: record verdicts
 
-An analyst works the five incidents: the two on the backup servers are the backup job, the other three are the attack. Post one verdict per incident. In production these arrive from your case tool through the same endpoint or a [disposition source](../guide/disposition-recipes.md):
+An analyst works the five incidents: the two on the backup servers are the backup job, the other three are the attack. Post one verdict per incident. In production these arrive from your case tool through the same endpoint or a [disposition source](disposition-recipes.md):
 
 ```bash
 curl -s http://127.0.0.1:9090/api/v1/incidents \
@@ -334,7 +334,7 @@ rsigma rule scorecard --backtest backtest.json --coverage coverage.json --triage
 }
 ```
 
-`live_fp_ratio` still reports the verdicts recorded before the filter existed; it falls as new verdicts arrive over the rolling window. `sole_coverage` flags that this is the only rule covering T1490, which makes it expensive to retire. The [Detection Scorecard](../guide/detection-scorecard.md) guide explains every signal.
+`live_fp_ratio` still reports the verdicts recorded before the filter existed; it falls as new verdicts arrive over the rolling window. `sole_coverage` flags that this is the only rule covering T1490, which makes it expensive to retire. The [Detection Scorecard](detection-scorecard.md) guide explains every signal.
 
 Stop the daemon when you are done with it:
 
@@ -380,8 +380,8 @@ docker rm -f rsigma-hunt
 
 ## What next
 
-- [Rule Drafting](../guide/rule-drafting.md) and [Rule Tuning](../guide/rule-tuning.md) cover both commands in depth, including correlation drafting and tuning without captures.
-- [Triage Feedback Loop](../guide/triage-feedback.md) and [Verdict-Driven Corpora](../guide/verdict-to-corpus.md) cover dispositions and capture in production.
-- [Hunting](../guide/hunting.md) covers time windows, limits, and read-only enforcement.
-- [CI/CD](../guide/ci-cd.md) turns lint, exemplar tests, and backtests into merge gates.
-- [MCP Server](../guide/mcp-server.md) runs the same loop from an AI agent.
+- [Rule Drafting](rule-drafting.md) and [Rule Tuning](rule-tuning.md) cover both commands in depth, including correlation drafting and tuning without captures.
+- [Triage Feedback Loop](triage-feedback.md) and [Verdict-Driven Corpora](verdict-to-corpus.md) cover dispositions and capture in production.
+- [Hunting](hunting.md) covers time windows, limits, and read-only enforcement.
+- [CI/CD](ci-cd.md) turns lint, exemplar tests, and backtests into merge gates.
+- [MCP Server](mcp-server.md) runs the same loop from an AI agent.

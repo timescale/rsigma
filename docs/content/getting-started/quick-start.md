@@ -150,7 +150,7 @@ You have used RSigma in three modes:
 - Continuous streaming detection with `engine daemon`.
 - Query generation with `backend convert`.
 
-To take one rule through drafting, testing, deployment, triage, tuning, measurement, and hunting, follow [Tutorial: The Detection Loop](detection-loop.md). Otherwise, pick the path that matches your work:
+To take one rule through drafting, testing, deployment, triage, tuning, measurement, and hunting, follow [Tutorial: The Detection Loop](../guide/detection-loop.md). Otherwise, pick the path that matches your work:
 
 - **Detection engineers**: [linting rules](../guide/linting-rules.md), [CI/CD](../guide/ci-cd.md), [processing pipelines](../guide/processing-pipelines.md).
 - **Platform engineers**: [streaming detection](../guide/streaming-detection.md), [NATS](../guide/nats-streaming.md), [OTLP integration](../guide/otlp-integration.md).
