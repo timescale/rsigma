@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### The detection loop tutorial moves to the User Guide
+### The detection loop tutorial moves to the User Guide (#624)
 
 [Tutorial: The Detection Loop](https://rsigma.io/guide/detection-loop/) is now the first page under the User Guide, right after the Detection Engineering Loop map it walks through, instead of sitting in Getting Started between the Quick Start and Core Concepts. Its old URL, `/getting-started/detection-loop/`, redirects to the new one.
 
