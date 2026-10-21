@@ -91,6 +91,7 @@ RSigma combines pySigma-style conversion with a streaming evaluator in one self-
 | [AxoDetect](https://axoflow.com/axodetect) | Commercial | Axoflow's detection workbench that runs Sigma rules in-stream inside its security data pipeline with RSigma as the evaluation engine |
 | [detection.studio](https://github.com/northsh/detection.studio) | MIT | Browser-based Sigma playground with real-time evaluation via RSigma compiled to WebAssembly |
 | [Garmr](https://github.com/hentorp/garmr) | AGPL-3.0 or commercial | Self-hosted application-audit and insider-risk platform using RSigma for per-event Sigma detection |
+| [Kestrel EDR](https://github.com/lawbyte/kestrel-edr) | Apache-2.0 | Self-hosted Windows EDR whose agents evaluate custom and curated SigmaHQ rules on the device with RSigma |
 | [LocalObserve](https://github.com/JJediny/LocalObserve) | Not specified | Local-first Linux security observability stack using RSigma for edge Sigma detection and webhook alerting |
 | [LogsTotal](https://github.com/wagga40/LogsTotal) | MIT | Self-hosted log analysis platform that runs Sigma rules through several engines, including RSigma for Windows event logs, and compares their findings |
 | [mozu](https://github.com/fukusuket/mozu) | AGPL-3.0 | Windows NTFS forensic triage from `$MFT` and `$UsnJrnl:$J` using RSigma to match file records and file events against Sigma rules |
