@@ -1,7 +1,5 @@
 //! Canonical STIX pattern printer (STIX Specification §9).
 
-use std::fmt::Write;
-
 use base64::Engine;
 
 use crate::core::StixTimestamp;
@@ -72,7 +70,9 @@ fn print_observation(ast: &PatternAst, min_prec: u8, out: &mut String) {
         }
         PatternAst::Repeats { inner, count, .. } => {
             print_qualifier_inner(inner, out);
-            write!(out, " REPEATS {count} TIMES").expect("fmt");
+            out.push_str(" REPEATS ");
+            out.push_str(&count.to_string());
+            out.push_str(" TIMES");
         }
         PatternAst::StartStop {
             inner, start, stop, ..
@@ -204,7 +204,9 @@ fn print_object_path(path: &ObjectPath, out: &mut String) {
                 print_dict_key(key, out);
             }
             PathStep::Index(idx) => {
-                write!(out, "[{idx}]").expect("fmt");
+                out.push('[');
+                out.push_str(&idx.to_string());
+                out.push(']');
             }
             PathStep::AnyIndex => out.push_str("[*]"),
             PathStep::Reference => {}
@@ -237,14 +239,14 @@ fn print_constant(value: &PatternConstant, out: &mut String) {
             print_escaped_string(s, out);
             out.push('\'');
         }
-        PatternConstant::Int(n) => write!(out, "{n}").expect("fmt"),
+        PatternConstant::Int(n) => out.push_str(&n.to_string()),
         PatternConstant::Float(f) => print_float(*f, out),
-        PatternConstant::Bool(b) => write!(out, "{b}").expect("fmt"),
+        PatternConstant::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         PatternConstant::Timestamp(ts) => print_timestamp(ts, out),
         PatternConstant::Hex(bytes) => {
             out.push_str("h'");
             for byte in bytes {
-                write!(out, "{byte:02x}").expect("fmt");
+                push_hex_byte(*byte, out);
             }
             out.push('\'');
         }
@@ -268,10 +270,16 @@ fn print_constant(value: &PatternConstant, out: &mut String) {
 
 fn print_float(value: f64, out: &mut String) {
     if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
-        write!(out, "{}", value as i64).expect("fmt");
+        out.push_str(&(value as i64).to_string());
     } else {
-        write!(out, "{value}").expect("fmt");
+        out.push_str(&value.to_string());
     }
+}
+
+fn push_hex_byte(byte: u8, out: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push(HEX[(byte >> 4) as usize] as char);
+    out.push(HEX[(byte & 0x0f) as usize] as char);
 }
 
 fn print_duration(duration: &Duration, out: &mut String) {
@@ -357,5 +365,21 @@ mod tests {
         let pattern = Pattern::parse("[ipv4-addr:value = '198.51.100.1/32']").expect("parse");
         assert_eq!(pattern.canonical(), print(pattern.ast()));
         assert_eq!(pattern.to_string(), print(pattern.ast()));
+    }
+
+    #[test]
+    fn canonical_spelling_pins_literals() {
+        // Uppercase hex and an integer-valued float must come back in canonical form.
+        // Semantic round-trips accept any spelling that parses to the same value.
+        let source = "[file:magic_number_hex = h'FFD8' AND file:defanged = true \
+                      AND file:extensions.'windows-pebinary-ext'.sections[0].entropy = 7.0] \
+                      REPEATS 2 TIMES";
+        let pattern = Pattern::parse(source).expect("parse");
+        let printed = print(pattern.ast());
+        assert_eq!(
+            printed,
+            "[file:magic_number_hex = h'ffd8' AND file:defanged = true AND file:extensions.'windows-pebinary-ext'.sections[0].entropy = 7] REPEATS 2 TIMES"
+        );
+        assert_eq!(pattern.canonical(), printed);
     }
 }

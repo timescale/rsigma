@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### rstix: pattern canonical printer without panic sites (#638)
+
+- The STIX pattern AST printer formats integers, booleans, hex literals, indices, and floats with infallible [`String`](https://doc.rust-lang.org/std/string/struct.String.html) appends instead of `write!(…).expect("fmt")`. Canonical pattern output is unchanged.
+
 ### rstix: confidence scale label mapping without panic sites (#637)
 
 - Verbal confidence scales (`NiLScale`, `AdmiraltyScale`, `WepScale`, `DniScale`, `MispScale`) map known labels through private `Confidence::known` for literals in `0..=100`, replacing `.expect("in range")` on those paths. Public `Confidence::new` is unchanged.
