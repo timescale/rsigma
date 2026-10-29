@@ -160,6 +160,8 @@ const emittedReleaseAnchors = new Set();
  * Each tag is closed with `:::` so text after it on the same line stays
  * outside the tag. docmd only honors that terminator when whitespace or the end
  * of the line follows it, so a tag directly followed by punctuation is an error.
+ * A tag inside a heading is also an error, since docmd would fold the tag's
+ * text into the heading anchor.
  *
  * @param {string} src
  * @param {string} page Page path for error messages.
@@ -203,8 +205,16 @@ function expandVersionTags(src, page, releases) {
       if (inFence) {
         return line;
       }
-      return line
-        .split(skipRe)
+      const segs = line.split(skipRe);
+      if (
+        /^ {0,3}#{1,6}\s/.test(line) &&
+        segs.some((seg) => !seg.startsWith("`") && /\{\{\s*added\s/.test(seg))
+      ) {
+        throw new Error(
+          `docmd-plugin-rsigma: ${page} has a version tag in the heading "${line.trim()}"; put the tag on its own line below the heading so the anchor stays stable`,
+        );
+      }
+      return segs
         .map((seg) => (seg.startsWith("`") ? seg : seg.replace(tagRe, render)))
         .join("");
     })

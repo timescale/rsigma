@@ -31,7 +31,9 @@ Defaults:
 
 The state key `index` is validated identically to PostgreSQL identifiers (`^[A-Za-z_][A-Za-z0-9_$]*$`). A custom index gets baked into the `FROM <index>` prefix of every generated query.
 
-## Search or where {{ added "0.24.0" }}
+## Search or where
+
+{{ added "0.24.0" }}
 
 LynxDB's `search` matches tokens case-insensitively and only knows the `*` wildcard. Each rule condition renders as `FROM <index> | search ...` when every value in it is one `search` matches exactly:
 
@@ -150,7 +152,9 @@ rsigma backend convert rules/ -t lynxdb -p pipeline.yml
 FROM security_logs | search CommandLine=*"whoami"*
 ```
 
-### Regex {{ added "0.24.0" }}
+### Regex
+
+{{ added "0.24.0" }}
 
 ```yaml
 detection:
@@ -165,7 +169,9 @@ FROM main | where match(CommandLine, "^cmd.*whoami")
 
 A `where` query reads every event in the index rather than using the inverted index, so rules that render as `where` are slower than rules that stay in `search`.
 
-### CIDR with combination {{ added "0.24.0" }}
+### CIDR with combination
+
+{{ added "0.24.0" }}
 
 ```yaml
 detection:
