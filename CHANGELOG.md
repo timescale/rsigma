@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5 (#646)
+
+The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
+
 ### Field observer snapshots count whole events (#647)
 
 `FieldObserver::snapshot`, which backs `GET /api/v1/fields` and the field report of `engine eval --observe-fields`, could catch an event halfway through being recorded: its keys were counted but its event count or its `overflow_dropped` count was not yet. `observe` now updates every counter under the same lock that `snapshot` and `reset` read and clear them under, so each snapshot reflects only whole events.
