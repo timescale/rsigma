@@ -21,6 +21,7 @@ pest = "2"
 pest_derive = "2"
 regex-syntax = "0.8"
 serde = { version = "1", features = ["derive"] }
+stacker = "0.1.25"
 yaml_serde = "0.10"
 yamlpath = { version = "1.27", optional = true }
 yamlpatch = { version = "1.26", optional = true }

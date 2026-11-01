@@ -4681,6 +4681,7 @@ dependencies = [
  "regex-syntax",
  "serde",
  "serde_json",
+ "stacker",
  "tempfile",
  "thiserror 2.0.21",
  "yaml_serde",
