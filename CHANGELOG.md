@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### The daemon loads rules at startup on musl builds again
+### The daemon loads rules at startup on musl builds again (#642)
 
 On the static musl binary and the `ghcr.io/timescale/rsigma` image, `engine daemon` 0.25.0 failed to parse every rule condition during its initial load with `stack limit reached`. It then started with 0 rules and still reported ready, or exited with `unknown rule reference` when the rules included a correlation. pest 2.9.3, which 0.25.0 picked up, refuses to parse when less than 64 KiB of stack appears to remain, and on musl the main thread reports only the part of its stack it has already touched. `parse_condition` now runs on a fresh 2 MiB stack whenever less than 256 KiB of stack appears to remain, so the initial load, reloads, and every other caller parse the same way regardless of the thread they run on. Deeply nested conditions are still rejected with an error instead of overflowing the stack.
 
