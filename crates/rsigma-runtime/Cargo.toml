@@ -34,7 +34,7 @@ yaml_serde = "0.10"
 thiserror = "2"
 tracing = "0.1"
 arc-swap = "1"
-parking_lot = "0.12"
+parking_lot = "0.13"
 syslog_loose = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
@@ -50,7 +50,7 @@ jaq-std = "3.0"
 jsonpath-rust = "1"
 cel = "0.15"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 notify = "8.2"
 hmac = { version = "0.13", features = ["zeroize"] }
 sha2 = "0.11"
@@ -64,7 +64,7 @@ tokio-stream = { version = "0.1", optional = true }
 async-nats = { version = "0.50", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
-evtx = { version = "0.12", optional = true, default-features = false }
+evtx = { version = "0.13", optional = true, default-features = false }
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }
 prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
@@ -75,7 +75,7 @@ rustls = { version = "0.23", optional = true }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 # Validates the OCSF goldens against the committed class-2004 schema fixture.
-jsonschema = "0.58"
+jsonschema = "0.60"
 rcgen = "0.14"
 time = "0.3"
 criterion = "0.8"

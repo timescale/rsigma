@@ -39,7 +39,7 @@ jobs:
       - uses: $/.github/actions/setup-rust
       # Pull `cargo-audit` from prebuilt artifacts rather than building
       # it from source every run; saves ~30s per audit invocation.
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-audit
       - run: cargo audit
