@@ -13,6 +13,7 @@ pub struct Metrics {
     pub events_parse_errors: IntCounter,
     pub detection_rules_loaded: IntGauge,
     pub correlation_rules_loaded: IntGauge,
+    pub rule_parse_errors: IntGauge,
     pub correlation_state_entries: IntGauge,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
@@ -143,6 +144,11 @@ impl Metrics {
         let correlation_rules_loaded = IntGauge::with_opts(Opts::new(
             "rsigma_correlation_rules_loaded",
             "Number of correlation rules loaded",
+        ))
+        .unwrap();
+        let rule_parse_errors = IntGauge::with_opts(Opts::new(
+            "rsigma_rule_parse_errors",
+            "Rule documents that failed to parse and were skipped in the loaded rule set",
         ))
         .unwrap();
         let correlation_state_entries = IntGauge::with_opts(Opts::new(
@@ -332,6 +338,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(correlation_rules_loaded.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(rule_parse_errors.clone()))
             .unwrap();
         registry
             .register(Box::new(correlation_state_entries.clone()))
@@ -1164,6 +1173,7 @@ impl Metrics {
             events_parse_errors,
             detection_rules_loaded,
             correlation_rules_loaded,
+            rule_parse_errors,
             correlation_state_entries,
             reloads_total,
             reloads_failed,

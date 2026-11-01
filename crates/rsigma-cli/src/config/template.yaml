@@ -182,6 +182,9 @@ daemon:
     observe_fields_max_keys: 10000
     # Allow include directives to reference remote (HTTP/NATS) sources.
     allow_remote_include: false
+    # Refuse to load a rule set in which any rule fails to parse. Off: rules
+    # that fail to parse are skipped; a load in which every rule fails is refused.
+    strict_rules: false
     # Enable the cross-rule Aho-Corasick pre-filter (daachorse-index feature).
     # cross_rule_ac: false
     # HTTP egress policy applied to dynamic-source and enrichment HTTP clients.

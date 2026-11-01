@@ -196,6 +196,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 observe_fields: Some(false),
                 observe_fields_max_keys: Some(OBSERVE_FIELDS_MAX_KEYS),
                 allow_remote_include: Some(false),
+                strict_rules: Some(false),
                 cross_rule_ac: Some(false),
                 match_detail: Some(MATCH_DETAIL.to_string()),
                 egress_policy: Some(EGRESS_POLICY.to_string()),

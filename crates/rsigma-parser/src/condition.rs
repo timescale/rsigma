@@ -33,6 +33,12 @@ struct SigmaConditionParser;
 const MAX_CONDITION_LEN: usize = 64 * 1024;
 const MAX_CONDITION_DEPTH: usize = 64;
 
+/// pest fails with "stack limit reached" when fewer than 64 KiB of stack
+/// remain, and musl reports only the already-touched part of the main
+/// thread's stack, so the reported headroom can be far below the real one.
+const CONDITION_STACK_RED_ZONE: usize = 256 * 1024;
+const CONDITION_STACK_SIZE: usize = 2 * 1024 * 1024;
+
 /// Parse a Sigma condition expression string into an AST.
 ///
 /// # Examples
@@ -51,6 +57,15 @@ pub fn parse_condition(input: &str) -> Result<ConditionExpr> {
         ));
     }
 
+    match stacker::remaining_stack() {
+        Some(remaining) if remaining < CONDITION_STACK_RED_ZONE => {
+            stacker::grow(CONDITION_STACK_SIZE, || parse_condition_inner(input))
+        }
+        _ => parse_condition_inner(input),
+    }
+}
+
+fn parse_condition_inner(input: &str) -> Result<ConditionExpr> {
     let pairs = SigmaConditionParser::parse(Rule::condition, input).map_err(|e| {
         let loc = extract_pest_location(&e);
         SigmaParserError::Condition(e.to_string(), loc)
@@ -836,5 +851,39 @@ mod tests {
             ConditionExpr::And(children) => assert_eq!(children.len(), 2),
             other => panic!("expected And, got {other:?}"),
         }
+    }
+
+    /// Recurses until less stack than pest's 64 KiB threshold appears to
+    /// remain, then parses, which is how the musl main thread looks to pest.
+    fn parse_with_little_stack_left(input: &str) -> Result<ConditionExpr> {
+        match stacker::remaining_stack() {
+            Some(remaining) if remaining > 48 * 1024 => {
+                let pad = std::hint::black_box([0u8; 4096]);
+                let result = parse_with_little_stack_left(input);
+                std::hint::black_box(&pad);
+                result
+            }
+            _ => parse_condition(input),
+        }
+    }
+
+    #[test]
+    fn parses_when_little_stack_appears_to_remain() {
+        let nested = format!("{}a{}", "(".repeat(60), ")".repeat(60));
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || {
+                assert!(parse_with_little_stack_left("selection and not filter").is_ok());
+                assert!(parse_with_little_stack_left(&nested).is_ok());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn deeply_nested_condition_fails_without_overflow() {
+        let input = format!("{}a{}", "(".repeat(30_000), ")".repeat(30_000));
+        assert!(parse_condition(&input).is_err());
     }
 }

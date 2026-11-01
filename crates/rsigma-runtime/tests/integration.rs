@@ -143,3 +143,109 @@ detection:
         "Updated"
     );
 }
+
+const GOOD_RULE: &str = r#"
+title: Good
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#;
+
+const BROKEN_RULE: &str = r#"
+title: Broken
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 2
+    condition: selection and (
+"#;
+
+fn rules_dir(rules: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, yaml) in rules {
+        std::fs::write(dir.path().join(name), yaml).unwrap();
+    }
+    dir
+}
+
+fn engine_for(dir: &tempfile::TempDir) -> RuntimeEngine {
+    RuntimeEngine::new(
+        dir.path().to_path_buf(),
+        vec![],
+        CorrelationConfig::default(),
+        false,
+    )
+}
+
+#[test]
+fn load_fails_when_every_rule_fails_to_parse() {
+    let dir = rules_dir(&[("broken.yml", BROKEN_RULE)]);
+    let err = engine_for(&dir).load_rules().unwrap_err();
+    assert!(err.contains("every rule failed to parse"), "{err}");
+}
+
+#[test]
+fn load_skips_broken_rules_and_counts_them() {
+    let dir = rules_dir(&[("good.yml", GOOD_RULE), ("broken.yml", BROKEN_RULE)]);
+    let mut engine = engine_for(&dir);
+    let stats = engine.load_rules().unwrap();
+    assert_eq!(stats.detection_rules, 1);
+    assert_eq!(stats.parse_errors, 1);
+    assert_eq!(engine.stats().parse_errors, 1);
+}
+
+#[test]
+fn empty_rules_dir_still_loads() {
+    let dir = rules_dir(&[]);
+    let stats = engine_for(&dir).load_rules().unwrap();
+    assert_eq!(stats.detection_rules, 0);
+    assert_eq!(stats.parse_errors, 0);
+}
+
+#[test]
+fn strict_rules_rejects_any_parse_error() {
+    let dir = rules_dir(&[("good.yml", GOOD_RULE), ("broken.yml", BROKEN_RULE)]);
+    let mut engine = engine_for(&dir);
+    engine.set_strict_rules(true);
+    let err = engine.load_rules().unwrap_err();
+    assert!(err.contains("strict rule loading"), "{err}");
+}
+
+#[test]
+fn reload_keeps_rules_when_every_rule_fails_to_parse() {
+    let dir = rules_dir(&[("good.yml", GOOD_RULE)]);
+    let mut engine = engine_for(&dir);
+    engine.load_rules().unwrap();
+    let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+    std::fs::write(dir.path().join("good.yml"), BROKEN_RULE).unwrap();
+    assert!(proc.reload_rules().is_err());
+
+    let batch = vec![r#"{"EventID": 1}"#.to_string()];
+    let results = proc.process_batch_lines(&batch, &identity_filter);
+    assert_eq!(
+        results[0].detection_count(),
+        1,
+        "previous rules stay active"
+    );
+}
+
+#[test]
+fn reload_keeps_strict_rules() {
+    let dir = rules_dir(&[("good.yml", GOOD_RULE)]);
+    let mut engine = engine_for(&dir);
+    engine.set_strict_rules(true);
+    engine.load_rules().unwrap();
+    let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+    std::fs::write(dir.path().join("broken.yml"), BROKEN_RULE).unwrap();
+    let err = proc.reload_rules().unwrap_err();
+    assert!(err.contains("strict rule loading"), "{err}");
+    assert_eq!(proc.stats().detection_rules, 1);
+}

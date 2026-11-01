@@ -16,9 +16,10 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_correlation_matches_total` | counter | none | Total correlation matches emitted. |
 | `rsigma_detection_rules_loaded` | gauge | none | Number of detection rules currently loaded. |
 | `rsigma_correlation_rules_loaded` | gauge | none | Number of correlation rules currently loaded. |
+| `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "unreleased" }} |
 | `rsigma_correlation_state_entries` | gauge | none | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
 | `rsigma_reloads_total` | counter | none | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
-| `rsigma_reloads_failed_total` | counter | none | Reload attempts that produced parse or compile errors. |
+| `rsigma_reloads_failed_total` | counter | none | Reload attempts that were refused, for example a compile error, every rule failing to parse, or any parse error under `--strict-rules`. The previous rules stay active. |
 | `rsigma_api_auth_failures_total` | counter | `reason` (`unauthorized`, `forbidden`) | API requests rejected by [bearer-token authentication](http-api.md#authentication): `unauthorized` is a missing or unrecognized token, `forbidden` a recognized token without the required permission. Each label value surfaces after its first rejection. Stays absent while authentication is disabled. |
 | `rsigma_audit_records_total` | counter | none | Control-plane API calls recorded in the [audit trail](http-api-state.md#audit-trail). Stays absent when audit is disabled (no `--state-db`). |
 | `rsigma_audit_write_errors_total` | counter | none | Audit trail SQLite insert or optional sink emission failures. |

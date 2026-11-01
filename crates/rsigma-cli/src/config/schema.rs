@@ -533,6 +533,11 @@ pub(crate) struct EnginePartial {
     pub observe_fields_max_keys: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_remote_include: Option<bool>,
+    /// Refuse to load a rule set in which any rule fails to parse. Default:
+    /// false, so rules that fail to parse are skipped and only a load in
+    /// which every rule fails is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict_rules: Option<bool>,
     /// Cross-rule Aho-Corasick pre-filter. Ignored unless built with `daachorse-index`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_rule_ac: Option<bool>,
@@ -558,6 +563,7 @@ impl Merge for EnginePartial {
                 .observe_fields_max_keys
                 .or(self.observe_fields_max_keys),
             allow_remote_include: over.allow_remote_include.or(self.allow_remote_include),
+            strict_rules: over.strict_rules.or(self.strict_rules),
             cross_rule_ac: over.cross_rule_ac.or(self.cross_rule_ac),
             match_detail: over.match_detail.or(self.match_detail),
             egress_policy: over.egress_policy.or(self.egress_policy),

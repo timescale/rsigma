@@ -29,6 +29,11 @@ pub struct RuntimeEngine {
     /// pipelines on every `load_rules()`.
     external_sources: Vec<DynamicSource>,
     allow_remote_include: bool,
+    /// Refuse to load a rule set in which any document failed to parse.
+    strict_rules: bool,
+    /// Parse errors in the rule set loaded by the last successful
+    /// `load_rules()`.
+    parse_errors: usize,
     /// Opt-in bloom-filter pre-filtering of positive substring matchers.
     /// Forwarded to the inner detection engine on every rule reload.
     bloom_prefilter: bool,
@@ -83,6 +88,9 @@ pub struct EngineStats {
     pub detection_rules: usize,
     pub correlation_rules: usize,
     pub state_entries: usize,
+    /// Rule documents that failed to parse and were left out of the
+    /// loaded rule set.
+    pub parse_errors: usize,
 }
 
 impl RuntimeEngine {
@@ -102,6 +110,8 @@ impl RuntimeEngine {
             source_resolver: None,
             external_sources: Vec::new(),
             allow_remote_include: false,
+            strict_rules: false,
+            parse_errors: 0,
             bloom_prefilter: false,
             bloom_max_bytes: None,
             match_detail: MatchDetailLevel::Off,
@@ -276,6 +286,18 @@ impl RuntimeEngine {
         self.allow_remote_include
     }
 
+    /// Make `load_rules()` fail when any rule document fails to parse,
+    /// instead of loading the documents that did parse. Off by default.
+    /// Applies on the next `load_rules()`; hot-reload carries it forward.
+    pub fn set_strict_rules(&mut self, strict: bool) {
+        self.strict_rules = strict;
+    }
+
+    /// Whether strict rule loading is enabled.
+    pub fn strict_rules(&self) -> bool {
+        self.strict_rules
+    }
+
     /// Set the pipeline file paths used for hot-reload.
     ///
     /// When paths are set, `load_rules()` re-reads pipeline YAML from disk
@@ -330,6 +352,10 @@ impl RuntimeEngine {
     /// pipeline file fails to parse, the entire reload is aborted and the
     /// old engine remains active.
     ///
+    /// Rule documents that fail to parse are logged and left out, unless
+    /// every rule failed to parse or [`set_strict_rules`](Self::set_strict_rules)
+    /// is on; then the load fails and the old engine remains active.
+    ///
     /// Dynamic pipeline sources are resolved if a source resolver is configured.
     pub fn load_rules(&mut self) -> Result<EngineStats, String> {
         let load_span = tracing::info_span!("load_rules", rules_path = %self.rules_path.display());
@@ -381,6 +407,8 @@ impl RuntimeEngine {
 
         let previous_state = self.export_state();
         let collection = load_collection(&self.rules_path)?;
+        check_parse_errors(&collection, self.strict_rules)?;
+        let parse_errors = collection.error_count();
         let has_correlations = !collection.correlations.is_empty();
 
         if let Some(mut spec) = self.routing.clone() {
@@ -439,8 +467,10 @@ impl RuntimeEngine {
                 detection_rules: router.detection_rule_count(),
                 correlation_rules: router.correlation_rule_count(),
                 state_entries: router.state_count(),
+                parse_errors,
             };
             self.engine = EngineVariant::Routed(Box::new(router));
+            self.parse_errors = parse_errors;
             self.refresh_rule_field_set(&collection);
             tracing::debug!(
                 detection_rules = stats.detection_rules,
@@ -477,8 +507,10 @@ impl RuntimeEngine {
                 detection_rules: engine.detection_rule_count(),
                 correlation_rules: engine.correlation_rule_count(),
                 state_entries: engine.state_count(),
+                parse_errors,
             };
             self.engine = EngineVariant::WithCorrelations(Box::new(engine));
+            self.parse_errors = parse_errors;
             self.refresh_rule_field_set(&collection);
             tracing::debug!(
                 detection_rules = stats.detection_rules,
@@ -509,8 +541,10 @@ impl RuntimeEngine {
                 detection_rules: engine.rule_count(),
                 correlation_rules: 0,
                 state_entries: 0,
+                parse_errors,
             };
             self.engine = EngineVariant::DetectionOnly(Box::new(engine));
+            self.parse_errors = parse_errors;
             self.refresh_rule_field_set(&collection);
             tracing::debug!(
                 detection_rules = stats.detection_rules,
@@ -576,16 +610,19 @@ impl RuntimeEngine {
                 detection_rules: engine.rule_count(),
                 correlation_rules: 0,
                 state_entries: 0,
+                parse_errors: self.parse_errors,
             },
             EngineVariant::WithCorrelations(engine) => EngineStats {
                 detection_rules: engine.detection_rule_count(),
                 correlation_rules: engine.correlation_rule_count(),
                 state_entries: engine.state_count(),
+                parse_errors: self.parse_errors,
             },
             EngineVariant::Routed(router) => EngineStats {
                 detection_rules: router.detection_rule_count(),
                 correlation_rules: router.correlation_rule_count(),
                 state_entries: router.state_count(),
+                parse_errors: self.parse_errors,
             },
         }
     }
@@ -689,6 +726,28 @@ fn load_collection(path: &Path) -> Result<SigmaCollection, String> {
     }
 
     Ok(collection)
+}
+
+fn check_parse_errors(collection: &SigmaCollection, strict: bool) -> Result<(), String> {
+    let no_rules = collection.rules.is_empty() && collection.correlations.is_empty();
+    let errors = collection.error_count();
+    let Some(first) = collection.errors().next() else {
+        if no_rules {
+            tracing::warn!("No detection or correlation rules found");
+        }
+        return Ok(());
+    };
+    if strict {
+        return Err(format!(
+            "{errors} rule parse error(s) with strict rule loading enabled; first: {first}"
+        ));
+    }
+    if no_rules {
+        return Err(format!(
+            "No rules loaded: every rule failed to parse ({errors} parse error(s)); first: {first}"
+        ));
+    }
+    Ok(())
 }
 
 /// Re-read and parse all pipeline files from disk, sorted by priority.

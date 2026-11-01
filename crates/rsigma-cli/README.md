@@ -296,6 +296,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--timestamp-fallback` | string | `"wallclock"` | `wallclock` (substitute current time) or `skip` (omit from correlation) when events lack parseable timestamps |
 | `--source` | repeatable | `[]` | External source file(s) or directory of source files. Loads dynamic source declarations independently of pipeline files. See [External source files](#external-source-files) |
 | `--allow-remote-include` | flag | `false` | Allow `include` directives in dynamic pipelines to reference remote (HTTP/NATS) sources. Local sources (file/command) are always permitted |
+| `--strict-rules` | flag | `false` | Refuse to load a rule set in which any rule fails to parse. Without it, rules that fail to parse are skipped and only a load in which every rule fails is refused. A refused startup load exits with code 2; a refused reload keeps the current rules |
 
 **NATS flags** (require `daemon-nats` feature):
 
@@ -482,6 +483,7 @@ The first three triggers all funnel through one debounced reload task that re-re
 | `rsigma_events_parse_errors_total` | counter | | JSON parse errors on input |
 | `rsigma_detection_rules_loaded` | gauge | | Number of detection rules loaded |
 | `rsigma_correlation_rules_loaded` | gauge | | Number of correlation rules loaded |
+| `rsigma_rule_parse_errors` | gauge | | Rule documents that failed to parse and were skipped in the loaded rule set |
 | `rsigma_correlation_state_entries` | gauge | | Active correlation state entries |
 | `rsigma_reloads_total` | counter | | Total rule reload attempts |
 | `rsigma_reloads_failed_total` | counter | | Failed rule reload attempts |

@@ -108,6 +108,8 @@ For a streaming daemon shape, wire an `EventSource` (`StdinSource`, `NatsSource`
 
 Sinks work on both multi-threaded and current-thread Tokio runtimes; on a current-thread runtime the stdout and file sinks write inline. `load_rules` is synchronous, so it can only resolve dynamic pipeline sources on a multi-threaded runtime and returns an error on a current-thread one, leaving the previous engine in place. {{ added "0.25.0" }}
 
+`load_rules` logs rule documents that fail to parse, leaves them out, and reports how many in `EngineStats::parse_errors`. It returns an error, leaving the previous engine in place, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`. Hot-reload carries the strict setting forward. {{ added "unreleased" }}
+
 ## Hot-reload
 
 `LogProcessor` holds the live `RuntimeEngine` in an `ArcSwap`. `processor.reload_rules()` rebuilds it from disk and atomically swaps it in; in-flight batches finish against the old engine, the next batch sees the new one. Wire a file watcher (`notify`), a `SIGHUP` handler, or an HTTP endpoint to call it:
@@ -122,7 +124,7 @@ let p = processor.clone();
 tokio::spawn(async move {
     // On reload trigger:
     match p.reload_rules() {
-        Ok(stats) => println!("reloaded {} rules", stats.rules_loaded),
+        Ok(stats) => println!("reloaded {} rules", stats.detection_rules),
         Err(e) => eprintln!("reload failed: {e}"),
     }
 });
