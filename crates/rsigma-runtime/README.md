@@ -45,6 +45,8 @@ let results = processor.process_batch_with_format(
 );
 ```
 
+`load_rules` skips rule documents that fail to parse and counts them in `EngineStats::parse_errors`. It returns an error, keeping the previous engine, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`.
+
 See the [examples](examples/) directory for complete working programs.
 
 ## Dynamic Source Resolution

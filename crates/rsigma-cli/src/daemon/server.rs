@@ -267,6 +267,8 @@ pub struct DaemonConfig {
     pub drain_timeout: u64,
     pub input_format: InputFormat,
     pub allow_remote_include: bool,
+    /// Refuse a rule load in which any rule fails to parse.
+    pub strict_rules: bool,
     /// Enable opt-in bloom-filter pre-filtering of positive substring
     /// matchers. Off by default; benefit is workload-dependent.
     pub bloom_prefilter: bool,
@@ -436,6 +438,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     );
     engine.set_pipeline_paths(config.pipeline_paths.clone());
     engine.set_allow_remote_include(config.allow_remote_include);
+    engine.set_strict_rules(config.strict_rules);
     engine.set_match_detail(config.match_detail);
     engine.set_bloom_prefilter(config.bloom_prefilter);
     if let Some(budget) = config.bloom_max_bytes {
@@ -611,6 +614,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             metrics
                 .correlation_rules_loaded
                 .set(stats.correlation_rules as i64);
+            metrics.rule_parse_errors.set(stats.parse_errors as i64);
             health.set_ready(true);
         }
         Err(e) => {
@@ -1314,6 +1318,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                     reload_metrics
                         .correlation_rules_loaded
                         .set(stats.correlation_rules as i64);
+                    reload_metrics
+                        .rule_parse_errors
+                        .set(stats.parse_errors as i64);
                     reload_health.set_ready(true);
                 }
                 Err(e) => {

@@ -124,7 +124,7 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/reload
 {"status":"reload_triggered"}
 ```
 
-The actual reload runs asynchronously; check `/readyz` and `rsigma_reloads_total` to confirm it completed. On a failure (parse error in a new rule), the daemon keeps serving the previously-loaded rules and increments `rsigma_reloads_failed_total`.
+The actual reload runs asynchronously; check `/readyz` and `rsigma_reloads_total` to confirm it completed. A rule that fails to parse is skipped and counted on `rsigma_rule_parse_errors`. On a failure (a compile error, every rule failing to parse, or any parse error under `--strict-rules`), the daemon keeps serving the previously-loaded rules and increments `rsigma_reloads_failed_total`.
 
 ## Event ingest (HTTP mode)
 

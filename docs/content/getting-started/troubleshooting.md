@@ -119,7 +119,7 @@ kill -HUP <daemon-pid>          # Unix
 rsigma config reload            # any platform, through the API
 ```
 
-When a reload fails (for example, a new rule does not parse), the daemon keeps serving the previous rules, `/readyz` returns `503`, and `rsigma_reloads_failed_total` goes up. The log line after `Reloading rules and pipelines...` names the failure. Fix the file and the next change reloads cleanly.
+A rule that does not parse is logged and skipped, and the rest of the reload goes through; `rsigma_rule_parse_errors` counts the skipped rules. When a reload fails (for example, a compile error, every rule failing to parse, or any parse error under `--strict-rules`), the daemon keeps serving the previous rules, stays ready, and `rsigma_reloads_failed_total` goes up. The log line after `Reloading rules and pipelines...` names the failure. Fix the file and the next change reloads cleanly.
 
 ## The API returns 401 or 403
 

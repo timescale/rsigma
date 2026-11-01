@@ -503,6 +503,7 @@ impl LogProcessor {
         let resolver = old.source_resolver().cloned();
         let external_sources = old.external_sources().to_vec();
         let allow_remote_include = old.allow_remote_include();
+        let strict_rules = old.strict_rules();
         let bloom_prefilter = old.bloom_prefilter();
         let bloom_max_bytes = old.bloom_max_bytes();
         let match_detail = old.match_detail();
@@ -516,6 +517,7 @@ impl LogProcessor {
         let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
         new_engine.set_pipeline_paths(pipeline_paths);
         new_engine.set_allow_remote_include(allow_remote_include);
+        new_engine.set_strict_rules(strict_rules);
         new_engine.set_match_detail(match_detail);
         new_engine.set_bloom_prefilter(bloom_prefilter);
         if let Some(budget) = bloom_max_bytes {

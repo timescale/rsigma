@@ -70,6 +70,7 @@ daemon:
   state:
     save_interval: 30
   engine:
+    strict_rules: false     # refuse a rule set in which any rule fails to parse (or --strict-rules)
     bloom_prefilter: false
     match_detail: off
     observe_fields: false

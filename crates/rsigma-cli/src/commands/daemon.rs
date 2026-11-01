@@ -288,6 +288,13 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "allow-remote-include")]
     pub allow_remote_include: bool,
 
+    /// Refuse to load a rule set in which any rule fails to parse. At
+    /// startup the daemon exits; on reload the current rules stay active.
+    /// Without it, rules that fail to parse are logged and skipped, and only
+    /// a load in which every rule fails is refused.
+    #[arg(long = "strict-rules")]
+    pub strict_rules: bool,
+
     /// HTTP egress policy applied to dynamic-source and enrichment HTTP clients.
     ///
     /// `default` (the default) blocks link-local addresses (which include
@@ -765,6 +772,7 @@ pub(crate) fn cmd_daemon(
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         allow_remote_include,
+        strict_rules,
         egress_policy,
         bloom_prefilter,
         match_detail,
@@ -911,6 +919,7 @@ pub(crate) fn cmd_daemon(
         #[cfg(feature = "daemon-nats")]
         consumer_group,
         allow_remote_include,
+        strict_rules,
         egress_policy,
         bloom_prefilter,
         match_detail,
@@ -1561,6 +1570,11 @@ fn apply_daemon_config(
         {
             args.allow_remote_include = v;
         }
+        if !explicit("strict_rules")
+            && let Some(v) = engine.strict_rules
+        {
+            args.strict_rules = v;
+        }
         if !explicit("egress_policy")
             && let Some(v) = engine.egress_policy
         {
@@ -1691,6 +1705,7 @@ fn run_daemon(
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
     allow_remote_include: bool,
+    strict_rules: bool,
     egress_policy: String,
     bloom_prefilter: bool,
     match_detail: String,
@@ -1872,6 +1887,7 @@ fn run_daemon(
         consumer_group,
         state_restore_mode,
         allow_remote_include,
+        strict_rules,
         bloom_prefilter,
         bloom_max_bytes,
         observe_fields,
