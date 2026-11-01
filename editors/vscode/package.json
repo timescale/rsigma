@@ -76,7 +76,7 @@
     "@vscode/vsce": {
       "undici": "^7.29.0"
     },
-    "@azure/msal-node": "^5.2.2",
+    "@azure/msal-node": "^7.1.0",
     "lodash": "^4.17.21",
     "brace-expansion": "^5.0.12"
   }

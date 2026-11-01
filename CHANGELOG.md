@@ -27,6 +27,10 @@ Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo
 
 `evtx` 0.13 keeps the raw integer of Windows bool substitution values other than 0 and 1, which Windows uses for bitmasks in some bool fields, so such EVTX fields now reach rules as an integer instead of `true`.
 
+### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5
+
+The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
+
 ### rstix: pattern canonical printer without panic sites (#638)
 
 - The STIX pattern AST printer formats integers, booleans, hex literals, indices, and floats with infallible [`String`](https://doc.rust-lang.org/std/string/struct.String.html) appends instead of `write!(…).expect("fmt")`. Canonical pattern output is unchanged.
