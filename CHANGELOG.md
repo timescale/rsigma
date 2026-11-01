@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Field observer snapshots count whole events
+### Field observer snapshots count whole events (#647)
 
 `FieldObserver::snapshot`, which backs `GET /api/v1/fields` and the field report of `engine eval --observe-fields`, could catch an event halfway through being recorded: its keys were counted but its event count or its `overflow_dropped` count was not yet. `observe` now updates every counter under the same lock that `snapshot` and `reset` read and clear them under, so each snapshot reflects only whole events.
 
