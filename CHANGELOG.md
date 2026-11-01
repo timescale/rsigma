@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5 (#646)
+
+The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
+
 ### Field observer snapshots count whole events (#647)
 
 `FieldObserver::snapshot`, which backs `GET /api/v1/fields` and the field report of `engine eval --observe-fields`, could catch an event halfway through being recorded: its keys were counted but its event count or its `overflow_dropped` count was not yet. `observe` now updates every counter under the same lock that `snapshot` and `reset` read and clear them under, so each snapshot reflects only whole events.
@@ -26,10 +30,6 @@ Migration for library users:
 Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo.lock`, `fuzz/Cargo.lock`, and `ci/wasm-smoke/Cargo.lock` regenerated against current `main`. Security: `rustls-webpki` 0.103.15 to 0.103.16 for RUSTSEC-2026-0382 and `webpki-roots` 1.0.9 to 1.0.11 for RUSTSEC-2026-0381 (distrusted intermediates accepted during certificate verification), `webpki-root-certs` 1.0.9 to 1.0.11 for RUSTSEC-2026-0383, and `ctutils` 0.4.2 to 0.4.5 for RUSTSEC-2026-0385, in both Cargo lockfiles. `tokio` 1.53.2 to 1.54.1 resolves the I/O safety unsoundness in RUSTSEC-2026-0386, and `evtx` 0.12 to 0.13 drops the unmaintained `encoding` crate (RUSTSEC-2021-0153), so `cargo audit` and `cargo deny` report no findings. Rust: the patch group with `pest` 2.9.4, `serde_json` 1.0.154, `arc-swap` 1.9.3, `jaq-core` 3.1.2, `jsonpath-rust` 1.0.12, `sha2` 0.11.1, and `opentelemetry-proto` 0.33.1 (#640), `uuid` 1.29.0 (#636), `serde_json` 1.0.154 in the fuzz crate (#631), `jsonschema` 0.58 to 0.60, `rusqlite` 0.40 to 0.41, `fancy-regex` 0.19 to 0.20, `parking_lot` 0.12 to 0.13, `p12-keystore` 0.3 to 0.4, and `rmcp` 3.7.0. The breaking bumps build without code changes. CI: `Swatinem/rust-cache` v2.9.3, `taiki-e/install-action` v2.87.30, `github/codeql-action/upload-sarif` v4.39.1, `rust-lang/crates-io-auth-action` v1.0.6, and `zizmorcore/zizmor-action` v0.7.1, repinned by commit SHA (#639). VS Code: `@types/node` 26.6.5 (#630). Docs: `markdown-it` 14.3.3 (#628). Held back: `yamlpath` and `yamlpatch` 1.31.0 (#635, #634) require rustc 1.97 through `tree-sitter-iter`, above the 1.96.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression; `testcontainers` 0.28.0 waits for a `testcontainers-modules` release that supports it; `reqwest` 0.13 in `rsigma-runtime` and `rsigma-mcp` replaces the bundled `webpki-roots` trust store with the platform verifier, which would change which certificates the webhook and OTLP/HTTP sinks, HTTP enrichers, HTTP dynamic sources, and the MCP daemon client trust.
 
 `evtx` 0.13 keeps the raw integer of Windows bool substitution values other than 0 and 1, which Windows uses for bitmasks in some bool fields, so such EVTX fields now reach rules as an integer instead of `true`.
-
-### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5 (#646)
-
-The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
 
 ### rstix: pattern canonical printer without panic sites (#638)
 
