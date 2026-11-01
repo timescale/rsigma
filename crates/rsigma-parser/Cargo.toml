@@ -14,7 +14,7 @@ default = ["fix"]
 fix = ["dep:yamlpatch", "dep:yamlpath"]
 
 [dependencies]
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 globset = "0.4"
 log = "0.4"
 pest = "2"
