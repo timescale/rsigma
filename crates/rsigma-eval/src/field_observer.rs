@@ -197,14 +197,17 @@ impl FieldObserver {
     /// the observer can be shared behind an `Arc` without locking from
     /// the caller's side.
     pub fn observe<E: Event + ?Sized>(&self, event: &E) {
-        self.events_observed.fetch_add(1, Ordering::Relaxed);
-        self.lifetime_events_observed
-            .fetch_add(1, Ordering::Relaxed);
         let keys = event.field_keys();
         if keys.is_empty() {
+            self.events_observed.fetch_add(1, Ordering::Relaxed);
+            self.lifetime_events_observed
+                .fetch_add(1, Ordering::Relaxed);
             return;
         }
         let mut overflow_local = 0u64;
+        // The counters are updated under the map lock so that a snapshot,
+        // which reads them under the same lock, never sees an event's keys
+        // without its event and overflow counts.
         let mut counts = self.inner.lock().expect("field observer mutex poisoned");
         for key in keys {
             if let Some(slot) = counts.get_mut(key.as_ref()) {
@@ -215,13 +218,15 @@ impl FieldObserver {
                 overflow_local = overflow_local.saturating_add(1);
             }
         }
-        drop(counts);
         if overflow_local > 0 {
             self.overflow_dropped
                 .fetch_add(overflow_local, Ordering::Relaxed);
             self.lifetime_overflow_dropped
                 .fetch_add(overflow_local, Ordering::Relaxed);
         }
+        self.events_observed.fetch_add(1, Ordering::Relaxed);
+        self.lifetime_events_observed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Snapshot the current counts. Entries are sorted by descending
@@ -242,15 +247,19 @@ impl FieldObserver {
             })
             .collect();
         let unique_keys = entries.len();
+        let events_observed = self.events_observed.load(Ordering::Relaxed);
+        let overflow_dropped = self.overflow_dropped.load(Ordering::Relaxed);
+        let lifetime_events_observed = self.lifetime_events_observed.load(Ordering::Relaxed);
+        let lifetime_overflow_dropped = self.lifetime_overflow_dropped.load(Ordering::Relaxed);
         drop(counts);
         entries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.field.cmp(&b.field)));
         FieldObservation {
             entries,
-            events_observed: self.events_observed.load(Ordering::Relaxed),
+            events_observed,
             unique_keys,
-            overflow_dropped: self.overflow_dropped.load(Ordering::Relaxed),
-            lifetime_events_observed: self.lifetime_events_observed.load(Ordering::Relaxed),
-            lifetime_overflow_dropped: self.lifetime_overflow_dropped.load(Ordering::Relaxed),
+            overflow_dropped,
+            lifetime_events_observed,
+            lifetime_overflow_dropped,
             max_keys: self.max_keys,
             uptime_seconds: self
                 .start
@@ -268,9 +277,9 @@ impl FieldObserver {
         let mut counts = self.inner.lock().expect("field observer mutex poisoned");
         let previous_keys = counts.len();
         counts.clear();
-        drop(counts);
         let previous_events = self.events_observed.swap(0, Ordering::Relaxed);
         self.overflow_dropped.store(0, Ordering::Relaxed);
+        drop(counts);
         *self
             .start
             .lock()
@@ -383,6 +392,35 @@ mod tests {
         for entry in &snap2.entries {
             assert_eq!(entry.count, 2, "tracked key counter advanced");
         }
+    }
+
+    #[test]
+    fn snapshot_counts_whole_events_during_concurrent_observation() {
+        const EVENTS: u64 = 20_000;
+        let observer = Arc::new(FieldObserver::new(2));
+        let writer = {
+            let observer = Arc::clone(&observer);
+            std::thread::spawn(move || {
+                let v = json!({"a": 1, "b": 2, "c": 3, "d": 4});
+                for _ in 0..EVENTS {
+                    observer.observe(&JsonEvent::borrow(&v));
+                }
+            })
+        };
+        loop {
+            let snap = observer.snapshot();
+            assert_eq!(
+                snap.overflow_dropped,
+                2 * snap.events_observed,
+                "snapshot saw a partially recorded event"
+            );
+            let tracked: u64 = snap.entries.iter().map(|e| e.count).sum();
+            assert_eq!(tracked, 2 * snap.events_observed);
+            if snap.events_observed == EVENTS {
+                break;
+            }
+        }
+        writer.join().unwrap();
     }
 
     #[test]
