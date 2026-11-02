@@ -12,7 +12,7 @@ RSigma v0.26.0 is a maintenance release: the daemon on musl builds and the Docke
 * Rule loading: a load in which every rule fails to parse exits with code `2` at startup and is refused on reload. The new `rsigma_rule_parse_errors` gauge counts skipped rules, and `--strict-rules` refuses any load with a parse error (#642). Field observer snapshots count whole events (#647).
 * Security and dependencies: `rustls-webpki`, `webpki-roots` and `webpki-root-certs` for RUSTSEC-2026-0381, RUSTSEC-2026-0382 and RUSTSEC-2026-0383, `ctutils` for RUSTSEC-2026-0385, `tokio` for RUSTSEC-2026-0386, and `evtx` 0.13 drops the unmaintained `encoding` crate (#643). `evtx` 0.15.1 fixes RUSTSEC-2026-0431, whose code rsigma's build never compiled in (#649). The VS Code extension's `@azure/msal-node` dev dependency moves to 7.1 for GHSA-xcx6-jx8p-x3h5 (#646).
 * Breaking: `RuntimeEngine::load_rules` returns an error when every rule fails to parse, and `EngineStats` gains `parse_errors` (#642). EVTX records reach rules in a new shape: bool fields with values other than 0 and 1 are integers (#643), and GUIDs are lowercase and in braces, unset elements are left out, and repeated `Data` names become arrays (#649). See the migration notes in the entries below.
-* rstix and docs: the pattern printer and confidence scale mapping drop their panic sites (#637, #638), and the detection loop tutorial moves to the User Guide (#624).
+* rstix and docs: the pattern printer and confidence scale mapping drop their panic sites (#637, #638, thanks to @SecurityEnthusiast), and the detection loop tutorial moves to the User Guide (#624).
 
 ### `evtx` 0.15.1 for RUSTSEC-2026-0431 (#649)
 
@@ -53,11 +53,11 @@ Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo
 
 `evtx` 0.13 keeps the raw integer of Windows bool substitution values other than 0 and 1, which Windows uses for bitmasks in some bool fields, so such EVTX fields now reach rules as an integer instead of `true`.
 
-### rstix: pattern canonical printer without panic sites (#638)
+### rstix: pattern canonical printer without panic sites (#638, thanks to @SecurityEnthusiast)
 
 - The STIX pattern AST printer formats integers, booleans, hex literals, indices, and floats with infallible [`String`](https://doc.rust-lang.org/std/string/struct.String.html) appends instead of `write!(…).expect("fmt")`. Canonical pattern output is unchanged.
 
-### rstix: confidence scale label mapping without panic sites (#637)
+### rstix: confidence scale label mapping without panic sites (#637, thanks to @SecurityEnthusiast)
 
 - Verbal confidence scales (`NiLScale`, `AdmiraltyScale`, `WepScale`, `DniScale`, `MispScale`) map known labels through private `Confidence::known` for literals in `0..=100`, replacing `.expect("in range")` on those paths. Public `Confidence::new` is unchanged.
 
