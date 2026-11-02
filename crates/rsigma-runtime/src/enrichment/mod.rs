@@ -68,8 +68,9 @@ pub use lookup::LookupEnricher;
 #[cfg(feature = "stix-enrich")]
 pub use stix::{StixEnricher, StixEnricherQuery};
 pub use template::{
-    TemplateEnricher, TemplateError, render_template, render_template_json, render_template_url,
-    validate_template_namespace,
+    TemplateEnricher, TemplateError, render_incident_template, render_incident_template_json,
+    render_incident_template_url, render_template, render_template_json, render_template_url,
+    validate_incident_template, validate_template_namespace,
 };
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.

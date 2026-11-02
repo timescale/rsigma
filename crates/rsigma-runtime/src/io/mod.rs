@@ -444,9 +444,9 @@ impl Sink {
     /// Deliver a pre-serialized incident line to this sink.
     ///
     /// Stdout/file write the line inline; NATS publishes to the per-incident
-    /// subject override when set, else the sink's configured subject. OTLP and
-    /// webhook sinks no-op, since incidents are not OTLP log records and the
-    /// webhook renderer templates from structured results, not incidents.
+    /// subject override when set, else the sink's configured subject. OTLP
+    /// sinks no-op, since incidents are not OTLP log records. Webhooks post
+    /// only when declared `kind: incident`.
     pub fn send_incident<'a>(
         &'a mut self,
         env: &'a IncidentEnvelope,
@@ -463,7 +463,7 @@ impl Sink {
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
-                Sink::Webhook(_) => Ok(()),
+                Sink::Webhook(s) => s.send_incident(&env.json, &DeliveryContext::new()).await,
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => s.send_raw(&env.json).await,
                 Sink::FanOut(sinks) => {
@@ -501,7 +501,10 @@ impl Sink {
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
-                Sink::Webhook(_) => Ok(()),
+                Sink::Webhook(s) => {
+                    s.send_incident(&env.native().json, &DeliveryContext::new())
+                        .await
+                }
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => s.send_raw(env.line(s.format())).await,
                 Sink::FanOut(sinks) => {
