@@ -108,7 +108,7 @@ For a streaming daemon shape, wire an `EventSource` (`StdinSource`, `NatsSource`
 
 Sinks work on both multi-threaded and current-thread Tokio runtimes; on a current-thread runtime the stdout and file sinks write inline. `load_rules` is synchronous, so it can only resolve dynamic pipeline sources on a multi-threaded runtime and returns an error on a current-thread one, leaving the previous engine in place. {{ added "0.25.0" }}
 
-`load_rules` logs rule documents that fail to parse, leaves them out, and reports how many in `EngineStats::parse_errors`. It returns an error, leaving the previous engine in place, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`. Hot-reload carries the strict setting forward. {{ added "unreleased" }}
+`load_rules` logs rule documents that fail to parse, leaves them out, and reports how many in `EngineStats::parse_errors`. It returns an error, leaving the previous engine in place, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`. Hot-reload carries the strict setting forward. {{ added "0.26.0" }}
 
 ## Hot-reload
 
