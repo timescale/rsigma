@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `evtx` 0.15.1 for RUSTSEC-2026-0431
+### `evtx` 0.15.1 for RUSTSEC-2026-0431 (#649)
 
 `evtx` moves from 0.13 to 0.15.1, which fixes RUSTSEC-2026-0431, an unbounded allocation when parsing a `.wevtcache` file. rsigma builds `evtx` without default features, so the affected `wevt_templates` code was never compiled into rsigma, but `cargo audit` and `cargo deny` flag every affected version. `utf16-simd` moves from 0.1.1 to 0.2.0 with it.
 
