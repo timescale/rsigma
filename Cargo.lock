@@ -1552,9 +1552,9 @@ dependencies = [
 
 [[package]]
 name = "evtx"
-version = "0.13.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03f34464e87db66ddffc0c0f2d3d9e8e971e2abbdde705739e16ad9286a4da23"
+checksum = "1f43baa96df69a1b45b7738edb91168028915e0f33aca91f194c39357f432a52"
 dependencies = [
  "ahash",
  "bitflags 2.13.2",
@@ -1563,6 +1563,7 @@ dependencies = [
  "encoding_rs",
  "jiff",
  "log",
+ "memchr",
  "serde_json",
  "sonic-rs",
  "thiserror 2.0.21",
@@ -6534,9 +6535,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "utf16-simd"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4be118d4436ac3c0d994602e970e2a06eb75eaa096a42e061d533af0ee678b8f"
+checksum = "a3029708233279f09f8687281ca6ae9fa07bf20abad7df602d36b8f8f4dadc28"
 dependencies = [
  "sonic-rs",
 ]

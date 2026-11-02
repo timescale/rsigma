@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `evtx` 0.15.1 for RUSTSEC-2026-0431 (#649)
+
+`evtx` moves from 0.13 to 0.15.1, which fixes RUSTSEC-2026-0431, an unbounded allocation when parsing a `.wevtcache` file. rsigma builds `evtx` without default features, so the affected `wevt_templates` code was never compiled into rsigma, but `cargo audit` and `cargo deny` flag every affected version. `utf16-simd` moves from 0.1.1 to 0.2.0 with it.
+
+0.15 renders EVTX records closer to how Windows renders them, which changes the events `engine eval -e @file.evtx` passes to rules:
+
+- Timestamps have seven fractional digits, such as `2016-07-08T18:12:51.6816408Z`. rsigma's timestamp parsing already accepts them.
+- GUIDs are lowercase and in braces, such as `{54849625-5478-4994-a5ba-3e3b0328c30d}`. Sigma string matching ignores case by default, so only a rule that matches a whole GUID without braces needs updating.
+- `Data` and `Binary` elements whose value was never set, and unset optional `System` fields, are left out instead of being present and empty.
+- Consecutive `Data` elements with the same name become one field whose value is an array, which rules match when any element matches. A name that appears again later gets a numbered suffix: in event 4648 of some logs, the second `LogonGuid` is `LogonGuid_1`.
+- Lone UTF-16 surrogates become U+FFFD, records of a log that wrapped around come out oldest first, and records past a corrupt record header are read instead of ending the chunk.
+
 ### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5 (#646)
 
 The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
