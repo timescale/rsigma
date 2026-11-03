@@ -76,16 +76,24 @@ impl DeliverySink for Sink {
     fn deliver_incident<'a>(
         &'a mut self,
         incident: &'a IncidentEnvelope,
-        _ctx: &'a DeliveryContext,
+        ctx: &'a DeliveryContext,
     ) -> DeliveryFuture<'a> {
-        self.send_incident(incident)
+        // A webhook signs from the per-item context so a retry re-sends the
+        // same id and signature.
+        match self {
+            Sink::Webhook(s) => Box::pin(s.send_incident(&incident.json, ctx)),
+            _ => self.send_incident(incident),
+        }
     }
     fn deliver_formatted_incident<'a>(
         &'a mut self,
         incident: &'a FormattedIncidentEnvelope,
-        _ctx: &'a DeliveryContext,
+        ctx: &'a DeliveryContext,
     ) -> DeliveryFuture<'a> {
-        self.send_formatted_incident(incident)
+        match self {
+            Sink::Webhook(s) => Box::pin(s.send_incident(&incident.native().json, ctx)),
+            _ => self.send_formatted_incident(incident),
+        }
     }
     fn label(&self) -> &'static str {
         self.kind_label()

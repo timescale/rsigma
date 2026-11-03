@@ -4,8 +4,7 @@
 //! layered `daemon.output.webhooks` key. Loaded once at daemon startup. The
 //! validator rejects startup with a clear, field-scoped error when:
 //!
-//! - `kind` is not `detection` or `correlation` (`incident` arrives with
-//!   roadmap item #48),
+//! - `kind` is not `detection`, `correlation`, or `incident`,
 //! - a templated field (`url`, a header value, `body`) references the wrong
 //!   namespace for the declared `kind`, or is malformed,
 //! - `url` is empty, the `method` is invalid, `retry.attempts` is zero, a
@@ -28,7 +27,7 @@ use zeroize::Zeroizing;
 
 use crate::enrichment::{
     EnricherKind, HttpEnricherClient, Scope, TemplateError, build_default_http_client,
-    validate_template_namespace,
+    validate_incident_template, validate_template_namespace,
 };
 use crate::io::DeliveryConfig;
 use crate::metrics::MetricsHook;
@@ -224,14 +223,15 @@ pub struct ScopeConfig {
 
 /// Parsed `kind:` discriminator.
 ///
-/// Deliberately a closed enum so #48 can add `Incident` additively without any
-/// existing config key changing meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebhookKind {
     /// Fires on detection results ([`ResultBody::Detection`]).
     Detection,
     /// Fires on correlation results ([`ResultBody::Correlation`]).
     Correlation,
+    /// Fires on alert-pipeline incident records (open, update, resolved),
+    /// templated with `${incident.*}`.
+    Incident,
 }
 
 impl WebhookKind {
@@ -240,27 +240,31 @@ impl WebhookKind {
         match self {
             WebhookKind::Detection => "detection",
             WebhookKind::Correlation => "correlation",
+            WebhookKind::Incident => "incident",
         }
     }
 
     /// Map onto the shared [`EnricherKind`] so the template-namespace validator
     /// (which is kind-agnostic past detection/correlation) can be reused.
-    pub(crate) fn as_enricher_kind(self) -> EnricherKind {
+    /// `None` for incidents, which are not evaluation results.
+    pub(crate) fn as_enricher_kind(self) -> Option<EnricherKind> {
         match self {
-            WebhookKind::Detection => EnricherKind::Detection,
-            WebhookKind::Correlation => EnricherKind::Correlation,
+            WebhookKind::Detection => Some(EnricherKind::Detection),
+            WebhookKind::Correlation => Some(EnricherKind::Correlation),
+            WebhookKind::Incident => None,
         }
     }
 
     /// True when this kind matches the given result body variant.
     pub fn matches(self, body: &ResultBody) -> bool {
-        self.as_enricher_kind().matches(body)
+        self.as_enricher_kind().is_some_and(|k| k.matches(body))
     }
 
     fn parse(s: &str) -> Option<Self> {
         match s {
             "detection" => Some(WebhookKind::Detection),
             "correlation" => Some(WebhookKind::Correlation),
+            "incident" => Some(WebhookKind::Incident),
             _ => None,
         }
     }
@@ -329,7 +333,7 @@ impl std::fmt::Display for WebhookConfigError {
             WebhookConfigError::Yaml(e) => write!(f, "invalid webhooks YAML: {e}"),
             WebhookConfigError::UnknownKind { webhook_id, kind } => write!(
                 f,
-                "webhook '{webhook_id}': unknown kind '{kind}' (valid kinds: detection, correlation; incident arrives with roadmap item #48)"
+                "webhook '{webhook_id}': unknown kind '{kind}' (valid kinds: detection, correlation, incident)"
             ),
             WebhookConfigError::MissingField { webhook_id, field } => {
                 write!(
@@ -435,14 +439,21 @@ fn build_one(
         });
     }
 
-    let ek = kind.as_enricher_kind();
-    check_template(&cfg.url, ek, &cfg.id, "url")?;
+    check_template(&cfg.url, kind, &cfg.id, "url")?;
     for (name, value) in &cfg.headers {
         let field: &'static str = Box::leak(format!("headers.{name}").into_boxed_str());
-        check_template(value, ek, &cfg.id, field)?;
+        check_template(value, kind, &cfg.id, field)?;
     }
     if let Some(body) = &cfg.body {
-        check_template(body, ek, &cfg.id, "body")?;
+        check_template(body, kind, &cfg.id, "body")?;
+    }
+    if kind == WebhookKind::Incident && cfg.scope.is_some() {
+        return Err(WebhookConfigError::Scope {
+            webhook_id: cfg.id.clone(),
+            message:
+                "scope is not supported for incident webhooks; scope the alert pipeline instead"
+                    .to_string(),
+        });
     }
 
     let method = match &cfg.method {
@@ -607,11 +618,15 @@ fn ensure_crypto_provider() {
 
 fn check_template(
     text: &str,
-    kind: EnricherKind,
+    kind: WebhookKind,
     id: &str,
     field: &'static str,
 ) -> Result<(), WebhookConfigError> {
-    validate_template_namespace(text, kind, id, field).map_err(|te| match te {
+    let checked = match kind.as_enricher_kind() {
+        Some(ek) => validate_template_namespace(text, ek, id, field),
+        None => validate_incident_template(text, id, field),
+    };
+    checked.map_err(|te| match te {
         TemplateError::CrossNamespace {
             reference, field, ..
         } => WebhookConfigError::CrossNamespace {
@@ -898,18 +913,80 @@ webhooks:
     }
 
     #[test]
-    fn unknown_kind_is_rejected_with_incident_hint() {
+    fn unknown_kind_is_rejected_with_valid_kinds() {
         let err = build_err(
             r#"
 webhooks:
   - id: pd
-    kind: incident
+    kind: risk
     url: https://example.test/hook
 "#,
         );
         let msg = err.to_string();
-        assert!(msg.contains("unknown kind 'incident'"), "{msg}");
-        assert!(msg.contains("roadmap item #48"), "{msg}");
+        assert!(msg.contains("unknown kind 'risk'"), "{msg}");
+        assert!(msg.contains("detection, correlation, incident"), "{msg}");
+    }
+
+    #[test]
+    fn incident_kind_accepts_incident_templates() {
+        let built = build(
+            r#"
+webhooks:
+  - id: master
+    kind: incident
+    url: https://example.test/incidents/${incident.incident_id}
+    body: '{"id":"${incident.incident_id}","state":"${incident.state}"}'
+"#,
+        )
+        .map_err(|e| e.to_string())
+        .unwrap();
+        assert_eq!(built.len(), 1);
+    }
+
+    #[test]
+    fn incident_kind_rejects_detection_templates() {
+        let msg = build_err(
+            r#"
+webhooks:
+  - id: master
+    kind: incident
+    url: https://example.test/hook
+    body: '{"t":"${detection.rule.title}"}'
+"#,
+        )
+        .to_string();
+        assert!(msg.contains("detection.rule.title"), "{msg}");
+    }
+
+    #[test]
+    fn detection_kind_rejects_incident_templates() {
+        let msg = build_err(
+            r#"
+webhooks:
+  - id: master
+    kind: detection
+    url: https://example.test/hook
+    body: '{"t":"${incident.state}"}'
+"#,
+        )
+        .to_string();
+        assert!(msg.contains("incident.state"), "{msg}");
+    }
+
+    #[test]
+    fn incident_kind_rejects_scope() {
+        let msg = build_err(
+            r#"
+webhooks:
+  - id: master
+    kind: incident
+    url: https://example.test/hook
+    scope:
+      levels: [high]
+"#,
+        )
+        .to_string();
+        assert!(msg.contains("not supported for incident webhooks"), "{msg}");
     }
 
     #[test]

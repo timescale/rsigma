@@ -21,6 +21,8 @@
 //! - `tags` (joined with `,`)
 //! - `fields.<name>` (the matched value of `<name>` from `matched_fields`)
 //! - `event.<dotted.path>` (navigate `DetectionBody::event` by JSON segment)
+//! - `enrichments.<dotted.path>` (navigate the result's enrichments map, e.g.
+//!   the alert pipeline's `incident_id`)
 //!
 //! Correlation paths:
 //! - `rule.title` / `rule.id` / `rule.level`
@@ -28,6 +30,11 @@
 //! - `type` (`event_count`, `temporal`, …)
 //! - `aggregated_value` / `timespan_secs`
 //! - `group_key` (joined `field=value,…`) or `group_key.<field>`
+//! - `enrichments.<dotted.path>`
+//!
+//! Incident webhooks use a third namespace, `${incident.<dotted.path>}`, that
+//! navigates the incident record (see [`render_incident_template`]). It is not
+//! valid inside enrichers, which never see incidents.
 //!
 //! Anything else (unrecognized prefix, dotted env var, etc.) is rejected at
 //! config load, **not** at runtime, so a deployment with a typo never starts
@@ -57,6 +64,8 @@ enum VarRef {
     Detection(String),
     /// `${correlation.<rest>}`
     Correlation(String),
+    /// `${incident.<rest>}`
+    Incident(String),
     /// `${ENV_VAR}` — single segment, no dot.
     Env(String),
     /// Anything else (dotted but unknown prefix, empty, …). Always an
@@ -69,6 +78,8 @@ fn classify_ref(name: &str) -> VarRef {
         VarRef::Detection(rest.to_string())
     } else if let Some(rest) = name.strip_prefix("correlation.") {
         VarRef::Correlation(rest.to_string())
+    } else if let Some(rest) = name.strip_prefix("incident.") {
+        VarRef::Incident(rest.to_string())
     } else if name.contains('.') || name.is_empty() {
         VarRef::Invalid(name.to_string())
     } else {
@@ -151,13 +162,33 @@ pub fn validate_template_namespace(
                     field,
                 });
             }
-            VarRef::Invalid(_) => {
+            VarRef::Incident(_) | VarRef::Invalid(_) => {
                 return Err(TemplateError::Malformed {
                     enricher_id: enricher_id.to_string(),
                     reference: inner.to_string(),
                     field,
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Validate a template rendered against an incident record: only
+/// `${incident.*}` and `${ENV_VAR}` references are allowed.
+pub fn validate_incident_template(
+    text: &str,
+    owner_id: &str,
+    field: &'static str,
+) -> Result<(), TemplateError> {
+    for caps in TEMPLATE_RE.captures_iter(text) {
+        let inner = caps.get(1).unwrap().as_str();
+        if !matches!(classify_ref(inner), VarRef::Env(_) | VarRef::Incident(_)) {
+            return Err(TemplateError::Malformed {
+                enricher_id: owner_id.to_string(),
+                reference: inner.to_string(),
+                field,
+            });
         }
     }
     Ok(())
@@ -220,26 +251,72 @@ fn render_with<F: Fn(ValueSource, String) -> String>(
     result: &EvaluationResult,
     escape: F,
 ) -> String {
+    render_refs(
+        text,
+        |var| match var {
+            VarRef::Detection(path) => match &result.body {
+                ResultBody::Detection(_) => render_detection_path(&path, result),
+                ResultBody::Correlation(_) => String::new(),
+            },
+            VarRef::Correlation(path) => match &result.body {
+                ResultBody::Correlation(_) => render_correlation_path(&path, result),
+                ResultBody::Detection(_) => String::new(),
+            },
+            _ => String::new(),
+        },
+        escape,
+    )
+}
+
+/// Render `text` against an incident record. `${incident.<path>}` navigates
+/// the record by dotted path; objects and arrays render as compact JSON.
+pub fn render_incident_template(text: &str, incident: &serde_json::Value) -> String {
+    render_incident_with(text, incident, |_, s| s)
+}
+
+/// URL variant of [`render_incident_template`]; see [`render_template_url`].
+pub fn render_incident_template_url(text: &str, incident: &serde_json::Value) -> String {
+    render_incident_with(text, incident, |source, s| match source {
+        ValueSource::Env => s,
+        ValueSource::Result => url_component_escape(&s),
+    })
+}
+
+/// JSON-body variant of [`render_incident_template`]; see [`render_template_json`].
+pub fn render_incident_template_json(text: &str, incident: &serde_json::Value) -> String {
+    render_incident_with(text, incident, |_, s| json_escape_value(s))
+}
+
+fn render_incident_with<F: Fn(ValueSource, String) -> String>(
+    text: &str,
+    incident: &serde_json::Value,
+    escape: F,
+) -> String {
+    render_refs(
+        text,
+        |var| match var {
+            VarRef::Incident(path) => navigate_json(incident, &path)
+                .map(json_to_string)
+                .unwrap_or_default(),
+            _ => String::new(),
+        },
+        escape,
+    )
+}
+
+/// Substitute every `${...}` reference: env vars from the process
+/// environment, everything else through `resolve`, then run each value
+/// through `escape`.
+fn render_refs<R: Fn(VarRef) -> String, F: Fn(ValueSource, String) -> String>(
+    text: &str,
+    resolve: R,
+    escape: F,
+) -> String {
     TEMPLATE_RE
         .replace_all(text, |caps: &regex::Captures| {
-            let inner = caps.get(1).unwrap().as_str();
-            let (source, raw) = match classify_ref(inner) {
+            let (source, raw) = match classify_ref(caps.get(1).unwrap().as_str()) {
                 VarRef::Env(name) => (ValueSource::Env, std::env::var(name).unwrap_or_default()),
-                VarRef::Detection(path) => (
-                    ValueSource::Result,
-                    match &result.body {
-                        ResultBody::Detection(_) => render_detection_path(&path, result),
-                        ResultBody::Correlation(_) => String::new(),
-                    },
-                ),
-                VarRef::Correlation(path) => (
-                    ValueSource::Result,
-                    match &result.body {
-                        ResultBody::Correlation(_) => render_correlation_path(&path, result),
-                        ResultBody::Detection(_) => String::new(),
-                    },
-                ),
-                VarRef::Invalid(_) => (ValueSource::Result, String::new()),
+                other => (ValueSource::Result, resolve(other)),
             };
             escape(source, raw)
         })
@@ -306,7 +383,27 @@ fn render_detection_path(path: &str, result: &EvaluationResult) -> String {
     if path == "event" {
         return body.event.as_ref().map(json_to_string).unwrap_or_default();
     }
+    if let Some(rest) = path.strip_prefix("enrichments.") {
+        return render_enrichment_path(rest, result);
+    }
     String::new()
+}
+
+/// Navigate the result's enrichments map by dotted path.
+fn render_enrichment_path(path: &str, result: &EvaluationResult) -> String {
+    let Some(map) = &result.header.enrichments else {
+        return String::new();
+    };
+    let (key, rest) = path.split_once('.').unwrap_or((path, ""));
+    let Some(value) = map.get(key) else {
+        return String::new();
+    };
+    if rest.is_empty() {
+        return json_to_string(value);
+    }
+    navigate_json(value, rest)
+        .map(json_to_string)
+        .unwrap_or_default()
 }
 
 fn render_correlation_path(path: &str, result: &EvaluationResult) -> String {
@@ -336,6 +433,9 @@ fn render_correlation_path(path: &str, result: &EvaluationResult) -> String {
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(",");
+    }
+    if let Some(rest) = path.strip_prefix("enrichments.") {
+        return render_enrichment_path(rest, result);
     }
     if let Some(name) = path.strip_prefix("group_key.") {
         for (k, v) in &body.group_key {
@@ -511,6 +611,64 @@ mod tests {
                 event: None,
             }),
         }
+    }
+
+    #[test]
+    fn enrichments_path_renders_pipeline_annotations() {
+        let mut eval = detection("t", "f", serde_json::json!("v"));
+        let mut map = serde_json::Map::new();
+        map.insert("incident_id".into(), serde_json::json!("fb68fd4d"));
+        map.insert("geo".into(), serde_json::json!({"country": "ID"}));
+        eval.header.enrichments = Some(map);
+        assert_eq!(
+            render_template_json(
+                r#"{"i":"${detection.enrichments.incident_id}","c":"${detection.enrichments.geo.country}","m":"${detection.enrichments.missing}"}"#,
+                &eval,
+            ),
+            r#"{"i":"fb68fd4d","c":"ID","m":""}"#
+        );
+    }
+
+    #[test]
+    fn enrichments_path_is_empty_without_enrichments() {
+        let eval = detection("t", "f", serde_json::json!("v"));
+        assert_eq!(
+            render_template("${detection.enrichments.incident_id}", &eval),
+            ""
+        );
+    }
+
+    #[test]
+    fn incident_template_navigates_record_and_escapes_json() {
+        let incident = serde_json::json!({
+            "incident_id": "abc",
+            "max_level": "critical",
+            "rule_counts": {"r1": 2},
+            "group_by": {"enrichment.src_ip": "1.1.1.1"},
+            "title": "a \"quoted\" value"
+        });
+        assert_eq!(
+            render_incident_template_json(
+                r#"{"id":"${incident.incident_id}","rc":"${incident.rule_counts}","t":"${incident.title}"}"#,
+                &incident,
+            ),
+            r#"{"id":"abc","rc":"{\"r1\":2}","t":"a \"quoted\" value"}"#
+        );
+    }
+
+    #[test]
+    fn incident_namespace_is_rejected_in_enrichers() {
+        assert!(
+            validate_template_namespace(
+                "${incident.state}",
+                EnricherKind::Detection,
+                "e",
+                "template"
+            )
+            .is_err()
+        );
+        assert!(validate_incident_template("${incident.state} ${HOME}", "w", "body").is_ok());
+        assert!(validate_incident_template("${detection.rule.id}", "w", "body").is_err());
     }
 
     #[test]

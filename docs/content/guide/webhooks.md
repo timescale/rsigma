@@ -70,7 +70,7 @@ webhooks:
 | Field | Required | Default | Notes |
 |-------|----------|---------|-------|
 | `id` | yes | none | Stable identifier; the `webhook_id` metric label and the per-sink delivery label. Must be unique across all webhook files. |
-| `kind` | yes | none | `detection` or `correlation`. Filters which result-body variant the webhook fires on. |
+| `kind` | yes | none | `detection`, `correlation`, or `incident`. Filters which result-body variant the webhook fires on; `incident` fires on alert-pipeline incident records. |
 | `url` | yes | none | Target URL template. |
 | `method` | no | `POST` | Any valid HTTP method. |
 | `headers` | no | none | Header templates. Values are rendered per result. |
@@ -95,7 +95,7 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 
 `url`, every header value, and `body` are templates rendered per result by the same engine the [enrichers](enrichers.md) use:
 
-- `${detection.*}` or `${correlation.*}` for result data, matching the webhook's `kind`. Common paths: `${detection.rule.title}`, `${detection.rule.id}`, `${detection.rule.level}`, `${detection.tags}`, `${detection.fields.<Name>}`, `${detection.event.<dotted.path>}`; `${correlation.type}`, `${correlation.aggregated_value}`, `${correlation.group_key.<field>}`.
+- `${detection.*}` or `${correlation.*}` for result data, matching the webhook's `kind`. Common paths: `${detection.rule.title}`, `${detection.rule.id}`, `${detection.rule.level}`, `${detection.tags}`, `${detection.fields.<Name>}`, `${detection.event.<dotted.path>}`, `${detection.enrichments.<dotted.path>}` (for example the alert pipeline's `incident_id`); `${correlation.type}`, `${correlation.aggregated_value}`, `${correlation.group_key.<field>}`.
 - `${ENV_VAR}` (single segment, no dot) for secrets. Resolved from the daemon process environment at render time, so secrets live in the environment, never in the webhook YAML.
 
 The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload. Header values are not escaped (CR and LF are rejected).
@@ -105,6 +105,20 @@ In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded a
 Every templated field is validated at startup against the webhook's `kind`: a `${correlation.*}` reference inside a `kind: detection` webhook rejects the daemon with a pointer at the offending field.
 
 `${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields.
+
+## Incident webhooks
+
+A `kind: incident` webhook fires on every incident record the [alert pipeline](alert-pipeline.md#grouping) emits: the first `open` after `group_wait`, each update after `group_interval` or `repeat_interval`, and the final `resolved`. Templates use the `${incident.<dotted.path>}` namespace, which navigates the incident record. Objects and arrays render as compact JSON, so `${incident.rule_counts}` or `${incident.entities}` land in the body as a JSON string. `scope` is rejected on incident webhooks; scope the alert pipeline instead.
+
+```yaml
+webhooks:
+  - id: case-manager
+    kind: incident
+    url: https://cases.internal/incidents
+    headers: {Content-Type: application/json}
+    body: '{"incident_id":"${incident.incident_id}","state":"${incident.state}","max_level":"${incident.max_level}","entities":"${incident.entities}"}'
+    signing: {secret_env: CASES_WEBHOOK_SECRET}
+```
 
 ## Delivery, retry, and rate limiting
 

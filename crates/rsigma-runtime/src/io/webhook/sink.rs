@@ -10,7 +10,8 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rsigma_eval::{EvaluationResult, ProcessResult};
 
 use crate::enrichment::{
-    HttpEnricherClient, render_template, render_template_json, render_template_url,
+    HttpEnricherClient, render_incident_template, render_incident_template_json,
+    render_incident_template_url, render_template, render_template_json, render_template_url,
 };
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
@@ -173,9 +174,53 @@ impl WebhookSink {
         Ok(())
     }
 
+    /// Deliver one alert-pipeline incident line (native NDJSON). A no-op for
+    /// detection and correlation webhooks.
+    pub async fn send_incident(
+        &mut self,
+        json: &str,
+        ctx: &DeliveryContext,
+    ) -> Result<(), RuntimeError> {
+        if self.kind != WebhookKind::Incident {
+            return Ok(());
+        }
+        let incident: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            RuntimeError::Permanent(format!("webhook {}: invalid incident line: {e}", self.id))
+        })?;
+        let url = render_incident_template_url(&self.url, &incident);
+        let headers = self
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), render_incident_template(value, &incident)))
+            .collect();
+        let body = self
+            .body
+            .as_ref()
+            .map(|b| render_incident_template_json(b, &incident));
+        self.post(url, headers, body, ctx, 0).await
+    }
+
     async fn deliver_one(
         &mut self,
         eval: &EvaluationResult,
+        ctx: &DeliveryContext,
+        idx: usize,
+    ) -> Result<(), RuntimeError> {
+        let url = render_template_url(&self.url, eval);
+        let headers = self
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), render_template(value, eval)))
+            .collect();
+        let body = self.body.as_ref().map(|b| render_template_json(b, eval));
+        self.post(url, headers, body, ctx, idx).await
+    }
+
+    async fn post(
+        &mut self,
+        url: String,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
         ctx: &DeliveryContext,
         idx: usize,
     ) -> Result<(), RuntimeError> {
@@ -187,21 +232,19 @@ impl WebhookSink {
             self.metrics.on_webhook_rate_limited(&self.id);
         }
 
-        let url = render_template_url(&self.url, eval);
         // Reserve for the user headers plus up to three signing headers
         // (webhook-id/timestamp/signature is the widest scheme) so a signed
         // request does not reallocate the map.
         let signing_headroom = if self.signer.is_some() { 3 } else { 0 };
-        let mut header_map = HeaderMap::with_capacity(self.headers.len() + signing_headroom);
-        for (name, value_template) in &self.headers {
-            let rendered = render_template(value_template, eval);
+        let mut header_map = HeaderMap::with_capacity(headers.len() + signing_headroom);
+        for (name, rendered) in &headers {
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
                 RuntimeError::Permanent(format!(
                     "webhook {}: invalid header name '{name}': {e}",
                     self.id
                 ))
             })?;
-            let header_value = HeaderValue::from_str(&rendered).map_err(|e| {
+            let header_value = HeaderValue::from_str(rendered).map_err(|e| {
                 RuntimeError::Permanent(format!(
                     "webhook {}: invalid header value for '{name}': {e}",
                     self.id
@@ -209,7 +252,6 @@ impl WebhookSink {
             })?;
             header_map.insert(header_name, header_value);
         }
-        let body = self.body.as_ref().map(|b| render_template_json(b, eval));
 
         // Sign the exact body bytes that go on the wire. The id and timestamp
         // come from the per-delivery context, so a retry reproduces the same
@@ -393,6 +435,72 @@ mod tests {
             Arc::new(NoopMetrics),
             Some(signer),
         )
+    }
+
+    fn incident_sink_to(url: String) -> WebhookSink {
+        WebhookSink::new(
+            "incidents".to_string(),
+            WebhookKind::Incident,
+            reqwest::Method::POST,
+            url,
+            vec![("Content-Type".to_string(), "application/json".to_string())],
+            Some(r#"{"id":"${incident.incident_id}","state":"${incident.state}","ips":"${incident.entities.enrichment.src_ip}"}"#.to_string()),
+            Duration::from_secs(5),
+            crate::enrichment::Scope::default(),
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn incident_webhook_posts_rendered_incident() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/incidents/inc-7"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut sink = incident_sink_to(format!(
+            "{}/incidents/${{incident.incident_id}}",
+            server.uri()
+        ));
+        let line = r#"{"incident_id":"inc-7","state":"open","entities":{"enrichment.src_ip":["1.1.1.1"]}}"#;
+        sink.send_incident(line, &ctx()).await.unwrap();
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
+        assert_eq!(body["id"], "inc-7");
+        assert_eq!(body["state"], "open");
+    }
+
+    #[tokio::test]
+    async fn detection_webhook_ignores_incidents() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let mut sink = sink_to(format!("{}/hook", server.uri()));
+        sink.send_incident(r#"{"incident_id":"x"}"#, &ctx())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn incident_webhook_ignores_results() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let mut sink = incident_sink_to(format!("{}/hook", server.uri()));
+        let result: ProcessResult = vec![detection("hi")];
+        sink.send(&result, &ctx()).await.unwrap();
     }
 
     #[tokio::test]

@@ -204,7 +204,7 @@ In `entity_graph` mode, `max_entities_per_incident` bounds the values an inciden
 
 ### Wire shape
 
-An `IncidentResult` is one flat NDJSON object, disambiguated downstream by the presence of an `incident_id` key. It carries the `state` (`open`/`resolved`), the `trigger` (`group_wait`/`group_interval`/`repeat`/`resolved`), the window bounds, the `max_level`, the `result_count`, per-rule `rule_counts`, the `group_by` key (group_by mode) or `entities` map (entity_graph mode), and the `refs` or `results`. Incidents are delivered to stdout, file, NATS, and unix sinks; with `nats_subject` set, incidents publish to that dedicated subject instead of the detection stream. OTLP and webhook sinks do not receive incidents.
+An `IncidentResult` is one flat NDJSON object, disambiguated downstream by the presence of an `incident_id` key. It carries the `state` (`open`/`resolved`), the `trigger` (`group_wait`/`group_interval`/`repeat`/`resolved`), the window bounds, the `max_level`, the `result_count`, per-rule `rule_counts`, the `group_by` key (group_by mode) or `entities` map (entity_graph mode), and the `refs` or `results`. Incidents are delivered to stdout, file, NATS, and unix sinks; with `nats_subject` set, incidents publish to that dedicated subject instead of the detection stream. OTLP sinks do not receive incidents. A webhook receives them only when declared `kind: incident` (see [Webhooks](webhooks.md#incident-webhooks)).
 
 Open incidents are also readable at `GET /api/v1/incidents`, and one at a time at `GET /api/v1/incidents/{id}`.
 
@@ -235,6 +235,6 @@ See [`engine incidents export`](../cli/engine/incidents-export.md) and [HTTP API
 - [CLI reference: `engine daemon`](../cli/engine/daemon.md) for `--alert-pipeline` and state flags.
 - [Enrichers](enrichers.md) for the stage that runs immediately before this one (or before risk).
 - [Risk-Based Alerting](risk-based-alerting.md) for the optional stage between enrichment and the alert pipeline.
-- [Webhooks](webhooks.md) for templated detection delivery (incidents are not sent to webhook sinks).
+- [Webhooks](webhooks.md) for templated detection, correlation, and incident delivery.
 - [Prometheus metrics reference](../reference/metrics.md) for the full alert-pipeline metric set.
 - [HTTP API reference](../reference/http-api.md) for `/api/v1/silences`, `/api/v1/incidents`, and incident bundles.
