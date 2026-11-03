@@ -16,7 +16,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_correlation_matches_total` | counter | none | Total correlation matches emitted. |
 | `rsigma_detection_rules_loaded` | gauge | none | Number of detection rules currently loaded. |
 | `rsigma_correlation_rules_loaded` | gauge | none | Number of correlation rules currently loaded. |
-| `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "unreleased" }} |
+| `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "0.26.0" }} |
 | `rsigma_correlation_state_entries` | gauge | none | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
 | `rsigma_reloads_total` | counter | none | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | none | Reload attempts that were refused, for example a compile error, every rule failing to parse, or any parse error under `--strict-rules`. The previous rules stay active. |

@@ -4,6 +4,28 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-02
+
+**TL;DR**
+RSigma v0.26.0 is a maintenance release: the daemon on musl builds and the Docker image loads rules at startup again, a load in which every rule fails to parse is refused instead of serving an empty engine, and dependency updates fix six RUSTSEC advisories.
+* Daemon: on the static musl binary and `ghcr.io/timescale/rsigma`, 0.25.0 parsed no rule conditions at startup and ran with 0 rules. Conditions now parse on a fresh stack when little stack appears to remain (#642). Upgrade if you run the Docker image or the musl binary.
+* Rule loading: a load in which every rule fails to parse exits with code `2` at startup and is refused on reload. The new `rsigma_rule_parse_errors` gauge counts skipped rules, and `--strict-rules` refuses any load with a parse error (#642). Field observer snapshots count whole events (#647).
+* Security and dependencies: `rustls-webpki`, `webpki-roots` and `webpki-root-certs` for RUSTSEC-2026-0381, RUSTSEC-2026-0382 and RUSTSEC-2026-0383, `ctutils` for RUSTSEC-2026-0385, `tokio` for RUSTSEC-2026-0386, and `evtx` 0.13 drops the unmaintained `encoding` crate (#643). `evtx` 0.15.1 fixes RUSTSEC-2026-0431, whose code rsigma's build never compiled in (#649). The VS Code extension's `@azure/msal-node` dev dependency moves to 7.1 for GHSA-xcx6-jx8p-x3h5 (#646).
+* Breaking: `RuntimeEngine::load_rules` returns an error when every rule fails to parse, and `EngineStats` gains `parse_errors` (#642). EVTX records reach rules in a new shape: bool fields with values other than 0 and 1 are integers (#643), and GUIDs are lowercase and in braces, unset elements are left out, and repeated `Data` names become arrays (#649). See the migration notes in the entries below.
+* rstix and docs: the pattern printer and confidence scale mapping drop their panic sites (#637, #638), and the detection loop tutorial moves to the User Guide (#624).
+
+### `evtx` 0.15.1 for RUSTSEC-2026-0431 (#649)
+
+`evtx` moves from 0.13 to 0.15.1, which fixes RUSTSEC-2026-0431, an unbounded allocation when parsing a `.wevtcache` file. rsigma builds `evtx` without default features, so the affected `wevt_templates` code was never compiled into rsigma, but `cargo audit` and `cargo deny` flag every affected version. `utf16-simd` moves from 0.1.1 to 0.2.0 with it.
+
+0.15 renders EVTX records closer to how Windows renders them, which changes the events `engine eval -e @file.evtx` passes to rules:
+
+- Timestamps have seven fractional digits, such as `2016-07-08T18:12:51.6816408Z`. rsigma's timestamp parsing already accepts them.
+- GUIDs are lowercase and in braces, such as `{54849625-5478-4994-a5ba-3e3b0328c30d}`. Sigma string matching ignores case by default, so only a rule that matches a whole GUID without braces needs updating.
+- `Data` and `Binary` elements whose value was never set, and unset optional `System` fields, are left out instead of being present and empty.
+- Consecutive `Data` elements with the same name become one field whose value is an array, which rules match when any element matches. A name that appears again later gets a numbered suffix: in event 4648 of some logs, the second `LogonGuid` is `LogonGuid_1`.
+- Lone UTF-16 surrogates become U+FFFD, records of a log that wrapped around come out oldest first, and records past a corrupt record header are read instead of ending the chunk.
+
 ### VS Code extension: `@azure/msal-node` 7.1 for GHSA-xcx6-jx8p-x3h5 (#646)
 
 The `@azure/msal-node` override in `editors/vscode/package.json` moves from `^5.2.2` to `^7.1.0`, which resolves to 7.1.1 and fixes the authorization code flow parameter disclosure in GHSA-xcx6-jx8p-x3h5. The package reaches the extension only as a development dependency, through `@vscode/vsce` and `@azure/identity`, and is not bundled into the extension.
@@ -27,7 +49,7 @@ Migration for library users:
 
 ### Dependency updates and certificate verification security fixes (#643)
 
-Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo.lock`, `fuzz/Cargo.lock`, and `ci/wasm-smoke/Cargo.lock` regenerated against current `main`. Security: `rustls-webpki` 0.103.15 to 0.103.16 for RUSTSEC-2026-0382 and `webpki-roots` 1.0.9 to 1.0.11 for RUSTSEC-2026-0381 (distrusted intermediates accepted during certificate verification), `webpki-root-certs` 1.0.9 to 1.0.11 for RUSTSEC-2026-0383, and `ctutils` 0.4.2 to 0.4.5 for RUSTSEC-2026-0385, in both Cargo lockfiles. `tokio` 1.53.2 to 1.54.1 resolves the I/O safety unsoundness in RUSTSEC-2026-0386, and `evtx` 0.12 to 0.13 drops the unmaintained `encoding` crate (RUSTSEC-2021-0153), so `cargo audit` and `cargo deny` report no findings. Rust: the patch group with `pest` 2.9.4, `serde_json` 1.0.154, `arc-swap` 1.9.3, `jaq-core` 3.1.2, `jsonpath-rust` 1.0.12, `sha2` 0.11.1, and `opentelemetry-proto` 0.33.1 (#640), `uuid` 1.29.0 (#636), `serde_json` 1.0.154 in the fuzz crate (#631), `jsonschema` 0.58 to 0.60, `rusqlite` 0.40 to 0.41, `fancy-regex` 0.19 to 0.20, `parking_lot` 0.12 to 0.13, `p12-keystore` 0.3 to 0.4, and `rmcp` 3.7.0. The breaking bumps build without code changes. CI: `Swatinem/rust-cache` v2.9.3, `taiki-e/install-action` v2.87.30, `github/codeql-action/upload-sarif` v4.39.1, `rust-lang/crates-io-auth-action` v1.0.6, and `zizmorcore/zizmor-action` v0.7.1, repinned by commit SHA (#639). VS Code: `@types/node` 26.6.5 (#630). Docs: `markdown-it` 14.3.3 (#628). Held back: `yamlpath` and `yamlpatch` 1.31.0 (#635, #634) require rustc 1.97 through `tree-sitter-iter`, above the 1.96.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression; `testcontainers` 0.28.0 waits for a `testcontainers-modules` release that supports it; `reqwest` 0.13 in `rsigma-runtime` and `rsigma-mcp` replaces the bundled `webpki-roots` trust store with the platform verifier, which would change which certificates the webhook and OTLP/HTTP sinks, HTTP enrichers, HTTP dynamic sources, and the MCP daemon client trust.
+Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo.lock`, `fuzz/Cargo.lock`, and `ci/wasm-smoke/Cargo.lock` regenerated against current `main`. Security: `rustls-webpki` 0.103.15 to 0.103.16 for RUSTSEC-2026-0382 and `webpki-roots` 1.0.9 to 1.0.11 for RUSTSEC-2026-0381 (distrusted intermediates accepted during certificate verification), `webpki-root-certs` 1.0.9 to 1.0.11 for RUSTSEC-2026-0383, and `ctutils` 0.4.2 to 0.4.5 for RUSTSEC-2026-0385, in both Cargo lockfiles. `tokio` 1.53.2 to 1.54.1 resolves the I/O safety unsoundness in RUSTSEC-2026-0386, and `evtx` 0.12 to 0.13 drops the unmaintained `encoding` crate (RUSTSEC-2021-0153), so `cargo audit` and `cargo deny` report no findings. Rust: the patch group with `pest` 2.9.4, `serde_json` 1.0.154, `arc-swap` 1.9.3, `jaq-core` 3.1.2, `jsonpath-rust` 1.0.12, `sha2` 0.11.1, and `opentelemetry-proto` 0.33.1 (#640), `uuid` 1.29.0 (#636), `serde_json` 1.0.154 in the fuzz crate (#631), `jsonschema` 0.58 to 0.60, `rusqlite` 0.40 to 0.41, `fancy-regex` 0.19 to 0.20, `parking_lot` 0.12 to 0.13, `p12-keystore` 0.3 to 0.4, and `rmcp` 3.7.0. The breaking bumps build without code changes. CI: `Swatinem/rust-cache` v2.9.3, `taiki-e/install-action` v2.87.30, `github/codeql-action/upload-sarif` v4.39.1, `rust-lang/crates-io-auth-action` v1.0.6, and `zizmorcore/zizmor-action` v0.7.1, repinned by commit SHA (#639). VS Code: `@types/node` 26.6.5 (#630) and `qs` 6.17.1 (#645). Docs: `markdown-it` 14.3.3 (#628). pySigma comparison tests: `certifi` 2026.10.18 (#644). Held back: `yamlpath` and `yamlpatch` 1.31.0 (#635, #634) require rustc 1.97 through `tree-sitter-iter`, above the 1.96.0 MSRV; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression; `testcontainers` 0.28.0 waits for a `testcontainers-modules` release that supports it; `reqwest` 0.13 in `rsigma-runtime` and `rsigma-mcp` replaces the bundled `webpki-roots` trust store with the platform verifier, which would change which certificates the webhook and OTLP/HTTP sinks, HTTP enrichers, HTTP dynamic sources, and the MCP daemon client trust.
 
 `evtx` 0.13 keeps the raw integer of Windows bool substitution values other than 0 and 1, which Windows uses for bitmasks in some bool fields, so such EVTX fields now reach rules as an integer instead of `true`.
 
@@ -42,6 +64,8 @@ Rolls up the open Dependabot PRs and the updates queued behind them, with `Cargo
 ### The detection loop tutorial moves to the User Guide (#624)
 
 [Tutorial: The Detection Loop](https://rsigma.io/guide/detection-loop/) is now the first page under the User Guide, right after the Detection Engineering Loop map it walks through, instead of sitting in Getting Started between the Quick Start and Core Concepts. Its old URL, `/getting-started/detection-loop/`, redirects to the new one.
+
+[v0.25.0...v0.26.0](https://github.com/timescale/rsigma/compare/v0.25.0...v0.26.0)
 
 ## [0.25.0] - 2026-10-19
 
@@ -3458,6 +3482,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.26.0]: https://github.com/timescale/rsigma/releases/tag/v0.26.0
 [0.25.0]: https://github.com/timescale/rsigma/releases/tag/v0.25.0
 [0.24.0]: https://github.com/timescale/rsigma/releases/tag/v0.24.0
 [0.23.0]: https://github.com/timescale/rsigma/releases/tag/v0.23.0

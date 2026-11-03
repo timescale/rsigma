@@ -30,9 +30,9 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--strict-rules` | off | Refuse to load a rule set in which any rule fails to parse. Config-file equivalent: `daemon.engine.strict_rules`. {{ added "unreleased" }} |
+| `--strict-rules` | off | Refuse to load a rule set in which any rule fails to parse. Config-file equivalent: `daemon.engine.strict_rules`. {{ added "0.26.0" }} |
 
-Rules that fail to parse are logged, left out of the loaded rule set, and counted on `rsigma_rule_parse_errors`. A load in which every rule fails to parse is refused, and so is any load with a parse error under `--strict-rules`. A refused load at startup exits with code `2`, the same as a compile error. A refused reload keeps the current rules active and increments `rsigma_reloads_failed_total`. A rules path with no rules and no parse errors still loads, with a warning. {{ added "unreleased" }}
+Rules that fail to parse are logged, left out of the loaded rule set, and counted on `rsigma_rule_parse_errors`. A load in which every rule fails to parse is refused, and so is any load with a parse error under `--strict-rules`. A refused load at startup exits with code `2`, the same as a compile error. A refused reload keeps the current rules active and increments `rsigma_reloads_failed_total`. A rules path with no rules and no parse errors still loads, with a warning. {{ added "0.26.0" }}
 
 ### Configuration
 
