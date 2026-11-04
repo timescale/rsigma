@@ -27,7 +27,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ryanriz/rsigma # GHCR needs lowercase; github.repository is RyanRiz/rsigma
 
 jobs:
   build:
