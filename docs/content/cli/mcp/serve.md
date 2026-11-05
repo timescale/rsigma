@@ -24,6 +24,7 @@ The command is gated behind the opt-in `mcp` Cargo feature: build from source wi
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--config <PATH>` | discovery | Load only this YAML config file instead of the discovery chain. Unlike a discovered project file, it may set the security-sensitive `mcp.*` keys (see [Project config trust](../../reference/configuration.md#project-config-trust)). CLI flags still override its values. {{ added "unreleased" }} |
 | `--lint-config <PATH>` | lint defaults | A lint config file (`.rsigma-lint.yml`) applied by the `lint_rules` tool (disabled rules, severity overrides, extra tag namespaces). Config key: `mcp.lint_config`. |
 | `--rules-dir <PATH>` | none | Root directory for path arguments in tool calls. Relative paths resolve against it, and any path that leaves it (absolute, `../`, or through a symlink) is refused. Without it, tools can read any file the server's OS user can read, `fix_rules` cannot write, `--http` refuses to start, and stdio prints a startup warning. Config key: `mcp.rules_dir`. |
 | `--allow-unconfined-paths` | off | Run without `--rules-dir`, leaving path arguments unconfined. Required to serve `--http` without a root; on stdio it silences the startup warning. `fix_rules` still cannot write without a root. Config key: `mcp.allow_unconfined_paths`. {{ added "0.25.0" }} |

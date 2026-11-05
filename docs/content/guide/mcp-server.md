@@ -220,7 +220,7 @@ rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 - **Plaintext safety.** Binding plaintext on a non-loopback address is refused unless `--allow-plaintext` is set.
 - **Path confinement.** `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }}
 
-The `--http`, `--lint-config`, `--rules-dir`, `--allow-unconfined-paths`, `--daemon-url`, `--daemon-ca`, and `--allow-operate-writes` settings also resolve from the layered config (`mcp` section) and the `RSIGMA_MCP__*` environment layer (for example `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100`); the MCP HTTP auth token and the daemon token stay flag/env-only.
+The `--http`, `--lint-config`, `--rules-dir`, `--allow-unconfined-paths`, `--daemon-url`, `--daemon-ca`, and `--allow-operate-writes` settings also resolve from the layered config (`mcp` section) and the `RSIGMA_MCP__*` environment layer (for example `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100`); the MCP HTTP auth token and the daemon token stay flag/env-only. {{ added "unreleased" }} A project file (`./rsigma.yaml` or `.rsigmarc`) cannot set `mcp.http_addr`, `mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.daemon_url`, `mcp.daemon_ca`, `mcp.allow_operate_writes`, or a `mcp.rules_dir` outside the project, so opening an agent in a cloned repository cannot turn these on. Set them with flags, the user config, or an explicit `--config <PATH>` (see [Project config trust](../reference/configuration.md#project-config-trust)).
 
 ## See also
 

@@ -1,6 +1,6 @@
 # Configuration
 
-`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, `rsigma rule visibility`, and `rsigma rule hygiene` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
+`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, `rsigma rule visibility`, `rsigma rule hygiene`, and `rsigma mcp serve` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
 
 The same machinery is exposed through the [`rsigma config` group](../cli/config/init.md) for scaffolding, validation, introspection, and reload.
 
@@ -10,7 +10,7 @@ From highest to lowest:
 
 1. **CLI flags** on the command line (e.g. `--rules /tmp/r`).
 2. **Environment variables**: uniform `RSIGMA_<SECTION>__<KEY>` (see [Environment layer](#environment-layer)) plus the legacy clap-bound names listed in [Environment Variables](environment-variables.md).
-3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory.
+3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "unreleased" }}
 4. **User config**: `$XDG_CONFIG_HOME/rsigma/config.yaml` (defaulting to `~/.config/rsigma/config.yaml`).
 5. **System config**: `/etc/rsigma/config.yaml`.
 6. **Compiled defaults** baked into the binary.
@@ -26,6 +26,30 @@ All layers that exist are loaded and merged. There is no first-match-wins fallba
 Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately).
 
 The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explicitly rather than `dirs::config_dir()`, so on macOS the path stays under `~/.config/rsigma` instead of `~/Library/Application Support/`. The `rsigma install` workflow uses the same layout.
+
+## Project config trust
+
+{{ added "unreleased" }}
+
+A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` above the current directory) ships with whatever repository is checked out, so running `rsigma` inside a cloned repository would otherwise let that repository configure the process. Project files can still set ordinary keys such as rule paths, pipelines, and output formats, but the keys below open a listener, a write path, a subprocess, or a network client, so rsigma ignores them when they come from a project file:
+
+| Key | Why it is protected |
+|-----|---------------------|
+| `mcp.http_addr` | Starts a network listener instead of stdio. |
+| `mcp.allow_unconfined_paths` | Lets tool calls read any file the server user can read. |
+| `mcp.allow_sigma_cli` | Lets `convert_rules` spawn sigma-cli. |
+| `mcp.daemon_url` | Points the operate tools, and the daemon token, at another server. |
+| `mcp.daemon_ca` | Adds a trusted root CA for the daemon connection. |
+| `mcp.allow_operate_writes` | Registers the mutating operate tools. |
+| `mcp.rules_dir` | Only when it resolves outside the directory holding the project file. A rules directory inside the project is kept. |
+
+Each ignored key prints a warning naming the file:
+
+```text
+warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags
+```
+
+The same keys work from every other layer: an explicit `--config <PATH>` (which replaces discovery, so the file is trusted as the operator's choice), the user config, the system config, `RSIGMA_*` environment variables, and CLI flags. To keep a protected key in a repository, commit the file under another name and pass it with `--config`. [`rsigma config validate`](../cli/config/validate.md) and [`rsigma config show`](../cli/config/show.md) list the ignored keys.
 
 ## Format
 

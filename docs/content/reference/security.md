@@ -209,6 +209,18 @@ Verdict-driven capture ([Verdict-Driven Corpora](../guide/verdict-to-corpus.md))
 - **The ring is not persisted.** A restart loses capture for open incidents rather than writing raw payloads into `--state-db`.
 - **No read or search API.** The spool is write-only from the daemon.
 
+## Project config files
+
+{{ added "unreleased" }}
+
+rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current directory, so a cloned repository can configure any `rsigma` command run inside it. Project files therefore cannot set the keys that open a gate. Those keys are ignored with a warning, and they resolve from `--config`, the user or system config, `RSIGMA_*` environment variables, or flags instead:
+
+- `mcp.http_addr`, `mcp.allow_unconfined_paths`, and `mcp.allow_sigma_cli`, which expose the MCP server on the network, unconfine its paths, or let it spawn sigma-cli.
+- `mcp.daemon_url`, `mcp.daemon_ca`, and `mcp.allow_operate_writes`, which would point the operate tools (and the daemon token) at another server or turn on the mutating tools.
+- `mcp.rules_dir` when it resolves outside the project file's directory.
+
+See [Project config trust](configuration.md#project-config-trust) for the full table and the warning format.
+
 ## MCP server tool surface
 
 The MCP server ([`rsigma mcp serve`](../cli/mcp/serve.md)) treats every tool argument as untrusted, because an agent can be steered by prompt-injected content it is asked to process (a third-party rule set, an issue being summarized).

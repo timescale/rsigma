@@ -32,15 +32,18 @@ By default unknown keys are warnings; `--strict` upgrades them to hard errors so
 
 ### Text mode
 
-Diagnostics go to stderr. Loaded layers are listed in increasing precedence order, then each unknown key and inactive section is printed, followed by a summary line.
+Diagnostics go to stderr. Loaded layers are listed in increasing precedence order, then each unknown key, ignored key, and inactive section is printed, followed by a summary line.
 
 ```text
 Loaded (low to high precedence):
   - /etc/rsigma/config.yaml
   - ./rsigma.yaml
 warning: unknown key 'bogus_key' in ./rsigma.yaml
+warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags
 Config is valid.
 ```
+
+An ignored key is a security-sensitive key set in a project file (`./rsigma.yaml` or `.rsigmarc`), which rsigma drops; see [Project config trust](../../reference/configuration.md#project-config-trust). Ignored keys do not fail validation, even with `--strict`. {{ added "unreleased" }}
 
 ### JSON mode
 
@@ -53,9 +56,14 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
   "unknown_keys": [
     { "file": "./rsigma.yaml", "key": "bogus_key" }
   ],
+  "ignored_keys": [
+    { "file": "./rsigma.yaml", "key": "mcp.daemon_url" }
+  ],
   "inactive_sections": []
 }
 ```
+
+`ignored_keys` {{ added "unreleased" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 
