@@ -35,6 +35,8 @@ The command is gated behind the opt-in `mcp` Cargo feature: build from source wi
 | `--allow-operate-writes` | off | Register `create_silence` and `post_disposition`. Requires `--daemon-url`. Config key: `mcp.allow_operate_writes`. {{ added "0.22.0" }} |
 | `--http <ADDR>` | stdio | Serve over the Streamable HTTP transport on this address (e.g. `127.0.0.1:9100`) instead of stdio. The MCP endpoint is mounted at `/mcp`. Config key: `mcp.http_addr`. |
 | `--auth-token <TOKEN>` | none | Require this static bearer token on every HTTP request (`Authorization: Bearer <token>`); requests without it get `401`. Also read from `RSIGMA_MCP_AUTH_TOKEN`. Flag/env only: secrets are never read from config files. |
+| `--allow-unauthenticated` | off | Serve `--http` on a non-loopback address without `--auth-token`. Without it, such a bind refuses to start, because anyone who can reach the port could call every tool. Loopback binds never need it. Flag only. {{ added "unreleased" }} |
+| `--allowed-host <HOST>` | see below | Accept this `Host` header value (a host name or `host:port`) on the HTTP transport. Repeatable. Adds to `localhost`, `127.0.0.1`, `::1`, and a specific bind IP; other hosts get `403`. Without it, a non-loopback bind with `--auth-token` accepts any host. Flag only. {{ added "unreleased" }} |
 | `--allow-plaintext` | off | Allow binding plaintext HTTP on a non-loopback address without TLS. Loopback binds never need it. |
 | `--tls-cert <PATH>` | none | TLS certificate (PEM) for the HTTP transport. Requires `--tls-key` and a build with the `daemon-tls` feature. |
 | `--tls-key <PATH>` | none | TLS private key (PEM) for the HTTP transport. Requires `--tls-cert`. |
@@ -93,20 +95,31 @@ Add to your `mcp.json`:
 For remote agents, serve over HTTP instead of stdio:
 
 ```bash
-# Local, loopback (no TLS required)
+# Local, loopback (no TLS or token required)
 rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 
 # Authenticated (bearer token), behind a TLS-terminating proxy
 RSIGMA_MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
   rsigma mcp serve --http 0.0.0.0:9100 --rules-dir /path/to/rules --allow-plaintext
 
-# Native TLS (requires the `daemon-tls` feature)
+# Native TLS (requires the `daemon-tls` feature), restricted to one host name
 rsigma mcp serve --http 0.0.0.0:9100 --rules-dir /path/to/rules \
-  --auth-token "$TOKEN" \
+  --auth-token "$TOKEN" --allowed-host mcp.example.com \
   --tls-cert /etc/rsigma/tls/cert.pem --tls-key /etc/rsigma/tls/key.pem
 ```
 
 The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses are refused unless `--allow-plaintext` is set (use it when a sidecar proxy terminates TLS). Native TLS reuses the daemon's rustls loader and is only available when the binary is built with `daemon-tls`.
+
+{{ added "unreleased" }} A non-loopback bind also needs `--auth-token`, or `--allow-unauthenticated` to opt out. Every request's `Host` header is checked to stop DNS-rebinding pages from reaching the server. The accepted hosts depend on the bind:
+
+| Bind | Accepted `Host` values |
+|------|------------------------|
+| Loopback, such as `127.0.0.1:9100` | `localhost`, `127.0.0.1`, `::1`, the bind IP, and each `--allowed-host`. |
+| Non-loopback with `--auth-token` and no `--allowed-host` | Any host. The bearer token is the access control, and startup logs a note. |
+| Non-loopback with `--allowed-host` | The loopback names, a specific bind IP (not `0.0.0.0` or `::`), and each `--allowed-host`. |
+| Non-loopback with `--allow-unauthenticated` | The same list. Startup logs the accepted hosts; pass `--allowed-host` for the names clients use. |
+
+A host without a port matches any port. Other hosts get `403 Forbidden`.
 
 `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set, because any client that reaches the endpoint could otherwise read files outside a rules tree. {{ added "0.25.0" }}
 
@@ -116,7 +129,7 @@ The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses
 |------|---------|
 | `0` | The server ran and the client disconnected cleanly. |
 | `2` | The server failed (transport error). |
-| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), or `--http` without `--rules-dir` or `--allow-unconfined-paths`. |
+| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), `--http` without `--rules-dir` or `--allow-unconfined-paths`, or a non-loopback `--http` without `--auth-token` or `--allow-unauthenticated`. |
 
 ## See also
 

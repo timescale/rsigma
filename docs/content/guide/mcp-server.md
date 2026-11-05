@@ -216,6 +216,8 @@ rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 ```
 
 - **Auth.** `--auth-token <token>` (or `RSIGMA_MCP_AUTH_TOKEN`) requires a static bearer token on every request; requests without `Authorization: Bearer <token>` get `401`. The token is compared in constant time and is flag/env-only (never read from config files).
+- **Auth off loopback.** A non-loopback `--http` bind refuses to start without `--auth-token` unless `--allow-unauthenticated` is set. {{ added "unreleased" }}
+- **Host validation.** Requests whose `Host` header is not accepted get `403`, which stops DNS-rebinding pages from reaching a local server. Loopback binds accept `localhost`, `127.0.0.1`, `::1`, and the bind IP. A non-loopback bind with a token accepts any host unless `--allowed-host` (repeatable) narrows it. See [`rsigma mcp serve`](../cli/mcp/serve.md#streamable-http) for the full table. {{ added "unreleased" }}
 - **TLS.** `--tls-cert`/`--tls-key` terminate TLS in-process using the same rustls loader as the daemon (requires a build with the `daemon-tls` feature). Alternatively terminate TLS at a sidecar proxy and bind plaintext with `--allow-plaintext`.
 - **Plaintext safety.** Binding plaintext on a non-loopback address is refused unless `--allow-plaintext` is set.
 - **Path confinement.** `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }}

@@ -45,7 +45,7 @@ Start a local server only when the user wants the agent wired up:
 rsigma mcp serve --rules-dir rules/
 ```
 
-Always pass `--rules-dir`. Without it, path arguments are unconfined, `fix_rules` cannot write, and `--http` refuses to start.
+Always pass `--rules-dir`. Without it, path arguments are unconfined, `fix_rules` cannot write, and `--http` refuses to start. A non-loopback `--http` bind also needs `--auth-token`.
 
 Point `--daemon-url` at a running daemon when the task is live triage (incidents, silences, dispositions). Those tools stay off until that URL is set. Writes stay behind `--allow-operate-writes`. A repository's `./rsigma.yaml` or `.rsigmarc` cannot turn these gates on; they come from flags, the user config, or `--config`. Details: [MCP server guide](https://rsigma.io/guide/mcp-server/).
 

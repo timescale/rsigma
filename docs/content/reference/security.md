@@ -240,6 +240,14 @@ The MCP server ([`rsigma mcp serve`](../cli/mcp/serve.md)) treats every tool arg
 - **No process execution or network egress from enrichers.** `evaluate_events` builds only `template` enrichers. `command`, `http`, `lookup`, and `stix` enrichers are refused; configure them on the daemon instead. {{ added "unreleased" }} A `template` enricher that references `${ENV_VAR}` in any templated field is refused as well, so a caller cannot read the server's environment variables through the enrichment result.
 - **sigma-cli delegation** (`--allow-sigma-cli`, off by default) spawns a subprocess. With `--rules-dir`, every path it receives is canonical and absolute, and it runs in an empty temporary directory, so a bare pipeline name cannot open a file (or a symlink) in the rules root. {{ added "unreleased" }} Only bare identifiers (letters, digits, `_`, `-`) are passed through as sigma-cli pipeline names; anything else is treated as a path and confined.
 
+### MCP Streamable HTTP
+
+{{ added "unreleased" }} The HTTP transport (`rsigma mcp serve --http`) exposes every registered tool to whoever reaches the port, so its defaults mirror the daemon's [network exposure](#daemon-network-exposure) checks:
+
+- **Auth is required off loopback.** A non-loopback bind without `--auth-token` refuses to start unless `--allow-unauthenticated` is set. Loopback binds work without a token.
+- **Host header validation.** Every request's `Host` must be accepted, or it gets `403`. This stops a DNS-rebinding web page from driving a server bound to loopback through the user's browser. Loopback binds accept `localhost`, `127.0.0.1`, `::1`, and the bind IP. A non-loopback bind with a token accepts any host, because the bearer token is the access control; `--allowed-host` (repeatable) restricts it to named hosts. An unauthenticated non-loopback bind keeps validation on, so clients must use a name passed with `--allowed-host`.
+- **Plaintext needs an opt-in.** A non-loopback bind without `--tls-cert`/`--tls-key` needs `--allow-plaintext`, for deployments where a proxy terminates TLS.
+
 ## Filesystem footprint
 
 The daemon never writes outside the paths it is explicitly given:
