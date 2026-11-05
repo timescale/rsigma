@@ -26,7 +26,7 @@ rsigma-mcp = "{{ rsigma.version }}"
 
 | Feature | Effect |
 |---------|--------|
-| `http` | Exposes `serve_http` and `http_router` for the Streamable HTTP transport. |
+| `http` | Exposes `serve_http`, `http_router`, and their `HttpOptions` variants for the Streamable HTTP transport. |
 
 ## Public surface
 
@@ -37,7 +37,8 @@ rsigma-mcp = "{{ rsigma.version }}"
 | `DaemonClient` / `DaemonConnect` / `DaemonError` | HTTP client pointed at the daemon control-plane API. |
 | `RsigmaMcp::default()` | A handler with no root, default lint configuration, and delegation disabled. |
 | `serve_stdio(handler)` | Serve the handler over stdio, blocking until the client disconnects. The caller owns the tokio runtime. |
-| `serve_http` / `http_router` (`http` feature) | Serve over Streamable HTTP (`/mcp`), or obtain the axum router for embedding. |
+| `serve_http` / `http_router` (`http` feature) | Serve over Streamable HTTP (`/mcp`), or obtain the axum router for embedding. The optional bearer token is the only setting, and only loopback `Host` headers are accepted. |
+| `serve_http_with` / `http_router_with(handler, HttpOptions)` (`http` feature) | Same, with `HttpOptions { auth_token, allowed_hosts }`. `AllowedHosts` is `Loopback` (`LOOPBACK_HOSTS`, the default), `List(hosts)`, or `Any`; requests with any other `Host` get `403`. Use `Any` only when a bearer token guards the endpoint. {{ added "unreleased" }} |
 
 The handler implements `rmcp::ServerHandler`, so it can also be served over any rmcp transport.
 

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rmcp::ServiceExt;
 use rmcp::transport::StreamableHttpClientTransport;
-use rsigma_mcp::RsigmaMcp;
+use rsigma_mcp::{AllowedHosts, HttpOptions, RsigmaMcp};
 
 /// Install a process-default rustls crypto provider. Under `--all-features`
 /// both aws-lc-rs and ring are in the dependency graph, so rustls has no
@@ -22,6 +22,8 @@ fn ensure_crypto_provider() {
     });
 }
 
+const INIT_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
+
 /// Bind an ephemeral port and spawn the MCP HTTP server on it, returning the
 /// bound address once it is listening.
 async fn spawn_server(auth: Option<String>) -> std::net::SocketAddr {
@@ -29,6 +31,18 @@ async fn spawn_server(auth: Option<String>) -> std::net::SocketAddr {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let _ = rsigma_mcp::serve_http(RsigmaMcp::default(), listener, auth).await;
+    });
+    // Give the spawned server a moment to start accepting.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    addr
+}
+
+/// Like [`spawn_server`], with explicit [`HttpOptions`].
+async fn spawn_server_with(options: HttpOptions) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = rsigma_mcp::serve_http_with(RsigmaMcp::default(), listener, options).await;
     });
     // Give the spawned server a moment to start accepting.
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -57,7 +71,7 @@ async fn http_bearer_auth_401_and_200() {
     let url = format!("http://{addr}/mcp");
     let http = reqwest::Client::new();
 
-    let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
+    let init_body = INIT_BODY;
 
     // No token -> the bearer middleware rejects before the MCP service.
     let resp = http
@@ -91,4 +105,75 @@ async fn http_bearer_auth_401_and_200() {
         "request with a valid token should be handled: got {}",
         resp.status()
     );
+}
+
+/// POST an `initialize` request to `addr` with the given `Host` header.
+async fn initialize_with_host(addr: std::net::SocketAddr, host: &str) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .post(format!("http://{addr}/mcp"))
+        .header("host", host)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(INIT_BODY)
+        .send()
+        .await
+        .expect("request sends")
+        .status()
+}
+
+#[tokio::test]
+async fn http_rejects_a_remote_host_by_default() {
+    ensure_crypto_provider();
+    let addr = spawn_server_with(HttpOptions::default()).await;
+    assert_eq!(
+        initialize_with_host(addr, "mcp.example.com").await,
+        reqwest::StatusCode::FORBIDDEN
+    );
+    let local = format!("localhost:{}", addr.port());
+    assert!(initialize_with_host(addr, &local).await.is_success());
+}
+
+#[tokio::test]
+async fn http_accepts_an_allowed_host() {
+    ensure_crypto_provider();
+    let addr = spawn_server_with(HttpOptions {
+        allowed_hosts: AllowedHosts::List(vec!["mcp.example.com".to_string()]),
+        ..Default::default()
+    })
+    .await;
+    assert!(
+        initialize_with_host(addr, "mcp.example.com")
+            .await
+            .is_success()
+    );
+    assert_eq!(
+        initialize_with_host(addr, "other.example.com").await,
+        reqwest::StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn http_any_host_still_requires_the_token() {
+    ensure_crypto_provider();
+    let addr = spawn_server_with(HttpOptions {
+        auth_token: Some("s3cr3t-token".to_string()),
+        allowed_hosts: AllowedHosts::Any,
+    })
+    .await;
+    assert_eq!(
+        initialize_with_host(addr, "mcp.example.com").await,
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let status = reqwest::Client::new()
+        .post(format!("http://{addr}/mcp"))
+        .header("host", "mcp.example.com")
+        .header("authorization", "Bearer s3cr3t-token")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(INIT_BODY)
+        .send()
+        .await
+        .expect("request sends")
+        .status();
+    assert!(status.is_success(), "got {status}");
 }
