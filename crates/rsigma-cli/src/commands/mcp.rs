@@ -25,6 +25,14 @@ pub(crate) enum McpCommands {
 /// Arguments for `rsigma mcp serve`.
 #[derive(Args, Debug)]
 pub(crate) struct McpServeArgs {
+    /// Path to a YAML config file. Overrides config-file discovery
+    /// (./rsigma.yaml, .rsigmarc, ~/.config/rsigma/config.yaml,
+    /// /etc/rsigma/config.yaml). Unlike a discovered project file, it may set
+    /// the security-sensitive `mcp.*` keys. CLI flags still take precedence
+    /// over config-file values.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
     /// Lint config file (`.rsigma-lint.yml`) applied by the `lint_rules` tool.
     /// When omitted, lint defaults are used.
     #[arg(long = "lint-config", value_name = "PATH")]
@@ -119,7 +127,7 @@ pub(crate) fn dispatch_mcp(cmd: McpCommands, ctx: crate::output::OutputCtx) {
 /// operator did not set explicitly. The MCP HTTP auth token and the daemon
 /// token are intentionally excluded: secrets stay flag/env-only.
 fn apply_mcp_config(args: &mut McpServeArgs) {
-    let base = crate::config::load_and_merge(None);
+    let base = crate::config::load_and_merge(args.config.as_deref());
     let Some(mcp) = base.mcp else {
         return;
     };
