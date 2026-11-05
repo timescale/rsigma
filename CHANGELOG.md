@@ -41,7 +41,7 @@ Source, enricher, and webhook transport errors now include the underlying cause,
 
 Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer takes effect. Move it to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`, pass the file with `mcp serve --config <PATH>`, or use the matching `RSIGMA_MCP__*` variable or flag.
 
-### Project config files cannot configure daemon sources, enrichers, sinks, or API access
+### Project config files cannot configure daemon sources, enrichers, sinks, or API access (#656)
 
 Running `rsigma engine daemon` inside a cloned repository loaded that repository's `./rsigma.yaml` or `.rsigmarc`, so a planted file could add a `command` enricher or source that ran on the first detection, send detections to its own sink, or weaken the API listener. Project files can no longer set:
 
