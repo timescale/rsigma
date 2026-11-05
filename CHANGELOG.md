@@ -16,7 +16,7 @@ Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code 
 - Their `pull_request` trigger no longer filters on the base branch or on changed paths, so every PR, including a docs-only PR or one based on another PR's branch, reports every job.
 - The `Security Audit` and `Workflow security (zizmor)` workflows also run on PRs against any base branch.
 
-### MCP `evaluate_events` refuses `${ENV_VAR}` in template enrichers
+### MCP `evaluate_events` refuses `${ENV_VAR}` in template enrichers (#653)
 
 A `template` enricher passed to the MCP server's `evaluate_events` tool, inline or through `enrichers_path`, could reference `${NAME}`, which renders from the server process's environment. Any MCP caller could read the server's environment variables, such as cloud credentials or API tokens, from the enrichment result. The tool now refuses such a template and names the offending references in the error; `${detection.*}` and `${correlation.*}` references work as before. The daemon still expands `${ENV_VAR}` in its own enrichers config. The new `rsigma_runtime::env_references` returns the environment references in a template, for library users who accept templates from untrusted input.
 
