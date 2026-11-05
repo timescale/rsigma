@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use super::RsigmaMcp;
 use super::shared::{NATIVE_TARGETS, get_backend, invalid, json_result, try_native_backend};
-use crate::input::resolve_confined_path;
+use crate::input::{ensure_no_symlinks, resolve_confined_path};
 
 /// How long a delegated sigma-cli invocation may run before the subprocess is
 /// killed. pySigma cold-start alone can take seconds; a plugin-heavy convert
@@ -312,11 +312,18 @@ impl RsigmaMcp {
 
     /// Resolve a delegated `path`/pipeline input, confining it to the
     /// configured `--rules-dir` when one is set (fail closed, symlink-safe:
-    /// both sides are canonicalized before the containment check). With no
-    /// root configured the path passes through unvalidated, consistent with
-    /// how the in-process tools read paths in that configuration.
+    /// both sides are canonicalized before the containment check). A
+    /// directory is refused when anything under it is a symlink, because
+    /// sigma-cli walks the tree itself and would follow links out of the
+    /// root. With no root configured the path passes through unvalidated,
+    /// consistent with how the in-process tools read paths in that
+    /// configuration.
     fn delegated_input_path(&self, path: &str) -> Result<PathBuf, McpError> {
-        resolve_confined_path(path, self.root())
+        let resolved = resolve_confined_path(path, self.root())?;
+        if resolved.is_dir() {
+            ensure_no_symlinks(&resolved, self.root())?;
+        }
+        Ok(resolved)
     }
 }
 
@@ -536,6 +543,48 @@ mod tests {
             let err = block_on(handler.delegate_convert(&cli, input, TEST_TIMEOUT)).unwrap_err();
             assert!(format!("{err:?}").contains("escapes the configured --rules-dir"));
         }
+    }
+
+    /// A rules directory under the root with `path` set to `rules`.
+    fn directory_input(root: &std::path::Path) -> ConvertInput {
+        let rules = root.join("rules");
+        std::fs::create_dir(&rules).unwrap();
+        std::fs::write(rules.join("rule.yml"), VALID_RULE).unwrap();
+        let mut input = convert_input("splunk");
+        input.yaml = None;
+        input.path = Some("rules".into());
+        input
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegation_refuses_directory_with_symlink_out_of_rules_dir() {
+        let root = tempfile::tempdir().unwrap();
+        let input = directory_input(root.path());
+        let outside = tempfile::NamedTempFile::with_suffix(".yml").unwrap();
+        std::fs::write(outside.path(), VALID_RULE).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("rules/leak.yml")).unwrap();
+
+        // The fake would succeed if spawned, so an error proves it never ran.
+        let bin = tempfile::tempdir().unwrap();
+        let cli = SigmaCli::from_program(fake_sigma(bin.path(), "q", "", 0, 0), true);
+        let handler = delegating_handler(Some(root.path().to_path_buf()));
+        let err = block_on(handler.delegate_convert(&cli, input, TEST_TIMEOUT)).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("directory contains a symlink"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn delegation_accepts_a_confined_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let input = directory_input(root.path());
+        let bin = tempfile::tempdir().unwrap();
+        let cli = SigmaCli::from_program(fake_sigma(bin.path(), "q", "", 0, 0), true);
+        let handler = delegating_handler(Some(root.path().to_path_buf()));
+        let v = block_on(handler.delegate_convert(&cli, input, TEST_TIMEOUT)).unwrap();
+        assert_eq!(v["ok"], true, "envelope: {v}");
     }
 
     #[test]
