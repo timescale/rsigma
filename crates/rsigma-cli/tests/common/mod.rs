@@ -494,6 +494,22 @@ pub fn poll_until<T>(deadline: Duration, mut check: impl FnMut() -> Option<T>) -
     }
 }
 
+/// The `id` of [`SIMPLE_RULE`].
+pub const SIMPLE_RULE_ID: &str = "00000000-0000-0000-0000-000000000001";
+
+/// A `POST /api/v1/silences` body that passes the default silence limits: a
+/// `rule =` matcher on [`SIMPLE_RULE_ID`] and an `ends_at` one hour out.
+pub fn bounded_silence(comment: &str) -> String {
+    let ends_at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    serde_json::json!({
+        "matchers": [{ "selector": "rule", "op": "=", "value": SIMPLE_RULE_ID }],
+        "ends_at": ends_at,
+        "comment": comment,
+        "created_by": "tests",
+    })
+    .to_string()
+}
+
 pub const SIMPLE_RULE: &str = r#"
 title: Test Rule
 id: 00000000-0000-0000-0000-000000000001

@@ -19,7 +19,7 @@ use rsigma_runtime::{
     DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver, FileSink,
     FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult, IncludeMode, InputFormat,
     LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState, RoutingSpec, RuntimeEngine,
-    SchemaClassifier, SchemaObserver, Silence, SilenceOrigin, SilenceSpec, Sink, SinkFormat,
+    SchemaClassifier, SchemaObserver, Silence, SilenceError, SilenceSpec, Sink, SinkFormat,
     StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file,
     load_risk_file, load_schema_signatures, spawn_source, strip_event_payloads,
 };
@@ -3452,14 +3452,24 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                 .into_response();
         }
     };
-    let max_silences = state
+    let Some((max_silences, limits)) = state
         .alert_pipeline_swap
         .load_full()
         .as_ref()
         .as_ref()
-        .map(|p| p.max_dynamic_silences())
-        .unwrap_or(rsigma_runtime::DEFAULT_MAX_DYNAMIC_SILENCES);
-    match Silence::build(spec, SilenceOrigin::Api) {
+        .map(|p| (p.max_dynamic_silences(), p.silence_limits()))
+    else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "no alert pipeline is loaded, so this silence would have no effect",
+                "hint": "silences require --alert-pipeline (or daemon.alert_pipeline)",
+            })),
+        )
+            .into_response();
+    };
+    let now = chrono::Utc::now().timestamp();
+    match Silence::build_api(spec, &limits, now) {
         Ok(silence) => {
             let id = silence.id().to_string();
             let added = {
@@ -3484,11 +3494,22 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                     .into_response()
             }
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Err(e) => {
+            let hint = match e {
+                SilenceError::Unbounded { .. } | SilenceError::TooLong { .. } => Some(
+                    "set an earlier ends_at, or raise max_silence_duration in the alert pipeline config",
+                ),
+                SilenceError::TooBroad => Some(
+                    "add a `=` matcher such as rule or match.<field>, or set allow_broad_silences: true in the alert pipeline config",
+                ),
+                _ => None,
+            };
+            let mut body = serde_json::json!({ "error": e.to_string() });
+            if let Some(hint) = hint {
+                body["hint"] = hint.into();
+            }
+            (StatusCode::BAD_REQUEST, Json(body)).into_response()
+        }
     }
 }
 

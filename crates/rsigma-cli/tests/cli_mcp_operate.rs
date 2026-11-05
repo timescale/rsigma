@@ -2,7 +2,8 @@
 //!
 //! Spawns `rsigma engine daemon` with dispositions enabled, points an
 //! in-process MCP handler at it, and chains create_silence -> list_silences
-//! -> post_disposition -> get_rule_quality over the MCP tool surface.
+//! -> post_disposition -> get_rule_quality over the MCP tool surface. A
+//! catch-all silence is refused with the daemon's hint.
 
 #![cfg(all(feature = "daemon", feature = "mcp"))]
 
@@ -41,9 +42,14 @@ async fn call_tool(
 #[tokio::test]
 async fn operate_tools_chain_against_a_live_daemon() {
     let rule = temp_file(".yml", SIMPLE_RULE);
+    let pipeline = temp_file(".yml", "{}");
     let daemon = DaemonProcess::spawn_http_with_args(
         rule.path().to_str().unwrap(),
-        &["--enable-dispositions"],
+        &[
+            "--enable-dispositions",
+            "--alert-pipeline",
+            pipeline.path().to_str().unwrap(),
+        ],
     );
     let url = daemon.url("");
     let url = url.trim_end_matches('/').to_string();
@@ -64,6 +70,23 @@ async fn operate_tools_chain_against_a_live_daemon() {
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server_task = tokio::spawn(async move { handler.serve(server_io).await });
     let client = ().serve(client_io).await.expect("client initialize");
+
+    let refused = call_tool(
+        &client,
+        "create_silence",
+        object!({
+            "matchers": [{ "selector": "rule", "op": "=~", "value": ".*" }],
+            "duration": "1h"
+        }),
+    )
+    .await;
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert!(
+        refused["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("allow_broad_silences")),
+        "{refused}"
+    );
 
     let created = call_tool(
         &client,
