@@ -38,7 +38,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-e, --event <EVENT>` | stdin | Single event as a JSON string, or `@path` to read NDJSON or `.evtx`. Without this flag, reads NDJSON from stdin. |
-| `--jq <JQ>` | unset | `jq` filter to extract the event payload from each input object. Example: `--jq '.event'`, `--jq '.records[]'`. Mutually exclusive with `--jsonpath`. |
+| `--jq <JQ>` | unset | `jq` filter to extract the event payload from each input object. Example: `--jq '.event'`, `--jq '.records[]'`. Mutually exclusive with `--jsonpath`. The `env` builtin is not available. {{ added "unreleased" }} |
 | `--jsonpath <JSONPATH>` | unset | JSONPath ([RFC 9535](https://www.rfc-editor.org/rfc/rfc9535)) query to extract the event payload. Example: `--jsonpath '$.event'`, `--jsonpath '$.records[*]'`. |
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With the `logfmt` and `cef` features: also `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog parsing. Format: `+HH:MM` or `-HH:MM`. |

@@ -41,8 +41,10 @@ daemon:
     # Bind address for health, metrics, and the HTTP/OTLP API. A non-loopback
     # TCP address refuses to start without TLS (or tls.allow_plaintext) and
     # without authentication (an auth block, tls.client_ca, or
-    # allow_unauthenticated). Loopback and unix:// addresses are exempt.
-    addr: "0.0.0.0:9090"
+    # allow_unauthenticated). Loopback and unix:// addresses are exempt. A
+    # project file (./rsigma.yaml, .rsigmarc) may only set a loopback address
+    # or a unix:// path inside the project.
+    # addr: "0.0.0.0:9090"
     # Serve an unauthenticated API on a non-loopback address. Use only behind
     # an authenticating proxy or network policy.
     # allow_unauthenticated: false

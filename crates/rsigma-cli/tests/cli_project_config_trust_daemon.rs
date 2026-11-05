@@ -133,3 +133,41 @@ fn project_config_cannot_open_an_unauthenticated_public_listener() {
             "refusing to bind plaintext on non-loopback address",
         ));
 }
+
+#[test]
+fn project_api_addr_cannot_receive_the_api_token() {
+    let capture = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    capture.set_nonblocking(true).unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let xdg = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join(".rsigmarc"),
+        format!(
+            "daemon:\n  api:\n    addr: http://{}\n",
+            capture.local_addr().unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(xdg.path().join("rsigma")).unwrap();
+    std::fs::write(
+        xdg.path().join("rsigma/config.yaml"),
+        "daemon:\n  api:\n    addr: 127.0.0.1:1\n",
+    )
+    .unwrap();
+
+    rsigma()
+        .current_dir(project.path())
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .env("RSIGMA_API_TOKEN", "operator-token")
+        .args(["engine", "incidents", "export", "inc-1"])
+        .timeout(Duration::from_secs(10))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "warning: ignoring 'daemon.api.addr' from project config",
+        ));
+    assert!(
+        capture.accept().is_err(),
+        "the project address must not receive a connection"
+    );
+}

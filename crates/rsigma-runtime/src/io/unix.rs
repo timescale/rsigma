@@ -40,11 +40,11 @@ impl Drop for UnixSocketGuard {
 /// Bind a [`UnixListener`] at `path`, recovering from a stale socket file left
 /// by a previously crashed run.
 ///
-/// On `AddrInUse` the existing socket is probed by connecting to it: a
-/// successful connect means another live process owns it (returned as an error
-/// so two daemons never fight over one path), while a failed connect means the
-/// file is stale and is removed and rebound. The socket file is then restricted
-/// to `0600`.
+/// On `AddrInUse` the existing path must be a socket, or binding fails without
+/// touching it. The socket is probed by connecting to it: a successful connect
+/// means another live process owns it (returned as an error so two daemons
+/// never fight over one path), while a failed connect means the file is stale
+/// and is removed and rebound. The socket file is then restricted to `0600`.
 ///
 /// Returns the listener plus a [`UnixSocketGuard`] that unlinks the socket on
 /// drop; hold it for the listener's lifetime.
@@ -52,6 +52,16 @@ pub async fn bind_unix_listener(path: &Path) -> io::Result<(UnixListener, UnixSo
     let listener = match UnixListener::bind(path) {
         Ok(listener) => listener,
         Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+            use std::os::unix::fs::FileTypeExt;
+            if !std::fs::symlink_metadata(path)?.file_type().is_socket() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{} exists and is not a unix socket; refusing to replace it",
+                        path.display()
+                    ),
+                ));
+            }
             if UnixStream::connect(path).await.is_ok() {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
@@ -142,5 +152,28 @@ mod tests {
         // A second bind while the first listener is alive must fail.
         let err = bind_unix_listener(&path).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[tokio::test]
+    async fn bind_never_removes_a_path_that_is_not_a_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("important.txt");
+        std::fs::write(&path, "keep me").unwrap();
+        let err = bind_unix_listener(&path).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
+
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, "keep me too").unwrap();
+        let link = dir.path().join("link.sock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(bind_unix_listener(&link).await.is_err());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me too");
     }
 }

@@ -389,24 +389,53 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         key: "daemon.output.webhooks",
         strip: |c, _| take(output(c).map(|o| &mut o.webhooks)),
     },
-    // A NATS input connects with the operator's NATS credentials.
+    // A NATS input connects with the operator's NATS credentials, and
+    // binding a unix:// path replaces whatever stale socket sits there.
     ProtectedKey {
         key: "daemon.input.source",
-        strip: |c, _| {
+        strip: |c, project_dir| {
             daemon(c)
                 .and_then(|d| d.input.as_mut())
                 .is_some_and(|input| {
-                    if input
-                        .source
-                        .as_deref()
-                        .is_some_and(|s| s.starts_with("nats://"))
-                    {
+                    if input.source.as_deref().is_some_and(|s| {
+                        s.starts_with("nats://") || unix_path_outside(s, project_dir)
+                    }) {
                         input.source = None;
                         true
                     } else {
                         false
                     }
                 })
+        },
+    },
+    // A durable consumer name could join another deployment's consumer and
+    // pull its messages.
+    ProtectedKey {
+        key: "daemon.nats.consumer_group",
+        strip: |c, _| {
+            take(
+                daemon(c)
+                    .and_then(|d| d.nats.as_mut())
+                    .map(|n| &mut n.consumer_group),
+            )
+        },
+    },
+    // Client commands send the API token to this address, and the server
+    // binds it.
+    ProtectedKey {
+        key: "daemon.api.addr",
+        strip: |c, project_dir| {
+            api(c).is_some_and(|a| {
+                if a.addr
+                    .as_deref()
+                    .is_some_and(|addr| !is_local_api_addr(addr, project_dir))
+                {
+                    a.addr = None;
+                    true
+                } else {
+                    false
+                }
+            })
         },
     },
     // API listener guards.
@@ -492,7 +521,53 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         key: "daemon.engine.allow_remote_include",
         strip: |c, _| take_true(engine(c).map(|e| &mut e.allow_remote_include)),
     },
+    // Files the CLI creates or truncates.
+    ProtectedKey {
+        key: "daemon.state.db",
+        strip: |c, project_dir| {
+            daemon(c)
+                .and_then(|d| d.state.as_mut())
+                .is_some_and(|s| take_outside(&mut s.db, project_dir))
+        },
+    },
+    ProtectedKey {
+        key: "eval.output",
+        strip: |c, project_dir| {
+            c.eval
+                .as_mut()
+                .is_some_and(|e| take_outside(&mut e.output, project_dir))
+        },
+    },
+    ProtectedKey {
+        key: "scorecard.report",
+        strip: |c, project_dir| {
+            c.scorecard
+                .as_mut()
+                .is_some_and(|s| take_outside(&mut s.report, project_dir))
+        },
+    },
 ];
+
+/// Whether `spec` is a `unix://` address whose path lies outside
+/// `project_dir`.
+fn unix_path_outside(spec: &str, project_dir: &Path) -> bool {
+    spec.strip_prefix("unix://")
+        .is_some_and(|path| !path_within(Path::new(path), project_dir))
+}
+
+/// Whether a project file may set `addr` as the API address: a loopback
+/// `host:port`, or a `unix://` path inside `project_dir`.
+fn is_local_api_addr(addr: &str, project_dir: &Path) -> bool {
+    if let Some(path) = addr.strip_prefix("unix://") {
+        return path_within(Path::new(path), project_dir);
+    }
+    if let Ok(socket) = addr.parse::<std::net::SocketAddr>() {
+        return socket.ip().is_loopback();
+    }
+    addr.rsplit_once(':').is_some_and(|(host, port)| {
+        host.eq_ignore_ascii_case("localhost") && port.parse::<u16>().is_ok()
+    })
+}
 
 /// Clear `path` when it lies outside `project_dir`. Returns whether it did.
 fn take_outside(path: &mut Option<PathBuf>, project_dir: &Path) -> bool {
@@ -858,8 +933,13 @@ daemon:
     batch_max: 64
   input:
     source: nats://127.0.0.1:4222/events
+  nats:
+    consumer_group: another-deployment
+  state:
+    db: /var/lib/elsewhere/state.db
+    save_interval: 30
   api:
-    addr: 127.0.0.1:9090
+    addr: http://attacker.example:9090
     auth:
       tokens: [{ name: t, role: admin, token_env: HOME }]
     allow_unauthenticated: true
@@ -898,8 +978,12 @@ daemon:
         assert!(output.sinks.is_none() && output.dlq.is_none() && output.webhooks.is_none());
         assert_eq!(output.batch_max, Some(64));
         assert!(daemon.input.unwrap().source.is_none());
+        assert!(daemon.nats.unwrap().consumer_group.is_none());
+        let state = daemon.state.unwrap();
+        assert!(state.db.is_none());
+        assert_eq!(state.save_interval, Some(30));
         let api = daemon.api.unwrap();
-        assert_eq!(api.addr.as_deref(), Some("127.0.0.1:9090"));
+        assert!(api.addr.is_none());
         assert!(api.auth.is_none() && api.allow_unauthenticated.is_none() && api.audit.is_none());
         let tls = api.tls.unwrap();
         assert!(tls.allow_plaintext.is_none() && tls.client_ca.is_none());
@@ -923,7 +1007,8 @@ daemon:
     #[test]
     fn project_layers_keep_local_daemon_inputs() {
         let dir = tempfile::tempdir().unwrap();
-        for source in ["stdin", "http", "unix:///tmp/rsigma-ingest.sock"] {
+        let inside = format!("unix://{}", dir.path().join("ingest.sock").display());
+        for source in ["stdin", "http", inside.as_str()] {
             let body = format!("daemon:\n  input:\n    source: {source}\n");
             let path = write_config(dir.path(), "rsigma.yaml", &body);
             let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
@@ -931,6 +1016,80 @@ daemon:
             assert_eq!(input.source.as_deref(), Some(source));
             assert!(loaded.ignored_keys.is_empty(), "{source}");
         }
+    }
+
+    #[test]
+    fn project_unix_paths_and_api_addr_stay_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let inside_sock = format!("unix://{}", dir.path().join("api.sock").display());
+        let outside_sock = format!("unix://{}", outside.path().join("victim.txt").display());
+        let escape_sock = format!("unix://{}", dir.path().join("../victim.txt").display());
+
+        for source in [outside_sock.as_str(), escape_sock.as_str()] {
+            let body = format!("daemon:\n  input:\n    source: {source}\n");
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            assert!(
+                loaded
+                    .config
+                    .daemon
+                    .unwrap()
+                    .input
+                    .unwrap()
+                    .source
+                    .is_none(),
+                "{source}"
+            );
+        }
+
+        for (addr, kept) in [
+            ("127.0.0.1:9090", true),
+            ("[::1]:9090", true),
+            ("localhost:9090", true),
+            (inside_sock.as_str(), true),
+            ("0.0.0.0:9090", false),
+            ("10.0.0.5:9090", false),
+            ("http://127.0.0.1:9090", false),
+            ("https://attacker.example", false),
+            ("attacker.example:9090", false),
+            (outside_sock.as_str(), false),
+        ] {
+            let body = format!("daemon:\n  api:\n    addr: \"{addr}\"\n");
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            let got = loaded.config.daemon.unwrap().api.unwrap().addr;
+            assert_eq!(got.is_some(), kept, "{addr}");
+        }
+
+        for (target, kept) in [
+            (dir.path().join("out"), true),
+            (outside.path().join("planted"), false),
+        ] {
+            let t = target.display();
+            let body = format!(
+                "daemon:\n  state:\n    db: {t}.db\neval:\n  output: {t}.ndjson\nscorecard:\n  report: {t}.md\n"
+            );
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            let config = loaded.config;
+            assert_eq!(
+                config.daemon.unwrap().state.unwrap().db.is_some(),
+                kept,
+                "{t}"
+            );
+            assert_eq!(config.eval.unwrap().output.is_some(), kept, "{t}");
+            assert_eq!(config.scorecard.unwrap().report.is_some(), kept, "{t}");
+            assert_eq!(loaded.ignored_keys.len(), if kept { 0 } else { 3 }, "{t}");
+        }
+    }
+
+    #[test]
+    fn config_init_template_sets_no_protected_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), "rsigma.yaml", include_str!("template.yaml"));
+        let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+        assert!(loaded.ignored_keys.is_empty(), "{:?}", loaded.ignored_keys);
     }
 
     #[test]

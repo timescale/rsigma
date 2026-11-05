@@ -43,17 +43,23 @@ Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yam
 
 ### Project config files cannot configure daemon sources, enrichers, sinks, or API access (#656)
 
-Running `rsigma engine daemon` inside a cloned repository loaded that repository's `./rsigma.yaml` or `.rsigmarc`, so a planted file could add a `command` enricher or source that ran on the first detection, send detections to its own sink, or weaken the API listener. Project files can no longer set:
+Running `rsigma engine daemon` inside a cloned repository loaded that repository's `./rsigma.yaml` or `.rsigmarc`, so a planted file could add a `command` enricher or source that ran on the first detection, send detections to its own sink, weaken the API listener, send the operator's API token to its own server, have a unix socket bind delete a file, or have the daemon, `engine eval`, or `rule scorecard` truncate a file outside the repository. Project files can no longer set:
 
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run commands and make HTTP requests.
-- `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, and a `nats://` `daemon.input.source`.
+- `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a `nats://` `daemon.input.source`.
+- A `daemon.api.addr` other than a loopback `host:port` or a `unix://` path inside the project, a `unix://` `daemon.input.source` outside the project, and a `daemon.state.db`, `eval.output`, or `scorecard.report` outside the project, since rsigma creates or truncates those files.
 - `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`.
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`.
 
-rsigma ignores these keys with the same warning as the protected `mcp.*` keys. Boolean opt-ins, including the `mcp.*` ones, are ignored only when set to `true`, so a project file can still turn a gate off. `rsigma config init` no longer writes `sources`, `sinks`, or `egress_policy` uncommented, so the generated `./rsigma.yaml` sets no protected key.
+rsigma ignores these keys with the same warning as the protected `mcp.*` keys. Boolean opt-ins, including the `mcp.*` ones, are ignored only when set to `true`, so a project file can still turn a gate off. `rsigma config init` no longer writes `sources`, `sinks`, `egress_policy`, or `api.addr` uncommented, so the generated `./rsigma.yaml` sets no protected key.
 
-Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
+Two related changes close paths a project file could still reach through keys it may set:
+
+- jq event filters (`--jq`, `daemon.input.jq`) no longer have the `env` builtin, which copied the process environment, including tokens, into evaluated events and detections.
+- Binding a `unix://` input or API socket replaces an existing path only when it is a stale socket. A regular file, directory, or symlink at that path now fails the bind instead of being deleted.
+
+Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. jq filters that call `env` fail to compile (exit `3`). Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
 
 ## [0.26.0] - 2026-11-02
 

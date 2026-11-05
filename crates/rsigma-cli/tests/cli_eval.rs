@@ -396,6 +396,27 @@ fn eval_jq_filter() {
 }
 
 #[test]
+fn eval_jq_filter_cannot_read_the_environment() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    for filter in ["env", "env.HOME", "{CommandLine: env.HOME}"] {
+        rsigma()
+            .args([
+                "engine",
+                "eval",
+                "--rules",
+                rule.path().to_str().unwrap(),
+                "--event",
+                "{}",
+                "--jq",
+                filter,
+            ])
+            .assert()
+            .code(3)
+            .stderr(predicate::str::contains("jq compilation errors"));
+    }
+}
+
+#[test]
 fn eval_jsonpath_filter() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let event = r#"{"data": {"CommandLine": "malware"}}"#;

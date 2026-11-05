@@ -49,7 +49,12 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.output.sinks` | Sends detections to files, NATS, OTLP collectors, or sockets. |
 | `daemon.output.dlq` | Sends failed events to a sink. |
 | `daemon.output.webhooks` | Sends detections to HTTP endpoints. |
-| `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials. `stdin`, `http`, and `unix://` inputs are kept. |
+| `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials, or a `unix://` path outside the project. `stdin`, `http`, and `unix://` inputs inside the project are kept. |
+| `daemon.nats.consumer_group` | Joins another deployment's durable consumer and pulls its messages. |
+| `daemon.api.addr` | Unless it is a loopback `host:port` (`127.0.0.1`, `::1`, `localhost`) or a `unix://` path inside the project. Client commands such as `engine incidents export` send the API token to this address, and the daemon binds it. |
+| `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. |
+| `eval.output` | Only when it resolves outside the project. `engine eval` creates or truncates the file. |
+| `scorecard.report` | Only when it resolves outside the project. `rule scorecard` creates or truncates the file. |
 | `daemon.api.auth` | A planted token could name any environment variable, such as `HOME`, as its secret, and a project `auth` block replaces the operator's. |
 | `daemon.api.allow_unauthenticated` | Serves the API without authentication on a non-loopback address. |
 | `daemon.api.tls.allow_plaintext` | Serves plaintext on a non-loopback address. |
