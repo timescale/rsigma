@@ -206,7 +206,8 @@ pub(crate) fn cmd_mcp_serve(mut args: McpServeArgs) {
     }
 
     if let Some(addr) = args.http
-        && let Err(e) = enforce_auth_policy(addr, &args)
+        && let Err(e) =
+            enforce_plaintext_policy(addr, &args).and_then(|()| enforce_auth_policy(addr, &args))
     {
         eprintln!("{e}");
         process::exit(exit_code::CONFIG_ERROR);
@@ -317,18 +318,9 @@ async fn serve_http_transport(
 ) -> anyhow::Result<()> {
     let tls_requested = args.tls_cert.is_some();
 
-    if !tls_requested && !addr.ip().is_loopback() && !args.allow_plaintext {
-        anyhow::bail!(
-            "refusing to bind plaintext on non-loopback address {addr}; \
-             pass --tls-cert/--tls-key to enable TLS or --allow-plaintext to opt out \
-             (e.g. when terminating TLS at a sidecar proxy)"
-        );
-    }
-
-    let options = rsigma_mcp::HttpOptions {
-        auth_token: args.auth_token.clone(),
-        allowed_hosts: allowed_hosts(addr, args),
-    };
+    let mut options = rsigma_mcp::HttpOptions::default();
+    options.auth_token = args.auth_token.clone();
+    options.allowed_hosts = allowed_hosts(addr, args);
     if !addr.ip().is_loopback() {
         match &options.allowed_hosts {
             rsigma_mcp::AllowedHosts::Any => eprintln!(
@@ -352,6 +344,19 @@ async fn serve_http_transport(
 
     eprintln!("MCP Streamable HTTP server listening on http://{addr}/mcp");
     rsigma_mcp::serve_http_with(handler, listener, options).await
+}
+
+/// Refuse a plaintext bind on a non-loopback address unless the operator passed
+/// `--tls-cert`/`--tls-key` or `--allow-plaintext`.
+fn enforce_plaintext_policy(addr: SocketAddr, args: &McpServeArgs) -> Result<(), String> {
+    if args.tls_cert.is_some() || addr.ip().is_loopback() || args.allow_plaintext {
+        return Ok(());
+    }
+    Err(format!(
+        "refusing to bind plaintext on non-loopback address {addr}; \
+         pass --tls-cert/--tls-key to enable TLS or --allow-plaintext to opt out \
+         (e.g. when terminating TLS at a sidecar proxy)"
+    ))
 }
 
 /// Refuse a non-loopback `--http` bind without a bearer token unless the

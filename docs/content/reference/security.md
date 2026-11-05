@@ -246,6 +246,7 @@ The MCP server ([`rsigma mcp serve`](../cli/mcp/serve.md)) treats every tool arg
 
 - **Auth is required off loopback.** A non-loopback bind without `--auth-token` refuses to start unless `--allow-unauthenticated` is set. Loopback binds work without a token.
 - **Host header validation.** Every request's `Host` must be accepted, or it gets `403`. This stops a DNS-rebinding web page from driving a server bound to loopback through the user's browser. Loopback binds accept `localhost`, `127.0.0.1`, `::1`, and the bind IP. A non-loopback bind with a token accepts any host, because the bearer token is the access control; `--allowed-host` (repeatable) restricts it to named hosts. An unauthenticated non-loopback bind keeps validation on, so clients must use a name passed with `--allowed-host`.
+- **Origin header validation.** A request carrying an `Origin` header must name an accepted host over `http` or `https`, or it gets `403`. This stops a web page on another site from sending tool calls to a local server through the user's browser, which the `Host` check alone does not catch because the browser sends the server's real host. Requests without `Origin`, which is how MCP clients connect, are unaffected. A token-guarded bind that accepts any host skips the check, since a page on another site does not know the token. {{ added "unreleased" }}
 - **Plaintext needs an opt-in.** A non-loopback bind without `--tls-cert`/`--tls-key` needs `--allow-plaintext`, for deployments where a proxy terminates TLS.
 
 ## Filesystem footprint

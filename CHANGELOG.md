@@ -80,15 +80,17 @@ In `rsigma-runtime`, `Silence::build_api` and `SilenceLimits` implement the limi
 
 Breaking changes: API silences without `ends_at`, longer than 30 days, or without a scoped `=` matcher are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` and the new `SilenceLimits` are `#[non_exhaustive]`, `AlertPipelineFile` has two new fields, and `AlertPipeline::new` takes the limits.
 
-### MCP HTTP requires a token off loopback and accepts the server's own host names (#659)
+### MCP HTTP requires a token off loopback, validates `Origin`, and accepts the server's own host names (#659)
 
 `rsigma mcp serve --http` on a non-loopback address started without `--auth-token`, exposing every tool to anyone who could reach the port. It now refuses to start (exit code `3`) unless `--allow-unauthenticated` is set. Loopback binds are unchanged.
 
-Every request's `Host` header was checked against `localhost`, `127.0.0.1`, and `::1` only, so a token-guarded server on `0.0.0.0` answered `403` to clients that used its IP or DNS name. A non-loopback bind with `--auth-token` now accepts any host, since the token is the access control, and the repeatable `--allowed-host` narrows that to named hosts. A specific bind IP is always accepted. Unauthenticated binds keep the validation that stops DNS-rebinding pages from reaching the server. See [`rsigma mcp serve`](https://rsigma.io/cli/mcp/serve/#streamable-http).
+Every request's `Host` header was checked against `localhost`, `127.0.0.1`, and `::1` only, so a token-guarded server on `0.0.0.0` answered `403` to clients that used its IP or DNS name. A non-loopback bind with `--auth-token` now accepts any host, since the token is the access control, and the repeatable `--allowed-host` narrows that to named hosts. A specific bind IP is always accepted. Unauthenticated binds keep the validation that stops DNS-rebinding pages from reaching the server.
 
-In `rsigma-mcp`, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token and `AllowedHosts`); `http_router` and `serve_http` are unchanged.
+The `Origin` header was not checked, so a web page on any site could send requests to a loopback MCP server through the user's browser. A request with an `Origin` header must now name an accepted host over `http` or `https`, or it gets `403`; requests without `Origin`, which is how MCP clients connect, are unaffected. Only a token-guarded bind that accepts any host skips the check. See [`rsigma mcp serve`](https://rsigma.io/cli/mcp/serve/#streamable-http).
 
-Breaking changes: a non-loopback `--http` bind without `--auth-token` refuses to start; pass `--allow-unauthenticated` to keep the old behavior. An empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN` is refused.
+In `rsigma-mcp`, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token and `AllowedHosts`); `http_router` and `serve_http` keep the loopback hosts and now validate `Origin` too. `HttpOptions` and `AllowedHosts` are `#[non_exhaustive]`, and an empty `AllowedHosts::List` means loopback.
+
+Breaking changes: a non-loopback `--http` bind without `--auth-token` refuses to start; pass `--allow-unauthenticated` to keep the old behavior. An empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN` is refused. Browser requests whose `Origin` names a host that is not accepted get `403`. A plaintext non-loopback bind without `--allow-plaintext` now exits `3` instead of `2`.
 
 ## [0.26.0] - 2026-11-02
 

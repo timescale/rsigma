@@ -115,6 +115,34 @@ fn public_bind_without_token_refuses_to_start() {
 }
 
 #[test]
+fn empty_token_env_var_refuses_to_start() {
+    let rules = tempfile::tempdir().unwrap();
+    rsigma()
+        .args(["mcp", "serve", "--http", "127.0.0.1:0", "--rules-dir"])
+        .arg(rules.path())
+        .env("RSIGMA_MCP_AUTH_TOKEN", "")
+        .timeout(Duration::from_secs(10))
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("is empty"));
+}
+
+#[test]
+fn public_plaintext_bind_refuses_to_start() {
+    let rules = tempfile::tempdir().unwrap();
+    rsigma()
+        .args(["mcp", "serve", "--http", "0.0.0.0:0", "--auth-token", TOKEN])
+        .arg("--rules-dir")
+        .arg(rules.path())
+        .timeout(Duration::from_secs(10))
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "refusing to bind plaintext on non-loopback address 0.0.0.0:0",
+        ));
+}
+
+#[test]
 fn token_guarded_public_bind_accepts_the_servers_own_address() {
     let server = McpHttp::spawn(&["--auth-token", TOKEN]);
     let host = format!("203.0.113.7:{}", server.port);

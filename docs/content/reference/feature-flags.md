@@ -67,7 +67,7 @@ The Model Context Protocol server library. Gated into the CLI by the `mcp` featu
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
-| `http` | no | `axum`, `rmcp/transport-streamable-http-server` | `serve_http`, `http_router`, and their `HttpOptions` variants (`serve_http_with`, `http_router_with`) for Streamable HTTP (`/mcp`). Bearer-token auth and `Host` validation are configured by the caller; TLS for the listener is provided by `rsigma-cli` when built with `daemon-tls`. |
+| `http` | no | `axum`, `rmcp/transport-streamable-http-server` | `serve_http`, `http_router`, and their `HttpOptions` variants (`serve_http_with`, `http_router_with`) for Streamable HTTP (`/mcp`). Bearer-token auth and `Host` and `Origin` validation are configured by the caller; TLS for the listener is provided by `rsigma-cli` when built with `daemon-tls`. |
 
 ## `rstix`
 

@@ -121,6 +121,8 @@ The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses
 
 A host without a port matches any port. Other hosts get `403 Forbidden`.
 
+A request carrying an `Origin` header must name one of the accepted hosts over `http` or `https` (for example `http://localhost:6274` for a browser-based inspector), or it gets `403 Forbidden`. Requests without `Origin` are unaffected, and a bind that accepts any host skips the check.
+
 `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set, because any client that reaches the endpoint could otherwise read files outside a rules tree. {{ added "0.25.0" }}
 
 ## Exit codes
@@ -129,7 +131,7 @@ A host without a port matches any port. Other hosts get `403 Forbidden`.
 |------|---------|
 | `0` | The server ran and the client disconnected cleanly. |
 | `2` | The server failed (transport error). |
-| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), `--http` without `--rules-dir` or `--allow-unconfined-paths`, or a non-loopback `--http` without `--auth-token` or `--allow-unauthenticated`. |
+| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), `--http` without `--rules-dir` or `--allow-unconfined-paths`, a non-loopback `--http` without `--auth-token` or `--allow-unauthenticated`, an empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN`, or a plaintext non-loopback `--http` without `--tls-cert`/`--tls-key` or `--allow-plaintext`. |
 
 ## See also
 
