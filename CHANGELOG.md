@@ -67,7 +67,7 @@ With `--rules-dir` and `--allow-sigma-cli`, the MCP `convert_rules` tool checked
 
 sigma-cli also ran with the rules root as its working directory, and pySigma opens an unknown pipeline name as a file relative to it. A bare name such as `leak` therefore reached a symlink at the root that pointed outside it. With `--rules-dir` set, sigma-cli now runs in an empty temporary directory; every path it receives is already canonical and absolute.
 
-### API silences are bounded, and refused without an alert pipeline
+### API silences are bounded, and refused without an alert pipeline (#658)
 
 `POST /api/v1/silences` accepted any matcher set and any `ends_at`, so one call with `rule =~ .*` and `ends_at: 9999-12-31T23:59:59Z` muted every detection indefinitely. That call can come from any token with `silences:write`, including an MCP client following prompt-injected instructions. Two alert-pipeline keys now bound silences created over the API:
 
