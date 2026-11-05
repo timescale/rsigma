@@ -19,7 +19,7 @@ use rsigma_runtime::{
     EgressPolicy, Enricher, EnricherKind, HttpEnricher, HttpResponseCache, OnError, Scope,
     build_default_http_client, set_default_egress_policy,
 };
-use wiremock::matchers::method;
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// An address the installed policy denies as private. It is unroutable, so a
@@ -197,4 +197,39 @@ async fn source_does_not_follow_redirect_to_denied_ip_literal() {
             .contains("egress policy denied private address 10.255.255.1"),
         "{err}"
     );
+}
+
+/// A server where `/hop/{i}` redirects to `/hop/{i + 1}` for `i < hops`, and
+/// `/hop/{hops}` answers `200`.
+async fn redirect_chain(hops: usize) -> MockServer {
+    let server = MockServer::start().await;
+    for i in 0..hops {
+        Mock::given(method("GET"))
+            .and(path(format!("/hop/{i}")))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", format!("/hop/{}", i + 1)),
+            )
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/hop/{hops}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn enricher_follows_ten_redirects_and_refuses_the_eleventh() {
+    install_policy();
+    let ten = redirect_chain(10).await;
+    enricher(&format!("{}/hop/0", ten.uri()))
+        .enrich(&mut detection())
+        .await
+        .expect("ten redirects are followed");
+
+    let eleven = redirect_chain(11).await;
+    let err = enrich_err(&format!("{}/hop/0", eleven.uri())).await;
+    assert!(err.contains("too many redirects"), "{err}");
 }

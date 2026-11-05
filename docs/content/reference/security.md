@@ -43,17 +43,19 @@ Operators that need remote-included pipelines (for centralised pipeline distribu
 
 ### HTTP egress policy (SSRF defense)
 
-The daemon issues HTTP requests in two places: dynamic-source resolution (a Sigma rule or pipeline references `type: http`) and post-evaluation enrichers (`type: http`). Both URLs come from operator-supplied YAML, so a compromised rule or pipeline can otherwise point the daemon at the cloud-metadata IMDS endpoint at `169.254.169.254` and exfiltrate IAM credentials, or at internal admin APIs reachable on link-local addresses.
+The egress policy governs three daemon HTTP clients: dynamic-source resolution (a Sigma rule or pipeline references `type: http`), post-evaluation enrichers (`type: http`), and webhook sinks. Their URLs come from operator-supplied YAML, so a compromised rule or pipeline can otherwise point the daemon at the cloud-metadata IMDS endpoint at `169.254.169.254` and exfiltrate IAM credentials, or at internal admin APIs reachable on link-local addresses.
 
-`rsigma engine daemon` exposes an `--egress-policy <default|strict|permissive>` flag (also `daemon.engine.egress_policy` in the layered YAML config) that selects one of three presets. The daemon's HTTP clients enforce it at three points, so a request never connects to a denied address: {{ added "unreleased" }}
+`rsigma engine daemon` exposes an `--egress-policy <default|strict|permissive>` flag (also `daemon.engine.egress_policy` in the layered YAML config) that selects one of three presets. These clients enforce it at three points, so without a proxy a request never connects to a denied address: {{ added "unreleased" }}
 
 - **DNS resolution.** Every address a hostname resolves to is filtered, so DNS rebinding (resolving a hostname to a public IP at the host-string check, then switching to a private IP between check and connect) cannot defeat the policy.
 - **The request URL.** A URL whose host is an IP literal (`http://169.254.169.254/`, `http://[fd00:ec2::254]/`, or an encoded IPv4 form such as `http://0xa9fea9fe/`) skips DNS, so the URL itself is checked before the request is sent.
 - **Every redirect hop.** Each `Location` target is checked the same way before it is followed, so an allowed upstream cannot bounce the request to a denied IP literal. Redirect targets given as hostnames are filtered at resolution as usual. At most 10 redirects are followed.
 
+When `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` is set, the clients send requests through that proxy, and the proxy resolves hostnames, so DNS-resolution filtering does not apply. IP-literal URLs and redirect targets are still checked. Enforce the same deny list on the proxy, or unset the variables for the daemon. The daemon logs a warning at startup when a proxy variable is set and the policy is not `permissive`. {{ added "unreleased" }}
+
 A denied request fails with the policy's reason (for example `egress policy denied link-local address 169.254.169.254`) in the source, enricher, or webhook error.
 
-| Preset       | Link-local (`169.254/16`, `fe80::/10`) | Cloud metadata (`fd00:ec2::254`) | Loopback (`127/8`, `::1`) | RFC1918 private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) |
+| Preset       | Link-local (`169.254/16`, `fe80::/10`) | Cloud metadata (`fd00:ec2::254`, `fd20:ce::254`, `100.100.100.200`) | Loopback (`127/8`, `::1`) | RFC1918 private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) |
 |--------------|----------------------------------------|----------------------------------|---------------------------|------------------------------------------------------------------|
 | `default`    | denied                                 | denied                           | allowed                   | allowed                                                          |
 | `strict`     | denied                                 | denied                           | denied                    | denied                                                           |
@@ -61,9 +63,9 @@ A denied request fails with the policy's reason (for example `egress policy deni
 
 The `default` preset balances safety against the common case of internal threat-intel services on private addresses. Pick `strict` if the daemon has no legitimate reason to reach private or loopback addresses; pick `permissive` only in tightly controlled environments where every source and enricher URL has been vetted. The presets are also reachable from library code via `rsigma_runtime::EgressPolicy::{default,strict,permissive}` and `set_default_egress_policy`; per-category builders (`with_block_link_local`, `with_block_cloud_metadata`, `with_block_loopback`, `with_block_private`) cover the in-between cases.
 
-IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host that resolves to `::ffff:169.254.169.254` is rejected as link-local just like the bare IPv4 form.
+IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host that resolves to `::ffff:169.254.169.254` is rejected as link-local just like the bare IPv4 form. {{ added "unreleased" }} So do IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96`, and `/96` prefixes in `64:ff9b:1::/48`), and 6to4 (`2002::/16`) addresses, which a NAT64 gateway or 6to4 relay forwards to the embedded IPv4 host.
 
-The policy applies only to the daemon's outbound HTTP clients. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
+The policy applies only to those three clients. OTLP sinks, the MCP server's daemon client, and one-shot CLI commands such as `rsigma taxii sync` or `engine status` do not go through it, so point them only at endpoints you trust. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
 
 Webhook sinks (`--webhook`) use the same egress-filtered client, so the policy governs outbound webhook deliveries too: `strict` blocks RFC1918, so a webhook targeting an internal relay needs `default` or `permissive`. Keep webhook secrets in the environment and reference them with `${ENV_VAR}` in the URL or headers; do not store tokens or signing URLs in the webhook YAML. A webhook may carry a per-entry `tls:` block (a custom CA bundle plus an optional client cert/key for mutual TLS) to reach an internal relay over private PKI; PEM files are read and validated at startup. A webhook may also HMAC-sign each request via a `signing:` block so a receiver can verify authenticity, integrity, and (for the timestamped default) replay freshness; the signing key is read from the environment (`signing.secret_env`) at startup, never stored in the YAML, and the default scheme follows the Standard Webhooks convention. See [webhook signing](../guide/webhooks.md#signing-requests).
 

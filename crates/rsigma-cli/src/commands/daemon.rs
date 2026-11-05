@@ -299,9 +299,9 @@ pub(crate) struct DaemonArgs {
     ///
     /// `default` (the default) blocks link-local addresses (which include
     /// `169.254.169.254` and `fe80::/10`) and known cloud-metadata
-    /// addresses (`fd00:ec2::254`). Loopback and RFC1918 private
-    /// addresses remain reachable so internal threat-intel APIs keep
-    /// working. `strict` additionally blocks loopback and private,
+    /// addresses (`fd00:ec2::254`, `fd20:ce::254`, `100.100.100.200`).
+    /// Loopback and RFC1918 private addresses remain reachable so
+    /// internal threat-intel APIs keep working. `strict` additionally blocks loopback and private,
     /// recommended for hardened deployments that have no legitimate
     /// internal HTTP target. `permissive` allows every resolved
     /// address; use only in tightly controlled environments where every
@@ -310,7 +310,9 @@ pub(crate) struct DaemonArgs {
     /// The policy is enforced at DNS resolution time inside the
     /// daemon's HTTP clients, so DNS rebinding cannot defeat
     /// host-string checks, and on IP-literal request URLs and every
-    /// redirect hop, which skip DNS.
+    /// redirect hop, which skip DNS. Behind an HTTP proxy
+    /// (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`) hostnames are resolved
+    /// by the proxy, so only IP literals and redirect targets are checked.
     #[arg(long = "egress-policy", value_parser = ["default", "strict", "permissive"], default_value = config::defaults::EGRESS_POLICY)]
     pub egress_policy: String,
 
@@ -1769,6 +1771,29 @@ fn run_daemon(
         )
         .with_writer(std::io::stderr)
         .init();
+
+    // reqwest honors these, and a proxy resolves hostnames itself, so only
+    // IP-literal URLs and redirect targets stay under the policy.
+    if egress_policy != "permissive" {
+        let proxies: Vec<&str> = [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ]
+        .into_iter()
+        .filter(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()))
+        .collect();
+        if !proxies.is_empty() {
+            tracing::warn!(
+                proxies = %proxies.join(","),
+                egress_policy = %egress_policy,
+                "An HTTP proxy is configured: hostnames are resolved by the proxy, so the egress policy checks only IP-literal URLs and redirect targets; enforce the deny list on the proxy too"
+            );
+        }
+    }
 
     let pipelines = crate::load_pipelines(&pipeline_paths);
     let event_filter = std::sync::Arc::new(crate::build_event_filter(jq, jsonpath));
