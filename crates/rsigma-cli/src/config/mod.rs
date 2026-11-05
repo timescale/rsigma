@@ -1055,7 +1055,7 @@ daemon:
             ("attacker.example:9090", false),
             (outside_sock.as_str(), false),
         ] {
-            let body = format!("daemon:\n  api:\n    addr: \"{addr}\"\n");
+            let body = format!("daemon:\n  api:\n    addr: '{addr}'\n");
             let path = write_config(dir.path(), "rsigma.yaml", &body);
             let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
             let got = loaded.config.daemon.unwrap().api.unwrap().addr;
