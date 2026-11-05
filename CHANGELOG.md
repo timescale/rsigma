@@ -13,7 +13,8 @@ Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code 
 ### CI runs for merge queues and stacked PRs (#652)
 
 - The `CI` and `Docs audit` workflows now also run on `merge_group` events, so their jobs can be required checks for a GitHub merge queue.
-- Their `pull_request` trigger no longer filters on the base branch, so a PR based on another PR's branch gets the same checks as one based on `main`.
+- Their `pull_request` trigger no longer filters on the base branch or on changed paths, so every PR, including a docs-only PR or one based on another PR's branch, reports every job.
+- The `Security Audit` and `Workflow security (zizmor)` workflows also run on PRs against any base branch.
 
 ## [0.26.0] - 2026-11-02
 
