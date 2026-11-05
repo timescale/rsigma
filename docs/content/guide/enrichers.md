@@ -40,7 +40,7 @@ enrichers:
 
 Every enricher declares a `kind: detection | correlation`. The kind drives two checks:
 
-1. **Config-load-time template validation.** A `kind: detection` enricher may only reference `${detection.*}` variables in its templated fields; a `kind: correlation` enricher may only reference `${correlation.*}`. Cross-namespace references are rejected at startup with a clear error pointing at the offending field. `${ENV_VAR}` is allowed in both namespaces.
+1. **Config-load-time template validation.** A `kind: detection` enricher may only reference `${detection.*}` variables in its templated fields; a `kind: correlation` enricher may only reference `${correlation.*}`. Cross-namespace references are rejected at startup with a clear error pointing at the offending field. `${ENV_VAR}` is allowed in both namespaces, except in enrichers passed to the MCP server's `evaluate_events` tool, which refuses them so a caller cannot read the server's environment (see [MCP server](mcp-server.md)). {{ added "unreleased" }}
 2. **Runtime body matching.** The pipeline skips enrichers whose declared kind does not match the current `EvaluationResult` body variant before invoking `enrich()`, so a detection-kind enricher pays no cost on correlation results and vice versa.
 
 Detection variables (`${detection.*}`):

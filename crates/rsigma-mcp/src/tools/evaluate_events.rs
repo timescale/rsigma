@@ -6,7 +6,9 @@ use rmcp::{
     tool_router,
 };
 use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, JsonEvent};
-use rsigma_runtime::{EnrichersFile, EnrichmentPipeline, build_enrichers, load_enrichers_file};
+use rsigma_runtime::{
+    EnrichersFile, EnrichmentPipeline, build_enrichers, env_references, load_enrichers_file,
+};
 use serde_json::{Value, json};
 
 use crate::input::resolve_confined_path;
@@ -46,8 +48,10 @@ pub struct EvaluateInput {
     #[serde(default)]
     pub emit_detections: bool,
     /// Inline enrichers config (YAML/JSON) applied to results before returning.
-    /// Mutually exclusive with `enrichers_path`. Only `template` enrichers are
-    /// supported here; use the daemon for `lookup`, `http`, `command`, and `stix`.
+    /// Mutually exclusive with `enrichers_path`. Only `template` enrichers with
+    /// `${detection.*}` or `${correlation.*}` references are supported here;
+    /// `${ENV_VAR}` references are refused. Use the daemon for `lookup`, `http`,
+    /// `command`, and `stix`.
     #[serde(default)]
     pub enrichers: Option<String>,
     /// Path to an enrichers config file. Mutually exclusive with `enrichers`.
@@ -187,6 +191,24 @@ impl RsigmaMcp {
                 cfg.type_name,
                 MCP_ENRICHER_TYPES.join(", ")
             )));
+        }
+
+        // `${ENV_VAR}` renders from the server's environment, which would hand
+        // its secrets (API keys, tokens) back to the MCP caller in the result.
+        for cfg in file.iter().flat_map(|f| &f.enrichers) {
+            let names = cfg
+                .template
+                .as_deref()
+                .map(env_references)
+                .unwrap_or_default();
+            if !names.is_empty() {
+                let refs: Vec<String> = names.iter().map(|n| format!("${{{n}}}")).collect();
+                return Err(invalid(format!(
+                    "enricher '{}': environment variable references are not available over MCP (found {}); use ${{detection.*}} or ${{correlation.*}} references, or the daemon",
+                    cfg.id,
+                    refs.join(", ")
+                )));
+            }
         }
 
         match file {
@@ -400,6 +422,57 @@ enrichers:
             .await
             .unwrap_err();
         assert!(format!("{err:?}").contains("not available over MCP"));
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rejects_env_reference_in_template() {
+        let enrichers = r#"
+enrichers:
+  - id: leak
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${detection.rule.id}:${PATH}:${HOME}"
+"#;
+        let err = handler()
+            .run_evaluate_events(eval_with_enrichers(enrichers))
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("environment variable references are not available over MCP"),
+            "{msg}"
+        );
+        assert!(msg.contains("${PATH}, ${HOME}"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rejects_env_reference_from_enrichers_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("enrichers.yaml"),
+            r#"
+enrichers:
+  - id: leak
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${HOME}"
+"#,
+        )
+        .unwrap();
+        let err = RsigmaMcp::new(Some(dir.path().to_path_buf()), Default::default(), false)
+            .run_evaluate_events(EvaluateInput {
+                enrichers: None,
+                enrichers_path: Some("enrichers.yaml".to_string()),
+                ..eval_with_enrichers("")
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:?}")
+                .contains("environment variable references are not available over MCP")
+        );
     }
 
     #[tokio::test]
