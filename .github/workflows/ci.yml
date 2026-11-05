@@ -9,14 +9,14 @@ on:
       - "assets/**"
       - "LICENSE"
       - ".gitignore"
+  # No base-branch or path filter: a PR stacked on another PR's branch gets CI
+  # too, and every PR reports every job, which required checks depend on. A
+  # workflow skipped by a path filter leaves its required checks pending.
   pull_request:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/**"
-      - "LICENSE"
-      - ".gitignore"
+  # Merge queue entries. `merge_group` takes no path filters, so every job
+  # runs on every entry.
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 

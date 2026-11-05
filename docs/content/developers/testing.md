@@ -2,6 +2,8 @@
 
 The workspace runs several test tiers. Most are gated in CI on every PR; coverage is advisory, and representative performance is path-selective on PRs with a fuller weekly matrix.
 
+The `CI` and `Docs audit` workflows run on every pull request, whatever its base branch or changed paths, and on `merge_group` events, so their jobs can serve as required checks for a merge queue. A workflow skipped by a path filter would leave its required checks pending and keep the PR out of the queue. The `Security Audit` and `Workflow security (zizmor)` workflows keep their path filters but also run on PRs against any base branch, so a PR stacked on another PR's branch gets them too.
+
 ## At a glance
 
 | Tier | Where it lives | How to run | Gated by |
