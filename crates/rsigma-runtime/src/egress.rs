@@ -180,7 +180,7 @@ fn is_known_cloud_metadata_v6(v6: Ipv6Addr) -> bool {
     // AWS IPv6 instance metadata: fd00:ec2::254. The address lives in
     // the unique-local space but is published as the IMDS endpoint, so
     // we deny it independently of the broader private-address toggle.
-    v6 == Ipv6Addr::new(0xfd00, 0x00ec, 0x0002, 0, 0, 0, 0, 0x0254)
+    v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
 }
 
 /// Reason an address was denied by an [`EgressPolicy`].
@@ -295,7 +295,11 @@ mod tests {
             Err(EgressDenial::LinkLocal(_))
         ));
         assert!(matches!(
-            p.permit_ip(v6(0xfd00, 0x00ec, 0x0002, 0, 0, 0, 0, 0x0254)),
+            p.permit_ip(v6(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)),
+            Err(EgressDenial::CloudMetadata(_))
+        ));
+        assert!(matches!(
+            p.permit_ip("fd00:ec2::254".parse().unwrap()),
             Err(EgressDenial::CloudMetadata(_))
         ));
     }
@@ -338,7 +342,7 @@ mod tests {
         assert!(p.permit_ip(v4(127, 0, 0, 1)).is_ok());
         assert!(p.permit_ip(v4(10, 0, 0, 1)).is_ok());
         assert!(
-            p.permit_ip(v6(0xfd00, 0x00ec, 0x0002, 0, 0, 0, 0, 0x0254))
+            p.permit_ip(v6(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254))
                 .is_ok()
         );
     }
@@ -364,7 +368,7 @@ mod tests {
         let p = EgressPolicy::default().with_block_link_local(false);
         assert!(p.permit_ip(v4(169, 254, 169, 254)).is_ok());
         assert!(matches!(
-            p.permit_ip(v6(0xfd00, 0x00ec, 0x0002, 0, 0, 0, 0, 0x0254)),
+            p.permit_ip(v6(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)),
             Err(EgressDenial::CloudMetadata(_))
         ));
     }
