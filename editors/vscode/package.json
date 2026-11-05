@@ -39,7 +39,7 @@
           "type": "string",
           "default": "rsigma-lsp",
           "scope": "machine",
-          "description": "Path to the rsigma-lsp binary. If not an absolute path, it will be looked up in $PATH. Can only be set in user settings, not workspace or folder settings."
+          "description": "Path to the rsigma-lsp binary. If not an absolute path, it will be looked up in $PATH. Set it in user settings, or remote settings for a remote window; it is ignored in workspace or folder settings. The value is not carried by Settings Sync."
         },
         "rsigma.trace.server": {
           "type": "string",

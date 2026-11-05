@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### VS Code extension: `rsigma.serverPath` is ignored in workspace settings (#651)
+
+`rsigma.serverPath` is the program the extension starts, and it starts on opening any folder with a `.yml` or `.yaml` file. A repository could commit a `.vscode/settings.json` that pointed it at a script of its own, and a developer who opened and trusted that folder would run the script. The setting now has `machine` scope, so VS Code reads it only from user settings, or from remote settings in a remote window, and ignores it in a workspace or folder `.vscode/settings.json`.
+
+Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code now ignores it and the extension starts `rsigma-lsp` from `$PATH`, or fails to start if it is not there. Move the value to your user settings, or to remote settings for Remote-SSH, WSL, and Dev Containers, where the path is on the remote host. Settings Sync does not carry `machine`-scoped values, so set a custom path on each machine.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**

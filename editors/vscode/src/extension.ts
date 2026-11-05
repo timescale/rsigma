@@ -60,7 +60,7 @@ export function activate(context: ExtensionContext): void {
     window.showErrorMessage(
       `Failed to start rsigma language server: ${err.message}. ` +
         `Make sure 'rsigma-lsp' is installed and available in your PATH, ` +
-        `or set 'rsigma.serverPath' in your settings.`
+        `or set 'rsigma.serverPath' in your user settings.`
     );
   });
 
