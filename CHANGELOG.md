@@ -61,7 +61,7 @@ Two related changes close paths a project file could still reach through keys it
 
 Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. jq filters that call `env` fail to compile (exit `3`). Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
 
-### Delegated `convert_rules` refuses rule directories that contain symlinks
+### Delegated `convert_rules` refuses rule directories that contain symlinks (#657)
 
 With `--rules-dir` and `--allow-sigma-cli`, the MCP `convert_rules` tool checked that a delegated `path` stayed inside the root, but passed a directory to sigma-cli without looking inside it. sigma-cli walks the directory itself and follows symlinks, so a link under the root to a file outside it could be read and echoed back in the converted queries. Delegated directory inputs are now refused when they contain a symlink anywhere in the tree, as the in-process tools already did, and sigma-cli is never started for them.
 
