@@ -131,9 +131,15 @@ impl DaemonProcess {
     /// daemon child. Used to exercise `${ENV_VAR}` template interpolation
     /// (e.g. webhook header secrets) without mutating the test process env.
     pub fn spawn_with_env(args: &[&str], env: &[(&str, &str)]) -> Self {
-        let child = StdCommand::new(rsigma_bin())
-            .args(args)
-            .envs(env.iter().copied())
+        let mut command = StdCommand::new(rsigma_bin());
+        command.args(args).envs(env.iter().copied());
+        Self::spawn_command(command)
+    }
+
+    /// Like [`DaemonProcess::spawn`] but runs a caller-built `rsigma`
+    /// command, for tests that also set the working directory.
+    pub fn spawn_command(mut command: StdCommand) -> Self {
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
