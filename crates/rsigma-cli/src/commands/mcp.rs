@@ -99,6 +99,18 @@ pub(crate) struct McpServeArgs {
     )]
     pub auth_token: Option<String>,
 
+    /// Serve `--http` on a non-loopback address without `--auth-token`. Off by
+    /// default: anyone who can reach the port could call every tool.
+    #[arg(long = "allow-unauthenticated")]
+    pub allow_unauthenticated: bool,
+
+    /// Accept this `Host` header value (a host name or `host:port`) on the HTTP
+    /// transport, in addition to `localhost`, `127.0.0.1`, `::1`, and a
+    /// specific bind IP. Repeatable. Without it, a non-loopback bind with
+    /// `--auth-token` accepts any host.
+    #[arg(long = "allowed-host", value_name = "HOST")]
+    pub allowed_hosts: Vec<String>,
+
     /// Allow binding plaintext HTTP on a non-loopback address without TLS.
     #[arg(long = "allow-plaintext")]
     pub allow_plaintext: bool,
@@ -191,6 +203,13 @@ pub(crate) fn cmd_mcp_serve(mut args: McpServeArgs) {
             );
             process::exit(exit_code::CONFIG_ERROR);
         }
+    }
+
+    if let Some(addr) = args.http
+        && let Err(e) = enforce_auth_policy(addr, &args)
+    {
+        eprintln!("{e}");
+        process::exit(exit_code::CONFIG_ERROR);
     }
 
     let lint_config = match &args.lint_config {
@@ -306,15 +325,69 @@ async fn serve_http_transport(
         );
     }
 
+    let options = rsigma_mcp::HttpOptions {
+        auth_token: args.auth_token.clone(),
+        allowed_hosts: allowed_hosts(addr, args),
+    };
+    if !addr.ip().is_loopback() {
+        match &options.allowed_hosts {
+            rsigma_mcp::AllowedHosts::Any => eprintln!(
+                "note: Host header validation is off because --auth-token guards {addr}; \
+                 pass --allowed-host to restrict the accepted host names"
+            ),
+            rsigma_mcp::AllowedHosts::List(hosts) if args.allowed_hosts.is_empty() => eprintln!(
+                "note: only these Host headers are accepted: {}; pass --allowed-host for the \
+                 names clients use to reach {addr}",
+                hosts.join(", ")
+            ),
+            _ => {}
+        }
+    }
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    let auth = args.auth_token.clone();
 
     if tls_requested {
-        return serve_http_tls(handler, listener, auth, addr, args).await;
+        return serve_http_tls(handler, listener, options, addr, args).await;
     }
 
     eprintln!("MCP Streamable HTTP server listening on http://{addr}/mcp");
-    rsigma_mcp::serve_http(handler, listener, auth).await
+    rsigma_mcp::serve_http_with(handler, listener, options).await
+}
+
+/// Refuse a non-loopback `--http` bind without a bearer token unless the
+/// operator passed `--allow-unauthenticated`, and refuse an empty token.
+fn enforce_auth_policy(addr: SocketAddr, args: &McpServeArgs) -> Result<(), String> {
+    match args.auth_token.as_deref() {
+        Some("") => Err("--auth-token (or RSIGMA_MCP_AUTH_TOKEN) is empty".to_string()),
+        Some(_) => Ok(()),
+        None if addr.ip().is_loopback() || args.allow_unauthenticated => Ok(()),
+        None => Err(format!(
+            "refusing to serve --http on non-loopback address {addr} without --auth-token: \
+             anyone who can reach it could call every tool; set --auth-token (or \
+             RSIGMA_MCP_AUTH_TOKEN), or pass --allow-unauthenticated to opt out"
+        )),
+    }
+}
+
+/// The `Host` header values the HTTP transport accepts. A non-loopback bind
+/// guarded by a token accepts any host unless `--allowed-host` narrows it;
+/// otherwise the loopback names, a specific bind IP, and every
+/// `--allowed-host` are accepted.
+fn allowed_hosts(addr: SocketAddr, args: &McpServeArgs) -> rsigma_mcp::AllowedHosts {
+    if args.allowed_hosts.is_empty() && !addr.ip().is_loopback() && args.auth_token.is_some() {
+        return rsigma_mcp::AllowedHosts::Any;
+    }
+    let mut hosts: Vec<String> = rsigma_mcp::LOOPBACK_HOSTS
+        .iter()
+        .map(|host| host.to_string())
+        .collect();
+    if !addr.ip().is_unspecified() {
+        hosts.push(addr.ip().to_string());
+    }
+    hosts.extend(args.allowed_hosts.iter().cloned());
+    let mut seen = std::collections::HashSet::new();
+    hosts.retain(|host| seen.insert(host.clone()));
+    rsigma_mcp::AllowedHosts::List(hosts)
 }
 
 /// TLS path: only available when the `daemon-tls` feature is compiled. Reuses
@@ -323,7 +396,7 @@ async fn serve_http_transport(
 async fn serve_http_tls(
     handler: rsigma_mcp::RsigmaMcp,
     listener: tokio::net::TcpListener,
-    auth: Option<String>,
+    options: rsigma_mcp::HttpOptions,
     addr: SocketAddr,
     args: &McpServeArgs,
 ) -> anyhow::Result<()> {
@@ -351,7 +424,7 @@ async fn serve_http_tls(
 
     eprintln!("MCP Streamable HTTP server listening on https://{addr}/mcp");
 
-    let router = rsigma_mcp::http_router(handler, auth);
+    let router = rsigma_mcp::http_router_with(handler, options);
     axum::serve(tls_listener, router).await?;
     Ok(())
 }
@@ -363,7 +436,7 @@ async fn serve_http_tls(
 async fn serve_http_tls(
     _handler: rsigma_mcp::RsigmaMcp,
     _listener: tokio::net::TcpListener,
-    _auth: Option<String>,
+    _options: rsigma_mcp::HttpOptions,
     _addr: SocketAddr,
     _args: &McpServeArgs,
 ) -> anyhow::Result<()> {
@@ -389,6 +462,85 @@ mod tests {
         let cli = Cli::try_parse_from(std::iter::once("serve").chain(argv.iter().copied()))
             .expect("valid args");
         path_confinement(&cli.args)
+    }
+
+    fn parse(argv: &[&str]) -> McpServeArgs {
+        Cli::try_parse_from(std::iter::once("serve").chain(argv.iter().copied()))
+            .expect("valid args")
+            .args
+    }
+
+    fn hosts(addr: &str, argv: &[&str]) -> rsigma_mcp::AllowedHosts {
+        allowed_hosts(addr.parse().unwrap(), &parse(argv))
+    }
+
+    fn list(hosts: &[&str]) -> rsigma_mcp::AllowedHosts {
+        rsigma_mcp::AllowedHosts::List(hosts.iter().map(|h| h.to_string()).collect())
+    }
+
+    #[test]
+    fn non_loopback_without_token_is_refused() {
+        let policy =
+            |addr: &str, argv: &[&str]| enforce_auth_policy(addr.parse().unwrap(), &parse(argv));
+        let err = policy("0.0.0.0:9100", &[]).unwrap_err();
+        assert!(err.contains("--allow-unauthenticated"), "{err}");
+        assert!(policy("0.0.0.0:9100", &["--auth-token", "t"]).is_ok());
+        assert!(policy("0.0.0.0:9100", &["--allow-unauthenticated"]).is_ok());
+        assert!(policy("127.0.0.1:9100", &[]).is_ok());
+        assert!(policy("[::1]:9100", &[]).is_ok());
+        assert!(policy("127.0.0.1:9100", &["--auth-token", ""]).is_err());
+    }
+
+    #[test]
+    fn loopback_binds_keep_host_validation() {
+        assert_eq!(
+            hosts("127.0.0.1:9100", &["--auth-token", "t"]),
+            list(&["localhost", "127.0.0.1", "::1"])
+        );
+        assert_eq!(
+            hosts("127.0.0.2:9100", &[]),
+            list(&["localhost", "127.0.0.1", "::1", "127.0.0.2"])
+        );
+    }
+
+    #[test]
+    fn token_guarded_public_bind_accepts_any_host() {
+        assert_eq!(
+            hosts("0.0.0.0:9100", &["--auth-token", "t"]),
+            rsigma_mcp::AllowedHosts::Any
+        );
+        assert_eq!(
+            hosts("10.0.0.5:9100", &["--auth-token", "t"]),
+            rsigma_mcp::AllowedHosts::Any
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_extend_the_defaults_and_the_bind_ip() {
+        assert_eq!(
+            hosts(
+                "10.0.0.5:9100",
+                &[
+                    "--auth-token",
+                    "t",
+                    "--allowed-host",
+                    "mcp.example.com",
+                    "--allowed-host",
+                    "10.0.0.5"
+                ]
+            ),
+            list(&[
+                "localhost",
+                "127.0.0.1",
+                "::1",
+                "10.0.0.5",
+                "mcp.example.com"
+            ])
+        );
+        assert_eq!(
+            hosts("0.0.0.0:9100", &["--allow-unauthenticated"]),
+            list(&["localhost", "127.0.0.1", "::1"])
+        );
     }
 
     #[test]
