@@ -254,7 +254,7 @@ Create a silence. The body is a JSON object with `matchers` (required; each `{se
 {{ added "unreleased" }} The alert pipeline's silence limits also return `400`, with an `error` and a `hint`:
 
 - `ends_at` is required and must be no more than `max_silence_duration` (default `720h`) from now. `max_silence_duration: 0` removes the bound.
-- At least one matcher must be `=` with a non-empty value, unless `allow_broad_silences: true` is set. `rule =~ .*` or `rule != x` alone is refused.
+- At least one matcher must be `=` with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, unless `allow_broad_silences: true` is set. `rule =~ .*`, `rule != x`, or `level = high` alone is refused.
 
 Without an alert pipeline (`--alert-pipeline`), the endpoint returns `409`, because no stage would apply the silence.
 

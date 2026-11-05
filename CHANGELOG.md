@@ -72,13 +72,13 @@ sigma-cli also ran with the rules root as its working directory, and pySigma ope
 `POST /api/v1/silences` accepted any matcher set and any `ends_at`, so one call with `rule =~ .*` and `ends_at: 9999-12-31T23:59:59Z` muted every detection indefinitely. That call can come from any token with `silences:write`, including an MCP client following prompt-injected instructions. Two alert-pipeline keys now bound silences created over the API:
 
 - `max_silence_duration` (default `720h`): `ends_at` is required and must be no more than this far from now. `0` removes the bound.
-- `allow_broad_silences` (default `false`): at least one matcher must be `=` with a non-empty value, so `rule =~ .*` or `rule != x` alone is refused.
+- `allow_broad_silences` (default `false`): at least one matcher must be `=` with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so `rule =~ .*`, `rule != x`, or `level = high` alone is refused.
 
-A silence that breaks either rule gets `400` with a hint naming the key. Silences declared in the alert-pipeline config are not limited. Without `--alert-pipeline` the daemon never applied silences but still returned `201`; it now returns `409`.
+A silence that breaks either rule gets `400` with a hint naming the key. Silences declared in the alert-pipeline config are not limited. Without `--alert-pipeline` the daemon never applied silences but still returned `201`; it now returns `409`. API silences restored from `--state-db` are kept even when they exceed the limits; the daemon logs their ids at startup and on reload so they can be reviewed and deleted.
 
 In `rsigma-runtime`, `Silence::build_api` and `SilenceLimits` implement the limits, `AlertPipeline::silence_limits` exposes them, and `SilenceError` gains `Unbounded`, `TooLong`, and `TooBroad`.
 
-Breaking changes: API silences without `ends_at`, longer than 30 days, or with only negative or regex matchers are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` is now `#[non_exhaustive]`, and `AlertPipelineFile` has two new fields.
+Breaking changes: API silences without `ends_at`, longer than 30 days, or without a scoped `=` matcher are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` and the new `SilenceLimits` are `#[non_exhaustive]`, `AlertPipelineFile` has two new fields, and `AlertPipeline::new` takes the limits.
 
 ## [0.26.0] - 2026-11-02
 

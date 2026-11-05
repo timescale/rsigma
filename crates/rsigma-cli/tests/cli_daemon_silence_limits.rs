@@ -69,6 +69,15 @@ fn default_limits_refuse_catch_all_and_unbounded_silences() {
 
     let (status, body) = post_silence(
         &daemon,
+        serde_json::json!({
+            "matchers": [{ "selector": "level", "op": "=", "value": "high" }],
+            "ends_at": in_one_hour(),
+        }),
+    );
+    assert_eq!(status, 400, "level alone mutes a whole severity: {body}");
+
+    let (status, body) = post_silence(
+        &daemon,
         serde_json::json!({ "matchers": scoped(), "ends_at": "9999-12-31T23:59:59Z" }),
     );
     assert_eq!(status, 400, "{body}");
@@ -121,5 +130,67 @@ fn silences_without_an_alert_pipeline_are_refused() {
     assert!(
         body["hint"].as_str().unwrap().contains("--alert-pipeline"),
         "{body}"
+    );
+}
+
+#[test]
+fn restored_silences_over_the_limits_are_kept_and_logged() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let open = temp_file(
+        ".yml",
+        "max_silence_duration: 0\nallow_broad_silences: true\n",
+    );
+    let strict = temp_file(".yml", "{}\n");
+    let dir = tempfile::tempdir().unwrap();
+    let state_db = dir.path().join("state.db");
+    let state_db = state_db.to_str().unwrap();
+    let spawn = |pipeline: &tempfile::NamedTempFile, extra: &[&str]| {
+        let mut args = vec![
+            "--alert-pipeline",
+            pipeline.path().to_str().unwrap(),
+            "--state-db",
+            state_db,
+            "--state-save-interval",
+            "1",
+        ];
+        args.extend_from_slice(extra);
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &args)
+    };
+
+    {
+        let daemon = spawn(&open, &[]);
+        let (status, body) = post_silence(
+            &daemon,
+            serde_json::json!({
+                "id": "legacy-catch-all",
+                "matchers": [{ "selector": "rule", "op": "=~", "value": ".*" }],
+            }),
+        );
+        assert_eq!(status, 201, "{body}");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    let daemon = spawn(&strict, &["--keep-state"]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let warned = loop {
+        let found = daemon
+            .stderr_lines()
+            .into_iter()
+            .find(|l| l.contains("API silences exceed") && l.contains("legacy-catch-all"));
+        if found.is_some() || std::time::Instant::now() > deadline {
+            break found;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(
+        warned.is_some(),
+        "restore should log the over-limit silence: {:?}",
+        daemon.stderr_lines()
+    );
+
+    let (_, text) = common::http_get(&daemon.url("/api/v1/silences"));
+    assert!(
+        text.contains("legacy-catch-all"),
+        "the restored silence stays in effect: {text}"
     );
 }

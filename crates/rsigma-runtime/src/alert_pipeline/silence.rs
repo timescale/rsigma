@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use rsigma_eval::EvaluationResult;
 
 use super::matcher::{MatchOp, MatcherError, MatcherSet, MatcherSpec};
+use crate::selector::Selector;
 
 /// Default for [`SilenceLimits::max_duration`]: an API silence must end
 /// within 30 days of its creation.
@@ -23,13 +24,15 @@ pub const DEFAULT_MAX_SILENCE_DURATION: Duration = Duration::from_secs(720 * 360
 /// Bounds on silences created over the API. Static silences from the config
 /// file are operator-owned and not subject to them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SilenceLimits {
     /// Latest `ends_at`, measured from creation. An API silence without
     /// `ends_at`, or ending later, is refused. `None` removes the bound.
     pub max_duration: Option<Duration>,
-    /// Accept silences whose matchers are all negative or regex matchers.
-    /// When `false`, an API silence needs at least one `=` matcher with a
-    /// non-empty value.
+    /// Accept silences that are not pinned to a rule, entity, or correlation
+    /// group. When `false`, an API silence needs at least one `=` matcher
+    /// with a non-empty value on `rule`, `match.<field>`, or
+    /// `correlation.group_key.<field>`.
     pub allow_broad: bool,
 }
 
@@ -40,6 +43,46 @@ impl Default for SilenceLimits {
             allow_broad: false,
         }
     }
+}
+
+/// Check an API silence's matchers and end time against `limits` at unix time
+/// `now`.
+fn check_limits(
+    matchers: &[MatcherSpec],
+    ends_at: Option<i64>,
+    limits: &SilenceLimits,
+    now: i64,
+) -> Result<(), SilenceError> {
+    if let Some(max) = limits.max_duration {
+        let Some(ends_at) = ends_at else {
+            return Err(SilenceError::Unbounded { max });
+        };
+        let max_secs = max.as_secs() + u64::from(max.subsec_nanos() > 0);
+        let latest = i64::try_from(max_secs)
+            .ok()
+            .and_then(|secs| now.checked_add(secs))
+            .unwrap_or(i64::MAX);
+        if ends_at > latest {
+            return Err(SilenceError::TooLong { max });
+        }
+    }
+    if !limits.allow_broad && !matchers.iter().any(is_scoping_matcher) {
+        return Err(SilenceError::TooBroad);
+    }
+    Ok(())
+}
+
+/// Whether `m` pins a silence to one rule, entity, or correlation group: an
+/// `=` with a non-empty value on `rule`, `match.<field>`, or
+/// `correlation.group_key.<field>`. `level`, `event.*`, and `enrichment.*`
+/// values are shared by whole classes of results, so they do not count.
+fn is_scoping_matcher(m: &MatcherSpec) -> bool {
+    m.op == MatchOp::Eq
+        && !m.value.is_empty()
+        && matches!(
+            Selector::parse(&m.selector),
+            Ok(Selector::Rule | Selector::Match(_) | Selector::CorrelationGroupKey(_))
+        )
 }
 
 /// Where a silence came from.
@@ -133,7 +176,8 @@ pub enum SilenceError {
     Unbounded { max: Duration },
     /// An API silence ends later than [`SilenceLimits::max_duration`] from now.
     TooLong { max: Duration },
-    /// An API silence has no `=` matcher with a non-empty value while
+    /// An API silence has no `=` matcher with a non-empty value on `rule`,
+    /// `match.<field>`, or `correlation.group_key.<field>` while
     /// [`SilenceLimits::allow_broad`] is off.
     TooBroad,
 }
@@ -162,7 +206,7 @@ impl std::fmt::Display for SilenceError {
             ),
             SilenceError::TooBroad => write!(
                 f,
-                "a silence created over the API needs at least one `=` matcher with a non-empty value (allow_broad_silences is off)"
+                "a silence created over the API needs at least one `=` matcher with a non-empty value on rule, match.<field>, or correlation.group_key.<field> (allow_broad_silences is off)"
             ),
         }
     }
@@ -213,26 +257,9 @@ impl Silence {
         limits: &SilenceLimits,
         now: i64,
     ) -> Result<Self, SilenceError> {
-        let scoped = spec
-            .matchers
-            .iter()
-            .any(|m| m.op == MatchOp::Eq && !m.value.is_empty());
+        let matchers = spec.matchers.clone();
         let silence = Silence::build(spec, SilenceOrigin::Api)?;
-        if let Some(max) = limits.max_duration {
-            let Some(ends_at) = silence.ends_at else {
-                return Err(SilenceError::Unbounded { max });
-            };
-            let latest = i64::try_from(max.as_secs())
-                .ok()
-                .and_then(|secs| now.checked_add(secs))
-                .unwrap_or(i64::MAX);
-            if ends_at > latest {
-                return Err(SilenceError::TooLong { max });
-            }
-        }
-        if !limits.allow_broad && !scoped {
-            return Err(SilenceError::TooBroad);
-        }
+        check_limits(&matchers, silence.ends_at, limits, now)?;
         Ok(silence)
     }
 
@@ -387,6 +414,17 @@ impl SilenceStore {
             .iter()
             .filter(|s| s.origin == SilenceOrigin::Api)
             .map(|s| s.to_snap())
+            .collect()
+    }
+
+    /// Ids of unexpired API silences that `limits` would refuse at `now`, such
+    /// as ones created before the limits applied.
+    pub(crate) fn api_over_limits(&self, limits: &SilenceLimits, now: i64) -> Vec<String> {
+        self.silences
+            .iter()
+            .filter(|s| s.origin == SilenceOrigin::Api && s.state(now) != SilenceState::Expired)
+            .filter(|s| check_limits(&s.matchers.to_specs(), s.ends_at, limits, now).is_err())
+            .map(|s| s.id.clone())
             .collect()
     }
 
@@ -590,6 +628,18 @@ mod tests {
     }
 
     #[test]
+    fn sub_second_max_duration_rounds_up_to_a_second() {
+        let limits = SilenceLimits {
+            max_duration: Some(Duration::from_millis(500)),
+            allow_broad: false,
+        };
+        let next_second = bounded(spec("10.0.0.1"), "2026-01-01T00:00:01Z");
+        assert!(Silence::build_api(next_second, &limits, NOW).is_ok());
+        let two_seconds = bounded(spec("10.0.0.1"), "2026-01-01T00:00:02Z");
+        assert!(Silence::build_api(two_seconds, &limits, NOW).is_err());
+    }
+
+    #[test]
     fn api_silence_without_a_scoped_eq_matcher_is_too_broad() {
         let limits = SilenceLimits::default();
         for matchers in [
@@ -597,6 +647,9 @@ mod tests {
             vec![matcher("rule", MatchOp::Ne, "x")],
             vec![matcher("rule", MatchOp::ReNotMatch, "x")],
             vec![matcher("match.SourceIp", MatchOp::Eq, "")],
+            vec![matcher("level", MatchOp::Eq, "critical")],
+            vec![matcher("event.Channel", MatchOp::Eq, "Security")],
+            vec![matcher("enrichment.team", MatchOp::Eq, "soc")],
         ] {
             let spec = SilenceSpec {
                 matchers,
@@ -617,6 +670,15 @@ mod tests {
             ..Default::default()
         };
         assert!(Silence::build_api(spec, &limits, NOW).is_ok());
+
+        for selector in ["rule", "correlation.group_key.SourceIp"] {
+            let spec = SilenceSpec {
+                matchers: vec![matcher(selector, MatchOp::Eq, "x")],
+                ends_at: Some("2026-01-01T01:00:00Z".to_string()),
+                ..Default::default()
+            };
+            assert!(Silence::build_api(spec, &limits, NOW).is_ok(), "{selector}");
+        }
     }
 
     #[test]
@@ -630,6 +692,41 @@ mod tests {
             ..Default::default()
         };
         assert!(Silence::build_api(spec, &open, NOW).is_ok());
+    }
+
+    #[test]
+    fn over_limit_api_silences_are_listed() {
+        let mut store = SilenceStore::default();
+        let broad = SilenceSpec {
+            id: Some("broad".into()),
+            matchers: vec![matcher("rule", MatchOp::ReMatch, ".*")],
+            ..Default::default()
+        };
+        store.add(Silence::build(broad, SilenceOrigin::Api).unwrap());
+        let scoped = bounded(spec("10.0.0.1"), "2026-01-01T01:00:00Z");
+        let scoped = SilenceSpec {
+            id: Some("scoped".into()),
+            ..scoped
+        };
+        store.add(Silence::build(scoped, SilenceOrigin::Api).unwrap());
+        let static_broad = SilenceSpec {
+            id: Some("static".into()),
+            matchers: vec![matcher("rule", MatchOp::ReMatch, ".*")],
+            ..Default::default()
+        };
+        store.set_static(vec![
+            Silence::build(static_broad, SilenceOrigin::Static).unwrap(),
+        ]);
+
+        assert_eq!(
+            store.api_over_limits(&SilenceLimits::default(), NOW),
+            ["broad"]
+        );
+        let open = SilenceLimits {
+            max_duration: None,
+            allow_broad: true,
+        };
+        assert!(store.api_over_limits(&open, NOW).is_empty());
     }
 
     #[test]

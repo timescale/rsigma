@@ -40,7 +40,7 @@ pub struct CreateSilenceInput {
 impl RsigmaMcp {
     /// Create a time-bounded silence on the daemon.
     #[tool(
-        description = "Create a silence on the configured rsigma daemon (POST /api/v1/silences). matchers are required. Supply exactly one of ends_at (RFC 3339) or duration (humantime, converted at call time); unbounded silences are refused. An optional id is pre-checked against the silence list so a retried create is a no-op."
+        description = "Create a silence on the configured rsigma daemon (POST /api/v1/silences). matchers are required. Supply exactly one of ends_at (RFC 3339) or duration (humantime, converted at call time); unbounded silences are refused. The daemon also requires an = matcher on rule, match.<field>, or correlation.group_key.<field>, and caps the window at its max_silence_duration (default 720h). An optional id is pre-checked against the silence list so a retried create is a no-op."
     )]
     async fn create_silence(
         &self,

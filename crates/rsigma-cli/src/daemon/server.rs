@@ -3500,7 +3500,7 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                     "set an earlier ends_at, or raise max_silence_duration in the alert pipeline config",
                 ),
                 SilenceError::TooBroad => Some(
-                    "add a `=` matcher such as rule or match.<field>, or set allow_broad_silences: true in the alert pipeline config",
+                    "add a `=` matcher on rule, match.<field>, or correlation.group_key.<field>, or set allow_broad_silences: true in the alert pipeline config",
                 ),
                 _ => None,
             };
