@@ -309,7 +309,8 @@ pub(crate) struct DaemonArgs {
     ///
     /// The policy is enforced at DNS resolution time inside the
     /// daemon's HTTP clients, so DNS rebinding cannot defeat
-    /// host-string checks.
+    /// host-string checks, and on IP-literal request URLs and every
+    /// redirect hop, which skip DNS.
     #[arg(long = "egress-policy", value_parser = ["default", "strict", "permissive"], default_value = config::defaults::EGRESS_POLICY)]
     pub egress_policy: String,
 

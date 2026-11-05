@@ -45,7 +45,13 @@ Operators that need remote-included pipelines (for centralised pipeline distribu
 
 The daemon issues HTTP requests in two places: dynamic-source resolution (a Sigma rule or pipeline references `type: http`) and post-evaluation enrichers (`type: http`). Both URLs come from operator-supplied YAML, so a compromised rule or pipeline can otherwise point the daemon at the cloud-metadata IMDS endpoint at `169.254.169.254` and exfiltrate IAM credentials, or at internal admin APIs reachable on link-local addresses.
 
-`rsigma engine daemon` exposes an `--egress-policy <default|strict|permissive>` flag (also `daemon.engine.egress_policy` in the layered YAML config) that selects one of three presets. The policy is enforced at *DNS resolution time* inside the daemon's `reqwest::Client`, so DNS rebinding (resolving a hostname to a public IP at the host-string check, then switching to a private IP between check and connect) cannot defeat it: the connect itself never sees a denied address.
+`rsigma engine daemon` exposes an `--egress-policy <default|strict|permissive>` flag (also `daemon.engine.egress_policy` in the layered YAML config) that selects one of three presets. The daemon's HTTP clients enforce it at three points, so a request never connects to a denied address: {{ added "unreleased" }}
+
+- **DNS resolution.** Every address a hostname resolves to is filtered, so DNS rebinding (resolving a hostname to a public IP at the host-string check, then switching to a private IP between check and connect) cannot defeat the policy.
+- **The request URL.** A URL whose host is an IP literal (`http://169.254.169.254/`, `http://[fd00:ec2::254]/`, or an encoded IPv4 form such as `http://0xa9fea9fe/`) skips DNS, so the URL itself is checked before the request is sent.
+- **Every redirect hop.** Each `Location` target is checked the same way before it is followed, so an allowed upstream cannot bounce the request to a denied IP literal. Redirect targets given as hostnames are filtered at resolution as usual. At most 10 redirects are followed.
+
+A denied request fails with the policy's reason (for example `egress policy denied link-local address 169.254.169.254`) in the source, enricher, or webhook error.
 
 | Preset       | Link-local (`169.254/16`, `fe80::/10`) | Cloud metadata (`fd00:ec2::254`) | Loopback (`127/8`, `::1`) | RFC1918 private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) |
 |--------------|----------------------------------------|----------------------------------|---------------------------|------------------------------------------------------------------|

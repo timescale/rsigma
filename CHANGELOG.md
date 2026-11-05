@@ -20,6 +20,16 @@ Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code 
 
 A `template` enricher passed to the MCP server's `evaluate_events` tool, inline or through `enrichers_path`, could reference `${NAME}`, which renders from the server process's environment. Any MCP caller could read the server's environment variables, such as cloud credentials or API tokens, from the enrichment result. The tool now refuses an enricher with a `${ENV_VAR}` reference in any templated field and names up to five of them in the error; `${detection.*}` and `${correlation.*}` references work as before. The daemon still expands `${ENV_VAR}` in its own enrichers config. The new `rsigma_runtime::env_references` returns the environment references in a template, for library users who accept templates from untrusted input.
 
+### The egress policy covers IP-literal URLs, redirects, and the AWS IPv6 metadata address
+
+`--egress-policy` was enforced only when a hostname was resolved, so three kinds of request reached addresses the policy denies:
+
+- A URL whose host is an IP literal, such as `http://169.254.169.254/latest/meta-data/` in an HTTP source, HTTP enricher, or webhook, skips DNS and was sent as is. The daemon now checks the URL before sending and fails the request with the policy's reason. A webhook delivery refused this way is permanent and goes to the DLQ instead of being retried.
+- Redirects were followed without a check, so an allowed upstream could answer with a redirect to a denied IP literal. Every hop is now checked before it is followed, still with at most 10 redirects.
+- The cloud-metadata rule compared against `fd00:ec:2::254` instead of the AWS IPv6 instance metadata address `fd00:ec2::254`, so the `default` preset, which allows private addresses, did not block it. It now does.
+
+Source, enricher, and webhook transport errors now include the underlying cause, so a resolution-time denial names the policy instead of reading only `error sending request`. The new `EgressPolicy::check_url` exposes the URL check to library users.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**
