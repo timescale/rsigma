@@ -54,10 +54,11 @@ fn list_tools(cwd: &Path, xdg: &Path, extra_args: &[&str]) -> (Vec<String>, Stri
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-                continue;
+                let _ = tx.send(Err(line));
+                return;
             };
             if value["id"] == 2 {
-                let _ = tx.send(value);
+                let _ = tx.send(Ok(value));
                 return;
             }
         }
@@ -73,7 +74,9 @@ fn list_tools(cwd: &Path, xdg: &Path, extra_args: &[&str]) -> (Vec<String>, Stri
         .unwrap()
         .read_to_string(&mut stderr)
         .unwrap();
-    let response = response.unwrap_or_else(|_| panic!("no tools/list response; stderr: {stderr}"));
+    let response = response
+        .unwrap_or_else(|_| panic!("no tools/list response; stderr: {stderr}"))
+        .unwrap_or_else(|line| panic!("non-JSON line on the stdio transport: {line}"));
 
     let names = response["result"]["tools"]
         .as_array()
@@ -227,4 +230,23 @@ fn config_show_omits_ignored_keys() {
         "{envelope}"
     );
     assert_eq!(envelope["ignored_keys"][0]["key"], "mcp.daemon_url");
+}
+
+#[test]
+fn project_lint_config_cannot_read_outside_the_project() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let xdg = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, "SECRET-TOKEN-abc123\n").unwrap();
+    std::fs::write(
+        project.path().join("rsigma.yaml"),
+        format!("mcp:\n  lint_config: {}\n", secret.display()),
+    )
+    .unwrap();
+
+    let (tools, stderr) = list_tools(project.path(), xdg.path(), &[]);
+    assert!(!tools.is_empty());
+    assert!(stderr.contains(&ignored("mcp.lint_config")), "{stderr}");
+    assert!(!stderr.contains("SECRET-TOKEN"), "{stderr}");
 }

@@ -123,7 +123,7 @@ Point the daemon at the same directory with **`--stix-store`** and a `type: stix
 
 ### `config`: YAML configuration
 
-Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config).
+Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config). Project files cannot set security-sensitive keys such as `mcp.daemon_url` or `mcp.allow_operate_writes`; those are ignored with a warning and read only from `--config`, the user or system config, the environment, or flags. See [Project config trust](https://rsigma.io/reference/configuration/#project-config-trust).
 
 ```bash
 # Scaffold a commented template at ./rsigma.yaml.

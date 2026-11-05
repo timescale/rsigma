@@ -41,7 +41,8 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `mcp.daemon_url` | Points the operate tools, and the daemon token, at another server. |
 | `mcp.daemon_ca` | Adds a trusted root CA for the daemon connection. |
 | `mcp.allow_operate_writes` | Registers the mutating operate tools. |
-| `mcp.rules_dir` | Only when it resolves outside the directory holding the project file. A rules directory inside the project is kept. |
+| `mcp.rules_dir` | Only when it resolves outside the directory holding the project file, following symlinks. A rules directory inside the project is kept. |
+| `mcp.lint_config` | Only when it resolves outside the directory holding the project file, following symlinks, because the server reads it at startup and prints parse errors. A lint config inside the project is kept. |
 
 Each ignored key prints a warning naming the file:
 

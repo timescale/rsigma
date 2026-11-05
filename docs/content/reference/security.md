@@ -217,7 +217,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 
 - `mcp.http_addr`, `mcp.allow_unconfined_paths`, and `mcp.allow_sigma_cli`, which expose the MCP server on the network, unconfine its paths, or let it spawn sigma-cli.
 - `mcp.daemon_url`, `mcp.daemon_ca`, and `mcp.allow_operate_writes`, which would point the operate tools (and the daemon token) at another server or turn on the mutating tools.
-- `mcp.rules_dir` when it resolves outside the project file's directory.
+- `mcp.rules_dir` and `mcp.lint_config` when they resolve outside the project file's directory, following symlinks.
 
 See [Project config trust](configuration.md#project-config-trust) for the full table and the warning format.
 

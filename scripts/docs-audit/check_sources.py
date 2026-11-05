@@ -171,10 +171,16 @@ def check_protected_config_keys() -> list[str]:
     if len(table) != 2:
         return ["PROTECTED_KEYS not found in crates/rsigma-cli/src/config/mod.rs"]
     keys = re.findall(r'key:\s*"([^"]+)"', table[1].split("\n];", 1)[0])
+    if not keys:
+        return ["no keys parsed from PROTECTED_KEYS in crates/rsigma-cli/src/config/mod.rs"]
     errors = []
-    for name in ("configuration.md", "security.md"):
+    for name, heading in (("configuration.md", "## Project config trust"), ("security.md", "## Project config files")):
         page = read(CONTENT / "reference" / name)
-        errors += [f"protected config key {key} is missing from reference/{name}" for key in keys if f"`{key}`" not in page]
+        if f"\n{heading}\n" not in page:
+            errors.append(f"reference/{name} has no '{heading}' section")
+            continue
+        section = page.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        errors += [f"protected config key {key} is missing from the '{heading}' section of reference/{name}" for key in keys if f"`{key}`" not in section]
     return errors
 
 

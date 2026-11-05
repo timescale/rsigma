@@ -317,25 +317,32 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         key: "mcp.allow_operate_writes",
         strip: |c, _| mcp(c).is_some_and(|m| m.allow_operate_writes.take().is_some()),
     },
-    // A project may confine the MCP server to its own tree, but not point it
-    // at a directory outside the project.
+    // A project may point these at its own tree, but not at paths outside
+    // the project.
     ProtectedKey {
         key: "mcp.rules_dir",
+        strip: |c, project_dir| mcp(c).is_some_and(|m| take_outside(&mut m.rules_dir, project_dir)),
+    },
+    ProtectedKey {
+        key: "mcp.lint_config",
         strip: |c, project_dir| {
-            mcp(c).is_some_and(|m| {
-                if m.rules_dir
-                    .as_deref()
-                    .is_some_and(|dir| !path_within(dir, project_dir))
-                {
-                    m.rules_dir = None;
-                    true
-                } else {
-                    false
-                }
-            })
+            mcp(c).is_some_and(|m| take_outside(&mut m.lint_config, project_dir))
         },
     },
 ];
+
+/// Clear `path` when it lies outside `project_dir`. Returns whether it did.
+fn take_outside(path: &mut Option<PathBuf>, project_dir: &Path) -> bool {
+    if path
+        .as_deref()
+        .is_some_and(|p| !path_within(p, project_dir))
+    {
+        *path = None;
+        true
+    } else {
+        false
+    }
+}
 
 /// Remove every [`PROTECTED_KEYS`] entry from a project file's partial and
 /// return the keys that were set.
@@ -348,21 +355,40 @@ fn strip_untrusted(config: &mut RsigmaConfigPartial, project_dir: &Path) -> Vec<
 }
 
 /// Whether `path` (relative paths resolve against the current directory, as
-/// the commands that read them do) lies inside `dir`. Existing paths are
-/// compared after resolving symlinks; others after removing `.` and `..`.
+/// the commands that read them do) lies inside `dir`. Symlinks are resolved
+/// in the longest prefix that exists, and the rest is normalized lexically,
+/// so a path that does not exist yet cannot escape through a symlinked parent.
 fn path_within(path: &Path, dir: &Path) -> bool {
     let cwd = std::env::current_dir().unwrap_or_default();
     let absolute = |p: &Path| {
-        let joined = if p.is_absolute() {
-            p.to_path_buf()
+        if p.is_absolute() {
+            resolve_existing_prefix(p)
         } else {
-            cwd.join(p)
-        };
-        joined
-            .canonicalize()
-            .unwrap_or_else(|_| normalize_lexically(&joined))
+            resolve_existing_prefix(&cwd.join(p))
+        }
     };
     absolute(path).starts_with(absolute(dir))
+}
+
+/// Canonicalize the longest prefix of `path` that exists and append the
+/// remaining components, folding `.` and `..`.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut prefix = path.to_path_buf();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = prefix.canonicalize() {
+            let mut out = real;
+            out.extend(rest.iter().rev());
+            return normalize_lexically(&out);
+        }
+        let Some(last) = prefix.components().next_back() else {
+            return normalize_lexically(path);
+        };
+        rest.push(last.as_os_str().to_os_string());
+        if !prefix.pop() {
+            return normalize_lexically(path);
+        }
+    }
 }
 
 /// Drop `.` components and fold `..` into its parent without touching the
@@ -533,7 +559,7 @@ mod tests {
         assert!(unknown.is_empty());
     }
 
-    const MCP_GATES: &str = "mcp:\n  http_addr: 0.0.0.0:9100\n  allow_unconfined_paths: true\n  allow_sigma_cli: true\n  daemon_url: http://127.0.0.1:9090\n  daemon_ca: /tmp/ca.pem\n  allow_operate_writes: true\n  lint_config: lint.yml\n";
+    const MCP_GATES: &str = "mcp:\n  http_addr: 0.0.0.0:9100\n  allow_unconfined_paths: true\n  allow_sigma_cli: true\n  daemon_url: http://127.0.0.1:9090\n  daemon_ca: /tmp/ca.pem\n  allow_operate_writes: true\n  lint_config: /etc/rsigma-lint.yml\n";
 
     fn write_config(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);
@@ -557,7 +583,7 @@ mod tests {
             assert!(mcp.daemon_url.is_none());
             assert!(mcp.daemon_ca.is_none());
             assert!(mcp.allow_operate_writes.is_none());
-            assert_eq!(mcp.lint_config, Some(PathBuf::from("lint.yml")));
+            assert!(mcp.lint_config.is_none());
             let keys: Vec<&str> = loaded.ignored_keys.iter().map(|(_, k)| *k).collect();
             assert_eq!(
                 keys,
@@ -568,6 +594,7 @@ mod tests {
                     "mcp.daemon_url",
                     "mcp.daemon_ca",
                     "mcp.allow_operate_writes",
+                    "mcp.lint_config",
                 ]
             );
             assert!(loaded.ignored_keys.iter().all(|(p, _)| *p == path));
@@ -608,29 +635,48 @@ mod tests {
     }
 
     #[test]
-    fn project_rules_dir_must_stay_inside_the_project() {
+    fn project_paths_must_stay_inside_the_project() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("rules")).unwrap();
         let inside = dir.path().join("rules");
         let outside = tempfile::tempdir().unwrap();
         let escape = dir.path().join("rules/../../elsewhere");
-        for (rules_dir, kept) in [
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        let through_link = dir.path().join("link");
+        let missing_through_link = dir.path().join("link/missing/../../escaped");
+        let missing_inside = dir.path().join("rules/new");
+        let mut cases = vec![
             (inside.as_path(), true),
             (outside.path(), false),
             (escape.as_path(), false),
+            (missing_inside.as_path(), true),
+        ];
+        if cfg!(unix) {
+            cases.push((through_link.as_path(), false));
+            cases.push((missing_through_link.as_path(), false));
+        }
+        for (key, field) in [
+            ("mcp.rules_dir", "rules_dir"),
+            ("mcp.lint_config", "lint_config"),
         ] {
-            let body = format!("mcp:\n  rules_dir: {}\n", rules_dir.display());
-            let path = write_config(dir.path(), ".rsigmarc", &body);
-            let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
-            let got = loaded.config.mcp.unwrap().rules_dir;
-            assert_eq!(got.is_some(), kept, "{}", rules_dir.display());
-            assert_eq!(
-                loaded
-                    .ignored_keys
-                    .iter()
-                    .any(|(_, k)| *k == "mcp.rules_dir"),
-                !kept
-            );
+            for (target, kept) in &cases {
+                let body = format!("mcp:\n  {field}: {}\n", target.display());
+                let path = write_config(dir.path(), ".rsigmarc", &body);
+                let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
+                let mcp = loaded.config.mcp.unwrap();
+                let got = match field {
+                    "rules_dir" => mcp.rules_dir,
+                    _ => mcp.lint_config,
+                };
+                assert_eq!(got.is_some(), *kept, "{key} = {}", target.display());
+                assert_eq!(
+                    loaded.ignored_keys.iter().any(|(_, k)| *k == key),
+                    !kept,
+                    "{key} = {}",
+                    target.display()
+                );
+            }
         }
     }
 
