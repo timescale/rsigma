@@ -144,6 +144,8 @@ daemon.api.addr = 0.0.0.0:9090  (default)
 
 `--config <PATH>` replaces the discovery chain with a single file, and `rsigma engine daemon --dry-run` prints the effective daemon section without starting anything. See [Configuration File](../reference/configuration.md).
 
+A project file cannot set security-sensitive keys such as `daemon.enrichers`, `daemon.output.sinks`, or `mcp.daemon_url`. When it tries, stderr shows `warning: ignoring '<key>' from project config <path>` and the value comes from another layer. Move the key to the user config, or pass the file with `--config`. See [Project config trust](../reference/configuration.md#project-config-trust).
+
 ## Still stuck
 
 Raise the log level for the component you are debugging, for example `RUST_LOG="info,rsigma::daemon::reload=debug"` for reloads; the [Observability](../guide/observability.md) guide lists the log targets. If the behavior looks like a bug, [open an issue](https://{{ rsigma.repo_url | replace("https://", "") }}/issues) with the `rsigma --version` output, the rule, and an event that reproduces it.

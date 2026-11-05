@@ -38,7 +38,7 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config <PATH>` | unset | Load a specific YAML config file instead of running the [discovery chain](../../reference/configuration.md#discovery). CLI flags still take precedence over file values. |
+| `--config <PATH>` | unset | Load a specific YAML config file instead of running the [discovery chain](../../reference/configuration.md#discovery). CLI flags still take precedence over file values. Unlike a discovered `./rsigma.yaml` or `.rsigmarc`, this file may set sources, enrichers, sinks, webhooks, API auth, and the other keys listed in [Project config trust](../../reference/configuration.md#project-config-trust). {{ added "unreleased" }} |
 | `--dry-run` | off | Print the effective `daemon` section (defaults < file < env) and exit `0` without binding any port. |
 
 ### Event input

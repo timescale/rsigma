@@ -147,7 +147,7 @@ rsigma config reload
 
 `engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, `rule visibility`, `rule doc`, and `rule hygiene` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
-Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://rsigma.io/reference/configuration/).
+Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The project files (`.rsigmarc` and `./rsigma.yaml`) cannot set security-sensitive keys such as `daemon.enrichers`, `daemon.output.sinks`, `daemon.api.auth`, or `mcp.daemon_url`; rsigma ignores them with a warning, and they resolve from `--config`, the user or system file, environment variables, or flags. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://rsigma.io/reference/configuration/).
 
 ### `rule parse`: Parse a single rule
 
