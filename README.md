@@ -114,7 +114,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 | [`rstix`](crates/rstix/) | STIX 2.1 library: typed objects, bundle parse/stream, semantic validation, and pattern engine |
 
 > [!TIP]
-> To learn more about RSigma, read these articles:
+> To learn more about RSigma, watch [Detection Engineering with RSigma](https://www.youtube.com/watch?v=cqeYdA39qv0) from Linux Security Summit Europe 2026 ([talk page](https://lsseu2026.sched.com/event/2WHc4), [slides](https://github.com/mostafa/rsigma-lss-eu-2026-talk/blob/main/deck/talk.md), [demo and materials](https://github.com/mostafa/rsigma-lss-eu-2026-talk)), and read these articles:
 > 
 > - [Pattern Detection and Correlation in JSON Logs](https://mostafa.dev/pattern-detection-and-correlation-in-json-logs-fab16334e4ee)
 > - [Streaming Logs to RSigma for Real-Time Detection](https://mostafa.dev/streaming-logs-to-rsigma-for-real-time-detection-72084b8041ad)
