@@ -97,7 +97,7 @@ pub use enrichment::{
     CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,
     EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
-    TemplateError, build_default_http_client, lookup_builtin, register_builtin,
+    TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
     validate_template_namespace,
 };
 #[cfg(feature = "stix-enrich")]

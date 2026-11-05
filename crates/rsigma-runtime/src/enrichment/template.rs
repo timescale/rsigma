@@ -163,6 +163,24 @@ pub fn validate_template_namespace(
     Ok(())
 }
 
+/// Return the names of every `${ENV_VAR}` reference inside `text`, in order
+/// of first appearance and without duplicates.
+///
+/// Rendering expands these from the process environment, so a caller that
+/// accepts templates from an untrusted party (the MCP server) uses this to
+/// reject them before building the enricher.
+pub fn env_references(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for caps in TEMPLATE_RE.captures_iter(text) {
+        if let VarRef::Env(name) = classify_ref(caps.get(1).unwrap().as_str())
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
 /// Render `text` against `result`, expanding every `${...}` reference.
 ///
 /// Values for missing fields render as the empty string (matching the
@@ -523,6 +541,17 @@ mod tests {
             ),
             "rule=Whoami cmd=whoami /all",
         );
+    }
+
+    #[test]
+    fn env_references_lists_only_env_vars_once() {
+        assert_eq!(
+            env_references(
+                "${HOME}/${detection.rule.title}/${correlation.type}/${HOME}/${AWS_SECRET}/${a.b}/${}"
+            ),
+            vec!["HOME".to_string(), "AWS_SECRET".to_string()],
+        );
+        assert!(env_references("plain ${detection.fields.x} text").is_empty());
     }
 
     #[test]
