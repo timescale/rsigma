@@ -80,7 +80,7 @@ In `rsigma-runtime`, `Silence::build_api` and `SilenceLimits` implement the limi
 
 Breaking changes: API silences without `ends_at`, longer than 30 days, or without a scoped `=` matcher are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` and the new `SilenceLimits` are `#[non_exhaustive]`, `AlertPipelineFile` has two new fields, and `AlertPipeline::new` takes the limits.
 
-### MCP HTTP requires a token off loopback and accepts the server's own host names
+### MCP HTTP requires a token off loopback and accepts the server's own host names (#659)
 
 `rsigma mcp serve --http` on a non-loopback address started without `--auth-token`, exposing every tool to anyone who could reach the port. It now refuses to start (exit code `3`) unless `--allow-unauthenticated` is set. Loopback binds are unchanged.
 
