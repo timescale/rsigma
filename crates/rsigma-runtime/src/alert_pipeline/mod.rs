@@ -40,7 +40,8 @@ pub use grouping::{
 };
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
-    Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView,
+    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceSpec,
+    SilenceState, SilenceStore, SilenceView,
 };
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;
@@ -80,10 +81,12 @@ pub struct AlertPipeline {
     static_silences: Vec<StaticSilence>,
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
+    silence_limits: SilenceLimits,
 }
 
 impl AlertPipeline {
     /// Construct from validated parts. Prefer [`build_alert_pipeline`].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         scope: Scope,
         strip_event: bool,
@@ -92,6 +95,7 @@ impl AlertPipeline {
         static_silences: Vec<StaticSilence>,
         inhibit: Option<InhibitConfig>,
         max_silences: usize,
+        silence_limits: SilenceLimits,
     ) -> Self {
         AlertPipeline {
             scope,
@@ -101,7 +105,14 @@ impl AlertPipeline {
             static_silences,
             inhibit,
             max_silences,
+            silence_limits,
         }
+    }
+
+    /// The bounds the silence API applies to new silences
+    /// (`max_silence_duration`, `allow_broad_silences`).
+    pub fn silence_limits(&self) -> SilenceLimits {
+        self.silence_limits
     }
 
     /// The static silences declared in the config, for (re-)seeding the store.
