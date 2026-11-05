@@ -237,6 +237,13 @@ impl WebhookSink {
             }
         }
 
+        // A denied IP-literal URL will not change on retry.
+        if let Err(denial) = self.client.check_url(&url) {
+            return Err(RuntimeError::Permanent(format!(
+                "webhook {}: {denial}",
+                self.id
+            )));
+        }
         let mut req = self
             .client
             .inner()
@@ -254,8 +261,9 @@ impl WebhookSink {
             // heal on retry, so they are retryable, not permanent.
             Err(e) => {
                 return Err(RuntimeError::Io(std::io::Error::other(format!(
-                    "webhook {}: request error: {e}",
-                    self.id
+                    "webhook {}: request error: {}",
+                    self.id,
+                    crate::egress::error_chain(&e)
                 ))));
             }
         };
@@ -450,6 +458,41 @@ mod tests {
             Err(RuntimeError::Permanent(_)) => {}
             other => panic!("expected permanent error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn denied_ip_literal_url_is_permanent() {
+        let mut sink = sink_to("http://169.254.169.254/hook".to_string());
+        let result: ProcessResult = vec![detection("hi")];
+        match sink.send(&result, &ctx()).await {
+            Err(RuntimeError::Permanent(msg)) => assert!(
+                msg.contains("egress policy denied link-local address 169.254.169.254"),
+                "{msg}"
+            ),
+            other => panic!("expected permanent error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn redirect_to_denied_ip_literal_is_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(307).insert_header("Location", "http://169.254.169.254/"),
+            )
+            .mount(&server)
+            .await;
+        let mut sink = sink_to(format!("{}/hook", server.uri()));
+        let result: ProcessResult = vec![detection("hi")];
+        let err = sink
+            .send(&result, &ctx())
+            .await
+            .expect_err("redirect must be refused");
+        assert!(
+            err.to_string()
+                .contains("egress policy denied link-local address 169.254.169.254"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

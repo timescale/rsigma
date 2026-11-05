@@ -9,10 +9,18 @@
 //!
 //! [`EgressPolicy`] expresses a deny list of address classes (cloud
 //! metadata, link-local, optionally loopback / private) and is applied
-//! at *DNS resolution time* via [`EgressFilteredResolver`], so a DNS
-//! rebinding attack that swaps the upstream's IP after a host-string
-//! check cannot defeat it: the connect itself never sees a denied
-//! address.
+//! in three places:
+//!
+//! - At *DNS resolution time* via [`EgressFilteredResolver`], so a DNS
+//!   rebinding attack that swaps the upstream's IP after a host-string
+//!   check cannot defeat it.
+//! - Before each request, via [`EgressPolicy::check_url`]. A URL whose host
+//!   is an IP literal (`http://169.254.169.254/`, `http://[::1]/`) never
+//!   reaches the resolver, because the HTTP client connects to the literal
+//!   directly.
+//! - On every redirect hop, via the redirect policy installed by
+//!   `egress_client_builder`, so an allowed upstream cannot bounce the
+//!   request to a denied IP literal.
 //!
 //! ## Defaults
 //!
@@ -122,6 +130,32 @@ impl EgressPolicy {
         self
     }
 
+    /// Decide whether the host of `url` is permitted when it is an IP literal.
+    ///
+    /// The HTTP client connects to an IP-literal host without consulting the
+    /// resolver, so [`EgressFilteredResolver`] never sees it; callers check the
+    /// URL with this method before sending. Hostnames return `Ok` because the
+    /// resolver filters their addresses at connect time, and a string that
+    /// does not parse as a URL returns `Ok` because the HTTP client rejects
+    /// it on its own. IPv4 hosts written in shorthand, octal, or hex
+    /// (`http://0x7f.1/`) are normalized by the URL parser before the check.
+    pub fn check_url(&self, url: &str) -> Result<(), EgressDenial> {
+        let Ok(parsed) = reqwest::Url::parse(url) else {
+            return Ok(());
+        };
+        let Some(host) = parsed.host_str() else {
+            return Ok(());
+        };
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        match host.parse::<IpAddr>() {
+            Ok(ip) => self.permit_ip(ip),
+            Err(_) => Ok(()),
+        }
+    }
+
     /// Decide whether `ip` is permitted under the policy.
     pub fn permit_ip(&self, ip: IpAddr) -> Result<(), EgressDenial> {
         match ip {
@@ -208,6 +242,45 @@ impl std::fmt::Display for EgressDenial {
 }
 
 impl std::error::Error for EgressDenial {}
+
+/// Redirect hops followed before giving up, matching reqwest's default policy.
+const MAX_REDIRECTS: usize = 10;
+
+/// Start a `reqwest` client builder that enforces `policy` on every address
+/// it connects to: the [`EgressFilteredResolver`] filters resolved hostnames,
+/// and a redirect policy re-checks each hop's URL with
+/// [`EgressPolicy::check_url`] so a redirect to a denied IP literal is
+/// refused. The first hop's URL is not covered; check it with
+/// [`EgressPolicy::check_url`] before sending.
+pub(crate) fn egress_client_builder(policy: EgressPolicy) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .dns_resolver(EgressFilteredResolver::new(policy).into_dns_resolver())
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                attempt.error("too many redirects")
+            } else if let Err(denial) = policy.check_url(attempt.url().as_str()) {
+                attempt.error(denial)
+            } else {
+                attempt.follow()
+            }
+        }))
+}
+
+/// Render `err` followed by each error in its source chain, so a resolver or
+/// redirect denial wrapped inside a `reqwest::Error` reaches the operator.
+pub(crate) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !out.contains(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        source = cause.source();
+    }
+    out
+}
 
 /// A [`reqwest::dns::Resolve`] implementation that delegates to
 /// `tokio::net::lookup_host` and then filters the resolved addresses
@@ -371,6 +444,75 @@ mod tests {
             p.permit_ip(v6(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)),
             Err(EgressDenial::CloudMetadata(_))
         ));
+    }
+
+    #[test]
+    fn check_url_denies_ip_literal_hosts() {
+        let p = EgressPolicy::default();
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://169.254.169.254:8080/",
+            "https://[fe80::1]/",
+            "http://[fd00:ec2::254]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://0xa9.0xfe.0xa9.0xfe/",
+            "http://0xa9fea9fe/",
+            "http://2852039166/",
+        ] {
+            assert!(p.check_url(url).is_err(), "{url} must be denied");
+        }
+        let strict = EgressPolicy::strict();
+        assert!(matches!(
+            strict.check_url("http://127.0.0.1:9090/"),
+            Err(EgressDenial::Loopback(_))
+        ));
+        assert!(matches!(
+            strict.check_url("http://[::1]/"),
+            Err(EgressDenial::Loopback(_))
+        ));
+        assert!(matches!(
+            strict.check_url("http://0x7f.1/"),
+            Err(EgressDenial::Loopback(_))
+        ));
+        assert!(matches!(
+            strict.check_url("http://10.1.2.3/"),
+            Err(EgressDenial::Private(_))
+        ));
+    }
+
+    #[test]
+    fn check_url_leaves_hostnames_and_allowed_literals_to_the_client() {
+        let p = EgressPolicy::default();
+        assert!(p.check_url("http://127.0.0.1:9090/").is_ok());
+        assert!(p.check_url("https://8.8.8.8/").is_ok());
+        assert!(p.check_url("https://metadata.google.internal/").is_ok());
+        assert!(p.check_url("not a url").is_ok());
+        assert!(
+            EgressPolicy::permissive()
+                .check_url("http://169.254.169.254/")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn error_chain_appends_causes_once() {
+        #[derive(Debug)]
+        struct Outer(EgressDenial);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("error sending request")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let err = Outer(EgressDenial::LinkLocal(v4(169, 254, 169, 254)));
+        assert_eq!(
+            error_chain(&err),
+            "error sending request: egress policy denied link-local address 169.254.169.254"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
