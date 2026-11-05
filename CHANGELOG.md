@@ -41,6 +41,20 @@ Source, enricher, and webhook transport errors now include the underlying cause,
 
 Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer takes effect. Move it to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`, pass the file with `mcp serve --config <PATH>`, or use the matching `RSIGMA_MCP__*` variable or flag.
 
+### Project config files cannot configure daemon sources, enrichers, sinks, or API access
+
+Running `rsigma engine daemon` inside a cloned repository loaded that repository's `./rsigma.yaml` or `.rsigmarc`, so a planted file could add a `command` enricher or source that ran on the first detection, send detections to its own sink, or weaken the API listener. Project files can no longer set:
+
+- `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run commands and make HTTP requests.
+- `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, and a `nats://` `daemon.input.source`.
+- `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`.
+- `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`.
+- `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`.
+
+rsigma ignores these keys with the same warning as the protected `mcp.*` keys. Boolean opt-ins, including the `mcp.*` ones, are ignored only when set to `true`, so a project file can still turn a gate off. `rsigma config init` no longer writes `sources`, `sinks`, or `egress_policy` uncommented, so the generated `./rsigma.yaml` sets no protected key.
+
+Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**

@@ -218,8 +218,13 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `mcp.http_addr`, `mcp.allow_unconfined_paths`, and `mcp.allow_sigma_cli`, which expose the MCP server on the network, unconfine its paths, or let it spawn sigma-cli.
 - `mcp.daemon_url`, `mcp.daemon_ca`, and `mcp.allow_operate_writes`, which would point the operate tools (and the daemon token) at another server or turn on the mutating tools.
 - `mcp.rules_dir` and `mcp.lint_config` when they resolve outside the project file's directory, following symlinks.
+- `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
+- `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
+- `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
+- `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
+- `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 
-See [Project config trust](configuration.md#project-config-trust) for the full table and the warning format.
+A project file may still turn a boolean opt-in off. See [Project config trust](configuration.md#project-config-trust) for the full table and the warning format.
 
 ## MCP server tool surface
 

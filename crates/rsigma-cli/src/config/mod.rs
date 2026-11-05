@@ -275,9 +275,10 @@ fn discover_layers(explicit: Option<&Path>) -> Vec<(PathBuf, Layer)> {
 /// `./rsigma.yaml`) may not set.
 ///
 /// Each of these opens a gate (a listener, a write path, a subprocess, a
-/// network client) that a repository could otherwise turn on just by being
-/// the current directory. They are honored from `--config`, the user and
-/// system config files, `RSIGMA_*` environment variables, and flags.
+/// network client) or weakens a guard that a repository could otherwise
+/// change just by being the current directory. They are honored from
+/// `--config`, the user and system config files, `RSIGMA_*` environment
+/// variables, and flags.
 pub(crate) struct ProtectedKey {
     /// Dotted config path, as printed in warnings and docs.
     pub key: &'static str,
@@ -290,32 +291,59 @@ fn mcp(config: &mut RsigmaConfigPartial) -> Option<&mut schema::McpPartial> {
     config.mcp.as_mut()
 }
 
+fn daemon(config: &mut RsigmaConfigPartial) -> Option<&mut schema::DaemonPartial> {
+    config.daemon.as_mut()
+}
+
+fn api(config: &mut RsigmaConfigPartial) -> Option<&mut schema::ApiPartial> {
+    daemon(config)?.api.as_mut()
+}
+
+fn output(config: &mut RsigmaConfigPartial) -> Option<&mut schema::OutputPartial> {
+    daemon(config)?.output.as_mut()
+}
+
+fn engine(config: &mut RsigmaConfigPartial) -> Option<&mut schema::EnginePartial> {
+    daemon(config)?.engine.as_mut()
+}
+
+/// Clear `slot` and return whether it held a value.
+fn take<T>(slot: Option<&mut Option<T>>) -> bool {
+    slot.is_some_and(|value| value.take().is_some())
+}
+
+/// Clear an opt-in flag only when it is `true`: a project file may still
+/// turn the gate off.
+fn take_true(slot: Option<&mut Option<bool>>) -> bool {
+    slot.is_some_and(|value| value.take_if(|on| *on).is_some())
+}
+
 /// Every key project files may not set. `scripts/docs-audit/check_sources.py`
 /// checks that the configuration and security references list each one.
 pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
     ProtectedKey {
         key: "mcp.http_addr",
-        strip: |c, _| mcp(c).is_some_and(|m| m.http_addr.take().is_some()),
+        strip: |c, _| take(mcp(c).map(|m| &mut m.http_addr)),
     },
     ProtectedKey {
         key: "mcp.allow_unconfined_paths",
-        strip: |c, _| mcp(c).is_some_and(|m| m.allow_unconfined_paths.take().is_some()),
+        strip: |c, _| take_true(mcp(c).map(|m| &mut m.allow_unconfined_paths)),
     },
     ProtectedKey {
         key: "mcp.allow_sigma_cli",
-        strip: |c, _| mcp(c).is_some_and(|m| m.allow_sigma_cli.take().is_some()),
+        strip: |c, _| take_true(mcp(c).map(|m| &mut m.allow_sigma_cli)),
     },
     ProtectedKey {
         key: "mcp.daemon_url",
-        strip: |c, _| mcp(c).is_some_and(|m| m.daemon_url.take().is_some()),
+        strip: |c, _| take(mcp(c).map(|m| &mut m.daemon_url)),
     },
     ProtectedKey {
         key: "mcp.daemon_ca",
-        strip: |c, _| mcp(c).is_some_and(|m| m.daemon_ca.take().is_some()),
+        strip: |c, _| take(mcp(c).map(|m| &mut m.daemon_ca)),
     },
     ProtectedKey {
         key: "mcp.allow_operate_writes",
-        strip: |c, _| mcp(c).is_some_and(|m| m.allow_operate_writes.take().is_some()),
+        strip: |c, _| take_true(mcp(c).map(|m| &mut m.allow_operate_writes)),
     },
     // A project may point these at its own tree, but not at paths outside
     // the project.
@@ -328,6 +356,141 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         strip: |c, project_dir| {
             mcp(c).is_some_and(|m| take_outside(&mut m.lint_config, project_dir))
         },
+    },
+    // Files that can declare `command` and HTTP sources or enrichers.
+    ProtectedKey {
+        key: "daemon.sources",
+        strip: |c, _| take(daemon(c).map(|d| &mut d.sources)),
+    },
+    ProtectedKey {
+        key: "daemon.enrichers",
+        strip: |c, _| take(daemon(c).map(|d| &mut d.enrichers)),
+    },
+    ProtectedKey {
+        key: "daemon.dispositions.source",
+        strip: |c, _| {
+            take(
+                daemon(c)
+                    .and_then(|d| d.dispositions.as_mut())
+                    .map(|d| &mut d.source),
+            )
+        },
+    },
+    // Destinations that receive detections, failed events, or audit lines.
+    ProtectedKey {
+        key: "daemon.output.sinks",
+        strip: |c, _| take(output(c).map(|o| &mut o.sinks)),
+    },
+    ProtectedKey {
+        key: "daemon.output.dlq",
+        strip: |c, _| take(output(c).map(|o| &mut o.dlq)),
+    },
+    ProtectedKey {
+        key: "daemon.output.webhooks",
+        strip: |c, _| take(output(c).map(|o| &mut o.webhooks)),
+    },
+    // A NATS input connects with the operator's NATS credentials.
+    ProtectedKey {
+        key: "daemon.input.source",
+        strip: |c, _| {
+            daemon(c)
+                .and_then(|d| d.input.as_mut())
+                .is_some_and(|input| {
+                    if input
+                        .source
+                        .as_deref()
+                        .is_some_and(|s| s.starts_with("nats://"))
+                    {
+                        input.source = None;
+                        true
+                    } else {
+                        false
+                    }
+                })
+        },
+    },
+    // API listener guards.
+    ProtectedKey {
+        key: "daemon.api.auth",
+        strip: |c, _| take(api(c).map(|a| &mut a.auth)),
+    },
+    ProtectedKey {
+        key: "daemon.api.allow_unauthenticated",
+        strip: |c, _| take_true(api(c).map(|a| &mut a.allow_unauthenticated)),
+    },
+    ProtectedKey {
+        key: "daemon.api.tls.allow_plaintext",
+        strip: |c, _| {
+            take_true(
+                api(c)
+                    .and_then(|a| a.tls.as_mut())
+                    .map(|t| &mut t.allow_plaintext),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.api.tls.client_ca",
+        strip: |c, _| {
+            take(
+                api(c)
+                    .and_then(|a| a.tls.as_mut())
+                    .map(|t| &mut t.client_ca),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.api.audit",
+        strip: |c, _| take(api(c).map(|a| &mut a.audit)),
+    },
+    // Opt-in endpoints and stores that expose raw events or detections.
+    ProtectedKey {
+        key: "daemon.tap.enabled",
+        strip: |c, _| {
+            take_true(
+                daemon(c)
+                    .and_then(|d| d.tap.as_mut())
+                    .map(|t| &mut t.enabled),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.tail.enabled",
+        strip: |c, _| {
+            take_true(
+                daemon(c)
+                    .and_then(|d| d.tail.as_mut())
+                    .map(|t| &mut t.enabled),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.capture.enabled",
+        strip: |c, _| {
+            take_true(
+                daemon(c)
+                    .and_then(|d| d.capture.as_mut())
+                    .map(|t| &mut t.enabled),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.capture.spool_dir",
+        strip: |c, _| {
+            take(
+                daemon(c)
+                    .and_then(|d| d.capture.as_mut())
+                    .map(|t| &mut t.spool_dir),
+            )
+        },
+    },
+    // Egress and remote-include guards for HTTP clients and pipelines.
+    ProtectedKey {
+        key: "daemon.engine.egress_policy",
+        strip: |c, _| take(engine(c).map(|e| &mut e.egress_policy)),
+    },
+    ProtectedKey {
+        key: "daemon.engine.allow_remote_include",
+        strip: |c, _| take_true(engine(c).map(|e| &mut e.allow_remote_include)),
     },
 ];
 
@@ -678,6 +841,123 @@ mod tests {
                 );
             }
         }
+    }
+
+    const DAEMON_GATES: &str = r#"
+daemon:
+  rules: rules/
+  sources: [sources.yml]
+  enrichers: enrich.yml
+  dispositions:
+    enabled: true
+    source: dispositions.yml
+  output:
+    sinks: ["file:///tmp/out.ndjson"]
+    dlq: "file:///tmp/dlq.ndjson"
+    webhooks: [hooks/]
+    batch_max: 64
+  input:
+    source: nats://127.0.0.1:4222/events
+  api:
+    addr: 127.0.0.1:9090
+    auth:
+      tokens: [{ name: t, role: admin, token_env: HOME }]
+    allow_unauthenticated: true
+    tls:
+      allow_plaintext: true
+      client_ca: ca.pem
+    audit:
+      enabled: false
+  tap:
+    enabled: true
+  tail:
+    enabled: true
+  capture:
+    enabled: true
+    spool_dir: /tmp/spool
+  engine:
+    egress_policy: permissive
+    allow_remote_include: true
+    bloom_prefilter: true
+"#;
+
+    #[test]
+    fn project_layers_drop_protected_daemon_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), "rsigma.yaml", DAEMON_GATES);
+        let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+        let daemon = loaded.config.daemon.unwrap();
+
+        assert_eq!(daemon.rules, Some(PathBuf::from("rules/")));
+        assert!(daemon.sources.is_none());
+        assert!(daemon.enrichers.is_none());
+        let dispositions = daemon.dispositions.unwrap();
+        assert_eq!(dispositions.enabled, Some(true));
+        assert!(dispositions.source.is_none());
+        let output = daemon.output.unwrap();
+        assert!(output.sinks.is_none() && output.dlq.is_none() && output.webhooks.is_none());
+        assert_eq!(output.batch_max, Some(64));
+        assert!(daemon.input.unwrap().source.is_none());
+        let api = daemon.api.unwrap();
+        assert_eq!(api.addr.as_deref(), Some("127.0.0.1:9090"));
+        assert!(api.auth.is_none() && api.allow_unauthenticated.is_none() && api.audit.is_none());
+        let tls = api.tls.unwrap();
+        assert!(tls.allow_plaintext.is_none() && tls.client_ca.is_none());
+        assert!(daemon.tap.unwrap().enabled.is_none());
+        assert!(daemon.tail.unwrap().enabled.is_none());
+        let capture = daemon.capture.unwrap();
+        assert!(capture.enabled.is_none() && capture.spool_dir.is_none());
+        let engine = daemon.engine.unwrap();
+        assert!(engine.egress_policy.is_none() && engine.allow_remote_include.is_none());
+        assert_eq!(engine.bloom_prefilter, Some(true));
+
+        let ignored: Vec<&str> = loaded.ignored_keys.iter().map(|(_, k)| *k).collect();
+        let daemon_keys: Vec<&str> = PROTECTED_KEYS
+            .iter()
+            .map(|p| p.key)
+            .filter(|k| k.starts_with("daemon."))
+            .collect();
+        assert_eq!(ignored, daemon_keys);
+    }
+
+    #[test]
+    fn project_layers_keep_local_daemon_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        for source in ["stdin", "http", "unix:///tmp/rsigma-ingest.sock"] {
+            let body = format!("daemon:\n  input:\n    source: {source}\n");
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            let input = loaded.config.daemon.unwrap().input.unwrap();
+            assert_eq!(input.source.as_deref(), Some(source));
+            assert!(loaded.ignored_keys.is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn project_layers_may_turn_gates_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = "mcp:\n  allow_sigma_cli: false\n  allow_operate_writes: false\ndaemon:\n  api:\n    allow_unauthenticated: false\n  tap:\n    enabled: false\n  engine:\n    allow_remote_include: false\n";
+        let path = write_config(dir.path(), ".rsigmarc", body);
+        let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
+        assert!(loaded.ignored_keys.is_empty(), "{:?}", loaded.ignored_keys);
+        let mcp = loaded.config.mcp.unwrap();
+        assert_eq!(mcp.allow_sigma_cli, Some(false));
+        assert_eq!(mcp.allow_operate_writes, Some(false));
+        let daemon = loaded.config.daemon.unwrap();
+        assert_eq!(daemon.api.unwrap().allow_unauthenticated, Some(false));
+        assert_eq!(daemon.tap.unwrap().enabled, Some(false));
+        assert_eq!(daemon.engine.unwrap().allow_remote_include, Some(false));
+    }
+
+    #[test]
+    fn operator_layers_keep_protected_daemon_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), "config.yaml", DAEMON_GATES);
+        let loaded = load_files(vec![(path, Layer::User)]).unwrap();
+        let daemon = loaded.config.daemon.unwrap();
+        assert_eq!(daemon.enrichers, Some(PathBuf::from("enrich.yml")));
+        assert_eq!(daemon.api.unwrap().allow_unauthenticated, Some(true));
+        assert!(loaded.ignored_keys.is_empty());
     }
 
     #[test]

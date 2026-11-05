@@ -31,7 +31,7 @@ The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explic
 
 {{ added "unreleased" }}
 
-A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` above the current directory) ships with whatever repository is checked out, so running `rsigma` inside a cloned repository would otherwise let that repository configure the process. Project files can still set ordinary keys such as rule paths, pipelines, and output formats, but the keys below open a listener, a write path, a subprocess, or a network client, so rsigma ignores them when they come from a project file:
+A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` above the current directory) ships with whatever repository is checked out, so running `rsigma` inside a cloned repository would otherwise let that repository configure the process. Project files can still set ordinary keys such as rule paths, pipelines, and output formats, but the keys below open a listener, a write path, a subprocess, or a network client, or weaken a guard, so rsigma ignores them when they come from a project file:
 
 | Key | Why it is protected |
 |-----|---------------------|
@@ -43,6 +43,26 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `mcp.allow_operate_writes` | Registers the mutating operate tools. |
 | `mcp.rules_dir` | Only when it resolves outside the directory holding the project file, following symlinks. A rules directory inside the project is kept. |
 | `mcp.lint_config` | Only when it resolves outside the directory holding the project file, following symlinks, because the server reads it at startup and prints parse errors. A lint config inside the project is kept. |
+| `daemon.sources` | Dynamic sources can run `command` sources and make HTTP requests. |
+| `daemon.enrichers` | Enrichers can run `command` enrichers and make HTTP requests. |
+| `daemon.dispositions.source` | A disposition pull source is a dynamic source. |
+| `daemon.output.sinks` | Sends detections to files, NATS, OTLP collectors, or sockets. |
+| `daemon.output.dlq` | Sends failed events to a sink. |
+| `daemon.output.webhooks` | Sends detections to HTTP endpoints. |
+| `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials. `stdin`, `http`, and `unix://` inputs are kept. |
+| `daemon.api.auth` | A planted token could name any environment variable, such as `HOME`, as its secret, and a project `auth` block replaces the operator's. |
+| `daemon.api.allow_unauthenticated` | Serves the API without authentication on a non-loopback address. |
+| `daemon.api.tls.allow_plaintext` | Serves plaintext on a non-loopback address. |
+| `daemon.api.tls.client_ca` | Decides which client certificates the API accepts. |
+| `daemon.api.audit` | Can turn off the control-plane audit trail or send it to a sink. |
+| `daemon.tap.enabled` | Streams raw events from `GET /api/v1/tap`. |
+| `daemon.tail.enabled` | Streams detections from `GET /api/v1/detections/stream`. |
+| `daemon.capture.enabled` | Retains raw event payloads for spooling. |
+| `daemon.capture.spool_dir` | Decides where retained payloads are written. |
+| `daemon.engine.egress_policy` | Can turn off the SSRF defense for HTTP sources and enrichers. |
+| `daemon.engine.allow_remote_include` | Lets pipelines include remote (HTTP or NATS) sources. |
+
+The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "unreleased" }}
 
 Each ignored key prints a warning naming the file:
 
