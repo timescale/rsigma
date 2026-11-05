@@ -229,9 +229,19 @@ impl RsigmaMcp {
             .args(&argv)
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true);
-        if let Some(root) = self.root() {
-            command.current_dir(root);
-        }
+        // With a root, every path in argv is canonical and absolute, so the
+        // subprocess runs in an empty directory: a bare pipeline name that
+        // pySigma falls back to opening as a file cannot resolve to anything,
+        // including a symlink at the root that points out of it.
+        let _workdir = match self.root() {
+            Some(_) => {
+                let dir = tempfile::TempDir::new()
+                    .map_err(|e| invalid(format!("cannot create temp dir: {e}")))?;
+                command.current_dir(dir.path());
+                Some(dir)
+            }
+            None => None,
+        };
 
         let output = match tokio::time::timeout(timeout, command.output()).await {
             Err(_) => {
@@ -574,6 +584,33 @@ mod tests {
             format!("{err:?}").contains("directory contains a symlink"),
             "{err:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegation_hides_the_rules_dir_from_bare_pipeline_names() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut input = directory_input(root.path());
+        input.pipelines = vec!["leak".into()];
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("leak")).unwrap();
+
+        // pySigma opens an unknown pipeline name as a file relative to its
+        // working directory; the fake reports whether `./leak` is reachable.
+        let bin = tempfile::tempdir().unwrap();
+        let program = bin.path().join("sigma");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nif [ -e leak ]; then printf leaked; else printf hidden; fi\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = SigmaCli::from_program(&program, true);
+        let handler = delegating_handler(Some(root.path().to_path_buf()));
+        let v = block_on(handler.delegate_convert(&cli, input, TEST_TIMEOUT)).unwrap();
+        assert_eq!(v["raw"], "hidden", "envelope: {v}");
     }
 
     #[test]

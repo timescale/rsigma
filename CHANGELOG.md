@@ -61,9 +61,11 @@ Two related changes close paths a project file could still reach through keys it
 
 Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. jq filters that call `env` fail to compile (exit `3`). Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
 
-### Delegated `convert_rules` refuses rule directories that contain symlinks (#657)
+### Delegated `convert_rules` no longer follows symlinks out of the rules root (#657)
 
 With `--rules-dir` and `--allow-sigma-cli`, the MCP `convert_rules` tool checked that a delegated `path` stayed inside the root, but passed a directory to sigma-cli without looking inside it. sigma-cli walks the directory itself and follows symlinks, so a link under the root to a file outside it could be read and echoed back in the converted queries. Delegated directory inputs are now refused when they contain a symlink anywhere in the tree, as the in-process tools already did, and sigma-cli is never started for them.
+
+sigma-cli also ran with the rules root as its working directory, and pySigma opens an unknown pipeline name as a file relative to it. A bare name such as `leak` therefore reached a symlink at the root that pointed outside it. With `--rules-dir` set, sigma-cli now runs in an empty temporary directory; every path it receives is already canonical and absolute.
 
 ## [0.26.0] - 2026-11-02
 
