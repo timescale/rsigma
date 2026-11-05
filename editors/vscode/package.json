@@ -38,7 +38,8 @@
         "rsigma.serverPath": {
           "type": "string",
           "default": "rsigma-lsp",
-          "description": "Path to the rsigma-lsp binary. If not an absolute path, it will be looked up in $PATH."
+          "scope": "machine",
+          "description": "Path to the rsigma-lsp binary. If not an absolute path, it will be looked up in $PATH. Can only be set in user settings, not workspace or folder settings."
         },
         "rsigma.trace.server": {
           "type": "string",

@@ -49,7 +49,7 @@ The extension activates on any `.yml` or `.yaml` workspace; you do not have to m
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
-| `rsigma.serverPath` | `rsigma-lsp` | Path to the `rsigma-lsp` binary. Resolved against `$PATH` if not absolute. Override this if you keep `rsigma-lsp` in a non-standard location. |
+| `rsigma.serverPath` | `rsigma-lsp` | Path to the `rsigma-lsp` binary. Resolved against `$PATH` if not absolute. Override this if you keep `rsigma-lsp` in a non-standard location. User settings only: VS Code ignores this setting in a workspace or folder `.vscode/settings.json`, so a cloned repository cannot choose which program the extension runs. |
 | `rsigma.trace.server` | `off` | LSP wire-trace level: `off`, `messages`, or `verbose`. Set to `verbose` only when filing a bug; it prints every JSON-RPC frame to the `rsigma` output channel. |
 
 The extension respects the same `.rsigma-lint.yml` files and `# rsigma-disable` inline suppressions that the CLI uses. Drop one in your workspace root or any ancestor directory of your rules.
