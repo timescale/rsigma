@@ -251,7 +251,7 @@ code --install-extension rsigma-0.1.0.vsix    # VSCode
 cursor --install-extension rsigma-0.1.0.vsix  # Cursor
 ```
 
-The extension launches `rsigma-lsp` from your `$PATH` by default. Override via the `rsigma.serverPath` setting.
+The extension launches `rsigma-lsp` from your `$PATH` by default. Override via the `rsigma.serverPath` setting (user settings, or remote settings for a remote window; workspace settings are ignored).
 
 ### Helix (`~/.config/helix/languages.toml`)
 
