@@ -177,6 +177,8 @@ Design properties:
 
 Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
+A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "unreleased" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value, so a single call cannot mute every rule indefinitely. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
+
 ## Control-plane API audit trail
 
 When the daemon runs with `--state-db`, an append-only audit log records every control-plane mutation: who called which endpoint, when, with what outcome, and a SHA-256 digest of the request body (never the body itself). Read the log with `GET /api/v1/audit` (`audit:read` when authentication is enabled). Event ingest and OTLP surfaces are excluded so the log stays small.

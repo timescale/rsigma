@@ -103,7 +103,7 @@ Three registration tiers:
 
 `--daemon-ca <PATH>` adds a PEM root CA for a self-signed daemon TLS listener. Unix-socket daemon URLs are unsupported; use TCP loopback.
 
-`create_silence` refuses an unbounded window: supply `ends_at` (RFC 3339) or `duration` (humantime, converted at call time). An optional client `id` is checked against `GET /api/v1/silences` first so a retried create is a no-op. `post_disposition` requires `fingerprint` or `incident_id` so the disposition store's redelivery key engages; without an identity a retry would double-count.
+`create_silence` refuses an unbounded window: supply `ends_at` (RFC 3339) or `duration` (humantime, converted at call time). The daemon also applies its silence limits, so a window past `max_silence_duration` or a silence without a scoped `=` matcher comes back as `{ "ok": false }` with the daemon's hint. {{ added "unreleased" }} An optional client `id` is checked against `GET /api/v1/silences` first so a retried create is a no-op. `post_disposition` requires `fingerprint` or `incident_id` so the disposition store's redelivery key engages; without an identity a retry would double-count.
 
 A typical triage loop calls `list_incidents` (optionally with `min_level` or `limit`), then `get_incident` or `get_incident_bundle`, then `list_risk_entities` and `get_rule_quality`, then `create_silence` with a TTL and `post_disposition`, and finally `tune_rules` if the verdict is a false positive.
 
