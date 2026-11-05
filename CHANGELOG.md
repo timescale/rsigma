@@ -20,7 +20,7 @@ Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code 
 
 A `template` enricher passed to the MCP server's `evaluate_events` tool, inline or through `enrichers_path`, could reference `${NAME}`, which renders from the server process's environment. Any MCP caller could read the server's environment variables, such as cloud credentials or API tokens, from the enrichment result. The tool now refuses an enricher with a `${ENV_VAR}` reference in any templated field and names up to five of them in the error; `${detection.*}` and `${correlation.*}` references work as before. The daemon still expands `${ENV_VAR}` in its own enrichers config. The new `rsigma_runtime::env_references` returns the environment references in a template, for library users who accept templates from untrusted input.
 
-### The egress policy covers IP-literal URLs, redirects, and the AWS IPv6 metadata address
+### The egress policy covers IP-literal URLs, redirects, and the AWS IPv6 metadata address (#654)
 
 `--egress-policy` was enforced only when a hostname was resolved, so three kinds of request reached addresses the policy denies:
 
