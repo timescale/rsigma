@@ -51,14 +51,12 @@ fn http_with_allow_unconfined_paths_starts() {
 #[test]
 fn http_with_allow_unconfined_paths_from_config_starts() {
     let cwd = tempfile::tempdir().unwrap();
-    std::fs::write(
-        cwd.path().join("rsigma.yaml"),
-        "mcp:\n  allow_unconfined_paths: true\n",
-    )
-    .unwrap();
+    let config = cwd.path().join("mcp.yaml");
+    std::fs::write(&config, "mcp:\n  allow_unconfined_paths: true\n").unwrap();
     let output = rsigma()
         .current_dir(cwd.path())
-        .args(["mcp", "serve", "--http", "127.0.0.1:0"])
+        .args(["mcp", "serve", "--http", "127.0.0.1:0", "--config"])
+        .arg(&config)
         .timeout(Duration::from_secs(2))
         .output()
         .unwrap();

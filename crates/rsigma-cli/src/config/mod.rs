@@ -34,6 +34,9 @@ pub(crate) fn load_and_merge(explicit: Option<&Path>) -> RsigmaConfigPartial {
             for (path, key) in &loaded.unknown_keys {
                 eprintln!("warning: unknown config key '{key}' in {}", path.display());
             }
+            for (path, key) in &loaded.ignored_keys {
+                eprintln!("{}", ignored_key_warning(path, key));
+            }
             for section in inactive_sections(&loaded.config) {
                 eprintln!(
                     "warning: config section '{section}' is set but inert in this build (feature disabled)"
@@ -166,6 +169,9 @@ pub(crate) struct LoadedConfig {
     pub sources: Vec<PathBuf>,
     /// Unknown keys encountered while parsing, paired with their file.
     pub unknown_keys: Vec<(PathBuf, String)>,
+    /// [`PROTECTED_KEYS`] a project file set, paired with that file. They are
+    /// not part of [`Self::config`].
+    pub ignored_keys: Vec<(PathBuf, &'static str)>,
 }
 
 /// Return the user config directory (`$XDG_CONFIG_HOME/rsigma` or
@@ -206,31 +212,174 @@ fn find_rsigmarc() -> Option<PathBuf> {
     }
 }
 
+/// The discovery layer a config file was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Layer {
+    /// `/etc/rsigma/config.yaml`.
+    System,
+    /// `~/.config/rsigma/config.yaml` (or under `$XDG_CONFIG_HOME`).
+    User,
+    /// The nearest `.rsigmarc`, walked up from the current directory.
+    ProjectRc,
+    /// `./rsigma.yaml` in the current directory.
+    ProjectYaml,
+    /// The file named by `--config`, which replaces discovery.
+    Explicit,
+}
+
+impl Layer {
+    /// Whether the file came from the working tree rather than from the
+    /// operator. Project files ship with whatever repository is checked out,
+    /// so they may not set [`PROTECTED_KEYS`].
+    fn is_project(self) -> bool {
+        matches!(self, Layer::ProjectRc | Layer::ProjectYaml)
+    }
+}
+
 /// Resolve the ordered list of config files to load, lowest precedence first.
 ///
 /// When `explicit` is set, only that path is returned (it is loaded
 /// unconditionally so a bad `--config` surfaces a clear error).
 pub(crate) fn discover(explicit: Option<&Path>) -> Vec<PathBuf> {
+    discover_layers(explicit)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// Like [`discover`], but pairs each path with the layer it came from.
+fn discover_layers(explicit: Option<&Path>) -> Vec<(PathBuf, Layer)> {
     if let Some(path) = explicit {
-        return vec![path.to_path_buf()];
+        return vec![(path.to_path_buf(), Layer::Explicit)];
     }
 
     let mut paths = Vec::new();
     if let Some(p) = first_existing(Path::new("/etc/rsigma"), "config") {
-        paths.push(p);
+        paths.push((p, Layer::System));
     }
     if let Some(dir) = user_config_dir()
         && let Some(p) = first_existing(&dir, "config")
     {
-        paths.push(p);
+        paths.push((p, Layer::User));
     }
     if let Some(p) = find_rsigmarc() {
-        paths.push(p);
+        paths.push((p, Layer::ProjectRc));
     }
     if let Some(p) = first_existing(Path::new("."), "rsigma") {
-        paths.push(p);
+        paths.push((p, Layer::ProjectYaml));
     }
     paths
+}
+
+/// A security-sensitive config key that project files (`.rsigmarc`,
+/// `./rsigma.yaml`) may not set.
+///
+/// Each of these opens a gate (a listener, a write path, a subprocess, a
+/// network client) that a repository could otherwise turn on just by being
+/// the current directory. They are honored from `--config`, the user and
+/// system config files, `RSIGMA_*` environment variables, and flags.
+pub(crate) struct ProtectedKey {
+    /// Dotted config path, as printed in warnings and docs.
+    pub key: &'static str,
+    /// Clear the key from a project file's partial. `project_dir` is the
+    /// directory holding that file. Returns whether a value was removed.
+    strip: fn(&mut RsigmaConfigPartial, project_dir: &Path) -> bool,
+}
+
+fn mcp(config: &mut RsigmaConfigPartial) -> Option<&mut schema::McpPartial> {
+    config.mcp.as_mut()
+}
+
+/// Every key project files may not set. `scripts/docs-audit/check_sources.py`
+/// checks that the configuration and security references list each one.
+pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
+    ProtectedKey {
+        key: "mcp.http_addr",
+        strip: |c, _| mcp(c).is_some_and(|m| m.http_addr.take().is_some()),
+    },
+    ProtectedKey {
+        key: "mcp.allow_unconfined_paths",
+        strip: |c, _| mcp(c).is_some_and(|m| m.allow_unconfined_paths.take().is_some()),
+    },
+    ProtectedKey {
+        key: "mcp.allow_sigma_cli",
+        strip: |c, _| mcp(c).is_some_and(|m| m.allow_sigma_cli.take().is_some()),
+    },
+    ProtectedKey {
+        key: "mcp.daemon_url",
+        strip: |c, _| mcp(c).is_some_and(|m| m.daemon_url.take().is_some()),
+    },
+    ProtectedKey {
+        key: "mcp.daemon_ca",
+        strip: |c, _| mcp(c).is_some_and(|m| m.daemon_ca.take().is_some()),
+    },
+    ProtectedKey {
+        key: "mcp.allow_operate_writes",
+        strip: |c, _| mcp(c).is_some_and(|m| m.allow_operate_writes.take().is_some()),
+    },
+    // A project may confine the MCP server to its own tree, but not point it
+    // at a directory outside the project.
+    ProtectedKey {
+        key: "mcp.rules_dir",
+        strip: |c, project_dir| {
+            mcp(c).is_some_and(|m| {
+                if m.rules_dir
+                    .as_deref()
+                    .is_some_and(|dir| !path_within(dir, project_dir))
+                {
+                    m.rules_dir = None;
+                    true
+                } else {
+                    false
+                }
+            })
+        },
+    },
+];
+
+/// Remove every [`PROTECTED_KEYS`] entry from a project file's partial and
+/// return the keys that were set.
+fn strip_untrusted(config: &mut RsigmaConfigPartial, project_dir: &Path) -> Vec<&'static str> {
+    PROTECTED_KEYS
+        .iter()
+        .filter(|protected| (protected.strip)(config, project_dir))
+        .map(|protected| protected.key)
+        .collect()
+}
+
+/// Whether `path` (relative paths resolve against the current directory, as
+/// the commands that read them do) lies inside `dir`. Existing paths are
+/// compared after resolving symlinks; others after removing `.` and `..`.
+fn path_within(path: &Path, dir: &Path) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let absolute = |p: &Path| {
+        let joined = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        };
+        joined
+            .canonicalize()
+            .unwrap_or_else(|_| normalize_lexically(&joined))
+    };
+    absolute(path).starts_with(absolute(dir))
+}
+
+/// Drop `.` components and fold `..` into its parent without touching the
+/// filesystem.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Parse a single config file into a partial plus the unknown keys it carried.
@@ -271,17 +420,38 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
 }
 
 /// Discover and merge every config layer (or the single `--config` file).
+/// [`PROTECTED_KEYS`] set by a project file are dropped and recorded in
+/// [`LoadedConfig::ignored_keys`].
 pub(crate) fn load_layered(explicit: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
+    load_files(discover_layers(explicit))
+}
+
+/// Load and merge `files` in order, lowest precedence first.
+fn load_files(files: Vec<(PathBuf, Layer)>) -> Result<LoadedConfig, ConfigError> {
     let mut loaded = LoadedConfig::default();
-    for path in discover(explicit) {
-        let (partial, unknown) = load_file(&path)?;
+    for (path, layer) in files {
+        let (mut partial, unknown) = load_file(&path)?;
         for key in unknown {
             loaded.unknown_keys.push((path.clone(), key));
+        }
+        if layer.is_project() {
+            let project_dir = path.parent().unwrap_or(Path::new("."));
+            for key in strip_untrusted(&mut partial, project_dir) {
+                loaded.ignored_keys.push((path.clone(), key));
+            }
         }
         loaded.config = std::mem::take(&mut loaded.config).merge(partial);
         loaded.sources.push(path);
     }
     Ok(loaded)
+}
+
+/// The warning printed for a protected key found in a project file.
+pub(crate) fn ignored_key_warning(path: &Path, key: &str) -> String {
+    format!(
+        "warning: ignoring '{key}' from project config {}; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags",
+        path.display()
+    )
 }
 
 /// Return config sections that are present but inert in this build because the
@@ -361,6 +531,107 @@ mod tests {
         let (partial, unknown) = load_file(&path).unwrap();
         assert!(partial.version.is_none());
         assert!(unknown.is_empty());
+    }
+
+    const MCP_GATES: &str = "mcp:\n  http_addr: 0.0.0.0:9100\n  allow_unconfined_paths: true\n  allow_sigma_cli: true\n  daemon_url: http://127.0.0.1:9090\n  daemon_ca: /tmp/ca.pem\n  allow_operate_writes: true\n  lint_config: lint.yml\n";
+
+    fn write_config(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn project_layers_drop_protected_mcp_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, layer) in [
+            (".rsigmarc", Layer::ProjectRc),
+            ("rsigma.yaml", Layer::ProjectYaml),
+        ] {
+            let path = write_config(dir.path(), name, MCP_GATES);
+            let loaded = load_files(vec![(path.clone(), layer)]).unwrap();
+            let mcp = loaded.config.mcp.unwrap();
+            assert!(mcp.http_addr.is_none());
+            assert!(mcp.allow_unconfined_paths.is_none());
+            assert!(mcp.allow_sigma_cli.is_none());
+            assert!(mcp.daemon_url.is_none());
+            assert!(mcp.daemon_ca.is_none());
+            assert!(mcp.allow_operate_writes.is_none());
+            assert_eq!(mcp.lint_config, Some(PathBuf::from("lint.yml")));
+            let keys: Vec<&str> = loaded.ignored_keys.iter().map(|(_, k)| *k).collect();
+            assert_eq!(
+                keys,
+                [
+                    "mcp.http_addr",
+                    "mcp.allow_unconfined_paths",
+                    "mcp.allow_sigma_cli",
+                    "mcp.daemon_url",
+                    "mcp.daemon_ca",
+                    "mcp.allow_operate_writes",
+                ]
+            );
+            assert!(loaded.ignored_keys.iter().all(|(p, _)| *p == path));
+        }
+    }
+
+    #[test]
+    fn operator_layers_keep_protected_mcp_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), "config.yaml", MCP_GATES);
+        for layer in [Layer::System, Layer::User, Layer::Explicit] {
+            let loaded = load_files(vec![(path.clone(), layer)]).unwrap();
+            let mcp = loaded.config.mcp.unwrap();
+            assert_eq!(mcp.daemon_url.as_deref(), Some("http://127.0.0.1:9090"));
+            assert_eq!(mcp.allow_operate_writes, Some(true));
+            assert!(loaded.ignored_keys.is_empty(), "{layer:?}");
+        }
+    }
+
+    #[test]
+    fn project_value_does_not_shadow_user_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write_config(
+            dir.path(),
+            "config.yaml",
+            "mcp:\n  daemon_url: http://user:9090\n",
+        );
+        let project = write_config(
+            dir.path(),
+            "rsigma.yaml",
+            "mcp:\n  daemon_url: http://evil:9090\n",
+        );
+        let loaded = load_files(vec![(user, Layer::User), (project, Layer::ProjectYaml)]).unwrap();
+        assert_eq!(
+            loaded.config.mcp.unwrap().daemon_url.as_deref(),
+            Some("http://user:9090")
+        );
+    }
+
+    #[test]
+    fn project_rules_dir_must_stay_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("rules")).unwrap();
+        let inside = dir.path().join("rules");
+        let outside = tempfile::tempdir().unwrap();
+        let escape = dir.path().join("rules/../../elsewhere");
+        for (rules_dir, kept) in [
+            (inside.as_path(), true),
+            (outside.path(), false),
+            (escape.as_path(), false),
+        ] {
+            let body = format!("mcp:\n  rules_dir: {}\n", rules_dir.display());
+            let path = write_config(dir.path(), ".rsigmarc", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
+            let got = loaded.config.mcp.unwrap().rules_dir;
+            assert_eq!(got.is_some(), kept, "{}", rules_dir.display());
+            assert_eq!(
+                loaded
+                    .ignored_keys
+                    .iter()
+                    .any(|(_, k)| *k == "mcp.rules_dir"),
+                !kept
+            );
+        }
     }
 
     #[test]

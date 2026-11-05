@@ -7,6 +7,9 @@
 #
 # Discovery: place this at ./rsigma.yaml, ~/.config/rsigma/config.yaml, or
 # /etc/rsigma/config.yaml, or point at it with `--config <path>`.
+# Project files (./rsigma.yaml, .rsigmarc) cannot set security-sensitive keys
+# such as mcp.daemon_url or mcp.allow_operate_writes; put those in the user
+# or system config, or pass the file with `--config`.
 # Regenerate the JSON Schema with: rsigma config schema
 version: 1
 

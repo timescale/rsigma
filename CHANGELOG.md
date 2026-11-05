@@ -31,6 +31,16 @@ A `template` enricher passed to the MCP server's `evaluate_events` tool, inline 
 
 Source, enricher, and webhook transport errors now include the underlying cause, so a resolution-time denial names the policy instead of reading only `error sending request`. The new `EgressPolicy::check_url` exposes the URL check to library users. When `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` is set, the proxy resolves hostnames, so only IP-literal URLs and redirect targets are checked; the daemon now logs a warning at startup in that case.
 
+### Project config files cannot open MCP server gates
+
+`rsigma` discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current directory, so a cloned repository could configure any command run inside it. Opening an MCP client in such a repository could point `rsigma mcp serve` at another daemon (sending it the daemon token), turn on the mutating operate tools, allow sigma-cli subprocesses, unconfine paths, or start an HTTP listener. Project files can no longer set `mcp.http_addr`, `mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.daemon_url`, `mcp.daemon_ca`, or `mcp.allow_operate_writes`, or a `mcp.rules_dir` that resolves outside the project file's directory. rsigma ignores these keys and prints a warning naming the file. The same keys still resolve from an explicit `--config`, the user and system config, `RSIGMA_MCP__*` environment variables, and flags.
+
+- `rsigma mcp serve` gains `--config <PATH>`, which loads only that file and may set every `mcp.*` key.
+- `rsigma config validate` and `rsigma config show` leave the ignored keys out of the resolved config and list them under `ignored_keys`.
+- The [Configuration](https://rsigma.io/reference/configuration/#project-config-trust) and [Security](https://rsigma.io/reference/security/) references list the protected keys.
+
+Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer takes effect. Move it to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`, pass the file with `mcp serve --config <PATH>`, or use the matching `RSIGMA_MCP__*` variable or flag.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**
