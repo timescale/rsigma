@@ -10,6 +10,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code now ignores it and the extension starts `rsigma-lsp` from `$PATH`, or fails to start if it is not there. Move the value to your user settings, or to remote settings for Remote-SSH, WSL, and Dev Containers, where the path is on the remote host. Settings Sync does not carry `machine`-scoped values, so set a custom path on each machine.
 
+### CI runs for merge queues and stacked PRs
+
+The `CI` and `Docs audit` workflows now also run on `merge_group` events, so their jobs can be required checks for a GitHub merge queue. Their `pull_request` trigger no longer filters on the base branch, so a PR based on another PR's branch gets the same checks as one based on `main`.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**

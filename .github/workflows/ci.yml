@@ -9,14 +9,17 @@ on:
       - "assets/**"
       - "LICENSE"
       - ".gitignore"
+  # No base-branch filter, so a PR stacked on another PR's branch gets CI too.
   pull_request:
-    branches: [main]
     paths-ignore:
       - "**.md"
       - "docs/**"
       - "assets/**"
       - "LICENSE"
       - ".gitignore"
+  # Merge queue entries. `merge_group` takes no path filters, so every job
+  # runs on every entry.
+  merge_group:
 
 permissions: {}
 
