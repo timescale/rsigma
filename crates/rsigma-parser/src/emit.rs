@@ -24,7 +24,7 @@ use crate::ast::{
     ArrayQuantifier, ConditionExpr, Detection, DetectionItem, Detections, LogSource, Modifier,
     Related, RelationType, SigmaCollection, SigmaRule, Status,
 };
-use crate::style::{KeyCtx, Lead, STEP, ScalarCtx, encode_key, push_scalar};
+use crate::style::{KeyCtx, Lead, RSIGMA_ORDER, STEP, ScalarCtx, encode_key, push_scalar};
 use crate::value::{SigmaString, SigmaValue, SpecialChar, StringPart};
 
 /// Emit a single detection [`SigmaRule`] as canonical Sigma YAML.
@@ -34,7 +34,13 @@ use crate::value::{SigmaString, SigmaValue, SpecialChar, StringPart};
 pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
     let mut out = String::new();
 
-    push_scalar(&mut out, "", Lead::Key("title"), &rule.title, ScalarCtx::Prose);
+    push_scalar(
+        &mut out,
+        "",
+        Lead::Key("title"),
+        &rule.title,
+        ScalarCtx::Prose,
+    );
     if let Some(id) = &rule.id {
         push_scalar(&mut out, "", Lead::Key("id"), id, ScalarCtx::Value);
     }
@@ -45,7 +51,13 @@ pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
         push_line(&mut out, "status", status_str(*status));
     }
     if let Some(description) = &rule.description {
-        push_scalar(&mut out, "", Lead::Key("description"), description, ScalarCtx::Prose);
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("description"),
+            description,
+            ScalarCtx::Prose,
+        );
     }
     emit_string_list(&mut out, "references", &rule.references, ScalarCtx::Prose);
     if let Some(author) = &rule.author {
@@ -55,7 +67,13 @@ pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
         push_scalar(&mut out, "", Lead::Key("date"), date, ScalarCtx::Value);
     }
     if let Some(modified) = &rule.modified {
-        push_scalar(&mut out, "", Lead::Key("modified"), modified, ScalarCtx::Value);
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("modified"),
+            modified,
+            ScalarCtx::Value,
+        );
     }
     emit_related(&mut out, &rule.related);
     emit_string_list(&mut out, "tags", &rule.tags, ScalarCtx::Prose);
@@ -65,16 +83,33 @@ pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
     emit_logsource(&mut out, &rule.logsource);
     emit_detection(&mut out, &rule.detection);
     emit_string_list(&mut out, "fields", &rule.fields, ScalarCtx::Prose);
-    emit_string_list(&mut out, "falsepositives", &rule.falsepositives, ScalarCtx::Prose);
+    emit_string_list(
+        &mut out,
+        "falsepositives",
+        &rule.falsepositives,
+        ScalarCtx::Prose,
+    );
     if let Some(level) = &rule.level {
         push_line(&mut out, "level", level.as_str());
     }
     emit_string_list(&mut out, "scope", &rule.scope, ScalarCtx::Prose);
     if let Some(license) = &rule.license {
-        push_scalar(&mut out, "", Lead::Key("license"), license, ScalarCtx::Prose);
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("license"),
+            license,
+            ScalarCtx::Prose,
+        );
     }
     if let Some(taxonomy) = &rule.taxonomy {
-        push_scalar(&mut out, "", Lead::Key("taxonomy"), taxonomy, ScalarCtx::Value);
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("taxonomy"),
+            taxonomy,
+            ScalarCtx::Value,
+        );
     }
     emit_custom_attributes(&mut out, rule);
 
@@ -147,7 +182,13 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
         push_scalar(out, STEP, Lead::Key("service"), service, ScalarCtx::Value);
     }
     if let Some(definition) = &logsource.definition {
-        push_scalar(out, STEP, Lead::Key("definition"), definition, ScalarCtx::Prose);
+        push_scalar(
+            out,
+            STEP,
+            Lead::Key("definition"),
+            definition,
+            ScalarCtx::Prose,
+        );
     }
     for (key, value) in sorted(&logsource.custom) {
         push_scalar(
@@ -161,9 +202,15 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
 }
 
 fn emit_custom_attributes(out: &mut String, rule: &SigmaRule) {
-    let mut keys: Vec<&String> = rule.custom_attributes.keys().collect();
-    keys.sort();
-    for key in keys {
+    let mut keys: Vec<&str> = rule.custom_attributes.keys().map(String::as_str).collect();
+    let mut ordered: Vec<&str> = RSIGMA_ORDER
+        .iter()
+        .copied()
+        .filter(|key| rule.custom_attributes.contains_key(*key))
+        .collect();
+    keys.sort_unstable();
+    ordered.extend(keys.into_iter().filter(|key| !RSIGMA_ORDER.contains(key)));
+    for key in ordered {
         let value = &rule.custom_attributes[key];
         emit_yaml_value(out, &encode_key(key, KeyCtx::Key), value, "");
     }
@@ -796,5 +843,89 @@ mod tests {
             "title: Condition\nlogsource:\n    category: test\ndetection:\n    '1e3':\n        Field: value\n    condition: '1e3'\n",
         );
         assert!(emitted.contains("condition: '1e3'"), "{emitted}");
+    }
+
+    #[test]
+    fn emits_root_keys_in_canonical_order() {
+        let yaml = "\
+zzz: last
+title: Order
+aaa: first
+id: 11111111-2222-3333-4444-555555555555
+name: order
+status: experimental
+description: Order test.
+references:
+    - https://example.com
+author: Jane Doe
+date: 2026-01-01
+modified: 2026-02-01
+related:
+    - id: 22222222-3333-4444-5555-666666666666
+      type: derived
+tags:
+    - attack.execution
+sigma-version: 3
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        Field: value
+    condition: selection
+fields:
+    - Field
+falsepositives:
+    - None known
+level: medium
+scope:
+    - endpoint
+license: MIT
+taxonomy: attack
+rsigma.exemplars:
+    - name: example
+      expect: match
+      event:
+          Field: value
+rsigma.suppress:
+    - reason: noisy
+";
+        let rule = parse_sigma_yaml(yaml)
+            .expect("input parses")
+            .rules
+            .remove(0);
+        let emitted = emit_rule_yaml(&rule);
+        let root_keys: Vec<&str> = emitted
+            .lines()
+            .filter(|line| !line.starts_with(' ') && line.contains(':'))
+            .map(|line| line.split(':').next().unwrap_or_default())
+            .collect();
+        let expected = [
+            "title",
+            "id",
+            "name",
+            "status",
+            "description",
+            "references",
+            "author",
+            "date",
+            "modified",
+            "related",
+            "tags",
+            "sigma-version",
+            "logsource",
+            "detection",
+            "fields",
+            "falsepositives",
+            "level",
+            "scope",
+            "license",
+            "taxonomy",
+            "rsigma.suppress",
+            "rsigma.exemplars",
+            "aaa",
+            "zzz",
+        ];
+        assert_eq!(root_keys, expected, "{emitted}");
     }
 }

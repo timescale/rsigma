@@ -69,8 +69,24 @@ pub(crate) fn plain_safe(s: &str) -> bool {
     };
     if matches!(
         first,
-        '-' | '?' | ':' | ',' | '[' | ']' | '{' | '}' | '#' | '&' | '*' | '!' | '|' | '>' | '\''
-            | '"' | '%' | '@' | '`'
+        '-' | '?'
+            | ':'
+            | ','
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '#'
+            | '&'
+            | '*'
+            | '!'
+            | '|'
+            | '>'
+            | '\''
+            | '"'
+            | '%'
+            | '@'
+            | '`'
     ) {
         return false;
     }
@@ -80,9 +96,9 @@ pub(crate) fn plain_safe(s: &str) -> bool {
     if s.starts_with("---") || s.starts_with("...") {
         return false;
     }
-    if s.chars().any(|c| {
-        c.is_control() || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
-    }) {
+    if s.chars()
+        .any(|c| c.is_control() || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}'))
+    {
         return false;
     }
     !coerces(s)
@@ -202,8 +218,10 @@ pub(crate) fn push_scalar(out: &mut String, indent: &str, lead: Lead<'_>, s: &st
 }
 
 fn single_quote_cannot_carry(c: char) -> bool {
-    matches!(c, '\n' | '\r' | '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
-        || (c.is_control() && c != '\t')
+    matches!(
+        c,
+        '\n' | '\r' | '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    ) || (c.is_control() && c != '\t')
 }
 
 fn literal_ok(s: &str) -> bool {
@@ -295,9 +313,147 @@ fn is_yaml_1_1_number(s: &str) -> bool {
         }
     }
     !groups.is_empty()
-        && groups.iter().all(|g| {
-            !g.is_empty() && g.len() <= 2 && g.chars().all(|c| c.is_ascii_digit())
-        })
+        && groups
+            .iter()
+            .all(|g| !g.is_empty() && g.len() <= 2 && g.chars().all(|c| c.is_ascii_digit()))
+}
+
+pub(crate) const DETECTION_ROOT: &[&str] = &[
+    "title",
+    "id",
+    "name",
+    "status",
+    "description",
+    "references",
+    "author",
+    "date",
+    "modified",
+    "related",
+    "tags",
+    "sigma-version",
+    "logsource",
+    "detection",
+    "fields",
+    "falsepositives",
+    "level",
+    "scope",
+    "license",
+    "taxonomy",
+];
+pub(crate) const CORRELATION_ROOT: &[&str] = &[
+    "title",
+    "id",
+    "name",
+    "status",
+    "description",
+    "references",
+    "author",
+    "date",
+    "modified",
+    "related",
+    "tags",
+    "sigma-version",
+    "correlation",
+    "generate",
+    "fields",
+    "falsepositives",
+    "level",
+    "scope",
+    "license",
+    "taxonomy",
+];
+pub(crate) const FILTER_ROOT: &[&str] = &[
+    "title",
+    "id",
+    "name",
+    "status",
+    "description",
+    "references",
+    "author",
+    "date",
+    "modified",
+    "related",
+    "tags",
+    "sigma-version",
+    "logsource",
+    "filter",
+    "fields",
+    "falsepositives",
+    "level",
+    "scope",
+    "license",
+    "taxonomy",
+];
+pub(crate) const COMMON_ROOT: &[&str] = &[
+    "title",
+    "id",
+    "name",
+    "status",
+    "description",
+    "references",
+    "author",
+    "date",
+    "modified",
+    "related",
+    "tags",
+    "sigma-version",
+    "fields",
+    "falsepositives",
+    "level",
+    "scope",
+    "license",
+    "taxonomy",
+];
+pub(crate) const RSIGMA_ORDER: &[&str] = &[
+    "rsigma.window",
+    "rsigma.gap",
+    "rsigma.timestamp_field",
+    "rsigma.suppress",
+    "rsigma.action",
+    "rsigma.correlation_event_mode",
+    "rsigma.max_correlation_events",
+    "rsigma.max_group_entries",
+    "rsigma.include_event",
+    "rsigma.risk_score",
+    "rsigma.exemplars",
+    "rsigma.ads.strategy",
+    "rsigma.ads.technical_context",
+    "rsigma.ads.blind_spots",
+    "rsigma.ads.validation",
+    "rsigma.ads.priority",
+    "rsigma.ads.response",
+    "rsigma.ads.exempt",
+];
+pub(crate) const LOGSOURCE: &[&str] = &["category", "product", "service", "definition"];
+pub(crate) const CORRELATION_BODY: &[&str] = &[
+    "type",
+    "rules",
+    "aliases",
+    "group-by",
+    "timespan",
+    "timeframe",
+    "window",
+    "gap",
+    "condition",
+    "generate",
+];
+pub(crate) const RELATED_ITEM: &[&str] = &["id", "type"];
+
+/// Sort keys so the ones named in `table` come first in table order and the
+/// rest keep their source order.
+pub(crate) fn sort_by_table<'a>(keys: &[&'a str], table: &[&str]) -> Vec<&'a str> {
+    let mut ranked: Vec<(usize, usize, &str)> = keys
+        .iter()
+        .enumerate()
+        .map(
+            |(index, key)| match table.iter().position(|candidate| candidate == key) {
+                Some(position) => (0, position, *key),
+                None => (1, index, *key),
+            },
+        )
+        .collect();
+    ranked.sort_by_key(|&(rank, position, _)| (rank, position));
+    ranked.into_iter().map(|(_, _, key)| key).collect()
 }
 
 #[cfg(test)]
@@ -307,27 +463,47 @@ mod tests {
     #[test]
     fn coerces_table() {
         for s in [
-            "", "true", "True", "TRUE", "yes", "No", "on", "OFF", "~", "null", "Null", "1", "-1",
-            "+1", "1.5", "1e3", ".inf", "-.inf", ".NaN", "0x1F", "0o17", "0b101", "0123",
-            "1_000", "0x_1F", "1:30", "190:20:30.15",
+            "",
+            "true",
+            "True",
+            "TRUE",
+            "yes",
+            "No",
+            "on",
+            "OFF",
+            "~",
+            "null",
+            "Null",
+            "1",
+            "-1",
+            "+1",
+            "1.5",
+            "1e3",
+            ".inf",
+            "-.inf",
+            ".NaN",
+            "0x1F",
+            "0o17",
+            "0b101",
+            "0123",
+            "1_000",
+            "0x_1F",
+            "1:30",
+            "190:20:30.15",
         ] {
             assert!(coerces(s), "expected {s:?} to coerce");
         }
-        for s in [
-            "whoami",
-            "2024-01-01",
-            "0x",
-            "attack.t1059",
-            "C:",
-            "a:b",
-        ] {
+        for s in ["whoami", "2024-01-01", "0x", "attack.t1059", "C:", "a:b"] {
             assert!(!coerces(s), "expected {s:?} not to coerce");
         }
     }
 
     #[test]
     fn encode_value_table() {
-        assert_eq!(encode("whoami", ScalarCtx::Value), Encoded::Plain("whoami".into()));
+        assert_eq!(
+            encode("whoami", ScalarCtx::Value),
+            Encoded::Plain("whoami".into())
+        );
         assert_eq!(
             encode(r"C:\Windows\", ScalarCtx::Value),
             Encoded::Single(r"'C:\Windows\'".into())
@@ -336,8 +512,14 @@ mod tests {
             encode("https://example.com/a?b=c", ScalarCtx::Value),
             Encoded::Single("'https://example.com/a?b=c'".into())
         );
-        assert_eq!(encode("a: b", ScalarCtx::Value), Encoded::Single("'a: b'".into()));
-        assert_eq!(encode("tab\there", ScalarCtx::Value), Encoded::Single("'tab\there'".into()));
+        assert_eq!(
+            encode("a: b", ScalarCtx::Value),
+            Encoded::Single("'a: b'".into())
+        );
+        assert_eq!(
+            encode("tab\there", ScalarCtx::Value),
+            Encoded::Single("'tab\there'".into())
+        );
         assert_eq!(
             encode("  indented\nx", ScalarCtx::Value),
             Encoded::Literal {
@@ -349,13 +531,22 @@ mod tests {
 
     #[test]
     fn encode_prose_table() {
-        assert_eq!(encode("whoami", ScalarCtx::Prose), Encoded::Plain("whoami".into()));
+        assert_eq!(
+            encode("whoami", ScalarCtx::Prose),
+            Encoded::Plain("whoami".into())
+        );
         assert_eq!(
             encode("https://example.com/a?b=c", ScalarCtx::Prose),
             Encoded::Plain("https://example.com/a?b=c".into())
         );
-        assert_eq!(encode("Joe's tool", ScalarCtx::Prose), Encoded::Plain("Joe's tool".into()));
-        assert_eq!(encode("True", ScalarCtx::Prose), Encoded::Single("'True'".into()));
+        assert_eq!(
+            encode("Joe's tool", ScalarCtx::Prose),
+            Encoded::Plain("Joe's tool".into())
+        );
+        assert_eq!(
+            encode("True", ScalarCtx::Prose),
+            Encoded::Single("'True'".into())
+        );
     }
 
     #[test]
@@ -393,7 +584,10 @@ mod tests {
                 lines: vec!["a".into(), String::new()],
             }
         );
-        assert_eq!(encode("\n", ScalarCtx::Value), Encoded::Double("\"\\n\"".into()));
+        assert_eq!(
+            encode("\n", ScalarCtx::Value),
+            Encoded::Double("\"\\n\"".into())
+        );
         assert_eq!(
             encode("bell\x07", ScalarCtx::Value),
             Encoded::Double("\"bell\\a\"".into())
@@ -404,9 +598,78 @@ mod tests {
     fn encode_keys() {
         assert_eq!(encode_key("title", KeyCtx::Key), "title");
         assert_eq!(encode_key("a b", KeyCtx::Key), "'a b'");
-        assert_eq!(encode_key("CommandLine|contains|all", KeyCtx::FieldKey), "CommandLine|contains|all");
-        assert_eq!(encode_key("Product Name|contains", KeyCtx::FieldKey), "'Product Name|contains'");
+        assert_eq!(
+            encode_key("CommandLine|contains|all", KeyCtx::FieldKey),
+            "CommandLine|contains|all"
+        );
+        assert_eq!(
+            encode_key("Product Name|contains", KeyCtx::FieldKey),
+            "'Product Name|contains'"
+        );
         assert_eq!(encode_key("@timestamp", KeyCtx::FieldKey), "'@timestamp'");
         assert_eq!(encode_key("<<", KeyCtx::Key), "<<");
+    }
+
+    fn shuffled<'a>(table: &'a [&'a str]) -> Vec<&'a str> {
+        let mut keys: Vec<&str> = table.to_vec();
+        keys.reverse();
+        keys
+    }
+
+    #[test]
+    fn detection_root_order() {
+        let keys = shuffled(DETECTION_ROOT);
+        assert_eq!(sort_by_table(&keys, DETECTION_ROOT), DETECTION_ROOT);
+    }
+
+    #[test]
+    fn correlation_root_order() {
+        let keys = shuffled(CORRELATION_ROOT);
+        assert_eq!(sort_by_table(&keys, CORRELATION_ROOT), CORRELATION_ROOT);
+    }
+
+    #[test]
+    fn filter_root_order() {
+        let keys = shuffled(FILTER_ROOT);
+        assert_eq!(sort_by_table(&keys, FILTER_ROOT), FILTER_ROOT);
+    }
+
+    #[test]
+    fn common_root_order() {
+        let keys = shuffled(COMMON_ROOT);
+        assert_eq!(sort_by_table(&keys, COMMON_ROOT), COMMON_ROOT);
+    }
+
+    #[test]
+    fn rsigma_order() {
+        let keys = shuffled(RSIGMA_ORDER);
+        assert_eq!(sort_by_table(&keys, RSIGMA_ORDER), RSIGMA_ORDER);
+    }
+
+    #[test]
+    fn logsource_order() {
+        let keys = shuffled(LOGSOURCE);
+        assert_eq!(sort_by_table(&keys, LOGSOURCE), LOGSOURCE);
+    }
+
+    #[test]
+    fn correlation_body_order() {
+        let keys = shuffled(CORRELATION_BODY);
+        assert_eq!(sort_by_table(&keys, CORRELATION_BODY), CORRELATION_BODY);
+    }
+
+    #[test]
+    fn related_item_order() {
+        let keys = shuffled(RELATED_ITEM);
+        assert_eq!(sort_by_table(&keys, RELATED_ITEM), RELATED_ITEM);
+    }
+
+    #[test]
+    fn unknown_keys_keep_source_order() {
+        let keys = ["zzz", "title", "aaa", "level"];
+        assert_eq!(
+            sort_by_table(&keys, DETECTION_ROOT),
+            ["title", "level", "zzz", "aaa"]
+        );
     }
 }
