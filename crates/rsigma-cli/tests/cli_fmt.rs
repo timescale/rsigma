@@ -85,6 +85,84 @@ fn check_exits_zero_when_all_formatted() {
 }
 
 #[test]
+fn stdin_is_formatted_with_stdout() {
+    let output = rsigma()
+        .args(["rule", "fmt", "--stdout", "-"])
+        .write_stdin(UNFORMATTED)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(stdout_of(&output), FORMATTED);
+}
+
+#[test]
+fn stdin_check_exits_one_when_unformatted() {
+    rsigma()
+        .args(["rule", "fmt", "--check", "-"])
+        .write_stdin(UNFORMATTED)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Would reformat: <stdin>"));
+}
+
+#[test]
+fn stdin_check_exits_zero_when_formatted() {
+    rsigma()
+        .args(["rule", "fmt", "--check", "-"])
+        .write_stdin(FORMATTED)
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn stdin_diff_uses_the_stdin_label() {
+    rsigma()
+        .args(["rule", "fmt", "--diff", "--color", "never", "-"])
+        .write_stdin(UNFORMATTED)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("--- a/<stdin>"));
+}
+
+#[test]
+fn stdin_non_sigma_is_skipped_with_stdout() {
+    let output = rsigma()
+        .args(["rule", "fmt", "--stdout", "-"])
+        .write_stdin(NON_SIGMA)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(stdout_of(&output), NON_SIGMA);
+}
+
+#[test]
+fn stdin_with_write_is_a_conflict() {
+    rsigma()
+        .args(["rule", "fmt", "--write", "-"])
+        .write_stdin(UNFORMATTED)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "`--write` cannot be used with `-`",
+        ));
+}
+
+#[test]
+fn stdin_cannot_be_mixed_with_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(dir.path(), "rule.yml", UNFORMATTED);
+    rsigma()
+        .args(["rule", "fmt", "-", dir.path().to_str().unwrap()])
+        .write_stdin(UNFORMATTED)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "`-` cannot be combined with file paths",
+        ));
+}
+
+#[test]
 fn diff_matches_golden() {
     let dir = tempfile::tempdir().unwrap();
     write_file(dir.path(), "rule.yml", UNFORMATTED);

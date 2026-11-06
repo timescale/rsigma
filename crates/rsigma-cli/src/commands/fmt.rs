@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -73,6 +73,10 @@ pub(crate) fn cmd_fmt(args: FmtArgs, ctx: OutputCtx) -> i32 {
 
     if mode == Mode::Stdout {
         return stdout_mode(&args.paths[0], &ctx);
+    }
+
+    if args.paths.len() == 1 && is_stdin(&args.paths[0]) {
+        return stdin_mode(mode, &ctx);
     }
 
     let roots: Vec<PathBuf> = if args.paths.is_empty() {
@@ -145,30 +149,8 @@ pub(crate) fn cmd_fmt(args: FmtArgs, ctx: OutputCtx) -> i32 {
         }
     }
 
-    if ctx.show_stats() {
-        let mut summary = if mode == Mode::Write {
-            format!("{changed} reformatted, {already} already formatted, {skipped} skipped")
-        } else {
-            format!(
-                "{changed} would be reformatted, {already} already formatted, {skipped} skipped"
-            )
-        };
-        if failed > 0 {
-            summary.push_str(&format!(", {failed} failed"));
-        }
-        if mode != Mode::Write && changed > 0 {
-            summary.push_str(" (run with --write to apply)");
-        }
-        eprintln!("{summary}");
-    }
-
-    if failed > 0 {
-        RULE_ERROR
-    } else if matches!(mode, Mode::Check | Mode::Diff) && changed > 0 {
-        FINDINGS
-    } else {
-        SUCCESS
-    }
+    report_summary(&ctx, mode, changed, already, skipped, failed);
+    exit_code(mode, changed, failed)
 }
 
 /// Validate the flag combination and pick the mode. The conflict pairs are
@@ -186,6 +168,17 @@ fn validate(args: &FmtArgs) -> Result<Mode, String> {
         if a && b {
             return Err(format!("`{a_name}` cannot be combined with `{b_name}`"));
         }
+    }
+
+    let stdin_count = args.paths.iter().filter(|path| is_stdin(path)).count();
+    if stdin_count > 1 {
+        return Err("`-` can appear only once".to_string());
+    }
+    if stdin_count == 1 && args.paths.len() > 1 {
+        return Err("`-` cannot be combined with file paths".to_string());
+    }
+    if stdin_count == 1 && args.write {
+        return Err("`--write` cannot be used with `-`".to_string());
     }
 
     if args.stdout {
@@ -215,10 +208,11 @@ fn validate(args: &FmtArgs) -> Result<Mode, String> {
 /// Print the formatted text of one file. A non-Sigma file is echoed unchanged
 /// so editor integrations never blank a buffer.
 fn stdout_mode(path: &Path, ctx: &OutputCtx) -> i32 {
-    let source = match fs::read_to_string(path) {
+    let label = input_label(path);
+    let source = match read_source(path) {
         Ok(source) => source,
         Err(error) => {
-            eprintln!("error: {}: {error}", path.display());
+            eprintln!("error: {label}: {error}");
             return RULE_ERROR;
         }
     };
@@ -229,15 +223,118 @@ fn stdout_mode(path: &Path, ctx: &OutputCtx) -> i32 {
         }
         Err(FormatError::NotSigma { .. }) => {
             if ctx.show_progress() {
-                eprintln!("skipped: {}: not a Sigma document", path.display());
+                eprintln!("skipped: {label}: not a Sigma document");
             }
             print!("{source}");
             SUCCESS
         }
         Err(error) => {
-            eprintln!("error: {}: {error}", path.display());
+            eprintln!("error: {label}: {error}");
             RULE_ERROR
         }
+    }
+}
+
+/// Report and diff a single document read from stdin.
+fn stdin_mode(mode: Mode, ctx: &OutputCtx) -> i32 {
+    let source = match read_source(Path::new("-")) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("error: <stdin>: {error}");
+            return RULE_ERROR;
+        }
+    };
+    let mut changed = 0usize;
+    let mut already = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    match format_yaml(&source) {
+        Ok(outcome) => {
+            if !outcome.changed {
+                already += 1;
+            } else {
+                changed += 1;
+                match mode {
+                    Mode::Report | Mode::Check => println!("Would reformat: <stdin>"),
+                    Mode::Diff => print_diff(
+                        "<stdin>",
+                        &source,
+                        &outcome.formatted,
+                        &Painter::new(ctx.color),
+                    ),
+                    Mode::Write | Mode::Stdout => unreachable!("stdin has no write or stdout mode"),
+                }
+            }
+        }
+        Err(FormatError::NotSigma { .. }) => {
+            if ctx.show_progress() {
+                eprintln!("skipped: <stdin>: not a Sigma document");
+            }
+            skipped += 1;
+        }
+        Err(error) => {
+            eprintln!("error: <stdin>: {error}");
+            failed += 1;
+        }
+    }
+    report_summary(ctx, mode, changed, already, skipped, failed);
+    exit_code(mode, changed, failed)
+}
+
+fn read_source(path: &Path) -> io::Result<String> {
+    if is_stdin(path) {
+        let mut source = String::new();
+        io::stdin().read_to_string(&mut source)?;
+        Ok(source)
+    } else {
+        fs::read_to_string(path)
+    }
+}
+
+fn is_stdin(path: &Path) -> bool {
+    path.as_os_str() == "-"
+}
+
+fn input_label(path: &Path) -> String {
+    if is_stdin(path) {
+        "<stdin>".to_string()
+    } else {
+        display_path(path, false)
+    }
+}
+
+fn report_summary(
+    ctx: &OutputCtx,
+    mode: Mode,
+    changed: usize,
+    already: usize,
+    skipped: usize,
+    failed: usize,
+) {
+    if !ctx.show_stats() {
+        return;
+    }
+    let mut summary = if mode == Mode::Write {
+        format!("{changed} reformatted, {already} already formatted, {skipped} skipped")
+    } else {
+        format!("{changed} would be reformatted, {already} already formatted, {skipped} skipped")
+    };
+    if failed > 0 {
+        summary.push_str(&format!(", {failed} failed"));
+    }
+    if mode != Mode::Write && changed > 0 {
+        summary.push_str(" (run with --write to apply)");
+    }
+    eprintln!("{summary}");
+}
+
+fn exit_code(mode: Mode, changed: usize, failed: usize) -> i32 {
+    if failed > 0 {
+        RULE_ERROR
+    } else if matches!(mode, Mode::Check | Mode::Diff) && changed > 0 {
+        FINDINGS
+    } else {
+        SUCCESS
     }
 }
 

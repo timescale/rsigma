@@ -24,7 +24,7 @@ For the layout rules, key order tables, comment placement, and the full list of 
 
 | Flag | Description |
 |------|-------------|
-| `[PATHS]...` | Sigma rule files or directories to format. Defaults to the current directory when omitted. Explicit file arguments are accepted whatever their extension; directory walks add `*.yml` and `*.yaml` files only. |
+| `[PATHS]...` | Sigma rule files or directories to format. Defaults to the current directory when omitted. Explicit file arguments are accepted whatever their extension; directory walks add `*.yml` and `*.yaml` files only. `-` reads one document from stdin and must be the only path. |
 
 ### Mode
 
@@ -35,7 +35,7 @@ For the layout rules, key order tables, comment placement, and the full list of 
 | `--write` | Rewrite files in place with an atomic rename. |
 | `--stdout` | Print the formatted text of exactly one file to stdout. A non-Sigma file is echoed unchanged so editor integrations never blank a buffer. |
 
-Without a mode flag, `rule fmt` reports the files that would change. `--write` cannot be combined with `--check`, `--diff`, or `--stdout`; `--stdout` cannot be combined with `--check` or `--diff`, and needs exactly one file path.
+Without a mode flag, `rule fmt` reports the files that would change. `--write` cannot be combined with `--check`, `--diff`, `--stdout`, or `-`; `--stdout` cannot be combined with `--check` or `--diff`, and needs exactly one file path or `-`.
 
 ### Output
 
@@ -90,14 +90,21 @@ Reformatted: rules/whoami.yml
 rsigma rule fmt --stdout rules/whoami.yml > /tmp/whoami.yml
 ```
 
+Read from stdin with `-`. The report and diff modes accept it too:
+
+```bash
+rsigma rule fmt --stdout - < rules/whoami.yml
+cat rules/whoami.yml | rsigma rule fmt --check -
+```
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | The report or write finished, or nothing needed to change. |
 | `1` | `--check` or `--diff`: at least one file would be reformatted. |
-| `2` | A file could not be read, parsed, formatted, or written. |
-| `3` | Conflicting mode flags, or `--stdout` without exactly one file. |
+| `2` | A file or stdin could not be read, parsed, formatted, or written. |
+| `3` | Conflicting mode flags, `--stdout` without exactly one file, `--write` with `-`, or `-` mixed with file paths. |
 
 ## See also
 
