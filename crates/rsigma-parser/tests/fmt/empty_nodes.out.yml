@@ -1,0 +1,11 @@
+title: Empty Nodes
+logsource:
+    category: test
+detection:
+    selection:
+        Empty:
+        EmptyItem:
+            -
+        Null: ~
+        Anchored: &a
+    condition: selection

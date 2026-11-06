@@ -15,6 +15,7 @@ use crate::code_action;
 use crate::completion;
 use crate::data;
 use crate::diagnostics;
+use crate::formatting;
 
 /// Debounce delay for diagnostics on text changes (milliseconds).
 const DIAGNOSTICS_DEBOUNCE_MS: u64 = 150;
@@ -149,6 +150,9 @@ impl LanguageServer for SigmaLanguageServer {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Document symbols
                 document_symbol_provider: Some(OneOf::Left(true)),
+                // Formatting
+                document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -274,6 +278,110 @@ impl LanguageServer for SigmaLanguageServer {
                     .map(CodeActionOrCommand::CodeAction)
                     .collect(),
             ))
+        }
+    }
+
+    // ── Formatting ──────────────────────────────────────────────────────
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        if !Self::is_sigma_file(uri) {
+            return Ok(None);
+        }
+
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
+        let Some(doc) = docs.get(uri) else {
+            return Ok(None);
+        };
+        let text = doc.text.clone();
+        drop(docs);
+
+        let outcome = match tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                formatting::document_edits(&text)
+            }))
+        })
+        .await
+        {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => {
+                log::error!("panic in formatting::document_edits");
+                return Ok(None);
+            }
+            Err(error) => {
+                log::error!("formatting task error: {error}");
+                return Ok(None);
+            }
+        };
+
+        match outcome {
+            formatting::Outcome::Edits(edits) => Ok(Some(edits)),
+            formatting::Outcome::Declined {
+                message,
+                level,
+                show,
+            } => {
+                self.client.log_message(level, &message).await;
+                if show {
+                    self.client
+                        .show_message(MessageType::WARNING, &message)
+                        .await;
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        if !Self::is_sigma_file(uri) {
+            return Ok(None);
+        }
+
+        let docs: tokio::sync::RwLockReadGuard<'_, _> = self.documents.read().await;
+        let Some(doc) = docs.get(uri) else {
+            return Ok(None);
+        };
+        let text = doc.text.clone();
+        drop(docs);
+        let range = params.range;
+
+        let outcome = match tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                formatting::range_edits(&text, range)
+            }))
+        })
+        .await
+        {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => {
+                log::error!("panic in formatting::range_edits");
+                return Ok(None);
+            }
+            Err(error) => {
+                log::error!("range formatting task error: {error}");
+                return Ok(None);
+            }
+        };
+
+        match outcome {
+            formatting::Outcome::Edits(edits) => Ok(Some(edits)),
+            formatting::Outcome::Declined {
+                message,
+                level,
+                show,
+            } => {
+                self.client.log_message(level, &message).await;
+                if show {
+                    self.client
+                        .show_message(MessageType::WARNING, &message)
+                        .await;
+                }
+                Ok(None)
+            }
         }
     }
 

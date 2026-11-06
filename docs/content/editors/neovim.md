@@ -90,6 +90,29 @@ require('lspconfig').yamlls.setup({
 
 Default bindings differ per distro; the canonical mapping is `vim.lsp.buf.code_action()`. In LazyVim and AstroNvim, `<leader>ca` is the standard. The {{ rsigma.lint.autofix }} fixable rules from the [Lint Rules reference](../reference/lint-rules.md) all surface as `quickfix`-kind actions marked `isPreferred`.
 
+### Formatting
+
+`rsigma-lsp` advertises whole-document and range formatting. Format the current buffer on demand:
+
+```lua
+vim.keymap.set('n', '<leader>f', function()
+  vim.lsp.buf.format({ name = 'rsigma-lsp' })
+end)
+```
+
+Format the current visual selection with `:'<,'>lua vim.lsp.buf.format({ name = 'rsigma-lsp' })`, or format on save:
+
+```lua
+vim.api.nvim_create_autocmd('BufWritePre', {
+  pattern = { '*.yml', '*.yaml' },
+  callback = function()
+    vim.lsp.buf.format({ name = 'rsigma-lsp' })
+  end,
+})
+```
+
+The formatter keeps comments, anchors, tags, and directives, and refuses any rewrite that would change what a rule means. See [Formatting Rules](../guide/formatting-rules.md).
+
 ## Helix
 
 Helix has built-in LSP support; just register the server:
@@ -103,9 +126,10 @@ command = "rsigma-lsp"
 [[language]]
 name = "yaml"
 language-servers = ["yaml-language-server", "rsigma-lsp"]
+auto-format = true
 ```
 
-Listing `yaml-language-server` first means generic YAML diagnostics come first in the picker; remove it if you want `rsigma-lsp` to be the only voice on Sigma files. The Helix code-action picker (`<space>a` by default) lists rsigma fixes alongside any other LSP's.
+Listing `yaml-language-server` first means generic YAML diagnostics come first in the picker; remove it if you want `rsigma-lsp` to be the only voice on Sigma files. The Helix code-action picker (`<space>a` by default) lists rsigma fixes alongside any other LSP's. With `auto-format = true`, `:format` and format-on-save use the first server that advertises formatting; remove `yaml-language-server` if you want rsigma to be the only formatter.
 
 ## Zed
 
@@ -122,13 +146,14 @@ Zed supports configuring a language server directly from `settings.json` (see [C
   },
   "languages": {
     "YAML": {
-      "language_servers": ["yaml-language-server", "rsigma"]
+      "language_servers": ["yaml-language-server", "rsigma"],
+      "formatter": "language_server"
     }
   }
 }
 ```
 
-There is no Zed extension package; the inline config above is the supported path.
+There is no Zed extension package; the inline config above is the supported path. `"formatter": "language_server"` routes formatting to the language server, so remove `yaml-language-server` if you want rsigma to be the only formatter.
 
 ## Emacs (`eglot`)
 

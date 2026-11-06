@@ -410,6 +410,7 @@ RULES_DIR="${RULES_DIR:-rules/}"
 PIPELINE="${PIPELINE:-pipelines/ecs.yml}"
 
 $RSIGMA_BIN rule lint    "$RULES_DIR" --fail-level warning
+$RSIGMA_BIN rule fmt     --check "$RULES_DIR"
 $RSIGMA_BIN rule validate "$RULES_DIR" -p "$PIPELINE"
 
 $RSIGMA_BIN rule backtest -r "$RULES_DIR" -p "$PIPELINE" \

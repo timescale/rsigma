@@ -1,0 +1,14 @@
+title: Blocks
+logsource:
+    category: test
+detection:
+    selection:
+        Literal: |
+            one
+            two
+        Folded: >
+            three
+            four
+        Chomped: |-
+            five
+    condition: selection

@@ -1,0 +1,39 @@
+title: Key Order Root
+id: 00000000-0000-0000-0000-000000000002
+name: key-order-root
+status: test
+description: Tests root ordering
+references:
+    - https://example.com/a
+author: Test Author
+date: 2024-01-01
+modified: 2024-02-01
+related:
+    - id: 00000000-0000-0000-0000-000000000003
+      type: derived
+tags:
+    - attack.discovery
+sigma-version: 2
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Field: value
+    condition: selection
+fields:
+    - Image
+falsepositives:
+    - Unknown
+level: low
+scope:
+    - process
+license: MIT
+taxonomy:
+    - attack
+rsigma.suppress: true
+rsigma.exemplars: 3
+custom_attributes:
+    team: detection
+zzz: last
+aaa: first

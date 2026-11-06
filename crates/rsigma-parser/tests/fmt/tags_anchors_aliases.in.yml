@@ -1,0 +1,8 @@
+custom: &base Anchored Title
+title: *base
+logsource:
+    category: test
+detection:
+    selection:
+        Field: !!str 123
+    condition: selection

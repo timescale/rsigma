@@ -23,10 +23,10 @@ use std::process;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
-    DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, HuntCommands, HygieneArgs, LintArgs, LintCounts,
-    ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ReverseArgs, ScorecardArgs,
-    StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs, ValidateArgs, VisibilityArgs,
-    dispatch_hunt,
+    DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, FmtArgs, HuntCommands, HygieneArgs, LintArgs,
+    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ReverseArgs,
+    ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs, ValidateArgs,
+    VisibilityArgs, dispatch_hunt,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -222,6 +222,9 @@ enum RuleCommands {
 
     /// Lint Sigma rules against the specification
     Lint(LintArgs),
+
+    /// Format Sigma rules into the canonical layout, keeping comments
+    Fmt(FmtArgs),
 
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
@@ -433,6 +436,10 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
         RuleCommands::Parse(args) => commands::cmd_parse(args, ctx),
         RuleCommands::Validate(args) => commands::cmd_validate(args, ctx),
         RuleCommands::Lint(args) => run_lint(args, ctx),
+        RuleCommands::Fmt(args) => {
+            let code = commands::cmd_fmt(args, ctx);
+            process::exit(code);
+        }
         RuleCommands::Fields(args) => commands::cmd_fields(args, ctx),
         RuleCommands::Draft(args) => commands::cmd_draft(args, ctx),
         RuleCommands::Tune(args) => commands::cmd_tune(args, ctx),

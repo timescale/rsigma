@@ -1,0 +1,7 @@
+title: Anchors
+logsource: &logsource
+    category: test
+detection:
+    selection: &selection
+        Field: value
+    condition: selection

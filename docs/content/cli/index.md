@@ -11,7 +11,7 @@ This reference documents every subcommand with its flag table, verified examples
 | Group | Subcommands | What it does |
 |-------|-------------|--------------|
 | [`engine`](engine/eval.md) | `eval`, `explain`, `classify`, `discover-schemas`, `status`, `incidents export`, `tap`, `tail`, `daemon` | Run and inspect Sigma rules against events: one-shot, explain, classify, or long-running |
-| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, tune, reverse-convert, backtest, score, and ATT&CK-map Sigma rule files |
+| [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, format, tune, reverse-convert, backtest, score, and ATT&CK-map Sigma rule files |
 | [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, Fibratus, and delegated sigma-cli targets) |
 | [`pipeline`](pipeline/diff.md) | `diff`, `resolve` | Diff pipeline rewrites and test dynamic sources |
 | [`hunt`](hunt/run.md) | `run` | Hunt a PostgreSQL/TimescaleDB archive with converted rules, streaming matches back as events |
@@ -54,6 +54,7 @@ rsigma
 │   ├── parse                  parse a single rule file, dump AST as JSON
 │   ├── validate               parse + compile a rule file or a directory of rules
 │   ├── lint                   run the {{ rsigma.lint.rules }} lint checks
+│   ├── fmt                    format rules into the canonical layout
 │   ├── fields                 list every field referenced by the rules
 │   ├── draft                  draft a rule from exemplar events (optional baseline)
 │   ├── tune                   propose a verified filter from FP/TP exemplars
@@ -98,7 +99,7 @@ Every subcommand uses the same four-code scheme. Full table and CI patterns are 
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Findings: `eval --fail-on-detection`, `lint --fail-level`, `hygiene`/`scorecard --fail-on`, or per-source failures from `pipeline resolve` |
+| `1` | Findings: `eval --fail-on-detection`, `lint --fail-level`, `fmt --check`/`--diff`, `hygiene`/`scorecard --fail-on`, or per-source failures from `pipeline resolve` |
 | `2` | Rule error: rules could not be parsed, compiled, or converted |
 | `3` | Configuration error: bad pipeline file, malformed argument, unreachable daemon client call |
 

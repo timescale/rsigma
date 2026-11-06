@@ -44,6 +44,57 @@ impl LineIndex {
             .unwrap_or(start);
         (start, end)
     }
+
+    /// Byte offset of an LSP position whose `character` counts UTF-16 code units.
+    ///
+    /// A line past the end gives `text.len()`; a character past the end of its
+    /// line gives the end of the line before `\r\n` or `\n`; a position inside
+    /// a surrogate pair snaps to the start of that character.
+    pub fn offset_at(&self, text: &str, position: Position) -> usize {
+        let Some(&line_start) = self.line_starts.get(position.line as usize) else {
+            return text.len();
+        };
+        let line_end = self
+            .line_starts
+            .get(position.line as usize + 1)
+            .map(|&start| start.saturating_sub(1))
+            .unwrap_or(text.len());
+        let content_end = if line_end > line_start && text.as_bytes()[line_end - 1] == b'\r' {
+            line_end - 1
+        } else {
+            line_end
+        };
+        let content = &text[line_start..content_end];
+
+        let mut units: u64 = 0;
+        for (byte, character) in content.char_indices() {
+            let width = character.len_utf16() as u64;
+            if units + width > position.character as u64 {
+                return line_start + byte;
+            }
+            units += width;
+            if units >= position.character as u64 {
+                return line_start + byte + character.len_utf8();
+            }
+        }
+        content_end
+    }
+
+    /// LSP position (UTF-16 `character`) of a byte offset, clamped to
+    /// `text.len()` and to the previous char boundary.
+    pub fn position_at(&self, text: &str, offset: usize) -> Position {
+        let mut offset = offset.min(text.len());
+        while !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        let line = self
+            .line_starts
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        let line_start = self.line_starts[line];
+        let character = text[line_start..offset].encode_utf16().count() as u32;
+        Position::new(line as u32, character)
+    }
 }
 
 /// Resolve a JSON-pointer path (from `LintWarning.path`) to an LSP `Range`.
@@ -234,5 +285,59 @@ tags:
 
         let range = resolve_path(text, &index, "/tags/1");
         assert_eq!(range.start.line, 3);
+    }
+
+    #[test]
+    fn offset_at_counts_ascii_units() {
+        let text = "title: Test\n";
+        let index = LineIndex::new(text);
+        assert_eq!(index.offset_at(text, Position::new(0, 5)), 5);
+    }
+
+    #[test]
+    fn offset_at_counts_utf16_units() {
+        let text = "éx";
+        let index = LineIndex::new(text);
+        assert_eq!(index.offset_at(text, Position::new(0, 1)), 2);
+        assert_eq!(index.position_at(text, 2), Position::new(0, 1));
+
+        let text = "€x";
+        let index = LineIndex::new(text);
+        assert_eq!(index.offset_at(text, Position::new(0, 1)), 3);
+        assert_eq!(index.position_at(text, 3), Position::new(0, 1));
+    }
+
+    #[test]
+    fn offset_at_snaps_inside_a_surrogate_pair() {
+        let text = "😀x";
+        let index = LineIndex::new(text);
+        assert_eq!(index.offset_at(text, Position::new(0, 1)), 0);
+        assert_eq!(index.offset_at(text, Position::new(0, 2)), 4);
+        assert_eq!(index.position_at(text, 4), Position::new(0, 2));
+        assert_eq!(index.position_at(text, 2), Position::new(0, 0));
+    }
+
+    #[test]
+    fn offset_at_stops_at_the_line_end() {
+        let text = "a\r\nb\n";
+        let index = LineIndex::new(text);
+        assert_eq!(index.offset_at(text, Position::new(0, 1)), 1);
+        assert_eq!(index.offset_at(text, Position::new(0, 50)), 1);
+        assert_eq!(index.offset_at(text, Position::new(1, 0)), 3);
+        assert_eq!(index.offset_at(text, Position::new(9, 0)), text.len());
+    }
+
+    #[test]
+    fn position_round_trips_on_char_boundaries() {
+        let text = "é€😀\nabc\r\n";
+        let index = LineIndex::new(text);
+        for offset in 0..=text.len() {
+            // A newline byte has no distinct LSP position: it maps to the end
+            // of its line, which `offset_at` resolves back to the line end.
+            if text.is_char_boundary(offset) && text.as_bytes().get(offset) != Some(&b'\n') {
+                let position = index.position_at(text, offset);
+                assert_eq!(index.offset_at(text, position), offset);
+            }
+        }
     }
 }

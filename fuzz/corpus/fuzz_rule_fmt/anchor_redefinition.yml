@@ -1,0 +1,7 @@
+title: Redefinition
+logsource: &base
+    category: test
+detection: &base
+    selection:
+        Field: value
+    condition: selection

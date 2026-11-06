@@ -226,6 +226,28 @@ Checked N file(s): X passed, Y failed (A error(s), B warning(s), C info(s))
 
 **Schema validation skips** documents with `action: global`, `action: reset`, or `action: repeat` (action fragments).
 
+### `rule fmt`: Format rules into the canonical layout
+
+Rewrite rule files into rsigma's canonical layout while keeping comments, anchors, aliases, tags, and directives. The formatter runs a semantic guard before returning changed text and refuses any rewrite that would change what a rule means.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `paths` | positional | current directory | Rule files or directories. Directories are walked recursively for `*.yml` and `*.yaml`. |
+| `--check` | flag | `false` | Report files that would change and exit `1` if any would be reformatted |
+| `--diff` | flag | `false` | Print a unified diff for each file that would change and exit `1` if any would be reformatted |
+| `--write` | flag | `false` | Rewrite files in place with an atomic rename |
+| `--stdout` | flag | `false` | Print the formatted text of exactly one file |
+
+```bash
+rsigma rule fmt rules/                         # report files that are not canonical
+rsigma rule fmt --check rules/                 # CI gate: exit 1 when a file would change
+rsigma rule fmt --diff rules/whoami.yml        # review the rewrite before applying it
+rsigma rule fmt --write rules/                 # apply the canonical layout
+rsigma rule fmt --stdout rules/whoami.yml      # format one file to stdout
+```
+
+`--write` cannot be combined with `--check`, `--diff`, or `--stdout`; `--stdout` cannot be combined with `--check` or `--diff` and needs exactly one file path. Files that are not Sigma documents are skipped. See the [Formatting Rules guide](https://rsigma.io/guide/formatting-rules/) for the canonical style and the constructs the formatter refuses.
+
 ### `mcp serve`: Run the MCP server for AI agents
 
 Expose the toolchain to MCP-aware agents (Cursor, Claude Code, ...) over stdio. The agent calls structured tools (`parse_rule`, `parse_condition`, `lint_rules`, `validate_rules`, `evaluate_events`, `tune_rules`, `convert_rules`, `list_backends`, `list_fields`, `resolve_pipeline`, `list_builtin_pipelines`) and gets back JSON. Point `--daemon-url` at a running daemon to add the Operate-cycle tools (incidents, risk, silences, dispositions); `--allow-operate-writes` is required for `create_silence` and `post_disposition`.

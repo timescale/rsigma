@@ -1,0 +1,9 @@
+title: Empty
+custom: ~
+other:
+logsource:
+    category: test
+detection:
+    selection:
+        Field:
+    condition: selection

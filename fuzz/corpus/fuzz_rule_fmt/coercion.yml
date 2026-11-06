@@ -1,0 +1,13 @@
+title: Coercion
+logsource:
+    category: test
+detection:
+    selection:
+        A: 'true'
+        B: '123'
+        C: '0x1F'
+        D: '1_000'
+        E: '1:30'
+        F: 'null'
+        G: '~'
+    condition: selection

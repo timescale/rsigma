@@ -1,0 +1,10 @@
+title: Flow Collections
+custom_map: {a: 1}
+custom_empty_map: {}
+logsource:
+    category: test
+detection:
+    selection:
+        List: [a, b]
+        EmptyList: []
+    condition: selection

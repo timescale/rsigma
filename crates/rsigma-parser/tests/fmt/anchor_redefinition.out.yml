@@ -1,0 +1,8 @@
+title: Anchor Redefinition
+detection: &a
+    selection:
+        Field: one
+    condition: selection
+logsource: &a
+    category: test
+custom: *a

@@ -36,6 +36,8 @@ jobs:
         include:
           - target: fuzz_parse_yaml
             max_len: 8192
+          - target: fuzz_rule_fmt
+            max_len: 8192
           - target: fuzz_condition
             max_len: 512
           - target: fuzz_eval_matching

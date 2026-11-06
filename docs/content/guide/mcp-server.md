@@ -47,7 +47,7 @@ Either way the client launches `rsigma mcp serve` as a subprocess and talks to i
 
 ## Tool reference
 
-Fifteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemon_url`) points at a running daemon, six Operate-cycle read tools join `tools/list`; `--allow-operate-writes` adds the two mutating tools. Content-bearing Engineer tools accept **either** inline content (`yaml`, `condition`, `events`, `query`) **or** a file `path`, never both. Path arguments resolve against `--rules-dir` when relative (and `tune_rules` and `test_exemplars` path inputs stay confined to that root when it is set). Outputs are JSON with an `ok` flag plus tool-specific fields. Content errors (a rule that fails to parse, a backend that cannot represent a rule, or a daemon that returns non-2xx) come back inside a successful response as `{ "ok": false, ... }` so the agent can read and act on them; only malformed requests return MCP errors.
+Sixteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemon_url`) points at a running daemon, six Operate-cycle read tools join `tools/list`; `--allow-operate-writes` adds the two mutating tools. Content-bearing Engineer tools accept **either** inline content (`yaml`, `condition`, `events`, `query`) **or** a file `path`, never both. Path arguments resolve against `--rules-dir` when relative (and `tune_rules` and `test_exemplars` path inputs stay confined to that root when it is set). Outputs are JSON with an `ok` flag plus tool-specific fields. Content errors (a rule that fails to parse, a backend that cannot represent a rule, or a daemon that returns non-2xx) come back inside a successful response as `{ "ok": false, ... }` so the agent can read and act on them; only malformed requests return MCP errors.
 
 | Tool | Input | Output |
 |------|-------|--------|
@@ -63,6 +63,7 @@ Fifteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemo
 | `resolve_pipeline` | `pipeline` (builtin name or path), `resolve_sources` | Pipeline name, priority, transformation count, dynamic sources. |
 | `list_builtin_pipelines` | (none) | The builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | `yaml` or file `path`, `lint_rules`, `write` | Applies safe auto-fixes; returns the fixed YAML and applied/failed/skipped-unsafe counts. `write: true` (path only, and only with `--rules-dir`) persists to disk. |
+| `format_rules` | `yaml` or file `path`, `write` | Rewrites Sigma YAML into the canonical layout and returns the formatted YAML and whether it changed. The semantic guard refuses rewrites that would change meaning, and non-Sigma documents come back as `skipped`. `write: true` (path only, and only with `--rules-dir`) persists to disk. {{ added "unreleased" }} |
 | `author_ads` | `yaml` or file/dir `path` | Per rule: the current ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 | `tune_rules` | rules (`yaml` or confined file/dir `path`), target `rule`, inline `false_positives` and `true_positives`, optional `pipelines` and tuning bounds | A verified `TuneReport` containing filter YAML, field rationale, clusters, FP coverage, warnings, and before/after counts. |
 | `test_exemplars` | rules (`yaml` or confined file/dir `path`), optional `pipelines` | The shared exemplar report: per-entry expect/actual/pass plus rules with no exemplars. {{ added "0.22.0" }} |
@@ -95,9 +96,9 @@ Three registration tiers:
 
 | Configuration | Tools in `tools/list` |
 |---------------|----------------------|
-| No daemon URL | The 15 Engineer-cycle tools. |
-| `--daemon-url` set | Those 15 plus the six read tools. |
-| `--daemon-url` and `--allow-operate-writes` | Those 21 plus `create_silence` and `post_disposition`. |
+| No daemon URL | The 16 Engineer-cycle tools. |
+| `--daemon-url` set | Those 16 plus the six read tools. |
+| `--daemon-url` and `--allow-operate-writes` | Those 22 plus `create_silence` and `post_disposition`. |
 
 `--allow-operate-writes` mirrors `--allow-sigma-cli`: default off, flag beats config (`mcp.allow_operate_writes`). A daemon running API authentication needs `--daemon-token` (or `RSIGMA_MCP_DAEMON_TOKEN`); the token is flag/env-only. A `reader` token covers the six read tools; an `operator` token adds `silences:write` and `dispositions:write` (and `capture:write` when capture is enabled). 401/403 come back as `{ "ok": false }` with a hint naming the flag and the required permission.
 

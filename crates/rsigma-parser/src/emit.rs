@@ -12,8 +12,9 @@
 //! so the same rule always produces byte-identical YAML. Detection value order
 //! and condition order are preserved as-is.
 //!
-//! Value scalars are rendered in Sigma's single-quote convention, with literal
-//! `*`, `?`, and `\` escaped so a re-parse reproduces the same
+//! Value scalars are rendered in Sigma's canonical quoting: a string stays
+//! plain only when YAML would read it back as exactly that string, and literal
+//! `*`, `?`, and `\` are escaped so a re-parse reproduces the same
 //! [`SigmaString`] wildcard structure.
 
 use std::collections::BTreeMap;
@@ -23,10 +24,8 @@ use crate::ast::{
     ArrayQuantifier, ConditionExpr, Detection, DetectionItem, Detections, LogSource, Modifier,
     Related, RelationType, SigmaCollection, SigmaRule, Status,
 };
+use crate::style::{KeyCtx, Lead, RSIGMA_ORDER, STEP, ScalarCtx, encode_key, push_scalar};
 use crate::value::{SigmaString, SigmaValue, SpecialChar, StringPart};
-
-/// One indentation level (four spaces, matching the SigmaHQ house style).
-const STEP: &str = "    ";
 
 /// Emit a single detection [`SigmaRule`] as canonical Sigma YAML.
 ///
@@ -35,47 +34,82 @@ const STEP: &str = "    ";
 pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
     let mut out = String::new();
 
-    push_line(&mut out, "title", &scalar_prose(&rule.title));
+    push_scalar(
+        &mut out,
+        "",
+        Lead::Key("title"),
+        &rule.title,
+        ScalarCtx::Prose,
+    );
     if let Some(id) = &rule.id {
-        push_line(&mut out, "id", &scalar(id));
+        push_scalar(&mut out, "", Lead::Key("id"), id, ScalarCtx::Value);
     }
     if let Some(name) = &rule.name {
-        push_line(&mut out, "name", &scalar(name));
+        push_scalar(&mut out, "", Lead::Key("name"), name, ScalarCtx::Value);
     }
     if let Some(status) = &rule.status {
         push_line(&mut out, "status", status_str(*status));
     }
     if let Some(description) = &rule.description {
-        emit_scalar_field(&mut out, "description", description, "");
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("description"),
+            description,
+            ScalarCtx::Prose,
+        );
     }
-    emit_string_list(&mut out, "references", &rule.references);
+    emit_string_list(&mut out, "references", &rule.references, ScalarCtx::Prose);
     if let Some(author) = &rule.author {
-        emit_scalar_field(&mut out, "author", author, "");
+        push_scalar(&mut out, "", Lead::Key("author"), author, ScalarCtx::Prose);
     }
     if let Some(date) = &rule.date {
-        push_line(&mut out, "date", &scalar(date));
+        push_scalar(&mut out, "", Lead::Key("date"), date, ScalarCtx::Value);
     }
     if let Some(modified) = &rule.modified {
-        push_line(&mut out, "modified", &scalar(modified));
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("modified"),
+            modified,
+            ScalarCtx::Value,
+        );
     }
     emit_related(&mut out, &rule.related);
-    emit_string_list(&mut out, "tags", &rule.tags);
+    emit_string_list(&mut out, "tags", &rule.tags, ScalarCtx::Prose);
     if let Some(version) = rule.sigma_version {
         push_line(&mut out, "sigma-version", &version.to_string());
     }
     emit_logsource(&mut out, &rule.logsource);
     emit_detection(&mut out, &rule.detection);
-    emit_string_list(&mut out, "fields", &rule.fields);
-    emit_string_list(&mut out, "falsepositives", &rule.falsepositives);
+    emit_string_list(&mut out, "fields", &rule.fields, ScalarCtx::Prose);
+    emit_string_list(
+        &mut out,
+        "falsepositives",
+        &rule.falsepositives,
+        ScalarCtx::Prose,
+    );
     if let Some(level) = &rule.level {
         push_line(&mut out, "level", level.as_str());
     }
-    emit_string_list(&mut out, "scope", &rule.scope);
+    emit_string_list(&mut out, "scope", &rule.scope, ScalarCtx::Prose);
     if let Some(license) = &rule.license {
-        emit_scalar_field(&mut out, "license", license, "");
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("license"),
+            license,
+            ScalarCtx::Prose,
+        );
     }
     if let Some(taxonomy) = &rule.taxonomy {
-        push_line(&mut out, "taxonomy", &scalar(taxonomy));
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("taxonomy"),
+            taxonomy,
+            ScalarCtx::Value,
+        );
     }
     emit_custom_attributes(&mut out, rule);
 
@@ -103,24 +137,13 @@ fn push_line(out: &mut String, key: &str, value: &str) {
     let _ = writeln!(out, "{key}: {value}");
 }
 
-fn emit_scalar_field(out: &mut String, key: &str, value: &str, indent: &str) {
-    if value.contains('\n') {
-        let _ = writeln!(out, "{indent}{key}: |-");
-        for line in value.split('\n') {
-            let _ = writeln!(out, "{indent}{STEP}{line}");
-        }
-    } else {
-        let _ = writeln!(out, "{indent}{key}: {}", scalar_prose(value));
-    }
-}
-
-fn emit_string_list(out: &mut String, key: &str, items: &[String]) {
+fn emit_string_list(out: &mut String, key: &str, items: &[String], ctx: ScalarCtx) {
     if items.is_empty() {
         return;
     }
     let _ = writeln!(out, "{key}:");
     for item in items {
-        let _ = writeln!(out, "{STEP}- {}", scalar_prose(item));
+        push_scalar(out, STEP, Lead::Dash, item, ctx);
     }
 }
 
@@ -130,7 +153,13 @@ fn emit_related(out: &mut String, related: &[Related]) {
     }
     let _ = writeln!(out, "related:");
     for entry in related {
-        let _ = writeln!(out, "{STEP}- id: {}", scalar(&entry.id));
+        push_scalar(
+            out,
+            &format!("{STEP}- "),
+            Lead::Key("id"),
+            &entry.id,
+            ScalarCtx::Value,
+        );
         let _ = writeln!(out, "{STEP}  type: {}", relation_str(entry.relation_type));
     }
 }
@@ -150,28 +179,46 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
     }
     let _ = writeln!(out, "logsource:");
     if let Some(category) = &logsource.category {
-        let _ = writeln!(out, "{STEP}category: {}", scalar(category));
+        push_scalar(out, STEP, Lead::Key("category"), category, ScalarCtx::Value);
     }
     if let Some(product) = &logsource.product {
-        let _ = writeln!(out, "{STEP}product: {}", scalar(product));
+        push_scalar(out, STEP, Lead::Key("product"), product, ScalarCtx::Value);
     }
     if let Some(service) = &logsource.service {
-        let _ = writeln!(out, "{STEP}service: {}", scalar(service));
+        push_scalar(out, STEP, Lead::Key("service"), service, ScalarCtx::Value);
     }
     if let Some(definition) = &logsource.definition {
-        emit_scalar_field(out, "definition", definition, STEP);
+        push_scalar(
+            out,
+            STEP,
+            Lead::Key("definition"),
+            definition,
+            ScalarCtx::Prose,
+        );
     }
     for (key, value) in sorted(&logsource.custom) {
-        let _ = writeln!(out, "{STEP}{}: {}", key_token(key), scalar(value));
+        push_scalar(
+            out,
+            STEP,
+            Lead::Key(&encode_key(key, KeyCtx::Key)),
+            value,
+            ScalarCtx::Value,
+        );
     }
 }
 
 fn emit_custom_attributes(out: &mut String, rule: &SigmaRule) {
-    let mut keys: Vec<&String> = rule.custom_attributes.keys().collect();
-    keys.sort();
-    for key in keys {
+    let mut keys: Vec<&str> = rule.custom_attributes.keys().map(String::as_str).collect();
+    let mut ordered: Vec<&str> = RSIGMA_ORDER
+        .iter()
+        .copied()
+        .filter(|key| rule.custom_attributes.contains_key(*key))
+        .collect();
+    keys.sort_unstable();
+    ordered.extend(keys.into_iter().filter(|key| !RSIGMA_ORDER.contains(key)));
+    for key in ordered {
         let value = &rule.custom_attributes[key];
-        emit_yaml_value(out, &key_token(key), value, "");
+        emit_yaml_value(out, &encode_key(key, KeyCtx::Key), value, "");
     }
 }
 
@@ -191,12 +238,24 @@ fn emit_condition(out: &mut String, conditions: &[ConditionExpr]) {
     match conditions {
         [] => {}
         [single] => {
-            let _ = writeln!(out, "{STEP}condition: {}", condition_source(single));
+            push_scalar(
+                out,
+                STEP,
+                Lead::Key("condition"),
+                &condition_source(single),
+                ScalarCtx::Condition,
+            );
         }
         many => {
             let _ = writeln!(out, "{STEP}condition:");
             for cond in many {
-                let _ = writeln!(out, "{STEP}{STEP}- {}", condition_source(cond));
+                push_scalar(
+                    out,
+                    &format!("{STEP}{STEP}"),
+                    Lead::Dash,
+                    &condition_source(cond),
+                    ScalarCtx::Condition,
+                );
             }
         }
     }
@@ -222,7 +281,7 @@ fn condition_source(expr: &ConditionExpr) -> String {
 }
 
 fn emit_named_detection(out: &mut String, name: &str, det: &Detection, indent: &str) {
-    let _ = writeln!(out, "{indent}{}:", key_token(name));
+    let _ = writeln!(out, "{indent}{}:", encode_key(name, KeyCtx::Key));
     emit_detection_value(out, det, &deeper(indent));
 }
 
@@ -237,7 +296,7 @@ fn emit_detection_value(out: &mut String, det: &Detection, indent: &str) {
         }
         Detection::Keywords(values) => {
             for value in values {
-                let _ = writeln!(out, "{indent}- {}", value_token(value));
+                push_value(out, indent, Lead::Dash, value, false, false);
             }
         }
         map_shaped => emit_map_entries(out, map_shaped, indent),
@@ -262,19 +321,21 @@ fn emit_map_entries(out: &mut String, det: &Detection, indent: &str) {
             quantifier,
             body,
         } => {
-            let _ = writeln!(
-                out,
-                "{indent}{}[{}]:",
-                field_token(field),
-                array_str(*quantifier)
-            );
+            let key = format!("{}[{}]", field, array_str(*quantifier));
+            let _ = writeln!(out, "{indent}{}:", encode_key(&key, KeyCtx::FieldKey));
             emit_detection_value(out, body, &deeper(indent));
         }
         Detection::Conditional { named, condition } => {
             for (name, sub) in sorted_named(named) {
                 emit_named_detection(out, name, sub, indent);
             }
-            let _ = writeln!(out, "{indent}condition: {}", condition_source(condition));
+            push_scalar(
+                out,
+                indent,
+                Lead::Key("condition"),
+                &condition_source(condition),
+                ScalarCtx::Condition,
+            );
         }
         // List-shaped detections cannot appear as bare map entries; render them
         // under a synthetic block so nothing is silently dropped.
@@ -310,20 +371,53 @@ fn emit_item(out: &mut String, item: &DetectionItem, indent: &str) {
         .iter()
         .any(|m| matches!(m, Modifier::Re | Modifier::Cidr | Modifier::FieldRef));
     let expand = item.field.modifiers.contains(&Modifier::Expand);
-    let token = |value: &SigmaValue| match value {
-        // Placeholder escapes are only unambiguous in the source text.
-        SigmaValue::String(s) if expand => scalar(&s.original),
-        _ => value_token_ctx(value, raw),
-    };
     match item.values.as_slice() {
         [single] => {
-            let _ = writeln!(out, "{indent}{key}: {}", token(single));
+            push_value(out, indent, Lead::Key(&key), single, raw, expand);
         }
         values => {
             let _ = writeln!(out, "{indent}{key}:");
             for value in values {
-                let _ = writeln!(out, "{indent}{STEP}- {}", token(value));
+                push_value(out, &deeper(indent), Lead::Dash, value, raw, expand);
             }
+        }
+    }
+}
+
+/// Write a [`SigmaValue`]: strings go through [`push_scalar`] in the value
+/// context, while non-string scalars are copied verbatim.
+fn push_value(
+    out: &mut String,
+    indent: &str,
+    lead: Lead<'_>,
+    value: &SigmaValue,
+    raw: bool,
+    expand: bool,
+) {
+    match value {
+        SigmaValue::String(s) => {
+            let source = if expand {
+                s.original.clone()
+            } else if raw {
+                s.as_plain().unwrap_or_else(|| s.original.clone())
+            } else {
+                sigma_string_source(s)
+            };
+            push_scalar(out, indent, lead, &source, ScalarCtx::Value);
+        }
+        other => {
+            let token = match other {
+                SigmaValue::Integer(n) => n.to_string(),
+                SigmaValue::Float(f) => float_token(*f),
+                SigmaValue::Bool(b) => b.to_string(),
+                SigmaValue::Null => "null".to_string(),
+                SigmaValue::String(_) => unreachable!("string handled above"),
+            };
+            let prefix = match lead {
+                Lead::Key(key) => format!("{indent}{key}:"),
+                Lead::Dash => format!("{indent}-"),
+            };
+            let _ = writeln!(out, "{prefix} {token}");
         }
     }
 }
@@ -337,15 +431,24 @@ fn emit_yaml_value(out: &mut String, key: &str, value: &yaml_serde::Value, inden
         yaml_serde::Value::Mapping(map) if !map.is_empty() => {
             let _ = writeln!(out, "{indent}{key}:");
             for (k, v) in map {
-                let child_key = k.as_str().map(key_token).unwrap_or_else(|| "?".to_string());
+                let child_key = yaml_key(k);
                 emit_yaml_value(out, &child_key, v, &deeper(indent));
             }
+        }
+        yaml_serde::Value::Mapping(_) => {
+            let _ = writeln!(out, "{indent}{key}: {{}}");
         }
         yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
             let _ = writeln!(out, "{indent}{key}:");
             for v in seq {
                 emit_yaml_seq_item(out, v, &deeper(indent));
             }
+        }
+        yaml_serde::Value::Sequence(_) => {
+            let _ = writeln!(out, "{indent}{key}: []");
+        }
+        yaml_serde::Value::String(s) => {
+            push_scalar(out, indent, Lead::Key(key), s, ScalarCtx::Value);
         }
         scalar => {
             let _ = writeln!(out, "{indent}{key}: {}", yaml_scalar(scalar));
@@ -359,7 +462,7 @@ fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str)
         yaml_serde::Value::Mapping(map) if !map.is_empty() => {
             let mut buf = String::new();
             for (k, v) in map {
-                let child_key = k.as_str().map(key_token).unwrap_or_else(|| "?".to_string());
+                let child_key = yaml_key(k);
                 emit_yaml_value(&mut buf, &child_key, v, "");
             }
             for (i, line) in buf.lines().enumerate() {
@@ -370,11 +473,20 @@ fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str)
                 }
             }
         }
+        yaml_serde::Value::Mapping(_) => {
+            let _ = writeln!(out, "{indent}- {{}}");
+        }
         yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
             let _ = writeln!(out, "{indent}-");
             for v in seq {
                 emit_yaml_seq_item(out, v, &deeper(indent));
             }
+        }
+        yaml_serde::Value::Sequence(_) => {
+            let _ = writeln!(out, "{indent}- []");
+        }
+        yaml_serde::Value::String(s) => {
+            push_scalar(out, indent, Lead::Dash, s, ScalarCtx::Value);
         }
         scalar => {
             let _ = writeln!(out, "{indent}- {}", yaml_scalar(scalar));
@@ -382,15 +494,23 @@ fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str)
     }
 }
 
+fn yaml_key(value: &yaml_serde::Value) -> String {
+    match value {
+        yaml_serde::Value::String(s) => encode_key(s, KeyCtx::Key),
+        other => yaml_scalar(other),
+    }
+}
+
 fn yaml_scalar(value: &yaml_serde::Value) -> String {
     match value {
         yaml_serde::Value::Null => "null".to_string(),
         yaml_serde::Value::Bool(b) => b.to_string(),
+        yaml_serde::Value::Number(n) if n.is_f64() => float_token(n.as_f64().unwrap_or_default()),
         yaml_serde::Value::Number(n) => n.to_string(),
-        yaml_serde::Value::String(s) => scalar(s),
+        yaml_serde::Value::String(s) => encode_key(s, KeyCtx::Key),
         // Nested collections are handled by emit_yaml_value; an inline fallback
         // keeps the emitter total for unexpected placements.
-        other => scalar(&format!("{other:?}")),
+        other => format!("{other:?}"),
     }
 }
 
@@ -398,29 +518,19 @@ fn yaml_scalar(value: &yaml_serde::Value) -> String {
 // Scalars, keys, and value tokens
 // =============================================================================
 
-/// Render a [`SigmaValue`] as a YAML token.
-fn value_token(value: &SigmaValue) -> String {
-    value_token_ctx(value, false)
-}
-
-/// Render a [`SigmaValue`] as a YAML token. When `raw` is set the string is a
-/// raw value (a regex, CIDR, or field reference) and is emitted verbatim rather
-/// than with Sigma wildcard escaping.
-fn value_token_ctx(value: &SigmaValue, raw: bool) -> String {
-    match value {
-        SigmaValue::String(s) if raw => scalar(&s.as_plain().unwrap_or_else(|| s.original.clone())),
-        SigmaValue::String(s) => scalar(&sigma_string_source(s)),
-        SigmaValue::Integer(n) => n.to_string(),
-        SigmaValue::Float(f) => float_token(*f),
-        SigmaValue::Bool(b) => b.to_string(),
-        SigmaValue::Null => "null".to_string(),
-    }
-}
-
 /// Format a float so it re-parses as a float (never collapses `3.0` to `3`).
 fn float_token(f: f64) -> String {
+    if f.is_nan() {
+        return ".nan".to_string();
+    }
+    if f == f64::INFINITY {
+        return ".inf".to_string();
+    }
+    if f == f64::NEG_INFINITY {
+        return "-.inf".to_string();
+    }
     let s = f.to_string();
-    if s.contains(['.', 'e', 'E']) || s.contains("inf") || s.contains("NaN") {
+    if s.contains(['.', 'e', 'E']) {
         s
     } else {
         format!("{s}.0")
@@ -472,80 +582,15 @@ fn push_escaped_literal(out: &mut String, text: &str) {
     }
 }
 
-/// Quote a value scalar in Sigma's single-quote convention unless it is a
-/// bare-safe token.
-fn scalar(s: &str) -> String {
-    if is_bare_safe(s) {
-        s.to_string()
-    } else {
-        quote(s)
-    }
-}
-
-/// Looser quoting for prose scalars (title, description, author): plain YAML
-/// permits internal spaces, so common values stay unquoted.
-fn scalar_prose(s: &str) -> String {
-    let bare = !s.is_empty()
-        && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && !s.ends_with(' ')
-        && !s.contains(": ")
-        && !s.contains(" #")
-        && !s.contains('\n')
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.' | ',' | '(' | ')' | '/')
-        });
-    if bare { s.to_string() } else { quote(s) }
-}
-
-fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-fn is_bare_safe(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-        && !s.starts_with('-')
-        && s.parse::<f64>().is_err()
-        && !matches!(
-            s.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
-        )
-}
-
-/// A mapping key (metadata key, custom-attribute key, or logsource custom
-/// field). Quoted only when it contains characters unsafe in a plain key.
-fn key_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if safe { s.to_string() } else { quote(s) }
-}
-
-/// A detection field name used inside a key (bare identifiers, dotted paths,
-/// and array/index markers pass through; anything else is quoted).
-fn field_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '[' | ']' | '@')
-        });
-    if safe { s.to_string() } else { quote(s) }
-}
-
 /// Build a detection key from a field name and its ordered modifiers.
 fn field_key(field: &str, modifiers: &[Modifier]) -> String {
     let mut key = String::new();
-    for (i, part) in field.split('|').enumerate() {
-        if i > 0 {
-            key.push('|');
-        }
-        key.push_str(&field_token(part));
-    }
+    key.push_str(field);
     for modifier in modifiers {
         key.push('|');
         key.push_str(modifier_str(*modifier));
     }
-    key
+    encode_key(&key, KeyCtx::FieldKey)
 }
 
 pub(crate) fn modifier_str(modifier: Modifier) -> &'static str {
@@ -760,5 +805,143 @@ mod tests {
         assert_round_trips(
             "title: Array\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        connections[any]:\n            protocol: TCP\n            port: 445\n    condition: selection\n",
         );
+    }
+
+    #[test]
+    fn quotes_strings_that_yaml_would_read_as_another_type() {
+        assert_round_trips(
+            "title: 'True'\nid: '123'\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: '0x1F'\n        Other: '1_000'\n        Third: '1:30'\n    condition: selection\n",
+        );
+    }
+
+    #[test]
+    fn emits_reference_urls_plain() {
+        let emitted = assert_round_trips(
+            "title: URL\nreferences:\n    - https://example.com/a?b=c\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n",
+        );
+        assert!(
+            emitted.contains("- https://example.com/a?b=c\n"),
+            "expected a plain URL:\n{emitted}"
+        );
+    }
+
+    #[test]
+    fn emits_multi_line_values_as_literal_blocks() {
+        let emitted = assert_round_trips(
+            "title: Multiline\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: |-\n            first line\n            second line\n    condition: selection\n",
+        );
+        assert!(emitted.contains("Field: |-"), "{emitted}");
+    }
+
+    #[test]
+    fn quotes_a_field_name_with_a_space_as_one_key() {
+        let emitted = assert_round_trips(
+            "title: Space\nlogsource:\n    category: test\ndetection:\n    selection:\n        'Product Name|contains': thing\n    condition: selection\n",
+        );
+        assert!(
+            emitted.contains("'Product Name|contains': thing"),
+            "{emitted}"
+        );
+    }
+
+    #[test]
+    fn emits_empty_custom_attribute_collections() {
+        let emitted = assert_round_trips(
+            "title: Empty\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\nempty_map: {}\nempty_seq: []\n",
+        );
+        assert!(emitted.contains("empty_map: {}"), "{emitted}");
+        assert!(emitted.contains("empty_seq: []"), "{emitted}");
+    }
+
+    #[test]
+    fn quotes_a_condition_that_would_read_as_another_type() {
+        let emitted = assert_round_trips(
+            "title: Condition\nlogsource:\n    category: test\ndetection:\n    '1e3':\n        Field: value\n    condition: '1e3'\n",
+        );
+        assert!(emitted.contains("condition: '1e3'"), "{emitted}");
+    }
+
+    #[test]
+    fn emits_root_keys_in_canonical_order() {
+        let yaml = "\
+zzz: last
+title: Order
+aaa: first
+id: 11111111-2222-3333-4444-555555555555
+name: order
+status: experimental
+description: Order test.
+references:
+    - https://example.com
+author: Jane Doe
+date: 2026-01-01
+modified: 2026-02-01
+related:
+    - id: 22222222-3333-4444-5555-666666666666
+      type: derived
+tags:
+    - attack.execution
+sigma-version: 3
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        Field: value
+    condition: selection
+fields:
+    - Field
+falsepositives:
+    - None known
+level: medium
+scope:
+    - endpoint
+license: MIT
+taxonomy: attack
+rsigma.exemplars:
+    - name: example
+      expect: match
+      event:
+          Field: value
+rsigma.suppress:
+    - reason: noisy
+";
+        let rule = parse_sigma_yaml(yaml)
+            .expect("input parses")
+            .rules
+            .remove(0);
+        let emitted = emit_rule_yaml(&rule);
+        let root_keys: Vec<&str> = emitted
+            .lines()
+            .filter(|line| !line.starts_with(' ') && line.contains(':'))
+            .map(|line| line.split(':').next().unwrap_or_default())
+            .collect();
+        let expected = [
+            "title",
+            "id",
+            "name",
+            "status",
+            "description",
+            "references",
+            "author",
+            "date",
+            "modified",
+            "related",
+            "tags",
+            "sigma-version",
+            "logsource",
+            "detection",
+            "fields",
+            "falsepositives",
+            "level",
+            "scope",
+            "license",
+            "taxonomy",
+            "rsigma.suppress",
+            "rsigma.exemplars",
+            "aaa",
+            "zzz",
+        ];
+        assert_eq!(root_keys, expected, "{emitted}");
     }
 }

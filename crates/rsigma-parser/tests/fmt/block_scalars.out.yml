@@ -1,0 +1,25 @@
+title: Block Scalars
+logsource:
+    category: test
+detection:
+    selection:
+        Literal: |
+            line one
+            line two
+        LiteralStrip: |-
+            line one
+            line two
+        LiteralKeep: |+
+            line one
+
+        Folded: |
+            line one line two
+        FoldedStrip: 'line one line two'
+        LeadingSpace: |4-
+             leading space
+            normal
+        BlankInside: |-
+            one
+
+            two
+    condition: selection

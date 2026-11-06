@@ -1,0 +1,17 @@
+title: Blank Lines
+
+
+logsource:
+
+    category: test
+detection:
+
+    selection:
+        Field: |
+
+            one
+
+            two
+    condition: selection
+
+

@@ -1,0 +1,10 @@
+title: Verbatim Scalars
+logsource:
+    category: test
+detection:
+    selection:
+        Bool: True
+        Hex: 0x1F
+        Float: 1e3
+        Infinite: .inf
+    condition: selection

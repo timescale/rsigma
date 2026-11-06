@@ -1,0 +1,11 @@
+title: An Über tool
+description: Detects Über activity
+references:
+    - https://example.com/über
+author: Jörg Müller
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine: 'héllo'
+    condition: selection
