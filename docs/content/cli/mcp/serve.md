@@ -61,7 +61,7 @@ The global flags (`--log-format`, `--quiet`, …) are accepted but stdout stays 
 | `resolve_pipeline` | Inspect a builtin or file pipeline; optionally resolve dynamic sources. |
 | `list_builtin_pipelines` | List the builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | Apply safe auto-fixes; optionally persist with `write: true` (requires `--rules-dir`). |
-| `format_rules` | Format Sigma YAML into the canonical layout; optionally persist with `write: true` (requires `--rules-dir`). |
+| `format_rules` | Format Sigma YAML into the canonical layout; optionally persist with `write: true` (requires `--rules-dir`). {{ added "unreleased" }} |
 | `author_ads` | Scaffold or render ADS detection metadata for a rule. |
 | `tune_rules` | Propose a verified Sigma filter from false-positive and true-positive event arrays. |
 | `test_exemplars` | Replay embedded `rsigma.exemplars` and return the pass/fail report. {{ added "0.22.0" }} |
