@@ -84,6 +84,8 @@ Values in detection selections stay plain only when every character is alphanume
 title: Test
 references:
     - https://example.com/rule
+logsource:
+    category: process_creation
 detection:
     selection:
         CommandLine: 'true'
