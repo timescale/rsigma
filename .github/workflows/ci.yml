@@ -379,6 +379,28 @@ jobs:
           echo "Checked out SigmaHQ/sigma at ${SIGMA_CORPUS_SHA}"
       - name: Validate and compile all Sigma rules
         run: ./target/release/rsigma rule validate /tmp/sigma/rules/ --verbose
+      - name: Format the SigmaHQ corpus with rule fmt
+        run: |
+          rm -rf /tmp/sigma-fmt
+          cp -R /tmp/sigma/rules /tmp/sigma-fmt
+          set +e
+          ./target/release/rsigma rule fmt --check /tmp/sigma-fmt > /tmp/fmt-check.out 2> /tmp/fmt-check.err
+          code=$?
+          set -e
+          tail -n 1 /tmp/fmt-check.err
+          if [ "$code" -ge 2 ]; then
+            echo "rule fmt --check exited $code"
+            grep '^error:' /tmp/fmt-check.err || true
+            exit 1
+          fi
+          if grep -q '^skipped:' /tmp/fmt-check.err; then
+            echo "rule fmt skipped SigmaHQ rule files"
+            grep '^skipped:' /tmp/fmt-check.err
+            exit 1
+          fi
+          ./target/release/rsigma rule fmt --write --quiet /tmp/sigma-fmt
+          ./target/release/rsigma rule fmt --check /tmp/sigma-fmt > /dev/null
+          ./target/release/rsigma rule validate /tmp/sigma-fmt --verbose
       - name: Validate SigmaHQ corpus with dynamic pipelines
         run: |
           ./target/release/rsigma rule validate /tmp/sigma/rules/ \
