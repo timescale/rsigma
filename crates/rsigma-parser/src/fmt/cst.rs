@@ -95,6 +95,10 @@ pub(crate) struct Entry {
     pub source_index: usize,
     pub leading: Vec<Comment>,
     pub trailing: Option<Comment>,
+    /// Further trailing comments for the same entry, written on their own
+    /// lines after the entry. An entry can trail both its key line (after a
+    /// tag or anchor) and a value that starts on a later line.
+    pub extra_trailing: Vec<Comment>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +108,9 @@ pub(crate) struct Item {
     pub source_index: usize,
     pub leading: Vec<Comment>,
     pub trailing: Option<Comment>,
+    /// Further trailing comments for the same item, written on their own
+    /// lines after the item.
+    pub extra_trailing: Vec<Comment>,
     /// Byte offset and row of the item's dash, or of its value for flow items.
     pub dash_byte: usize,
     pub dash: Point,
@@ -371,6 +378,7 @@ impl Builder<'_> {
                 source_index,
                 leading: Vec::new(),
                 trailing: None,
+                extra_trailing: Vec::new(),
             });
             source_index += 1;
         }
@@ -388,6 +396,7 @@ impl Builder<'_> {
                 source_index,
                 leading: Vec::new(),
                 trailing: None,
+                extra_trailing: Vec::new(),
             });
             source_index += 1;
         }
@@ -478,6 +487,7 @@ impl Builder<'_> {
                 source_index,
                 leading: Vec::new(),
                 trailing: None,
+                extra_trailing: Vec::new(),
                 dash,
                 dash_byte,
             });
@@ -542,6 +552,7 @@ impl Builder<'_> {
             source_index: 0,
             leading: Vec::new(),
             trailing: None,
+            extra_trailing: Vec::new(),
         };
         Ok(self.push_node(
             pair.start_byte()..pair.end_byte(),

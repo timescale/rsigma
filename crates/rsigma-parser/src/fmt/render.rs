@@ -147,18 +147,76 @@ fn render_entry(
     }
     let key = key_text(model, entry.key, key_ctx);
     let prefix = format!("{indent}{key}:");
+    if entry.extra_trailing.is_empty() {
+        render_value(
+            render,
+            model,
+            plan,
+            kind,
+            doc,
+            entry.value,
+            entry_path,
+            &prefix,
+            indent,
+            entry.trailing.as_ref(),
+        );
+    } else {
+        render_split_value(
+            render,
+            model,
+            plan,
+            kind,
+            doc,
+            entry.value,
+            entry_path,
+            &prefix,
+            indent,
+            entry.trailing.as_ref(),
+            &entry.extra_trailing,
+        );
+    }
+}
+
+/// Render a value on its own line when the entry trails comments on both its
+/// key line and a later value line. Keeping the value on the key line would
+/// collapse the two trailing comments into one.
+#[allow(clippy::too_many_arguments)]
+fn render_split_value(
+    render: &mut Render,
+    model: &Model,
+    plan: &Plan,
+    kind: DocKind,
+    doc: usize,
+    value: NodeId,
+    value_path: &[PathSeg],
+    prefix: &str,
+    indent: &str,
+    trailing: Option<&Comment>,
+    extra_trailing: &[Comment],
+) {
+    let mut line = prefix.to_string();
+    if let Some(comment) = trailing {
+        line.push(' ');
+        line.push_str(&comment.text);
+    }
+    render.text.push_str(&line);
+    render.text.push('\n');
+    let value_indent = format!("{indent}{STEP}");
     render_value(
         render,
         model,
         plan,
         kind,
         doc,
-        entry.value,
-        entry_path,
-        &prefix,
-        indent,
-        entry.trailing.as_ref(),
+        value,
+        value_path,
+        &value_indent,
+        &value_indent,
+        extra_trailing.first(),
     );
+    for comment in extra_trailing.iter().skip(1) {
+        write_comment(render, &value_indent, comment);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -176,11 +234,14 @@ fn render_value(
 ) {
     let node = &model.nodes[value as usize];
     let props = props_text(&node.props);
+    // A split value is already placed at its indentation, so it needs no
+    // separator space before its properties or token.
+    let sep = if prefix.ends_with(' ') { "" } else { " " };
     match &node.kind {
         NodeKind::Empty => {
             let mut line = prefix.to_string();
             if !props.is_empty() {
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(props.trim_end());
             }
             if let Some(comment) = trailing {
@@ -192,7 +253,7 @@ fn render_value(
         }
         NodeKind::Alias(name) => {
             let mut line = prefix.to_string();
-            line.push(' ');
+            line.push_str(sep);
             line.push_str(&props);
             line.push('*');
             line.push_str(name);
@@ -218,7 +279,7 @@ fn render_value(
                     Encoded::Literal { header, .. } => header.clone(),
                 };
                 let mut line = prefix.to_string();
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(&props);
                 line.push_str(&first);
                 if let Some(comment) = trailing {
@@ -242,7 +303,7 @@ fn render_value(
                     render_verbatim_block(render, text, &props, prefix, indent, trailing);
                 } else {
                     let mut line = prefix.to_string();
-                    line.push(' ');
+                    line.push_str(sep);
                     line.push_str(&props);
                     line.push_str(text);
                     if let Some(comment) = trailing {
@@ -257,11 +318,11 @@ fn render_value(
         NodeKind::Map { entries, .. } => {
             let mut line = prefix.to_string();
             if entries.is_empty() {
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(&props);
                 line.push_str("{}");
             } else if !props.is_empty() {
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(props.trim_end());
             }
             if let Some(comment) = trailing {
@@ -280,11 +341,11 @@ fn render_value(
         NodeKind::Seq { items, .. } => {
             let mut line = prefix.to_string();
             if items.is_empty() {
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(&props);
                 line.push_str("[]");
             } else if !props.is_empty() {
-                line.push(' ');
+                line.push_str(sep);
                 line.push_str(props.trim_end());
             }
             if let Some(comment) = trailing {
@@ -339,6 +400,26 @@ fn render_item(
     indent: &str,
 ) {
     let node = &model.nodes[item.value as usize];
+    if !item.extra_trailing.is_empty() {
+        for comment in &item.leading {
+            write_comment(render, indent, comment);
+        }
+        let dash = format!("{indent}-");
+        render_split_value(
+            render,
+            model,
+            plan,
+            kind,
+            doc,
+            item.value,
+            item_path,
+            &dash,
+            indent,
+            item.trailing.as_ref(),
+            &item.extra_trailing,
+        );
+        return;
+    }
     match &node.kind {
         NodeKind::Map { entries, .. } if !entries.is_empty() => {
             if node.props.is_empty() && item.trailing.is_none() {

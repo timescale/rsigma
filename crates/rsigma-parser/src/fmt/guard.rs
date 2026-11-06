@@ -164,6 +164,12 @@ fn collect_fingerprint(
                         .or_default()
                         .push(comment.text.clone());
                 }
+                for comment in &entry.extra_trailing {
+                    comments
+                        .entry((entry_path.clone(), CommentRole::Trailing))
+                        .or_default()
+                        .push(comment.text.clone());
+                }
                 collect_fingerprint(
                     model,
                     entry.value,
@@ -194,6 +200,12 @@ fn collect_fingerprint(
                         .push(comment.text.clone());
                 }
                 if let Some(comment) = &item.trailing {
+                    comments
+                        .entry((item_path.clone(), CommentRole::Trailing))
+                        .or_default()
+                        .push(comment.text.clone());
+                }
+                for comment in &item.extra_trailing {
                     comments
                         .entry((item_path.clone(), CommentRole::Trailing))
                         .or_default()

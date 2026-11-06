@@ -393,14 +393,22 @@ fn set_trailing(model: &mut Model, owner: &Owner, comment: Comment) {
             if let NodeKind::Map { entries, .. } = &mut model.nodes[map as usize].kind
                 && let Some(entry) = entries.get_mut(index)
             {
-                entry.trailing = Some(comment);
+                if entry.trailing.is_none() {
+                    entry.trailing = Some(comment);
+                } else {
+                    entry.extra_trailing.push(comment);
+                }
             }
         }
         OwnerKind::Item { seq, index } => {
             if let NodeKind::Seq { items, .. } = &mut model.nodes[seq as usize].kind
                 && let Some(item) = items.get_mut(index)
             {
-                item.trailing = Some(comment);
+                if item.trailing.is_none() {
+                    item.trailing = Some(comment);
+                } else {
+                    item.extra_trailing.push(comment);
+                }
             }
         }
     }
@@ -576,6 +584,24 @@ mod tests {
             entry(&model, map, index).trailing.as_ref().unwrap().text,
             "# note"
         );
+    }
+
+    #[test]
+    fn trailing_comments_on_key_and_value_lines_both_stay_with_the_entry() {
+        let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    selection: # key\n        Field # value\n    condition: selection\n";
+        let model = build(source);
+        let (map, index) = find_entry(&model, "detection");
+        let NodeKind::Map { entries, .. } = &model.nodes[map as usize].kind else {
+            panic!()
+        };
+        let detection = entries[index].value;
+        let NodeKind::Map { entries, .. } = &model.nodes[detection as usize].kind else {
+            panic!()
+        };
+        let selection = &entries[0];
+        assert_eq!(selection.trailing.as_ref().unwrap().text, "# key");
+        assert_eq!(selection.extra_trailing.len(), 1);
+        assert_eq!(selection.extra_trailing[0].text, "# value");
     }
 
     #[test]

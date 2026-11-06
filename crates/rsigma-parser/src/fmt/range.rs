@@ -215,6 +215,9 @@ fn comment_end(model: &Model, node: NodeId) -> usize {
                 if let Some(comment) = &entry.trailing {
                     end = end.max(comment.byte + comment.text.len());
                 }
+                for comment in &entry.extra_trailing {
+                    end = end.max(comment.byte + comment.text.len());
+                }
                 end = end.max(comment_end(model, entry.value));
             }
             end
@@ -232,6 +235,9 @@ fn comment_end(model: &Model, node: NodeId) -> usize {
                     end = end.max(comment.byte + comment.text.len());
                 }
                 if let Some(comment) = &item.trailing {
+                    end = end.max(comment.byte + comment.text.len());
+                }
+                for comment in &item.extra_trailing {
                     end = end.max(comment.byte + comment.text.len());
                 }
                 end = end.max(comment_end(model, item.value));

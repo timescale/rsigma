@@ -201,3 +201,8 @@ fn golden_multi_doc_trailing_comment() {
 fn golden_comment_before_block_value() {
     run_golden("comment_before_block_value");
 }
+
+#[test]
+fn golden_split_trailing_comment() {
+    run_golden("split_trailing_comment");
+}
