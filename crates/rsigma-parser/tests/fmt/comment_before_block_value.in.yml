@@ -1,0 +1,12 @@
+title: Test
+logsource:
+  category: test
+detection:
+  selection_a:
+    Field:
+      - one
+  selection_b:
+    # note
+    Field:
+      - two
+  condition: selection_a

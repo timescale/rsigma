@@ -220,6 +220,28 @@ fn attach_own_line(
         .filter(|owner| owner.doc == doc && owner.end_byte < comment.byte)
         .max_by_key(|owner| owner.end_byte);
 
+    // A comment between a key and the first child of its block collection is a
+    // leading comment for that child, not a dangling comment of the collection
+    // that ended just before the key.
+    let inside_later_block = owners
+        .iter()
+        .filter(|owner| owner.doc == doc)
+        .filter(|owner| owner.start_byte < comment.byte && comment.byte < owner.end_byte)
+        .filter(|owner| {
+            matches!(shape(model, owner.value), Shape::Block)
+                && model.nodes[owner.value as usize].span.start > comment.byte
+        })
+        .max_by_key(|owner| owner.ancestors.len())
+        .is_some();
+    if inside_later_block {
+        if let Some(next) = next {
+            set_leading(model, next, comment);
+        } else {
+            push_dangling(model, model.docs[doc].root, comment);
+        }
+        return Ok(());
+    }
+
     if let Some(previous) = previous {
         for collection in &previous.ancestors {
             let node = &model.nodes[*collection as usize];
@@ -588,6 +610,65 @@ mod tests {
             panic!()
         };
         let _ = entries;
+    }
+
+    #[test]
+    fn own_line_comment_before_a_block_value_is_leading() {
+        let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    selection_a:\n        Field:\n            - one\n    selection_b:\n        # note\n        Field:\n            - two\n    condition: selection_a\n";
+        let model = build(source);
+        let (map, index) = find_entry(&model, "detection");
+        let detection = entry(&model, map, index).value;
+        let NodeKind::Map { entries, .. } = &model.nodes[detection as usize].kind else {
+            panic!()
+        };
+        let selection_a = entries
+            .iter()
+            .find(|entry| key_string(&model, entry.key) == "selection_a")
+            .unwrap();
+        let selection_b = entries
+            .iter()
+            .find(|entry| key_string(&model, entry.key) == "selection_b")
+            .unwrap();
+        let NodeKind::Map {
+            entries: selection_b_entries,
+            ..
+        } = &model.nodes[selection_b.value as usize].kind
+        else {
+            panic!()
+        };
+        assert_eq!(selection_b_entries[0].leading.len(), 1);
+        assert_eq!(selection_b_entries[0].leading[0].text, "# note");
+        let NodeKind::Map { dangling, .. } = &model.nodes[selection_a.value as usize].kind else {
+            panic!()
+        };
+        assert!(dangling.is_empty());
+    }
+
+    #[test]
+    fn own_line_comment_between_sequence_items_is_leading() {
+        let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Image|endswith:\n            - '/one'\n            # note\n            - '/two'\n    condition: selection\n";
+        let model = build(source);
+        let (map, index) = find_entry(&model, "detection");
+        let detection = entry(&model, map, index).value;
+        let NodeKind::Map { entries, .. } = &model.nodes[detection as usize].kind else {
+            panic!()
+        };
+        let selection = entries
+            .iter()
+            .find(|entry| key_string(&model, entry.key) == "selection")
+            .unwrap();
+        let NodeKind::Map { entries, .. } = &model.nodes[selection.value as usize].kind else {
+            panic!()
+        };
+        let NodeKind::Seq {
+            items, dangling, ..
+        } = &model.nodes[entries[0].value as usize].kind
+        else {
+            panic!()
+        };
+        assert!(dangling.is_empty());
+        assert_eq!(items[1].leading.len(), 1);
+        assert_eq!(items[1].leading[0].text, "# note");
     }
 
     #[test]

@@ -196,3 +196,8 @@ fn golden_action_repeat_common_only() {
 fn golden_multi_doc_trailing_comment() {
     run_golden("multi_doc_trailing_comment");
 }
+
+#[test]
+fn golden_comment_before_block_value() {
+    run_golden("comment_before_block_value");
+}
