@@ -1,0 +1,101 @@
+# ECS (Elastic Common Schema) field mapping for Linux log sources.
+#
+# Maps generic Sigma field names (Sysmon-style vocabulary used in portable rules)
+# to ECS field names as produced by Filebeat, Elastic Agent, or similar shippers
+# on Linux. Scope in this file matches the shipped `ecs_windows` categories
+# that apply to `product: linux` rules; extend with new blocks when fixtures exist.
+#
+# This is a path-only pipeline (load by file path). It is not a builtin `-p ecs_linux`.
+#
+# Provenance: field names aligned with `ecs_windows.yml` / pySigma-backend-elasticsearch
+# `ecs_windows` process/network/file/DNS/image mappings; Elastic does not ship a
+# separate `ecs_linux` pySigma pipeline.
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ecs_linux.yml -e @event.json
+
+name: ecs_linux
+priority: 20
+
+transformations:
+  - id: ecs_linux_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: process.command_line
+      Image: process.executable
+      OriginalFileName: process.pe.original_file_name
+      CurrentDirectory: process.working_directory
+      ProcessGuid: process.entity_id
+      ProcessId: process.pid
+      ParentProcessGuid: process.parent.entity_id
+      ParentProcessId: process.parent.pid
+      ParentImage: process.parent.executable
+      ParentCommandLine: process.parent.command_line
+      User: user.name
+      Company: process.pe.company
+      Description: process.pe.description
+      Product: process.pe.product
+      FileVersion: process.pe.file_version
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: process_creation
+
+  - id: ecs_linux_network_connection_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: source.ip
+      SourceHostname: source.domain
+      SourcePort: source.port
+      DestinationIp: destination.ip
+      DestinationHostname: destination.domain
+      DestinationPort: destination.port
+      DestinationPortName: network.protocol
+      Protocol: network.transport
+      Image: process.executable
+      User: user.name
+      ProcessId: process.pid
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: network_connection
+
+  - id: ecs_linux_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: file.path
+      Image: process.executable
+      Signed: file.code_signature.signed
+      SignatureStatus: file.code_signature.status
+      Signature: file.code_signature.subject_name
+      Imphash: file.pe.imphash
+      Company: file.pe.company
+      Description: file.pe.description
+      Product: file.pe.product
+      FileVersion: file.pe.file_version
+      OriginalFileName: file.pe.original_file_name
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: image_load
+
+  - id: ecs_linux_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file.path
+      Image: process.executable
+      User: user.name
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: file_event
+
+  - id: ecs_linux_dns_query_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: dns.question.name
+      Image: process.executable
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: dns_query
