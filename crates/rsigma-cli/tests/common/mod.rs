@@ -131,9 +131,15 @@ impl DaemonProcess {
     /// daemon child. Used to exercise `${ENV_VAR}` template interpolation
     /// (e.g. webhook header secrets) without mutating the test process env.
     pub fn spawn_with_env(args: &[&str], env: &[(&str, &str)]) -> Self {
-        let child = StdCommand::new(rsigma_bin())
-            .args(args)
-            .envs(env.iter().copied())
+        let mut command = StdCommand::new(rsigma_bin());
+        command.args(args).envs(env.iter().copied());
+        Self::spawn_command(command)
+    }
+
+    /// Like [`DaemonProcess::spawn`] but runs a caller-built `rsigma`
+    /// command, for tests that also set the working directory.
+    pub fn spawn_command(mut command: StdCommand) -> Self {
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -486,6 +492,22 @@ pub fn poll_until<T>(deadline: Duration, mut check: impl FnMut() -> Option<T>) -
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The `id` of [`SIMPLE_RULE`].
+pub const SIMPLE_RULE_ID: &str = "00000000-0000-0000-0000-000000000001";
+
+/// A `POST /api/v1/silences` body that passes the default silence limits: a
+/// `rule =` matcher on [`SIMPLE_RULE_ID`] and an `ends_at` one hour out.
+pub fn bounded_silence(comment: &str) -> String {
+    let ends_at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    serde_json::json!({
+        "matchers": [{ "selector": "rule", "op": "=", "value": SIMPLE_RULE_ID }],
+        "ends_at": ends_at,
+        "comment": comment,
+        "created_by": "tests",
+    })
+    .to_string()
 }
 
 pub const SIMPLE_RULE: &str = r#"

@@ -309,6 +309,28 @@ async fn call_evaluate_events_refuses_command_enricher() {
 }
 
 #[tokio::test]
+async fn call_evaluate_events_refuses_env_reference_in_template() {
+    let (server, client) = connect().await;
+    let server_path = std::env::var("PATH").expect("PATH is set for the test process");
+
+    let mut req = CallToolRequestParams::new("evaluate_events");
+    req.arguments = Some(object!({
+        "yaml": RULE,
+        "events": [ { "CommandLine": "cmd /c whoami" } ],
+        "enrichers": "enrichers:\n  - id: leak\n    kind: detection\n    type: template\n    inject_field: out\n    template: \"${PATH}\"\n",
+    }));
+    let err = format!("{:?}", client.call_tool(req).await.unwrap_err());
+    assert!(
+        err.contains("environment variable references are not available over MCP"),
+        "{err}"
+    );
+    assert!(!err.contains(&server_path), "{err}");
+
+    client.cancel().await.ok();
+    server.cancel().await.ok();
+}
+
+#[tokio::test]
 async fn call_tune_rules_round_trip() {
     let (server, client) = connect().await;
 

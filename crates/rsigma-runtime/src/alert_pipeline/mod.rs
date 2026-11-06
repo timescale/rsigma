@@ -40,7 +40,8 @@ pub use grouping::{
 };
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
-    Silence, SilenceError, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView,
+    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceSpec,
+    SilenceState, SilenceStore, SilenceView,
 };
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;
@@ -80,10 +81,12 @@ pub struct AlertPipeline {
     static_silences: Vec<StaticSilence>,
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
+    silence_limits: SilenceLimits,
 }
 
 impl AlertPipeline {
     /// Construct from validated parts. Prefer [`build_alert_pipeline`].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         scope: Scope,
         strip_event: bool,
@@ -92,6 +95,7 @@ impl AlertPipeline {
         static_silences: Vec<StaticSilence>,
         inhibit: Option<InhibitConfig>,
         max_silences: usize,
+        silence_limits: SilenceLimits,
     ) -> Self {
         AlertPipeline {
             scope,
@@ -101,7 +105,14 @@ impl AlertPipeline {
             static_silences,
             inhibit,
             max_silences,
+            silence_limits,
         }
+    }
+
+    /// The bounds the silence API applies to new silences
+    /// (`max_silence_duration`, `allow_broad_silences`).
+    pub fn silence_limits(&self) -> SilenceLimits {
+        self.silence_limits
     }
 
     /// The static silences declared in the config, for (re-)seeding the store.
@@ -411,6 +422,7 @@ impl AlertPipeline {
         }
         // Silences are independent of the configured stages.
         state.silences.restore_api(snap.silences, now);
+        self.warn_over_limit_silences(state, now, "restore");
         let mut trim = CapTrim::default();
         if let Some(cfg) = self.dedup.as_ref() {
             state
@@ -454,7 +466,24 @@ impl AlertPipeline {
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
         trim.log("reload");
+        self.warn_over_limit_silences(state, chrono::Utc::now().timestamp(), "reload");
         trim
+    }
+
+    /// Log the API silences the current limits would refuse. They stay in
+    /// effect until they expire or are deleted, so an operator can review
+    /// silences created before the limits applied.
+    fn warn_over_limit_silences(&self, state: &AlertPipelineState, now: i64, context: &str) {
+        let ids = state.silences.api_over_limits(&self.silence_limits, now);
+        if !ids.is_empty() {
+            tracing::warn!(
+                context,
+                count = ids.len(),
+                ids = %ids.join(","),
+                "API silences exceed max_silence_duration or allow_broad_silences; they stay \
+                 active until they expire or are deleted with DELETE /api/v1/silences/{{id}}"
+            );
+        }
     }
 }
 

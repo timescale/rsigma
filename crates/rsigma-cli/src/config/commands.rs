@@ -21,7 +21,15 @@ use crate::output::{
 
 use super::defaults::defaults_partial;
 use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
-use super::{discover, inactive_sections, load_layered};
+use super::{discover, ignored_key_warning, inactive_sections, load_layered};
+
+/// Render protected keys dropped from project files as `[{file, key}]`.
+fn ignored_keys_json(ignored: &[(PathBuf, &'static str)]) -> Value {
+    ignored
+        .iter()
+        .map(|(path, key)| json!({ "file": path, "key": key }))
+        .collect()
+}
 
 /// The committed, commented template emitted by `rsigma config init`.
 const TEMPLATE: &str = include_str!("template.yaml");
@@ -213,6 +221,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                         "key": key,
                     }))
                     .collect::<Vec<_>>(),
+                "ignored_keys": ignored_keys_json(&loaded.ignored_keys),
                 "inactive_sections": inactive,
             });
 
@@ -222,6 +231,13 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     kind: "unknown_key".into(),
                     file: path.display().to_string(),
                     detail: key.clone(),
+                });
+            }
+            for (path, key) in &loaded.ignored_keys {
+                rows.push(ValidateIssueRow {
+                    kind: "ignored_key".into(),
+                    file: path.display().to_string(),
+                    detail: key.to_string(),
                 });
             }
             for section in &inactive {
@@ -264,6 +280,9 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     }
                     for (path, key) in &loaded.unknown_keys {
                         eprintln!("warning: unknown key '{key}' in {}", path.display());
+                    }
+                    for (path, key) in &loaded.ignored_keys {
+                        eprintln!("{}", ignored_key_warning(path, key));
                     }
                     for section in &inactive {
                         eprintln!(
@@ -353,6 +372,12 @@ fn cmd_show(args: ShowArgs, ctx: OutputCtx) {
         })
         .collect();
 
+    if mode != "json" {
+        for (path, key) in &loaded.ignored_keys {
+            eprintln!("{}", ignored_key_warning(path, key));
+        }
+    }
+
     match mode.as_str() {
         "json" => {
             let sources: BTreeMap<&String, Source> = resolved
@@ -361,7 +386,11 @@ fn cmd_show(args: ShowArgs, ctx: OutputCtx) {
                 .filter(|(path, _)| section_matches(path, filter))
                 .map(|(path, source)| (path, *source))
                 .collect();
-            let envelope = json!({ "config": merged, "sources": sources });
+            let envelope = json!({
+                "config": merged,
+                "sources": sources,
+                "ignored_keys": ignored_keys_json(&loaded.ignored_keys),
+            });
             render_json(&envelope, true);
         }
         "yaml" => {

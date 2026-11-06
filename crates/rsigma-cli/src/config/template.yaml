@@ -7,6 +7,9 @@
 #
 # Discovery: place this at ./rsigma.yaml, ~/.config/rsigma/config.yaml, or
 # /etc/rsigma/config.yaml, or point at it with `--config <path>`.
+# Project files (./rsigma.yaml, .rsigmarc) cannot set security-sensitive keys
+# such as daemon.enrichers, daemon.output.sinks, or mcp.daemon_url; put those
+# in the user or system config, or pass the file with `--config`.
 # Regenerate the JSON Schema with: rsigma config schema
 version: 1
 
@@ -26,7 +29,7 @@ daemon:
   # Builtin pipeline names (ecs_windows, sysmon) or YAML file paths.
   pipelines: []
   # External dynamic-source files or directories (repeatable).
-  sources: []
+  # sources: [/etc/rsigma/sources]
   # Post-evaluation enricher config file.
   # enrichers: /etc/rsigma/enrichers.yml
   # Alert-pipeline config file (dedup, grouping, silencing, inhibition).
@@ -38,8 +41,10 @@ daemon:
     # Bind address for health, metrics, and the HTTP/OTLP API. A non-loopback
     # TCP address refuses to start without TLS (or tls.allow_plaintext) and
     # without authentication (an auth block, tls.client_ca, or
-    # allow_unauthenticated). Loopback and unix:// addresses are exempt.
-    addr: "0.0.0.0:9090"
+    # allow_unauthenticated). Loopback and unix:// addresses are exempt. A
+    # project file (./rsigma.yaml, .rsigmarc) may only set a loopback address
+    # or a unix:// path inside the project.
+    # addr: "0.0.0.0:9090"
     # Serve an unauthenticated API on a non-loopback address. Use only behind
     # an authenticating proxy or network policy.
     # allow_unauthenticated: false
@@ -113,7 +118,8 @@ daemon:
     # unix sinks only), ?compression=gzip and ?timeout=10s (OTLP export
     # deadline per attempt), and for TLS ?ca=, ?client_cert=, ?client_key=
     # (PEM paths; the last two enable mutual TLS) and ?tls_domain= (SNI).
-    sinks: [stdout]
+    # Default: stdout.
+    # sinks: [stdout]
     # Dead-letter queue for events that fail processing.
     # dlq: "file:///var/lib/rsigma/dlq.ndjson"
     # Seconds to wait for in-flight events to drain on shutdown.
@@ -191,7 +197,7 @@ daemon:
     # default    = block link-local + cloud-metadata (SSRF defense, allow loopback / private).
     # strict     = also block loopback + RFC1918 private (recommended for hardened deployments).
     # permissive = allow every resolved address (only for tightly controlled environments).
-    egress_policy: default
+    # egress_policy: default
 
   # Live event tap (GET /api/v1/tap). Records a bounded window of the live
   # event stream as a replayable NDJSON fixture. Opt-in: disabled by default

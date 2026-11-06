@@ -9,6 +9,7 @@ use rsigma_eval::pipeline::sources::{DataFormat, ExtractExpr};
 use super::extract::apply_extract;
 use super::file::parse_data;
 use super::{MAX_SOURCE_RESPONSE_BYTES, ResolvedValue, SourceError, SourceErrorKind};
+use crate::egress::{EgressPolicy, default_egress_policy, egress_client_builder, error_chain};
 
 /// Process-wide shared HTTP client for source fetches. Built lazily on first
 /// use and reused for every subsequent call so refresh storms (e.g. a
@@ -16,30 +17,39 @@ use super::{MAX_SOURCE_RESPONSE_BYTES, ResolvedValue, SourceError, SourceErrorKi
 /// TLS handshakes, connection pooling, and DNS resolution. Per-call timeouts
 /// are applied via [`reqwest::RequestBuilder::timeout`] so a shared client is
 /// safe even when callers want different timeouts.
-static DEFAULT_HTTP_SOURCE_CLIENT: OnceLock<Arc<reqwest::Client>> = OnceLock::new();
+static DEFAULT_HTTP_SOURCE_CLIENT: OnceLock<SourceClient> = OnceLock::new();
 
 const DEFAULT_SOURCE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The shared source client and the egress policy it was built with, so the
+/// per-request URL check uses the same policy as the client's resolver.
+struct SourceClient {
+    client: Arc<reqwest::Client>,
+    policy: EgressPolicy,
+}
 
 /// Return the process-wide HTTP client used by source resolution.
 ///
 /// The first call constructs the client; subsequent calls return the same
-/// `Arc<reqwest::Client>`. The client is wired to the
-/// [`default_egress_policy`](crate::egress::default_egress_policy) via a
-/// custom DNS resolver so a Sigma rule that points the daemon at a cloud
-/// metadata endpoint cannot exfiltrate IAM credentials.
+/// `Arc<reqwest::Client>`. The client enforces the [`default_egress_policy`]
+/// on resolved hostnames and on every redirect hop, and [`resolve_http`] also
+/// checks each request URL before sending, so a Sigma rule that points the
+/// daemon at a cloud metadata endpoint, by hostname or by IP literal, cannot
+/// exfiltrate IAM credentials.
 ///
 /// Errors building the client are surfaced as `SourceError` rather than
 /// panicking so callers can fail-soft on broken TLS setups instead of
 /// crashing the daemon.
 pub fn shared_http_source_client() -> Result<Arc<reqwest::Client>, SourceError> {
+    shared_source_client().map(|c| c.client.clone())
+}
+
+fn shared_source_client() -> Result<&'static SourceClient, SourceError> {
     if let Some(client) = DEFAULT_HTTP_SOURCE_CLIENT.get() {
-        return Ok(client.clone());
+        return Ok(client);
     }
-    let resolver =
-        crate::egress::EgressFilteredResolver::new(crate::egress::default_egress_policy())
-            .into_dns_resolver();
-    let built = reqwest::Client::builder()
-        .dns_resolver(resolver)
+    let policy = default_egress_policy();
+    let built = egress_client_builder(policy)
         .build()
         .map(Arc::new)
         .map_err(|e| SourceError {
@@ -47,7 +57,10 @@ pub fn shared_http_source_client() -> Result<Arc<reqwest::Client>, SourceError> 
             kind: SourceErrorKind::Fetch(format!("failed to build HTTP client: {e}")),
         })?;
     // Other threads may have raced us; whichever insert wins is fine.
-    Ok(DEFAULT_HTTP_SOURCE_CLIENT.get_or_init(|| built).clone())
+    Ok(DEFAULT_HTTP_SOURCE_CLIENT.get_or_init(|| SourceClient {
+        client: built,
+        policy,
+    }))
 }
 
 /// Resolve an HTTP source by fetching the URL and parsing the response.
@@ -85,7 +98,11 @@ pub(crate) async fn resolve_http_with_limit(
     timeout: Option<Duration>,
     max_bytes: usize,
 ) -> Result<ResolvedValue, SourceError> {
-    let client = shared_http_source_client()?;
+    let SourceClient { client, policy } = shared_source_client()?;
+    policy.check_url(url).map_err(|denial| SourceError {
+        source_id: String::new(),
+        kind: SourceErrorKind::Fetch(format!("HTTP request failed: {denial}")),
+    })?;
 
     // A request carrying a body defaults to POST when no method is given; a
     // bodyless request defaults to GET. An explicit method always wins.
@@ -119,7 +136,7 @@ pub(crate) async fn resolve_http_with_limit(
         } else {
             SourceError {
                 source_id: String::new(),
-                kind: SourceErrorKind::Fetch(format!("HTTP request failed: {e}")),
+                kind: SourceErrorKind::Fetch(format!("HTTP request failed: {}", error_chain(&e))),
             }
         }
     })?;

@@ -40,7 +40,7 @@ enrichers:
 
 Every enricher declares a `kind: detection | correlation`. The kind drives two checks:
 
-1. **Config-load-time template validation.** A `kind: detection` enricher may only reference `${detection.*}` variables in its templated fields; a `kind: correlation` enricher may only reference `${correlation.*}`. Cross-namespace references are rejected at startup with a clear error pointing at the offending field. `${ENV_VAR}` is allowed in both namespaces.
+1. **Config-load-time template validation.** A `kind: detection` enricher may only reference `${detection.*}` variables in its templated fields; a `kind: correlation` enricher may only reference `${correlation.*}`. Cross-namespace references are rejected at startup with a clear error pointing at the offending field. `${ENV_VAR}` is allowed in both namespaces, except in enrichers passed to the MCP server's `evaluate_events` tool, which refuses them so a caller cannot read the server's environment (see [MCP server](mcp-server.md)). {{ added "unreleased" }}
 2. **Runtime body matching.** The pipeline skips enrichers whose declared kind does not match the current `EvaluationResult` body variant before invoking `enrich()`, so a detection-kind enricher pays no cost on correlation results and vice versa.
 
 Detection variables (`${detection.*}`):
@@ -175,7 +175,7 @@ Per-result `reqwest` request with template-expanded URL, headers, and optional b
 
 Event and correlation values are escaped for where they land. In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so a field value cannot add path segments, start a query, or reach another path on the host; a value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. In `body`, values are JSON-string-escaped, so a value inside a JSON string literal cannot add keys; a placeholder outside a string literal is inserted as raw text. `${ENV_VAR}` values in `url` are inserted verbatim, and header values are not escaped (CR and LF are rejected). {{ added "0.25.0" }}
 
-Each enricher instance owns its own response cache: two enrichers hitting the same URL with different `Authorization` headers do not share entries. Response bodies are capped at 10 MiB (same default as HTTP dynamic sources). Outbound URLs follow the daemon [`--egress-policy`](../reference/security.md#http-egress-policy-ssrf-defense) (SSRF / cloud-metadata defense at DNS resolution time).
+Each enricher instance owns its own response cache: two enrichers hitting the same URL with different `Authorization` headers do not share entries. Response bodies are capped at 10 MiB (same default as HTTP dynamic sources). Outbound URLs follow the daemon [`--egress-policy`](../reference/security.md#http-egress-policy-ssrf-defense) (SSRF / cloud-metadata defense at DNS resolution time, on IP-literal URLs, and on every redirect hop). {{ added "unreleased" }}
 
 ### `command`: per-result local-process execution
 

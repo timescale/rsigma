@@ -1,6 +1,6 @@
 # Configuration
 
-`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, `rsigma rule visibility`, and `rsigma rule hygiene` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
+`rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, `rsigma rule visibility`, `rsigma rule hygiene`, and `rsigma mcp serve` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.
 
 The same machinery is exposed through the [`rsigma config` group](../cli/config/init.md) for scaffolding, validation, introspection, and reload.
 
@@ -10,7 +10,7 @@ From highest to lowest:
 
 1. **CLI flags** on the command line (e.g. `--rules /tmp/r`).
 2. **Environment variables**: uniform `RSIGMA_<SECTION>__<KEY>` (see [Environment layer](#environment-layer)) plus the legacy clap-bound names listed in [Environment Variables](environment-variables.md).
-3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory.
+3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "unreleased" }}
 4. **User config**: `$XDG_CONFIG_HOME/rsigma/config.yaml` (defaulting to `~/.config/rsigma/config.yaml`).
 5. **System config**: `/etc/rsigma/config.yaml`.
 6. **Compiled defaults** baked into the binary.
@@ -26,6 +26,56 @@ All layers that exist are loaded and merged. There is no first-match-wins fallba
 Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately).
 
 The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explicitly rather than `dirs::config_dir()`, so on macOS the path stays under `~/.config/rsigma` instead of `~/Library/Application Support/`. The `rsigma install` workflow uses the same layout.
+
+## Project config trust
+
+{{ added "unreleased" }}
+
+A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` above the current directory) ships with whatever repository is checked out, so running `rsigma` inside a cloned repository would otherwise let that repository configure the process. Project files can still set ordinary keys such as rule paths, pipelines, and output formats, but the keys below open a listener, a write path, a subprocess, or a network client, or weaken a guard, so rsigma ignores them when they come from a project file:
+
+| Key | Why it is protected |
+|-----|---------------------|
+| `mcp.http_addr` | Starts a network listener instead of stdio. |
+| `mcp.allow_unconfined_paths` | Lets tool calls read any file the server user can read. |
+| `mcp.allow_sigma_cli` | Lets `convert_rules` spawn sigma-cli. |
+| `mcp.daemon_url` | Points the operate tools, and the daemon token, at another server. |
+| `mcp.daemon_ca` | Adds a trusted root CA for the daemon connection. |
+| `mcp.allow_operate_writes` | Registers the mutating operate tools. |
+| `mcp.rules_dir` | Only when it resolves outside the directory holding the project file, following symlinks. A rules directory inside the project is kept. |
+| `mcp.lint_config` | Only when it resolves outside the directory holding the project file, following symlinks, because the server reads it at startup and prints parse errors. A lint config inside the project is kept. |
+| `daemon.sources` | Dynamic sources can run `command` sources and make HTTP requests. |
+| `daemon.enrichers` | Enrichers can run `command` enrichers and make HTTP requests. |
+| `daemon.dispositions.source` | A disposition pull source is a dynamic source. |
+| `daemon.output.sinks` | Sends detections to files, NATS, OTLP collectors, or sockets. |
+| `daemon.output.dlq` | Sends failed events to a sink. |
+| `daemon.output.webhooks` | Sends detections to HTTP endpoints. |
+| `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials, or a `unix://` path outside the project. `stdin`, `http`, and `unix://` inputs inside the project are kept. |
+| `daemon.nats.consumer_group` | Joins another deployment's durable consumer and pulls its messages. |
+| `daemon.api.addr` | Unless it is a loopback `host:port` (`127.0.0.1`, `::1`, `localhost`) or a `unix://` path inside the project. Client commands such as `engine incidents export` send the API token to this address, and the daemon binds it. |
+| `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. |
+| `eval.output` | Only when it resolves outside the project. `engine eval` creates or truncates the file. |
+| `scorecard.report` | Only when it resolves outside the project. `rule scorecard` creates or truncates the file. |
+| `daemon.api.auth` | A planted token could name any environment variable, such as `HOME`, as its secret, and a project `auth` block replaces the operator's. |
+| `daemon.api.allow_unauthenticated` | Serves the API without authentication on a non-loopback address. |
+| `daemon.api.tls.allow_plaintext` | Serves plaintext on a non-loopback address. |
+| `daemon.api.tls.client_ca` | Decides which client certificates the API accepts. |
+| `daemon.api.audit` | Can turn off the control-plane audit trail or send it to a sink. |
+| `daemon.tap.enabled` | Streams raw events from `GET /api/v1/tap`. |
+| `daemon.tail.enabled` | Streams detections from `GET /api/v1/detections/stream`. |
+| `daemon.capture.enabled` | Retains raw event payloads for spooling. |
+| `daemon.capture.spool_dir` | Decides where retained payloads are written. |
+| `daemon.engine.egress_policy` | Can turn off the SSRF defense for HTTP sources and enrichers. |
+| `daemon.engine.allow_remote_include` | Lets pipelines include remote (HTTP or NATS) sources. |
+
+The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "unreleased" }}
+
+Each ignored key prints a warning naming the file:
+
+```text
+warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags
+```
+
+The same keys work from every other layer: an explicit `--config <PATH>` (which replaces discovery, so the file is trusted as the operator's choice), the user config, the system config, `RSIGMA_*` environment variables, and CLI flags. To keep a protected key in a repository, commit the file under another name and pass it with `--config`. [`rsigma config validate`](../cli/config/validate.md) and [`rsigma config show`](../cli/config/show.md) list the ignored keys.
 
 ## Format
 

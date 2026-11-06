@@ -538,7 +538,8 @@ fn build_one(
 ///
 /// The CA bundle is trusted in addition to the system roots; a client cert and
 /// key together enable mutual TLS. Egress filtering (SSRF defense) is preserved
-/// via the same DNS resolver the default client uses.
+/// the same way as for the default client: the resolver and redirect policy
+/// from `egress_client_builder`, plus a per-request URL check.
 fn build_tls_client(
     id: &str,
     tls: &WebhookTlsConfig,
@@ -558,10 +559,8 @@ fn build_tls_client(
     }
 
     ensure_crypto_provider();
-    let resolver =
-        crate::egress::EgressFilteredResolver::new(crate::egress::default_egress_policy())
-            .into_dns_resolver();
-    let mut builder = reqwest::Client::builder().dns_resolver(resolver);
+    let policy = crate::egress::default_egress_policy();
+    let mut builder = crate::egress::egress_client_builder(policy);
 
     if let Some(ca_path) = &tls.ca {
         let pem = std::fs::read(ca_path)
@@ -587,7 +586,7 @@ fn build_tls_client(
 
     builder
         .build()
-        .map(|c| HttpEnricherClient::from_reqwest(std::sync::Arc::new(c)))
+        .map(|c| HttpEnricherClient::with_egress_policy(c, policy))
         .map_err(|e| err(format!("TLS client build failed: {e}")))
 }
 

@@ -103,7 +103,7 @@ Three registration tiers:
 
 `--daemon-ca <PATH>` adds a PEM root CA for a self-signed daemon TLS listener. Unix-socket daemon URLs are unsupported; use TCP loopback.
 
-`create_silence` refuses an unbounded window: supply `ends_at` (RFC 3339) or `duration` (humantime, converted at call time). An optional client `id` is checked against `GET /api/v1/silences` first so a retried create is a no-op. `post_disposition` requires `fingerprint` or `incident_id` so the disposition store's redelivery key engages; without an identity a retry would double-count.
+`create_silence` refuses an unbounded window: supply `ends_at` (RFC 3339) or `duration` (humantime, converted at call time). The daemon also applies its silence limits, so a window past `max_silence_duration` or a silence without a scoped `=` matcher comes back as `{ "ok": false }` with the daemon's hint. {{ added "unreleased" }} An optional client `id` is checked against `GET /api/v1/silences` first so a retried create is a no-op. `post_disposition` requires `fingerprint` or `incident_id` so the disposition store's redelivery key engages; without an identity a retry would double-count.
 
 A typical triage loop calls `list_incidents` (optionally with `min_level` or `limit`), then `get_incident` or `get_incident_bundle`, then `list_risk_entities` and `get_rule_quality`, then `create_silence` with a TTL and `post_disposition`, and finally `tune_rules` if the verdict is a false positive.
 
@@ -120,7 +120,7 @@ The server exposes read-only MCP resources so an agent can ground itself on the 
 
 ## Enrichment
 
-`evaluate_events` accepts an optional `enrichers` (inline YAML/JSON) or `enrichers_path`. The config follows the daemon's enrichers schema, restricted to `template` enrichers (with kind-aware template namespaces); the matches are enriched before being returned. Because the loader validates the config (including template-namespace checks) and surfaces failures as structured errors, the tool doubles as a template-enricher validator. `command` and `http` enrichers are refused so a tool call cannot run local programs or reach network endpoints, and `lookup` and `stix` enrichers need resources only the daemon has; configure all four on the daemon.
+`evaluate_events` accepts an optional `enrichers` (inline YAML/JSON) or `enrichers_path`. The config follows the daemon's enrichers schema, restricted to `template` enrichers (with kind-aware template namespaces) that use only `${detection.*}` or `${correlation.*}` references; the matches are enriched before being returned. Because the loader validates the config (including template-namespace checks) and surfaces failures as structured errors, the tool doubles as a template-enricher validator. `command` and `http` enrichers are refused so a tool call cannot run local programs or reach network endpoints, and `lookup` and `stix` enrichers need resources only the daemon has; configure all four on the daemon. {{ added "unreleased" }} An enricher with a `${ENV_VAR}` reference in any templated field is refused too, because it would render the server's environment variables (API keys, tokens) into the result returned to the caller.
 
 ### Example calls
 
@@ -216,11 +216,13 @@ rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 ```
 
 - **Auth.** `--auth-token <token>` (or `RSIGMA_MCP_AUTH_TOKEN`) requires a static bearer token on every request; requests without `Authorization: Bearer <token>` get `401`. The token is compared in constant time and is flag/env-only (never read from config files).
+- **Auth off loopback.** A non-loopback `--http` bind refuses to start without `--auth-token` unless `--allow-unauthenticated` is set. {{ added "unreleased" }}
+- **Host validation.** Requests whose `Host` header is not accepted get `403`, which stops DNS-rebinding pages from reaching a local server. Loopback binds accept `localhost`, `127.0.0.1`, `::1`, and the bind IP. A non-loopback bind with a token accepts any host unless `--allowed-host` (repeatable) narrows it. A browser request whose `Origin` does not name an accepted host gets `403` as well, so a web page on another site cannot drive a local server. See [`rsigma mcp serve`](../cli/mcp/serve.md#streamable-http) for the full table. {{ added "unreleased" }}
 - **TLS.** `--tls-cert`/`--tls-key` terminate TLS in-process using the same rustls loader as the daemon (requires a build with the `daemon-tls` feature). Alternatively terminate TLS at a sidecar proxy and bind plaintext with `--allow-plaintext`.
 - **Plaintext safety.** Binding plaintext on a non-loopback address is refused unless `--allow-plaintext` is set.
 - **Path confinement.** `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set. {{ added "0.25.0" }}
 
-The `--http`, `--lint-config`, `--rules-dir`, `--allow-unconfined-paths`, `--daemon-url`, `--daemon-ca`, and `--allow-operate-writes` settings also resolve from the layered config (`mcp` section) and the `RSIGMA_MCP__*` environment layer (for example `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100`); the MCP HTTP auth token and the daemon token stay flag/env-only.
+The `--http`, `--lint-config`, `--rules-dir`, `--allow-unconfined-paths`, `--allow-sigma-cli`, `--daemon-url`, `--daemon-ca`, and `--allow-operate-writes` settings also resolve from the layered config (`mcp` section) and the `RSIGMA_MCP__*` environment layer (for example `RSIGMA_MCP__HTTP_ADDR=127.0.0.1:9100`); the MCP HTTP auth token and the daemon token stay flag/env-only. {{ added "unreleased" }} A project file (`./rsigma.yaml` or `.rsigmarc`) cannot set `mcp.http_addr`, `mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.daemon_url`, `mcp.daemon_ca`, `mcp.allow_operate_writes`, or a `mcp.rules_dir` or `mcp.lint_config` outside the project, so opening an agent in a cloned repository cannot turn these on. Set them with flags, `RSIGMA_MCP__*` environment variables, the user or system config, or an explicit `--config <PATH>` (see [Project config trust](../reference/configuration.md#project-config-trust)).
 
 ## See also
 

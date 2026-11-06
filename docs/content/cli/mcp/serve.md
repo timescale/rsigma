@@ -24,6 +24,7 @@ The command is gated behind the opt-in `mcp` Cargo feature: build from source wi
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--config <PATH>` | discovery | Load only this YAML config file instead of the discovery chain. Unlike a discovered project file, it may set the security-sensitive `mcp.*` keys (see [Project config trust](../../reference/configuration.md#project-config-trust)). CLI flags still override its values. {{ added "unreleased" }} |
 | `--lint-config <PATH>` | lint defaults | A lint config file (`.rsigma-lint.yml`) applied by the `lint_rules` tool (disabled rules, severity overrides, extra tag namespaces). Config key: `mcp.lint_config`. |
 | `--rules-dir <PATH>` | none | Root directory for path arguments in tool calls. Relative paths resolve against it, and any path that leaves it (absolute, `../`, or through a symlink) is refused. Without it, tools can read any file the server's OS user can read, `fix_rules` cannot write, `--http` refuses to start, and stdio prints a startup warning. Config key: `mcp.rules_dir`. |
 | `--allow-unconfined-paths` | off | Run without `--rules-dir`, leaving path arguments unconfined. Required to serve `--http` without a root; on stdio it silences the startup warning. `fix_rules` still cannot write without a root. Config key: `mcp.allow_unconfined_paths`. {{ added "0.25.0" }} |
@@ -34,6 +35,8 @@ The command is gated behind the opt-in `mcp` Cargo feature: build from source wi
 | `--allow-operate-writes` | off | Register `create_silence` and `post_disposition`. Requires `--daemon-url`. Config key: `mcp.allow_operate_writes`. {{ added "0.22.0" }} |
 | `--http <ADDR>` | stdio | Serve over the Streamable HTTP transport on this address (e.g. `127.0.0.1:9100`) instead of stdio. The MCP endpoint is mounted at `/mcp`. Config key: `mcp.http_addr`. |
 | `--auth-token <TOKEN>` | none | Require this static bearer token on every HTTP request (`Authorization: Bearer <token>`); requests without it get `401`. Also read from `RSIGMA_MCP_AUTH_TOKEN`. Flag/env only: secrets are never read from config files. |
+| `--allow-unauthenticated` | off | Serve `--http` on a non-loopback address without `--auth-token`. Without it, such a bind refuses to start, because anyone who can reach the port could call every tool. Loopback binds never need it. Flag only. {{ added "unreleased" }} |
+| `--allowed-host <HOST>` | see below | Accept this `Host` header value (a host name or `host:port`) on the HTTP transport. Repeatable. Adds to `localhost`, `127.0.0.1`, `::1`, and a specific bind IP; other hosts get `403`. Without it, a non-loopback bind with `--auth-token` accepts any host. Flag only. {{ added "unreleased" }} |
 | `--allow-plaintext` | off | Allow binding plaintext HTTP on a non-loopback address without TLS. Loopback binds never need it. |
 | `--tls-cert <PATH>` | none | TLS certificate (PEM) for the HTTP transport. Requires `--tls-key` and a build with the `daemon-tls` feature. |
 | `--tls-key <PATH>` | none | TLS private key (PEM) for the HTTP transport. Requires `--tls-cert`. |
@@ -92,20 +95,33 @@ Add to your `mcp.json`:
 For remote agents, serve over HTTP instead of stdio:
 
 ```bash
-# Local, loopback (no TLS required)
+# Local, loopback (no TLS or token required)
 rsigma mcp serve --http 127.0.0.1:9100 --rules-dir /path/to/rules
 
 # Authenticated (bearer token), behind a TLS-terminating proxy
 RSIGMA_MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
   rsigma mcp serve --http 0.0.0.0:9100 --rules-dir /path/to/rules --allow-plaintext
 
-# Native TLS (requires the `daemon-tls` feature)
+# Native TLS (requires the `daemon-tls` feature), restricted to one host name
 rsigma mcp serve --http 0.0.0.0:9100 --rules-dir /path/to/rules \
-  --auth-token "$TOKEN" \
+  --auth-token "$TOKEN" --allowed-host mcp.example.com \
   --tls-cert /etc/rsigma/tls/cert.pem --tls-key /etc/rsigma/tls/key.pem
 ```
 
 The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses are refused unless `--allow-plaintext` is set (use it when a sidecar proxy terminates TLS). Native TLS reuses the daemon's rustls loader and is only available when the binary is built with `daemon-tls`.
+
+{{ added "unreleased" }} A non-loopback bind also needs `--auth-token`, or `--allow-unauthenticated` to opt out. Every request's `Host` header is checked to stop DNS-rebinding pages from reaching the server. The accepted hosts depend on the bind:
+
+| Bind | Accepted `Host` values |
+|------|------------------------|
+| Loopback, such as `127.0.0.1:9100` | `localhost`, `127.0.0.1`, `::1`, the bind IP, and each `--allowed-host`. |
+| Non-loopback with `--auth-token` and no `--allowed-host` | Any host. The bearer token is the access control, and startup logs a note. |
+| Non-loopback with `--allowed-host` | The loopback names, a specific bind IP (not `0.0.0.0` or `::`), and each `--allowed-host`. |
+| Non-loopback with `--allow-unauthenticated` | The same list. Startup logs the accepted hosts; pass `--allowed-host` for the names clients use. |
+
+A host without a port matches any port. Other hosts get `403 Forbidden`.
+
+A request carrying an `Origin` header must name one of the accepted hosts over `http` or `https` (for example `http://localhost:6274` for a browser-based inspector), or it gets `403 Forbidden`. Requests without `Origin` are unaffected, and a bind that accepts any host skips the check.
 
 `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set, because any client that reaches the endpoint could otherwise read files outside a rules tree. {{ added "0.25.0" }}
 
@@ -115,7 +131,7 @@ The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses
 |------|---------|
 | `0` | The server ran and the client disconnected cleanly. |
 | `2` | The server failed (transport error). |
-| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), or `--http` without `--rules-dir` or `--allow-unconfined-paths`. |
+| `3` | The `--lint-config` file could not be loaded, an invalid config value (e.g. `mcp.http_addr`), `--http` without `--rules-dir` or `--allow-unconfined-paths`, a non-loopback `--http` without `--auth-token` or `--allow-unauthenticated`, an empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN`, or a plaintext non-loopback `--http` without `--tls-cert`/`--tls-key` or `--allow-plaintext`. |
 
 ## See also
 

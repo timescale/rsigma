@@ -19,7 +19,9 @@ use super::dedup::DedupConfig;
 use super::grouping::{Caps, GroupConfig, GroupMode, IncludeMode};
 use super::inhibit::{InhibitConfig, InhibitRule};
 use super::matcher::{MatcherError, MatcherSet, MatcherSpec};
-use super::silence::{Silence, SilenceError, SilenceOrigin, SilenceSpec};
+use super::silence::{
+    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceSpec,
+};
 use crate::selector::{Selector, SelectorParseError};
 
 /// Default re-emit cadence: `0` means pure suppression (no re-emits, only a
@@ -90,6 +92,15 @@ pub struct AlertPipelineFile {
     /// this many is rejected with `429`. Defaults to 1000.
     #[serde(default)]
     pub max_silences: Option<usize>,
+    /// Latest `ends_at` for an API silence, measured from its creation
+    /// (humantime). API silences without `ends_at`, or ending later, are
+    /// rejected with `400`. `0` removes the bound. Defaults to 720h.
+    #[serde(default, with = "humantime_opt")]
+    pub max_silence_duration: Option<Duration>,
+    /// Accept API silences with no `=` matcher on a non-empty value, such as
+    /// `rule =~ .*` alone. Defaults to false.
+    #[serde(default)]
+    pub allow_broad_silences: bool,
     /// Inhibition rules. An active source mutes matching targets.
     #[serde(default)]
     pub inhibit_rules: Vec<InhibitRuleFile>,
@@ -366,6 +377,14 @@ pub fn build_alert_pipeline(
     };
 
     let max_silences = file.max_silences.unwrap_or(DEFAULT_MAX_DYNAMIC_SILENCES);
+    let silence_limits = SilenceLimits {
+        max_duration: match file.max_silence_duration {
+            Some(Duration::ZERO) => None,
+            Some(max) => Some(max),
+            None => Some(DEFAULT_MAX_SILENCE_DURATION),
+        },
+        allow_broad: file.allow_broad_silences,
+    };
 
     Ok(AlertPipeline::new(
         scope,
@@ -375,6 +394,7 @@ pub fn build_alert_pipeline(
         static_silences,
         inhibit,
         max_silences,
+        silence_limits,
     ))
 }
 
@@ -496,6 +516,23 @@ mod tests {
     fn empty_file_builds() {
         let file: AlertPipelineFile = yaml_serde::from_str("{}").unwrap();
         build_alert_pipeline(file).unwrap();
+    }
+
+    #[test]
+    fn silence_limits_default_and_override() {
+        let limits = |yaml: &str| {
+            let file: AlertPipelineFile = yaml_serde::from_str(yaml).unwrap();
+            build_alert_pipeline(file).unwrap().silence_limits()
+        };
+        assert_eq!(limits("{}"), SilenceLimits::default());
+        assert_eq!(
+            limits("max_silence_duration: 2h\nallow_broad_silences: true\n"),
+            SilenceLimits {
+                max_duration: Some(Duration::from_secs(7200)),
+                allow_broad: true,
+            }
+        );
+        assert_eq!(limits("max_silence_duration: 0\n").max_duration, None);
     }
 
     #[test]

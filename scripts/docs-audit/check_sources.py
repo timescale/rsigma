@@ -2,10 +2,10 @@
 """Check the docs catalogues against the source tree.
 
 Each check compares a list the docs maintain by hand (fuzz harnesses, lint
-counts, metrics, HTTP routes, features, environment variables, native
-backends, navigation) with the code it describes, and rejects em and en
-dashes outside windash examples. Needs only the Python standard library and
-no built binary.
+counts, metrics, HTTP routes, features, protected config keys, environment
+variables, native backends, navigation) with the code it describes, and
+rejects em and en dashes outside windash examples. Needs only the Python
+standard library and no built binary.
 
     python3 scripts/docs-audit/check_sources.py
 
@@ -165,6 +165,25 @@ def check_features() -> list[str]:
     return [f"CLI feature {name} is missing from reference/feature-flags.md" for name in names if f"`{name}`" not in page]
 
 
+def check_protected_config_keys() -> list[str]:
+    text = read(ROOT / "crates" / "rsigma-cli" / "src" / "config" / "mod.rs")
+    table = text.split("PROTECTED_KEYS: &[ProtectedKey] = &[", 1)
+    if len(table) != 2:
+        return ["PROTECTED_KEYS not found in crates/rsigma-cli/src/config/mod.rs"]
+    keys = re.findall(r'key:\s*"([^"]+)"', table[1].split("\n];", 1)[0])
+    if not keys:
+        return ["no keys parsed from PROTECTED_KEYS in crates/rsigma-cli/src/config/mod.rs"]
+    errors = []
+    for name, heading in (("configuration.md", "## Project config trust"), ("security.md", "## Project config files")):
+        page = read(CONTENT / "reference" / name)
+        if f"\n{heading}\n" not in page:
+            errors.append(f"reference/{name} has no '{heading}' section")
+            continue
+        section = page.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        errors += [f"protected config key {key} is missing from the '{heading}' section of reference/{name}" for key in keys if f"`{key}`" not in section]
+    return errors
+
+
 def check_native_backends() -> list[str]:
     def targets(path: Path) -> list[str]:
         match = re.search(r"NATIVE_TARGETS:\s*&\[&str\]\s*=\s*&\[([^\]]*)\]", read(path))
@@ -197,6 +216,7 @@ CHECKS = [
     check_metrics,
     check_http_routes,
     check_features,
+    check_protected_config_keys,
     check_native_backends,
 ]
 

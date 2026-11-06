@@ -26,6 +26,9 @@ use super::{
     inject_enrichment,
     template::{render_template, render_template_json, render_template_url},
 };
+use crate::egress::{
+    EgressDenial, EgressPolicy, default_egress_policy, egress_client_builder, error_chain,
+};
 use crate::metrics::{MetricsHook, NoopMetrics};
 use crate::sources::MAX_SOURCE_RESPONSE_BYTES;
 
@@ -71,18 +74,45 @@ pub struct HttpEnricher {
 /// of `rsigma-runtime` so consumer crates (e.g. `rsigma-cli`) do not
 /// need a direct dep just to wire enrichers together.
 #[derive(Clone)]
-pub struct HttpEnricherClient(Arc<reqwest::Client>);
+pub struct HttpEnricherClient {
+    client: Arc<reqwest::Client>,
+    /// Policy the client was built with, re-applied to each request URL so an
+    /// IP-literal host (which bypasses the resolver) is filtered too.
+    egress: Option<EgressPolicy>,
+}
 
 impl HttpEnricherClient {
     /// Wrap an existing `reqwest::Client`. Useful for tests that want to
     /// stub out the client (e.g. a `wiremock`-backed tower stack).
+    ///
+    /// The wrapper applies no egress policy of its own: request URLs are
+    /// sent as given, and only whatever resolver and redirect policy the
+    /// caller configured on `client` filter them.
     pub fn from_reqwest(client: Arc<reqwest::Client>) -> Self {
-        Self(client)
+        Self {
+            client,
+            egress: None,
+        }
+    }
+    /// Wrap a client built by [`egress_client_builder`] for `policy`, so each
+    /// request URL is also checked against `policy` before it is sent.
+    pub(crate) fn with_egress_policy(client: reqwest::Client, policy: EgressPolicy) -> Self {
+        Self {
+            client: Arc::new(client),
+            egress: Some(policy),
+        }
     }
     /// Access the inner client. Crate-private so external code goes
     /// through the wrapper.
     pub(crate) fn inner(&self) -> &reqwest::Client {
-        &self.0
+        &self.client
+    }
+    /// Check `url` against the client's egress policy, if it has one.
+    pub(crate) fn check_url(&self, url: &str) -> Result<(), EgressDenial> {
+        match &self.egress {
+            Some(policy) => policy.check_url(url),
+            None => Ok(()),
+        }
     }
 }
 
@@ -90,19 +120,15 @@ impl HttpEnricherClient {
 /// pipeline. All HTTP enrichers in the same daemon process share one
 /// client to amortize TLS handshakes and DNS resolution.
 ///
-/// The client is wired to the
-/// [`default_egress_policy`](crate::egress::default_egress_policy) via a
-/// custom DNS resolver so an enrichment URL that resolves to a denied
-/// address (cloud metadata, link-local) fails fast at connect time
-/// rather than completing a request to a sensitive endpoint.
+/// The client enforces the [`default_egress_policy`] on every address it would
+/// connect to: a hostname that resolves to a denied address (cloud metadata,
+/// link-local) fails at connect time, an IP-literal URL is refused before the
+/// request is sent, and a redirect to a denied IP literal is not followed.
 pub fn build_default_http_client() -> Result<HttpEnricherClient, String> {
-    let resolver =
-        crate::egress::EgressFilteredResolver::new(crate::egress::default_egress_policy())
-            .into_dns_resolver();
-    reqwest::Client::builder()
-        .dns_resolver(resolver)
+    let policy = default_egress_policy();
+    egress_client_builder(policy)
         .build()
-        .map(|c| HttpEnricherClient(Arc::new(c)))
+        .map(|c| HttpEnricherClient::with_egress_policy(c, policy))
         .map_err(|e| format!("reqwest client build failed: {e}"))
 }
 
@@ -239,6 +265,10 @@ impl Enricher for HttpEnricher {
                 kind: EnrichErrorKind::Fetch(format!("invalid method '{}': {e}", self.method)),
             })?;
 
+        self.client.check_url(&url).map_err(|denial| EnrichError {
+            enricher_id: self.id.clone(),
+            kind: EnrichErrorKind::Fetch(denial.to_string()),
+        })?;
         let mut req = self
             .client
             .inner()
@@ -252,7 +282,7 @@ impl Enricher for HttpEnricher {
             kind: if e.is_timeout() {
                 EnrichErrorKind::Timeout
             } else {
-                EnrichErrorKind::Fetch(format!("{e}"))
+                EnrichErrorKind::Fetch(error_chain(&e))
             },
         })?;
 

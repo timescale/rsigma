@@ -4,7 +4,10 @@
 
 mod common;
 
-use common::{DaemonProcess, SIMPLE_RULE, http_get, http_get_bearer, http_post_bearer, temp_file};
+use common::{
+    DaemonProcess, SIMPLE_RULE, bounded_silence, http_get, http_get_bearer, http_post_bearer,
+    temp_file,
+};
 use std::time::Duration;
 
 const AUTH_CONFIG: &str = r#"
@@ -20,11 +23,9 @@ daemon:
           token_env: TEST_TOKEN_READER
 "#;
 
-const SILENCE: &str = r#"{
-    "matchers": [{"selector": "match.CommandLine", "op": "=~", "value": "malware.*"}],
-    "comment": "audit test",
-    "created_by": "tests"
-}"#;
+fn silence() -> String {
+    bounded_silence("audit test")
+}
 
 #[test]
 fn mutation_is_audited_with_token_and_status() {
@@ -32,6 +33,7 @@ fn mutation_is_audited_with_token_and_status() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.db");
     let config = temp_file(".yaml", AUTH_CONFIG);
+    let alert_pipeline = temp_file(".yml", "{}\n");
 
     let daemon = DaemonProcess::spawn_http_with_args_env(
         rule.path().to_str().unwrap(),
@@ -40,6 +42,8 @@ fn mutation_is_audited_with_token_and_status() {
             config.path().to_str().unwrap(),
             "--state-db",
             db.to_str().unwrap(),
+            "--alert-pipeline",
+            alert_pipeline.path().to_str().unwrap(),
         ],
         &[
             ("TEST_TOKEN_OPERATOR", "tok-operator"),
@@ -47,7 +51,8 @@ fn mutation_is_audited_with_token_and_status() {
         ],
     );
 
-    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", SILENCE);
+    let (status, body) =
+        http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", &silence());
     assert_eq!(status, 201, "{body}");
 
     // Give the async audit write a moment to land in SQLite.
@@ -123,7 +128,8 @@ fn oversized_body_is_rejected_and_recorded() {
 
     // The silence body is well over the 16-byte cap, so the audit middleware
     // rejects it with 413 before the handler runs.
-    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", SILENCE);
+    let (status, body) =
+        http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", &silence());
     assert_eq!(status, 413, "{body}");
 
     std::thread::sleep(Duration::from_millis(200));

@@ -8,8 +8,8 @@
 mod common;
 
 use common::{
-    DaemonProcess, SIMPLE_RULE, http_delete_bearer, http_get, http_get_bearer, http_post,
-    http_post_bearer, spawn_expect_failure, temp_file,
+    DaemonProcess, SIMPLE_RULE, bounded_silence, http_delete_bearer, http_get, http_get_bearer,
+    http_post, http_post_bearer, spawn_expect_failure, temp_file,
 };
 use std::time::Duration;
 
@@ -42,11 +42,9 @@ daemon:
 
 /// A valid silence body (the auth tests only care about the status code, but
 /// authorized requests should exercise the real handler, not a 400 path).
-const SILENCE: &str = r#"{
-    "matchers": [{"selector": "match.CommandLine", "op": "=~", "value": "malware.*"}],
-    "comment": "auth test",
-    "created_by": "tests"
-}"#;
+fn silence() -> String {
+    bounded_silence("auth test")
+}
 
 const TOKEN_ENV: &[(&str, &str)] = &[
     ("TEST_TOKEN_READER", "tok-reader"),
@@ -56,14 +54,20 @@ const TOKEN_ENV: &[(&str, &str)] = &[
     ("TEST_TOKEN_BOT", "tok-bot"),
 ];
 
-fn spawn_with_auth_config(rule_path: &str) -> (DaemonProcess, tempfile::NamedTempFile) {
+fn spawn_with_auth_config(rule_path: &str) -> (DaemonProcess, [tempfile::NamedTempFile; 2]) {
     let config = temp_file(".yaml", AUTH_CONFIG);
+    let alert_pipeline = temp_file(".yml", "{}\n");
     let daemon = DaemonProcess::spawn_http_with_args_env(
         rule_path,
-        &["--config", config.path().to_str().unwrap()],
+        &[
+            "--config",
+            config.path().to_str().unwrap(),
+            "--alert-pipeline",
+            alert_pipeline.path().to_str().unwrap(),
+        ],
         TOKEN_ENV,
     );
-    (daemon, config)
+    (daemon, [config, alert_pipeline])
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +142,8 @@ fn reader_reads_but_cannot_write() {
         let (status, _) = http_get_bearer(&daemon.url(path), "tok-reader");
         assert_eq!(status, 200, "reader GET {path}");
     }
-    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-reader", SILENCE);
+    let (status, body) =
+        http_post_bearer(&daemon.url("/api/v1/silences"), "tok-reader", &silence());
     assert_eq!(status, 403, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(
@@ -156,7 +161,8 @@ fn operator_writes_but_cannot_reload() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let (daemon, _config) = spawn_with_auth_config(rule.path().to_str().unwrap());
 
-    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", SILENCE);
+    let (status, body) =
+        http_post_bearer(&daemon.url("/api/v1/silences"), "tok-operator", &silence());
     assert_eq!(status, 201, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let id = v["id"].as_str().expect("silence id").to_string();
@@ -203,7 +209,7 @@ fn ingest_token_ships_events_but_cannot_read_or_operate() {
 
     let (status, _) = http_get_bearer(&daemon.url("/api/v1/status"), "tok-ingest");
     assert_eq!(status, 403, "ingest token cannot read status");
-    let (status, _) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-ingest", SILENCE);
+    let (status, _) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-ingest", &silence());
     assert_eq!(status, 403, "ingest token cannot create silences");
 }
 
@@ -214,7 +220,7 @@ fn custom_role_grants_its_permission_set() {
 
     let (status, _) = http_get_bearer(&daemon.url("/api/v1/status"), "tok-bot");
     assert_eq!(status, 200, "triage-bot has *:read");
-    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-bot", SILENCE);
+    let (status, body) = http_post_bearer(&daemon.url("/api/v1/silences"), "tok-bot", &silence());
     assert_eq!(status, 201, "{body}");
     let (status, _) = http_post_bearer(&daemon.url("/api/v1/dispositions"), "tok-bot", "{}");
     assert_eq!(status, 403, "triage-bot lacks dispositions:write");

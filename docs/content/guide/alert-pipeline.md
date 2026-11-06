@@ -74,6 +74,9 @@ silences:
 ### The silence API
 
 - `POST /api/v1/silences` creates a silence from a JSON body (`matchers`, optional `starts_at`/`ends_at` RFC 3339, `created_by`, `comment`) and returns the assigned `id`. It returns `429 Too Many Requests` once the dynamic-silence cap (`max_silences`, default 1000) is reached; delete silences or raise the cap.
+- API silences are bounded by default. {{ added "unreleased" }} Each one needs an `ends_at` no more than `max_silence_duration` (default `720h`) from now, and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, such as `rule = <id>` or `match.SourceIp = 10.0.0.5`. `level`, `event.*`, and `enrichment.*` matchers do not count, because their values are shared by whole classes of results. A silence that breaks either rule gets `400` with a hint naming the config key; set `max_silence_duration: 0` or `allow_broad_silences: true` to lift them. Silences declared in the config are not limited. The limits apply per silence: covering many rules takes one silence per rule, up to `max_silences`.
+- API silences that exceed the current limits, such as ones restored from `--state-db` that were created before an upgrade, stay in effect until they expire or are deleted. The daemon logs their ids at startup and on alert-pipeline reload. {{ added "unreleased" }}
+- Without `--alert-pipeline`, nothing applies silences, so `POST /api/v1/silences` returns `409 Conflict` instead of accepting a silence that would have no effect. {{ added "unreleased" }}
 - `GET /api/v1/silences` lists every silence with its derived `state` (`pending`/`active`/`expired`) and `origin`.
 - `DELETE /api/v1/silences/{id}` removes a silence.
 
@@ -115,6 +118,8 @@ dedup:
 | `dedup.resolve_timeout` | `1h` | Idle timeout after which an active alert resolves and is evicted (humantime). |
 | `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. The `rsigma_dedup_store_entries` gauge plateauing at this value signals saturation. |
 | `max_silences` | `1000` | Ceiling on concurrently-tracked dynamic (API) silences. `POST /api/v1/silences` returns `429` past this. Static silences from the config do not count against it. |
+| `max_silence_duration` | `720h` | Latest `ends_at` for an API silence, measured from when it is created (humantime). `POST /api/v1/silences` returns `400` for a silence without `ends_at` or one that ends later. `0` removes the bound. Static silences are not limited. {{ added "unreleased" }} |
+| `allow_broad_silences` | `false` | Accept API silences with no `=` matcher on a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, such as `rule =~ .*`, `rule != x`, or `level = high` alone, which mute whole classes of results. Static silences are not limited. {{ added "unreleased" }} |
 | `max_inhibit_sources` | `100000` | Ceiling on tracked inhibition sources across all `inhibit_rules`. Once reached, a result that would open a new source is not tracked (counted on `rsigma_inhibit_sources_refused_total{rule}`); it can still be inhibited, and existing sources keep refreshing. {{ added "0.25.0" }} |
 
 ### Field selectors

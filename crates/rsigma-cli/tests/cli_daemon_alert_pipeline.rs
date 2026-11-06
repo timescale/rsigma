@@ -235,9 +235,14 @@ fn silence_mutes_matching_detections() {
         &format!("file://{output_path}"),
     ]);
 
-    // Create a silence matching the rule's CommandLine, before sending events.
+    // Create a silence scoped to the rule and its CommandLine, before sending
+    // events.
     let silence = serde_json::json!({
-        "matchers": [{"selector": "match.CommandLine", "op": "=~", "value": "malware.*"}],
+        "matchers": [
+            {"selector": "rule", "op": "=", "value": common::SIMPLE_RULE_ID},
+            {"selector": "match.CommandLine", "op": "=~", "value": "malware.*"}
+        ],
+        "ends_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
         "comment": "test maintenance",
         "created_by": "ops"
     })
