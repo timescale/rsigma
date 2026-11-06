@@ -149,13 +149,12 @@ pub(crate) fn cmd_fmt(args: FmtArgs, ctx: OutputCtx) -> i32 {
         }
     }
 
-    report_summary(&ctx, mode, changed, already, skipped, failed);
+    report_summary(&ctx, mode, changed, already, skipped, failed, true);
     exit_code(mode, changed, failed)
 }
 
 /// Validate the flag combination and pick the mode. The conflict pairs are
-/// checked in the order the plan documents so the first reported message is
-/// deterministic.
+/// checked in a fixed order so the first reported conflict is deterministic.
 fn validate(args: &FmtArgs) -> Result<Mode, String> {
     let conflicts = [
         (args.write, "--write", args.check, "--check"),
@@ -277,7 +276,7 @@ fn stdin_mode(mode: Mode, ctx: &OutputCtx) -> i32 {
             failed += 1;
         }
     }
-    report_summary(ctx, mode, changed, already, skipped, failed);
+    report_summary(ctx, mode, changed, already, skipped, failed, false);
     exit_code(mode, changed, failed)
 }
 
@@ -310,6 +309,7 @@ fn report_summary(
     already: usize,
     skipped: usize,
     failed: usize,
+    writable: bool,
 ) {
     if !ctx.show_stats() {
         return;
@@ -323,7 +323,11 @@ fn report_summary(
         summary.push_str(&format!(", {failed} failed"));
     }
     if mode != Mode::Write && changed > 0 {
-        summary.push_str(" (run with --write to apply)");
+        summary.push_str(if writable {
+            " (run with --write to apply)"
+        } else {
+            " (run with --stdout - to print the formatted text)"
+        });
     }
     eprintln!("{summary}");
 }

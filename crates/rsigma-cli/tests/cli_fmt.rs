@@ -102,7 +102,11 @@ fn stdin_check_exits_one_when_unformatted() {
         .write_stdin(UNFORMATTED)
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("Would reformat: <stdin>"));
+        .stdout(predicate::str::contains("Would reformat: <stdin>"))
+        .stderr(predicate::str::contains(
+            "(run with --stdout - to print the formatted text)",
+        ))
+        .stderr(predicate::str::contains("--write").not());
 }
 
 #[test]
