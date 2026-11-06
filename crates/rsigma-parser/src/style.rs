@@ -224,8 +224,13 @@ fn single_quote_cannot_carry(c: char) -> bool {
     ) || (c.is_control() && c != '\t')
 }
 
+/// Lines that end in a space or tab stay quoted: editors and pre-commit hooks
+/// that trim trailing whitespace would silently change a literal block.
 fn literal_ok(s: &str) -> bool {
     if !s.chars().any(|c| c != '\n') {
+        return false;
+    }
+    if s.split('\n').any(|line| line.ends_with([' ', '\t'])) {
         return false;
     }
     !s.chars().any(|c| {
@@ -571,6 +576,14 @@ mod tests {
 
     #[test]
     fn encode_literal_table() {
+        assert_eq!(
+            encode("x  \ny", ScalarCtx::Value),
+            Encoded::Double("\"x  \\ny\"".into())
+        );
+        assert_eq!(
+            encode("x\t\ny", ScalarCtx::Value),
+            Encoded::Double("\"x\\t\\ny\"".into())
+        );
         assert_eq!(
             encode("a\nb", ScalarCtx::Value),
             Encoded::Literal {
