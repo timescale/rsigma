@@ -133,7 +133,7 @@ The site publishes from `main`, so docs for a change that is not in a release ye
 
 From `docs/`, run `npm install` once, then `npm run docs:build` and `npm run docs:validate` before pushing docs changes; `.github/workflows/docs.yml` enforces both on every PR. `.github/workflows/docs-audit.yml` also checks the docs catalogues, CLI pages, config schema, MCP tool list, backend samples, and YAML examples against the code on every PR; see [Testing: Docs audit](https://rsigma.io/developers/testing/#docs-audit) for running the two scripts locally.
 
-A `CHANGELOG.md` entry under `## [X.Y.Z] - YYYY-MM-DD` is part of the release commit (the same content gets copied to the GitHub Release body). For features with public-API impact, the release notes mention the affected README and `docs/` pages so reviewers can sanity-check the doc sync.
+Each PR adds its `CHANGELOG.md` entry at the top of `## [Unreleased]`, so the section lists the newest change first, as the released sections do. A `CHANGELOG.md` entry under `## [X.Y.Z] - YYYY-MM-DD` is part of the release commit (the same content gets copied to the GitHub Release body). For features with public-API impact, the release notes mention the affected README and `docs/` pages so reviewers can sanity-check the doc sync.
 
 ## Architecture
 
