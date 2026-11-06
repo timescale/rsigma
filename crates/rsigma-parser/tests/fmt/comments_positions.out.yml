@@ -1,0 +1,14 @@
+# header comment
+title: Comments Positions # trailing on title key
+logsource:
+    category: test
+detection:
+    selection:
+        # leading on Field
+        Field: value # trailing on scalar
+        Block: content # trailing on block header
+        Items:
+            - one # trailing on dash
+    # leading on condition
+    condition: selection
+    # dangling in detection

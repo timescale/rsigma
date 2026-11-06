@@ -153,7 +153,13 @@ fn emit_related(out: &mut String, related: &[Related]) {
     }
     let _ = writeln!(out, "related:");
     for entry in related {
-        push_scalar(out, STEP, Lead::Key("id"), &entry.id, ScalarCtx::Value);
+        push_scalar(
+            out,
+            &format!("{STEP}- "),
+            Lead::Key("id"),
+            &entry.id,
+            ScalarCtx::Value,
+        );
         let _ = writeln!(out, "{STEP}  type: {}", relation_str(entry.relation_type));
     }
 }
@@ -499,6 +505,9 @@ fn yaml_scalar(value: &yaml_serde::Value) -> String {
     match value {
         yaml_serde::Value::Null => "null".to_string(),
         yaml_serde::Value::Bool(b) => b.to_string(),
+        yaml_serde::Value::Number(n) if n.is_f64() => {
+            float_token(n.as_f64().unwrap_or_default())
+        }
         yaml_serde::Value::Number(n) => n.to_string(),
         yaml_serde::Value::String(s) => encode_key(s, KeyCtx::Key),
         // Nested collections are handled by emit_yaml_value; an inline fallback
@@ -513,8 +522,17 @@ fn yaml_scalar(value: &yaml_serde::Value) -> String {
 
 /// Format a float so it re-parses as a float (never collapses `3.0` to `3`).
 fn float_token(f: f64) -> String {
+    if f.is_nan() {
+        return ".nan".to_string();
+    }
+    if f == f64::INFINITY {
+        return ".inf".to_string();
+    }
+    if f == f64::NEG_INFINITY {
+        return "-.inf".to_string();
+    }
     let s = f.to_string();
-    if s.contains(['.', 'e', 'E']) || s.contains("inf") || s.contains("NaN") {
+    if s.contains(['.', 'e', 'E']) {
         s
     } else {
         format!("{s}.0")

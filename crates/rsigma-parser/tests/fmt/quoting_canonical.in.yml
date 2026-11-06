@@ -1,0 +1,21 @@
+title: Quoting Canonical
+logsource:
+  category: test
+detection:
+  selection:
+    Plain: 'whoami'
+    Double: "x"
+    Wildcard: '*foo*'
+    Backslash: 'C:\Windows\'
+    CoerceTrue: 'true'
+    CoerceInt: '123'
+    CoerceHex: '0x1F'
+    CoerceUnderscore: '1_000'
+    CoerceTime: '1:30'
+    CoerceNull: 'null'
+    CoerceTilde: '~'
+    Empty: ''
+    Url: 'https://example.com/a?b=c'
+  condition: selection
+references:
+  - https://example.com/a?b=c

@@ -1,0 +1,12 @@
+# license header
+# rsigma-disable-next-line missing_author
+title: Comments Follow Keys
+# logsource note
+logsource:
+    category: test
+detection:
+    selection:
+        Field: value
+    # rsigma-disable missing_author
+    condition: selection
+# tail

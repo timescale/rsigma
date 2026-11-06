@@ -1,0 +1,12 @@
+title: Double Quoted Escapes
+logsource:
+    category: test
+detection:
+    selection:
+        Bell: "bell\a"
+        Tab: 'tab	here'
+        Newline: |-
+            line
+            break
+        NextLine: "a\Nb"
+    condition: selection

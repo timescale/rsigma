@@ -10,8 +10,9 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["fix"]
+default = ["fix", "fmt"]
 fix = ["dep:yamlpatch", "dep:yamlpath"]
+fmt = ["dep:tree-sitter", "dep:tree-sitter-yaml"]
 
 [dependencies]
 fancy-regex = "0.20"
@@ -22,6 +23,8 @@ pest_derive = "2"
 regex-syntax = "0.8"
 serde = { version = "1", features = ["derive"] }
 stacker = "0.1.25"
+tree-sitter = { version = "0.26", optional = true }
+tree-sitter-yaml = { version = "0.7", optional = true }
 yaml_serde = "0.10"
 yamlpath = { version = "1.27", optional = true }
 yamlpatch = { version = "1.26", optional = true }

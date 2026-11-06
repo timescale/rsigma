@@ -299,18 +299,18 @@ fn is_yaml_1_1_number(s: &str) -> bool {
         return false;
     }
     let mut groups: Vec<&str> = rest.split(':').collect();
-    if let Some(last) = groups.last_mut() {
-        if let Some((digits, frac)) = last.split_once('.') {
-            if digits.is_empty()
-                || digits.len() > 2
-                || !digits.chars().all(|c| c.is_ascii_digit())
-                || frac.is_empty()
-                || !frac.chars().all(|c| c.is_ascii_digit())
-            {
-                return false;
-            }
-            *last = digits;
+    if let Some(last) = groups.last_mut()
+        && let Some((digits, frac)) = last.split_once('.')
+    {
+        if digits.is_empty()
+            || digits.len() > 2
+            || !digits.chars().all(|c| c.is_ascii_digit())
+            || frac.is_empty()
+            || !frac.chars().all(|c| c.is_ascii_digit())
+        {
+            return false;
         }
+        *last = digits;
     }
     !groups.is_empty()
         && groups
@@ -441,6 +441,7 @@ pub(crate) const RELATED_ITEM: &[&str] = &["id", "type"];
 
 /// Sort keys so the ones named in `table` come first in table order and the
 /// rest keep their source order.
+#[cfg(test)]
 pub(crate) fn sort_by_table<'a>(keys: &[&'a str], table: &[&str]) -> Vec<&'a str> {
     let mut ranked: Vec<(usize, usize, &str)> = keys
         .iter()

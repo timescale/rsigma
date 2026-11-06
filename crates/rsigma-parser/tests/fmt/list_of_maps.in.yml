@@ -1,0 +1,10 @@
+title: List Of Maps
+logsource:
+  category: test
+detection:
+  selection:
+    - Field: one
+      Other: two
+    - Field: three
+      Other: four
+  condition: selection

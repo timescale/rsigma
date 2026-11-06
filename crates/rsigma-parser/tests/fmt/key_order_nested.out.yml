@@ -1,0 +1,19 @@
+title: Key Order Nested
+related:
+    - id: 00000000-0000-0000-0000-000000000004
+      type: derived
+logsource:
+    category: process_creation
+    product: windows
+    service: sysmon
+    definition: nested logsource
+detection:
+    selection_b:
+        FieldB: two
+    selection_a:
+        FieldA: one
+    timeframe: 5m
+    condition: selection_b and selection_a
+falsepositives:
+    - Unknown
+level: low

@@ -62,6 +62,8 @@ pub mod condition;
 pub mod diagnostic;
 pub mod emit;
 pub mod error;
+#[cfg(feature = "fmt")]
+pub mod fmt;
 pub mod exemplar;
 pub mod fieldpath;
 pub mod lint;
@@ -87,6 +89,8 @@ pub use ast::{
 pub use condition::parse_condition;
 pub use diagnostic::{CollectionDiagnostic, DiagnosticKind, DiagnosticSeverity};
 pub use emit::{emit_collection_yaml, emit_rule_yaml};
+#[cfg(feature = "fmt")]
+pub use fmt::{FormatError, FormatOutcome, format_yaml};
 pub use error::{Result, SigmaParserError, SigmaParserErrorKind, SourceLocation};
 pub use exemplar::{
     EXEMPLARS_KEY, Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind,

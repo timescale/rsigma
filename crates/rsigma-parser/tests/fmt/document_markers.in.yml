@@ -1,0 +1,18 @@
+---
+title: First Document
+logsource:
+    category: test
+detection:
+    selection:
+        Field: one
+    condition: selection
+...
+---
+title: Second Document
+logsource:
+    category: test
+detection:
+    selection:
+        Field: two
+    condition: selection
+...

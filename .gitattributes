@@ -3,3 +3,4 @@
 crates/rsigma-cli/tests/golden/** text eol=lf
 crates/rsigma-convert/tests/golden/** text eol=lf
 crates/rsigma-eval/src/rule_draft/golden/** text eol=lf
+crates/rsigma-parser/tests/fmt/** text eol=lf
