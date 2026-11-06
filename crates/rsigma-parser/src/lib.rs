@@ -97,7 +97,7 @@ pub use exemplar::{
     raw_exemplar_values, raw_match_exemplar_count, raw_winning_exemplars,
 };
 #[cfg(feature = "fmt")]
-pub use fmt::{FormatError, FormatOutcome, format_yaml};
+pub use fmt::{FormatError, FormatOutcome, RangeEdit, format_yaml, format_yaml_range};
 pub use lint::catalogue::{LintRuleInfo, catalogue};
 #[cfg(feature = "fix")]
 pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};

@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tree_sitter::Tree;
 
 use crate::diagnostic::DiagnosticSeverity;
+use crate::fmt::context::DocKind;
 use crate::parser::parse_sigma_yaml;
 
 pub(crate) mod classify;
@@ -18,7 +19,10 @@ pub(crate) mod context;
 pub(crate) mod cst;
 pub(crate) mod guard;
 pub(crate) mod order;
+pub(crate) mod range;
 pub(crate) mod render;
+
+pub use range::{RangeEdit, format_yaml_range};
 
 /// The deepest collection nesting the formatter accepts.
 pub(crate) const MAX_DEPTH: usize = 64;
@@ -84,7 +88,48 @@ pub enum FormatError {
 /// );
 /// ```
 pub fn format_yaml(source: &str) -> Result<FormatOutcome, FormatError> {
-    let (stripped, _had_bom) = match source.strip_prefix('\u{FEFF}') {
+    let prepared = prepare(source)?;
+    let formatted = prepared.rendered.text.clone();
+    let changed = formatted != source;
+    if !changed {
+        return Ok(FormatOutcome {
+            formatted,
+            changed: false,
+        });
+    }
+    let before = prepared.before();
+    guard::check(&before, &formatted)?;
+    Ok(FormatOutcome {
+        formatted,
+        changed: true,
+    })
+}
+
+/// The source-derived state shared by whole-file and range formatting.
+pub(crate) struct Prepared {
+    pub model: cst::Model,
+    pub kinds: Vec<DocKind>,
+    pub collection: crate::SigmaCollection,
+    pub values: Vec<yaml_serde::Value>,
+    pub fingerprint: Vec<String>,
+    pub rendered: render::Render,
+    pub had_bom: bool,
+}
+
+impl Prepared {
+    pub(crate) fn before(&self) -> guard::Before<'_> {
+        guard::Before {
+            values: &self.values,
+            collection: &self.collection,
+            fingerprint: self.fingerprint.clone(),
+            kinds: &self.kinds,
+        }
+    }
+}
+
+/// Run the formatter pipeline up to (and including) rendering.
+pub(crate) fn prepare(source: &str) -> Result<Prepared, FormatError> {
+    let (stripped, had_bom) = match source.strip_prefix('\u{FEFF}') {
         Some(rest) => (rest, true),
         None => (source, false),
     };
@@ -131,24 +176,14 @@ pub fn format_yaml(source: &str) -> Result<FormatOutcome, FormatError> {
             construct: "formatted output would be more than 16 times the input size".to_string(),
         });
     }
-    let formatted = rendered.text;
-    let changed = formatted != source;
-    if !changed {
-        return Ok(FormatOutcome {
-            formatted,
-            changed: false,
-        });
-    }
-    let before = guard::Before {
-        values: &values,
-        collection: &collection,
+    Ok(Prepared {
+        model,
+        kinds,
+        collection,
+        values,
         fingerprint,
-        kinds: &kinds,
-    };
-    guard::check(&before, &formatted)?;
-    Ok(FormatOutcome {
-        formatted,
-        changed: true,
+        rendered,
+        had_bom,
     })
 }
 
