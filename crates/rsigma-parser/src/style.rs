@@ -3,62 +3,410 @@
 /// One indentation level (four spaces, matching the SigmaHQ house style).
 pub(crate) const STEP: &str = "    ";
 
-/// Quote a value scalar in Sigma's single-quote convention unless it is a
-/// bare-safe token.
-pub(crate) fn scalar(s: &str) -> String {
-    if is_bare_safe(s) {
-        s.to_string()
-    } else {
-        quote(s)
+/// Where a scalar sits, which decides how loosely it may stay plain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScalarCtx {
+    Prose,
+    Value,
+    Condition,
+}
+
+/// How a mapping key is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyCtx {
+    Key,
+    FieldKey,
+}
+
+/// The chosen YAML form of a string scalar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Encoded {
+    Plain(String),
+    Single(String),
+    Double(String),
+    Literal { header: String, lines: Vec<String> },
+}
+
+/// Where a scalar is written: after `key:` or after `- `.
+pub(crate) enum Lead<'a> {
+    Key(&'a str),
+    Dash,
+}
+
+/// True when a plain `s` would not read back as exactly the string `s` in
+/// yaml_serde or in a YAML 1.1 reader (PyYAML, which pySigma uses).
+pub(crate) fn coerces(s: &str) -> bool {
+    if s.is_empty() {
+        return true;
     }
+    if matches!(
+        s.to_ascii_lowercase().as_str(),
+        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
+    ) {
+        return true;
+    }
+    if s.parse::<f64>().is_ok() {
+        return true;
+    }
+    match yaml_serde::from_str::<yaml_serde::Value>(s) {
+        Ok(yaml_serde::Value::String(ref v)) if v == s => {}
+        // A plain scalar is never a collection in block context; `plain_safe`
+        // rejects the spellings (`: `, trailing `:`) that would make it one.
+        Ok(yaml_serde::Value::Mapping(_)) | Ok(yaml_serde::Value::Sequence(_)) => {}
+        _ => return true,
+    }
+    is_yaml_1_1_number(s)
 }
 
-/// Looser quoting for prose scalars (title, description, author): plain YAML
-/// permits internal spaces, so common values stay unquoted.
-pub(crate) fn scalar_prose(s: &str) -> String {
-    let bare = !s.is_empty()
-        && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && !s.ends_with(' ')
-        && !s.contains(": ")
-        && !s.contains(" #")
-        && !s.contains('\n')
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.' | ',' | '(' | ')' | '/')
-        });
-    if bare { s.to_string() } else { quote(s) }
+/// The YAML block-context plain rule, applied before style-specific
+/// restrictions.
+pub(crate) fn plain_safe(s: &str) -> bool {
+    if s.is_empty() || s.starts_with(char::is_whitespace) || s.ends_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
+    if matches!(
+        first,
+        '-' | '?' | ':' | ',' | '[' | ']' | '{' | '}' | '#' | '&' | '*' | '!' | '|' | '>' | '\''
+            | '"' | '%' | '@' | '`'
+    ) {
+        return false;
+    }
+    if s.contains(": ") || s.contains(" #") || s.ends_with(':') {
+        return false;
+    }
+    if s.starts_with("---") || s.starts_with("...") {
+        return false;
+    }
+    if s.chars().any(|c| {
+        c.is_control() || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
+    }) {
+        return false;
+    }
+    !coerces(s)
 }
 
-pub(crate) fn quote(s: &str) -> String {
+/// Choose the YAML form of a string scalar for the given context.
+pub(crate) fn encode(s: &str, ctx: ScalarCtx) -> Encoded {
+    if s.contains('\n') && literal_ok(s) {
+        return literal(s);
+    }
+    if s.chars().any(single_quote_cannot_carry) {
+        return Encoded::Double(double_quote(s));
+    }
+    if plain_allowed(s, ctx) {
+        return Encoded::Plain(s.to_string());
+    }
+    Encoded::Single(single_quote(s))
+}
+
+/// Write a mapping key in the given context.
+pub(crate) fn encode_key(s: &str, ctx: KeyCtx) -> String {
+    if s == "<<" {
+        return "<<".to_string();
+    }
+    if s.chars().any(single_quote_cannot_carry) {
+        return double_quote(s);
+    }
+    let safe = match ctx {
+        KeyCtx::Key => {
+            plain_safe(s)
+                && s.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'))
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        }
+        KeyCtx::FieldKey => {
+            plain_safe(s)
+                && s.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/'))
+                && s.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || matches!(c, '_' | '-' | '.' | '/' | '[' | ']' | '@' | '|')
+                })
+        }
+    };
+    if safe { s.to_string() } else { single_quote(s) }
+}
+
+/// Wrap a string in single quotes, doubling embedded single quotes.
+pub(crate) fn single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-fn is_bare_safe(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-        && !s.starts_with('-')
-        && s.parse::<f64>().is_err()
-        && !matches!(
-            s.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
-        )
+/// Wrap a string in double quotes, escaping characters YAML requires escaped.
+pub(crate) fn double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\0' => out.push_str("\\0"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\x0B' => out.push_str("\\v"),
+            '\x0C' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            '\x1B' => out.push_str("\\e"),
+            '\u{85}' => out.push_str("\\N"),
+            '\u{A0}' => out.push('\u{A0}'),
+            '\u{2028}' => out.push_str("\\L"),
+            '\u{2029}' => out.push_str("\\P"),
+            '\u{FEFF}' => out.push_str("\\uFEFF"),
+            c if c.is_control() => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\\x{:02X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
-/// A mapping key (metadata key, custom-attribute key, or logsource custom
-/// field). Quoted only when it contains characters unsafe in a plain key.
-pub(crate) fn key_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if safe { s.to_string() } else { quote(s) }
+/// Write `{indent}{key}: token` or `{indent}- token`, or a literal block whose
+/// content sits at `{indent}{STEP}`.
+pub(crate) fn push_scalar(out: &mut String, indent: &str, lead: Lead<'_>, s: &str, ctx: ScalarCtx) {
+    let prefix = match lead {
+        Lead::Key(key) => format!("{indent}{key}:"),
+        Lead::Dash => format!("{indent}-"),
+    };
+    match encode(s, ctx) {
+        Encoded::Plain(token) | Encoded::Single(token) | Encoded::Double(token) => {
+            out.push_str(&prefix);
+            out.push(' ');
+            out.push_str(&token);
+            out.push('\n');
+        }
+        Encoded::Literal { header, lines } => {
+            out.push_str(&prefix);
+            out.push(' ');
+            out.push_str(&header);
+            out.push('\n');
+            for line in lines {
+                if !line.is_empty() {
+                    out.push_str(indent);
+                    out.push_str(STEP);
+                    out.push_str(&line);
+                }
+                out.push('\n');
+            }
+        }
+    }
 }
 
-/// A detection field name used inside a key (bare identifiers, dotted paths,
-/// and array/index markers pass through; anything else is quoted).
-pub(crate) fn field_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '[' | ']' | '@')
-        });
-    if safe { s.to_string() } else { quote(s) }
+fn single_quote_cannot_carry(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
+        || (c.is_control() && c != '\t')
+}
+
+fn literal_ok(s: &str) -> bool {
+    if !s.chars().any(|c| c != '\n') {
+        return false;
+    }
+    !s.chars().any(|c| {
+        c == '\r'
+            || (c.is_control() && c != '\t' && c != '\n')
+            || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
+    })
+}
+
+fn literal(s: &str) -> Encoded {
+    let trailing = s.chars().rev().take_while(|&c| c == '\n').count();
+    let chomp = match trailing {
+        0 => "-",
+        1 => "",
+        _ => "+",
+    };
+    let body = &s[..s.len() - trailing];
+    let mut lines: Vec<String> = body.split('\n').map(str::to_string).collect();
+    if trailing >= 2 {
+        for _ in 0..trailing - 1 {
+            lines.push(String::new());
+        }
+    }
+    let indent_indicator = lines
+        .iter()
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.starts_with(' '));
+    let header = if indent_indicator {
+        format!("|4{chomp}")
+    } else {
+        format!("|{chomp}")
+    };
+    Encoded::Literal { header, lines }
+}
+
+fn plain_allowed(s: &str, ctx: ScalarCtx) -> bool {
+    if !plain_safe(s) {
+        return false;
+    }
+    match ctx {
+        ScalarCtx::Value => s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/')),
+        ScalarCtx::Prose => s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()),
+        ScalarCtx::Condition => true,
+    }
+}
+
+fn is_yaml_1_1_number(s: &str) -> bool {
+    let s = s
+        .strip_prefix('+')
+        .or_else(|| s.strip_prefix('-'))
+        .unwrap_or(s);
+    if s.is_empty() {
+        return false;
+    }
+    if s.starts_with("0b") || s.starts_with("0x") {
+        let digits = &s[2..];
+        return digits.contains('_')
+            && digits
+                .chars()
+                .all(|c| c == '_' || c.is_ascii_digit() || c.is_ascii_hexdigit());
+    }
+    if s.chars().all(|c| c == '_' || c.is_ascii_digit()) {
+        return s.contains('_') && s.chars().any(|c| c.is_ascii_digit());
+    }
+    let Some((head, rest)) = s.split_once(':') else {
+        return false;
+    };
+    if head.is_empty() || !head.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let mut groups: Vec<&str> = rest.split(':').collect();
+    if let Some(last) = groups.last_mut() {
+        if let Some((digits, frac)) = last.split_once('.') {
+            if digits.is_empty()
+                || digits.len() > 2
+                || !digits.chars().all(|c| c.is_ascii_digit())
+                || frac.is_empty()
+                || !frac.chars().all(|c| c.is_ascii_digit())
+            {
+                return false;
+            }
+            *last = digits;
+        }
+    }
+    !groups.is_empty()
+        && groups.iter().all(|g| {
+            !g.is_empty() && g.len() <= 2 && g.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coerces_table() {
+        for s in [
+            "", "true", "True", "TRUE", "yes", "No", "on", "OFF", "~", "null", "Null", "1", "-1",
+            "+1", "1.5", "1e3", ".inf", "-.inf", ".NaN", "0x1F", "0o17", "0b101", "0123",
+            "1_000", "0x_1F", "1:30", "190:20:30.15",
+        ] {
+            assert!(coerces(s), "expected {s:?} to coerce");
+        }
+        for s in [
+            "whoami",
+            "2024-01-01",
+            "0x",
+            "attack.t1059",
+            "C:",
+            "a:b",
+        ] {
+            assert!(!coerces(s), "expected {s:?} not to coerce");
+        }
+    }
+
+    #[test]
+    fn encode_value_table() {
+        assert_eq!(encode("whoami", ScalarCtx::Value), Encoded::Plain("whoami".into()));
+        assert_eq!(
+            encode(r"C:\Windows\", ScalarCtx::Value),
+            Encoded::Single(r"'C:\Windows\'".into())
+        );
+        assert_eq!(
+            encode("https://example.com/a?b=c", ScalarCtx::Value),
+            Encoded::Single("'https://example.com/a?b=c'".into())
+        );
+        assert_eq!(encode("a: b", ScalarCtx::Value), Encoded::Single("'a: b'".into()));
+        assert_eq!(encode("tab\there", ScalarCtx::Value), Encoded::Single("'tab\there'".into()));
+        assert_eq!(
+            encode("  indented\nx", ScalarCtx::Value),
+            Encoded::Literal {
+                header: "|4-".into(),
+                lines: vec!["  indented".into(), "x".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn encode_prose_table() {
+        assert_eq!(encode("whoami", ScalarCtx::Prose), Encoded::Plain("whoami".into()));
+        assert_eq!(
+            encode("https://example.com/a?b=c", ScalarCtx::Prose),
+            Encoded::Plain("https://example.com/a?b=c".into())
+        );
+        assert_eq!(encode("Joe's tool", ScalarCtx::Prose), Encoded::Plain("Joe's tool".into()));
+        assert_eq!(encode("True", ScalarCtx::Prose), Encoded::Single("'True'".into()));
+    }
+
+    #[test]
+    fn encode_condition_table() {
+        assert_eq!(
+            encode("1 of selection_*", ScalarCtx::Condition),
+            Encoded::Plain("1 of selection_*".into())
+        );
+        assert_eq!(
+            encode("a: b", ScalarCtx::Condition),
+            Encoded::Single("'a: b'".into())
+        );
+    }
+
+    #[test]
+    fn encode_literal_table() {
+        assert_eq!(
+            encode("a\nb", ScalarCtx::Value),
+            Encoded::Literal {
+                header: "|-".into(),
+                lines: vec!["a".into(), "b".into()],
+            }
+        );
+        assert_eq!(
+            encode("a\n", ScalarCtx::Value),
+            Encoded::Literal {
+                header: "|".into(),
+                lines: vec!["a".into()],
+            }
+        );
+        assert_eq!(
+            encode("a\n\n", ScalarCtx::Value),
+            Encoded::Literal {
+                header: "|+".into(),
+                lines: vec!["a".into(), String::new()],
+            }
+        );
+        assert_eq!(encode("\n", ScalarCtx::Value), Encoded::Double("\"\\n\"".into()));
+        assert_eq!(
+            encode("bell\x07", ScalarCtx::Value),
+            Encoded::Double("\"bell\\a\"".into())
+        );
+    }
+
+    #[test]
+    fn encode_keys() {
+        assert_eq!(encode_key("title", KeyCtx::Key), "title");
+        assert_eq!(encode_key("a b", KeyCtx::Key), "'a b'");
+        assert_eq!(encode_key("CommandLine|contains|all", KeyCtx::FieldKey), "CommandLine|contains|all");
+        assert_eq!(encode_key("Product Name|contains", KeyCtx::FieldKey), "'Product Name|contains'");
+        assert_eq!(encode_key("@timestamp", KeyCtx::FieldKey), "'@timestamp'");
+        assert_eq!(encode_key("<<", KeyCtx::Key), "<<");
+    }
 }
