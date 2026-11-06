@@ -40,3 +40,19 @@ tempfile = "3"
 [[bench]]
 name = "parse"
 harness = false
+
+[[test]]
+name = "fmt_golden"
+required-features = ["fmt"]
+
+[[test]]
+name = "fmt_parity"
+required-features = ["fmt"]
+
+[[test]]
+name = "fmt_range"
+required-features = ["fmt"]
+
+[[test]]
+name = "fmt_refusals"
+required-features = ["fmt"]

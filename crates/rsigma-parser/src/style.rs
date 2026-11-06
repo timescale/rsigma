@@ -448,7 +448,7 @@ pub(crate) const RELATED_ITEM: &[&str] = &["id", "type"];
 
 /// Sort keys so the ones named in `table` come first in table order and the
 /// rest keep their source order.
-#[cfg(test)]
+#[cfg(all(test, feature = "fmt"))]
 pub(crate) fn sort_by_table<'a>(keys: &[&'a str], table: &[&str]) -> Vec<&'a str> {
     let mut ranked: Vec<(usize, usize, &str)> = keys
         .iter()
@@ -617,6 +617,11 @@ mod tests {
         assert_eq!(encode_key("@timestamp", KeyCtx::FieldKey), "'@timestamp'");
         assert_eq!(encode_key("<<", KeyCtx::Key), "<<");
     }
+}
+
+#[cfg(all(test, feature = "fmt"))]
+mod order_tests {
+    use super::*;
 
     fn shuffled<'a>(table: &'a [&'a str]) -> Vec<&'a str> {
         let mut keys: Vec<&str> = table.to_vec();

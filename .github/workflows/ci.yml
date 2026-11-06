@@ -72,6 +72,10 @@ jobs:
       # The CLI README documents `cargo build --no-default-features` for a
       # build without the daemon dependencies.
       - run: cargo check -p rsigma --no-default-features --all-targets --locked
+      # The parser's `fix` and `fmt` features gate their tests; WASM builds
+      # use neither.
+      - run: cargo check -p rsigma-parser --no-default-features --all-targets --locked
+      - run: cargo check -p rsigma-parser --no-default-features --features fix --all-targets --locked
 
   wasm:
     name: WASM build
