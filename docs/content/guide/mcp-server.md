@@ -63,6 +63,7 @@ Fifteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemo
 | `resolve_pipeline` | `pipeline` (builtin name or path), `resolve_sources` | Pipeline name, priority, transformation count, dynamic sources. |
 | `list_builtin_pipelines` | (none) | The builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | `yaml` or file `path`, `lint_rules`, `write` | Applies safe auto-fixes; returns the fixed YAML and applied/failed/skipped-unsafe counts. `write: true` (path only, and only with `--rules-dir`) persists to disk. |
+| `format_rules` | `yaml` or file `path`, `write` | Rewrites Sigma YAML into the canonical layout and returns the formatted YAML and whether it changed. The semantic guard refuses rewrites that would change meaning, and non-Sigma documents come back as `skipped`. `write: true` (path only, and only with `--rules-dir`) persists to disk. |
 | `author_ads` | `yaml` or file/dir `path` | Per rule: the current ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 | `tune_rules` | rules (`yaml` or confined file/dir `path`), target `rule`, inline `false_positives` and `true_positives`, optional `pipelines` and tuning bounds | A verified `TuneReport` containing filter YAML, field rationale, clusters, FP coverage, warnings, and before/after counts. |
 | `test_exemplars` | rules (`yaml` or confined file/dir `path`), optional `pipelines` | The shared exemplar report: per-entry expect/actual/pass plus rules with no exemplars. {{ added "0.22.0" }} |
