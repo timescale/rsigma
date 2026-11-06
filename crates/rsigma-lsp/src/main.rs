@@ -8,6 +8,7 @@ mod code_action;
 mod completion;
 mod data;
 mod diagnostics;
+mod formatting;
 mod position;
 mod server;
 
