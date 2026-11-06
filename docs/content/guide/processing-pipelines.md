@@ -59,7 +59,7 @@ rsigma rule validate rules/ -p sysmon
 
 The argument is first checked against [builtin pipelines](#builtin-pipelines). If no match, it is treated as a file path. Multiple pipelines are sorted by `priority` and applied in sequence.
 
-Some pipelines ship in the repository as YAML only (for example [`ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml) for `product: linux` rules against ECS-shaped Linux events). Pass the path; there is no builtin short name until one is registered in `builtin_names()` {{ added "unreleased" }}.
+Some pipelines ship in the repository as YAML only (for example [`ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml) for `product: linux` rules against ECS-shaped Linux events). Pass the path; there is no builtin short name until one is registered in `builtin_names()`. {{ added "unreleased" }}
 
 ## Builtin pipelines
 

@@ -4,9 +4,9 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#330)
+### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
 
-Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) and [Processing Pipelines](docs/content/guide/processing-pipelines.md) document path-only use.
+Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) and [Processing Pipelines](docs/content/guide/processing-pipelines.md) document path-only use. Issue: [#330](https://github.com/timescale/rsigma/issues/330).
 
 ### Dependency follow-up and `minimatch` security fix (#672)
 
