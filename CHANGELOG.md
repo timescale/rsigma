@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `rsigma rule fmt` formats Sigma rules and keeps their comments
+### `rsigma rule fmt` formats Sigma rules and keeps their comments (#673)
 
 `rsigma rule fmt` rewrites detection rules, correlations, filters, and action-chain fragments into one canonical layout. It reports the files that would change by default, `--check` exits `1` when any file is not canonical, `--diff` prints a unified diff, `--write` rewrites files atomically, and `--stdout` prints one file for editor or pipe use. Exit codes are `0` for a completed report or write, `1` for `--check` or `--diff` when a file would change, `2` when a file cannot be read, parsed, formatted, or written, and `3` for conflicting mode flags or `--stdout` without exactly one file.
 
