@@ -92,6 +92,11 @@ In `rsigma-mcp`, `http_router_with` and `serve_http_with` take `HttpOptions` (be
 
 Breaking changes: a non-loopback `--http` bind without `--auth-token` refuses to start; pass `--allow-unauthenticated` to keep the old behavior. An empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN` is refused. Browser requests whose `Origin` names a host that is not accepted get `403`. A plaintext non-loopback bind without `--allow-plaintext` now exits `3` instead of `2`.
 
+### Docs-only PRs skip the CI build and test jobs
+
+- A new `Changes` job in the `CI` workflow skips the build, lint, and test jobs when a PR changes only documentation: `docs/`, `assets/`, `LICENSE`, `.gitignore`, and Markdown files outside a `tests/` directory, so golden output files still run the tests. The jobs still report, as skipped, so required checks are not left pending. Merge queue entries always run every job.
+- A new `CI result` job reports one pass or fail for the workflow and is the check to require. Coverage stays advisory and does not affect it.
+
 ## [0.26.0] - 2026-11-02
 
 **TL;DR**
