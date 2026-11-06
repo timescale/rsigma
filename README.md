@@ -20,7 +20,7 @@
     <a href="https://glama.ai/mcp/servers/timescale/rsigma"><img src="https://glama.ai/mcp/servers/timescale/rsigma/badges/score.svg" alt="rsigma MCP server score on Glama.ai" /></a>
 </p>
 
-RSigma is a complete detection engineering toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, MCP, and LSP.
+RSigma is a complete detection engineering toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, formatter, CLI, MCP, and LSP.
 
 RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
 
