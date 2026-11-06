@@ -505,9 +505,7 @@ fn yaml_scalar(value: &yaml_serde::Value) -> String {
     match value {
         yaml_serde::Value::Null => "null".to_string(),
         yaml_serde::Value::Bool(b) => b.to_string(),
-        yaml_serde::Value::Number(n) if n.is_f64() => {
-            float_token(n.as_f64().unwrap_or_default())
-        }
+        yaml_serde::Value::Number(n) if n.is_f64() => float_token(n.as_f64().unwrap_or_default()),
         yaml_serde::Value::Number(n) => n.to_string(),
         yaml_serde::Value::String(s) => encode_key(s, KeyCtx::Key),
         // Nested collections are handled by emit_yaml_value; an inline fallback

@@ -72,7 +72,9 @@ pub(crate) fn key_ctx(ctx: MapCtx) -> KeyCtx {
 
 pub(crate) fn scalar_ctx(path: &[PathSeg]) -> ScalarCtx {
     match path {
-        [PathSeg::Key(key)] if matches!(key.as_str(), "title" | "description" | "author" | "license") => {
+        [PathSeg::Key(key)]
+            if matches!(key.as_str(), "title" | "description" | "author" | "license") =>
+        {
             ScalarCtx::Prose
         }
         [PathSeg::Key(key), PathSeg::Key(name)] if key == "logsource" && name == "definition" => {
@@ -120,15 +122,30 @@ mod tests {
 
     #[test]
     fn root_context() {
-        assert_eq!(map_ctx(DocKind::Detection, &[]), MapCtx::Root(DocKind::Detection));
+        assert_eq!(
+            map_ctx(DocKind::Detection, &[]),
+            MapCtx::Root(DocKind::Detection)
+        );
     }
 
     #[test]
     fn section_contexts() {
-        assert_eq!(map_ctx(DocKind::Detection, &[key("logsource")]), MapCtx::Logsource);
-        assert_eq!(map_ctx(DocKind::Detection, &[key("detection")]), MapCtx::Detection);
-        assert_eq!(map_ctx(DocKind::Correlation, &[key("correlation")]), MapCtx::CorrelationBody);
-        assert_eq!(map_ctx(DocKind::Filter, &[key("filter")]), MapCtx::FilterBody);
+        assert_eq!(
+            map_ctx(DocKind::Detection, &[key("logsource")]),
+            MapCtx::Logsource
+        );
+        assert_eq!(
+            map_ctx(DocKind::Detection, &[key("detection")]),
+            MapCtx::Detection
+        );
+        assert_eq!(
+            map_ctx(DocKind::Correlation, &[key("correlation")]),
+            MapCtx::CorrelationBody
+        );
+        assert_eq!(
+            map_ctx(DocKind::Filter, &[key("filter")]),
+            MapCtx::FilterBody
+        );
         assert_eq!(
             map_ctx(DocKind::Detection, &[key("related"), PathSeg::Index(0)]),
             MapCtx::RelatedItem
@@ -157,17 +174,16 @@ mod tests {
     #[test]
     fn scalar_contexts() {
         assert_eq!(scalar_ctx(&[key("title")]), ScalarCtx::Prose);
-        assert_eq!(scalar_ctx(&[key("references"), PathSeg::Index(0)]), ScalarCtx::Prose);
+        assert_eq!(
+            scalar_ctx(&[key("references"), PathSeg::Index(0)]),
+            ScalarCtx::Prose
+        );
         assert_eq!(
             scalar_ctx(&[key("detection"), key("condition")]),
             ScalarCtx::Condition
         );
         assert_eq!(
-            scalar_ctx(&[
-                key("detection"),
-                key("selection"),
-                key("Field")
-            ]),
+            scalar_ctx(&[key("detection"), key("selection"), key("Field")]),
             ScalarCtx::Value
         );
         assert_eq!(

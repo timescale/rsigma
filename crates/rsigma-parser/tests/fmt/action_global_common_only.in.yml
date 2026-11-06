@@ -1,0 +1,10 @@
+title: Global Common
+level: low
+action: global
+---
+logsource:
+    category: test
+detection:
+    selection:
+        Field: one
+    condition: selection

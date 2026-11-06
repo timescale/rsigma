@@ -1,0 +1,17 @@
+title: Base Rule
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Correlation With Rules
+correlation:
+    condition:
+        gte: 10
+    timespan: 5m
+    rules:
+        - Base Rule
+    type: event_count
+level: high

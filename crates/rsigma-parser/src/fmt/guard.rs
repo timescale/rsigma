@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::fmt::cst::{Model, NodeId, NodeKind, PathSeg, PreludeLine, Prop, key_string};
 use crate::fmt::context::DocKind;
+use crate::fmt::cst::{Model, NodeId, NodeKind, PathSeg, PreludeLine, Prop, key_string};
 use crate::fmt::order::Plan;
 use crate::fmt::{FormatError, comments, cst, deserialize_values, order, parse_tree};
 use crate::parser::parse_sigma_yaml;
@@ -83,7 +83,11 @@ pub(crate) fn fingerprint(model: &Model, _kinds: &[DocKind], plan: &Plan) -> Vec
             &mut aliases,
         );
         for ((path, role), texts) in comments {
-            lines.push(format!("{role} {}: {}", path_text(&path), texts.join(" | ")));
+            lines.push(format!(
+                "{role} {}: {}",
+                path_text(&path),
+                texts.join(" | ")
+            ));
         }
         for (path, tag) in tags {
             lines.push(format!("tag {}: {tag}", path_text(&path)));
@@ -133,7 +137,9 @@ fn collect_fingerprint(
         }
     }
     match &node.kind {
-        NodeKind::Map { entries, dangling, .. } => {
+        NodeKind::Map {
+            entries, dangling, ..
+        } => {
             for comment in dangling {
                 comments
                     .entry((path.clone(), CommentRole::Dangling))
@@ -169,7 +175,9 @@ fn collect_fingerprint(
                 );
             }
         }
-        NodeKind::Seq { items, dangling, .. } => {
+        NodeKind::Seq {
+            items, dangling, ..
+        } => {
             for comment in dangling {
                 comments
                     .entry((path.clone(), CommentRole::Dangling))
@@ -192,13 +200,7 @@ fn collect_fingerprint(
                         .push(comment.text.clone());
                 }
                 collect_fingerprint(
-                    model,
-                    item.value,
-                    item_path,
-                    comments,
-                    tags,
-                    anchors,
-                    aliases,
+                    model, item.value, item_path, comments, tags, anchors, aliases,
                 );
             }
         }
@@ -299,7 +301,11 @@ pub(crate) fn check(before: &Before<'_>, output: &str) -> Result<(), FormatError
         }
     }
     let collection = parse_sigma_yaml(output).map_err(|_| guard("parser diagnostics changed"))?;
-    if collection.diagnostics.iter().any(|diagnostic| diagnostic.is_error()) {
+    if collection
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.is_error())
+    {
         return Err(guard("parser diagnostics changed"));
     }
     if collection.rules != before.collection.rules {

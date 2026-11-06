@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::fmt::cst::{Model, NodeId, NodeKind, PathSeg, Prop, key_string};
 use crate::fmt::context::{DocKind, MapCtx, map_ctx};
+use crate::fmt::cst::{Model, NodeId, NodeKind, PathSeg, Prop, key_string};
 use crate::style::{
     COMMON_ROOT, CORRELATION_BODY, CORRELATION_ROOT, DETECTION_ROOT, FILTER_ROOT, LOGSOURCE,
     RELATED_ITEM, RSIGMA_ORDER,
@@ -48,7 +48,11 @@ pub(crate) fn plan(model: &Model, kinds: &[DocKind]) -> Plan {
         if !has_alias {
             for info in maps {
                 let order = permutation(model, info.id, info.ctx);
-                if order.iter().enumerate().any(|(index, value)| index != *value) {
+                if order
+                    .iter()
+                    .enumerate()
+                    .any(|(index, value)| index != *value)
+                {
                     result.maps.insert(info.id, order);
                 }
             }
@@ -60,7 +64,11 @@ pub(crate) fn plan(model: &Model, kinds: &[DocKind]) -> Plan {
         };
         for info in maps {
             let order = permutation(model, info.id, info.ctx);
-            if order.iter().enumerate().all(|(index, value)| index == *value) {
+            if order
+                .iter()
+                .enumerate()
+                .all(|(index, value)| index == *value)
+            {
                 continue;
             }
             result.maps.insert(info.id, order);
@@ -122,9 +130,12 @@ fn permutation(model: &Model, id: NodeId, ctx: MapCtx) -> Vec<usize> {
                 let key = key_string(model, entry.key);
                 let rank = if key == "action" {
                     (0, 0)
-                } else if let Some(position) = table.iter().position(|candidate| *candidate == key) {
+                } else if let Some(position) = table.iter().position(|candidate| *candidate == key)
+                {
                     (1, position)
-                } else if let Some(position) = RSIGMA_ORDER.iter().position(|candidate| *candidate == key) {
+                } else if let Some(position) =
+                    RSIGMA_ORDER.iter().position(|candidate| *candidate == key)
+                {
                     (2, position)
                 } else {
                     (3, entry.source_index)
@@ -198,9 +209,9 @@ fn table_permutation(
 fn document_has_alias(model: &Model, id: NodeId) -> bool {
     match &model.nodes[id as usize].kind {
         NodeKind::Alias(_) => true,
-        NodeKind::Map { entries, .. } => entries
-            .iter()
-            .any(|entry| document_has_alias(model, entry.value) || document_has_alias(model, entry.key)),
+        NodeKind::Map { entries, .. } => entries.iter().any(|entry| {
+            document_has_alias(model, entry.value) || document_has_alias(model, entry.key)
+        }),
         NodeKind::Seq { items, .. } => items
             .iter()
             .any(|item| document_has_alias(model, item.value)),

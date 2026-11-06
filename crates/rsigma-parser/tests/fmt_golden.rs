@@ -19,8 +19,8 @@ fn run_golden(name: &str) {
     let expected = fs::read_to_string(&expected_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", expected_path.display()));
 
-    let outcome = format_yaml(&input)
-        .unwrap_or_else(|error| panic!("formatting '{name}' failed: {error}"));
+    let outcome =
+        format_yaml(&input).unwrap_or_else(|error| panic!("formatting '{name}' failed: {error}"));
     assert_eq!(
         outcome.formatted, expected,
         "\n\nGolden mismatch for '{name}':\n--- actual ---\n{}\n--- expected ---\n{expected}\n",
@@ -160,4 +160,34 @@ fn golden_item_props_comments() {
 #[test]
 fn golden_unicode() {
     run_golden("unicode");
+}
+
+#[test]
+fn golden_correlation_rule() {
+    run_golden("correlation_rule");
+}
+
+#[test]
+fn golden_correlation_with_rules_in_file() {
+    run_golden("correlation_with_rules_in_file");
+}
+
+#[test]
+fn golden_filter_rule() {
+    run_golden("filter_rule");
+}
+
+#[test]
+fn golden_action_global_repeat_reset() {
+    run_golden("action_global_repeat_reset");
+}
+
+#[test]
+fn golden_action_global_common_only() {
+    run_golden("action_global_common_only");
+}
+
+#[test]
+fn golden_action_repeat_common_only() {
+    run_golden("action_repeat_common_only");
 }

@@ -244,7 +244,10 @@ impl Builder<'_> {
                     NodeKind::Alias(name),
                 ))
             }
-            other => Err(unsupported(node, format!("unsupported YAML node `{other}`"))),
+            other => Err(unsupported(
+                node,
+                format!("unsupported YAML node `{other}`"),
+            )),
         }
     }
 
@@ -553,12 +556,7 @@ impl Builder<'_> {
         ))
     }
 
-    fn build_scalar(
-        &mut self,
-        node: TsNode<'_>,
-        value: &yaml_serde::Value,
-        block: bool,
-    ) -> NodeId {
+    fn build_scalar(&mut self, node: TsNode<'_>, value: &yaml_serde::Value, block: bool) -> NodeId {
         let text = self.slice(node).to_string();
         let decoded = match value {
             yaml_serde::Value::String(s) => Decoded::Str(s.clone()),
@@ -578,13 +576,7 @@ impl Builder<'_> {
     }
 
     fn empty_at(&mut self, byte: usize, point: Point) -> NodeId {
-        self.push_node(
-            byte..byte,
-            point,
-            point,
-            Vec::new(),
-            NodeKind::Empty,
-        )
+        self.push_node(byte..byte, point, point, Vec::new(), NodeKind::Empty)
     }
 
     fn push_node(
@@ -680,4 +672,3 @@ pub(crate) fn child_column(model: &Model, id: NodeId) -> usize {
         _ => 0,
     }
 }
-

@@ -3,11 +3,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::fmt::cst::{
-    Comment, Decoded, Entry, Item, Model, NodeId, NodeKind, PathSeg, PreludeLine, Prop,
-    key_string,
-};
 use crate::fmt::context::{DocKind, key_ctx, map_ctx, scalar_ctx};
+use crate::fmt::cst::{
+    Comment, Decoded, Entry, Item, Model, NodeId, NodeKind, PathSeg, PreludeLine, Prop, key_string,
+};
 use crate::fmt::order::Plan;
 use crate::style::{Encoded, STEP, encode, encode_key};
 
@@ -59,16 +58,7 @@ pub(crate) fn render(model: &Model, kinds: &[DocKind], plan: &Plan) -> Render {
             render.text.push_str(&comment.text);
             render.text.push('\n');
         }
-        render_map_entries(
-            &mut render,
-            model,
-            plan,
-            kind,
-            doc.root,
-            &[],
-            "",
-            false,
-        );
+        render_map_entries(&mut render, model, plan, kind, doc.root, &[], "", false);
     }
     if !render.text.ends_with('\n') {
         render.text.push('\n');
@@ -353,7 +343,9 @@ fn render_item(
                 render.text.push_str(&line);
                 render.text.push('\n');
                 let deeper = format!("{indent}  ");
-                render_map_entries(render, model, plan, kind, item.value, item_path, &deeper, true);
+                render_map_entries(
+                    render, model, plan, kind, item.value, item_path, &deeper, true,
+                );
             }
         }
         NodeKind::Seq { items, .. } if !items.is_empty() => {
@@ -604,7 +596,7 @@ fn write_comment(render: &mut Render, indent: &str, comment: &Comment) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fmt::{classify, cst, comments};
+    use crate::fmt::{classify, comments, cst};
 
     fn formatted(source: &str) -> String {
         let mut parser = tree_sitter::Parser::new();

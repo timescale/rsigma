@@ -1,0 +1,27 @@
+title: Global Rule
+logsource:
+    product: windows
+action: global
+---
+detection:
+    selection:
+        Field: one
+    condition: selection
+---
+title: Repeated Rule
+detection:
+    selection:
+        Field: two
+    condition: selection
+action: repeat
+---
+title: Reset Rule
+action: reset
+---
+title: After Reset
+logsource:
+    category: test
+detection:
+    selection:
+        Field: three
+    condition: selection

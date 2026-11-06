@@ -224,7 +224,14 @@ fn attach_own_line(
 fn collect_owners(model: &Model) -> Vec<Owner> {
     let mut owners = Vec::new();
     for (doc, document) in model.docs.iter().enumerate() {
-        collect_node_owners(model, doc, document.root, Vec::new(), Vec::new(), &mut owners);
+        collect_node_owners(
+            model,
+            doc,
+            document.root,
+            Vec::new(),
+            Vec::new(),
+            &mut owners,
+        );
     }
     owners.sort_by_key(|owner| (owner.doc, owner.start_byte));
     owners
@@ -324,7 +331,11 @@ fn shape(model: &Model, id: NodeId) -> Shape {
         NodeKind::Alias(_) => Shape::Alias,
         NodeKind::Empty => Shape::Empty,
         NodeKind::Map { flow, .. } | NodeKind::Seq { flow, .. } => {
-            if *flow { Shape::Flow } else { Shape::Block }
+            if *flow {
+                Shape::Flow
+            } else {
+                Shape::Block
+            }
         }
     }
 }
@@ -408,9 +419,11 @@ fn split_header(model: &mut Model) {
             }
         }
         run.reverse();
-        let keep_run = run
-            .last()
-            .is_some_and(|index| first.leading[*index].text.contains("rsigma-disable-next-line"));
+        let keep_run = run.last().is_some_and(|index| {
+            first.leading[*index]
+                .text
+                .contains("rsigma-disable-next-line")
+        });
         let mut header = Vec::new();
         let mut leading = Vec::new();
         for (index, comment) in first.leading.drain(..).enumerate() {
@@ -477,10 +490,9 @@ mod tests {
         let language: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
         parser.set_language(&language).unwrap();
         let tree = parser.parse(source, None).unwrap();
-        let values: Vec<yaml_serde::Value> =
-            yaml_serde::Deserializer::from_str(source)
-                .map(|doc| yaml_serde::Value::deserialize(doc).unwrap())
-                .collect();
+        let values: Vec<yaml_serde::Value> = yaml_serde::Deserializer::from_str(source)
+            .map(|doc| yaml_serde::Value::deserialize(doc).unwrap())
+            .collect();
         let mut model = cst::build(source, &tree, &values).unwrap();
         attach(&mut model, source).unwrap();
         model
@@ -513,7 +525,10 @@ mod tests {
         let source = "title: Test # note\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n";
         let model = build(source);
         let (map, index) = find_entry(&model, "title");
-        assert_eq!(entry(&model, map, index).trailing.as_ref().unwrap().text, "# note");
+        assert_eq!(
+            entry(&model, map, index).trailing.as_ref().unwrap().text,
+            "# note"
+        );
     }
 
     #[test]
@@ -591,10 +606,9 @@ mod tests {
         let language: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
         parser.set_language(&language).unwrap();
         let tree = parser.parse(source, None).unwrap();
-        let values: Vec<yaml_serde::Value> =
-            yaml_serde::Deserializer::from_str(source)
-                .map(|doc| yaml_serde::Value::deserialize(doc).unwrap())
-                .collect();
+        let values: Vec<yaml_serde::Value> = yaml_serde::Deserializer::from_str(source)
+            .map(|doc| yaml_serde::Value::deserialize(doc).unwrap())
+            .collect();
         let mut model = cst::build(source, &tree, &values).unwrap();
         let error = attach(&mut model, source).unwrap_err();
         assert!(matches!(
@@ -608,7 +622,10 @@ mod tests {
     fn comment_on_document_marker_is_start_comment() {
         let source = "--- # first\ntitle: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n";
         let model = build(source);
-        assert_eq!(model.docs[0].start_comment.as_ref().unwrap().text, "# first");
+        assert_eq!(
+            model.docs[0].start_comment.as_ref().unwrap().text,
+            "# first"
+        );
     }
 
     #[test]

@@ -13,15 +13,23 @@ fn assert_emitted_output_is_canonical(label: &str, source: &str) {
     let collection = parse_sigma_yaml(source)
         .unwrap_or_else(|error| panic!("parsing '{label}' failed: {error}"));
     assert!(
-        collection.diagnostics.iter().all(|diagnostic| !diagnostic.is_error()),
+        collection
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.is_error()),
         "'{label}' has parser errors: {:#?}",
         collection.diagnostics
     );
-    assert!(!collection.rules.is_empty(), "'{label}' has no detection rules");
+    // The emitter writes detection rules only, so goldens that hold just
+    // correlations or filters have nothing to compare here.
+    if collection.rules.is_empty() {
+        return;
+    }
     for (index, rule) in collection.rules.iter().enumerate() {
         let emitted = emit_rule_yaml(rule);
-        let outcome = format_yaml(&emitted)
-            .unwrap_or_else(|error| panic!("formatting emitted '{label}' rule {index} failed: {error}"));
+        let outcome = format_yaml(&emitted).unwrap_or_else(|error| {
+            panic!("formatting emitted '{label}' rule {index} failed: {error}")
+        });
         assert!(
             !outcome.changed,
             "'{label}' rule {index} emitted text is not canonical:\n--- emitted ---\n{emitted}\n--- formatted ---\n{}",
@@ -39,7 +47,10 @@ fn golden_outputs_are_canonical() {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "yml"))
-        .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().ends_with(".out.yml")))
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".out.yml"))
+        })
         .collect();
     entries.sort();
     assert!(!entries.is_empty(), "no golden outputs found");

@@ -78,10 +78,7 @@ fn processing_pipeline_is_not_sigma() {
     let source = "name: pipeline\npriority: 20\ntransformations: []\n";
     let error = format_yaml(source).unwrap_err();
     assert!(
-        matches!(
-            error,
-            FormatError::NotSigma { document: 0, .. }
-        ),
+        matches!(error, FormatError::NotSigma { document: 0, .. }),
         "expected NotSigma, got {error:?}"
     );
 }
@@ -91,10 +88,7 @@ fn rule_followed_by_a_pipeline_document_is_not_sigma() {
     let source = format!("{RULE}---\nname: pipeline\npriority: 20\ntransformations: []\n");
     let error = format_yaml(&source).unwrap_err();
     assert!(
-        matches!(
-            error,
-            FormatError::NotSigma { document: 1, .. }
-        ),
+        matches!(error, FormatError::NotSigma { document: 1, .. }),
         "expected NotSigma in document 1, got {error:?}"
     );
 }
