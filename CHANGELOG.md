@@ -4,6 +4,11 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs-only PRs skip the CI build and test jobs (#669)
+
+- A new `Changes` job in the `CI` workflow skips the build, lint, and test jobs when a PR changes only documentation: `docs/`, `assets/`, `LICENSE`, `.gitignore`, and Markdown files outside a `tests/` directory, so golden output files still run the tests. The jobs still report, as skipped, so required checks are not left pending. Merge queue entries always run every job.
+- A new `CI result` job reports one pass or fail for the workflow and is the check to require. Coverage stays advisory and does not affect it.
+
 ### MCP HTTP requires a token off loopback, validates `Origin`, and accepts the server's own host names (#659)
 
 `rsigma mcp serve --http` on a non-loopback address started without `--auth-token`, exposing every tool to anyone who could reach the port. It now refuses to start (exit code `3`) unless `--allow-unauthenticated` is set. Loopback binds are unchanged.

@@ -10,8 +10,9 @@ on:
       - "LICENSE"
       - ".gitignore"
   # No base-branch or path filter: a PR stacked on another PR's branch gets CI
-  # too, and every PR reports every job, which required checks depend on. A
-  # workflow skipped by a path filter leaves its required checks pending.
+  # too. A workflow skipped by a path filter leaves its required checks
+  # pending, so docs-only PRs are detected by the `changes` job instead, and
+  # the skipped jobs still report.
   pull_request:
   # Merge queue entries. `merge_group` takes no path filters, so every job
   # runs on every entry.
@@ -29,8 +30,27 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The PR merge commit and its first parent, the base branch tip.
+          fetch-depth: 2
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: scripts/ci-changes.sh "$EVENT_NAME" HEAD^1 HEAD >> "$GITHUB_OUTPUT"
   check:
     name: Check
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,6 +75,8 @@ jobs:
 
   wasm:
     name: WASM build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo
@@ -90,6 +112,8 @@ jobs:
 
   fmt:
     name: Format
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,6 +128,8 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -121,6 +147,8 @@ jobs:
 
   rstix-lean-features:
     name: rstix lean features
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -145,6 +173,8 @@ jobs:
     # stale, or incomplete. Workspace `test` also executes the suite under
     # --all-features; this job is the gated artifact producer.
     name: rstix STIX interop self-certification
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo for checkout
@@ -175,6 +205,8 @@ jobs:
     # against a mock TAXII Server, regenerates the checklist package, then fails
     # if the report is missing, stale, or incomplete.
     name: rstix TAXII TXC interop self-certification
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo for checkout
@@ -202,6 +234,8 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -235,6 +269,8 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -287,6 +323,8 @@ jobs:
 
   doc:
     name: Doc
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -308,6 +346,8 @@ jobs:
 
   sigma-corpus:
     name: Sigma Corpus Regression
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -376,6 +416,8 @@ jobs:
 
   mcp-smoke:
     name: MCP Smoke
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -399,6 +441,8 @@ jobs:
 
   output-format-smoke:
     name: Output Format Smoke
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo
@@ -416,3 +460,36 @@ jobs:
         run: cargo build --locked -p rsigma --all-features
       - name: Smoke-test --output-format across CLI commands
         run: ./scripts/output-format-smoke.sh --bin target/debug/rsigma
+
+  # The one check to require for this workflow. A job skipped because a PR
+  # changes only docs counts as passed, and a matrix job skipped as a whole
+  # reports one check instead of one per OS, so per-job checks cannot be
+  # required reliably. Coverage is advisory and left out.
+  ci-result:
+    name: CI result
+    if: always()
+    needs:
+      - changes
+      - check
+      - wasm
+      - fmt
+      - clippy
+      - rstix-lean-features
+      - rstix-interop
+      - rstix-taxii-interop
+      - test
+      - doc
+      - sigma-corpus
+      - mcp-smoke
+      - output-format-smoke
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fail if any job failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac
