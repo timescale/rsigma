@@ -4,42 +4,36 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### VS Code extension: `rsigma.serverPath` is ignored in workspace settings (#651)
+### MCP HTTP requires a token off loopback, validates `Origin`, and accepts the server's own host names (#659)
 
-`rsigma.serverPath` is the program the extension starts, and it starts on opening any folder with a `.yml` or `.yaml` file. A repository could commit a `.vscode/settings.json` that pointed it at a script of its own, and a developer who opened and trusted that folder would run the script. The setting now has `machine` scope, so VS Code reads it only from user settings, or from remote settings in a remote window, and ignores it in a workspace or folder `.vscode/settings.json`.
+`rsigma mcp serve --http` on a non-loopback address started without `--auth-token`, exposing every tool to anyone who could reach the port. It now refuses to start (exit code `3`) unless `--allow-unauthenticated` is set. Loopback binds are unchanged.
 
-Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code now ignores it and the extension starts `rsigma-lsp` from `$PATH`, or fails to start if it is not there. Move the value to your user settings, or to remote settings for Remote-SSH, WSL, and Dev Containers, where the path is on the remote host. Settings Sync does not carry `machine`-scoped values, so set a custom path on each machine.
+Every request's `Host` header was checked against `localhost`, `127.0.0.1`, and `::1` only, so a token-guarded server on `0.0.0.0` answered `403` to clients that used its IP or DNS name. A non-loopback bind with `--auth-token` now accepts any host, since the token is the access control, and the repeatable `--allowed-host` narrows that to named hosts. A specific bind IP is always accepted. Unauthenticated binds keep the validation that stops DNS-rebinding pages from reaching the server.
 
-### CI runs for merge queues and stacked PRs (#652)
+The `Origin` header was not checked, so a web page on any site could send requests to a loopback MCP server through the user's browser. A request with an `Origin` header must now name an accepted host over `http` or `https`, or it gets `403`; requests without `Origin`, which is how MCP clients connect, are unaffected. Only a token-guarded bind that accepts any host skips the check. See [`rsigma mcp serve`](https://rsigma.io/cli/mcp/serve/#streamable-http).
 
-- The `CI` and `Docs audit` workflows now also run on `merge_group` events, so their jobs can be required checks for a GitHub merge queue.
-- Their `pull_request` trigger no longer filters on the base branch or on changed paths, so every PR, including a docs-only PR or one based on another PR's branch, reports every job.
-- The `Security Audit` and `Workflow security (zizmor)` workflows also run on PRs against any base branch.
+In `rsigma-mcp`, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token and `AllowedHosts`); `http_router` and `serve_http` keep the loopback hosts and now validate `Origin` too. `HttpOptions` and `AllowedHosts` are `#[non_exhaustive]`, and an empty `AllowedHosts::List` means loopback.
 
-### MCP `evaluate_events` refuses `${ENV_VAR}` in template enrichers (#653)
+Breaking changes: a non-loopback `--http` bind without `--auth-token` refuses to start; pass `--allow-unauthenticated` to keep the old behavior. An empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN` is refused. Browser requests whose `Origin` names a host that is not accepted get `403`. A plaintext non-loopback bind without `--allow-plaintext` now exits `3` instead of `2`.
 
-A `template` enricher passed to the MCP server's `evaluate_events` tool, inline or through `enrichers_path`, could reference `${NAME}`, which renders from the server process's environment. Any MCP caller could read the server's environment variables, such as cloud credentials or API tokens, from the enrichment result. The tool now refuses an enricher with a `${ENV_VAR}` reference in any templated field and names up to five of them in the error; `${detection.*}` and `${correlation.*}` references work as before. The daemon still expands `${ENV_VAR}` in its own enrichers config. The new `rsigma_runtime::env_references` returns the environment references in a template, for library users who accept templates from untrusted input.
+### API silences are bounded, and refused without an alert pipeline (#658)
 
-### The egress policy covers IP-literal URLs, redirects, IPv6 forms of IPv4 addresses, and more cloud metadata addresses (#654)
+`POST /api/v1/silences` accepted any matcher set and any `ends_at`, so one call with `rule =~ .*` and `ends_at: 9999-12-31T23:59:59Z` muted every detection indefinitely. That call can come from any token with `silences:write`, including an MCP client following prompt-injected instructions. Two alert-pipeline keys now bound silences created over the API:
 
-`--egress-policy` was enforced only when a hostname was resolved, and some addresses slipped through its rules, so these requests reached addresses the policy denies:
+- `max_silence_duration` (default `720h`): `ends_at` is required and must be no more than this far from now. `0` removes the bound.
+- `allow_broad_silences` (default `false`): at least one matcher must be `=` with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so `rule =~ .*`, `rule != x`, or `level = high` alone is refused.
 
-- A URL whose host is an IP literal, such as `http://169.254.169.254/latest/meta-data/` in an HTTP source, HTTP enricher, or webhook, skips DNS and was sent as is. The daemon now checks the URL before sending and fails the request with the policy's reason. A webhook delivery refused this way is permanent and goes to the DLQ instead of being retried.
-- Redirects were followed without a check, so an allowed upstream could answer with a redirect to a denied IP literal. Every hop is now checked before it is followed, still with at most 10 redirects.
-- The cloud-metadata rule compared against `fd00:ec:2::254` instead of the AWS IPv6 instance metadata address `fd00:ec2::254`, so the `default` preset, which allows private addresses, did not block it. It now does, along with GCP's IPv6 metadata address `fd20:ce::254` and Alibaba Cloud's `100.100.100.200`.
-- Only IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherited the IPv4 rules. IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96` and `/96` prefixes in `64:ff9b:1::/48`), and 6to4 (`2002::/16`) addresses now do too, so `http://[64:ff9b::10.0.0.1]/` is denied wherever `10.0.0.1` is.
+A silence that breaks either rule gets `400` with a hint naming the key. Silences declared in the alert-pipeline config are not limited. Without `--alert-pipeline` the daemon never applied silences but still returned `201`; it now returns `409`. API silences restored from `--state-db` are kept even when they exceed the limits; the daemon logs their ids at startup and on reload so they can be reviewed and deleted.
 
-Source, enricher, and webhook transport errors now include the underlying cause, so a resolution-time denial names the policy instead of reading only `error sending request`. The new `EgressPolicy::check_url` exposes the URL check to library users. When `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` is set, the proxy resolves hostnames, so only IP-literal URLs and redirect targets are checked; the daemon now logs a warning at startup in that case.
+In `rsigma-runtime`, `Silence::build_api` and `SilenceLimits` implement the limits, `AlertPipeline::silence_limits` exposes them, and `SilenceError` gains `Unbounded`, `TooLong`, and `TooBroad`.
 
-### Project config files cannot open MCP server gates (#655)
+Breaking changes: API silences without `ends_at`, longer than 30 days, or without a scoped `=` matcher are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` and the new `SilenceLimits` are `#[non_exhaustive]`, `AlertPipelineFile` has two new fields, and `AlertPipeline::new` takes the limits.
 
-`rsigma` discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current directory, so a cloned repository could configure any command run inside it. Opening an MCP client in such a repository could point `rsigma mcp serve` at another daemon (sending it the daemon token), turn on the mutating operate tools, allow sigma-cli subprocesses, unconfine paths, start an HTTP listener, or read a file outside the repository as the lint config. Project files can no longer set `mcp.http_addr`, `mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.daemon_url`, `mcp.daemon_ca`, or `mcp.allow_operate_writes`, or a `mcp.rules_dir` or `mcp.lint_config` that resolves outside the project file's directory (symlinks included). rsigma ignores these keys and prints a warning naming the file. The same keys still resolve from an explicit `--config`, the user and system config, `RSIGMA_MCP__*` environment variables, and flags.
+### Delegated `convert_rules` no longer follows symlinks out of the rules root (#657)
 
-- `rsigma mcp serve` gains `--config <PATH>`, which loads only that file and may set every `mcp.*` key.
-- `rsigma config validate` and `rsigma config show` leave the ignored keys out of the resolved config and list them under `ignored_keys`.
-- The [Configuration](https://rsigma.io/reference/configuration/#project-config-trust) and [Security](https://rsigma.io/reference/security/) references list the protected keys.
+With `--rules-dir` and `--allow-sigma-cli`, the MCP `convert_rules` tool checked that a delegated `path` stayed inside the root, but passed a directory to sigma-cli without looking inside it. sigma-cli walks the directory itself and follows symlinks, so a link under the root to a file outside it could be read and echoed back in the converted queries. Delegated directory inputs are now refused when they contain a symlink anywhere in the tree, as the in-process tools already did, and sigma-cli is never started for them.
 
-Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer takes effect. Move it to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`, pass the file with `mcp serve --config <PATH>`, or use the matching `RSIGMA_MCP__*` variable or flag.
+sigma-cli also ran with the rules root as its working directory, and pySigma opens an unknown pipeline name as a file relative to it. A bare name such as `leak` therefore reached a symlink at the root that pointed outside it. With `--rules-dir` set, sigma-cli now runs in an empty temporary directory; every path it receives is already canonical and absolute.
 
 ### Project config files cannot configure daemon sources, enrichers, sinks, or API access (#656)
 
@@ -61,36 +55,42 @@ Two related changes close paths a project file could still reach through keys it
 
 Breaking changes: a daemon that reads one of these keys from `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer applies it. jq filters that call `env` fail to compile (exit `3`). Pass the file with `engine daemon --config <PATH>`, as the deployment guides do, or move the keys to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`.
 
-### Delegated `convert_rules` no longer follows symlinks out of the rules root (#657)
+### Project config files cannot open MCP server gates (#655)
 
-With `--rules-dir` and `--allow-sigma-cli`, the MCP `convert_rules` tool checked that a delegated `path` stayed inside the root, but passed a directory to sigma-cli without looking inside it. sigma-cli walks the directory itself and follows symlinks, so a link under the root to a file outside it could be read and echoed back in the converted queries. Delegated directory inputs are now refused when they contain a symlink anywhere in the tree, as the in-process tools already did, and sigma-cli is never started for them.
+`rsigma` discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current directory, so a cloned repository could configure any command run inside it. Opening an MCP client in such a repository could point `rsigma mcp serve` at another daemon (sending it the daemon token), turn on the mutating operate tools, allow sigma-cli subprocesses, unconfine paths, start an HTTP listener, or read a file outside the repository as the lint config. Project files can no longer set `mcp.http_addr`, `mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.daemon_url`, `mcp.daemon_ca`, or `mcp.allow_operate_writes`, or a `mcp.rules_dir` or `mcp.lint_config` that resolves outside the project file's directory (symlinks included). rsigma ignores these keys and prints a warning naming the file. The same keys still resolve from an explicit `--config`, the user and system config, `RSIGMA_MCP__*` environment variables, and flags.
 
-sigma-cli also ran with the rules root as its working directory, and pySigma opens an unknown pipeline name as a file relative to it. A bare name such as `leak` therefore reached a symlink at the root that pointed outside it. With `--rules-dir` set, sigma-cli now runs in an empty temporary directory; every path it receives is already canonical and absolute.
+- `rsigma mcp serve` gains `--config <PATH>`, which loads only that file and may set every `mcp.*` key.
+- `rsigma config validate` and `rsigma config show` leave the ignored keys out of the resolved config and list them under `ignored_keys`.
+- The [Configuration](https://rsigma.io/reference/configuration/#project-config-trust) and [Security](https://rsigma.io/reference/security/) references list the protected keys.
 
-### API silences are bounded, and refused without an alert pipeline (#658)
+Breaking changes: an `mcp.*` key from the list above that lives in `./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc` no longer takes effect. Move it to `~/.config/rsigma/config.yaml` or `/etc/rsigma/config.yaml`, pass the file with `mcp serve --config <PATH>`, or use the matching `RSIGMA_MCP__*` variable or flag.
 
-`POST /api/v1/silences` accepted any matcher set and any `ends_at`, so one call with `rule =~ .*` and `ends_at: 9999-12-31T23:59:59Z` muted every detection indefinitely. That call can come from any token with `silences:write`, including an MCP client following prompt-injected instructions. Two alert-pipeline keys now bound silences created over the API:
+### The egress policy covers IP-literal URLs, redirects, IPv6 forms of IPv4 addresses, and more cloud metadata addresses (#654)
 
-- `max_silence_duration` (default `720h`): `ends_at` is required and must be no more than this far from now. `0` removes the bound.
-- `allow_broad_silences` (default `false`): at least one matcher must be `=` with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so `rule =~ .*`, `rule != x`, or `level = high` alone is refused.
+`--egress-policy` was enforced only when a hostname was resolved, and some addresses slipped through its rules, so these requests reached addresses the policy denies:
 
-A silence that breaks either rule gets `400` with a hint naming the key. Silences declared in the alert-pipeline config are not limited. Without `--alert-pipeline` the daemon never applied silences but still returned `201`; it now returns `409`. API silences restored from `--state-db` are kept even when they exceed the limits; the daemon logs their ids at startup and on reload so they can be reviewed and deleted.
+- A URL whose host is an IP literal, such as `http://169.254.169.254/latest/meta-data/` in an HTTP source, HTTP enricher, or webhook, skips DNS and was sent as is. The daemon now checks the URL before sending and fails the request with the policy's reason. A webhook delivery refused this way is permanent and goes to the DLQ instead of being retried.
+- Redirects were followed without a check, so an allowed upstream could answer with a redirect to a denied IP literal. Every hop is now checked before it is followed, still with at most 10 redirects.
+- The cloud-metadata rule compared against `fd00:ec:2::254` instead of the AWS IPv6 instance metadata address `fd00:ec2::254`, so the `default` preset, which allows private addresses, did not block it. It now does, along with GCP's IPv6 metadata address `fd20:ce::254` and Alibaba Cloud's `100.100.100.200`.
+- Only IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherited the IPv4 rules. IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96` and `/96` prefixes in `64:ff9b:1::/48`), and 6to4 (`2002::/16`) addresses now do too, so `http://[64:ff9b::10.0.0.1]/` is denied wherever `10.0.0.1` is.
 
-In `rsigma-runtime`, `Silence::build_api` and `SilenceLimits` implement the limits, `AlertPipeline::silence_limits` exposes them, and `SilenceError` gains `Unbounded`, `TooLong`, and `TooBroad`.
+Source, enricher, and webhook transport errors now include the underlying cause, so a resolution-time denial names the policy instead of reading only `error sending request`. The new `EgressPolicy::check_url` exposes the URL check to library users. When `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` is set, the proxy resolves hostnames, so only IP-literal URLs and redirect targets are checked; the daemon now logs a warning at startup in that case.
 
-Breaking changes: API silences without `ends_at`, longer than 30 days, or without a scoped `=` matcher are refused by default; set `max_silence_duration: 0` or `allow_broad_silences: true` in the alert-pipeline config to keep the old behavior. `POST /api/v1/silences` without an alert pipeline returns `409` instead of `201`. `SilenceError` and the new `SilenceLimits` are `#[non_exhaustive]`, `AlertPipelineFile` has two new fields, and `AlertPipeline::new` takes the limits.
+### MCP `evaluate_events` refuses `${ENV_VAR}` in template enrichers (#653)
 
-### MCP HTTP requires a token off loopback, validates `Origin`, and accepts the server's own host names (#659)
+A `template` enricher passed to the MCP server's `evaluate_events` tool, inline or through `enrichers_path`, could reference `${NAME}`, which renders from the server process's environment. Any MCP caller could read the server's environment variables, such as cloud credentials or API tokens, from the enrichment result. The tool now refuses an enricher with a `${ENV_VAR}` reference in any templated field and names up to five of them in the error; `${detection.*}` and `${correlation.*}` references work as before. The daemon still expands `${ENV_VAR}` in its own enrichers config. The new `rsigma_runtime::env_references` returns the environment references in a template, for library users who accept templates from untrusted input.
 
-`rsigma mcp serve --http` on a non-loopback address started without `--auth-token`, exposing every tool to anyone who could reach the port. It now refuses to start (exit code `3`) unless `--allow-unauthenticated` is set. Loopback binds are unchanged.
+### CI runs for merge queues and stacked PRs (#652)
 
-Every request's `Host` header was checked against `localhost`, `127.0.0.1`, and `::1` only, so a token-guarded server on `0.0.0.0` answered `403` to clients that used its IP or DNS name. A non-loopback bind with `--auth-token` now accepts any host, since the token is the access control, and the repeatable `--allowed-host` narrows that to named hosts. A specific bind IP is always accepted. Unauthenticated binds keep the validation that stops DNS-rebinding pages from reaching the server.
+- The `CI` and `Docs audit` workflows now also run on `merge_group` events, so their jobs can be required checks for a GitHub merge queue.
+- Their `pull_request` trigger no longer filters on the base branch or on changed paths, so every PR, including a docs-only PR or one based on another PR's branch, reports every job.
+- The `Security Audit` and `Workflow security (zizmor)` workflows also run on PRs against any base branch.
 
-The `Origin` header was not checked, so a web page on any site could send requests to a loopback MCP server through the user's browser. A request with an `Origin` header must now name an accepted host over `http` or `https`, or it gets `403`; requests without `Origin`, which is how MCP clients connect, are unaffected. Only a token-guarded bind that accepts any host skips the check. See [`rsigma mcp serve`](https://rsigma.io/cli/mcp/serve/#streamable-http).
+### VS Code extension: `rsigma.serverPath` is ignored in workspace settings (#651)
 
-In `rsigma-mcp`, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token and `AllowedHosts`); `http_router` and `serve_http` keep the loopback hosts and now validate `Origin` too. `HttpOptions` and `AllowedHosts` are `#[non_exhaustive]`, and an empty `AllowedHosts::List` means loopback.
+`rsigma.serverPath` is the program the extension starts, and it starts on opening any folder with a `.yml` or `.yaml` file. A repository could commit a `.vscode/settings.json` that pointed it at a script of its own, and a developer who opened and trusted that folder would run the script. The setting now has `machine` scope, so VS Code reads it only from user settings, or from remote settings in a remote window, and ignores it in a workspace or folder `.vscode/settings.json`.
 
-Breaking changes: a non-loopback `--http` bind without `--auth-token` refuses to start; pass `--allow-unauthenticated` to keep the old behavior. An empty `--auth-token` or `RSIGMA_MCP_AUTH_TOKEN` is refused. Browser requests whose `Origin` names a host that is not accepted get `403`. A plaintext non-loopback bind without `--allow-plaintext` now exits `3` instead of `2`.
+Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code now ignores it and the extension starts `rsigma-lsp` from `$PATH`, or fails to start if it is not there. Move the value to your user settings, or to remote settings for Remote-SSH, WSL, and Dev Containers, where the path is on the remote host. Settings Sync does not carry `machine`-scoped values, so set a custom path on each machine.
 
 ## [0.26.0] - 2026-11-02
 
