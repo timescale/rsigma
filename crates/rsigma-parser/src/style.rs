@@ -318,6 +318,7 @@ fn is_yaml_1_1_number(s: &str) -> bool {
             .all(|g| !g.is_empty() && g.len() <= 2 && g.chars().all(|c| c.is_ascii_digit()))
 }
 
+#[cfg(feature = "fmt")]
 pub(crate) const DETECTION_ROOT: &[&str] = &[
     "title",
     "id",
@@ -340,6 +341,7 @@ pub(crate) const DETECTION_ROOT: &[&str] = &[
     "license",
     "taxonomy",
 ];
+#[cfg(feature = "fmt")]
 pub(crate) const CORRELATION_ROOT: &[&str] = &[
     "title",
     "id",
@@ -362,6 +364,7 @@ pub(crate) const CORRELATION_ROOT: &[&str] = &[
     "license",
     "taxonomy",
 ];
+#[cfg(feature = "fmt")]
 pub(crate) const FILTER_ROOT: &[&str] = &[
     "title",
     "id",
@@ -384,6 +387,7 @@ pub(crate) const FILTER_ROOT: &[&str] = &[
     "license",
     "taxonomy",
 ];
+#[cfg(feature = "fmt")]
 pub(crate) const COMMON_ROOT: &[&str] = &[
     "title",
     "id",
@@ -424,7 +428,9 @@ pub(crate) const RSIGMA_ORDER: &[&str] = &[
     "rsigma.ads.response",
     "rsigma.ads.exempt",
 ];
+#[cfg(feature = "fmt")]
 pub(crate) const LOGSOURCE: &[&str] = &["category", "product", "service", "definition"];
+#[cfg(feature = "fmt")]
 pub(crate) const CORRELATION_BODY: &[&str] = &[
     "type",
     "rules",
@@ -437,6 +443,7 @@ pub(crate) const CORRELATION_BODY: &[&str] = &[
     "condition",
     "generate",
 ];
+#[cfg(feature = "fmt")]
 pub(crate) const RELATED_ITEM: &[&str] = &["id", "type"];
 
 /// Sort keys so the ones named in `table` come first in table order and the
