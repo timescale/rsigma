@@ -23,10 +23,8 @@ use crate::ast::{
     ArrayQuantifier, ConditionExpr, Detection, DetectionItem, Detections, LogSource, Modifier,
     Related, RelationType, SigmaCollection, SigmaRule, Status,
 };
+use crate::style::{STEP, field_token, key_token, scalar, scalar_prose};
 use crate::value::{SigmaString, SigmaValue, SpecialChar, StringPart};
-
-/// One indentation level (four spaces, matching the SigmaHQ house style).
-const STEP: &str = "    ";
 
 /// Emit a single detection [`SigmaRule`] as canonical Sigma YAML.
 ///
@@ -470,66 +468,6 @@ fn push_escaped_literal(out: &mut String, text: &str) {
         }
         i += 1;
     }
-}
-
-/// Quote a value scalar in Sigma's single-quote convention unless it is a
-/// bare-safe token.
-fn scalar(s: &str) -> String {
-    if is_bare_safe(s) {
-        s.to_string()
-    } else {
-        quote(s)
-    }
-}
-
-/// Looser quoting for prose scalars (title, description, author): plain YAML
-/// permits internal spaces, so common values stay unquoted.
-fn scalar_prose(s: &str) -> String {
-    let bare = !s.is_empty()
-        && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && !s.ends_with(' ')
-        && !s.contains(": ")
-        && !s.contains(" #")
-        && !s.contains('\n')
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.' | ',' | '(' | ')' | '/')
-        });
-    if bare { s.to_string() } else { quote(s) }
-}
-
-fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-fn is_bare_safe(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-        && !s.starts_with('-')
-        && s.parse::<f64>().is_err()
-        && !matches!(
-            s.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
-        )
-}
-
-/// A mapping key (metadata key, custom-attribute key, or logsource custom
-/// field). Quoted only when it contains characters unsafe in a plain key.
-fn key_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if safe { s.to_string() } else { quote(s) }
-}
-
-/// A detection field name used inside a key (bare identifiers, dotted paths,
-/// and array/index markers pass through; anything else is quoted).
-fn field_token(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '[' | ']' | '@')
-        });
-    if safe { s.to_string() } else { quote(s) }
 }
 
 /// Build a detection key from a field name and its ordered modifiers.

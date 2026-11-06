@@ -68,6 +68,7 @@ pub mod lint;
 pub mod parser;
 pub mod reference;
 pub mod selector;
+mod style;
 pub mod validate;
 pub mod value;
 pub mod version;
