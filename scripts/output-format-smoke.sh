@@ -248,6 +248,7 @@ check "reverse yaml keep" 'title:|detection:' \
   rule reverse --from lucene 'EventID:1' --logsource-product windows --output-format csv --quiet
 check "migrate warn" 'not supported by `rule migrate-sources`' \
   rule migrate-sources -p "$MIGPIPE" -o "$TMP/out-sources.yml" --dry-run --output-format csv
+check "fmt text warn" 'not supported by `rule fmt`' rule fmt "$RULE" --output-format csv
 
 note "backend convert / targets / formats"
 check "convert raw" 'CommandLine|malware' backend convert "$RULE" -t test
