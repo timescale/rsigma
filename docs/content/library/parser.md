@@ -22,7 +22,7 @@ For full rule loading, compilation, and event evaluation, layer [`rsigma-eval`](
 rsigma-parser = "{{ rsigma.version }}"
 ```
 
-The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintained `serde_yaml` fork), `regex`, `regex-syntax` and `fancy-regex` (regular-expression validation), `pest`, and `thiserror`. Default features enable YAML source fixes via the optional `fix` feature (`yamlpatch` and `yamlpath`).
+The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintained `serde_yaml` fork), `regex`, `regex-syntax` and `fancy-regex` (regular-expression validation), `pest`, and `thiserror`. Default features enable YAML source fixes via the optional `fix` feature (`yamlpatch` and `yamlpath`) and the comment-preserving formatter via the `fmt` feature (`tree-sitter` and `tree-sitter-yaml`).
 
 ## Public surface
 
@@ -45,6 +45,8 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `lint::catalogue::catalogue() -> Vec<LintRuleInfo>` | Programmatic metadata for every lint rule: stable id, default severity, fix disposition, one-line description. |
 | `ads::ads_catalogue() -> Vec<AdsSectionInfo>` | The nine [ADS](../guide/detection-strategy.md) sections: id, carrier field, default-required, description. `AdsSection`/`AdsDocument` read present and missing sections off a `SigmaRule`. |
 | `lint::fix::apply_fixes_to_source(&str, &[&LintWarning]) -> SourceFixOutcome` | Apply every safe fix to a YAML source string, preserving comments and formatting; reports applied/failed counts. |
+| `format_yaml(&str) -> Result<FormatOutcome, FormatError>` | Rewrite a Sigma YAML file into the canonical layout, keeping comments, anchors, tags, and directives. See [Formatting](#formatting). |
+| `format_yaml_range(&str, usize, usize) -> Result<Option<RangeEdit>, FormatError>` | Format only the smallest block mapping that contains a byte range, for editor selection formatting. |
 | `reference::{MODIFIERS, MITRE_TACTICS}` | Field-modifier descriptions and MITRE ATT&CK tactic metadata, shared with the LSP and the MCP server. |
 
 The full enumeration of modifiers (30+), correlation types (8), and condition operators lives in [the crate README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/README.md).
@@ -114,6 +116,45 @@ let fixable: Vec<_> = warnings.iter().filter(|w| w.fix.is_some()).collect();
 let outcome = apply_fixes_to_source(source, &fixable);
 println!("applied {} fix(es)", outcome.applied);
 ```
+
+## Formatting
+
+{{ added "unreleased" }}
+
+`format_yaml` rewrites a whole Sigma file into the canonical layout used by `rsigma rule fmt` and the LSP. It keeps comments, anchors, aliases, tags, and directives, and it runs a semantic guard before returning changed text. `format_yaml_range` formats only the smallest block mapping that contains a byte range and returns the replacement plus the byte span to splice; it returns `Ok(None)` when that mapping is already canonical.
+
+```rust
+use rsigma_parser::{format_yaml, format_yaml_range};
+
+let source = "title: Test\nlogsource:\n  category: test\ndetection:\n  selection:\n    Field: value\n  condition: selection\n";
+
+let outcome = format_yaml(source).unwrap();
+assert!(outcome.changed);
+assert!(outcome.formatted.contains("\n    category: test\n"));
+
+let start = source.find("selection:").unwrap();
+let end = source.find("condition: selection").unwrap() + "condition: selection".len();
+if let Some(edit) = format_yaml_range(source, start, end).unwrap() {
+    let mut formatted = String::new();
+    formatted.push_str(&source[..edit.start]);
+    formatted.push_str(&edit.replacement);
+    formatted.push_str(&source[edit.end..]);
+    assert!(formatted.contains("\n      Field: value\n"));
+}
+```
+
+`FormatError` distinguishes the reasons a file is left alone:
+
+| Variant | Meaning |
+|---------|---------|
+| `Yaml` | The input is not valid YAML. The message carries a one-based line and column. |
+| `NotSigma` | A document is empty, not a mapping, or has none of `detection`, `logsource`, `correlation`, or `filter`. |
+| `InvalidSigma` | The YAML parses but the Sigma parser reports an error. |
+| `Unsupported` | Valid YAML the formatter cannot lay out safely, such as a comment between a key and its scalar value, an explicit complex key, a comment inside a flow sequence, more than 64 levels of nesting, or output larger than 16 times the input. |
+| `Guard` | The rewrite would change values, parsed rules, diagnostics, comments, anchors, aliases, tags, directives, or `action` values. |
+| `Range` | The requested range is outside the document, splits a character, or cannot be formatted on its own. |
+
+The `fmt` feature is enabled by default and pulls in `tree-sitter` and `tree-sitter-yaml`. Disable default features for parser-only `wasm32-unknown-unknown` builds. See [Formatting Rules](../guide/formatting-rules.md) for the layout, key order, comment placement, and refused constructs.
 
 ## Condition parsing
 

@@ -22,6 +22,7 @@ cargo install --path crates/rsigma-lsp
 | Completions | Context-aware; trigger characters: `\|`, `:`, ` `, `\n` |
 | Hover | Field modifiers, MITRE ATT&CK tactics and techniques |
 | Document symbols | Hierarchical outline of rule structure |
+| Formatting | Whole-document and selection formatting with rsigma's canonical style |
 
 ## Diagnostics
 

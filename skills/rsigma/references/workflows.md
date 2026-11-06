@@ -10,13 +10,14 @@ Prefer the MCP tool when `rsigma mcp serve` is connected. Otherwise use the CLI.
 
 1. **Draft.** Hand-authored YAML (sigma-rules), `rule draft` from exemplar events, or `reverse_convert` / `rule reverse` from a Lucene query, which needs at least one logsource product, category, or service. Call `parse_rule` (or `rule parse`) and stop if the rule is invalid. Parse errors cover a missing logsource, conflicting modifiers, values of the wrong type, invalid regexes, and undefined detections, and each names the field.
 2. **Lint.** `lint_rules` or `rule lint`. Each finding has a rule id and a `fixable` flag. Apply a known-safe fix with `fix_rules` or `rule lint --fix`. Rewrite the rest by hand. Do not treat a count of checks as stable. The catalogue is the [linting guide](https://rsigma.io/guide/linting-rules/).
-3. **Evaluate.** `evaluate_events` or `engine eval` against a few positive and negative events. `match_detail` of `summary` or `full` explains why an event matched. When the events live on the rule as `rsigma.exemplars`, `test_exemplars` or `rule test` is the closed runner.
+3. **Format.** `rule fmt --write` rewrites the file into the canonical layout and keeps comments. Run `rule fmt --check` in CI. The formatter refuses any rewrite that would change what the rule means. Guide: [Formatting Rules](https://rsigma.io/guide/formatting-rules/).
+4. **Evaluate.** `evaluate_events` or `engine eval` against a few positive and negative events. `match_detail` of `summary` or `full` explains why an event matched. When the events live on the rule as `rsigma.exemplars`, `test_exemplars` or `rule test` is the closed runner.
    Correlation inputs do not produce standalone output by default, including a correlation that feeds another correlation. Set top-level `generate: true` on the referencing correlation or pass `--emit-detections` when those matches are needed.
-4. **Tune.** For a noisy rule, `tune_rules` or `rule tune` with classified false positives and a true-positive set that must still fire. Review the returned filter before writing it.
+5. **Tune.** For a noisy rule, `tune_rules` or `rule tune` with classified false positives and a true-positive set that must still fire. Review the returned filter before writing it.
    Target filters by rule `id` or `name`, not title. Selector patterns in a filter condition refer only to that filter's own detection items.
-5. **Validate.** `validate_rules` or `rule validate` on the set, with pipelines when the rules depend on them. Parse warnings, such as an invalid `status` or `level`, are reported but do not fail validation; pass `fail_level: warning` (or the [`rule validate`](https://rsigma.io/cli/rule/validate/) `--fail-level` flag) to fail on them.
+6. **Validate.** `validate_rules` or `rule validate` on the set, with pipelines when the rules depend on them. Parse warnings, such as an invalid `status` or `level`, are reported but do not fail validation; pass `fail_level: warning` (or the [`rule validate`](https://rsigma.io/cli/rule/validate/) `--fail-level` flag) to fail on them.
    Pipeline conditions use the pySigma `*_cond_op`, `*_cond_not`, and `*_cond_expr` keys. Placeholder transformations require `|expand` values; `value_placeholders` must resolve every variable unless runtime substitution is explicitly enabled.
-6. **Convert.** `convert_rules` or `backend convert` to the deployment target. Native targets run in-process. Other targets need sigma-cli, and on MCP they also need `--allow-sigma-cli`.
+7. **Convert.** `convert_rules` or `backend convert` to the deployment target. Native targets run in-process. Other targets need sigma-cli, and on MCP they also need `--allow-sigma-cli`.
 
 Guide: [MCP server](https://rsigma.io/guide/mcp-server/).
 

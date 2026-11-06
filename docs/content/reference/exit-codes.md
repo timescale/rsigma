@@ -7,7 +7,7 @@
 | Code | Constant | Meaning |
 |------|----------|---------|
 | `0` | `SUCCESS` | Operation completed cleanly. For `engine eval`, events were processed (detections may have fired). For `rule lint`, no findings at or above `--fail-level`. For `rule validate`, every rule parsed and compiled. |
-| `1` | `FINDINGS` | The tool ran but produced findings. For `engine eval --fail-on-detection`, at least one detection or correlation fired. For `rule lint --fail-level <X>`, at least one finding at or above `X`. Also used by `pipeline resolve` when any source returns `"status": "error"`, and by `rule hygiene` and `rule scorecard` when `--fail-on` matches. |
+| `1` | `FINDINGS` | The tool ran but produced findings. For `engine eval --fail-on-detection`, at least one detection or correlation fired. For `rule lint --fail-level <X>`, at least one finding at or above `X`. For `rule fmt --check` or `rule fmt --diff`, at least one file would be reformatted. Also used by `pipeline resolve` when any source returns `"status": "error"`, and by `rule hygiene` and `rule scorecard` when `--fail-on` matches. |
 | `2` | `RULE_ERROR` | The input rules could not be loaded or compiled. For `rule validate`, parse or compile errors. For `backend convert`, conversion failed or every rule failed. For `engine eval`, `rule lint`, `rule fields`, and `rule parse`, the rules path or file could not be read. For `rule condition`, the expression has bad syntax. For `rule stdin`, stdin could not be read. |
 | `3` | `CONFIG_ERROR` | Configuration or argument error: bad pipeline file, unknown backend target, malformed `--suppress` duration, invalid `--jq` filter, schema load/fetch/parse failure, unreachable daemon client call. |
 
@@ -20,6 +20,7 @@
 | `rule parse` | File readable; YAML errors and missing-field issues are warnings on stderr and the partial AST still prints. | (not used) | File could not be opened (IO error). | (not used) |
 | `rule validate` | Every rule parsed and compiled. | (not used) | At least one parse or compile error. | Pipeline/`--source` load failure, `--resolve-sources` failure. |
 | `rule lint` | No findings at or above `--fail-level`. | Findings at or above `--fail-level` (including schema violations when `--schema` is set). | Rules path unreadable. | Schema argument/load/fetch/parse/compile failure, or other CLI configuration error. |
+| `rule fmt` | Report or write finished, or nothing to change. | `--check` or `--diff`: at least one file would be reformatted. | A file could not be read, parsed, formatted, or written. | Conflicting mode flags, or `--stdout` without exactly one file. |
 | `rule fields` | Listed cleanly. Per-rule parse errors are warnings only. | (not used) | Rules path unreadable. | Pipeline file unreadable. |
 | `rule condition` | Expression parsed. | (not used) | Bad expression syntax. | (not used) |
 | `rule stdin` | YAML syntax errors and invalid documents are warnings; the partial AST still prints. | (not used) | stdin read failure (including non-UTF-8 input), or an `action: global`/`action: repeat` merge over the nesting limit. | (not used) |

@@ -1,6 +1,6 @@
 ---
 name: rsigma
-description: "Use the rsigma CLI and MCP server: engine eval, engine daemon, rule lint, rule draft, rule tune, rule backtest, backend convert, mcp serve. Prefer MCP tools when rsigma mcp serve is connected. For authoring Sigma YAML (detection, correlation, filters, pipelines, modifiers), use the sigma-rules skill. Use this skill whenever the user mentions rsigma, evaluating or linting Sigma rules, converting rules to a SIEM query, running a detection daemon, drafting or tuning rules from events, or backtesting a ruleset, even if they do not name the binary."
+description: "Use the rsigma CLI and MCP server: engine eval, engine daemon, rule lint, rule fmt, rule draft, rule tune, rule backtest, backend convert, mcp serve. Prefer MCP tools when rsigma mcp serve is connected. For authoring Sigma YAML (detection, correlation, filters, pipelines, modifiers), use the sigma-rules skill. Use this skill whenever the user mentions rsigma, evaluating or linting Sigma rules, converting rules to a SIEM query, running a detection daemon, drafting or tuning rules from events, or backtesting a ruleset, even if they do not name the binary."
 ---
 
 # rsigma
