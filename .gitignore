@@ -2,6 +2,7 @@
 /fuzz/target
 /ci/wasm-smoke/target
 *.profdata
+*.pending-snap
 
 # VSCode extension build artifacts
 editors/vscode/node_modules/
