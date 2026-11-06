@@ -61,7 +61,7 @@ rayon = "1.12.0"
 
 # optional
 tokio-stream = { version = "0.1", optional = true }
-async-nats = { version = "0.50", optional = true }
+async-nats = { version = "0.51", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.15.1", optional = true, default-features = false }
