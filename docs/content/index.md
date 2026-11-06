@@ -105,7 +105,7 @@ RSigma combines pySigma-style conversion with a streaming evaluator in one self-
 
 | Event | Talk | Topic | Materials |
 |-------|------|-------|-----------|
-| Linux Security Summit Europe 2026 | [Detection Engineering with RSigma](https://lsseu2026.sched.com/event/2WHc4) | One Linux detection from auditd and Tetragon telemetry through normalization, portable Sigma evaluation, stateful correlation, fixture-based testing, and deployment | [Video](https://www.youtube.com/watch?v=cqeYdA39qv0), [slides](https://github.com/mostafa/rsigma-lss-eu-2026-talk/blob/main/deck/talk.md), [demo and materials](https://github.com/mostafa/rsigma-lss-eu-2026-talk) |
+| Linux Security Summit Europe 2026 | [Detection Engineering with RSigma](https://lsseu2026.sched.com/event/2WHc4) | One Linux detection from auditd and Tetragon telemetry through normalization, portable Sigma evaluation, stateful correlation, fixture-based testing, and deployment | [Video](https://www.youtube.com/watch?v=cqeYdA39qv0), [slides](https://hosted-files.sched.co/lsseu2026/d0/talk.pdf), [demo and materials](https://github.com/mostafa/rsigma-lss-eu-2026-talk) |
 
 ## Read the deep dives
 
