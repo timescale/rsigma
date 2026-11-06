@@ -29,6 +29,11 @@ fn stdout_of(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// The CLI prints `/` separators on every platform.
+fn slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn stderr_of(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
@@ -42,7 +47,7 @@ fn report_lists_unformatted_files_and_exits_zero() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert!(stdout_of(&output).contains(&format!("Would reformat: {}", path.display())));
+    assert!(stdout_of(&output).contains(&format!("Would reformat: {}", slash(&path))));
 }
 
 #[test]
@@ -95,7 +100,7 @@ fn diff_matches_golden() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    let stdout = stdout_of(&output).replace(dir.path().to_str().unwrap(), "<DIR>");
+    let stdout = stdout_of(&output).replace(&slash(dir.path()), "<DIR>");
     let golden =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/fmt_diff.txt"))
             .unwrap();
@@ -237,7 +242,7 @@ fn stdout_rejects_directory_and_multiple_paths() {
         .code(3)
         .stderr(predicate::str::contains(format!(
             "error: `--stdout` needs a file, but `{}` is a directory",
-            dir.path().display()
+            slash(dir.path())
         )));
 
     rsigma()

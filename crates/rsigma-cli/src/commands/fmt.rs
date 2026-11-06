@@ -195,7 +195,7 @@ fn validate(args: &FmtArgs) -> Result<Mode, String> {
         if args.paths[0].is_dir() {
             return Err(format!(
                 "`--stdout` needs a file, but `{}` is a directory",
-                args.paths[0].display()
+                display_path(&args.paths[0], false)
             ));
         }
         return Ok(Mode::Stdout);
