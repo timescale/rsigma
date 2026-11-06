@@ -20,7 +20,7 @@ pub(crate) struct SpanInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Render {
     pub text: String,
-    pub spans: BTreeMap<Vec<PathSeg>, SpanInfo>,
+    pub spans: BTreeMap<(usize, Vec<PathSeg>), SpanInfo>,
 }
 
 pub(crate) fn render(model: &Model, kinds: &[DocKind], plan: &Plan) -> Render {
@@ -58,7 +58,17 @@ pub(crate) fn render(model: &Model, kinds: &[DocKind], plan: &Plan) -> Render {
             render.text.push_str(&comment.text);
             render.text.push('\n');
         }
-        render_map_entries(&mut render, model, plan, kind, doc.root, &[], "", false);
+        render_map_entries(
+            &mut render,
+            model,
+            plan,
+            kind,
+            index,
+            doc.root,
+            &[],
+            "",
+            false,
+        );
     }
     if !render.text.ends_with('\n') {
         render.text.push('\n');
@@ -72,6 +82,7 @@ fn render_map_entries(
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     map_id: NodeId,
     path: &[PathSeg],
     indent: &str,
@@ -93,6 +104,7 @@ fn render_map_entries(
             model,
             plan,
             kind,
+            doc,
             entry,
             &entry_path,
             indent,
@@ -106,7 +118,7 @@ fn render_map_entries(
         }
     }
     render.spans.insert(
-        path.to_vec(),
+        (doc, path.to_vec()),
         SpanInfo {
             start,
             end: render.text.len(),
@@ -121,6 +133,7 @@ fn render_entry(
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     entry: &Entry,
     entry_path: &[PathSeg],
     indent: &str,
@@ -139,6 +152,7 @@ fn render_entry(
         model,
         plan,
         kind,
+        doc,
         entry.value,
         entry_path,
         &prefix,
@@ -153,6 +167,7 @@ fn render_value(
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     value: NodeId,
     value_path: &[PathSeg],
     prefix: &str,
@@ -257,7 +272,9 @@ fn render_value(
             render.text.push('\n');
             if !entries.is_empty() {
                 let deeper = format!("{indent}{STEP}");
-                render_map_entries(render, model, plan, kind, value, value_path, &deeper, false);
+                render_map_entries(
+                    render, model, plan, kind, doc, value, value_path, &deeper, false,
+                );
             }
         }
         NodeKind::Seq { items, .. } => {
@@ -278,17 +295,19 @@ fn render_value(
             render.text.push('\n');
             if !items.is_empty() {
                 let deeper = format!("{indent}{STEP}");
-                render_sequence(render, model, plan, kind, value, value_path, &deeper);
+                render_sequence(render, model, plan, kind, doc, value, value_path, &deeper);
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_sequence(
     render: &mut Render,
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     seq_id: NodeId,
     path: &[PathSeg],
     indent: &str,
@@ -299,7 +318,7 @@ fn render_sequence(
     for (index, item) in items.iter().enumerate() {
         let mut item_path = path.to_vec();
         item_path.push(PathSeg::Index(index));
-        render_item(render, model, plan, kind, item, &item_path, indent);
+        render_item(render, model, plan, kind, doc, item, &item_path, indent);
     }
     if let NodeKind::Seq { dangling, .. } = &model.nodes[seq_id as usize].kind {
         for comment in dangling {
@@ -308,11 +327,13 @@ fn render_sequence(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_item(
     render: &mut Render,
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     item: &Item,
     item_path: &[PathSeg],
     indent: &str,
@@ -321,7 +342,9 @@ fn render_item(
     match &node.kind {
         NodeKind::Map { entries, .. } if !entries.is_empty() => {
             if node.props.is_empty() && item.trailing.is_none() {
-                render_compact_mapping_item(render, model, plan, kind, item, item_path, indent);
+                render_compact_mapping_item(
+                    render, model, plan, kind, doc, item, item_path, indent,
+                );
             } else {
                 for comment in &item.leading {
                     write_comment(render, indent, comment);
@@ -344,7 +367,7 @@ fn render_item(
                 render.text.push('\n');
                 let deeper = format!("{indent}  ");
                 render_map_entries(
-                    render, model, plan, kind, item.value, item_path, &deeper, true,
+                    render, model, plan, kind, doc, item.value, item_path, &deeper, true,
                 );
             }
         }
@@ -365,7 +388,9 @@ fn render_item(
             render.text.push_str(&line);
             render.text.push('\n');
             let deeper = format!("{indent}{STEP}");
-            render_sequence(render, model, plan, kind, item.value, item_path, &deeper);
+            render_sequence(
+                render, model, plan, kind, doc, item.value, item_path, &deeper,
+            );
         }
         _ => {
             for comment in &item.leading {
@@ -377,6 +402,7 @@ fn render_item(
                 model,
                 plan,
                 kind,
+                doc,
                 item.value,
                 item_path,
                 &dash,
@@ -387,11 +413,13 @@ fn render_item(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_compact_mapping_item(
     render: &mut Render,
     model: &Model,
     plan: &Plan,
     kind: DocKind,
+    doc: usize,
     item: &Item,
     item_path: &[PathSeg],
     indent: &str,
@@ -412,7 +440,7 @@ fn render_compact_mapping_item(
         write_comment(render, indent, comment);
     }
     let cont = format!("{indent}  ");
-    let insertion = render.text.len() + cont.len();
+    let insertion = render.text.len();
     let mut scratch = Render {
         text: String::new(),
         spans: BTreeMap::new(),
@@ -424,6 +452,7 @@ fn render_compact_mapping_item(
         model,
         plan,
         kind,
+        doc,
         first,
         &first_path,
         &cont,
@@ -431,9 +460,9 @@ fn render_compact_mapping_item(
         true,
     );
     let first_entry = scratch.text;
-    for (path, span) in scratch.spans {
+    for (key, span) in scratch.spans {
         render.spans.insert(
-            path,
+            key,
             SpanInfo {
                 start: span.start + insertion,
                 end: span.end + insertion,
@@ -461,6 +490,7 @@ fn render_compact_mapping_item(
             model,
             plan,
             kind,
+            doc,
             entry,
             &entry_path,
             &cont,
@@ -474,7 +504,7 @@ fn render_compact_mapping_item(
         }
     }
     render.spans.insert(
-        item_path.to_vec(),
+        (doc, item_path.to_vec()),
         SpanInfo {
             start,
             end: render.text.len(),

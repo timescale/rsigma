@@ -65,7 +65,7 @@ pub fn format_yaml_range(
     let span = prepared
         .rendered
         .spans
-        .get(&region.path)
+        .get(&(document, region.path.clone()))
         .ok_or_else(|| FormatError::Range("the range is not inside a mapping".to_string()))?;
 
     let replacement = build_replacement(&prepared.rendered.text, span, region.child_col);

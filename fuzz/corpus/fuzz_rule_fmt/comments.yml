@@ -1,0 +1,10 @@
+# header
+title: Commented
+logsource:
+    category: test
+detection:
+    # leading
+    selection:
+        Field: value  # trailing
+    condition: selection
+    # dangling

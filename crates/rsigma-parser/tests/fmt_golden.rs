@@ -191,3 +191,8 @@ fn golden_action_global_common_only() {
 fn golden_action_repeat_common_only() {
     run_golden("action_repeat_common_only");
 }
+
+#[test]
+fn golden_multi_doc_trailing_comment() {
+    run_golden("multi_doc_trailing_comment");
+}

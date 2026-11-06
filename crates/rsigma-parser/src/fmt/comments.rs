@@ -42,6 +42,7 @@ pub(crate) fn attach(model: &mut Model, source: &str) -> Result<(), crate::fmt::
             root_start: model.nodes[doc.root as usize].span.start,
             root_end: model.nodes[doc.root as usize].span.end,
             start_token_row: doc.start_token.map(|(_, row)| row),
+            start_token_byte: doc.start_token.map(|(byte, _)| byte),
             first_directive: doc.directive_bytes.first().copied(),
         })
         .collect();
@@ -95,12 +96,22 @@ struct DocInfo {
     root_start: usize,
     root_end: usize,
     start_token_row: Option<usize>,
+    start_token_byte: Option<usize>,
     first_directive: Option<usize>,
 }
 
 fn assign_document(comment: &Comment, docs: &[DocInfo]) -> Option<usize> {
     if docs.is_empty() {
         return None;
+    }
+    // Tree-sitter includes trailing comments in a document's root span. A
+    // comment that sits inside a document belongs to it even though the byte
+    // offset is past the previous document's end.
+    if let Some(index) = docs
+        .iter()
+        .position(|doc| doc.root_start <= comment.byte && comment.byte < doc.root_end)
+    {
+        return Some(index);
     }
     let previous = docs
         .iter()
@@ -111,11 +122,14 @@ fn assign_document(comment: &Comment, docs: &[DocInfo]) -> Option<usize> {
     let Some(previous) = previous else {
         return Some(0);
     };
-    if let Some(next) = docs.get(previous + 1)
-        && next.first_directive.is_some_and(|byte| byte < comment.byte)
-        && comment.byte < next.root_start
-    {
-        return Some(previous + 1);
+    if let Some(next) = docs.get(previous + 1) {
+        let boundary = match (next.first_directive, next.start_token_byte) {
+            (Some(directive), Some(start)) => Some(directive.min(start)),
+            (directive, start) => directive.or(start),
+        };
+        if boundary.is_some_and(|byte| byte < comment.byte) && comment.byte < next.root_start {
+            return Some(previous + 1);
+        }
     }
     Some(previous)
 }
@@ -149,6 +163,17 @@ fn attach_trailing(model: &mut Model, owners: &[Owner], doc: usize, comment: Com
                     shape(model, owner.value),
                     Shape::Scalar | Shape::Alias | Shape::Empty | Shape::Flow
                 ) && owner.end.row == comment.row
+            }),
+    );
+    // A comment can trail node properties such as an anchor or tag on a line
+    // between the key or dash and the value. The entry or item owns it.
+    candidates.extend(
+        owners
+            .iter()
+            .filter(|owner| owner.doc == doc)
+            .filter(|owner| {
+                let value = &model.nodes[owner.value as usize];
+                owner.start.row < comment.row && value.start.row >= comment.row
             }),
     );
     candidates.sort_by_key(|owner| std::cmp::Reverse(owner.ancestors.len()));
@@ -629,6 +654,16 @@ mod tests {
     }
 
     #[test]
+    fn comment_on_later_document_marker_is_start_comment() {
+        let source = "title: One\naction: global\n---  # trail: Reset\naction: reset\n";
+        let model = build(source);
+        assert_eq!(
+            model.docs[1].start_comment.as_ref().unwrap().text,
+            "# trail: Reset"
+        );
+    }
+
+    #[test]
     fn comments_between_documents_follow_the_previous_document() {
         let source = "title: One\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n# between\n---\ntitle: Two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n";
         let model = build(source);
@@ -637,6 +672,38 @@ mod tests {
             panic!()
         };
         assert!(dangling.iter().any(|c| c.text == "# between"));
+    }
+
+    #[test]
+    fn trailing_comment_after_anchor_on_its_own_line_stays_with_the_entry() {
+        let source = "e:\n &A #urs\n s\naction: reset\n";
+        let model = build(source);
+        let (map, index) = find_entry(&model, "e");
+        assert_eq!(
+            entry(&model, map, index).trailing.as_ref().unwrap().text,
+            "#urs"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_in_later_document_stays_with_its_entry() {
+        let source = "title: Global\nlogsource:\n    product: windows\naction: global\n---\ndetection:\n    seield: value  # trail: Reset\naction: reset\n";
+        let model = build(source);
+        let NodeKind::Map { entries, .. } = &model.nodes[model.docs[1].root as usize].kind else {
+            panic!()
+        };
+        let detection = entries
+            .iter()
+            .find(|entry| key_string(&model, entry.key) == "detection")
+            .unwrap();
+        let NodeKind::Map { entries, .. } = &model.nodes[detection.value as usize].kind else {
+            panic!()
+        };
+        let entry = entries
+            .iter()
+            .find(|entry| key_string(&model, entry.key) == "seield")
+            .unwrap();
+        assert_eq!(entry.trailing.as_ref().unwrap().text, "# trail: Reset");
     }
 
     #[test]

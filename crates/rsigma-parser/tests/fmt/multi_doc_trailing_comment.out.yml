@@ -1,0 +1,8 @@
+action: global
+title: Global
+logsource:
+    product: windows
+---
+action: reset
+detection:
+    seield: value # trail: Reset

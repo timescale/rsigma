@@ -1,0 +1,10 @@
+title: Merge
+defaults: &defaults
+    level: low
+logsource:
+    <<: *defaults
+    category: test
+detection:
+    selection:
+        Field: value
+    condition: selection

@@ -1,0 +1,7 @@
+title: Tags
+logsource:
+    category: test
+detection:
+    selection:
+        Field: !!str 123
+    condition: selection

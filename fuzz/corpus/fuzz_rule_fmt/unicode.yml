@@ -1,0 +1,8 @@
+title: Tést 😀
+description: Ünïcode rule
+logsource:
+    category: test
+detection:
+    selection:
+        Field: wért
+    condition: selection

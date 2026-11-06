@@ -1,0 +1,13 @@
+title: Whoami Execution
+id: 00000000-0000-0000-0000-000000000001
+status: test
+description: Detects whoami execution
+author: SigmaHQ
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\whoami.exe'
+    condition: selection
+level: low

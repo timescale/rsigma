@@ -55,6 +55,30 @@ fn compact_list_item_mapping_is_reindented() {
 }
 
 #[test]
+fn range_inside_a_nested_mapping_of_a_list_item_is_reindented() {
+    let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\nrsigma.exemplars:\n    - event:\n        Field: value\n        Other: 'two'\n";
+    let start = source.rfind("Field: value").unwrap();
+    let end = source.find("Other: 'two'").unwrap() + "Other: 'two'".len();
+    let output = apply(source, start, end).unwrap().expect("edit");
+    assert_eq!(
+        output,
+        "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\nrsigma.exemplars:\n    - event:\n        Field: value\n        Other: two\n"
+    );
+}
+
+#[test]
+fn range_lookup_is_per_document() {
+    let source = "title: One\nlogsource:\n    category: test\ndetection:\n    selection:\n      Field: value\n      Other: 'two'\n    condition: selection\n---\ntitle: Two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Alpha: one\n        Beta: two\n    condition: selection\n";
+    let start = source.find("Field: value").unwrap();
+    let end = source.find("Other: 'two'").unwrap() + "Other: 'two'".len();
+    let output = apply(source, start, end).unwrap().expect("edit");
+    assert_eq!(
+        output,
+        "title: One\nlogsource:\n    category: test\ndetection:\n    selection:\n      Field: value\n      Other: two\n    condition: selection\n---\ntitle: Two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Alpha: one\n        Beta: two\n    condition: selection\n"
+    );
+}
+
+#[test]
 fn canonical_range_is_a_no_op() {
     let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n";
     let (start, end) = range_of(source, "selection:");

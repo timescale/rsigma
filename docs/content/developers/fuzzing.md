@@ -1,12 +1,13 @@
 # Fuzzing
 
-The workspace ships 28 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 22 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 29 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 23 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
 | Target | Covers | Max input len in CI |
 | -------- | -------- | --------------------- |
 | `fuzz_parse_yaml` | The Sigma YAML parser (`parse_sigma_yaml`). | 8192 |
+| `fuzz_rule_fmt` | The Sigma formatter (`format_yaml`, `format_yaml_range`): idempotency, value equality, and comment and anchor preservation. | 8192 |
 | `fuzz_condition` | Condition-expression parser only. | 512 |
 | `fuzz_eval_matching` | Engine evaluation. Feeds parsed rules and constructed JSON events. | 65536 |
 | `fuzz_eval_matcher_diff` | Differential test for the matcher optimizer (`optimize_any_of`): runs the Aho-Corasick fast path against the naive scalar fallback on the same needles and haystacks. Not in the weekly matrix; run manually. | (default) |

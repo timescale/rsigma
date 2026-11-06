@@ -1,0 +1,9 @@
+title: Filter Admin
+logsource:
+    category: process_creation
+filter:
+    rules:
+        - 00000000-0000-0000-0000-000000000001
+    selection:
+        User|startswith: 'adm_'
+    condition: selection
