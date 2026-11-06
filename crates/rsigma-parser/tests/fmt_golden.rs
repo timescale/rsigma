@@ -88,6 +88,11 @@ fn golden_quoting_canonical() {
 }
 
 #[test]
+fn golden_quoting_yaml_1_1() {
+    run_golden("quoting_yaml_1_1");
+}
+
+#[test]
 fn golden_double_quoted_escapes() {
     run_golden("double_quoted_escapes");
 }

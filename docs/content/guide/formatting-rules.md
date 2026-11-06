@@ -76,7 +76,9 @@ Recognized `rsigma.*` attributes come before other custom attributes, in this or
 
 ### Quoting
 
-Strings that YAML 1.1 would read as another type are quoted, including `true`, `false`, `null`, `yes`, `no`, `on`, `off`, `~`, decimal and scientific numbers, `.inf`, `.nan`, hex, octal, binary, underscored numbers, and sexagesimal numbers. The formatter also quotes strings that begin with a YAML indicator or contain `: ` or ` #`, and it uses double quotes when a value contains control characters that single quotes cannot carry.
+Strings that YAML 1.1 would read as another type are quoted, including `true`, `false`, `null`, `yes`, `no`, `on`, `off`, `~`, `=`, `<<`, decimal and scientific numbers, `.inf`, `.nan`, hex, octal, binary, underscored numbers, sexagesimal numbers, and timestamps such as `2024-01-01`. A value that YAML 1.2 reads as a string but YAML 1.1 reads as a number or timestamp keeps its source style: an unquoted `date: 2024-01-01` or `Count: 1_000` stays unquoted and a quoted one stays quoted, so neither PyYAML (which pySigma uses) nor rsigma sees a different type after formatting. A `<<` key stays plain only when it was a plain merge key in the source.
+
+The formatter also quotes strings that begin with a YAML indicator or contain `: ` or ` #`, and it uses double quotes when a value contains control characters that single quotes cannot carry or a multi-line value has a line that ends in a space or tab, since editors that trim trailing whitespace would change a literal block.
 
 Values in detection selections stay plain only when every character is alphanumeric or one of `_`, `-`, `.`, `/`. Prose fields such as `title`, `description`, `author`, `license`, `logsource.definition`, and items of `references`, `tags`, `falsepositives`, `fields`, and `scope` stay plain when they start with an alphanumeric character and contain no indicator. Condition expressions stay plain unless a YAML rule forces quoting. Mapping keys use the same rules; detection field keys may also contain `/`, `[`, `]`, `@`, and `|`.
 

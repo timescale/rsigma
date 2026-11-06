@@ -8,7 +8,7 @@ use crate::fmt::cst::{
     Comment, Decoded, Entry, Item, Model, NodeId, NodeKind, PathSeg, PreludeLine, Prop, key_string,
 };
 use crate::fmt::order::Plan;
-use crate::style::{Encoded, STEP, encode, encode_key};
+use crate::style::{Encoded, STEP, encode, encode_key, is_yaml_1_1_typed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SpanInfo {
@@ -271,7 +271,11 @@ fn render_value(
         } => match decoded {
             Decoded::Str(s) => {
                 let ctx = scalar_ctx(value_path);
-                let encoded = encode(s, ctx);
+                let encoded = if keeps_yaml_1_1_plain(text, s) {
+                    Encoded::Plain(s.clone())
+                } else {
+                    encode(s, ctx)
+                };
                 let first = match &encoded {
                     Encoded::Plain(token) | Encoded::Single(token) | Encoded::Double(token) => {
                         token.clone()
@@ -657,6 +661,13 @@ fn rewrite_indent_indicator(header: &str) -> String {
     result
 }
 
+/// A plain source scalar that yaml_serde reads as a string but PyYAML reads as
+/// an int, float, or timestamp (`1_000`, `1:30`, `2024-01-01`) stays plain, so
+/// neither reader sees a different type after formatting.
+fn keeps_yaml_1_1_plain(raw: &str, decoded: &str) -> bool {
+    raw == decoded && is_yaml_1_1_typed(decoded)
+}
+
 fn key_text(model: &Model, key: NodeId, ctx: crate::style::KeyCtx) -> String {
     let node = &model.nodes[key as usize];
     let mut text = props_text(&node.props);
@@ -666,8 +677,8 @@ fn key_text(model: &Model, key: NodeId, ctx: crate::style::KeyCtx) -> String {
             text: raw,
             ..
         } => {
-            if s == "<<" && raw == "<<" {
-                text.push_str("<<");
+            if (s == "<<" && raw == "<<") || keeps_yaml_1_1_plain(raw, s) {
+                text.push_str(s);
             } else {
                 text.push_str(&encode_key(s, ctx));
             }

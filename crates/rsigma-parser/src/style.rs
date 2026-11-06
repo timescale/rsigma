@@ -55,7 +55,9 @@ pub(crate) fn coerces(s: &str) -> bool {
         Ok(yaml_serde::Value::Mapping(_)) | Ok(yaml_serde::Value::Sequence(_)) => {}
         _ => return true,
     }
-    is_yaml_1_1_number(s)
+    // PyYAML resolves a plain `=` to the value tag and a plain `<<` to the
+    // merge tag; `safe_load` cannot construct either as a scalar.
+    s == "=" || s == "<<" || is_yaml_1_1_typed(s)
 }
 
 /// The YAML block-context plain rule, applied before style-specific
@@ -120,9 +122,6 @@ pub(crate) fn encode(s: &str, ctx: ScalarCtx) -> Encoded {
 
 /// Write a mapping key in the given context.
 pub(crate) fn encode_key(s: &str, ctx: KeyCtx) -> String {
-    if s == "<<" {
-        return "<<".to_string();
-    }
     if s.chars().any(single_quote_cannot_carry) {
         return double_quote(s);
     }
@@ -279,48 +278,169 @@ fn plain_allowed(s: &str, ctx: ScalarCtx) -> bool {
     }
 }
 
-fn is_yaml_1_1_number(s: &str) -> bool {
-    let s = s
-        .strip_prefix('+')
-        .or_else(|| s.strip_prefix('-'))
-        .unwrap_or(s);
-    if s.is_empty() {
-        return false;
+/// True when PyYAML's YAML 1.1 implicit resolvers (`yaml/resolver.py`) read a
+/// plain `s` as an int, a float, or a timestamp.
+pub(crate) fn is_yaml_1_1_typed(s: &str) -> bool {
+    let b = s.as_bytes();
+    yaml_1_1_int(b) || yaml_1_1_float(b) || yaml_1_1_timestamp(b)
+}
+
+fn count_while(b: &[u8], i: usize, f: impl Fn(u8) -> bool) -> usize {
+    b.get(i..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|&&c| f(c))
+        .count()
+}
+
+fn digit_or_underscore(c: u8) -> bool {
+    c.is_ascii_digit() || c == b'_'
+}
+
+fn blank(c: u8) -> bool {
+    c == b' ' || c == b'\t'
+}
+
+fn strip_sign(b: &[u8]) -> &[u8] {
+    match b {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => b,
     }
-    if s.starts_with("0b") || s.starts_with("0x") {
-        let digits = &s[2..];
-        return digits.contains('_')
-            && digits
-                .chars()
-                .all(|c| c == '_' || c.is_ascii_digit() || c.is_ascii_hexdigit());
-    }
-    if s.chars().all(|c| c == '_' || c.is_ascii_digit()) {
-        return s.contains('_') && s.chars().any(|c| c.is_ascii_digit());
-    }
-    let Some((head, rest)) = s.split_once(':') else {
-        return false;
-    };
-    if head.is_empty() || !head.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    let mut groups: Vec<&str> = rest.split(':').collect();
-    if let Some(last) = groups.last_mut()
-        && let Some((digits, frac)) = last.split_once('.')
-    {
-        if digits.is_empty()
-            || digits.len() > 2
-            || !digits.chars().all(|c| c.is_ascii_digit())
-            || frac.is_empty()
-            || !frac.chars().all(|c| c.is_ascii_digit())
-        {
-            return false;
+}
+
+/// End of `(?::[0-5]?[0-9])+` starting at `i`, or `None` when it does not match.
+fn sexagesimal_end(b: &[u8], mut i: usize) -> Option<usize> {
+    let start = i;
+    while b.get(i) == Some(&b':') {
+        let n = count_while(b, i + 1, |c| c.is_ascii_digit());
+        if !(n == 1 || (n == 2 && b[i + 1] <= b'5')) {
+            return None;
         }
-        *last = digits;
+        i += 1 + n;
     }
-    !groups.is_empty()
-        && groups
-            .iter()
-            .all(|g| !g.is_empty() && g.len() <= 2 && g.chars().all(|c| c.is_ascii_digit()))
+    (i > start).then_some(i)
+}
+
+/// End of an optional `[eE][-+][0-9]+` at `i`.
+fn exponent_end(b: &[u8], i: usize) -> usize {
+    match b.get(i..) {
+        Some([b'e' | b'E', b'+' | b'-', ..]) => {
+            let n = count_while(b, i + 2, |c| c.is_ascii_digit());
+            if n > 0 { i + 2 + n } else { i }
+        }
+        _ => i,
+    }
+}
+
+/// `[-+]?(0b[0-1_]+ | 0[0-7_]+ | 0 | [1-9][0-9_]* | 0x[0-9a-fA-F_]+ | [1-9][0-9_]*(:[0-5]?[0-9])+)`
+fn yaml_1_1_int(b: &[u8]) -> bool {
+    let b = strip_sign(b);
+    match b {
+        [b'0', b'b', rest @ ..] if !rest.is_empty() => {
+            rest.iter().all(|&c| matches!(c, b'0' | b'1' | b'_'))
+        }
+        [b'0', b'x', rest @ ..] if !rest.is_empty() => {
+            rest.iter().all(|&c| c.is_ascii_hexdigit() || c == b'_')
+        }
+        [b'0', rest @ ..] => rest.iter().all(|&c| matches!(c, b'0'..=b'7' | b'_')),
+        [b'1'..=b'9', ..] => {
+            let n = 1 + count_while(b, 1, digit_or_underscore);
+            n == b.len() || sexagesimal_end(b, n) == Some(b.len())
+        }
+        _ => false,
+    }
+}
+
+/// `[-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+][0-9]+)? | \.[0-9][0-9_]*([eE][-+][0-9]+)?
+/// | [-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]* | [-+]?\.(inf|Inf|INF) | \.(nan|NaN|NAN)`
+fn yaml_1_1_float(b: &[u8]) -> bool {
+    if let [b'.', rest @ ..] = b {
+        if matches!(rest, b"nan" | b"NaN" | b"NAN") {
+            return true;
+        }
+        if rest.first().is_some_and(u8::is_ascii_digit) {
+            let n = 1 + count_while(rest, 1, digit_or_underscore);
+            return exponent_end(rest, n) == rest.len();
+        }
+    }
+    let b = strip_sign(b);
+    if let [b'.', rest @ ..] = b {
+        return matches!(rest, b"inf" | b"Inf" | b"INF");
+    }
+    if !b.first().is_some_and(u8::is_ascii_digit) {
+        return false;
+    }
+    let whole = 1 + count_while(b, 1, digit_or_underscore);
+    let dot = sexagesimal_end(b, whole).unwrap_or(whole);
+    if b.get(dot) != Some(&b'.') {
+        return false;
+    }
+    let end = dot + 1 + count_while(b, dot + 1, digit_or_underscore);
+    if dot == whole {
+        exponent_end(b, end) == b.len()
+    } else {
+        end == b.len()
+    }
+}
+
+/// `YYYY-MM-DD`, or `YYYY-M-D` followed by `T`, `t`, or blanks, `H:MM:SS`, an
+/// optional fraction, and an optional `Z` or `[-+]H(:MM)?` zone.
+fn yaml_1_1_timestamp(b: &[u8]) -> bool {
+    let digits = |i: usize| count_while(b, i, |c| c.is_ascii_digit());
+    if digits(0) != 4 || b.get(4) != Some(&b'-') {
+        return false;
+    }
+    let month = digits(5);
+    if !(1..=2).contains(&month) || b.get(5 + month) != Some(&b'-') {
+        return false;
+    }
+    let day_start = 6 + month;
+    let day = digits(day_start);
+    let mut i = day_start + day;
+    if i == b.len() {
+        return month == 2 && day == 2;
+    }
+    if !(1..=2).contains(&day) {
+        return false;
+    }
+    match b[i] {
+        b'T' | b't' => i += 1,
+        c if blank(c) => i += count_while(b, i, blank),
+        _ => return false,
+    }
+    let hour = digits(i);
+    if !(1..=2).contains(&hour) || b.get(i + hour) != Some(&b':') {
+        return false;
+    }
+    i += hour + 1;
+    if digits(i) != 2 || b.get(i + 2) != Some(&b':') {
+        return false;
+    }
+    i += 3;
+    if digits(i) != 2 {
+        return false;
+    }
+    i += 2;
+    if b.get(i) == Some(&b'.') {
+        i += 1 + digits(i + 1);
+    }
+    if i == b.len() {
+        return true;
+    }
+    i += count_while(b, i, blank);
+    match b.get(i) {
+        Some(b'Z') => i + 1 == b.len(),
+        Some(b'+' | b'-') => {
+            let zone_hour = digits(i + 1);
+            if !(1..=2).contains(&zone_hour) {
+                return false;
+            }
+            let after = i + 1 + zone_hour;
+            after == b.len()
+                || (b.get(after) == Some(&b':') && digits(after + 1) == 2 && after + 3 == b.len())
+        }
+        _ => false,
+    }
 }
 
 #[cfg(feature = "fmt")]
@@ -469,7 +589,7 @@ pub(crate) fn sort_by_table<'a>(keys: &[&'a str], table: &[&str]) -> Vec<&'a str
     ranked.into_iter().map(|(_, _, key)| key).collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fmt"))]
 mod tests {
     use super::*;
 
@@ -503,10 +623,38 @@ mod tests {
             "0x_1F",
             "1:30",
             "190:20:30.15",
+            "1_000.5",
+            "1.5_0",
+            "1_0.",
+            ".5_0",
+            "1:30.",
+            "-1:30",
+            "0_7",
+            "2024-01-01",
+            "2024-1-1T10:00:00Z",
+            "2024-01-01 10:00:00",
+            "2024-01-01t10:00:00.5 +01:00",
+            "=",
+            "<<",
         ] {
             assert!(coerces(s), "expected {s:?} to coerce");
         }
-        for s in ["whoami", "2024-01-01", "0x", "attack.t1059", "C:", "a:b"] {
+        for s in [
+            "whoami",
+            "0x",
+            "0b",
+            "attack.t1059",
+            "C:",
+            "a:b",
+            "1:70",
+            "1:300",
+            "1e3e",
+            "2024-01-1",
+            "2024-001-01",
+            "2024-01-01T10:00",
+            "2024-01-01 10:00:00 +001",
+            "4688a",
+        ] {
             assert!(!coerces(s), "expected {s:?} not to coerce");
         }
     }
@@ -628,7 +776,7 @@ mod tests {
             "'Product Name|contains'"
         );
         assert_eq!(encode_key("@timestamp", KeyCtx::FieldKey), "'@timestamp'");
-        assert_eq!(encode_key("<<", KeyCtx::Key), "<<");
+        assert_eq!(encode_key("<<", KeyCtx::Key), "'<<'");
     }
 }
 
