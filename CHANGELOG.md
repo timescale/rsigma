@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs-only PRs skip the CI build and test jobs
+### Docs-only PRs skip the CI build and test jobs (#669)
 
 - A new `Changes` job in the `CI` workflow skips the build, lint, and test jobs when a PR changes only documentation: `docs/`, `assets/`, `LICENSE`, `.gitignore`, and Markdown files outside a `tests/` directory, so golden output files still run the tests. The jobs still report, as skipped, so required checks are not left pending. Merge queue entries always run every job.
 - A new `CI result` job reports one pass or fail for the workflow and is the check to require. Coverage stays advisory and does not affect it.
