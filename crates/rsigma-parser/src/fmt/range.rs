@@ -73,18 +73,35 @@ pub fn format_yaml_range(
         return Ok(None);
     }
 
-    let mut spliced = String::with_capacity(stripped.len() + replacement.len());
-    spliced.push_str(&stripped[..region.start]);
-    spliced.push_str(&replacement);
-    spliced.push_str(&stripped[region.end..]);
-    let before = prepared.before();
-    guard::check(&before, &spliced)?;
+    splice_checked(
+        &prepared.before(),
+        stripped,
+        region.start,
+        region.end,
+        &replacement,
+    )?;
 
     Ok(Some(RangeEdit {
         start: region.start + bom,
         end: region.end + bom,
         replacement,
     }))
+}
+
+/// Splice `replacement` over `start..end` and run the whole-file guard on the
+/// result.
+fn splice_checked(
+    before: &guard::Before<'_>,
+    source: &str,
+    start: usize,
+    end: usize,
+    replacement: &str,
+) -> Result<(), FormatError> {
+    let mut spliced = String::with_capacity(source.len() + replacement.len());
+    spliced.push_str(&source[..start]);
+    spliced.push_str(replacement);
+    spliced.push_str(&source[end..]);
+    guard::check(before, &spliced)
 }
 
 /// A block mapping's source region and the column of its first key.
@@ -445,6 +462,23 @@ mod tests {
                 "\u{FEFF}title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        Field: value\n    condition: selection\n"
             )
         );
+    }
+
+    #[test]
+    fn the_splice_guard_refuses_a_replacement_that_changes_the_file() {
+        let source = "title: Test\nlogsource:\n  # keep\n  category: test\ndetection:\n  selection:\n    Field: value\n  condition: selection\n";
+        let prepared = prepare(source).unwrap();
+        let before = prepared.before();
+        let start = source.find("  # keep").unwrap();
+        let end = source.find("detection:").unwrap();
+
+        splice_checked(&before, source, start, end, "  # keep\n  category: test\n").unwrap();
+
+        let dropped = splice_checked(&before, source, start, end, "  category: test\n");
+        assert!(matches!(dropped, Err(FormatError::Guard(_))), "{dropped:?}");
+
+        let changed = splice_checked(&before, source, start, end, "  # keep\n  category: other\n");
+        assert!(matches!(changed, Err(FormatError::Guard(_))), "{changed:?}");
     }
 
     #[test]
