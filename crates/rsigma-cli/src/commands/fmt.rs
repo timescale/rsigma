@@ -343,10 +343,13 @@ fn walk_dir(
     }
 }
 
-/// Display path: the path as walked. Under the implicit `.` root, drop the
-/// leading `./` so output reads like the user typed it.
+/// Display path: the path as walked, with `/` separators on every platform.
+/// Under the implicit `.` root, drop the leading `./` so output reads like the
+/// user typed it.
 fn display_path(path: &Path, implicit_root: bool) -> String {
-    let display = path.display().to_string();
+    let display = path
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     if implicit_root {
         display.strip_prefix("./").unwrap_or(&display).to_string()
     } else {
