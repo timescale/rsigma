@@ -1,0 +1,19 @@
+%YAML 1.2
+---
+title: First Directive
+logsource:
+    category: test
+detection:
+    selection:
+        Field: one
+    condition: selection
+...
+%YAML 1.2
+---
+title: Second Directive
+logsource:
+    category: test
+detection:
+    selection:
+        Field: two
+    condition: selection

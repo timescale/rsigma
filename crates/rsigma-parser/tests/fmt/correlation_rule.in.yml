@@ -1,0 +1,14 @@
+title: Correlation Rule
+level: high
+correlation:
+    condition:
+        gte: 10
+    timespan: 5m
+    group-by:
+        - SourceIP
+    rules:
+        - Base Rule
+    aliases:
+        SourceIP: source.ip
+    type: event_count
+status: experimental

@@ -13,6 +13,7 @@ The extension also runs as-is in [Cursor](https://cursor.sh/) and any other VS C
 | Completions | Modifier names after `|`, MITRE ATT&CK tags inside `tags:`, valid `status`, `level`, `product`, `category`, and `service` values, top-level keys, selection names referenced from `condition:`. |
 | Hover | Modifier documentation, MITRE ATT&CK tactic and technique descriptions (with link-out to attack.mitre.org). |
 | Document symbols | Hierarchical outline of `title`, `logsource`, `detection`, `correlation`, used by VS Code's Outline view and breadcrumb. |
+| Formatting | Whole-document and selection formatting with rsigma's canonical layout. Comments, anchors, tags, and directives are kept, and the semantic guard refuses any change to what a rule means. |
 
 All capabilities target Sigma detection, correlation, and filter rules. Processing pipeline YAML is not a first-class LSP document type; open pipelines may produce generic YAML/Sigma parse noise rather than pipeline-aware diagnostics.
 
@@ -66,11 +67,14 @@ For a folder of Sigma rules, this is a sensible `.vscode/settings.json`:
   },
   "yaml.validate": false,
   "yaml.format.enable": false,
-  "editor.formatOnSave": false
+  "[yaml]": {
+    "editor.defaultFormatter": "rsigma.rsigma",
+    "editor.formatOnSave": true
+  }
 }
 ```
 
-The first two lines make sure VS Code treats your rules as YAML (and thus activates the rsigma extension). Disabling `yaml.validate` avoids double-squiggles from the generic YAML language server. Disabling formatting prevents the YAML formatter from rewriting wildcard patterns and reflowing condition expressions; the rsigma extension does not provide formatting.
+The first two lines make sure VS Code treats your rules as YAML (and thus activates the rsigma extension). Disabling `yaml.validate` avoids double-squiggles from the generic YAML language server. Disabling `yaml.format.enable` prevents the generic YAML formatter from rewriting wildcard patterns and reflowing condition expressions, while the `[yaml]` block routes formatting to rsigma and formats on save. Choose rsigma as the default formatter for Sigma rules; the generic YAML formatter does not know the canonical key order or the semantic guard.
 
 ## Troubleshooting
 

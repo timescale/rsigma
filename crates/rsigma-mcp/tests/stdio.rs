@@ -96,6 +96,7 @@ async fn tools_list_exposes_all_core_tools() {
         "resolve_pipeline",
         "list_builtin_pipelines",
         "fix_rules",
+        "format_rules",
         "author_ads",
         "reverse_convert",
         "tune_rules",
@@ -105,7 +106,7 @@ async fn tools_list_exposes_all_core_tools() {
             "missing tool {expected}"
         );
     }
-    assert_eq!(tools.len(), 15, "expected exactly 15 tools, got {names:?}");
+    assert_eq!(tools.len(), 16, "expected exactly 16 tools, got {names:?}");
 
     // parse_rule advertises an input schema with the `yaml` property.
     let parse_rule = tools.iter().find(|t| t.name == "parse_rule").unwrap();
@@ -139,8 +140,8 @@ async fn tools_list_gains_operate_reads_when_daemon_url_is_set() {
     }
     assert_eq!(
         tools.len(),
-        21,
-        "expected 15 engineer tools plus 6 operate reads, got {names:?}"
+        22,
+        "expected 16 engineer tools plus 6 operate reads, got {names:?}"
     );
     assert!(
         !names
@@ -162,8 +163,8 @@ async fn tools_list_gains_write_tools_only_when_gated_on() {
     assert!(names.contains(&"post_disposition".to_string()));
     assert_eq!(
         tools.len(),
-        23,
-        "expected 15 engineer tools plus 6 reads plus 2 writes, got {names:?}"
+        24,
+        "expected 16 engineer tools plus 6 reads plus 2 writes, got {names:?}"
     );
 
     client.cancel().await.ok();

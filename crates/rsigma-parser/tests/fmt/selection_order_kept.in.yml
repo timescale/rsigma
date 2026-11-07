@@ -1,0 +1,12 @@
+title: Selection Order Kept
+logsource:
+    category: test
+detection:
+    selection:
+        Zebra: z
+        Alpha: a
+        Middle: m
+    list_selection:
+        - Zebra: z
+          Alpha: a
+    condition: selection and list_selection

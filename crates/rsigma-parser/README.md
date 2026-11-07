@@ -40,6 +40,15 @@ The parser runs these checks on every detection item, and `rsigma-ir` reruns the
 
 The emitter is a deterministic canonical form: named detections, logsource custom fields, and custom attributes are emitted in sorted order, `field|modifier` keys are reconstructed from the `FieldSpec`, and literal wildcards in values are escaped so a re-parse reproduces the same `SigmaString` (while `re`/`cidr`/`fieldref` values stay raw). It powers `rsigma-convert`'s reverse conversion (query to Sigma YAML). Sequences of mappings, including `rsigma.exemplars`, round-trip through emit.
 
+### Formatting
+
+| Function | Description |
+|----------|-------------|
+| `format_yaml(source: &str)` | Rewrite a Sigma file into the canonical layout, preserving comments, anchors, aliases, tags, and directives, and refusing any rewrite that changes the rule's meaning |
+| `format_yaml_range(source: &str, start: usize, end: usize)` | Rewrite only the smallest block mapping that contains the byte range, returning a `RangeEdit` splice or `None` when it is already canonical |
+
+`FormatOutcome` carries the formatted text and a `changed` flag; `FormatError` reports YAML syntax errors, documents that are not Sigma, invalid Sigma, refused constructs, and ranges that are not inside a mapping. Formatting is enabled by the default `fmt` feature, which adds the `tree-sitter` and `tree-sitter-yaml` dependencies. Disable default features for `wasm32-unknown-unknown` builds.
+
 ### Exemplars
 
 | Function | Description |

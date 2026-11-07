@@ -4694,6 +4694,8 @@ dependencies = [
  "stacker",
  "tempfile",
  "thiserror 2.0.21",
+ "tree-sitter",
+ "tree-sitter-yaml",
  "yaml_serde",
  "yamlpatch",
  "yamlpath",

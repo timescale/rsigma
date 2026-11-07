@@ -1,0 +1,9 @@
+title: Indentless Sequence
+logsource:
+    category: test
+detection:
+    selection:
+        Field:
+        - a
+        - b
+    condition: selection

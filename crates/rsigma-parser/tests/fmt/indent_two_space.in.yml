@@ -1,0 +1,8 @@
+title: Indent Two Space
+logsource:
+  category: test
+detection:
+  selection:
+    Field: value
+    Other: two
+  condition: selection

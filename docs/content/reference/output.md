@@ -117,11 +117,14 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 | `rule reverse` | Sigma YAML | Warn; keep YAML. |
 | `rule draft` (default `--emit yaml`) | Sigma YAML | Warn; keep YAML. |
 | `rule migrate-sources` | Source YAML + pipeline rewrites | Warn; keep file/YAML product. |
+| `rule fmt` | File report, unified diff, or formatted YAML | Warn; keep text. |
 | `engine tap` | Replayable NDJSON fixture | Warn unless `ndjson`; never array-wrap or pretty-print. |
 | `engine daemon` | Configured sink wire format | Warn; sinks unchanged. |
 | `mcp serve` | MCP protocol stream | Warn; protocol unchanged. |
 | `config init`/`config reload` | File write/HTTP status | Warn; no stdout data product. |
 | `config schema` | JSON Schema document | `json`/`ndjson` supported; `table`/`csv`/`tsv` warn and fall back to JSON. |
+
+`rule fmt` writes its data product to stdout: `Would reformat:` report lines, unified diffs, or the formatted text from `--stdout`. Progress lines, `Reformatted:` lines, `skipped:` lines, errors, and the trailing summary go to stderr.
 
 ## Examples
 

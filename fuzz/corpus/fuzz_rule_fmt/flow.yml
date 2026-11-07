@@ -1,0 +1,6 @@
+title: Flow
+tags: [attack.execution, attack.discovery]
+logsource: {category: test}
+detection:
+    selection: {Field: value}
+    condition: selection

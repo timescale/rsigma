@@ -1,0 +1,7 @@
+name: test
+priority: 20
+transformations:
+    - id: rename
+      type: field_name
+      mapping:
+        CommandLine: command_line

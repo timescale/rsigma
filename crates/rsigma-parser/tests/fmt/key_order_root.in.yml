@@ -1,0 +1,39 @@
+level: low
+custom_attributes:
+    team: detection
+zzz: last
+rsigma.exemplars: 3
+rsigma.suppress: true
+detection:
+    selection:
+        Field: value
+    condition: selection
+logsource:
+    product: windows
+    category: process_creation
+title: Key Order Root
+tags:
+    - attack.discovery
+falsepositives:
+    - Unknown
+author: Test Author
+references:
+    - https://example.com/a
+description: Tests root ordering
+id: 00000000-0000-0000-0000-000000000002
+status: test
+date: 2024-01-01
+modified: 2024-02-01
+related:
+    - type: derived
+      id: 00000000-0000-0000-0000-000000000003
+sigma-version: 2
+fields:
+    - Image
+scope:
+    - process
+license: MIT
+taxonomy:
+    - attack
+name: key-order-root
+aaa: first

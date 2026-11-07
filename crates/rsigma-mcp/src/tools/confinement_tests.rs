@@ -9,6 +9,7 @@ use super::RsigmaMcp;
 use super::convert_rules::ConvertInput;
 use super::evaluate_events::EvaluateInput;
 use super::fix_rules::FixInput;
+use super::format_rules::FormatInput;
 use super::list_fields::FieldsInput;
 use super::resolve_pipeline::ResolvePipelineInput;
 use super::shared::SourceInput;
@@ -115,6 +116,15 @@ fn every_path_input_is_confined_to_rules_dir() {
             }),
         );
         assert_escapes(
+            "format_rules",
+            &p,
+            s.run_format_rules(FormatInput {
+                yaml: None,
+                path: Some(p.clone()),
+                write: false,
+            }),
+        );
+        assert_escapes(
             "list_fields",
             &p,
             s.run_list_fields(FieldsInput {
@@ -215,6 +225,27 @@ fn paths_inside_rules_dir_still_resolve() {
     input.enrichers_path = Some("enrichers.yml".to_string());
     let v = block_on(s.run_evaluate_events(input)).unwrap();
     assert_eq!(v["summary"]["detection_matches"], 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn format_rules_write_does_not_follow_symlink_out_of_rules_dir() {
+    use std::os::unix::fs::symlink;
+
+    let fx = Fixture::new();
+    let target = fx.outside.path().join("unformatted.yml");
+    let original =
+        "title: T\nlogsource:\n  category: test\ndetection:\n  sel:\n    a: b\n  condition: sel\n";
+    std::fs::write(&target, original).unwrap();
+    symlink(&target, fx.root.path().join("link.yml")).unwrap();
+
+    let result = fx.server.run_format_rules(FormatInput {
+        yaml: None,
+        path: Some("link.yml".to_string()),
+        write: true,
+    });
+    assert_escapes("format_rules write", "link.yml", result);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
 }
 
 #[cfg(unix)]

@@ -53,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
 | `resolve_pipeline` | Inspect a builtin or file pipeline; optionally resolve dynamic sources. |
 | `list_builtin_pipelines` | List the builtin pipelines. |
 | `fix_rules` | Apply safe auto-fixes to Sigma YAML; `write: true` (path only, and only with a rules root) persists to disk. |
+| `format_rules` | Rewrite Sigma YAML into the canonical layout; `write: true` (path only, and only with a rules root) persists to disk. |
 | `author_ads` | Report each rule's ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 | `reverse_convert` | Reverse-convert a SIEM query (`dialect: lucene` today) into a draft Sigma rule (YAML); takes the metadata and logsource a query cannot carry as parameters. |
 | `tune_rules` | Propose a verified Sigma filter from inline false-positive and true-positive event arrays; path inputs and pipeline files are confined to `--rules-dir`. |

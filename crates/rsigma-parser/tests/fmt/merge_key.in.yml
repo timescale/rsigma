@@ -1,0 +1,12 @@
+title: Merge Key
+base: &base
+    Nested: value
+merged:
+    <<: *base
+    Other: two
+logsource:
+    category: test
+detection:
+    selection:
+        Field: value
+    condition: selection

@@ -1,0 +1,14 @@
+--- a/<DIR>/rule.yml
++++ b/<DIR>/rule.yml
+@@ -1,7 +1,7 @@
+ title: Test
+ logsource:
+-  category: test
++    category: test
+ detection:
+-  selection:
+-    Field: value
+-  condition: selection
++    selection:
++        Field: value
++    condition: selection

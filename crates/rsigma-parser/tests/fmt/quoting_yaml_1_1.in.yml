@@ -1,0 +1,15 @@
+title: YAML 1.1 types
+date: 2024-01-01
+modified: '2024-02-01'
+logsource:
+  category: test
+detection:
+  selection:
+    PlainUnderscore: 1_000
+    QuotedUnderscore: '1_000'
+    PlainTime: 1:30
+    QuotedFloat: '1_000.5'
+    QuotedDate: '2024-01-01'
+    '<<': literal key
+    TrailingSpace: "x  \ny"
+  condition: selection

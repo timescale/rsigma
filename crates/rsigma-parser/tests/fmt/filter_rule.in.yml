@@ -1,0 +1,9 @@
+title: Filter Rule
+filter:
+    condition: not selection
+    selection:
+        CommandLine|contains: expected_tool.exe
+    rules:
+        - 12345678-1234-1234-1234-123456789012
+logsource:
+    category: test

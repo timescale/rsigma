@@ -20,13 +20,13 @@
     <a href="https://glama.ai/mcp/servers/timescale/rsigma"><img src="https://glama.ai/mcp/servers/timescale/rsigma/badges/score.svg" alt="rsigma MCP server score on Glama.ai" /></a>
 </p>
 
-RSigma is a complete detection engineering toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, CLI, MCP, and LSP.
+RSigma is a complete detection engineering toolkit for the [Sigma](https://sigmahq.io/) detection standard, including a parser, evaluation engine, rule conversion, streaming runtime, linter, formatter, CLI, MCP, and LSP.
 
 RSigma parses Sigma YAML rules into a strongly-typed AST, compiles them into optimized matchers, and evaluates them against log events in real time. It handles stateful correlation logic in-process with memory-efficient compressed event storage. Or as Zack Allen put it in [DEW #149](https://www.detectionengineering.net/i/191079258/detection-engineering-gem), "RSigma is essentially a SIEM."
 
 You can send events in many formats, including JSON, syslog (RFC 3164/5424), logfmt, CEF, EVTX (Windows Event Log), plain text, and OTLP (OpenTelemetry Protocol), with auto-detection by default. pySigma-compatible processing pipelines handle field mapping and backend configuration. OTLP support lets any OpenTelemetry-compatible agent (Grafana Alloy, Vector, Fluent Bit, OTel Collector) forward logs to RSigma via HTTP or gRPC for detection.
 
-For rule quality and editor integration, a built-in linter validates rules against 90 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, and quick-fix code actions in any editor.
+For rule quality and editor integration, a built-in linter validates rules against 90 checks derived from the Sigma v2.1.0 specification, and an LSP server provides real-time diagnostics, completions, hover documentation, quick-fix code actions, and formatting in any editor.
 
 RSigma builds on open industry standards throughout: [Sigma](https://sigmahq.io/) for detection rules, [OpenTelemetry](https://opentelemetry.io/) for log ingestion and detection export, and [STIX](https://oasis-open.github.io/cti-documentation/stix/intro) and [TAXII](https://oasis-open.github.io/cti-documentation/taxii/intro) for threat intelligence.
 
@@ -43,8 +43,9 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 * **[Rule drafting](https://rsigma.io/guide/rule-drafting/):** Drafts detection rules and temporal correlations from exemplar events contrasted against a baseline corpus with `rule draft`
 * **[Rule tuning](https://rsigma.io/guide/rule-tuning/):** Proposes a spec-native filter from false-positive events, verifies that every known true positive still fires, and refuses unsafe separators with `rule tune`
 * **[Built-in linter](https://rsigma.io/guide/linting-rules/):** Validates rules with 90 checks, four severity levels, suppressions, custom tag namespaces, and auto-fix for 14 safe rules
+* **[Formatter](https://rsigma.io/guide/formatting-rules/):** Rewrites rules into one canonical layout with `rule fmt`, keeps comments, and refuses any change to what a rule means
 * **[ADS metadata](https://rsigma.io/guide/detection-strategy/):** Documents rules with [Palantir ADS](https://github.com/palantir/alerting-detection-strategy-framework) sections under `rsigma.ads.*`, enforced by the linter and scaffolded with `rule doc`
-* **LSP server:** Provides real-time diagnostics, completions, hover documentation, document symbols, and quick-fix code actions in [VSCode](https://rsigma.io/editors/vscode/), [Neovim](https://rsigma.io/editors/neovim/), and any LSP-capable editor
+* **LSP server:** Provides real-time diagnostics, completions, hover documentation, document symbols, quick-fix code actions, and formatting in [VSCode](https://rsigma.io/editors/vscode/), [Neovim](https://rsigma.io/editors/neovim/), and any LSP-capable editor
 * **[MCP server](https://rsigma.io/guide/mcp-server/):** Exposes the toolchain to AI agents (Cursor, Claude Code, ...) as structured MCP tools over stdio or Streamable HTTP with `rsigma mcp serve`
 
 ### Test
@@ -109,7 +110,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 | [`rsigma-convert`](crates/rsigma-convert/) | Transform rules into backend-native query strings |
 | [`rsigma-runtime`](crates/rsigma-runtime/) | Streaming runtime with input adapters, log processor, and hot-reload |
 | [`rsigma-mcp`](crates/rsigma-mcp/) | Model Context Protocol (MCP) server exposing the toolchain as tools for AI agents |
-| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, evaluating, converting rules, field catalog, and running a detection daemon |
+| [`rsigma`](crates/rsigma-cli/) | CLI for parsing, validating, linting, formatting, evaluating, converting rules, field catalog, and running a detection daemon |
 | [`rsigma-lsp`](crates/rsigma-lsp/) | Language Server Protocol (LSP) server for IDE support |
 | [`rstix`](crates/rstix/) | STIX 2.1 library: typed objects, bundle parse/stream, semantic validation, and pattern engine |
 

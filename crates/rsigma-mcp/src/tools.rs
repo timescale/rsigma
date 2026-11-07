@@ -42,6 +42,7 @@ mod convert_rules;
 mod create_silence;
 mod evaluate_events;
 mod fix_rules;
+mod format_rules;
 mod get_incident;
 mod get_incident_bundle;
 mod get_rule_quality;
@@ -215,6 +216,7 @@ impl RsigmaMcp {
             + Self::resolve_pipeline_router()
             + Self::list_builtin_pipelines_router()
             + Self::fix_rules_router()
+            + Self::format_rules_router()
             + Self::author_ads_router()
             + Self::reverse_router()
             + Self::tune_rules_router()

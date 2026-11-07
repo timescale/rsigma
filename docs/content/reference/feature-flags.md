@@ -60,6 +60,7 @@ The conversion engine. Used as a library and re-exported by `rsigma-cli`.
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
 | `fix` | yes | `yamlpath`, `yamlpatch` | The source-preserving `lint::fix` module and crate-root `apply_fixes_to_source`/`SourceFixOutcome` re-exports. Disable default features for parser/evaluator-only `wasm32-unknown-unknown` builds. Parsing, validation, lint diagnostics, and fix metadata remain available without it. |
+| `fmt` | yes | `tree-sitter`, `tree-sitter-yaml` | The comment-preserving formatter: the `fmt` module and crate-root `format_yaml`, `format_yaml_range`, `FormatOutcome`, `RangeEdit`, and `FormatError` re-exports. `rsigma rule fmt` and LSP formatting need it. Disable default features for `wasm32-unknown-unknown` builds. |
 
 ## `rsigma-mcp`
 

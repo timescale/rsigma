@@ -1,0 +1,11 @@
+title: Base Rule
+logsource:
+    category: test
+detection:
+    selection:
+        Field: one
+    condition: selection
+---
+title: Repeated Common Only
+level: high
+action: repeat

@@ -1,0 +1,7 @@
+title: CRLF
+logsource:
+  category: test
+detection:
+  selection:
+    Field: value
+  condition: selection

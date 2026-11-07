@@ -64,10 +64,13 @@ pub mod emit;
 pub mod error;
 pub mod exemplar;
 pub mod fieldpath;
+#[cfg(feature = "fmt")]
+pub mod fmt;
 pub mod lint;
 pub mod parser;
 pub mod reference;
 pub mod selector;
+mod style;
 pub mod validate;
 pub mod value;
 pub mod version;
@@ -93,6 +96,8 @@ pub use exemplar::{
     filter_exemplars, match_exemplar_count, match_exemplar_count_json, parse_exemplars,
     raw_exemplar_values, raw_match_exemplar_count, raw_winning_exemplars,
 };
+#[cfg(feature = "fmt")]
+pub use fmt::{FormatError, FormatOutcome, RangeEdit, format_yaml, format_yaml_range};
 pub use lint::catalogue::{LintRuleInfo, catalogue};
 #[cfg(feature = "fix")]
 pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};

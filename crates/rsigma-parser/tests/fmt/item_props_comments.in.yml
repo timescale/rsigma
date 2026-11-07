@@ -1,0 +1,14 @@
+title: Item Props Comments
+logsource:
+    category: test
+detection:
+    selection:
+        # above anchored item
+        - &a
+          Field: one
+        - # trailing on dash
+          Field: two
+        # above plain item
+        - Field: three
+          Other: four
+    condition: selection

@@ -194,7 +194,10 @@ The other LSP modules are smaller and orthogonal to lints:
 | `completion.rs` | Field name and keyword completions. | Adding entries to the static completion table, or wiring a context-sensitive resolver. |
 | `position.rs` | UTF-16, UTF-8, and byte-offset conversion. | Rarely; touch only if you spot a multi-byte off-by-one. |
 | `data.rs` | Static reference data (modifier list, well-known tags, severity colors). | Adding entries to the constant arrays. |
+| `formatting.rs` | Document and range formatting providers. | Adding formatting options; the rewrite itself delegates to `rsigma_parser::format_yaml` and `format_yaml_range`, so the canonical style lives in the parser. |
 | `server.rs` | The LSP server-loop wiring (`tower_lsp_server`). | Adding new LSP methods (e.g. hover, goto-definition). |
+
+Formatting delegates to `rsigma_parser::format_yaml`, so the editor, `rsigma rule fmt`, and the library share one canonical style and one semantic guard.
 
 The LSP has no integration tests of its own today; manual testing through the VS Code extension is the current verification path.
 

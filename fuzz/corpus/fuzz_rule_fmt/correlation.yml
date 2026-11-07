@@ -1,0 +1,11 @@
+title: Brute Force
+correlation:
+    type: event_count
+    rules:
+        - Base Rule
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 100
+level: high
