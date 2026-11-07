@@ -160,6 +160,13 @@ rsigma engine daemon -r rules/ \
 
 `sysmon` (priority 10) adds the EventID conditions first; `ecs_windows` (priority 20) renames the field names to ECS; finally the org overrides at, say, priority 50 add per-tenant table routing.
 
+On Linux ECS events (no Sysmon routing), load the path pipeline directly:
+
+```bash
+rsigma engine daemon -r rules/ \
+    -p crates/rsigma-eval/pipelines/ecs_linux.yml
+```
+
 ## See also
 
 - [Processing Pipelines](../guide/processing-pipelines.md) for the full pipeline grammar, transformation types, and dynamic pipelines.
