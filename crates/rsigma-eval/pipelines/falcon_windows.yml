@@ -5,9 +5,9 @@
 # plus flat fields such as `ImageFileName`, `RemoteAddressIP4`, ...). Intended
 # for evaluating Sigma rules against Falcon FDR / NG-SIEM JSON lines with `-p`.
 #
-# Provenance: Falcon Events Data Dictionary (ProcessRollup2, NetworkConnectIP4).
-# v1 scope: `process_creation` and `network_connection` on `product: windows`
-# only; macOS/Linux Falcon events differ and are deferred.
+# Provenance: Falcon Events Data Dictionary (FDR export shape).
+# Scope: five portable Sigma categories on `product: windows`. macOS/Linux
+# sensor events use different platform fields and are outside this file.
 #
 # Path-only: load by file path (not a builtin short name).
 #
@@ -68,3 +68,62 @@ transformations:
       - type: logsource
         product: windows
         category: network_connection
+
+  - id: falcon_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: TargetFileName
+      User: UserName
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: file_event
+
+  - id: falcon_file_event_simple_name
+    type: add_condition
+    prepend: true
+    conditions:
+      event_simpleName: PeFileWritten
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: file_event
+
+  - id: falcon_dns_query_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: DomainName
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: dns_query
+
+  - id: falcon_dns_query_event
+    type: add_condition
+    prepend: true
+    conditions:
+      event_simpleName: DnsRequest
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: dns_query
+
+  - id: falcon_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: FilePath
+      Image: ImageFileName
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: image_load
+
+  - id: falcon_image_load_event
+    type: add_condition
+    prepend: true
+    conditions:
+      event_simpleName: ImageLoadRollup2
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: image_load

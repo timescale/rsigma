@@ -1,0 +1,77 @@
+# Splunk Common Information Model (CIM) field mapping for eval rule rewrite.
+#
+# Maps generic Sigma / Sysmon-style field names to CIM field names on indexed
+# events. Datamodels: Endpoint (process, file), Network Traffic, Network
+# Resolution (DNS). Aligned with the five portable Sigma categories covered by
+# `ecs_linux` (process, network, file, image load, DNS).
+#
+# Provenance: Splunk CIM 5.x Endpoint and Network datamodels
+# (https://docs.splunk.com/Documentation/CIM/latest/User/).
+#
+# Path-only: load by file path (not a builtin short name).
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/cim_events.yml -e @event.json
+
+name: cim_events
+priority: 20
+
+transformations:
+  - id: cim_endpoint_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: process_cmdline
+      Image: process
+      ProcessId: process_id
+      User: user
+      ParentImage: parent_process
+      ParentProcessId: parent_process_id
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+
+  - id: cim_network_traffic_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: src_ip
+      SourceHostname: src
+      SourcePort: src_port
+      DestinationIp: dest_ip
+      DestinationHostname: dest
+      DestinationPort: dest_port
+      DestinationPortName: app
+      Protocol: transport
+      User: user
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  - id: cim_endpoint_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file_path
+      Image: process
+      User: user
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  - id: cim_endpoint_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: file_path
+      Image: process
+      User: user
+    rule_conditions:
+      - type: logsource
+        category: image_load
+
+  - id: cim_network_resolution_dns_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: query
+      Image: process
+      User: user
+    rule_conditions:
+      - type: logsource
+        category: dns_query
