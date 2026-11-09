@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
+
+Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events for each category; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) includes the full field map, [Processing Pipelines](docs/content/guide/processing-pipelines.md) documents path-only use, and [`crates/rsigma-eval/README.md`](crates/rsigma-eval/README.md) links the file. Issue: [#330](https://github.com/timescale/rsigma/issues/330).
+
 ### `rsigma rule fmt` formats Sigma rules and keeps their comments (#673)
 
 `rsigma rule fmt` rewrites detection rules, correlations, filters, and action-chain fragments into one canonical layout. It reports the files that would change by default, `--check` exits `1` when any file is not canonical, `--diff` prints a unified diff, `--write` rewrites files atomically, and `--stdout` prints one file for editor or pipe use. `-` reads one document from stdin for `--stdout`, `--check`, `--diff`, and the bare report; it must be the only path and cannot be combined with `--write`. Exit codes are `0` for a completed report or write, `1` for `--check` or `--diff` when a file would change, `2` when a file or stdin cannot be read, parsed, formatted, or written, and `3` for conflicting mode flags, `--stdout` without exactly one file, `--write` with `-`, or `-` mixed with file paths.

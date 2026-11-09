@@ -52,11 +52,14 @@ Pass `-p NAME_OR_PATH` to any subcommand that accepts pipelines (`engine eval`, 
 ```bash
 rsigma engine eval -r rules/ -p ecs_windows -e @events.ndjson
 rsigma engine daemon -r rules/ -p ecs_windows -p custom-mappings.yml
+rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ecs_linux.yml -e @linux-events.ndjson
 rsigma backend convert rules/ -t postgres -p crates/rsigma-convert/pipelines/ocsf_postgres.yml
 rsigma rule validate rules/ -p sysmon
 ```
 
 The argument is first checked against [builtin pipelines](#builtin-pipelines). If no match, it is treated as a file path. Multiple pipelines are sorted by `priority` and applied in sequence.
+
+Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) and [`ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml). Pass the file path; there is no builtin short name until one is registered in `builtin_names()`. See [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "unreleased" }}
 
 ## Builtin pipelines
 
