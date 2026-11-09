@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Path-only `falcon_windows` pipeline for CrowdStrike Falcon
+
+Adds [`crates/rsigma-eval/pipelines/falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml): load with `-p crates/rsigma-eval/pipelines/falcon_windows.yml`. Maps Sigma fields to Falcon sensor JSON for Windows `process_creation` and `network_connection`, including `event_simpleName` routing for `ProcessRollup2` and `NetworkConnectIP4`. Tests in `crates/rsigma-eval/tests/falcon_windows_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+
 ### Path-only `ocsf_events` pipeline for OCSF live JSON
 
 Adds [`crates/rsigma-eval/pipelines/ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml): load with `-p crates/rsigma-eval/pipelines/ocsf_events.yml`. Maps Sigma fields to OCSF attribute paths for `process_creation` and `network_connection` when evaluating rules against OCSF-shaped input. Distinct from OCSF Detection Finding sink output (`?format=ocsf`) and from `rsigma-convert/pipelines/ocsf_postgres.yml`. Tests in `crates/rsigma-eval/tests/ocsf_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).

@@ -57,11 +57,12 @@ rsigma backend convert rules/ -t postgres -p crates/rsigma-convert/pipelines/ocs
 rsigma rule validate rules/ -p sysmon
 rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/cim_network_traffic.yml -e @cim-events.ndjson
 rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ocsf_events.yml -e @ocsf-events.ndjson
+rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/falcon_windows.yml -e @falcon-events.ndjson
 ```
 
 The argument is first checked against [builtin pipelines](#builtin-pipelines). If no match, it is treated as a file path. Multiple pipelines are sorted by `priority` and applied in sequence.
 
-Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml), and [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml). Pass the file path; those names are not in `builtin_names()`. See [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "unreleased" }}
+Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml). Pass the file path; those names are not in `builtin_names()`. See [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "unreleased" }}
 
 ## Builtin pipelines
 

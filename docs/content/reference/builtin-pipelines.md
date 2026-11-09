@@ -12,7 +12,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`), and [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -204,6 +204,25 @@ Priority: `20`. Source: [`pipelines/ocsf_events.yml`](https://github.com/timesca
 | `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `process.file.path`, `User` to `process.user.name` |
 
 Other OCSF classes and attributes are out of scope until fixtures pin them. {{ added "unreleased" }}
+
+## `falcon_windows` (path-only)
+
+Maps Sysmon-style Sigma fields to CrowdStrike Falcon **sensor JSON** for Windows `process_creation` and `network_connection` rules. Injects `event_simpleName` discriminators (`ProcessRollup2`, `NetworkConnectIP4`) and renames fields to Falcon export names (`ImageFileName`, `RemoteAddressIP4`, ...). Use with FDR or NG-SIEM JSON lines, not with `backend convert -t crowdstrike` delegation alone (that path uses pySigma, not this eval rewrite).
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/falcon_windows.yml \
+    -e '{"event_simpleName":"ProcessRollup2","ImageFileName":"...\\\\cmd.exe","CommandLine":"whoami"}'
+```
+
+Priority: `20`. Source: [`pipelines/falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml).
+
+| Category | Sigma fields to Falcon fields |
+|----------|------------------------------|
+| `process_creation` | `Image` to `ImageFileName`, `CommandLine`, `ParentImage` to `ParentImageFileName`, `ParentCommandLine`, `ParentProcessId`, `ProcessId` to `RawProcessId`, `User` to `UserName`; adds `event_simpleName: ProcessRollup2` |
+| `network_connection` | `SourceIp` to `LocalAddressIP4`, `SourcePort` to `LocalPort`, `DestinationIp` to `RemoteAddressIP4`, `DestinationPort` to `RemotePort`, `DestinationHostname` to `DomainName`, `Image` to `ImageFileName`, `ProcessId`, `User` to `UserName`; adds `event_simpleName: NetworkConnectIP4` |
+
+`NetworkConnectIP6`, `DnsRequest`, and non-Windows `event_platform` values are out of scope until fixtures land. {{ added "unreleased" }}
 
 ## See also
 
