@@ -5,14 +5,12 @@
 # on Linux. Scope in this file matches the shipped `ecs_windows` categories
 # that apply to `product: linux` rules; extend with new blocks when fixtures exist.
 #
-# This is a path-only pipeline (load by file path). It is not a builtin `-p ecs_linux`.
-#
 # Provenance: field names aligned with `ecs_windows.yml` / pySigma-backend-elasticsearch
 # `ecs_windows` process/network/file/DNS/image mappings; Elastic does not ship a
 # separate `ecs_linux` pySigma pipeline.
 #
 # Usage:
-#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ecs_linux.yml -e @event.json
+#   rsigma engine eval -r rules/ -p ecs_linux -e @event.json
 
 name: ecs_linux
 priority: 20

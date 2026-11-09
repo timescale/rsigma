@@ -1,17 +1,16 @@
-//! Regression for the shipped path-only `ecs_linux` pipeline.
+//! Regression for the shipped `ecs_linux` pipeline (builtin `-p ecs_linux` or YAML path).
 //!
 //! Sigma rules use Sysmon-style field names (`Image`, `CommandLine`, ...). ECS
 //! documents use `process.*`, `source.*`, `destination.*`, `dns.*`. This
 //! pipeline rewrites rule fields for `product: linux` the same way `ecs_windows`
-//! does for Windows categories covered here. Load it by path:
-//! `-p crates/rsigma-eval/pipelines/ecs_linux.yml`.
+//! does for Windows categories covered here.
 //!
 //! v1 scope is defined by this file and the integration tests: `process_creation`,
 //! `network_connection`, `file_event`, `image_load`, and `dns_query`. Other
 //! categories are intentionally omitted until fixture-backed mappings land.
 
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::{Engine, parse_pipeline};
+use rsigma_eval::{Engine, parse_pipeline, resolve_builtin_pipeline};
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
 
@@ -242,4 +241,17 @@ detection:
     let mut bare = Engine::new();
     bare.add_collection(&collection).expect("compile");
     assert!(bare.evaluate(&event).is_empty());
+}
+
+#[test]
+fn ecs_linux_builtin_matches_embedded_yaml() {
+    let from_builtin = resolve_builtin_pipeline("ecs_linux")
+        .expect("ecs_linux is a builtin")
+        .expect("parse builtin ecs_linux");
+    let from_file = parse_pipeline(ECS_LINUX_PIPELINE).expect("parse ecs_linux.yml");
+    assert_eq!(from_builtin.name, from_file.name);
+    assert_eq!(
+        from_builtin.transformations.len(),
+        from_file.transformations.len()
+    );
 }

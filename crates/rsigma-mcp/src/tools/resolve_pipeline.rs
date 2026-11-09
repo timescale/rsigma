@@ -12,7 +12,7 @@ use super::shared::json_result;
 /// Input for `resolve_pipeline`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ResolvePipelineInput {
-    /// A builtin pipeline name (`ecs_windows`, `fibratus_windows`, `sysmon`) or
+    /// A builtin pipeline name (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or
     /// a path to a pipeline YAML file.
     pub pipeline: String,
     /// Resolve dynamic sources (file/command/HTTP) and report their data keys.
