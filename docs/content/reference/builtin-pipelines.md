@@ -12,7 +12,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip) and [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`), and [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -185,6 +185,25 @@ Priority: `20`. Source: [`pipelines/cim_network_traffic.yml`](https://github.com
 | `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
 
 `Image` and `ProcessId` are omitted until a fixture-backed mapping is added. {{ added "unreleased" }}
+
+## `ocsf_events` (path-only)
+
+Maps Sysmon-style Sigma fields to [OCSF](https://schema.ocsf.io/) attribute paths on **live input JSON** for `process_creation` and `network_connection` rules. Use with events that already carry OCSF nesting (`process.cmd_line`, `src_endpoint.ip`, and similar). This pipeline rewrites **rules** at evaluation time; it does not serialize daemon output as OCSF (`?format=ocsf`), and it is not the Postgres conversion YAML under `rsigma-convert/pipelines/ocsf_postgres.yml`.
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/ocsf_events.yml \
+    -e '{"class_uid":1007,"process":{"cmd_line":"whoami","file":{"path":"/bin/bash"}}}'
+```
+
+Priority: `20`. Source: [`pipelines/ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml).
+
+| Category | Sigma fields to OCSF paths |
+|----------|---------------------------|
+| `process_creation` | `CommandLine` to `process.cmd_line`, `Image` to `process.file.path`, `ProcessId` to `process.pid`, `User` to `process.user.name`, `ParentCommandLine` to `process.parent_process.cmd_line`, `ParentImage` to `process.parent_process.file.path`, `ParentProcessId` to `process.parent_process.pid` |
+| `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `process.file.path`, `User` to `process.user.name` |
+
+Other OCSF classes and attributes are out of scope until fixtures pin them. {{ added "unreleased" }}
 
 ## See also
 

@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Path-only `ocsf_events` pipeline for OCSF live JSON
+
+Adds [`crates/rsigma-eval/pipelines/ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml): load with `-p crates/rsigma-eval/pipelines/ocsf_events.yml`. Maps Sigma fields to OCSF attribute paths for `process_creation` and `network_connection` when evaluating rules against OCSF-shaped input. Distinct from OCSF Detection Finding sink output (`?format=ocsf`) and from `rsigma-convert/pipelines/ocsf_postgres.yml`. Tests in `crates/rsigma-eval/tests/ocsf_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+
 ### Path-only `cim_network_traffic` pipeline for Splunk CIM
 
 Adds [`crates/rsigma-eval/pipelines/cim_network_traffic.yml`](crates/rsigma-eval/pipelines/cim_network_traffic.yml): load with `-p crates/rsigma-eval/pipelines/cim_network_traffic.yml`. Maps Sysmon-style Sigma fields to Splunk CIM Network Traffic attributes for `category: network_connection` (`src_ip`, `dest_ip`, `transport`, and related fields). Integration tests in `crates/rsigma-eval/tests/cim_network_traffic_pipeline.rs` pin synthetic CIM-shaped events. [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) documents the field table. Relates to [#330](https://github.com/timescale/rsigma/issues/330).

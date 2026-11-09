@@ -386,7 +386,7 @@ Bring `rsigma_eval::ProcessResultExt` into scope to use these methods.
 
 pySigma-compatible pipeline system for field mapping, logsource transformation, and backend-specific configuration. Supports multi-pipeline chaining with priority ordering.
 
-Builtin pipelines: `ecs_windows`, `ecs_linux`, `fibratus_windows`, and `sysmon` (resolve with `-p <name>`). Shipped path-only YAML also lives under [`pipelines/`](pipelines/): [`gcp_audit.yml`](pipelines/gcp_audit.yml) (strip `data.` for GCP audit rules), [`cim_network_traffic.yml`](pipelines/cim_network_traffic.yml) (Splunk CIM Network Traffic for `network_connection`). See [Builtin Pipelines](https://rsigma.io/reference/builtin-pipelines/) for field maps.
+Builtin pipelines: `ecs_windows`, `ecs_linux`, `fibratus_windows`, and `sysmon` (resolve with `-p <name>`). Shipped path-only YAML also lives under [`pipelines/`](pipelines/): [`gcp_audit.yml`](pipelines/gcp_audit.yml) (strip `data.` for GCP audit rules), [`cim_network_traffic.yml`](pipelines/cim_network_traffic.yml) (Splunk CIM Network Traffic for `network_connection`), [`ocsf_events.yml`](pipelines/ocsf_events.yml) (OCSF live JSON for eval; not sink `?format=ocsf` or convert pipelines). See [Builtin Pipelines](https://rsigma.io/reference/builtin-pipelines/) for field maps.
 
 ### Pipeline Chaining
 

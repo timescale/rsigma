@@ -56,11 +56,12 @@ rsigma engine eval -r rules/ -p ecs_linux -e @linux-events.ndjson
 rsigma backend convert rules/ -t postgres -p crates/rsigma-convert/pipelines/ocsf_postgres.yml
 rsigma rule validate rules/ -p sysmon
 rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/cim_network_traffic.yml -e @cim-events.ndjson
+rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ocsf_events.yml -e @ocsf-events.ndjson
 ```
 
 The argument is first checked against [builtin pipelines](#builtin-pipelines). If no match, it is treated as a file path. Multiple pipelines are sorted by `priority` and applied in sequence.
 
-Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) and [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml). Pass the file path; those names are not in `builtin_names()`. See [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "unreleased" }}
+Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml), and [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml). Pass the file path; those names are not in `builtin_names()`. See [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "unreleased" }}
 
 ## Builtin pipelines
 
@@ -504,7 +505,15 @@ See [Security Hardening reference](../reference/security.md) for the full pictur
 
 ## OCSF pipelines
 
-Two OCSF (Open Cybersecurity Schema Framework) pipelines ship under [`crates/rsigma-convert/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-convert/pipelines) and are useful as starting points for PostgreSQL-backed deployments:
+Three different OCSF touchpoints exist in RSigma; do not mix them:
+
+| Mechanism | Purpose |
+|-----------|---------|
+| [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) under `rsigma-eval` | **Eval rule rewrite** on live OCSF JSON input (`-p path/to/ocsf_events.yml`). |
+| `?format=ocsf` on a daemon sink | **Output** serialization as OCSF Detection Finding (class 2004). See [OCSF Findings](ocsf-findings.md). |
+| `ocsf_postgres*.yml` under `rsigma-convert` | **SQL conversion** field layout for `backend convert -t postgres`. |
+
+Two convert pipelines ship under [`crates/rsigma-convert/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-convert/pipelines) and are useful as starting points for PostgreSQL-backed deployments: {{ added "unreleased" }}
 
 | Pipeline | What it does |
 |----------|--------------|
