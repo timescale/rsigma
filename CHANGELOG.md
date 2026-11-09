@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Complete issue #330 canonicalizing pipelines
+
+Delivers optional eval rule-rewrite pipelines for ECS (`ecs_linux` builtin), Splunk CIM (`cim_events.yml`), OCSF live JSON (`ocsf_events.yml`), and CrowdStrike Falcon Windows (`falcon_windows.yml`). The five portable Sigma categories (`process_creation`, `network_connection`, `file_event`, `image_load`, `dns_query`) are implemented for each target with integration tests. Renames `cim_network_traffic.yml` to `cim_events.yml`. Adds [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md) as the scope contract. Closes [#330](https://github.com/timescale/rsigma/issues/330).
+
 ### Path-only `falcon_windows` pipeline for CrowdStrike Falcon
 
 Adds [`crates/rsigma-eval/pipelines/falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml): load with `-p crates/rsigma-eval/pipelines/falcon_windows.yml`. Maps Sigma fields to Falcon sensor JSON for Windows `process_creation` and `network_connection`, including `event_simpleName` routing for `ProcessRollup2` and `NetworkConnectIP4`. Tests in `crates/rsigma-eval/tests/falcon_windows_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
@@ -12,9 +16,9 @@ Adds [`crates/rsigma-eval/pipelines/falcon_windows.yml`](crates/rsigma-eval/pipe
 
 Adds [`crates/rsigma-eval/pipelines/ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml): load with `-p crates/rsigma-eval/pipelines/ocsf_events.yml`. Maps Sigma fields to OCSF attribute paths for `process_creation` and `network_connection` when evaluating rules against OCSF-shaped input. Distinct from OCSF Detection Finding sink output (`?format=ocsf`) and from `rsigma-convert/pipelines/ocsf_postgres.yml`. Tests in `crates/rsigma-eval/tests/ocsf_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
 
-### Path-only `cim_network_traffic` pipeline for Splunk CIM
+### Path-only `cim_events` pipeline for Splunk CIM
 
-Adds [`crates/rsigma-eval/pipelines/cim_network_traffic.yml`](crates/rsigma-eval/pipelines/cim_network_traffic.yml): load with `-p crates/rsigma-eval/pipelines/cim_network_traffic.yml`. Maps Sysmon-style Sigma fields to Splunk CIM Network Traffic attributes for `category: network_connection` (`src_ip`, `dest_ip`, `transport`, and related fields). Integration tests in `crates/rsigma-eval/tests/cim_network_traffic_pipeline.rs` pin synthetic CIM-shaped events. [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) documents the field table. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+Adds [`crates/rsigma-eval/pipelines/cim_events.yml`](crates/rsigma-eval/pipelines/cim_events.yml) (evolved from the initial network-only slice). Maps Sysmon-style Sigma fields to Splunk CIM for the portable five categories. Integration tests in `crates/rsigma-eval/tests/cim_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
 
 ### Builtin `ecs_linux` processing pipeline
 

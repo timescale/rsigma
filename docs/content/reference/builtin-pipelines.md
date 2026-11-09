@@ -1,5 +1,7 @@
 # Builtin Pipelines
 
+For issue [#330](https://github.com/timescale/rsigma/issues/330) canonicalizing scope (ECS, CIM, OCSF eval, Falcon), see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
+
 RSigma embeds four ready-to-use processing pipelines in the binary so common Windows and Linux ECS deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
 
 ```bash
@@ -12,7 +14,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -168,27 +170,29 @@ rsigma engine daemon -r rules/ \
     -p ecs_linux
 ```
 
-## `cim_network_traffic` (path-only)
+## `cim_events` (path-only)
 
-Maps Sysmon-style Sigma field names to [Splunk CIM](https://docs.splunk.com/Documentation/CIM/latest/User/NetworkTraffic) Network Traffic fields (`src_ip`, `dest_ip`, `transport`, and related attributes) for `category: network_connection` rules. Use when events are already CIM-normalized in your indexer. v1 covers the network connection category only; other CIM datamodels need their own YAML and fixtures.
+Maps Sysmon-style Sigma field names to [Splunk CIM](https://docs.splunk.com/Documentation/CIM/latest/User/) fields on normalized events (Endpoint, Network Traffic, Network Resolution). Covers the same five portable categories as `ecs_linux`. {{ added "unreleased" }}
 
 ```bash
 rsigma engine eval -r rules/ \
-    -p crates/rsigma-eval/pipelines/cim_network_traffic.yml \
-    -e '{"dest_ip":"93.184.216.34","dest_port":443,"transport":"tcp","user":"alice"}'
+    -p crates/rsigma-eval/pipelines/cim_events.yml \
+    -e '{"dest_ip":"93.184.216.34","dest_port":443,"transport":"tcp"}'
 ```
 
-Priority: `20`. Source: [`pipelines/cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml).
+Priority: `20`. Source: [`pipelines/cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml).
 
 | Category | Sigma fields to CIM fields |
 |----------|---------------------------|
+| `process_creation` | `CommandLine` to `process_cmdline`, `Image` to `process`, `ProcessId` to `process_id`, `User` to `user`, `ParentImage` to `parent_process`, `ParentProcessId` to `parent_process_id` |
 | `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
-
-`Image` and `ProcessId` are omitted until a fixture-backed mapping is added. {{ added "unreleased" }}
+| `file_event` | `TargetFilename` to `file_path`, `Image` to `process`, `User` to `user` |
+| `image_load` | `ImageLoaded` to `file_path`, `Image` to `process`, `User` to `user` |
+| `dns_query` | `QueryName` to `query`, `Image` to `process`, `User` to `user` |
 
 ## `ocsf_events` (path-only)
 
-Maps Sysmon-style Sigma fields to [OCSF](https://schema.ocsf.io/) attribute paths on **live input JSON** for `process_creation` and `network_connection` rules. Use with events that already carry OCSF nesting (`process.cmd_line`, `src_endpoint.ip`, and similar). This pipeline rewrites **rules** at evaluation time; it does not serialize daemon output as OCSF (`?format=ocsf`), and it is not the Postgres conversion YAML under `rsigma-convert/pipelines/ocsf_postgres.yml`.
+Maps Sysmon-style Sigma fields to [OCSF](https://schema.ocsf.io/) attribute paths on **live input JSON** for the five portable categories. Use with events that already carry OCSF nesting (`process.cmd_line`, `src_endpoint.ip`, and similar). This pipeline rewrites **rules** at evaluation time; it does not serialize daemon output as OCSF (`?format=ocsf`), and it is not the Postgres conversion YAML under `rsigma-convert/pipelines/ocsf_postgres.yml`.
 
 ```bash
 rsigma engine eval -r rules/ \
@@ -202,12 +206,13 @@ Priority: `20`. Source: [`pipelines/ocsf_events.yml`](https://github.com/timesca
 |----------|---------------------------|
 | `process_creation` | `CommandLine` to `process.cmd_line`, `Image` to `process.file.path`, `ProcessId` to `process.pid`, `User` to `process.user.name`, `ParentCommandLine` to `process.parent_process.cmd_line`, `ParentImage` to `process.parent_process.file.path`, `ParentProcessId` to `process.parent_process.pid` |
 | `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `process.file.path`, `User` to `process.user.name` |
-
-Other OCSF classes and attributes are out of scope until fixtures pin them. {{ added "unreleased" }}
+| `file_event` | `TargetFilename` to `file.path`, `Image` to `process.file.path`, `User` to `process.user.name` |
+| `image_load` | `ImageLoaded` to `module.path`, `Image` to `process.file.path`, `User` to `process.user.name` |
+| `dns_query` | `QueryName` to `query.hostname`, `Image` to `process.file.path`, `User` to `process.user.name` |
 
 ## `falcon_windows` (path-only)
 
-Maps Sysmon-style Sigma fields to CrowdStrike Falcon **sensor JSON** for Windows `process_creation` and `network_connection` rules. Injects `event_simpleName` discriminators (`ProcessRollup2`, `NetworkConnectIP4`) and renames fields to Falcon export names (`ImageFileName`, `RemoteAddressIP4`, ...). Use with FDR or NG-SIEM JSON lines, not with `backend convert -t crowdstrike` delegation alone (that path uses pySigma, not this eval rewrite).
+Maps Sysmon-style Sigma fields to CrowdStrike Falcon **sensor JSON** for Windows rules in the five portable categories. Injects `event_simpleName` discriminators (`ProcessRollup2`, `NetworkConnectIP4`) and renames fields to Falcon export names (`ImageFileName`, `RemoteAddressIP4`, ...). Use with FDR or NG-SIEM JSON lines, not with `backend convert -t crowdstrike` delegation alone (that path uses pySigma, not this eval rewrite).
 
 ```bash
 rsigma engine eval -r rules/ \
@@ -221,8 +226,11 @@ Priority: `20`. Source: [`pipelines/falcon_windows.yml`](https://github.com/time
 |----------|------------------------------|
 | `process_creation` | `Image` to `ImageFileName`, `CommandLine`, `ParentImage` to `ParentImageFileName`, `ParentCommandLine`, `ParentProcessId`, `ProcessId` to `RawProcessId`, `User` to `UserName`; adds `event_simpleName: ProcessRollup2` |
 | `network_connection` | `SourceIp` to `LocalAddressIP4`, `SourcePort` to `LocalPort`, `DestinationIp` to `RemoteAddressIP4`, `DestinationPort` to `RemotePort`, `DestinationHostname` to `DomainName`, `Image` to `ImageFileName`, `ProcessId`, `User` to `UserName`; adds `event_simpleName: NetworkConnectIP4` |
+| `file_event` | `TargetFilename` to `TargetFileName`, `User` to `UserName`; adds `event_simpleName: PeFileWritten` |
+| `dns_query` | `QueryName` to `DomainName`; adds `event_simpleName: DnsRequest` |
+| `image_load` | `ImageLoaded` to `FilePath`, `Image` to `ImageFileName`; adds `event_simpleName: ImageLoadRollup2` |
 
-`NetworkConnectIP6`, `DnsRequest`, and non-Windows `event_platform` values are out of scope until fixtures land. {{ added "unreleased" }}
+Falcon macOS/Linux shapes and `NetworkConnectIP6` are outside this file; see [Canonicalizing Pipelines](canonicalizing-pipelines.md). {{ added "unreleased" }}
 
 ## See also
 
