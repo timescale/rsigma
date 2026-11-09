@@ -46,7 +46,7 @@ fn ocsf_events_pipeline_parses() {
     let pipeline = parse_pipeline(OCSF_EVENTS_PIPELINE).expect("parse ocsf_events");
     assert_eq!(pipeline.name, "ocsf_events");
     assert_eq!(pipeline.priority, 20);
-    assert_eq!(pipeline.transformations.len(), 2);
+    assert_eq!(pipeline.transformations.len(), 5);
 }
 
 #[test]
@@ -120,4 +120,81 @@ detection:
         engine.evaluate(&event).is_empty(),
         "Sigma field names must not match OCSF paths without the pipeline"
     );
+}
+
+#[test]
+fn ocsf_events_maps_file_dns_and_image_load() {
+    let pipeline = parse_pipeline(OCSF_EVENTS_PIPELINE).expect("parse");
+
+    let file_rule = r#"
+title: OCSF file
+id: 00000000-0000-0000-0000-0000000000o4
+logsource:
+    category: file_event
+detection:
+    selection:
+        TargetFilename: '/etc/shadow'
+    condition: selection
+"#;
+    let file_event = JsonEvent::borrow(&json!({
+        "class_uid": 1001,
+        "file": { "path": "/etc/shadow" },
+        "process": { "file": { "path": "/usr/bin/cp" } }
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(file_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&file_event).len(), 1);
+
+    let dns_rule = r#"
+title: OCSF dns
+id: 00000000-0000-0000-0000-0000000000o5
+logsource:
+    category: dns_query
+detection:
+    selection:
+        QueryName: 'malware.example'
+    condition: selection
+"#;
+    let dns_event = JsonEvent::borrow(&json!({
+        "class_uid": 4003,
+        "query": { "hostname": "malware.example" },
+        "process": { "file": { "path": "/usr/bin/dig" } }
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(dns_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&dns_event).len(), 1);
+
+    let image_rule = r#"
+title: OCSF module
+id: 00000000-0000-0000-0000-0000000000o6
+logsource:
+    category: image_load
+detection:
+    selection:
+        ImageLoaded: '/lib/evil.so'
+    condition: selection
+"#;
+    let image_event = JsonEvent::borrow(&json!({
+        "class_uid": 1005,
+        "module": { "path": "/lib/evil.so" },
+        "process": { "file": { "path": "/usr/bin/app" } }
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(image_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&image_event).len(), 1);
 }

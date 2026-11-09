@@ -44,7 +44,7 @@ fn falcon_windows_pipeline_parses() {
     let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse falcon_windows");
     assert_eq!(pipeline.name, "falcon_windows");
     assert_eq!(pipeline.priority, 20);
-    assert_eq!(pipeline.transformations.len(), 4);
+    assert_eq!(pipeline.transformations.len(), 10);
 }
 
 #[test]
@@ -147,4 +147,86 @@ detection:
         engine.evaluate(&event).is_empty(),
         "Sigma names must not match Falcon fields without the pipeline"
     );
+}
+
+#[test]
+fn falcon_windows_maps_file_dns_and_image_load() {
+    let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse");
+
+    let file_rule = r#"
+title: PE write
+id: 00000000-0000-0000-0000-0000000000f5
+logsource:
+    product: windows
+    category: file_event
+detection:
+    selection:
+        TargetFilename|contains: 'Temp'
+    condition: selection
+"#;
+    let file_event = JsonEvent::borrow(&json!({
+        "event_simpleName": "PeFileWritten",
+        "event_platform": "Win",
+        "TargetFileName": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\Temp\\\\evil.exe",
+        "UserName": "jdoe"
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(file_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&file_event).len(), 1);
+
+    let dns_rule = r#"
+title: DNS
+id: 00000000-0000-0000-0000-0000000000f6
+logsource:
+    product: windows
+    category: dns_query
+detection:
+    selection:
+        QueryName: 'evil.example.org'
+    condition: selection
+"#;
+    let dns_event = JsonEvent::borrow(&json!({
+        "event_simpleName": "DnsRequest",
+        "event_platform": "Win",
+        "DomainName": "evil.example.org"
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(dns_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&dns_event).len(), 1);
+
+    let image_rule = r#"
+title: DLL load
+id: 00000000-0000-0000-0000-0000000000f7
+logsource:
+    product: windows
+    category: image_load
+detection:
+    selection:
+        ImageLoaded|contains: 'evil.dll'
+    condition: selection
+"#;
+    let image_event = JsonEvent::borrow(&json!({
+        "event_simpleName": "ImageLoadRollup2",
+        "event_platform": "Win",
+        "FilePath": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\System32\\\\evil.dll",
+        "ImageFileName": "\\\\Device\\\\HarddiskVolume2\\\\Program Files\\\\app\\\\app.exe"
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(image_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&image_event).len(), 1);
 }
