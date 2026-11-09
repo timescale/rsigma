@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Path-only `cim_network_traffic` pipeline for Splunk CIM
+
+Adds [`crates/rsigma-eval/pipelines/cim_network_traffic.yml`](crates/rsigma-eval/pipelines/cim_network_traffic.yml): load with `-p crates/rsigma-eval/pipelines/cim_network_traffic.yml`. Maps Sysmon-style Sigma fields to Splunk CIM Network Traffic attributes for `category: network_connection` (`src_ip`, `dest_ip`, `transport`, and related fields). Integration tests in `crates/rsigma-eval/tests/cim_network_traffic_pipeline.rs` pin synthetic CIM-shaped events. [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) documents the field table. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+
+### Builtin `ecs_linux` processing pipeline
+
+Registers `ecs_linux` in the embedded pipeline registry so `-p ecs_linux` works without a YAML file path. Docs and MCP now list four builtins (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`); `gcp_audit` remains path-only. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+
 ### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
 
 Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events for each category; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) includes the full field map, [Processing Pipelines](docs/content/guide/processing-pipelines.md) documents path-only use, and [`crates/rsigma-eval/README.md`](crates/rsigma-eval/README.md) links the file. Issue: [#330](https://github.com/timescale/rsigma/issues/330).

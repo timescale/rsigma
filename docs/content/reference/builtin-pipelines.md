@@ -1,9 +1,10 @@
 # Builtin Pipelines
 
-RSigma embeds three ready-to-use processing pipelines in the binary so common Windows deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
+RSigma embeds four ready-to-use processing pipelines in the binary so common Windows and Linux ECS deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
 
 ```bash
 rsigma engine eval   -r rules/ -p ecs_windows -e @events.ndjson
+rsigma engine eval   -r rules/ -p ecs_linux -e @linux-events.ndjson
 rsigma engine daemon -r rules/ -p sysmon
 rsigma backend convert rules/ -t fibratus -p fibratus_windows
 rsigma backend convert rules/ -t postgres -p ecs_windows
@@ -11,7 +12,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped examples include [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip) and [`ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml) (Sigma to ECS field mapping for `product: linux`, same categories as covered in that file; not a builtin `-p ecs_linux` name). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip) and [`cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml) (Sigma to Splunk CIM Network Traffic for `category: network_connection`). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -46,30 +47,12 @@ Each transformation is gated by `rule_conditions: logsource.category` so only th
 
 `ecs_windows` assumes the agent has already flattened the Windows events into ECS shape. It does NOT flatten raw `.evtx` records (those are nested under `Event.System.*` and `Event.EventData.*`). For raw `.evtx` files, use dotted-path rules or write a custom flattening pipeline. See [Input Formats: EVTX](../guide/input-formats.md#evtx-windows-event-log-feature-gated).
 
-## `fibratus_windows`
+## `ecs_linux`
 
-Maps Sigma Windows logsource categories and PascalCase fields onto Fibratus kernel-event names and the lowercase-dotted Fibratus vocabulary (`ps.exe`, `ps.cmdline`, `file.path`, `net.dip`, …). Use it when converting Windows rules to Fibratus YAML so the output matches upstream Fibratus rules-library style.
-
-```bash
-rsigma backend convert -t fibratus -p fibratus_windows rules/windows/process_creation/
-```
-
-Priority: `20`. Source: [`pipelines/fibratus_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/fibratus_windows.yml).
-
-### What it does
-
-- `field_name_mapping` renames Sigma fields to Fibratus attributes per category (`process_creation`, `network_connection`, `file_event`, `image_load`, `registry_*`, `dns_query`, `pipe_created`, `create_remote_thread`, and related).
-- `add_condition` injects `evt.name` discriminators (for example `CreateProcess`, `Connect`) so Fibratus can short-circuit on the event name before the rest of the body.
-- Field notes follow Fibratus 3.0.0: on `CreateProcess`, `ps.*` describes the created (child) process and `ps.parent.*` the parent; cross-process targets use `evt.arg[...]`.
-
-Pair with [`backend convert -t fibratus`](../cli/backend/convert.md) and the [Fibratus backend reference](backends/fibratus.md).
-
-## `ecs_linux` (path-only)
-
-Maps Sigma field names to [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) for `product: linux` rules when your events are already ECS-shaped (for example Filebeat or Elastic Agent on Linux). Aligned with the overlapping blocks in [`ecs_windows`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_windows.yml). This file ships in the repository only: there is no builtin `-p ecs_linux`; pass the path.
+Maps Sigma field names to [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) for `product: linux` rules when your events are already ECS-shaped (for example Filebeat or Elastic Agent on Linux). Aligned with the overlapping blocks in [`ecs_windows`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_windows.yml).
 
 ```bash
-rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ecs_linux.yml -e @linux-events.ndjson
+rsigma engine eval -r rules/ -p ecs_linux -e @linux-events.ndjson
 ```
 
 Priority: `20`. Source: [`pipelines/ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml).
@@ -88,7 +71,25 @@ Each transformation is gated by `rule_conditions` with `product: linux` and a `c
 
 ### Pair with the right input
 
-Use with JSON or NDJSON where fields match ECS paths. This pipeline does not flatten raw audit envelopes; normalize first or extend the YAML for your shape. {{ added "unreleased" }}
+Use with JSON or NDJSON where fields match ECS paths. This pipeline does not flatten raw audit envelopes; normalize first or extend the YAML for your shape.
+
+## `fibratus_windows`
+
+Maps Sigma Windows logsource categories and PascalCase fields onto Fibratus kernel-event names and the lowercase-dotted Fibratus vocabulary (`ps.exe`, `ps.cmdline`, `file.path`, `net.dip`, …). Use it when converting Windows rules to Fibratus YAML so the output matches upstream Fibratus rules-library style.
+
+```bash
+rsigma backend convert -t fibratus -p fibratus_windows rules/windows/process_creation/
+```
+
+Priority: `20`. Source: [`pipelines/fibratus_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/fibratus_windows.yml).
+
+### What it does
+
+- `field_name_mapping` renames Sigma fields to Fibratus attributes per category (`process_creation`, `network_connection`, `file_event`, `image_load`, `registry_*`, `dns_query`, `pipe_created`, `create_remote_thread`, and related).
+- `add_condition` injects `evt.name` discriminators (for example `CreateProcess`, `Connect`) so Fibratus can short-circuit on the event name before the rest of the body.
+- Field notes follow Fibratus 3.0.0: on `CreateProcess`, `ps.*` describes the created (child) process and `ps.parent.*` the parent; cross-process targets use `evt.arg[...]`.
+
+Pair with [`backend convert -t fibratus`](../cli/backend/convert.md) and the [Fibratus backend reference](backends/fibratus.md).
 
 ## `sysmon`
 
@@ -160,12 +161,30 @@ rsigma engine daemon -r rules/ \
 
 `sysmon` (priority 10) adds the EventID conditions first; `ecs_windows` (priority 20) renames the field names to ECS; finally the org overrides at, say, priority 50 add per-tenant table routing.
 
-On Linux ECS events (no Sysmon routing), load the path pipeline directly:
+On Linux ECS events (no Sysmon routing), chain the Linux ECS builtin:
 
 ```bash
 rsigma engine daemon -r rules/ \
-    -p crates/rsigma-eval/pipelines/ecs_linux.yml
+    -p ecs_linux
 ```
+
+## `cim_network_traffic` (path-only)
+
+Maps Sysmon-style Sigma field names to [Splunk CIM](https://docs.splunk.com/Documentation/CIM/latest/User/NetworkTraffic) Network Traffic fields (`src_ip`, `dest_ip`, `transport`, and related attributes) for `category: network_connection` rules. Use when events are already CIM-normalized in your indexer. v1 covers the network connection category only; other CIM datamodels need their own YAML and fixtures.
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/cim_network_traffic.yml \
+    -e '{"dest_ip":"93.184.216.34","dest_port":443,"transport":"tcp","user":"alice"}'
+```
+
+Priority: `20`. Source: [`pipelines/cim_network_traffic.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_network_traffic.yml).
+
+| Category | Sigma fields to CIM fields |
+|----------|---------------------------|
+| `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
+
+`Image` and `ProcessId` are omitted until a fixture-backed mapping is added. {{ added "unreleased" }}
 
 ## See also
 
