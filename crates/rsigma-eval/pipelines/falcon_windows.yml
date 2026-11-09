@@ -1,0 +1,70 @@
+# CrowdStrike Falcon Windows endpoint event field mapping.
+#
+# Maps generic Sigma / Sysmon-style field names on Windows logsource rules
+# to Falcon sensor JSON attribute names (`event_simpleName` discriminators
+# plus flat fields such as `ImageFileName`, `RemoteAddressIP4`, ...). Intended
+# for evaluating Sigma rules against Falcon FDR / NG-SIEM JSON lines with `-p`.
+#
+# Provenance: Falcon Events Data Dictionary (ProcessRollup2, NetworkConnectIP4).
+# v1 scope: `process_creation` and `network_connection` on `product: windows`
+# only; macOS/Linux Falcon events differ and are deferred.
+#
+# Path-only: load by file path (not a builtin short name).
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/falcon_windows.yml -e @event.json
+
+name: falcon_windows
+priority: 20
+
+transformations:
+  - id: falcon_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      Image: ImageFileName
+      CommandLine: CommandLine
+      ParentImage: ParentImageFileName
+      ParentCommandLine: ParentCommandLine
+      ParentProcessId: ParentProcessId
+      ProcessId: RawProcessId
+      User: UserName
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: process_creation
+
+  - id: falcon_process_creation_event
+    type: add_condition
+    prepend: true
+    conditions:
+      event_simpleName: ProcessRollup2
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: process_creation
+
+  - id: falcon_network_connection_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: LocalAddressIP4
+      SourcePort: LocalPort
+      DestinationIp: RemoteAddressIP4
+      DestinationPort: RemotePort
+      DestinationHostname: DomainName
+      Image: ImageFileName
+      ProcessId: ProcessId
+      User: UserName
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: network_connection
+
+  - id: falcon_network_connection_event
+    type: add_condition
+    prepend: true
+    conditions:
+      event_simpleName: NetworkConnectIP4
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: network_connection
