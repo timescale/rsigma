@@ -5,9 +5,7 @@
 //! pipeline rewrites rule fields for `product: linux` the same way `ecs_windows`
 //! does for Windows categories covered here.
 //!
-//! v1 scope is defined by this file and the integration tests: `process_creation`,
-//! `network_connection`, `file_event`, `image_load`, and `dns_query`. Other
-//! categories are intentionally omitted until fixture-backed mappings land.
+//! Covers the five portable categories in `canonicalizing-pipelines.md`.
 
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::{Engine, parse_pipeline, resolve_builtin_pipeline};

@@ -61,7 +61,7 @@ Priority: `20`. Source: [`pipelines/ecs_linux.yml`](https://github.com/timescale
 
 ### What it maps
 
-Each transformation is gated by `rule_conditions` with `product: linux` and a `category`. Only the rows below are in the file; Windows-only fields from `ecs_windows` (for example `IntegrityLevel`, `Hashes`, `QueryStatus` to `sysmon.dns.status`) are omitted until a Linux fixture backs them.
+Each transformation is gated by `rule_conditions` with `product: linux` and a `category`. Only the rows below are in the file. Windows-only optional fields from `ecs_windows` (for example `IntegrityLevel`, `Hashes`, `QueryStatus` to `sysmon.dns.status`) are not mapped on Linux by design.
 
 | Category | Sigma fields to ECS fields |
 |----------|---------------------------|

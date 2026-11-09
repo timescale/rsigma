@@ -30,7 +30,7 @@ transformations:
       - type: logsource
         category: process_creation
 
-  - id: cim_network_traffic_fields
+  - id: cim_network_connection_fields
     type: field_name_mapping
     mapping:
       SourceIp: src_ip

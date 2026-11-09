@@ -230,3 +230,61 @@ detection:
         .unwrap();
     assert_eq!(engine.evaluate(&image_event).len(), 1);
 }
+
+#[test]
+fn falcon_windows_wrong_simple_name_does_not_match_dns_rule() {
+    let rule = r#"
+title: DNS gate
+id: 00000000-0000-0000-0000-0000000000f8
+logsource:
+    product: windows
+    category: dns_query
+detection:
+    selection:
+        QueryName: 'evil.example.org'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let mut event_val = json!({
+        "event_simpleName": "NetworkConnectIP4",
+        "DomainName": "evil.example.org"
+    });
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .unwrap();
+    assert!(engine.evaluate(&event).is_empty());
+    event_val["event_simpleName"] = json!("DnsRequest");
+    let event = JsonEvent::borrow(&event_val);
+    assert_eq!(
+        engine.evaluate(&event).len(),
+        1,
+        "DnsRequest discriminator required"
+    );
+}
+
+#[test]
+fn without_pipeline_file_rule_does_not_match_falcon_event() {
+    let rule = r#"
+title: file
+id: 00000000-0000-0000-0000-0000000000f9
+logsource:
+    product: windows
+    category: file_event
+detection:
+    selection:
+        TargetFilename|contains: 'evil.exe'
+    condition: selection
+"#;
+    let event = JsonEvent::borrow(&json!({
+        "event_simpleName": "PeFileWritten",
+        "TargetFileName": "\\\\Device\\\\HarddiskVolume2\\\\Temp\\\\evil.exe"
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection(&parse_sigma_yaml(rule).unwrap())
+        .unwrap();
+    assert!(engine.evaluate(&event).is_empty());
+}

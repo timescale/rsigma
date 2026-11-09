@@ -525,7 +525,8 @@ Use them as templates and copy/customize for your schema. They are typical examp
 
 ## See also
 
-- [Builtin Pipelines reference](../reference/builtin-pipelines.md) for the contents of `ecs_windows` and `sysmon`.
+- [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) for issue #330 scope (ECS, CIM, OCSF eval, Falcon).
+- [Builtin Pipelines reference](../reference/builtin-pipelines.md) for `ecs_windows`, `ecs_linux`, `sysmon`, `fibratus_windows`, and path-only canonicalizers.
 - [Dynamic Sources reference](../reference/dynamic-sources.md) for the full source spec, extract language details, and benchmarks.
 - [Custom Attributes reference](../reference/custom-attributes.md) for every `rsigma.*` and `postgres.*` knob.
 - [Security Hardening reference](../reference/security.md) for the resource limits enforced on dynamic sources.

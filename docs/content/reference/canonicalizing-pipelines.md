@@ -26,14 +26,14 @@ These five `logsource.category` values are the **issue #330 contract**, aligned 
 | `image_load` | yes | yes | yes | yes (`ImageLoadRollup2`) |
 | `dns_query` | yes | yes | yes | yes (`DnsRequest`) |
 
-Field-level maps live in [Builtin Pipelines](builtin-pipelines.md) (builtins and path-only sections). Integration tests in `crates/rsigma-eval/tests/*_pipeline.rs` pin synthetic events for every row.
+Field-level maps live in [Builtin Pipelines](builtin-pipelines.md) (builtins and path-only sections). Integration tests in `crates/rsigma-eval/tests/*_pipeline.rs` exercise every category in the table with positive matches; each file includes negative controls when `-p` is not applied.
 
 ## Intentionally not in issue #330 scope
 
 | Area | Use instead |
 |------|-------------|
 | Windows-only Sigma categories (`registry_event`, `pipe_created`, `driver_load`, `create_remote_thread`, `process_access`, …) on non-ECS targets | `ecs_windows` + `sysmon`, or vendor-specific rules |
-| Falcon macOS/Linux `event_platform` | Separate pipeline file if added later; not part of #330 close |
+| Falcon macOS/Linux `event_platform` and `NetworkConnectIP6` | Out of scope; use vendor-native rules or a follow-up pipeline file |
 | OCSF **Detection Finding** sink output (`?format=ocsf`) | [OCSF Findings](../guide/ocsf-findings.md) |
 | Postgres **convert** OCSF layout | `rsigma-convert/pipelines/ocsf_postgres*.yml` |
 | `backend convert -t crowdstrike` | pySigma via [sigma-cli](backends/sigma-cli.md) |

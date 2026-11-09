@@ -155,3 +155,23 @@ detection:
         .unwrap();
     assert!(engine.evaluate(&event).is_empty());
 }
+
+#[test]
+fn without_pipeline_file_rule_does_not_match_cim() {
+    let rule = r#"
+title: file
+id: 00000000-0000-0000-0000-0000000000c7
+logsource:
+    category: file_event
+detection:
+    selection:
+        TargetFilename: '/tmp/x'
+    condition: selection
+"#;
+    let event = JsonEvent::borrow(&json!({"file_path": "/tmp/x"}));
+    let mut engine = Engine::new();
+    engine
+        .add_collection(&parse_sigma_yaml(rule).unwrap())
+        .unwrap();
+    assert!(engine.evaluate(&event).is_empty());
+}

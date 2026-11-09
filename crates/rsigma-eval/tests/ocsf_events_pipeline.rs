@@ -198,3 +198,25 @@ detection:
         .unwrap();
     assert_eq!(engine.evaluate(&image_event).len(), 1);
 }
+
+#[test]
+fn without_pipeline_file_rule_does_not_match_ocsf_event() {
+    let rule = r#"
+title: file
+id: 00000000-0000-0000-0000-0000000000o7
+logsource:
+    category: file_event
+detection:
+    selection:
+        TargetFilename: '/etc/shadow'
+    condition: selection
+"#;
+    let event = JsonEvent::borrow(&json!({
+        "file": { "path": "/etc/shadow" }
+    }));
+    let mut engine = Engine::new();
+    engine
+        .add_collection(&parse_sigma_yaml(rule).unwrap())
+        .unwrap();
+    assert!(engine.evaluate(&event).is_empty());
+}

@@ -4,29 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Complete issue #330 canonicalizing pipelines
+### Canonicalizing pipelines (issue #330)
 
-Delivers optional eval rule-rewrite pipelines for ECS (`ecs_linux` builtin), Splunk CIM (`cim_events.yml`), OCSF live JSON (`ocsf_events.yml`), and CrowdStrike Falcon Windows (`falcon_windows.yml`). The five portable Sigma categories (`process_creation`, `network_connection`, `file_event`, `image_load`, `dns_query`) are implemented for each target with integration tests. Renames `cim_network_traffic.yml` to `cim_events.yml`. Adds [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md) as the scope contract. Closes [#330](https://github.com/timescale/rsigma/issues/330).
+Optional `-p` rule-rewrite pipelines for ECS, Splunk CIM, OCSF live JSON, and CrowdStrike Falcon Windows. The portable Sigma categories `process_creation`, `network_connection`, `file_event`, `image_load`, and `dns_query` are implemented for each target. Integration tests live under `crates/rsigma-eval/tests/*_pipeline.rs` with per-category positives and negative controls without `-p`.
 
-### Path-only `falcon_windows` pipeline for CrowdStrike Falcon
+- **ECS Linux:** [`ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml) is a **builtin** (`-p ecs_linux`); four builtins total. Linux ECS field mapping first shipped path-only in [#674](https://github.com/timescale/rsigma/pull/674).
+- **CIM:** [`cim_events.yml`](crates/rsigma-eval/pipelines/cim_events.yml) (Splunk CIM; replaces the earlier network-only filename).
+- **OCSF eval:** [`ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml) on live input (not sink `?format=ocsf`, not [`ocsf_postgres.yml`](crates/rsigma-convert/pipelines/ocsf_postgres.yml)).
+- **Falcon:** [`falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml) for Windows sensor JSON, including `event_simpleName` gates.
 
-Adds [`crates/rsigma-eval/pipelines/falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml): load with `-p crates/rsigma-eval/pipelines/falcon_windows.yml`. Maps Sigma fields to Falcon sensor JSON for Windows `process_creation` and `network_connection`, including `event_simpleName` routing for `ProcessRollup2` and `NetworkConnectIP4`. Tests in `crates/rsigma-eval/tests/falcon_windows_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
-
-### Path-only `ocsf_events` pipeline for OCSF live JSON
-
-Adds [`crates/rsigma-eval/pipelines/ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml): load with `-p crates/rsigma-eval/pipelines/ocsf_events.yml`. Maps Sigma fields to OCSF attribute paths for `process_creation` and `network_connection` when evaluating rules against OCSF-shaped input. Distinct from OCSF Detection Finding sink output (`?format=ocsf`) and from `rsigma-convert/pipelines/ocsf_postgres.yml`. Tests in `crates/rsigma-eval/tests/ocsf_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
-
-### Path-only `cim_events` pipeline for Splunk CIM
-
-Adds [`crates/rsigma-eval/pipelines/cim_events.yml`](crates/rsigma-eval/pipelines/cim_events.yml) (evolved from the initial network-only slice). Maps Sysmon-style Sigma fields to Splunk CIM for the portable five categories. Integration tests in `crates/rsigma-eval/tests/cim_events_pipeline.rs`. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
-
-### Builtin `ecs_linux` processing pipeline
-
-Registers `ecs_linux` in the embedded pipeline registry so `-p ecs_linux` works without a YAML file path. Docs and MCP now list four builtins (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`); `gcp_audit` remains path-only. Relates to [#330](https://github.com/timescale/rsigma/issues/330).
-
-### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
-
-Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events for each category; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) includes the full field map, [Processing Pipelines](docs/content/guide/processing-pipelines.md) documents path-only use, and [`crates/rsigma-eval/README.md`](crates/rsigma-eval/README.md) links the file. Issue: [#330](https://github.com/timescale/rsigma/issues/330).
+Scope and exclusions: [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md). Field tables: [Builtin Pipelines](docs/content/reference/builtin-pipelines.md). Closes [#330](https://github.com/timescale/rsigma/issues/330).
 
 ### `rsigma rule fmt` formats Sigma rules and keeps their comments (#673)
 
