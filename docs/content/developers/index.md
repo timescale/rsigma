@@ -19,7 +19,7 @@ rsigma/
 ├── docs/                   # This site (docmd)
 ├── fuzz/                   # 25 cargo-fuzz harnesses
 ├── tests/fixtures/         # Cross-crate test data (dynamic pipelines, etc.)
-├── crates/rsigma-eval/pipelines/  # Built-in processing pipelines (ecs_windows, fibratus_windows, sysmon)
+├── crates/rsigma-eval/pipelines/  # Built-in processing pipelines (ecs_windows, ecs_linux, fibratus_windows, sysmon)
 ├── .github/workflows/      # CI: test, fuzz, audit, docker, publish, release
 └── Cargo.toml              # Workspace; single shared version
 ```

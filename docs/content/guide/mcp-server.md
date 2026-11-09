@@ -61,7 +61,7 @@ Sixteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemo
 | `list_backends` | (none) | Conversion targets with their formats and correlation methods; with `--allow-sigma-cli`, installed sigma-cli targets are appended with `engine: "sigma-cli"`. |
 | `list_fields` | rules, `pipelines`, `include_filters` | Each referenced field with the rules and source kinds that use it. |
 | `resolve_pipeline` | `pipeline` (builtin name or path), `resolve_sources` | Pipeline name, priority, transformation count, dynamic sources. |
-| `list_builtin_pipelines` | (none) | The builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
+| `list_builtin_pipelines` | (none) | The builtin pipelines (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | `yaml` or file `path`, `lint_rules`, `write` | Applies safe auto-fixes; returns the fixed YAML and applied/failed/skipped-unsafe counts. `write: true` (path only, and only with `--rules-dir`) persists to disk. |
 | `format_rules` | `yaml` or file `path`, `write` | Rewrites Sigma YAML into the canonical layout and returns the formatted YAML and whether it changed. The semantic guard refuses rewrites that would change meaning, and non-Sigma documents come back as `skipped`. `write: true` (path only, and only with `--rules-dir`) persists to disk. {{ added "unreleased" }} |
 | `author_ads` | `yaml` or file/dir `path` | Per rule: the current ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
@@ -195,7 +195,7 @@ By default the server is pure in-process Rust and `convert_rules` only accepts t
 
 The delegated result carries `engine: "sigma-cli"`, a per-line `queries` split, the verbatim `raw` output (read this for multi-line formats like Loki `ruler`), and sigma-cli's diagnostics as `warnings`. When sigma-cli is not installed, the result is `{ "ok": false, ... }` with install guidance.
 
-Delegation is off by default because it spawns a subprocess, a category change from the server's in-process posture. When enabled it stays bounded: `path` and file-based `pipelines` arguments are confined to `--rules-dir` when one is configured (a path that escapes it is refused), inline `yaml` is staged through a private temporary file, each invocation is killed after 60 seconds, and at most two delegations run concurrently. RSigma builtin pipeline names (`ecs_windows`, `fibratus_windows`, `sysmon`) are not translated for delegated targets; pass sigma-cli pipeline names or YAML paths. Discovery honors the `RSIGMA_SIGMA_CLI` override and otherwise resolves `sigma` on `PATH`; note that the prebuilt Docker image bundles no Python, so delegation is effectively a local-stdio feature.
+Delegation is off by default because it spawns a subprocess, a category change from the server's in-process posture. When enabled it stays bounded: `path` and file-based `pipelines` arguments are confined to `--rules-dir` when one is configured (a path that escapes it is refused), inline `yaml` is staged through a private temporary file, each invocation is killed after 60 seconds, and at most two delegations run concurrently. RSigma builtin pipeline names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) are not translated for delegated targets; pass sigma-cli pipeline names or YAML paths. Discovery honors the `RSIGMA_SIGMA_CLI` override and otherwise resolves `sigma` on `PATH`; note that the prebuilt Docker image bundles no Python, so delegation is effectively a local-stdio feature.
 
 ## The agentic loop
 

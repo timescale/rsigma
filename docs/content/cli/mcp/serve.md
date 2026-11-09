@@ -59,7 +59,7 @@ The global flags (`--log-format`, `--quiet`, …) are accepted but stdout stays 
 | `list_backends` | List conversion targets and their formats (plus installed sigma-cli targets with `--allow-sigma-cli`). |
 | `list_fields` | List the event fields rules reference, with provenance. |
 | `resolve_pipeline` | Inspect a builtin or file pipeline; optionally resolve dynamic sources. |
-| `list_builtin_pipelines` | List the builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`). |
+| `list_builtin_pipelines` | List the builtin pipelines (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`). |
 | `fix_rules` | Apply safe auto-fixes; optionally persist with `write: true` (requires `--rules-dir`). |
 | `format_rules` | Format Sigma YAML into the canonical layout; optionally persist with `write: true` (requires `--rules-dir`). {{ added "unreleased" }} |
 | `author_ads` | Scaffold or render ADS detection metadata for a rule. |
