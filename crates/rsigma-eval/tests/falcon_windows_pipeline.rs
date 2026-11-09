@@ -64,7 +64,8 @@ detection:
 "#;
     let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse pipeline");
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&falcon_process_event());
+    let event_val = falcon_process_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine
@@ -116,7 +117,8 @@ detection:
 "#;
     let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse pipeline");
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&falcon_network_event());
+    let event_val = falcon_network_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine
@@ -139,7 +141,8 @@ detection:
     condition: selection
 "#;
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&falcon_network_event());
+    let event_val = falcon_network_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine.add_collection(&collection).expect("compile");
@@ -164,12 +167,13 @@ detection:
         TargetFilename|contains: 'Temp'
     condition: selection
 "#;
-    let file_event = JsonEvent::borrow(&json!({
+    let file_val = json!({
         "event_simpleName": "PeFileWritten",
         "event_platform": "Win",
         "TargetFileName": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\Temp\\\\evil.exe",
         "UserName": "jdoe"
-    }));
+    });
+    let file_event = JsonEvent::borrow(&file_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -190,11 +194,12 @@ detection:
         QueryName: 'evil.example.org'
     condition: selection
 "#;
-    let dns_event = JsonEvent::borrow(&json!({
+    let dns_val = json!({
         "event_simpleName": "DnsRequest",
         "event_platform": "Win",
         "DomainName": "evil.example.org"
-    }));
+    });
+    let dns_event = JsonEvent::borrow(&dns_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -215,12 +220,13 @@ detection:
         ImageLoaded|contains: 'evil.dll'
     condition: selection
 "#;
-    let image_event = JsonEvent::borrow(&json!({
+    let image_val = json!({
         "event_simpleName": "ImageLoadRollup2",
         "event_platform": "Win",
         "FilePath": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\System32\\\\evil.dll",
         "ImageFileName": "\\\\Device\\\\HarddiskVolume2\\\\Program Files\\\\app\\\\app.exe"
-    }));
+    });
+    let image_event = JsonEvent::borrow(&image_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -278,10 +284,11 @@ detection:
         TargetFilename|contains: 'evil.exe'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({
+    let event_val = json!({
         "event_simpleName": "PeFileWritten",
         "TargetFileName": "\\\\Device\\\\HarddiskVolume2\\\\Temp\\\\evil.exe"
-    }));
+    });
+    let event = JsonEvent::borrow(&event_val);
     let mut engine = Engine::new();
     engine
         .add_collection(&parse_sigma_yaml(rule).unwrap())

@@ -65,7 +65,8 @@ detection:
 "#;
     let pipeline = parse_pipeline(OCSF_EVENTS_PIPELINE).expect("parse pipeline");
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&ocsf_process_event());
+    let event_val = ocsf_process_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine
@@ -90,7 +91,8 @@ detection:
 "#;
     let pipeline = parse_pipeline(OCSF_EVENTS_PIPELINE).expect("parse pipeline");
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&ocsf_network_event());
+    let event_val = ocsf_network_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine
@@ -112,7 +114,8 @@ detection:
     condition: selection
 "#;
     let collection = parse_sigma_yaml(rule).expect("parse rule");
-    let event = JsonEvent::borrow(&ocsf_process_event());
+    let event_val = ocsf_process_event();
+    let event = JsonEvent::borrow(&event_val);
 
     let mut engine = Engine::new();
     engine.add_collection(&collection).expect("compile");
@@ -136,11 +139,12 @@ detection:
         TargetFilename: '/etc/shadow'
     condition: selection
 "#;
-    let file_event = JsonEvent::borrow(&json!({
+    let file_val = json!({
         "class_uid": 1001,
         "file": { "path": "/etc/shadow" },
         "process": { "file": { "path": "/usr/bin/cp" } }
-    }));
+    });
+    let file_event = JsonEvent::borrow(&file_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -160,11 +164,12 @@ detection:
         QueryName: 'malware.example'
     condition: selection
 "#;
-    let dns_event = JsonEvent::borrow(&json!({
+    let dns_val = json!({
         "class_uid": 4003,
         "query": { "hostname": "malware.example" },
         "process": { "file": { "path": "/usr/bin/dig" } }
-    }));
+    });
+    let dns_event = JsonEvent::borrow(&dns_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -184,11 +189,12 @@ detection:
         ImageLoaded: '/lib/evil.so'
     condition: selection
 "#;
-    let image_event = JsonEvent::borrow(&json!({
+    let image_val = json!({
         "class_uid": 1005,
         "module": { "path": "/lib/evil.so" },
         "process": { "file": { "path": "/usr/bin/app" } }
-    }));
+    });
+    let image_event = JsonEvent::borrow(&image_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -211,9 +217,10 @@ detection:
         TargetFilename: '/etc/shadow'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({
+    let event_val = json!({
         "file": { "path": "/etc/shadow" }
-    }));
+    });
+    let event = JsonEvent::borrow(&event_val);
     let mut engine = Engine::new();
     engine
         .add_collection(&parse_sigma_yaml(rule).unwrap())

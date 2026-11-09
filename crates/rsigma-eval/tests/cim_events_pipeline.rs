@@ -29,11 +29,12 @@ detection:
         User: 'alice'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({
+    let event_val = json!({
         "process": "/usr/bin/bash",
         "process_cmdline": "bash -c id",
         "user": "alice"
-    }));
+    });
+    let event = JsonEvent::borrow(&event_val);
     let pipeline = parse_pipeline(CIM_PIPELINE).expect("parse");
     let collection = parse_sigma_yaml(rule).expect("rule");
     let mut engine = Engine::new();
@@ -57,11 +58,12 @@ detection:
         Protocol: 'tcp'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({
+    let event_val = json!({
         "dest_ip": "93.184.216.34",
         "dest_port": 443,
         "transport": "tcp"
-    }));
+    });
+    let event = JsonEvent::borrow(&event_val);
     let pipeline = parse_pipeline(CIM_PIPELINE).expect("parse");
     let collection = parse_sigma_yaml(rule).expect("rule");
     let mut engine = Engine::new();
@@ -85,7 +87,8 @@ detection:
         TargetFilename: '/tmp/evil.bin'
     condition: selection
 "#;
-    let file_event = JsonEvent::borrow(&json!({"file_path": "/tmp/evil.bin"}));
+    let file_val = json!({"file_path": "/tmp/evil.bin"});
+    let file_event = JsonEvent::borrow(&file_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -105,7 +108,8 @@ detection:
         QueryName: 'evil.example.org'
     condition: selection
 "#;
-    let dns_event = JsonEvent::borrow(&json!({"query": "evil.example.org"}));
+    let dns_val = json!({"query": "evil.example.org"});
+    let dns_event = JsonEvent::borrow(&dns_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -125,7 +129,8 @@ detection:
         ImageLoaded: 'C:\\Windows\\System32\\evil.dll'
     condition: selection
 "#;
-    let image_event = JsonEvent::borrow(&json!({"file_path": "C:\\Windows\\System32\\evil.dll"}));
+    let image_val = json!({"file_path": "C:\\Windows\\System32\\evil.dll"});
+    let image_event = JsonEvent::borrow(&image_val);
     let mut engine = Engine::new();
     engine
         .add_collection_with_pipelines(
@@ -148,7 +153,8 @@ detection:
         DestinationIp: '1.2.3.4'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({"dest_ip": "1.2.3.4"}));
+    let event_val = json!({"dest_ip": "1.2.3.4"});
+    let event = JsonEvent::borrow(&event_val);
     let mut engine = Engine::new();
     engine
         .add_collection(&parse_sigma_yaml(rule).unwrap())
@@ -168,7 +174,8 @@ detection:
         TargetFilename: '/tmp/x'
     condition: selection
 "#;
-    let event = JsonEvent::borrow(&json!({"file_path": "/tmp/x"}));
+    let event_val = json!({"file_path": "/tmp/x"});
+    let event = JsonEvent::borrow(&event_val);
     let mut engine = Engine::new();
     engine
         .add_collection(&parse_sigma_yaml(rule).unwrap())
