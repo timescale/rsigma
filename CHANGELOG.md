@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs site breadcrumb structured data passes Google validation (#677)
+
+Google Search Console rejected the breadcrumb structured data on most rsigma.io pages with `Missing field "item"`. docmd builds the trail from the sidebar, so a navigation group without a page of its own, such as Reference, rule, or Deploy and Detect, became a breadcrumb entry with no URL. The docs plugin now drops those entries and renumbers the rest, so every entry links to a page. The visible sidebar and breadcrumbs are unchanged.
+
 ### Docs site search and link preview metadata (#676)
 
 Every page on rsigma.io now has a written meta description in its frontmatter, so search results, link previews, and `llms.txt` show a summary of the page instead of an empty description. The docs plugin fails the build when a page has no description or one over 160 characters. The home page title and heading now read "RSigma: Sigma Detection Engineering Toolkit in Rust" instead of "Welcome to RSigma's documentation!".
