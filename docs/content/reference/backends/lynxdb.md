@@ -1,3 +1,7 @@
+---
+description: "RSigma LynxDB backend reference: convert Sigma rules into SPL2-compatible LynxDB search and where queries, with output formats and options."
+---
+
 # LynxDB Backend
 
 The `lynxdb` backend converts Sigma rules into [SPL2](https://docs.lynxdb.org/docs/sigma/spl2-mapping/)-compatible queries for LynxDB. A rule renders as a native `search` expression when LynxDB's search matches every one of its values exactly, and as a `where` expression otherwise.

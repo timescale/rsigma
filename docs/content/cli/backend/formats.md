@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma backend formats: list the output formats and correlation methods that one Sigma conversion backend supports, with flags and examples."
+---
+
 # `rsigma backend formats`
 
 {{ added "0.12.0" }}

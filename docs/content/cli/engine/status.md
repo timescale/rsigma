@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine status: fetch a running daemon's counters, such as rules loaded, events processed, detections fired, and uptime, in one snapshot."
+---
+
 # `rsigma engine status`
 
 {{ added "0.17.0" }}

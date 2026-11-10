@@ -1,3 +1,7 @@
+---
+description: "How to contribute to RSigma: set up the Rust workspace, run tests and docs builds, follow the documentation and changelog rules, and open a pull request."
+---
+
 {%
    include-markdown "../../CONTRIBUTING.md"
 %}

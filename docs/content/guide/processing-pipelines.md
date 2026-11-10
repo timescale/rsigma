@@ -1,3 +1,7 @@
+---
+description: "Map Sigma rule fields to your log schema with pySigma-compatible processing pipelines in RSigma: static, builtin ECS and Sysmon, and dynamic pipelines."
+---
+
 # Processing Pipelines
 
 Processing pipelines are RSigma's mechanism for transforming Sigma rules before they reach the engine or a backend. They handle the impedance mismatch between how Sigma rules name fields (`CommandLine`, `EventID`, `User`) and how your events actually name fields (`process.command_line`, `winlog.event_id`, `actor.user.name`). Pipelines are pySigma-compatible, so anything you write for pySigma works in RSigma, and most pipelines from the SigmaHQ pySigma backends work as well.

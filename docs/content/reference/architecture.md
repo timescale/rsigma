@@ -1,3 +1,7 @@
+---
+description: "RSigma architecture: the crate map of the Rust workspace, the execution shapes of eval and daemon, and how parsing, evaluation, and I/O fit together."
+---
+
 # Architecture
 
 RSigma is a workspace of nine crates organised around one principle: rule processing and event evaluation are pure library code; everything I/O-bound or runtime-shaped is layered on top. This page documents the crate map, the execution shapes, and how the pieces interact at runtime.

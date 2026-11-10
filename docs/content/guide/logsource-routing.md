@@ -1,3 +1,7 @@
+---
+description: "Speed up Sigma evaluation on mixed-platform streams with RSigma logsource-aware routing, which skips rules whose product, service, or category conflicts."
+---
+
 # Logsource-Aware Evaluation
 
 {{ added "0.18.0" }}

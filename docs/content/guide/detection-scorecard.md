@@ -1,3 +1,7 @@
+---
+description: "Build a detection scorecard with RSigma: per-rule precision, volume, ATT&CK context, and a keep, tune, or retire verdict for periodic Sigma rule review."
+---
+
 # Detection Scorecard
 
 {{ added "0.17.0" }}

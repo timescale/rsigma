@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma backend convert: translate Sigma rules into PostgreSQL, LynxDB, or Fibratus queries natively, or other SIEM targets through sigma-cli."
+---
+
 # `rsigma backend convert`
 
 {{ added "0.12.0" }}

@@ -1,3 +1,7 @@
+---
+description: "How RSigma interprets Sigma value modifiers such as contains, re, cidr, base64offset, and windash where the specification is open, compared with pySigma."
+---
+
 # Value Modifiers
 
 {{ added "0.24.0" }}

@@ -1,3 +1,7 @@
+---
+description: "Send Sigma detections from RSigma to Slack, Microsoft Teams, Discord, PagerDuty, or any HTTP endpoint with the templated webhook sink and recipes."
+---
+
 # Webhooks
 
 {{ added "0.17.0" }}

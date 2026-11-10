@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine incidents export: pull one incident bundle from a running rsigma daemon and write it to stdout or a file for review."
+---
+
 # `rsigma engine incidents export`
 
 {{ added "0.21.0" }}

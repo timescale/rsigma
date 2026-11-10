@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma mcp serve: run the Model Context Protocol server that gives AI agents such as Cursor and Claude Code typed Sigma rule tools."
+---
+
 # `rsigma mcp serve`
 
 {{ added "0.16.0" }}

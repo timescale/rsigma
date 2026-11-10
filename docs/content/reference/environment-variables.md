@@ -1,3 +1,7 @@
+---
+description: "Every environment variable rsigma reads: secret-bearing names for NATS and TLS, the RSIGMA_SECTION__KEY config overrides, and how CLI flags take precedence."
+---
+
 # Environment Variables
 
 `rsigma` reads two parallel families of environment variables in addition to its CLI flags:

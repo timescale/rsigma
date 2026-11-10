@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine classify: report which log schema each event matches, such as ECS, Sysmon, or CloudTrail, using built-in or custom signatures."
+---
+
 # `rsigma engine classify`
 
 {{ added "0.18.0" }}

@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma backend targets: list the Sigma conversion backends compiled into the binary, plus any sigma-cli targets available through delegation."
+---
+
 # `rsigma backend targets`
 
 {{ added "0.12.0" }}

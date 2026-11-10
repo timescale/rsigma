@@ -1,3 +1,7 @@
+---
+description: "Reference for RSigma dynamic pipeline sources: file, command, HTTP, and NATS sources, data formats, extract languages, refresh, errors, and limits."
+---
+
 # Dynamic Pipeline Sources
 
 Dynamic pipeline sources let a [processing pipeline](../guide/processing-pipelines.md#dynamic-pipelines) pull values from external systems (files, local commands, HTTP, NATS) at load time and inject them through the standard Sigma `vars` + `value_placeholders` mechanism. This page documents the full source specification, every source type, the four data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.

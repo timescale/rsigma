@@ -1,3 +1,7 @@
+---
+description: "Helr is an HTTP API audit log collector that polls Okta, GitHub, Slack, and other SaaS APIs and feeds NDJSON straight into the RSigma detection daemon."
+---
+
 # Helr (HTTP API log collector)
 
 [Helr](https://github.com/timescale/helr) is a sister project to RSigma: a single-binary HTTP API log collector that polls audit-log endpoints (Okta, Google Workspace, GitHub, Slack, 1Password, Tailscale, and any HTTP API that returns a JSON array with cursor, Link-header, or page pagination) and emits NDJSON to stdout, a file, an HTTP endpoint, or a NATS subject.

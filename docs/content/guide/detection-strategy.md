@@ -1,3 +1,7 @@
+---
+description: "Store Palantir Alerting and Detection Strategy (ADS) context on Sigma rules with RSigma, so goals, blind spots, and response plans are linted in CI."
+---
+
 # Detection Strategy (ADS)
 
 {{ added "0.18.0" }}

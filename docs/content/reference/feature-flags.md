@@ -1,3 +1,7 @@
+---
+description: "RSigma Cargo feature flags: every optional feature across the workspace crates, its default, what it pulls in, and how to enable it in source builds."
+---
+
 # Feature Flags
 
 `rsigma` is a workspace of nine library crates (`rsigma-parser`, `rsigma-ir`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime`, `rsigma-mcp`, `rsigma-cli`, `rsigma-lsp`, `rstix`), several of which expose Cargo features that gate optional dependencies and code paths. This page documents every feature, its default state, what it pulls in, and how to enable it when building from source.

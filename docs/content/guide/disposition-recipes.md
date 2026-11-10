@@ -1,3 +1,7 @@
+---
+description: "Tested recipes that pull analyst verdicts from TheHive, Jira, and GitHub Issues into RSigma's triage feedback loop to compute false-positive ratios."
+---
+
 # Disposition Source Recipes
 
 {{ added "0.19.0" }}

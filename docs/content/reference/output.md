@@ -1,3 +1,7 @@
+---
+description: "RSigma output formats reference: the global selector for human, JSON, NDJSON, table, CSV, and TSV output, color policy, and noise controls."
+---
+
 # Output Formats
 
 Structured rsigma commands can emit results in one of five formats. Artifact producers (Sigma YAML, backend query text, replay fixtures) and protocol streams keep their fixed wire format. The selector, color policy, and noise controls are global flags that resolve through the same precedence model as the rest of the [configuration](configuration.md).

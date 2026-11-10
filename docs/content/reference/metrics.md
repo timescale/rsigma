@@ -1,3 +1,7 @@
+---
+description: "Every Prometheus metric the RSigma daemon exposes on /metrics: evaluation, correlation, sinks, enrichment, sources, OTLP, and TLS families with labels."
+---
+
 # Prometheus Metrics
 
 The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is {{ rsigma.metrics.names }} metric names: {{ rsigma.metrics.always }} are always registered, and the OTLP ({{ rsigma.metrics.otlp }}) and TLS ({{ rsigma.metrics.tls }}) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.

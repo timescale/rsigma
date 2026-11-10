@@ -1,3 +1,7 @@
+---
+description: "RSigma daemon HTTP API for detection state: counters, correlation windows, incidents, risk, silences, audit trail, and analyst dispositions."
+---
+
 # HTTP API: Detection State
 
 The daemon's read and control endpoints for detection state: counters, correlation windows, incidents, risk, silences, the audit trail, and analyst dispositions. The [HTTP API](http-api.md#endpoint-summary) page lists every route with its permission; [authentication](http-api.md#authentication) applies to all of them.

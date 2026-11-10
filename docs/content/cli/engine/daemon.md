@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine daemon: run Sigma detection as a long-running service with hot-reload, health checks, Prometheus metrics, and persistent state."
+---
+
 # `rsigma engine daemon`
 
 {{ added "0.12.0" }}

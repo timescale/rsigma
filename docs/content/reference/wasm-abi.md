@@ -1,3 +1,7 @@
+---
+description: "RSigma WASM ABI: building rsigma-parser and rsigma-eval for wasm32-unknown-unknown, the CI smoke test, and the reserved ABI version 1 contract."
+---
+
 # WASM ABI
 
 {{ added "0.19.0" }}

@@ -1,3 +1,7 @@
+---
+description: "Enrich Sigma detections in the RSigma daemon with asset, identity, IP reputation, GeoIP, and runbook context using template, lookup, HTTP, and command steps."
+---
+
 # Enrichers
 
 {{ added "0.13.0" }}

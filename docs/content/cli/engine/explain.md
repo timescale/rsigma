@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine explain: show why a Sigma rule did or did not match a single event, selection by selection, to debug missed detections."
+---
+
 # `rsigma engine explain`
 
 {{ added "0.18.0" }}

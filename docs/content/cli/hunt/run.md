@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma hunt run: convert Sigma rules to SQL, run them read-only against a PostgreSQL or TimescaleDB log archive, and stream matches as NDJSON."
+---
+
 # `rsigma hunt run`
 
 {{ added "0.22.0" }}

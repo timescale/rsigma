@@ -1,3 +1,7 @@
+---
+description: "Lint Sigma rules with rsigma rule lint: severity levels, suppressions, auto-fix, JSON schema validation, and CI integration patterns for rule repositories."
+---
+
 # Linting Rules
 
 `rsigma rule lint` runs {{ rsigma.lint.rules }} built-in lint rules derived from the Sigma v2.1.0 specification against your rule files. The linter reads each YAML rule, runs it through a pipeline of checks, and reports findings with severity, location, and an optional auto-fix. Use the linter both locally (before commit) and in CI (as a gate on PRs).

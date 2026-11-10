@@ -1,3 +1,7 @@
+---
+description: "Match one Sigma ruleset across ECS, Windows Event Log, Sysmon, CEF, and OCSF events with RSigma schema routing and per-schema field-mapping pipelines."
+---
+
 # Schema Routing
 
 {{ added "0.18.0" }}

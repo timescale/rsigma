@@ -1,3 +1,7 @@
+---
+description: "RSigma quick start: write a Sigma rule, evaluate it against a JSON event, run the streaming daemon with hot-reload, and convert the rule to SQL."
+---
+
 # Quick Start
 
 This guide walks through writing one Sigma rule, evaluating it against a JSON event, and running RSigma as a streaming daemon that reloads when the rule changes.

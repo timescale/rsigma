@@ -1,3 +1,7 @@
+---
+description: "rsigma-eval Rust crate: compile Sigma rules into matchers, evaluate events, run correlation windows, and apply processing pipelines in your own program."
+---
+
 # `rsigma-eval`
 
 The detection and correlation engine. Compiles parsed Sigma rules into a matcher tree (via the [`rsigma-ir`](ir.md) HIR), evaluates events against them, runs correlation windows, and applies processing pipelines.

@@ -1,3 +1,7 @@
+---
+description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly libFuzzer workflow, seed corpora, and how to run and add fuzz targets locally."
+---
+
 # Fuzzing
 
 The workspace ships 29 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 23 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.

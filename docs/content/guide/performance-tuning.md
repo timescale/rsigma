@@ -1,3 +1,7 @@
+---
+description: "Tune RSigma Sigma evaluation throughput: how the candidate index prunes rules, logsource routing, batching, and what to expect on the SigmaHQ ruleset."
+---
+
 # Performance Tuning
 
 How fast RSigma evaluates depends on how much of your corpus the candidate index can prune. The index works from rule witnesses: necessary conditions, at least one of which must hold on any event the rule can match. Exact field values, substring needles, keywords, mandatory regex literals, and bare field presence all yield witnesses, so most of a real corpus is prunable and an event is only evaluated against the rules it could plausibly match. Rules whose conditions admit no witness, in practice the ones whose only required branch is negated, are evaluated against every event and cost time linear in their count. For each surviving rule, condition evaluation first computes only the boolean verdict, allowing `any` and threshold selectors to stop once decided; matched-selection details are collected only when the rule matches.

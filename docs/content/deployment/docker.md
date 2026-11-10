@@ -1,3 +1,7 @@
+---
+description: "Run RSigma with Docker: the signed multi-arch ghcr.io/timescale/rsigma image, its SBOM and SLSA provenance, verification, and hardened run flags."
+---
+
 # Docker
 
 `rsigma` ships as a multi-arch container image at `ghcr.io/timescale/rsigma`. Images are built from the Alpine-based builder in the repo-root [Dockerfile](https://github.com/timescale/rsigma/blob/main/Dockerfile), scanned by Grype (critical CVEs gate the push), signed with keyless cosign, and shipped with an SPDX SBOM plus SLSA Build L3 provenance attestations. The runtime image runs `FROM scratch` with no shell and no package manager.

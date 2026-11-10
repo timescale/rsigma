@@ -1,3 +1,7 @@
+---
+description: "Give AI agents like Cursor and Claude Code structured Sigma tools with the RSigma MCP server: parse, lint, evaluate, convert, and tune rules as typed calls."
+---
+
 # MCP Server
 
 {{ added "0.16.0" }}

@@ -1,3 +1,7 @@
+---
+description: "RSigma Fibratus backend reference: convert Sigma rules into Fibratus rule YAML for kernel-event detection on Windows endpoints, with options and mappings."
+---
+
 # Fibratus Backend
 
 {{ added "0.15.0" }}

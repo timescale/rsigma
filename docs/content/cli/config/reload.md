@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config reload: ask a running rsigma daemon to hot-reload its Sigma rules, pipelines, enrichers, and TLS material without a restart."
+---
+
 # `rsigma config reload`
 
 {{ added "0.14.0" }}

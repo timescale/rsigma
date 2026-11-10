@@ -1,3 +1,7 @@
+---
+description: "How the RSigma Sigma linter and language server fit together, how to add a lint rule, and how to extend rsigma-lsp diagnostics and code actions."
+---
+
 # Linter and LSP
 
 The {{ rsigma.lint.rules }} lint rules are the single source of authority for "is this Sigma file well-formed"; the language server reuses them so an in-editor squiggle and a CI `rsigma rule lint` failure are byte-identical.

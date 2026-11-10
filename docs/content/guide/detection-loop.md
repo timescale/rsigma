@@ -1,3 +1,7 @@
+---
+description: "Hands-on RSigma tutorial: draft a Sigma rule from incident events, test it, deploy it, triage alerts, tune false positives, measure it, and hunt with it."
+---
+
 # Tutorial: The Detection Loop
 
 This tutorial takes one detection around the whole loop on a laptop: draft a rule from incident events, test it, deploy it to the daemon, triage its alerts, tune away the false positives the triage surfaced, measure it, and hunt an archive with it. Every step runs on the small sample files created below. The [Detection Engineering Loop](detection-engineering-loop.md) guide is the map of the stages; this page walks them with real commands.

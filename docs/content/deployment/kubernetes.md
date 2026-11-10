@@ -1,3 +1,7 @@
+---
+description: "Deploy the RSigma Sigma detection daemon on Kubernetes with a Deployment, persistent correlation state, ConfigMap rules, probes, and pod hardening."
+---
+
 # Kubernetes
 
 Run the streaming daemon in a cluster from the published image: a single-replica Deployment with a persistent volume for correlation state, the rules and config from ConfigMaps, liveness and readiness probes on the daemon API, and a locked-down pod security context.

@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule validate: parse and compile a Sigma rule file or a whole rule directory recursively, and report errors for CI gates."
+---
+
 # `rsigma rule validate`
 
 {{ added "0.12.0" }}

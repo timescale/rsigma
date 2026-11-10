@@ -1,3 +1,7 @@
+---
+description: "Set up risk-based alerting in RSigma: score Sigma detections per entity, accumulate risk over a sliding window, and raise incidents past a threshold."
+---
+
 # Risk-Based Alerting
 
 {{ added "0.18.0" }}

@@ -1,3 +1,7 @@
+---
+description: "Reference for RSigma schema signatures: the grammar, predicates, and specificity rules that schema routing and engine classify use to recognize events."
+---
+
 # Schema Signatures
 
 {{ added "0.18.0" }}

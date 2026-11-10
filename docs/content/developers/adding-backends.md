@@ -1,3 +1,7 @@
+---
+description: "How to add a Sigma conversion backend to RSigma: implement the Backend trait in rsigma-convert, render queries, add golden tests, and wire it into the CLI."
+---
+
 # Adding a new backend
 
 The `Backend` trait in [`rsigma-convert`](../library/convert.md) is the plug-in surface for SIEM query generation. The shipped implementations are `PostgresBackend`, `LynxDbBackend`, `FibratusBackend`, and the two test backends; this page walks through adding your own (Splunk, Elastic, KQL, ClickHouse, …) and wiring it into the CLI.
