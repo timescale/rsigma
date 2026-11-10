@@ -4,11 +4,11 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs site search and link preview metadata
+### Docs site search and link preview metadata (#676)
 
 Every page on rsigma.io now has a written meta description in its frontmatter, so search results, link previews, and `llms.txt` show a summary of the page instead of an empty description. The docs plugin fails the build when a page has no description or one over 160 characters. The home page title and heading now read "RSigma: Sigma Detection Engineering Toolkit in Rust" instead of "Welcome to RSigma's documentation!".
 
-The plugin renders a 1200x630 link preview card from the brand SVGs and every page references it through `og:image` and `twitter:image`, with its size and alt text. It also adds `og:site_name`, a schema.org `SoftwareApplication` description of RSigma on the home page with the version and license from `Cargo.toml`, and a `<lastmod>` to every sitemap entry from the last commit to the page's source, or to the root file it inlines, such as `CHANGELOG.md` for the release notes. The home page no longer declares a structured-data search URL, because the site search does not read a query from the URL.
+The RSigma social banner, which now lists the formatter among the capabilities, is committed as `assets/social-banner.png`, and every page references it through `og:image` and `twitter:image`, with its size and alt text. The docs plugin also adds `og:site_name`, a schema.org `SoftwareApplication` description of RSigma on the home page with the version and license from `Cargo.toml`, and a `<lastmod>` to every sitemap entry from the last commit to the page's source, or to the root file it inlines, such as `CHANGELOG.md` for the release notes. The home page no longer declares a structured-data search URL, because the site search does not read a query from the URL.
 
 ### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
 

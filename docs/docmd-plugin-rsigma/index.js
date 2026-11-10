@@ -424,23 +424,21 @@ const BRAND_COPIES = {
   "logo.svg": "rsigma-logotype-horizontal.svg",
   "logo-dark.svg": "rsigma-logotype-horizontal-dark.svg",
   "favicon.svg": "rsigma-icon.svg",
+  "social-banner.png": "social-banner.png",
 };
 
 /** Sizes packed into `favicon.ico` for browsers without SVG favicon support. */
 const ICO_SIZES = [16, 32, 48];
 
 /**
- * Link preview card referenced by `plugins.seo.openGraph.defaultImage`. 1200x630
- * is the size Facebook, LinkedIn, Slack, and X crop to without letterboxing.
- * The background is docmd's dark-theme `--bg-color`, matching the site default.
+ * Link preview banner referenced by `plugins.seo.openGraph.defaultImage`,
+ * copied from the repo-root `assets/`. The size must match the PNG.
  */
-const SOCIAL_CARD = {
-  name: "social-card.png",
-  alt: "RSigma logo",
+const SOCIAL_BANNER = {
+  name: "social-banner.png",
+  alt: "RSigma: a complete Sigma detection engineering toolkit",
   width: 1200,
-  height: 630,
-  logoWidth: 840,
-  background: "#0d0d0f",
+  height: 627,
 };
 
 /** Repo-root `assets/` files copied into the site so pages can embed them. */
@@ -491,11 +489,11 @@ function packIco(entries) {
 }
 
 /**
- * Build the brand image set from the repo-root `assets/` SVGs: the light and
- * dark sidebar lockups and the SVG favicon are copied as-is; `favicon.ico`
- * (from the small mark), `apple-touch-icon.png` (the full mark on white,
- * since iOS fills transparency with black), and the link preview card (the
- * dark lockup on the dark-theme background) are rasterised. Memoised on the
+ * Build the brand image set from the repo-root `assets/`: the light and dark
+ * sidebar lockups, the SVG favicon, and the link preview banner are copied
+ * as-is; `favicon.ico` (from the small mark) and `apple-touch-icon.png` (the
+ * full mark on white, since iOS fills transparency with black) are
+ * rasterised. Memoised on the
  * sources so repeated builds in one `docmd dev` session rasterise once.
  *
  * @param {string} assetsDir
@@ -547,27 +545,10 @@ async function renderBrandImages(assetsDir) {
     .png()
     .toBuffer();
 
-  const cardLogo = await sharp(copies["logo-dark.svg"], { density: 300 })
-    .resize({ width: SOCIAL_CARD.logoWidth })
-    .png()
-    .toBuffer();
-  const socialCard = await sharp({
-    create: {
-      width: SOCIAL_CARD.width,
-      height: SOCIAL_CARD.height,
-      channels: 3,
-      background: SOCIAL_CARD.background,
-    },
-  })
-    .composite([{ input: cardLogo, gravity: "center" }])
-    .png()
-    .toBuffer();
-
   const images = {
     ...copies,
     "favicon.ico": packIco(icoEntries),
     "apple-touch-icon.png": touchIcon,
-    [SOCIAL_CARD.name]: socialCard,
   };
   brandImageCache = { key, images };
   return images;
@@ -768,7 +749,7 @@ function checkDescriptions(pages, docsRoot) {
 }
 
 /**
- * Add the size and alt text of the link preview card after the `og:image` and
+ * Add the size and alt text of the link preview banner after the `og:image` and
  * `twitter:image` tags docmd emits, so previews render without fetching the
  * image first, plus `og:site_name` after `og:type`.
  *
@@ -776,8 +757,8 @@ function checkDescriptions(pages, docsRoot) {
  * @returns {string}
  */
 function injectSocialMeta(html) {
-  const card = new RegExp(`(<meta property="og:image" content="[^"]*/${SOCIAL_CARD.name}">\\n?)`);
-  const twitterCard = new RegExp(`(<meta name="twitter:image" content="[^"]*/${SOCIAL_CARD.name}">\\n?)`);
+  const card = new RegExp(`(<meta property="og:image" content="[^"]*/${SOCIAL_BANNER.name}">\\n?)`);
+  const twitterCard = new RegExp(`(<meta name="twitter:image" content="[^"]*/${SOCIAL_BANNER.name}">\\n?)`);
   if (html.includes('property="og:site_name"')) {
     return html;
   }
@@ -785,11 +766,11 @@ function injectSocialMeta(html) {
     .replace(/(<meta property="og:type" content="[^"]*">\n?)/, '$1<meta property="og:site_name" content="RSigma">\n')
     .replace(
       card,
-      `$1<meta property="og:image:width" content="${SOCIAL_CARD.width}">\n` +
-        `<meta property="og:image:height" content="${SOCIAL_CARD.height}">\n` +
-        `<meta property="og:image:alt" content="${SOCIAL_CARD.alt}">\n`,
+      `$1<meta property="og:image:width" content="${SOCIAL_BANNER.width}">\n` +
+        `<meta property="og:image:height" content="${SOCIAL_BANNER.height}">\n` +
+        `<meta property="og:image:alt" content="${SOCIAL_BANNER.alt}">\n`,
     )
-    .replace(twitterCard, `$1<meta name="twitter:image:alt" content="${SOCIAL_CARD.alt}">\n`);
+    .replace(twitterCard, `$1<meta name="twitter:image:alt" content="${SOCIAL_BANNER.alt}">\n`);
 }
 
 /**
@@ -812,7 +793,7 @@ function injectSoftwareStructuredData(html, description) {
     name: "RSigma",
     description,
     url: origin,
-    image: `${origin}assets/images/${SOCIAL_CARD.name}`,
+    image: `${origin}assets/images/${SOCIAL_BANNER.name}`,
     applicationCategory: "SecurityApplication",
     operatingSystem: "Linux, macOS, Windows",
     softwareVersion: rsigma.version,

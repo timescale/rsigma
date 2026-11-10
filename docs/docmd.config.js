@@ -53,8 +53,8 @@ export default {
     },
     mermaid: {},
     seo: {
-      // Rendered from the brand SVGs by docmd-plugin-rsigma.
-      openGraph: { defaultImage: "assets/images/social-card.png" },
+      // Copied from the repo-root assets/ by docmd-plugin-rsigma.
+      openGraph: { defaultImage: "assets/images/social-banner.png" },
       // docmd's search box does not read a `?q=` URL parameter, so the
       // structured-data SearchAction would advertise a search URL that ignores
       // its query.
