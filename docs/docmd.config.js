@@ -52,6 +52,14 @@ export default {
       commitHistory: true,
     },
     mermaid: {},
+    seo: {
+      // Rendered from the brand SVGs by docmd-plugin-rsigma.
+      openGraph: { defaultImage: "assets/images/social-card.png" },
+      // docmd's search box does not read a `?q=` URL parameter, so the
+      // structured-data SearchAction would advertise a search URL that ignores
+      // its query.
+      searchAction: false,
+    },
     // The AI chat plugin is on by default and sends reader questions to
     // api.docmd.io, a processor the privacy page does not cover.
     ai: { enabled: false },
