@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs site breadcrumb structured data passes Google validation
+### Docs site breadcrumb structured data passes Google validation (#677)
 
 Google Search Console rejected the breadcrumb structured data on most rsigma.io pages with `Missing field "item"`. docmd builds the trail from the sidebar, so a navigation group without a page of its own, such as Reference, rule, or Deploy and Detect, became a breadcrumb entry with no URL. The docs plugin now drops those entries and renumbers the rest, so every entry links to a page. The visible sidebar and breadcrumbs are unchanged.
 
