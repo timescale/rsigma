@@ -1,3 +1,7 @@
+---
+description: "Install the RSigma extension for VS Code and Cursor: live Sigma rule linting, parse and compile errors, code actions, completions, hover, and formatting."
+---
+
 # VS Code and Cursor
 
 The `rsigma` VS Code extension wraps [`rsigma-lsp`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-lsp) and lights up `.yml` files with the same {{ rsigma.lint.rules }} lint rules, parse errors, and compile errors that `rsigma rule lint` and `rsigma rule validate` produce. Because it is a thin client over the language server, anything that lints in CI also lights up in the editor, and vice versa.

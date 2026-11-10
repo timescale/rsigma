@@ -1,3 +1,7 @@
+---
+description: "Log shipper recipes that deliver cloud, identity, SaaS, container, and host events to RSigma in shapes its schema routing recognizes automatically."
+---
+
 # Cloud Collection Recipes
 
 {{ added "0.20.0" }}

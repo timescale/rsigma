@@ -1,3 +1,7 @@
+---
+description: "Evaluate Sigma rules against log events with rsigma engine eval: input modes, envelopes, non-JSON formats, correlation, match detail, and CI exit codes."
+---
+
 # Evaluating Rules
 
 `rsigma engine eval` runs Sigma rules against events as a one-shot command. Use it for ad-hoc hunting, forensic replay, and CI gates. For a long-running daemon with hot-reload and metrics, see [Streaming Detection](streaming-detection.md).

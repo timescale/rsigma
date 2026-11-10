@@ -1,3 +1,7 @@
+---
+description: "How to add a bespoke enricher to the RSigma runtime: implement the Enricher trait, register it under a type name, and reference it from enricher YAML."
+---
+
 # Adding an enricher
 
 The four primitives `template`, `lookup`, `http`, and `command` cover almost every operational use case via [recipes](../guide/enrichers.md#composing-enrichers-recipes). When they don't, the runtime ships a bespoke enricher API: implement the `Enricher` trait, register it under a stable `type:` name with `register_builtin(name, factory)`, and operators reference it from their YAML by that name.

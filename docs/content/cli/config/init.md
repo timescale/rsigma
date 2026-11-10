@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config init: write a commented YAML configuration template to disk as a starting point for the daemon, eval, and other commands."
+---
+
 # `rsigma config init`
 
 {{ added "0.14.0" }}

@@ -1,3 +1,7 @@
+---
+description: "RSigma daemon HTTP API reference: health probes, Prometheus metrics, REST control endpoints, event ingest, OTLP, authentication, and permissions."
+---
+
 # HTTP API
 
 The `engine daemon` binds a single Axum HTTP server on `--api-addr` (default `0.0.0.0:9090`) that handles probes, metrics, REST control endpoints, an HTTP event ingest endpoint, and (with the `daemon-otlp` feature) OTLP log ingestion.

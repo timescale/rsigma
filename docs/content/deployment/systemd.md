@@ -1,3 +1,7 @@
+---
+description: "Run the RSigma detection daemon as a hardened systemd service on Linux, with a config file, a state directory, hot reload, and graceful shutdown."
+---
+
 # systemd
 
 Run the streaming daemon as a hardened systemd service on a Linux host: one config file, a state directory for correlation state, `systemctl reload` for hot reload, and a graceful drain on stop.

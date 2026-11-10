@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma taxii store: import a local STIX 2.1 bundle JSON file into an on-disk STIX object store for threat intelligence workflows."
+---
+
 # `rsigma taxii store`
 
 {{ added "0.23.0" }}

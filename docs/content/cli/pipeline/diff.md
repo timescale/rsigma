@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma pipeline diff: show how processing pipelines rewrite a Sigma rule's fields and values before evaluation or conversion."
+---
+
 # `rsigma pipeline diff`
 
 {{ added "0.18.0" }}

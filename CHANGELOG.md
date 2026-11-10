@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs site search and link preview metadata (#676)
+
+Every page on rsigma.io now has a written meta description in its frontmatter, so search results, link previews, and `llms.txt` show a summary of the page instead of an empty description. The docs plugin fails the build when a page has no description or one over 160 characters. The home page title and heading now read "RSigma: Sigma Detection Engineering Toolkit in Rust" instead of "Welcome to RSigma's documentation!".
+
+The RSigma social banner, which now lists the formatter among the capabilities, is committed as `assets/social-banner.png`, and every page references it through `og:image` and `twitter:image`, with its size and alt text. The docs plugin also adds `og:site_name`, a schema.org `SoftwareApplication` description of RSigma on the home page with the version and license from `Cargo.toml`, and a `<lastmod>` to every sitemap entry from the last commit to the page's source, or to the root file it inlines, such as `CHANGELOG.md` for the release notes. The home page no longer declares a structured-data search URL, because the site search does not read a query from the URL.
+
 ### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
 
 Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events for each category; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) includes the full field map, [Processing Pipelines](docs/content/guide/processing-pipelines.md) documents path-only use, and [`crates/rsigma-eval/README.md`](crates/rsigma-eval/README.md) links the file. Issue: [#330](https://github.com/timescale/rsigma/issues/330).

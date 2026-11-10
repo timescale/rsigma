@@ -1,3 +1,7 @@
+---
+description: "Developer orientation for RSigma contributors: the repository map, the crates in the Rust workspace, and where to start when changing the code."
+---
+
 # Developer orientation
 
 These pages are for contributors hacking on rsigma itself, not consumers of the Sigma engine. If you came here looking for "how do I run rules", that lives in the [Quick start](../getting-started/quick-start.md); the public Rust API surface is in [Library](../library/index.md).

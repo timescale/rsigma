@@ -1,3 +1,7 @@
+---
+description: "Catalog of every RSigma lint rule for Sigma v2.1.0: rule ID, default severity, what it flags, and whether rsigma rule lint --fix corrects it."
+---
+
 # Lint Rules
 
 `rsigma rule lint` runs {{ rsigma.lint.rules }} built-in checks derived from the Sigma v2.1.0 specification, plus {{ rsigma.lint.reserved }} reserved enum value (`empty_filter_rules`) that no production code currently emits. This page is the canonical catalog: every rule's ID, default severity, what it flags, and whether `--fix` can auto-correct it.

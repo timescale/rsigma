@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule reverse: convert an Elastic Lucene query back into a draft Sigma rule, from an argument, files, directories, or stdin."
+---
+
 # `rsigma rule reverse`
 
 {{ added "0.20.0" }}

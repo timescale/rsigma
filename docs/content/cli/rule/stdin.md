@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule stdin: read Sigma rule YAML from standard input and print the parsed abstract syntax tree as JSON, for pipes and editors."
+---
+
 # `rsigma rule stdin`
 
 {{ added "0.12.0" }}

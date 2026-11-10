@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule migrate-sources: move sources blocks embedded in processing pipelines into standalone dynamic source files."
+---
+
 # `rsigma rule migrate-sources`
 
 {{ added "0.13.0" }}

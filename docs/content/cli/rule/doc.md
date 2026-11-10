@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule doc: report on or scaffold the Alerting and Detection Strategy (ADS) document stored on one or more Sigma rules."
+---
+
 # `rsigma rule doc`
 
 {{ added "0.18.0" }}

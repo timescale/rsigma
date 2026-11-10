@@ -1,3 +1,7 @@
+---
+description: "Privacy notice for the RSigma documentation site: how Google Analytics 4 is used, how cookie consent works, and how to reset your choice."
+---
+
 # Privacy
 
 This documentation site uses Google Analytics 4 to understand how the documentation is used. Analytics cookie storage is disabled unless you accept it. Advertising storage, ad personalization, and ad user data remain disabled.

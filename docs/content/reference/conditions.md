@@ -1,3 +1,7 @@
+---
+description: "How RSigma interprets Sigma keyword detections and condition selectors such as 1 of and all of, where the specification leaves room, compared with pySigma."
+---
+
 # Keywords and Conditions
 
 {{ added "0.24.0" }}

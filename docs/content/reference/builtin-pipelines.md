@@ -1,3 +1,7 @@
+---
+description: "Reference for the processing pipelines built into RSigma, including ECS Windows and Sysmon field mappings, and how to copy and customize them."
+---
+
 # Builtin Pipelines
 
 RSigma embeds three ready-to-use processing pipelines in the binary so common Windows deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:

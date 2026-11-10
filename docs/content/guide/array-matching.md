@@ -1,3 +1,7 @@
+---
+description: "Match Sigma rules against array values in CloudTrail, Okta, Kubernetes audit, and Windows logs with RSigma's array selectors, a proposed Sigma extension."
+---
+
 # Array Matching
 
 {{ added "0.15.0" }}

@@ -1,4 +1,10 @@
-# Welcome to RSigma's documentation!
+---
+title: "RSigma: Sigma Detection Engineering Toolkit in Rust"
+titleAppend: false
+description: "RSigma is a Rust toolkit for Sigma detection rules: parse, lint, evaluate, correlate, and convert rules, and run a streaming detection daemon from one binary."
+---
+
+# RSigma: Sigma Detection Engineering Toolkit in Rust
 
 RSigma is a [Sigma](https://sigmahq.io/) detection engineering toolkit: parser, linter, evaluator, correlation engine, conversion framework, streaming daemon, and MCP and LSP servers. It builds on open standards: Sigma for detection rules, [OpenTelemetry](https://opentelemetry.io/) for log ingestion and detection export, and [STIX](https://oasis-open.github.io/cti-documentation/stix/intro) and [TAXII](https://oasis-open.github.io/cti-documentation/taxii/intro) for threat intelligence.
 

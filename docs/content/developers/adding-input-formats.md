@@ -1,3 +1,7 @@
+---
+description: "How to add an event input format to the RSigma streaming runtime: write a line parser adapter, wire it into the CLI, and gate it behind a feature flag."
+---
+
 # Adding an input format
 
 The streaming runtime accepts events as raw text lines and dispatches them through `parse_line(line, format) -> Option<EventInputDecoded>`. Each variant of `InputFormat` corresponds to one adapter under `crates/rsigma-runtime/src/input/`. This page walks through adding a new one (a binary protocol, a vendor-specific log shape, a new structured-text format), wiring it into the CLI, and gating it behind a feature flag.

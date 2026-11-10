@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine tail: stream a running rsigma daemon's live Sigma detections and correlations to your terminal as they happen."
+---
+
 # `rsigma engine tail`
 
 {{ added "0.17.0" }}

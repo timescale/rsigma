@@ -1,3 +1,7 @@
+---
+description: "Ship Kubernetes audit logs, Docker events, and osquery results to RSigma with Vector, the OpenTelemetry Collector, or Grafana Alloy for Sigma detection."
+---
+
 # Container and Host Recipes
 
 {{ added "0.20.0" }}

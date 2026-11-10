@@ -1,3 +1,7 @@
+---
+description: "Draft Sigma rules from log events with rsigma rule draft: supply incident exemplars and a baseline, and get discriminative Sigma YAML to review and commit."
+---
+
 # Drafting Rules from Logs
 
 {{ added "0.19.0" }}

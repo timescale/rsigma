@@ -1,3 +1,7 @@
+---
+description: "RSigma exit codes: the four structured codes every subcommand uses so CI runners can tell a clean run from findings from a configuration or rule error."
+---
+
 # Exit Codes
 
 `rsigma` uses a structured exit-code scheme so CI runners can distinguish a tool failure from a finding. The same four codes apply to every subcommand. The exact source of truth is the [`exit_code` module](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/exit_code.rs).

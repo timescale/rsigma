@@ -1,3 +1,7 @@
+---
+description: "RSigma daemon HTTP API for live observability: field and schema observation, bounded event taps, and live detection tails, with permissions."
+---
+
 # HTTP API: Live Observability
 
 The daemon's endpoints for looking at live traffic: which fields and schemas arrive, a bounded tap of raw events, and a live tail of detections. Most are opt-in. The [HTTP API](http-api.md#endpoint-summary) page lists every route with its permission; [authentication](http-api.md#authentication) applies to all of them.

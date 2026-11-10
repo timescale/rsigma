@@ -1,3 +1,7 @@
+---
+description: "Configure the RSigma alert pipeline: inhibit, silence, deduplicate, and group Sigma detections into incidents, modeled on Prometheus Alertmanager."
+---
+
 # Alert Pipeline
 
 {{ added "0.18.0" }}

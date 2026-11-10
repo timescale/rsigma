@@ -1,3 +1,7 @@
+---
+description: "How to add a dynamic pipeline source type to RSigma, such as S3 or Redis: implement SourceResolver dispatch, caching, and error policies."
+---
+
 # Adding a dynamic source type
 
 Dynamic pipeline sources (`http`, `command`, `file`, `nats`) live behind one trait: `SourceResolver`. Each `DynamicSource` carries a typed `SourceType` plus shared metadata (`id`, refresh policy, error policy, optional extract). The shipped `DefaultSourceResolver` dispatches on `SourceType`, hits the right adapter, and stores the result in a shared `Arc<SourceCache>`. This page walks through adding a new source type (S3, BigQuery, Redis, an internal HTTP endpoint with non-standard auth) and wiring it into the parser, resolver, and CLI.

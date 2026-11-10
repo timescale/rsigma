@@ -1,3 +1,7 @@
+---
+description: "Core RSigma concepts: what Sigma rules are, processing pipelines, the eval and daemon split, rule conversion, correlation, and the noun-led CLI."
+---
+
 # Core Concepts
 
 A short tour of the ideas you run into when working with RSigma. If you already know Sigma, skim for RSigma-specific details: eval vs daemon, pipelines, conversion, and the noun-led CLI. If you are new to Sigma, the primer below is enough to follow the rest of these docs; authoring depth lives on SigmaHQ.

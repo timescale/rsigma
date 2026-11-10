@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config show: print the effective rsigma configuration after merging every layer, annotated with the layer each value came from."
+---
+
 # `rsigma config show`
 
 {{ added "0.14.0" }}

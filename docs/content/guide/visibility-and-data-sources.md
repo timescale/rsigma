@@ -1,3 +1,7 @@
+---
+description: "Check which telemetry your Sigma rules depend on with RSigma: score data source visibility and export DeTT&CT YAML and an ATT&CK Navigator layer."
+---
+
 # Visibility and Data Sources
 
 {{ added "0.17.0" }}

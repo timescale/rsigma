@@ -1,3 +1,7 @@
+---
+description: "Keep a Sigma rule set healthy with rsigma rule hygiene: find silent, noisy, untagged, and ownerless rules, read the report, and gate retirement in CI."
+---
+
 # Rule Hygiene
 
 {{ added "0.18.0" }}

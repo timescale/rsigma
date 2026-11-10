@@ -1,3 +1,7 @@
+---
+description: "Choose an event input format for RSigma: JSON, syslog, plain text, logfmt, CEF, EVTX, and OTLP, with auto-detection, timestamps, and parser options."
+---
+
 # Input Formats
 
 RSigma can read events in seven formats, with auto-detection as the default. This page covers when to choose each format, the parser specifics, the timestamps extracted, and the format-specific flags.

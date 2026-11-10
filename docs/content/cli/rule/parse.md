@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule parse: parse a single Sigma rule YAML file and print its abstract syntax tree as JSON for inspection or tooling."
+---
+
 # `rsigma rule parse`
 
 {{ added "0.12.0" }}

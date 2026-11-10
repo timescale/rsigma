@@ -1,3 +1,7 @@
+---
+description: "RSigma PostgreSQL and TimescaleDB backend reference: convert Sigma rules to SQL, with output formats, backend options, correlations, and type mappings."
+---
+
 # PostgreSQL/TimescaleDB Backend
 
 The `postgres` backend (aliases: `postgresql`, `pg`) converts Sigma rules into PostgreSQL SQL, with optional TimescaleDB-specific extensions. It is the most fully featured of the conversion backends and the default choice for SOCs running PostgreSQL or TimescaleDB as their log store.

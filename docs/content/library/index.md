@@ -1,3 +1,7 @@
+---
+description: "Embed RSigma in your Rust programs: an overview of the published crates for Sigma parsing, intermediate representation, evaluation, conversion, and runtime."
+---
+
 # Library API
 
 Every crate in the workspace publishes to crates.io and can be embedded in another Rust program. This section is the entry point for embedders, alternative-frontend authors, and contributors who need to understand the public Rust surface area.

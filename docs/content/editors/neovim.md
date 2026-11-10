@@ -1,3 +1,7 @@
+---
+description: "Set up the rsigma-lsp language server in Neovim, Helix, and Zed for Sigma rule diagnostics, code actions, completions, hover, and document symbols."
+---
+
 # Neovim, Helix, Zed
 
 Any editor that speaks the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) can drive `rsigma-lsp`. This page covers the three you are most likely to use; the same pattern works for Emacs, Sublime Text, Kakoune, and anything else with an LSP client.

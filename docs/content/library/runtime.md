@@ -1,3 +1,7 @@
+---
+description: "rsigma-runtime Rust crate: an async streaming pipeline around rsigma-eval with input adapters, sinks, hot-reload, dynamic sources, and metrics."
+---
+
 # `rsigma-runtime`
 
 The streaming runtime. Wraps `rsigma-eval` in an async pipeline with input adapters, sinks, hot-reload, dynamic source resolution, and pluggable metrics.

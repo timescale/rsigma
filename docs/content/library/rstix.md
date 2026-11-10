@@ -1,3 +1,7 @@
+---
+description: "rstix Rust crate for STIX 2.1: typed objects for all built-in STIX types, streaming bundle ingestion, validation, patterns, and TAXII 2.1 support."
+---
+
 # rstix
 
 {{ added "0.15.0" }}

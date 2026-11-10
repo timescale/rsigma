@@ -1,3 +1,7 @@
+---
+description: "Threat hunt with Sigma rules in your PostgreSQL or TimescaleDB log archive using rsigma hunt run, and stream the matching rows back as NDJSON exemplars."
+---
+
 # Hunting in the Archive
 
 {{ added "0.22.0" }}
