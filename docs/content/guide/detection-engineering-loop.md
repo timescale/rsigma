@@ -1,3 +1,7 @@
+---
+description: "The detection engineering loop with RSigma: author, test, deploy, detect, alert, measure, and hunt with Sigma rules, with links to each stage's guide."
+---
+
 # Detection Engineering Loop
 
 Detection engineering spans human judgment (what deserves a detection, what the telemetry shows) and repeatable software work (authoring, testing, deployment, detection, alerting, measurement, hunting). RSigma owns the software phases and hands off the rest. This page is the map: one revolution of the loop, station by station, with links into the detailed guides.

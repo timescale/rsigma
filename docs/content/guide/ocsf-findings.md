@@ -1,3 +1,7 @@
+---
+description: "Emit Sigma detections as OCSF Detection Finding (class 2004) JSON from the RSigma daemon, ready for Splunk, Elastic, Amazon Security Lake, and Datadog."
+---
+
 # OCSF Findings
 
 {{ added "0.21.0" }}

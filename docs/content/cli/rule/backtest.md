@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule backtest: replay an event corpus against Sigma rules, compare fire counts with declared expectations, and emit a CI report."
+---
+
 # `rsigma rule backtest`
 
 {{ added "0.17.0" }}

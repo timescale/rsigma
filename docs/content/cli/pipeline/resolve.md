@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma pipeline resolve: resolve dynamic pipeline sources (HTTP, file, command, NATS) offline, with an optional dry-run mode."
+---
+
 # `rsigma pipeline resolve`
 
 {{ added "0.12.0" }}

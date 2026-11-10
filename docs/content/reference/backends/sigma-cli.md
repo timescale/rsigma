@@ -1,3 +1,7 @@
+---
+description: "Reach Splunk, Elasticsearch, Kusto, QRadar, Loki, and 30+ pySigma backends from rsigma backend convert by delegating to an installed sigma-cli."
+---
+
 # sigma-cli delegation
 
 {{ added "0.17.0" }}

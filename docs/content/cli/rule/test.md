@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule test: replay the exemplar events embedded in Sigma detection and correlation rules to verify that each rule still fires."
+---
+
 # `rsigma rule test`
 
 {{ added "0.22.0" }}

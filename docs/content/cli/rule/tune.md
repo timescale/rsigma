@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule tune: propose a verified Sigma filter rule from false-positive exemplars while keeping known true positives matching."
+---
+
 # `rsigma rule tune`
 
 {{ added "0.21.0" }}

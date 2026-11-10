@@ -1,3 +1,7 @@
+---
+description: "rsigma-parser Rust crate: parse Sigma detection, correlation, and filter rules and condition expressions into a typed AST, with linting and formatting."
+---
+
 # `rsigma-parser`
 
 Parse Sigma rule YAML, correlation rules, filter rules, and condition expressions into a typed AST. The only crate that touches Sigma source; every other rsigma crate consumes the AST shapes defined here.

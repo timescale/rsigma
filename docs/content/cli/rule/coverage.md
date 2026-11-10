@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule coverage: map Sigma rules onto MITRE ATT&CK, export a Navigator layer, and report gaps against Atomic Red Team and SigmaHQ."
+---
+
 # `rsigma rule coverage`
 
 {{ added "0.17.0" }}

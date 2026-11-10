@@ -1,3 +1,7 @@
+---
+description: "Ship AWS CloudTrail, Azure, and GCP Cloud Audit Logs to RSigma with Vector, the OpenTelemetry Collector, or Grafana Alloy for Sigma detection."
+---
+
 # Cloud Platform Recipes
 
 {{ added "0.20.0" }}

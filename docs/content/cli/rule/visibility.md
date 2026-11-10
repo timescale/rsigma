@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule visibility: score telemetry visibility and export DeTT&CT data source YAML and an ATT&CK Navigator visibility layer."
+---
+
 # `rsigma rule visibility`
 
 {{ added "0.17.0" }}

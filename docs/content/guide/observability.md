@@ -1,3 +1,7 @@
+---
+description: "Observe the RSigma daemon and CLI with tracing logs, Prometheus metrics, and health endpoints, and learn which signals to alert on in production."
+---
+
 # Observability
 
 RSigma is built on `tracing` plus the `prometheus` crate. Every meaningful event in the daemon and CLI lands on one of:

@@ -1,3 +1,7 @@
+---
+description: "rsigma-mcp Rust crate: a Model Context Protocol server built on rmcp that exposes Sigma parse, lint, evaluate, convert, and tune tools to AI agents."
+---
+
 # `rsigma-mcp`
 
 {{ added "0.16.0" }}

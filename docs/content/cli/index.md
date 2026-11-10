@@ -1,3 +1,7 @@
+---
+description: "Reference for the rsigma CLI: every command group (engine, rule, backend, pipeline, hunt, taxii, mcp, config), config precedence, and feature requirements."
+---
+
 # CLI Reference
 
 `rsigma` is a single binary that exposes every operation through noun-led command groups: `engine`, `rule`, `backend`, `pipeline`, `hunt`, `taxii`, `mcp`, and `config`. Each subcommand is independent and self-contained; there is no global state. A YAML config file is optional but supported, with strict flag > env > file > default precedence. See the [Configuration Reference](../reference/configuration.md).

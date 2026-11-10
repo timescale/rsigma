@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule condition: parse a Sigma condition expression such as selection and not filter, and print its abstract syntax tree."
+---
+
 # `rsigma rule condition`
 
 {{ added "0.12.0" }}

@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule lint: lint Sigma rules against the v2.1.0 specification with built-in checks, severity levels, suppressions, and auto-fix."
+---
+
 # `rsigma rule lint`
 
 {{ added "0.12.0" }}

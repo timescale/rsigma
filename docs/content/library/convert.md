@@ -1,3 +1,7 @@
+---
+description: "rsigma-convert Rust crate: convert Sigma rules into backend query strings through a shared IR, with PostgreSQL, LynxDB, and Fibratus backends included."
+---
+
 # `rsigma-convert`
 
 Convert Sigma rules into backend-native query strings. A rule is lowered to the intermediate representation (`rsigma-ir`) once, and the `Backend` trait renders from that HIR; ships with PostgreSQL/TimescaleDB, LynxDB, and Fibratus backends, and lets you add your own.

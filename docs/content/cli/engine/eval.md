@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine eval: evaluate Sigma detection and correlation rules against events from a file, stdin, or an inline argument in one shot."
+---
+
 # `rsigma engine eval`
 
 {{ added "0.12.0" }}

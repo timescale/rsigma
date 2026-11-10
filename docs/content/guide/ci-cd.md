@@ -1,3 +1,7 @@
+---
+description: "Run Sigma detection-as-code in CI with RSigma: lint, validate, backtest, and coverage gates, exit codes, and pipelines for GitHub Actions and GitLab CI."
+---
+
 # CI/CD
 
 RSigma is designed to drop into a detection-as-code workflow. The CLI surfaces that matter for CI are `rule lint`, `rule validate`, `rule backtest`, `rule coverage`, `rule scorecard`, `rule hygiene`, `rule doc`, `engine eval`, and `backend convert`. Each exits with a structured code that lets CI runners distinguish "no findings, clean exit" from "the tool ran but reported findings" from "the tool could not run because of a configuration or rule error."

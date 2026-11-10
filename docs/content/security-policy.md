@@ -1,3 +1,7 @@
+---
+description: "RSigma security policy: supported versions, how to report a vulnerability privately, and which components and issues are in scope for disclosure."
+---
+
 {%
    include-markdown "../../SECURITY.md"
 %}

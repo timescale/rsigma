@@ -1,3 +1,7 @@
+---
+description: "Capture analyst verdicts on Sigma alerts and compute a live per-rule false-positive ratio with RSigma's triage feedback loop, the key SOC quality metric."
+---
+
 # Triage Feedback Loop
 
 {{ added "0.18.0" }}

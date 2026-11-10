@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma taxii sync: fetch objects from a TAXII 2.1 collection and persist them in a local on-disk STIX 2.1 store."
+---
+
 # `rsigma taxii sync`
 
 {{ added "0.23.0" }}

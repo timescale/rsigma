@@ -1,3 +1,7 @@
+---
+description: "RSigma security hardening reference: input size caps, resource limits, parsing safeguards, SQL injection prevention, and daemon listener exposure."
+---
+
 # Security Hardening
 
 RSigma deliberately bounds every input and every external resource it touches. This page catalogues the hard limits, the parsing safeguards, the operational concerns (process signals, lock primitives, daemon listener exposure), and the dynamic-pipeline-specific protections. None of these are configurable through CLI flags today; they are compile-time constants. Operators wanting different limits should fork and document the deviation locally.

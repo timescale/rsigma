@@ -1,3 +1,7 @@
+---
+description: "rsigma-ir Rust crate: the shared intermediate representation for Sigma rules between the parser AST and the evaluation and conversion crates."
+---
+
 # `rsigma-ir`
 
 {{ added "0.20.0" }}

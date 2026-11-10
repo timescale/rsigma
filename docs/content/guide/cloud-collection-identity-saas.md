@@ -1,3 +1,7 @@
+---
+description: "Ship Microsoft 365, Entra, GitHub, Okta, and OneLogin audit logs to RSigma with Vector, the OpenTelemetry Collector, or Grafana Alloy for Sigma detection."
+---
+
 # Identity and SaaS Recipes
 
 {{ added "0.20.0" }}

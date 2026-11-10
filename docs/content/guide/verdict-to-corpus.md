@@ -1,3 +1,7 @@
+---
+description: "Turn analyst verdicts into regression corpora with RSigma: true positives feed rule backtest and false positives feed rule tune for Sigma rule upkeep."
+---
+
 # Verdict-Driven Corpora
 
 {{ added "0.22.0" }}

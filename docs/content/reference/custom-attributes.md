@@ -1,3 +1,7 @@
+---
+description: "Reference for Sigma custom_attributes that RSigma recognizes: rsigma engine and correlation overrides and backend hints, set per rule in YAML."
+---
+
 # Custom Attributes
 
 Sigma rules accept a `custom_attributes:` mapping for engine and backend hints that aren't part of the core Sigma spec. RSigma recognizes two namespaces:

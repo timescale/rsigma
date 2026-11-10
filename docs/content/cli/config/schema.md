@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config schema: emit the JSON Schema for the rsigma configuration file, for editor validation and autocompletion of YAML config."
+---
+
 # `rsigma config schema`
 
 {{ added "0.14.0" }}

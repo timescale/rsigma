@@ -1,3 +1,7 @@
+---
+description: "Run real-time Sigma detection with the RSigma daemon: inputs, sinks, hot-reload, correlation state persistence, and the HTTP API for health and metrics."
+---
+
 # Streaming Detection
 
 `rsigma engine daemon` runs RSigma as a long-running service: it keeps a compiled engine in memory, reads events from a continuous source, writes detections to one or more sinks, and exposes a small HTTP API for health checks, metrics, and management. Use it when you need state to survive restarts, hot-reload across rule changes, or a Prometheus-scrapeable detection engine.

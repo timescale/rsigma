@@ -1,3 +1,7 @@
+---
+description: "Stream events into and detections out of RSigma with NATS JetStream: authentication, at-least-once delivery, replay, consumer groups, and dead-letter queues."
+---
+
 # NATS Streaming
 
 RSigma can read events from and write detections to [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream). This page covers the daemon's NATS integration: authentication, at-least-once delivery, replay, consumer groups, and the dead-letter queue. For NATS-as-an-input fundamentals see [Streaming Detection](streaming-detection.md).

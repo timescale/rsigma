@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule hygiene: flag silent, noisy, untagged, ownerless, and deprecated Sigma rules as maintenance and retirement candidates in one report."
+---
+
 # `rsigma rule hygiene`
 
 {{ added "0.18.0" }}

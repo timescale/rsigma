@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule draft: generate a draft Sigma detection rule or temporal correlation from exemplar events, optionally against a baseline corpus."
+---
+
 # `rsigma rule draft`
 
 {{ added "0.19.0" }}

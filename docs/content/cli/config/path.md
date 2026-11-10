@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config path: print the configuration files rsigma would load for the daemon, eval, and backtest, in increasing precedence order."
+---
+
 # `rsigma config path`
 
 {{ added "0.14.0" }}

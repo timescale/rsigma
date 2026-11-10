@@ -1,3 +1,7 @@
+---
+description: "Convert Sigma rules to PostgreSQL, TimescaleDB, LynxDB, and Fibratus queries with RSigma, or to Splunk, Elastic, and other SIEMs through sigma-cli."
+---
+
 # Rule Conversion
 
 `rsigma backend convert` translates Sigma rules into queries for a specific log analytics backend. Instead of evaluating rules against live events, conversion produces query strings that you can run against an existing log store: PostgreSQL/TimescaleDB, LynxDB, and Fibratus natively, plus the broader pySigma ecosystem via [sigma-cli delegation](../reference/backends/sigma-cli.md). This is the right path for historical threat hunting and for retroactive coverage testing against months of already-collected logs.

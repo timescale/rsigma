@@ -1,3 +1,7 @@
+---
+description: "Tune noisy Sigma rules with rsigma rule tune: turn confirmed false positives into a verified filter rule that still matches every known true positive."
+---
+
 # Rule Tuning
 
 {{ added "0.21.0" }}

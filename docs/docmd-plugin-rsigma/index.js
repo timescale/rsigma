@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
@@ -221,6 +222,8 @@ function expandVersionTags(src, page, releases) {
     .join("\n");
 }
 
+const INCLUDE_MARKDOWN_RE = /\{%\s*include-markdown\s+"([^"]+)"\s*%\}/g;
+
 /**
  * @param {string} src
  * @param {string} filePath
@@ -228,9 +231,7 @@ function expandVersionTags(src, page, releases) {
  * @returns {string}
  */
 function inlineIncludeMarkdown(src, filePath, projectRoot) {
-  const includeRe =
-    /\{%\s*include-markdown\s+"([^"]+)"\s*%\}/g;
-  return src.replace(includeRe, (_match, relPath) => {
+  return src.replace(INCLUDE_MARKDOWN_RE, (_match, relPath) => {
     const baseDir = path.dirname(filePath);
     const target = path.resolve(baseDir, relPath);
     const relToRoot = path.relative(projectRoot, target);
@@ -423,10 +424,22 @@ const BRAND_COPIES = {
   "logo.svg": "rsigma-logotype-horizontal.svg",
   "logo-dark.svg": "rsigma-logotype-horizontal-dark.svg",
   "favicon.svg": "rsigma-icon.svg",
+  "social-banner.png": "social-banner.png",
 };
 
 /** Sizes packed into `favicon.ico` for browsers without SVG favicon support. */
 const ICO_SIZES = [16, 32, 48];
+
+/**
+ * Link preview banner referenced by `plugins.seo.openGraph.defaultImage`,
+ * copied from the repo-root `assets/`. The size must match the PNG.
+ */
+const SOCIAL_BANNER = {
+  name: "social-banner.png",
+  alt: "RSigma: a complete Sigma detection engineering toolkit",
+  width: 1200,
+  height: 627,
+};
 
 /** Repo-root `assets/` files copied into the site so pages can embed them. */
 const COPIED_ASSETS = ["detection-loop.svg", "architecture.svg", "internal_architecture.svg"];
@@ -476,10 +489,11 @@ function packIco(entries) {
 }
 
 /**
- * Build the brand image set from the repo-root `assets/` SVGs: the light and
- * dark sidebar lockups and the SVG favicon are copied as-is; `favicon.ico`
- * (from the small mark) and `apple-touch-icon.png` (the full mark on white,
- * since iOS fills transparency with black) are rasterised. Memoised on the
+ * Build the brand image set from the repo-root `assets/`: the light and dark
+ * sidebar lockups, the SVG favicon, and the link preview banner are copied
+ * as-is; `favicon.ico` (from the small mark) and `apple-touch-icon.png` (the
+ * full mark on white, since iOS fills transparency with black) are
+ * rasterised. Memoised on the
  * sources so repeated builds in one `docmd dev` session rasterise once.
  *
  * @param {string} assetsDir
@@ -702,6 +716,186 @@ function plainTextFences(md) {
   };
 }
 
+/** Search engines cut meta descriptions off at about this many characters. */
+const MAX_DESCRIPTION_LENGTH = 160;
+
+/**
+ * docmd's SEO plugin writes an empty `<meta name="description">` for a page
+ * without a `description:` in its frontmatter, so search results and link
+ * previews fall back to whatever text the crawler picks. Fail the build
+ * instead.
+ *
+ * @param {any[]} pages
+ * @param {string} docsRoot
+ */
+function checkDescriptions(pages, docsRoot) {
+  const problems = [];
+  for (const page of pages) {
+    const where = page.sourcePath ? path.relative(docsRoot, page.sourcePath) : page.outputPath;
+    const description = page.frontmatter?.description;
+    if (typeof description !== "string" || !description.trim()) {
+      problems.push(`${where}: no description`);
+    } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+      problems.push(
+        `${where}: description is ${description.length} characters, over ${MAX_DESCRIPTION_LENGTH}`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `docmd-plugin-rsigma: every page needs a frontmatter description of at most ${MAX_DESCRIPTION_LENGTH} characters:\n  ${problems.join("\n  ")}`,
+    );
+  }
+}
+
+/**
+ * Add the size and alt text of the link preview banner after the `og:image` and
+ * `twitter:image` tags docmd emits, so previews render without fetching the
+ * image first, plus `og:site_name` after `og:type`.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function injectSocialMeta(html) {
+  const card = new RegExp(`(<meta property="og:image" content="[^"]*/${SOCIAL_BANNER.name}">\\n?)`);
+  const twitterCard = new RegExp(`(<meta name="twitter:image" content="[^"]*/${SOCIAL_BANNER.name}">\\n?)`);
+  if (html.includes('property="og:site_name"')) {
+    return html;
+  }
+  return html
+    .replace(/(<meta property="og:type" content="[^"]*">\n?)/, '$1<meta property="og:site_name" content="RSigma">\n')
+    .replace(
+      card,
+      `$1<meta property="og:image:width" content="${SOCIAL_BANNER.width}">\n` +
+        `<meta property="og:image:height" content="${SOCIAL_BANNER.height}">\n` +
+        `<meta property="og:image:alt" content="${SOCIAL_BANNER.alt}">\n`,
+    )
+    .replace(twitterCard, `$1<meta name="twitter:image:alt" content="${SOCIAL_BANNER.alt}">\n`);
+}
+
+/**
+ * docmd builds the `BreadcrumbList` structured data from the sidebar, so a
+ * navigation group without a page of its own (`Reference`, `rule`, `Deploy and
+ * Detect`) becomes a list item with a name and no `item` URL. Google rejects
+ * the whole trail when any item but the last lacks one, so drop those items
+ * and renumber the rest.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function linkBreadcrumbStructuredData(html) {
+  return html.replace(
+    /(<script type="application\/ld\+json">\n)(\{"@context":"https:\/\/schema\.org","@type":"BreadcrumbList".*\})(\n<\/script>)/,
+    (match, open, json, close) => {
+      const data = JSON.parse(json);
+      const items = data.itemListElement;
+      const linked = items.filter((item, i) => item.item || i === items.length - 1);
+      if (linked.length === items.length) {
+        return match;
+      }
+      data.itemListElement = linked.map((item, i) => ({ ...item, position: i + 1 }));
+      return `${open}${JSON.stringify(data).replaceAll("<", "\\u003c")}${close}`;
+    },
+  );
+}
+
+/**
+ * Describe RSigma itself on the home page with schema.org `SoftwareApplication`
+ * data, using the version and license from `Cargo.toml`.
+ *
+ * @param {string} html
+ * @param {string} description
+ * @returns {string}
+ */
+function injectSoftwareStructuredData(html, description) {
+  if (html.includes('"SoftwareApplication"')) {
+    return html;
+  }
+  const rsigma = /** @type {any} */ (rsigmaVars)?.rsigma ?? {};
+  const origin = siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`;
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "RSigma",
+    description,
+    url: origin,
+    image: `${origin}assets/images/${SOCIAL_BANNER.name}`,
+    applicationCategory: "SecurityApplication",
+    operatingSystem: "Linux, macOS, Windows",
+    softwareVersion: rsigma.version,
+    license: `https://spdx.org/licenses/${rsigma.license}.html`,
+    sameAs: [rsigma.repo_url, "https://crates.io/crates/rsigma"],
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  };
+  const json = JSON.stringify(data, null, 2).replaceAll("<", "\\u003c");
+  return html.replace("</head>", `<script type="application/ld+json">\n${json}\n</script>\n</head>`);
+}
+
+/**
+ * Commit time of the last change to a file, as an ISO 8601 string, or null
+ * outside a git checkout or for an uncommitted file.
+ *
+ * @param {string} file
+ * @param {string} root Repository root.
+ * @returns {string | null}
+ */
+function gitLastCommitDate(file, root) {
+  try {
+    const out = execFileSync("git", ["log", "-1", "--format=%ct", "--", path.relative(root, file)], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out ? new Date(Number(out) * 1000).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * docmd's sitemap has no `<lastmod>`, which crawlers use to decide what to
+ * recrawl. Add the last commit time of each page's source, from the git
+ * plugin's metadata, or of the root file a page inlines (release notes,
+ * contributing, benchmarks, security policy) when that is newer.
+ *
+ * @param {string} sitemapPath
+ * @param {any[]} pages
+ * @param {string} root Repository root.
+ * @returns {number} entries dated
+ */
+function addSitemapLastmod(sitemapPath, pages, root) {
+  if (!fs.existsSync(sitemapPath)) {
+    return 0;
+  }
+  const origin = siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`;
+  const lastmod = new Map();
+  for (const page of pages) {
+    const dates = [page.frontmatter?._git?.lastUpdated];
+    if (page.sourcePath && typeof page.rawMarkdown === "string") {
+      for (const m of page.rawMarkdown.matchAll(INCLUDE_MARKDOWN_RE)) {
+        dates.push(gitLastCommitDate(path.resolve(path.dirname(page.sourcePath), m[1]), root));
+      }
+    }
+    const newest = dates.filter(Boolean).sort().at(-1);
+    if (newest) {
+      lastmod.set(`${origin}${page.outputPath.replace(/index\.html$/, "")}`, newest);
+    }
+  }
+  let dated = 0;
+  const xml = fs
+    .readFileSync(sitemapPath, "utf8")
+    .replace(/(<loc>([^<]+)<\/loc>\n)(?!\s*<lastmod>)/g, (match, locLine, url) => {
+      const date = lastmod.get(url);
+      if (!date) {
+        return match;
+      }
+      dated += 1;
+      return `${locLine}    <lastmod>${date}</lastmod>\n`;
+    });
+  fs.writeFileSync(sitemapPath, xml);
+  return dated;
+}
+
 export default {
   plugin: {
     name: "docmd-plugin-rsigma",
@@ -760,6 +954,8 @@ export default {
     const outputDir = ctx?.outputDir ?? path.join(process.cwd(), "site");
     const log = typeof ctx?.log === "function" ? ctx.log : () => {};
     const docsRoot = process.cwd();
+    const pages = ctx?.pages ?? [];
+    checkDescriptions(pages, docsRoot);
     const root = repoRoot ?? findRepoRoot(docsRoot);
     const assetsDir = path.join(root, "assets");
     await writeBrandImages(path.join(outputDir, "assets", "images"), assetsDir);
@@ -775,6 +971,8 @@ export default {
       fs.readFileSync(path.join(docsRoot, "rsigma.schema.json")),
     );
     const ratios = diagramAspectRatios(assetsDir);
+    const homeHtml = path.join(outputDir, "index.html");
+    const homePage = pages.find((page) => page.outputPath === "index.html");
     let stripped = 0;
     let titlesRendered = 0;
     for (const file of collectHtmlFiles(outputDir)) {
@@ -785,6 +983,11 @@ export default {
       }
       next = injectAnalyticsConsentMode(next);
       next = injectIconLinks(next);
+      next = injectSocialMeta(next);
+      next = linkBreadcrumbStructuredData(next);
+      if (file === homeHtml) {
+        next = injectSoftwareStructuredData(next, homePage?.frontmatter?.description ?? "");
+      }
       next = embedInteractiveDiagrams(next, ratios);
       const withTitles = renderMarkdownTitles(next);
       if (withTitles !== next) {
@@ -795,6 +998,7 @@ export default {
         fs.writeFileSync(file, next);
       }
     }
+    const dated = addSitemapLastmod(path.join(outputDir, "sitemap.xml"), pages, root);
     const notesHtml = path.join(outputDir, "release-notes", "index.html");
     if (emittedReleaseAnchors.size > 0 && fs.existsSync(notesHtml)) {
       const notes = fs.readFileSync(notesHtml, "utf8");
@@ -816,7 +1020,7 @@ export default {
       }
     }
     log(
-      `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages, rendered Markdown in ${titlesRendered} page titles, checked ${emittedReleaseAnchors.size} version-tag anchors`,
+      `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages, rendered Markdown in ${titlesRendered} page titles, checked ${emittedReleaseAnchors.size} version-tag anchors, dated ${dated} sitemap entries`,
     );
   },
 };

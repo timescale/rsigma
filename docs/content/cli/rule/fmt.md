@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule fmt: rewrite Sigma rules into a canonical YAML layout while keeping comments and meaning, with check, diff, and write modes."
+---
+
 # `rsigma rule fmt`
 
 {{ added "unreleased" }}

@@ -1,3 +1,7 @@
+---
+description: "RSigma configuration file reference: the YAML schema, the config discovery chain, and how flag, environment, file, and default precedence resolves."
+---
+
 # Configuration
 
 `rsigma engine daemon`, `rsigma engine eval`, `rsigma rule backtest`, `rsigma rule coverage`, `rsigma rule scorecard`, `rsigma rule visibility`, `rsigma rule hygiene`, and `rsigma mcp serve` can be driven by a YAML config file in addition to CLI flags and environment variables. This page describes the schema, the discovery chain, and the precedence model that decides which value wins when more than one layer sets the same key.

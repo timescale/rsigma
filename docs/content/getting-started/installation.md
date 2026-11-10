@@ -1,3 +1,7 @@
+---
+description: "Install RSigma on Linux, macOS, or Windows from signed binary archives, the Docker image, or Cargo, and verify the download before you run it."
+---
+
 # Installation
 
 RSigma ships as a single self-contained binary on every supported platform. Pick the install method that matches your environment.

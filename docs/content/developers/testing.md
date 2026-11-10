@@ -1,3 +1,7 @@
+---
+description: "How RSigma is tested: unit, integration, golden, corpus, and docs audit tiers, which ones gate CI on every pull request, and how to run them locally."
+---
+
 # Testing
 
 The workspace runs several test tiers. Most are gated in CI on every PR; coverage is advisory, and representative performance is path-selective on PRs with a fuller weekly matrix.

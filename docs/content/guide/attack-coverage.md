@@ -1,3 +1,7 @@
+---
+description: "Measure MITRE ATT&CK coverage of your Sigma rules with RSigma: export Navigator heatmaps and diff coverage against Atomic Red Team and SigmaHQ."
+---
+
 # ATT&CK Coverage
 
 {{ added "0.17.0" }}

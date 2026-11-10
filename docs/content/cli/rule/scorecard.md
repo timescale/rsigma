@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule scorecard: combine backtest, coverage, and triage outputs into a per-rule keep, tune, or retire verdict for detection review."
+---
+
 # `rsigma rule scorecard`
 
 {{ added "0.17.0" }}

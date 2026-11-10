@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma config validate: load every rsigma configuration layer and report problems before they cause a daemon or eval run to misbehave."
+---
+
 # `rsigma config validate`
 
 {{ added "0.14.0" }}

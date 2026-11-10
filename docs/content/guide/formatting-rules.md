@@ -1,3 +1,7 @@
+---
+description: "Format Sigma rules consistently with rsigma rule fmt: the canonical style, key order, quoting, comment handling, and editor and CI integration."
+---
+
 # Formatting Rules
 
 {{ added "unreleased" }}

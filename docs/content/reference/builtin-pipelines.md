@@ -1,3 +1,7 @@
+---
+description: "Reference for the processing pipelines built into RSigma, including ECS Windows and Sysmon field mappings, and how to copy and customize them."
+---
+
 # Builtin Pipelines
 
 For issue [#330](https://github.com/timescale/rsigma/issues/330) canonicalizing scope (ECS, CIM, OCSF eval, Falcon), see [Canonicalizing Pipelines](canonicalizing-pipelines.md).

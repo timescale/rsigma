@@ -1,3 +1,7 @@
+---
+description: "RSigma benchmark results for Sigma rule parsing, evaluation, and correlation throughput, from synthetic microbenchmarks to a full SigmaHQ corpus baseline."
+---
+
 {%
    include-markdown "../../BENCHMARKS.md"
 %}

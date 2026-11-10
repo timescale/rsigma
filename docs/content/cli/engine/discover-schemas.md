@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma engine discover-schemas: mine unrecognized log events into candidate schema signatures that you can review, redact, and commit."
+---
+
 # `rsigma engine discover-schemas`
 
 {{ added "0.19.0" }}

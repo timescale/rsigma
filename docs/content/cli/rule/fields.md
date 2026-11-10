@@ -1,3 +1,7 @@
+---
+description: "Reference for rsigma rule fields: list every field referenced by a directory of Sigma rules, to check rules against the fields your logs carry."
+---
+
 # `rsigma rule fields`
 
 {{ added "0.12.0" }}

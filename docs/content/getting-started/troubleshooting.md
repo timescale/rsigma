@@ -1,3 +1,7 @@
+---
+description: "Troubleshoot RSigma by symptom: missing commands or flags, daemon startup failures, rules that do not match, correlations that never fire, and API 401 errors."
+---
+
 # Troubleshooting
 
 Common problems, organized by what you see. Each entry names the message to look for, the cause, and the fix.
