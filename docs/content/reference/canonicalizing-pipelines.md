@@ -1,6 +1,6 @@
 # Canonicalizing pipelines (issue #330)
 
-RSigma ships optional **processing pipelines** that rewrite Sigma rule field names so portable rules match your indexed event schema when you pass **`-p`**. Nothing runs unless you opt in. Issue [#330](https://github.com/timescale/rsigma/issues/330) defined four targets; the table below is the **completed scope** for that issue.
+RSigma ships optional **processing pipelines** that rewrite Sigma rule field names so portable rules match your indexed event schema when you pass **`-p`**. Nothing runs unless you opt in. Issue [#330](https://github.com/timescale/rsigma/issues/330) tracks portable rule rewrite for four indexed-event targets; the tables below describe the **intended contract** and what ships in-tree. Field maps are defined in the pipeline YAML and [Builtin Pipelines](builtin-pipelines.md); integration tests use vendor-shaped JSON that matches those maps, not pipeline output field names. {{ added "unreleased" }}
 
 ## Shipped pipelines
 
@@ -22,7 +22,7 @@ These five `logsource.category` values are the **issue #330 contract**, aligned 
 |----------|-------------------|-----|-----------|----------------|
 | `process_creation` | yes | yes | yes | yes (`ProcessRollup2`) |
 | `network_connection` | yes | yes | yes | yes (`NetworkConnectIP4`) |
-| `file_event` | yes | yes | yes | yes (`PeFileWritten`) |
+| `file_event` | yes | yes | yes | yes (`PeFileWritten`, `FileWritten`, `NewFileWritten`) |
 | `image_load` | yes | yes | yes | yes (`ImageLoadRollup2`) |
 | `dns_query` | yes | yes | yes | yes (`DnsRequest`) |
 

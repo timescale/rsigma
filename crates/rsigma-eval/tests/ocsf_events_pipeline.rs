@@ -34,8 +34,8 @@ fn ocsf_network_event() -> serde_json::Value {
         "src_endpoint": { "ip": "10.0.0.5", "port": 51514 },
         "dst_endpoint": { "ip": "93.184.216.34", "port": 443 },
         "connection_info": { "protocol_name": "tcp" },
-        "process": {
-            "file": { "path": "/usr/bin/curl" },
+        "actor": {
+            "process": { "file": { "path": "/usr/bin/curl" } },
             "user": { "name": "alice" }
         }
     })
@@ -142,7 +142,7 @@ detection:
     let file_val = json!({
         "class_uid": 1001,
         "file": { "path": "/etc/shadow" },
-        "process": { "file": { "path": "/usr/bin/cp" } }
+        "actor": { "process": { "file": { "path": "/usr/bin/cp" } } }
     });
     let file_event = JsonEvent::borrow(&file_val);
     let mut engine = Engine::new();
@@ -167,7 +167,7 @@ detection:
     let dns_val = json!({
         "class_uid": 4003,
         "query": { "hostname": "malware.example" },
-        "process": { "file": { "path": "/usr/bin/dig" } }
+        "actor": { "process": { "file": { "path": "/usr/bin/dig" } } }
     });
     let dns_event = JsonEvent::borrow(&dns_val);
     let mut engine = Engine::new();
@@ -191,8 +191,8 @@ detection:
 "#;
     let image_val = json!({
         "class_uid": 1005,
-        "module": { "path": "/lib/evil.so" },
-        "process": { "file": { "path": "/usr/bin/app" } }
+        "module": { "file": { "path": "/lib/evil.so" } },
+        "actor": { "process": { "file": { "path": "/usr/bin/app" } } }
     });
     let image_event = JsonEvent::borrow(&image_val);
     let mut engine = Engine::new();

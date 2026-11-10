@@ -40,8 +40,8 @@ transformations:
       DestinationIp: dst_endpoint.ip
       DestinationPort: dst_endpoint.port
       Protocol: connection_info.protocol_name
-      Image: process.file.path
-      User: process.user.name
+      Image: actor.process.file.path
+      User: actor.user.name
     rule_conditions:
       - type: logsource
         category: network_connection
@@ -50,8 +50,8 @@ transformations:
     type: field_name_mapping
     mapping:
       TargetFilename: file.path
-      Image: process.file.path
-      User: process.user.name
+      Image: actor.process.file.path
+      User: actor.user.name
     rule_conditions:
       - type: logsource
         category: file_event
@@ -59,9 +59,9 @@ transformations:
   - id: ocsf_image_load_fields
     type: field_name_mapping
     mapping:
-      ImageLoaded: module.path
-      Image: process.file.path
-      User: process.user.name
+      ImageLoaded: module.file.path
+      Image: actor.process.file.path
+      User: actor.user.name
     rule_conditions:
       - type: logsource
         category: image_load
@@ -70,8 +70,8 @@ transformations:
     type: field_name_mapping
     mapping:
       QueryName: query.hostname
-      Image: process.file.path
-      User: process.user.name
+      Image: actor.process.file.path
+      User: actor.user.name
     rule_conditions:
       - type: logsource
         category: dns_query

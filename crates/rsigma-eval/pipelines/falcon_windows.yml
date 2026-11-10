@@ -9,6 +9,8 @@
 # Scope: five portable Sigma categories on `product: windows`. macOS/Linux
 # sensor events use different platform fields and are outside this file.
 #
+# `ParentImage` maps to `ParentBaseFileName` (executable file name, not a full path).
+#
 # Path-only: load by file path (not a builtin short name).
 #
 # Usage:
@@ -23,11 +25,9 @@ transformations:
     mapping:
       Image: ImageFileName
       CommandLine: CommandLine
-      ParentImage: ParentImageFileName
-      ParentCommandLine: ParentCommandLine
+      ParentImage: ParentBaseFileName
       ParentProcessId: ParentProcessId
       ProcessId: RawProcessId
-      User: UserName
     rule_conditions:
       - type: logsource
         product: windows
@@ -52,7 +52,7 @@ transformations:
       DestinationPort: RemotePort
       DestinationHostname: DomainName
       Image: ImageFileName
-      ProcessId: ProcessId
+      ProcessId: ContextProcessId
       User: UserName
     rule_conditions:
       - type: logsource
@@ -83,7 +83,10 @@ transformations:
     type: add_condition
     prepend: true
     conditions:
-      event_simpleName: PeFileWritten
+      event_simpleName:
+        - PeFileWritten
+        - FileWritten
+        - NewFileWritten
     rule_conditions:
       - type: logsource
         product: windows
@@ -111,7 +114,7 @@ transformations:
   - id: falcon_image_load_fields
     type: field_name_mapping
     mapping:
-      ImageLoaded: FilePath
+      ImageLoaded: FileName
       Image: ImageFileName
     rule_conditions:
       - type: logsource

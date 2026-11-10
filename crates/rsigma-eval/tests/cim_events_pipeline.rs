@@ -30,8 +30,8 @@ detection:
     condition: selection
 "#;
     let event_val = json!({
-        "process": "/usr/bin/bash",
-        "process_cmdline": "bash -c id",
+        "process_path": "/usr/bin/bash",
+        "process": "bash -c id",
         "user": "alice"
     });
     let event = JsonEvent::borrow(&event_val);
@@ -129,7 +129,10 @@ detection:
         ImageLoaded: 'C:\\Windows\\System32\\evil.dll'
     condition: selection
 "#;
-    let image_val = json!({"file_path": "C:\\Windows\\System32\\evil.dll"});
+    let image_val = json!({
+        "loaded_file": "C:\\Windows\\System32\\evil.dll",
+        "process_path": "C:\\Windows\\System32\\app.exe"
+    });
     let image_event = JsonEvent::borrow(&image_val);
     let mut engine = Engine::new();
     engine

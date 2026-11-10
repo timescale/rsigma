@@ -5,8 +5,8 @@
 # Resolution (DNS). Aligned with the five portable Sigma categories covered by
 # `ecs_linux` (process, network, file, image load, DNS).
 #
-# Provenance: Splunk CIM 5.x Endpoint and Network datamodels
-# (https://docs.splunk.com/Documentation/CIM/latest/User/).
+# Provenance: Splunk CIM Endpoint.Processes and related datamodels
+# (https://help.splunk.com/en/data-management/common-information-model/).
 #
 # Path-only: load by file path (not a builtin short name).
 #
@@ -20,11 +20,12 @@ transformations:
   - id: cim_endpoint_process_creation_fields
     type: field_name_mapping
     mapping:
-      CommandLine: process_cmdline
-      Image: process
+      CommandLine: process
+      Image: process_path
       ProcessId: process_id
       User: user
-      ParentImage: parent_process
+      ParentCommandLine: parent_process
+      ParentImage: parent_process_path
       ParentProcessId: parent_process_id
     rule_conditions:
       - type: logsource
@@ -50,7 +51,7 @@ transformations:
     type: field_name_mapping
     mapping:
       TargetFilename: file_path
-      Image: process
+      Image: process_path
       User: user
     rule_conditions:
       - type: logsource
@@ -59,8 +60,8 @@ transformations:
   - id: cim_endpoint_image_load_fields
     type: field_name_mapping
     mapping:
-      ImageLoaded: file_path
-      Image: process
+      ImageLoaded: loaded_file
+      Image: process_path
       User: user
     rule_conditions:
       - type: logsource
@@ -70,8 +71,6 @@ transformations:
     type: field_name_mapping
     mapping:
       QueryName: query
-      Image: process
-      User: user
     rule_conditions:
       - type: logsource
         category: dns_query

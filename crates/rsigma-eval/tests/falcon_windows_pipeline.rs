@@ -17,8 +17,7 @@ fn falcon_process_event() -> serde_json::Value {
         "event_platform": "Win",
         "ImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\cmd.exe",
         "CommandLine": "cmd.exe /c whoami",
-        "ParentImageFileName": "\\Device\\HarddiskVolume3\\Windows\\explorer.exe",
-        "UserName": "jdoe",
+        "ParentBaseFileName": "explorer.exe",
         "RawProcessId": 4892_u64
     })
 }
@@ -35,7 +34,7 @@ fn falcon_network_event() -> serde_json::Value {
         "RemotePort": 443,
         "DomainName": "api.example.com",
         "ImageFileName": "\\Device\\HarddiskVolume3\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        "ProcessId": "4892"
+        "ContextProcessId": "4892"
     })
 }
 
@@ -59,7 +58,7 @@ detection:
     selection:
         Image|contains: 'System32\\cmd.exe'
         CommandLine|contains: 'whoami'
-        User: 'jdoe'
+        ParentImage: 'explorer.exe'
     condition: selection
 "#;
     let pipeline = parse_pipeline(FALCON_PIPELINE).expect("parse pipeline");
@@ -183,6 +182,21 @@ detection:
         .unwrap();
     assert_eq!(engine.evaluate(&file_event).len(), 1);
 
+    let script_val = json!({
+        "event_simpleName": "FileWritten",
+        "event_platform": "Win",
+        "TargetFileName": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\Temp\\\\evil.ps1"
+    });
+    let script_event = JsonEvent::borrow(&script_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(
+            &parse_sigma_yaml(file_rule).unwrap(),
+            std::slice::from_ref(&pipeline),
+        )
+        .unwrap();
+    assert_eq!(engine.evaluate(&script_event).len(), 1);
+
     let dns_rule = r#"
 title: DNS
 id: 00000000-0000-0000-0000-0000000000f6
@@ -223,7 +237,7 @@ detection:
     let image_val = json!({
         "event_simpleName": "ImageLoadRollup2",
         "event_platform": "Win",
-        "FilePath": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\System32\\\\evil.dll",
+        "FileName": "\\\\Device\\\\HarddiskVolume2\\\\Windows\\\\System32\\\\evil.dll",
         "ImageFileName": "\\\\Device\\\\HarddiskVolume2\\\\Program Files\\\\app\\\\app.exe"
     });
     let image_event = JsonEvent::borrow(&image_val);

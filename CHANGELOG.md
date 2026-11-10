@@ -12,7 +12,7 @@ Adds path-only eval rule-rewrite pipelines for Splunk CIM, OCSF live JSON, and C
 - **OCSF eval:** [`ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml) on live input (not sink `?format=ocsf`, not [`ocsf_postgres.yml`](crates/rsigma-convert/pipelines/ocsf_postgres.yml)).
 - **Falcon:** [`falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml) for Windows sensor JSON, including `event_simpleName` gates.
 
-Scope and exclusions: [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md). Field tables: [Builtin Pipelines](docs/content/reference/builtin-pipelines.md). Closes [#330](https://github.com/timescale/rsigma/issues/330).
+Scope and exclusions: [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md). Field tables: [Builtin Pipelines](docs/content/reference/builtin-pipelines.md). Relates to [#330](https://github.com/timescale/rsigma/issues/330).
 
 Registers `ecs_linux` in the embedded pipeline registry so `-p ecs_linux` resolves without a YAML file path. Docs and MCP list four builtins (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`); `gcp_audit` remains path-only.
 

@@ -184,11 +184,11 @@ Priority: `20`. Source: [`pipelines/cim_events.yml`](https://github.com/timescal
 
 | Category | Sigma fields to CIM fields |
 |----------|---------------------------|
-| `process_creation` | `CommandLine` to `process_cmdline`, `Image` to `process`, `ProcessId` to `process_id`, `User` to `user`, `ParentImage` to `parent_process`, `ParentProcessId` to `parent_process_id` |
+| `process_creation` | `CommandLine` to `process`, `Image` to `process_path`, `ProcessId` to `process_id`, `User` to `user`, `ParentCommandLine` to `parent_process`, `ParentImage` to `parent_process_path`, `ParentProcessId` to `parent_process_id` |
 | `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
-| `file_event` | `TargetFilename` to `file_path`, `Image` to `process`, `User` to `user` |
-| `image_load` | `ImageLoaded` to `file_path`, `Image` to `process`, `User` to `user` |
-| `dns_query` | `QueryName` to `query`, `Image` to `process`, `User` to `user` |
+| `file_event` | `TargetFilename` to `file_path`, `Image` to `process_path`, `User` to `user` |
+| `image_load` | `ImageLoaded` to `loaded_file`, `Image` to `process_path`, `User` to `user` |
+| `dns_query` | `QueryName` to `query` |
 
 ## `ocsf_events` (path-only)
 
@@ -205,10 +205,10 @@ Priority: `20`. Source: [`pipelines/ocsf_events.yml`](https://github.com/timesca
 | Category | Sigma fields to OCSF paths |
 |----------|---------------------------|
 | `process_creation` | `CommandLine` to `process.cmd_line`, `Image` to `process.file.path`, `ProcessId` to `process.pid`, `User` to `process.user.name`, `ParentCommandLine` to `process.parent_process.cmd_line`, `ParentImage` to `process.parent_process.file.path`, `ParentProcessId` to `process.parent_process.pid` |
-| `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `process.file.path`, `User` to `process.user.name` |
-| `file_event` | `TargetFilename` to `file.path`, `Image` to `process.file.path`, `User` to `process.user.name` |
-| `image_load` | `ImageLoaded` to `module.path`, `Image` to `process.file.path`, `User` to `process.user.name` |
-| `dns_query` | `QueryName` to `query.hostname`, `Image` to `process.file.path`, `User` to `process.user.name` |
+| `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `file_event` | `TargetFilename` to `file.path`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `image_load` | `ImageLoaded` to `module.file.path`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `dns_query` | `QueryName` to `query.hostname`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
 
 ## `falcon_windows` (path-only)
 
@@ -224,11 +224,11 @@ Priority: `20`. Source: [`pipelines/falcon_windows.yml`](https://github.com/time
 
 | Category | Sigma fields to Falcon fields |
 |----------|------------------------------|
-| `process_creation` | `Image` to `ImageFileName`, `CommandLine`, `ParentImage` to `ParentImageFileName`, `ParentCommandLine`, `ParentProcessId`, `ProcessId` to `RawProcessId`, `User` to `UserName`; adds `event_simpleName: ProcessRollup2` |
-| `network_connection` | `SourceIp` to `LocalAddressIP4`, `SourcePort` to `LocalPort`, `DestinationIp` to `RemoteAddressIP4`, `DestinationPort` to `RemotePort`, `DestinationHostname` to `DomainName`, `Image` to `ImageFileName`, `ProcessId`, `User` to `UserName`; adds `event_simpleName: NetworkConnectIP4` |
-| `file_event` | `TargetFilename` to `TargetFileName`, `User` to `UserName`; adds `event_simpleName: PeFileWritten` |
+| `process_creation` | `Image` to `ImageFileName`, `CommandLine`, `ParentImage` to `ParentBaseFileName` (file name, not full path), `ParentProcessId`, `ProcessId` to `RawProcessId`; adds `event_simpleName: ProcessRollup2`. `UserName` is not on raw ProcessRollup2 FDR records. |
+| `network_connection` | `SourceIp` to `LocalAddressIP4`, `SourcePort` to `LocalPort`, `DestinationIp` to `RemoteAddressIP4`, `DestinationPort` to `RemotePort`, `DestinationHostname` to `DomainName`, `Image` to `ImageFileName`, `ProcessId` to `ContextProcessId`, `User` to `UserName`; adds `event_simpleName: NetworkConnectIP4` |
+| `file_event` | `TargetFilename` to `TargetFileName`, `User` to `UserName`; adds `event_simpleName` in `PeFileWritten`, `FileWritten`, or `NewFileWritten` |
 | `dns_query` | `QueryName` to `DomainName`; adds `event_simpleName: DnsRequest` |
-| `image_load` | `ImageLoaded` to `FilePath`, `Image` to `ImageFileName`; adds `event_simpleName: ImageLoadRollup2` |
+| `image_load` | `ImageLoaded` to `FileName`, `Image` to `ImageFileName`; adds `event_simpleName: ImageLoadRollup2` |
 
 Falcon macOS/Linux shapes and `NetworkConnectIP6` are outside this file; see [Canonicalizing Pipelines](canonicalizing-pipelines.md). {{ added "unreleased" }}
 
