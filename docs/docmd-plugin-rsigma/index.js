@@ -774,6 +774,32 @@ function injectSocialMeta(html) {
 }
 
 /**
+ * docmd builds the `BreadcrumbList` structured data from the sidebar, so a
+ * navigation group without a page of its own (`Reference`, `rule`, `Deploy and
+ * Detect`) becomes a list item with a name and no `item` URL. Google rejects
+ * the whole trail when any item but the last lacks one, so drop those items
+ * and renumber the rest.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function linkBreadcrumbStructuredData(html) {
+  return html.replace(
+    /(<script type="application\/ld\+json">\n)(\{"@context":"https:\/\/schema\.org","@type":"BreadcrumbList".*\})(\n<\/script>)/,
+    (match, open, json, close) => {
+      const data = JSON.parse(json);
+      const items = data.itemListElement;
+      const linked = items.filter((item, i) => item.item || i === items.length - 1);
+      if (linked.length === items.length) {
+        return match;
+      }
+      data.itemListElement = linked.map((item, i) => ({ ...item, position: i + 1 }));
+      return `${open}${JSON.stringify(data).replaceAll("<", "\\u003c")}${close}`;
+    },
+  );
+}
+
+/**
  * Describe RSigma itself on the home page with schema.org `SoftwareApplication`
  * data, using the version and license from `Cargo.toml`.
  *
@@ -958,6 +984,7 @@ export default {
       next = injectAnalyticsConsentMode(next);
       next = injectIconLinks(next);
       next = injectSocialMeta(next);
+      next = linkBreadcrumbStructuredData(next);
       if (file === homeHtml) {
         next = injectSoftwareStructuredData(next, homePage?.frontmatter?.description ?? "");
       }
