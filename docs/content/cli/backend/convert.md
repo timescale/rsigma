@@ -44,7 +44,7 @@ Global `--output-format json` wraps queries in a `{target, format, queries:[…]
 
 | Flag | Description |
 |------|-------------|
-| `-p, --pipeline <PIPELINE>` | Processing pipeline(s) (repeatable). Builtin names (`ecs_windows`, `fibratus_windows`, `sysmon`) or YAML file paths. |
+| `-p, --pipeline <PIPELINE>` | Processing pipeline(s) (repeatable). Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. |
 | `--without-pipeline` | Skip the pipeline-requirement check that some backends enforce. Use when you know the rules already match your target schema. |
 
 ### Backend options and error handling

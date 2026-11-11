@@ -1,0 +1,77 @@
+# OCSF field mapping for live JSON events (eval / daemon rule rewrite).
+#
+# Maps generic Sigma / Sysmon-style field names to OCSF attribute paths on
+# normalized event documents (nested JSON as producers emit them). This is for
+# matching rules against OCSF-shaped **input** events with `-p`; it does not
+# emit OCSF Detection Finding (class 2004) on output (`?format=ocsf`), and it
+# is not `crates/rsigma-convert/pipelines/ocsf_postgres.yml` (SQL conversion).
+#
+# Provenance: OCSF schema 1.3 (class_uid 1007 Process, 4001 Network, 1001 File,
+# 1005 Module, 4003 DNS) attribute names (https://schema.ocsf.io/).
+#
+# Path-only: load by file path (not a builtin short name).
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ocsf_events.yml -e @event.json
+
+name: ocsf_events
+priority: 20
+
+transformations:
+  - id: ocsf_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: process.cmd_line
+      Image: process.file.path
+      ProcessId: process.pid
+      User: process.user.name
+      ParentCommandLine: process.parent_process.cmd_line
+      ParentImage: process.parent_process.file.path
+      ParentProcessId: process.parent_process.pid
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+
+  - id: ocsf_network_connection_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: src_endpoint.ip
+      SourcePort: src_endpoint.port
+      DestinationIp: dst_endpoint.ip
+      DestinationPort: dst_endpoint.port
+      Protocol: connection_info.protocol_name
+      Image: actor.process.file.path
+      User: actor.user.name
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  - id: ocsf_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file.path
+      Image: actor.process.file.path
+      User: actor.user.name
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  - id: ocsf_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: module.file.path
+      Image: actor.process.file.path
+      User: actor.user.name
+    rule_conditions:
+      - type: logsource
+        category: image_load
+
+  - id: ocsf_dns_query_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: query.hostname
+      Image: actor.process.file.path
+      User: actor.user.name
+    rule_conditions:
+      - type: logsource
+        category: dns_query

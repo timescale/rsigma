@@ -4,10 +4,13 @@ description: "Reference for the processing pipelines built into RSigma, includin
 
 # Builtin Pipelines
 
-RSigma embeds three ready-to-use processing pipelines in the binary so common Windows deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
+For issue [#330](https://github.com/timescale/rsigma/issues/330) canonicalizing scope (ECS, CIM, OCSF eval, Falcon), see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
+
+RSigma embeds four ready-to-use processing pipelines in the binary so common Windows and Linux ECS deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
 
 ```bash
 rsigma engine eval   -r rules/ -p ecs_windows -e @events.ndjson
+rsigma engine eval   -r rules/ -p ecs_linux -e @linux-events.ndjson
 rsigma engine daemon -r rules/ -p sysmon
 rsigma backend convert rules/ -t fibratus -p fibratus_windows
 rsigma backend convert rules/ -t postgres -p ecs_windows
@@ -15,7 +18,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped examples include [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip) and [`ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml) (Sigma to ECS field mapping for `product: linux`, same categories as covered in that file; not a builtin `-p ecs_linux` name). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -50,6 +53,32 @@ Each transformation is gated by `rule_conditions: logsource.category` so only th
 
 `ecs_windows` assumes the agent has already flattened the Windows events into ECS shape. It does NOT flatten raw `.evtx` records (those are nested under `Event.System.*` and `Event.EventData.*`). For raw `.evtx` files, use dotted-path rules or write a custom flattening pipeline. See [Input Formats: EVTX](../guide/input-formats.md#evtx-windows-event-log-feature-gated).
 
+## `ecs_linux`
+
+Maps Sigma field names to [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) for `product: linux` rules when your events are already ECS-shaped (for example Filebeat or Elastic Agent on Linux). Aligned with the overlapping blocks in [`ecs_windows`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_windows.yml).
+
+```bash
+rsigma engine eval -r rules/ -p ecs_linux -e @linux-events.ndjson
+```
+
+Priority: `20`. Source: [`pipelines/ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml).
+
+### What it maps
+
+Each transformation is gated by `rule_conditions` with `product: linux` and a `category`. Only the rows below are in the file. Windows-only optional fields from `ecs_windows` (for example `IntegrityLevel`, `Hashes`, `QueryStatus` to `sysmon.dns.status`) are not mapped on Linux by design.
+
+| Category | Sigma fields to ECS fields |
+|----------|---------------------------|
+| `process_creation` | `CommandLine` to `process.command_line`, `Image` to `process.executable`, `OriginalFileName` to `process.pe.original_file_name`, `CurrentDirectory` to `process.working_directory`, `ProcessGuid` to `process.entity_id`, `ProcessId` to `process.pid`, `ParentProcessGuid` to `process.parent.entity_id`, `ParentProcessId` to `process.parent.pid`, `ParentImage` to `process.parent.executable`, `ParentCommandLine` to `process.parent.command_line`, `User` to `user.name`, `Company` to `process.pe.company`, `Description` to `process.pe.description`, `Product` to `process.pe.product`, `FileVersion` to `process.pe.file_version` |
+| `network_connection` | `SourceIp` to `source.ip`, `SourceHostname` to `source.domain`, `SourcePort` to `source.port`, `DestinationIp` to `destination.ip`, `DestinationHostname` to `destination.domain`, `DestinationPort` to `destination.port`, `DestinationPortName` to `network.protocol`, `Protocol` to `network.transport`, `Image` to `process.executable`, `User` to `user.name`, `ProcessId` to `process.pid` |
+| `image_load` | `ImageLoaded` to `file.path`, `Image` to `process.executable`, `Signed` / `SignatureStatus` / `Signature` to `file.code_signature.*`, `Imphash` to `file.pe.imphash`, `Company` / `Description` / `Product` / `FileVersion` / `OriginalFileName` to `file.pe.*` |
+| `file_event` | `TargetFilename` to `file.path`, `Image` to `process.executable`, `User` to `user.name` |
+| `dns_query` | `QueryName` to `dns.question.name`, `Image` to `process.executable` |
+
+### Pair with the right input
+
+Use with JSON or NDJSON where fields match ECS paths. This pipeline does not flatten raw audit envelopes; normalize first or extend the YAML for your shape.
+
 ## `fibratus_windows`
 
 Maps Sigma Windows logsource categories and PascalCase fields onto Fibratus kernel-event names and the lowercase-dotted Fibratus vocabulary (`ps.exe`, `ps.cmdline`, `file.path`, `net.dip`, …). Use it when converting Windows rules to Fibratus YAML so the output matches upstream Fibratus rules-library style.
@@ -67,32 +96,6 @@ Priority: `20`. Source: [`pipelines/fibratus_windows.yml`](https://github.com/ti
 - Field notes follow Fibratus 3.0.0: on `CreateProcess`, `ps.*` describes the created (child) process and `ps.parent.*` the parent; cross-process targets use `evt.arg[...]`.
 
 Pair with [`backend convert -t fibratus`](../cli/backend/convert.md) and the [Fibratus backend reference](backends/fibratus.md).
-
-## `ecs_linux` (path-only)
-
-Maps Sigma field names to [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) for `product: linux` rules when your events are already ECS-shaped (for example Filebeat or Elastic Agent on Linux). Aligned with the overlapping blocks in [`ecs_windows`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_windows.yml). This file ships in the repository only: there is no builtin `-p ecs_linux`; pass the path.
-
-```bash
-rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/ecs_linux.yml -e @linux-events.ndjson
-```
-
-Priority: `20`. Source: [`pipelines/ecs_linux.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ecs_linux.yml).
-
-### What it maps
-
-Each transformation is gated by `rule_conditions` with `product: linux` and a `category`. Only the rows below are in the file; Windows-only fields from `ecs_windows` (for example `IntegrityLevel`, `Hashes`, `QueryStatus` to `sysmon.dns.status`) are omitted until a Linux fixture backs them.
-
-| Category | Sigma fields to ECS fields |
-|----------|---------------------------|
-| `process_creation` | `CommandLine` to `process.command_line`, `Image` to `process.executable`, `OriginalFileName` to `process.pe.original_file_name`, `CurrentDirectory` to `process.working_directory`, `ProcessGuid` to `process.entity_id`, `ProcessId` to `process.pid`, `ParentProcessGuid` to `process.parent.entity_id`, `ParentProcessId` to `process.parent.pid`, `ParentImage` to `process.parent.executable`, `ParentCommandLine` to `process.parent.command_line`, `User` to `user.name`, `Company` to `process.pe.company`, `Description` to `process.pe.description`, `Product` to `process.pe.product`, `FileVersion` to `process.pe.file_version` |
-| `network_connection` | `SourceIp` to `source.ip`, `SourceHostname` to `source.domain`, `SourcePort` to `source.port`, `DestinationIp` to `destination.ip`, `DestinationHostname` to `destination.domain`, `DestinationPort` to `destination.port`, `DestinationPortName` to `network.protocol`, `Protocol` to `network.transport`, `Image` to `process.executable`, `User` to `user.name`, `ProcessId` to `process.pid` |
-| `image_load` | `ImageLoaded` to `file.path`, `Image` to `process.executable`, `Signed` / `SignatureStatus` / `Signature` to `file.code_signature.*`, `Imphash` to `file.pe.imphash`, `Company` / `Description` / `Product` / `FileVersion` / `OriginalFileName` to `file.pe.*` |
-| `file_event` | `TargetFilename` to `file.path`, `Image` to `process.executable`, `User` to `user.name` |
-| `dns_query` | `QueryName` to `dns.question.name`, `Image` to `process.executable` |
-
-### Pair with the right input
-
-Use with JSON or NDJSON where fields match ECS paths. This pipeline does not flatten raw audit envelopes; normalize first or extend the YAML for your shape. {{ added "unreleased" }}
 
 ## `sysmon`
 
@@ -164,12 +167,74 @@ rsigma engine daemon -r rules/ \
 
 `sysmon` (priority 10) adds the EventID conditions first; `ecs_windows` (priority 20) renames the field names to ECS; finally the org overrides at, say, priority 50 add per-tenant table routing.
 
-On Linux ECS events (no Sysmon routing), load the path pipeline directly:
+On Linux ECS events (no Sysmon routing), chain the Linux ECS builtin:
 
 ```bash
 rsigma engine daemon -r rules/ \
-    -p crates/rsigma-eval/pipelines/ecs_linux.yml
+    -p ecs_linux
 ```
+
+## `cim_events` (path-only)
+
+Maps Sysmon-style Sigma field names to [Splunk CIM](https://docs.splunk.com/Documentation/CIM/latest/User/) fields on normalized events (Endpoint, Network Traffic, Network Resolution). Covers the same five portable categories as `ecs_linux`. {{ added "unreleased" }}
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/cim_events.yml \
+    -e '{"dest_ip":"93.184.216.34","dest_port":443,"transport":"tcp"}'
+```
+
+Priority: `20`. Source: [`pipelines/cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml).
+
+| Category | Sigma fields to CIM fields |
+|----------|---------------------------|
+| `process_creation` | `CommandLine` to `process`, `Image` to `process_path`, `ProcessId` to `process_id`, `User` to `user`, `ParentCommandLine` to `parent_process`, `ParentImage` to `parent_process_path`, `ParentProcessId` to `parent_process_id` |
+| `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
+| `file_event` | `TargetFilename` to `file_path`, `Image` to `image`, `User` to `user` |
+| `image_load` | `ImageLoaded` to `loaded_file`, `Image` to `process_path`, `User` to `user` |
+| `dns_query` | `QueryName` to `query` |
+
+## `ocsf_events` (path-only)
+
+Maps Sysmon-style Sigma fields to [OCSF](https://schema.ocsf.io/) attribute paths on **live input JSON** for the five portable categories. Use with events that already carry OCSF nesting (`process.cmd_line`, `src_endpoint.ip`, and similar). This pipeline rewrites **rules** at evaluation time; it does not serialize daemon output as OCSF (`?format=ocsf`), and it is not the Postgres conversion YAML under `rsigma-convert/pipelines/ocsf_postgres.yml`.
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/ocsf_events.yml \
+    -e '{"class_uid":1007,"process":{"cmd_line":"whoami","file":{"path":"/bin/bash"}}}'
+```
+
+Priority: `20`. Source: [`pipelines/ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml).
+
+| Category | Sigma fields to OCSF paths |
+|----------|---------------------------|
+| `process_creation` | `CommandLine` to `process.cmd_line`, `Image` to `process.file.path`, `ProcessId` to `process.pid`, `User` to `process.user.name`, `ParentCommandLine` to `process.parent_process.cmd_line`, `ParentImage` to `process.parent_process.file.path`, `ParentProcessId` to `process.parent_process.pid` |
+| `network_connection` | `SourceIp` to `src_endpoint.ip`, `SourcePort` to `src_endpoint.port`, `DestinationIp` to `dst_endpoint.ip`, `DestinationPort` to `dst_endpoint.port`, `Protocol` to `connection_info.protocol_name`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `file_event` | `TargetFilename` to `file.path`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `image_load` | `ImageLoaded` to `module.file.path`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+| `dns_query` | `QueryName` to `query.hostname`, `Image` to `actor.process.file.path`, `User` to `actor.user.name` |
+
+## `falcon_windows` (path-only)
+
+Maps Sysmon-style Sigma fields to CrowdStrike Falcon **sensor JSON** for Windows rules in the five portable categories. Injects `event_simpleName` discriminators (`ProcessRollup2`, `NetworkConnectIP4`) and renames fields to Falcon export names (`ImageFileName`, `RemoteAddressIP4`, ...). Use with FDR or NG-SIEM JSON lines, not with `backend convert -t crowdstrike` delegation alone (that path uses pySigma, not this eval rewrite).
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/falcon_windows.yml \
+    -e '{"event_simpleName":"ProcessRollup2","ImageFileName":"...\\\\cmd.exe","CommandLine":"whoami"}'
+```
+
+Priority: `20`. Source: [`pipelines/falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml).
+
+| Category | Sigma fields to Falcon fields |
+|----------|------------------------------|
+| `process_creation` | `Image` to `ImageFileName`, `CommandLine`, `ParentImage` to `ParentBaseFileName` (file name, not full path), `ParentProcessId`, `ProcessId` to `RawProcessId`; adds `event_simpleName: ProcessRollup2`. `UserName` is not on raw ProcessRollup2 FDR records. |
+| `network_connection` | `SourceIp` to `LocalAddressIP4`, `SourcePort` to `LocalPort`, `DestinationIp` to `RemoteAddressIP4`, `DestinationPort` to `RemotePort`, `DestinationHostname` to `DomainName`, `Image` to `ImageFileName`, `ProcessId` to `ContextProcessId`, `User` to `UserName`; adds `event_simpleName: NetworkConnectIP4` |
+| `file_event` | `TargetFilename` to `TargetFileName`, `User` to `UserName`; adds `event_simpleName` in `PeFileWritten`, `FileWritten`, or `NewFileWritten` |
+| `dns_query` | `QueryName` to `DomainName`; adds `event_simpleName: DnsRequest` |
+| `image_load` | `ImageLoaded` to `FileName`, `Image` to `ImageFileName`; adds `event_simpleName: ImageLoadRollup2` |
+
+Falcon macOS/Linux shapes and `NetworkConnectIP6` are outside this file; see [Canonicalizing Pipelines](canonicalizing-pipelines.md). {{ added "unreleased" }}
 
 ## See also
 

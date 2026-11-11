@@ -28,7 +28,7 @@ It consumes event data, so it lives under `engine` (the `rule` group stays stati
 |------|---------|-------------|
 | `-r, --rules <PATH>...` | required | Sigma rule file(s) or director(ies) to explain. Repeatable. |
 | `-e, --event <JSON\|@FILE\|->` | stdin | The event to explain against: inline JSON, `@path` to a JSON file, or `-` (or omitted) to read a single JSON object from stdin. |
-| `-p, --pipeline <PATH\|NAME>` | none | Processing pipeline(s) to apply before evaluation. Builtin names (`ecs_windows`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable, applied in priority order. |
+| `-p, --pipeline <PATH\|NAME>` | none | Processing pipeline(s) to apply before evaluation. Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable, applied in priority order. |
 | `--rule-id <ID>` | unset | Only explain the rule with this id (falling back to an exact title). |
 | `--show-pipeline` | off | Print the pipeline transformation summary before each human-tree trace. No effect without `-p`, and ignored for `json`/`ndjson`/`csv`/`tsv` output. |
 

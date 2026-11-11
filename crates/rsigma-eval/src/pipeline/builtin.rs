@@ -3,12 +3,14 @@ use super::parsing::parse_pipeline;
 use crate::error::Result;
 
 const ECS_WINDOWS_YAML: &str = include_str!("../../pipelines/ecs_windows.yml");
+const ECS_LINUX_YAML: &str = include_str!("../../pipelines/ecs_linux.yml");
 const FIBRATUS_WINDOWS_YAML: &str = include_str!("../../pipelines/fibratus_windows.yml");
 const SYSMON_YAML: &str = include_str!("../../pipelines/sysmon.yml");
 
 /// Builtin pipeline entries: (name, yaml_content).
 const BUILTIN_PIPELINES: &[(&str, &str)] = &[
     ("ecs_windows", ECS_WINDOWS_YAML),
+    ("ecs_linux", ECS_LINUX_YAML),
     ("fibratus_windows", FIBRATUS_WINDOWS_YAML),
     ("sysmon", SYSMON_YAML),
 ];
@@ -26,7 +28,7 @@ pub fn resolve_builtin(name: &str) -> Option<Result<Pipeline>> {
 
 /// Return the list of available builtin pipeline names.
 pub fn builtin_names() -> &'static [&'static str] {
-    &["ecs_windows", "fibratus_windows", "sysmon"]
+    &["ecs_windows", "ecs_linux", "fibratus_windows", "sysmon"]
 }
 
 #[cfg(test)]
@@ -60,6 +62,14 @@ mod tests {
     }
 
     #[test]
+    fn ecs_linux_parses_successfully() {
+        let pipeline = resolve_builtin("ecs_linux").unwrap().unwrap();
+        assert_eq!(pipeline.name, "ecs_linux");
+        assert_eq!(pipeline.priority, 20);
+        assert!(!pipeline.transformations.is_empty());
+    }
+
+    #[test]
     fn unknown_name_returns_none() {
         assert!(resolve_builtin("nonexistent").is_none());
     }
@@ -68,6 +78,7 @@ mod tests {
     fn builtin_names_lists_all() {
         let names = builtin_names();
         assert!(names.contains(&"ecs_windows"));
+        assert!(names.contains(&"ecs_linux"));
         assert!(names.contains(&"fibratus_windows"));
         assert!(names.contains(&"sysmon"));
     }

@@ -52,7 +52,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 
 | Flag | Description |
 |------|-------------|
-| `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Accepts the builtin names (`ecs_windows`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable; applied in priority order. |
+| `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Accepts the builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable; applied in priority order. |
 
 Dynamic pipeline sources are not resolved by `engine eval`. Dynamic references stay unresolved and a stderr note points you at [`pipeline resolve`](../pipeline/resolve.md) or [`engine daemon`](daemon.md).
 
@@ -222,7 +222,7 @@ rsigma engine eval -r rules/ --suppress 5m --action reset \
 
 - [Evaluating Rules](../../guide/evaluating-rules.md) for the narrative version with event-extraction patterns and correlation walkthroughs.
 - [Input Formats](../../guide/input-formats.md) for JSON, syslog, logfmt, CEF, EVTX, OTLP, plain text, and auto-detect.
-- [Processing Pipelines](../../guide/processing-pipelines.md) for `-p` semantics and the builtin pipelines (`ecs_windows`, `fibratus_windows`, `sysmon`).
+- [Processing Pipelines](../../guide/processing-pipelines.md) for `-p` semantics and the builtin pipelines (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`).
 - [Performance Tuning](../../guide/performance-tuning.md) for `--bloom-prefilter` and `--cross-rule-ac`.
 - [CI/CD](../../guide/ci-cd.md) for `--fail-on-detection` patterns.
 - [Schema Routing](../../guide/schema-routing.md) and [Logsource-Aware Evaluation](../../guide/logsource-routing.md) for the routing flags above.

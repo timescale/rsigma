@@ -153,12 +153,12 @@ otelcol.receiver.filelog "azure" {
 
 GCP Cloud Audit logs are `LogEntry` objects whose `protoPayload.@type` equals `type.googleapis.com/google.cloud.audit.AuditLog`. The built-in signature matches on the `@type` value alone (specificity 95).
 
-SigmaHQ's `gcp.audit` rules reference fields under a `data.` prefix (for example `data.protoPayload.serviceName`), while a native Cloud Logging event carries them without it (`protoPayload.serviceName`). Use the builtin `gcp_audit` pipeline to strip the `data.` prefix from rule field names so those rules match native events.
+SigmaHQ's `gcp.audit` rules reference fields under a `data.` prefix (for example `data.protoPayload.serviceName`), while a native Cloud Logging event carries them without it (`protoPayload.serviceName`). Use the shipped [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) pipeline (path-only, not a builtin name) to strip the `data.` prefix from rule field names so those rules match native events.
 
 For a GCP-only feed, apply the pipeline globally (schema routing is optional):
 
 ```bash
-rsigma engine daemon -r rules/ -p gcp_audit --input http --api-addr 127.0.0.1:8952
+rsigma engine daemon -r rules/ -p crates/rsigma-eval/pipelines/gcp_audit.yml --input http --api-addr 127.0.0.1:8952
 ```
 
 On a mixed stream with `--schema-routing`, bind the pipeline to the `gcp_audit` schema in `--schema-config` instead of relying on `-p` alone (see [A combined example](cloud-collection-recipes.md#a-combined-example)). With schema routing enabled and no bindings, every event falls through to `default_pipelines`, and a bare `-p` is not applied per schema.

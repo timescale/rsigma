@@ -320,6 +320,7 @@ export default {
         { title: "Keywords and Conditions", path: "/reference/conditions" },
         { title: "Custom Attributes", path: "/reference/custom-attributes" },
         { title: "Builtin Pipelines", path: "/reference/builtin-pipelines" },
+        { title: "Canonicalizing Pipelines", path: "/reference/canonicalizing-pipelines" },
         { title: "Dynamic Pipeline Sources", path: "/reference/dynamic-sources" },
         { title: "Security Hardening", path: "/reference/security" },
         { title: "WASM ABI", path: "/reference/wasm-abi" },

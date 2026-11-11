@@ -39,7 +39,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_builtin_pipelines_lists_three() {
+    fn list_builtin_pipelines_lists_all() {
         let v = run_list_builtin_pipelines();
         let names: Vec<&str> = v["pipelines"]
             .as_array()
@@ -48,6 +48,7 @@ mod tests {
             .map(|p| p["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"ecs_windows"));
+        assert!(names.contains(&"ecs_linux"));
         assert!(names.contains(&"fibratus_windows"));
         assert!(names.contains(&"sysmon"));
     }

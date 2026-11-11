@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Canonicalizing pipelines (issue #330) (#675)
+
+Adds path-only eval rule-rewrite pipelines for Splunk CIM, OCSF live JSON, and CrowdStrike Falcon Windows. The portable Sigma categories `process_creation`, `network_connection`, `file_event`, `image_load`, and `dns_query` are implemented for each target. Integration tests live under `crates/rsigma-eval/tests/*_pipeline.rs` with per-category positives and negative controls without `-p`.
+
+- **CIM:** [`cim_events.yml`](crates/rsigma-eval/pipelines/cim_events.yml) (Splunk CIM; replaces the earlier network-only filename).
+- **OCSF eval:** [`ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml) on live input (not sink `?format=ocsf`, not [`ocsf_postgres.yml`](crates/rsigma-convert/pipelines/ocsf_postgres.yml)).
+- **Falcon:** [`falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml) for Windows sensor JSON, including `event_simpleName` gates.
+
+Scope and exclusions: [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md). Field tables: [Builtin Pipelines](docs/content/reference/builtin-pipelines.md). Relates to [#330](https://github.com/timescale/rsigma/issues/330).
+
+Registers `ecs_linux` in the embedded pipeline registry so `-p ecs_linux` resolves without a YAML file path. Docs and MCP list four builtins (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`); `gcp_audit` remains path-only.
+
 ### Docs site breadcrumb structured data passes Google validation (#677)
 
 Google Search Console rejected the breadcrumb structured data on most rsigma.io pages with `Missing field "item"`. docmd builds the trail from the sidebar, so a navigation group without a page of its own, such as Reference, rule, or Deploy and Detect, became a breadcrumb entry with no URL. The docs plugin now drops those entries and renumbers the rest, so every entry links to a page. The visible sidebar and breadcrumbs are unchanged.
