@@ -240,7 +240,7 @@ Formal record of engineering choices for the Pattern Engine. Full text: [crate R
 
 | | |
 | --- | --- |
-| **Status** | Accepted (PR #296) |
+| **Status** | Accepted |
 | **Applies to** | `IndicatorBuilder`, `IndicatorBuilderError` |
 
 **Context.** Indicators need STIX pattern parse/type-check (when `pattern` is enabled) plus `Indicator::validate()`. Construction paths are JSON deserialize and `IndicatorBuilder`.
@@ -388,11 +388,11 @@ Formal record of wire-parse engineering choices. Full text: [crate README: Data 
 
 | | |
 | --- | --- |
-| **Status** | Accepted (#327) |
+| **Status** | Accepted |
 | **Applies to** | `serde` feature (default), `domain-name`, `email-addr`, `url` SCO types |
 | **Spec** | STIX 2.1 §6.4, §6.5, §6.15 |
 
-**Context.** PR #315 previously gated strict IDNA, RFC 5322, and URL checks behind the optional `validate` feature. [Issue #267](https://github.com/timescale/rsigma/issues/267) directs MUST at parse and SHOULD via `Bundle::validate()`.
+**Context.** STIX 2.1 makes the IDNA, RFC 5322, and URL constraints wire-format requirements. The default parser must reject values that violate those requirements. `Bundle::validate()` remains the surface for advisory checks and structured diagnostics.
 
 **Decision.** Malformed `domain-name`, `email-addr`, and `url` values are rejected at the default `serde` parse. URL validation uses full RFC 3986 parse via the `url` crate (any valid absolute URL), not a scheme whitelist. Other wire-format checks use T1 (`Bundle::validate()`) or T2 (Validation Pipeline) as documented in [Validation tiers](#rstix-validation-tiers).
 

@@ -4,7 +4,7 @@ description: "Reference for the processing pipelines built into RSigma, includin
 
 # Builtin Pipelines
 
-For issue [#330](https://github.com/timescale/rsigma/issues/330) canonicalizing scope (ECS, CIM, OCSF eval, Falcon), see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
+For the supported ECS, CIM, OCSF eval, and Falcon schemas and categories, see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
 
 RSigma embeds four ready-to-use processing pipelines in the binary so common Windows and Linux ECS deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
 

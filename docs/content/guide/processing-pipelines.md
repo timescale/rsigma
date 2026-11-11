@@ -531,7 +531,7 @@ Use them as templates and copy/customize for your schema. They are typical examp
 
 ## See also
 
-- [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) for issue #330 scope (ECS, CIM, OCSF eval, Falcon).
+- [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) for supported ECS, CIM, OCSF eval, and Falcon schemas and categories.
 - [Builtin Pipelines reference](../reference/builtin-pipelines.md) for `ecs_windows`, `ecs_linux`, `sysmon`, `fibratus_windows`, and path-only canonicalizers.
 - [Dynamic Pipelines reference](../reference/dynamic-pipelines.md) for source binding through `vars:` and `include:`.
 - [Dynamic Sources reference](../reference/dynamic-sources.md) for the reusable source spec, extract languages, refresh, and errors.
