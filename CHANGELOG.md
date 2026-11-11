@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Rust 1.97.1 MSRV
+
+The workspace MSRV and the compiler pinned for local development, CI, release binaries, crates.io publishing, performance runs, backend engine tests, and the Docker builder move from Rust 1.96.0 to 1.97.1. Fuzzing remains on its separately pinned nightly toolchain. Formatter test patterns follow the new Clippy guidance.
+
 ### User-facing docs state current behavior directly (#694)
 
 Processing-pipeline, testing, and `rstix` library pages now describe supported behavior and engineering constraints directly instead of framing them through the issues and pull requests that introduced them. Explicit design-decision sections retain their rationale while using product and specification language.
