@@ -5648,13 +5648,14 @@ dependencies = [
 
 [[package]]
 name = "subfeature"
-version = "1.26.1"
+version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e685ca3f1f2cd09b04ada9642ea26a0dd7bcf52f963ace408b0279f192f7465f"
+checksum = "b629cab8906895d8bd52d01b38c272f0a70ca69a8dbd0ef204742122301bc088"
 dependencies = [
  "memchr",
  "regex",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -5771,7 +5772,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6366,13 +6367,12 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.13"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17ebdd3a5a7e28a1890b876fdbd0c3c0fe0a6336cffaa104f11b9f720c9daa29"
+checksum = "37b2bed8f39a73439f3b0b7ed8f452be5d2911b5e9da69d352ef113bb7448fb8"
 dependencies = [
  "cc",
  "regex",
- "regex-syntax",
  "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
@@ -6380,9 +6380,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-iter"
-version = "1.27.0"
+version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cbef0ee83b87916292355e78f4fdee268d719ececa729be8914882428ca86b0"
+checksum = "b12173ded2536b8fd9cfd5c0982314de59f569e37a2926ebc6a569b4c827bc77"
 dependencies = [
  "tree-sitter",
 ]
@@ -7126,9 +7126,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpatch"
-version = "1.26.1"
+version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "919764173d845c2b685a44ca9a028534ef1127bcf713edc6b69787430f18b030"
+checksum = "d2f3495675a453c46ed5f149d23c55636fa92893ec482fb4979191f56bf1544b"
 dependencies = [
  "indexmap 2.14.2",
  "line-index",
@@ -7141,9 +7141,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpath"
-version = "1.27.0"
+version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1362068e6e34bf985c39ee42ee8d410fcc398fedbd5f9303602616db26f542b5"
+checksum = "ba8c521d118703eddaca5fa0252a44e279f3a14df3e23fc61e53d40923d46e6e"
 dependencies = [
  "line-index",
  "self_cell",
