@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### User-facing docs state current behavior directly (#694)
+
+Processing-pipeline, testing, and `rstix` library pages now describe supported behavior and engineering constraints directly instead of framing them through the issues and pull requests that introduced them. Explicit design-decision sections retain their rationale while using product and specification language.
+
 ### Canonicalizing pipelines reference (#692)
 
 The Canonicalizing Pipelines page now presents the shipped ECS, CIM, OCSF, and Falcon pipelines as product documentation instead of framing them around their tracking issue. It places the unreleased marker below the title, gives every pipeline an exact `-p` invocation, and separates supported categories, exclusions, and the three OCSF surfaces more clearly.

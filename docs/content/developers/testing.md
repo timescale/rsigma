@@ -72,7 +72,7 @@ Categories for orientation (not a contract on per-file counts):
 
 List discovered tests with `cargo test -p rsigma --tests -- --list`. Prefer that over memorizing counts.
 
-The shared harness in `crates/rsigma-cli/tests/common/mod.rs` is the canonical reference for spawning a long-running daemon under test: it drains stdout in a background thread to prevent pipe stalls, forwards stderr lines via `mpsc`, probes the actual TCP socket with `TcpStream::connect_timeout` before returning a handle, and wraps the `Child` in a `ChildGuard` RAII type that kills it on drop. PR #115 hardened this against macOS-under-load flakes by replacing every `std::thread::sleep` wait with a `poll_until` retry loop that polls the actual observable condition (HTTP status, metric counter) every 50 ms up to a 5 s deadline. Use it for any new daemon-level test; do not roll your own.
+The shared harness in `crates/rsigma-cli/tests/common/mod.rs` is the canonical reference for spawning a long-running daemon under test: it drains stdout in a background thread to prevent pipe stalls, forwards stderr lines via `mpsc`, probes the actual TCP socket with `TcpStream::connect_timeout` before returning a handle, and wraps the `Child` in a `ChildGuard` RAII type that kills it on drop. Readiness and state changes use `poll_until` to check the observable condition (HTTP status, metric counter) every 50 ms for up to 5 seconds. Do not replace these checks with `std::thread::sleep`, which is unreliable on loaded CI hosts. Use the shared harness for every new daemon-level test.
 
 ### Container E2E (NATS and Postgres via testcontainers)
 
