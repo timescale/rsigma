@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Canonicalizing pipelines reference (#692)
+
+The Canonicalizing Pipelines page now presents the shipped ECS, CIM, OCSF, and Falcon pipelines as product documentation instead of framing them around their tracking issue. It places the unreleased marker below the title, gives every pipeline an exact `-p` invocation, and separates supported categories, exclusions, and the three OCSF surfaces more clearly.
+
 ### Dynamic source documentation separates reusable sources from consumers (#691)
 
 The Dynamic Sources reference now documents source declarations, fetch types, refresh, errors, and limits independently of their consumers. A new Dynamic Pipelines reference covers `${source.*}`, `vars:`, and `include:` binding, while the Enrichers guide makes clear that `lookup` enrichers can consume the same shared source cache without a pipeline. Navigation, API, metrics, security, CLI, and library pages use the same consumer-neutral terminology.
