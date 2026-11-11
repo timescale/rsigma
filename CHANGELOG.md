@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### YAML edit dependencies 1.32.0
+### YAML edit dependencies 1.32.0 (#697)
 
 The rule formatter and fixer move from `yamlpath` 1.27.0 and `yamlpatch` 1.26.1 to 1.32.0, now that their `tree-sitter-iter` dependency is compatible with the workspace MSRV. The parser and fuzz harness move their direct `tree-sitter` dependency from 0.26 to the required 0.27 release.
 
