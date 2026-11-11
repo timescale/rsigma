@@ -1,3 +1,7 @@
+---
+description: "Reference for the optional ECS, CIM, OCSF, and Falcon pipelines that rewrite Sigma field names when you pass -p."
+---
+
 # Canonicalizing pipelines (issue #330)
 
 RSigma ships optional **processing pipelines** that rewrite Sigma rule field names so portable rules match your indexed event schema when you pass **`-p`**. Nothing runs unless you opt in. Issue [#330](https://github.com/timescale/rsigma/issues/330) tracks portable rule rewrite for four indexed-event targets; the tables below describe the **intended contract** and what ships in-tree. Field maps are defined in the pipeline YAML and [Builtin Pipelines](builtin-pipelines.md); integration tests use vendor-shaped JSON that matches those maps, not pipeline output field names. {{ added "unreleased" }}
