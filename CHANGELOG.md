@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Bound MCP client response bodies
+### Bound MCP client response bodies (#696)
 
 `rmcp` moves from 3.8.0 to 3.9.0 to resolve RUSTSEC-2026-0462. Streamable HTTP clients now reject successful JSON response bodies larger than 16 MiB and error response bodies larger than 64 KiB instead of buffering unbounded data from a malicious or compromised MCP server.
 
