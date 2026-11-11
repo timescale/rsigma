@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Rust 1.97.1 MSRV
+### Rust 1.97.1 MSRV (#695)
 
 The workspace MSRV and the compiler pinned for local development, CI, release binaries, crates.io publishing, performance runs, backend engine tests, and the Docker builder move from Rust 1.96.0 to 1.97.1. Fuzzing remains on its separately pinned nightly toolchain. Formatter test patterns follow the new Clippy guidance.
 
