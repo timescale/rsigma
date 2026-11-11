@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Bound MCP client response bodies
+
+`rmcp` moves from 3.8.0 to 3.9.0 to resolve RUSTSEC-2026-0462. Streamable HTTP clients now reject successful JSON response bodies larger than 16 MiB and error response bodies larger than 64 KiB instead of buffering unbounded data from a malicious or compromised MCP server.
+
 ### Rust 1.97.1 MSRV (#695)
 
 The workspace MSRV and the compiler pinned for local development, CI, release binaries, crates.io publishing, performance runs, backend engine tests, and the Docker builder move from Rust 1.96.0 to 1.97.1. Fuzzing remains on its separately pinned nightly toolchain. Formatter test patterns follow the new Clippy guidance.
