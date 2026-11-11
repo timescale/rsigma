@@ -16,7 +16,7 @@ rsigma-runtime = { path = "../crates/rsigma-runtime", features = ["logfmt", "cef
 prost = "0.14"
 serde = "1"
 serde_json = "1"
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-yaml = "0.7"
 yaml_serde = "0.10"
 regex = "1"

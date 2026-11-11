@@ -2,7 +2,7 @@
 
 # Pin the workspace MSRV image by digest for immutability. Dependabot updates
 # the digest without changing the Rust version.
-FROM rust:1.96.0-alpine@sha256:f87aa870663e2b57ec8c69de82c7eedf7383bee987eef7612c0359635eaadb41 AS builder
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
 
 # build-base: jemalloc-sys compiles C for the musl global allocator.
 RUN apk add --no-cache musl-dev build-base
