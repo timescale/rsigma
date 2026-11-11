@@ -54,7 +54,7 @@ Global `--output-format json` wraps queries in a `{target, format, queries:[…]
 | `-O, --option <KEY=VALUE>` | Backend-specific option. Repeatable. PostgreSQL examples: `-O table=okta_events`, `-O json_field=data`, `-O timestamp_field=time`. Correlation engines that advertise methods also accept `-O correlation_method=NAME` (see [`backend formats`](formats.md)). See [PostgreSQL backend reference](../../reference/backends/postgres.md) for the full list. |
 | `-s, --skip-unsupported` | Skip rules that the backend cannot represent instead of failing the run with exit `2`. The skipped rules are reported on stderr. |
 
-Dynamic pipeline sources are not resolved by `backend convert`. A pipeline that references `${source.<id>}` still converts with unresolved placeholders; use [`pipeline resolve`](../pipeline/resolve.md) to inspect sources or [`engine daemon`](../engine/daemon.md) to evaluate with live resolution.
+Dynamic sources referenced by pipelines are not resolved by `backend convert`. A pipeline that references `${source.<id>}` still converts with unresolved placeholders; use [`pipeline resolve`](../pipeline/resolve.md) to inspect sources or [`engine daemon`](../engine/daemon.md) to evaluate with live resolution.
 
 ## Examples
 

@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 
 | Feature | Effect |
 |---------|--------|
-| `nats` | NATS JetStream as an event source, sink, and dynamic-pipeline source. |
+| `nats` | NATS JetStream as an event source, sink, and dynamic source. |
 | `otlp` | OTLP/HTTP and OTLP/gRPC log decoding (`opentelemetry-proto`, `prost`). |
 | `logfmt` | logfmt input parser. |
 | `cef` | CEF input parser. |
@@ -50,7 +50,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 | `MetricsHook` trait + `NoopMetrics` | The plug-in surface that the daemon uses to wire `prometheus` counters. Reimplement to ship metrics elsewhere (Datadog, OpenTelemetry, custom registry). |
 | `input::parse_line(...)` | Format-aware line parser. Auto-detects JSON, syslog, plain text; honors format hints. |
 | `EvtxFileReader` (feature `evtx`) | Streaming `.evtx` reader. |
-| `SourceResolver` trait + `DefaultSourceResolver` | Dynamic-pipeline source resolution: HTTP, command, file, NATS. |
+| `SourceResolver` trait + `DefaultSourceResolver` | Dynamic source resolution for pipelines and lookup enrichers: HTTP, command, file, NATS. |
 | `SourceCache` | TTL-aware cache for resolved source values. Optional SQLite backing for cross-restart persistence. |
 | `TemplateExpander`, `RefreshScheduler`, `RefreshTrigger` | Substitutes `${source.X}` references in pipeline `vars:` and runs the refresh policies. |
 | `Enricher` trait + `EnrichmentPipeline` | Post-evaluation enrichment surface. Drives the five primitives (`TemplateEnricher`, `LookupEnricher`, `HttpEnricher`, `CommandEnricher`, `StixEnricher` with `stix-enrich`) and any bespoke types registered via `register_builtin`. |
@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 For a streaming daemon shape, wire an `EventSource` (`StdinSource`, `NatsSource`, …) through `spawn_source` into your own loop, batch the channel into `Vec<String>`, and feed it to `process_batch_lines`. The daemon code in `rsigma-cli/src/daemon/server.rs` is the reference implementation.
 
-Sinks work on both multi-threaded and current-thread Tokio runtimes; on a current-thread runtime the stdout and file sinks write inline. `load_rules` is synchronous, so it can only resolve dynamic pipeline sources on a multi-threaded runtime and returns an error on a current-thread one, leaving the previous engine in place. {{ added "0.25.0" }}
+Sinks work on both multi-threaded and current-thread Tokio runtimes; on a current-thread runtime the stdout and file sinks write inline. `load_rules` is synchronous, so it can only resolve dynamic sources referenced by pipelines on a multi-threaded runtime and returns an error on a current-thread one, leaving the previous engine in place. {{ added "0.25.0" }}
 
 `load_rules` logs rule documents that fail to parse, leaves them out, and reports how many in `EngineStats::parse_errors`. It returns an error, leaving the previous engine in place, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`. Hot-reload carries the strict setting forward. {{ added "0.26.0" }}
 
@@ -205,7 +205,7 @@ let resolver = DefaultSourceResolver::new();
 let value = resolver.resolve(&source).await?;
 ```
 
-The full spec (source types, data formats, extract languages, refresh policies) lives in [Dynamic Pipeline Sources](../reference/dynamic-sources.md). `RefreshScheduler` runs the periodic refresh policies; `TemplateExpander` substitutes `${source.X}` references into the pipeline.
+The full reusable-source spec (types, data formats, extract languages, refresh policies) lives in [Dynamic Sources](../reference/dynamic-sources.md). `RefreshScheduler` runs the periodic refresh policies; `TemplateExpander` substitutes `${source.X}` references into pipelines, and `lookup` enrichers can read the same `SourceCache`.
 
 ## Error handling
 
@@ -215,6 +215,7 @@ The full spec (source types, data formats, extract languages, refresh policies) 
 
 - [Streaming Detection](../guide/streaming-detection.md) for the operator-facing daemon walkthrough.
 - [Architecture](../reference/architecture.md) for the runtime data flow.
-- [Dynamic Pipeline Sources](../reference/dynamic-sources.md) for the source spec.
+- [Dynamic Sources](../reference/dynamic-sources.md) for the source spec.
+- [Dynamic Pipelines](../reference/dynamic-pipelines.md) for pipeline binding.
 - [`rsigma-runtime` README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-runtime/README.md).
 - [docs.rs/rsigma-runtime](https://docs.rs/rsigma-runtime).

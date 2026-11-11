@@ -1,12 +1,16 @@
 ---
-description: "Reference for RSigma dynamic pipeline sources: file, command, HTTP, and NATS sources, data formats, extract languages, refresh, errors, and limits."
+description: "Reference for reusable RSigma dynamic sources: file, command, HTTP, and NATS types, extraction, refresh, errors, and limits."
 ---
 
-# Dynamic Pipeline Sources
+# Dynamic Sources
 
-Dynamic pipeline sources let a [processing pipeline](../guide/processing-pipelines.md#dynamic-pipelines) pull values from external systems (files, local commands, HTTP, NATS) at load time and inject them through the standard Sigma `vars` + `value_placeholders` mechanism. This page documents the full source specification, every source type, the four data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
+{{ added "0.10.0" }}
 
-For an introduction to the feature see [Processing Pipelines: dynamic pipelines](../guide/processing-pipelines.md#dynamic-pipelines). For end-to-end testing see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics see [Prometheus metrics: dynamic pipeline sources](metrics.md#dynamic-pipeline-sources-5-metrics).
+Dynamic sources let the daemon fetch reusable values from files, local commands, HTTP endpoints, and NATS subjects. Source declarations are loaded independently through `--source`, resolved into a shared cache, and consumed by either [dynamic pipelines](dynamic-pipelines.md) or [`lookup` enrichers](../guide/enrichers.md#lookup-read-from-the-dynamic-source-cache). One source can be reused by any number of pipelines and enrichers.
+
+Dynamic pipelines and `lookup` enrichers are currently the only consumers of dynamic sources. This page documents the consumer-independent source specification: every source type, the four data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
+
+For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics).
 
 ## Source declaration
 
@@ -27,11 +31,16 @@ sources:
     refresh: 1h
 ```
 
-Pass it to the daemon:
+Pass it to the daemon alongside whichever consumers need it:
 
 ```bash
-rsigma engine daemon -r rules/ -p pipeline.yml --source sources.yml
+rsigma engine daemon -r rules/ \
+    --source sources.yml \
+    -p pipeline.yml \
+    --enrichers enrichers.yml
 ```
+
+The pipeline and enricher flags are independent. Omit either one when that consumer is not needed.
 
 A directory path loads all `*.yml`/`*.yaml` files in it, sorted alphabetically:
 
@@ -75,14 +84,14 @@ sources:
 
 The full Rust type lives at [`rsigma_eval::pipeline::sources::DynamicSource`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/sources.rs). The parser is at [`rsigma_eval::pipeline::parsing`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs).
 
-A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`), which is exactly what a `${source.<id>}` reference can name. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "0.25.0" }}
+A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`). Pipelines reference it as `${source.<id>}` and `lookup` enrichers use it in their `source:` field. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "0.25.0" }}
 
 ### Collision semantics
 
 Source IDs must be unique across every `--source` file (and across every directory the flag expands into). If the same ID appears in two different declaration sites the daemon exits at startup with an error naming both file paths, so there is exactly one canonical declaration site per source ID.
 
 ::: callout warning "Pipeline-embedded `sources:` was removed in v0.19.0"
-Declaring `sources:` inside a pipeline file is no longer accepted (tracked in [#137](https://github.com/timescale/rsigma/issues/137)). The parser rejects such a pipeline with a hard error pointing at the migration tool. Source declarations live only in standalone `--source` files; a pipeline references them with `${source.<id>}`.
+Declaring `sources:` inside a pipeline file is no longer accepted (tracked in [#137](https://github.com/timescale/rsigma/issues/137)). The parser rejects such a pipeline with a hard error pointing at the migration tool. Source declarations live only in standalone `--source` files, which also lets enrichers reuse them.
 
 If you still have a pipeline with an inline `sources:` block, run `rsigma rule migrate-sources -p <pipelines-dir-or-file> -o sources.yml` to extract it into a standalone file, then load it via `--source sources.yml`. See the [`rule migrate-sources` reference](../cli/rule/migrate-sources.md) for flags and the `--strategy per-pipeline` mode.
 :::
@@ -271,65 +280,29 @@ The `required` flag interacts with `on_error`:
 - `required: true` + `on_error: use_cached` -> startup succeeds if a cached value exists from a prior run (with `--state-db`); fails otherwise.
 - `required: false` + `on_error: fail` -> source resolves to null; pipeline continues.
 
-## Template substitution
+## Consumers
 
-The `${source.<id>}` syntax expands ONLY in the `vars:` block. The expander does NOT substitute references inside typed transformation fields (e.g. `add_condition.conditions.X`). The supported pattern is to put the resolved value into a `vars:` entry and reference it from rules via the standard Sigma `%name%` placeholder, expanded by the `value_placeholders` transformation:
+### Dynamic pipelines
 
-```yaml
-# sources.yml -- loaded via `--source sources.yml`
-sources:
-  - id: ip_blocklist
-    type: http
-    url: …
-    extract: ".ips"
-```
+A pipeline reads a source through `${source.<id>}` in `vars:` or an `include:` directive. Pipeline-specific substitution rules, examples, limits, and validation commands are documented in [Dynamic Pipelines](dynamic-pipelines.md).
+
+### Lookup enrichers
+
+A `type: lookup` enricher names a cached source with `source: <id>`, then optionally applies a per-result jq, JSONPath, or CEL expression before injecting the value:
 
 ```yaml
-# pipeline.yml -- loaded via `-p pipeline.yml`
-vars:
-  blocklist: "${source.ip_blocklist}"
-
-transformations:
-  - type: value_placeholders
+enrichers:
+  - id: asset_context
+    kind: detection
+    type: lookup
+    inject_field: asset
+    source: asset_inventory
+    extract: '."${detection.fields.HostName}"'
+    extract_type: jq
+    default: "unknown"
 ```
 
-```yaml
-# rule
-detection:
-    selection:
-        DestinationIp|expand: '%blocklist%'
-    condition: selection
-```
-
-Dot-path indexing into a nested structure works in `vars:`:
-
-```yaml
-vars:
-  admin_emails: "${source.env_config.admin_emails}"
-  log_index:    "${source.env_config.log_index}"
-```
-
-Inline templates work too (`${source.X}` as part of a larger string), but they substitute the source's stringified representation, which is rarely what you want for array sources. Whole-value substitution (where `${source.X}` is the entire `vars:` entry) is the safe form: it expands an array source to multiple `vars` entries that `value_placeholders` can map onto rule values. For scalar sources, inline templates compose cleanly:
-
-```yaml
-vars:
-  greeting: "Hello, ${source.env_config.org_name}!"
-```
-
-## Include directives
-
-A source resolving to a JSON array of transformation objects can be inlined via `include:`:
-
-```yaml
-transformations:
-  - include: ${source.dynamic_transforms}
-```
-
-Constraints:
-
-- The resolved value must be a JSON array of transformation objects, not a single object.
-- Nested includes are rejected (`MAX_INCLUDE_DEPTH = 1`). If an included fragment itself contains `include:` directives, expansion fails at startup with a clear error message.
-- Remote sources (HTTP, NATS) require `--allow-remote-include` on the daemon. The default policy restricts include resolution to local sources (`file`, `command`) to limit the blast radius of a compromised CDN or NATS broker.
+The source is declared once in a standalone `--source` file. It does not need to be referenced by a pipeline, and the daemon does not require `-p` merely because an enricher uses it. See [Using dynamic sources with `lookup` enrichers](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers) for the complete configuration and lookup behavior.
 
 ## Triggers and hot-reload
 
@@ -366,11 +339,12 @@ Exceeding any limit produces a `SourceErrorKind::ResourceLimit` failure with a d
 
 ## See also
 
-- [Processing Pipelines: dynamic pipelines](../guide/processing-pipelines.md#dynamic-pipelines) for the narrative version.
+- [Dynamic Pipelines](dynamic-pipelines.md) for pipeline-specific `${source.<id>}`, `vars:`, and `include:` behavior.
+- [Enrichers](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers) for consuming source values after a detection or correlation fires.
 - [Disposition Source Recipes](../guide/disposition-recipes.md) for worked HTTP sources (env-header auth, POST `body`, jq `extract`) that pull case-system verdicts into the triage loop.
 - [`pipeline resolve`](../cli/pipeline/resolve.md) for offline source testing.
 - [`rule validate --resolve-sources`](../cli/rule/validate.md) for the strict CI gate.
-- [Prometheus metrics: dynamic pipeline sources](metrics.md#dynamic-pipeline-sources-5-metrics) for what every successful and failing resolve exposes.
-- [HTTP API: sources](http-api.md#dynamic-pipeline-sources) for the daemon control endpoints.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for what every successful and failing resolve exposes.
+- [HTTP API: sources](http-api.md#dynamic-sources) for the daemon control endpoints.
 - [Security Hardening](security.md) for every other resource limit the runtime enforces.
 - [`rsigma_runtime::sources` source](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation.

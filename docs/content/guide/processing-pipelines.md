@@ -318,7 +318,9 @@ See [Custom Attributes reference](../reference/custom-attributes.md) for the ful
 
 ## Dynamic pipelines
 
-Static pipelines hardcode every value in YAML. Dynamic pipelines let those values come from external sources at runtime: HTTP APIs, local commands, files, or NATS subjects. pySigma later added similar file, HTTP, and command placeholder transformations for conversion ([SigmaHQ/pySigma#470](https://github.com/SigmaHQ/pySigma/issues/470)), inspired by this RSigma work. RSigma's model adds features aimed at streaming engines: detached `--source` files, refresh policies (`once`, interval, `watch`, `push`, `on_demand`), NATS, include directives, and hot-reload through the daemon HTTP API, most of which might not be relevant to rule conversion.
+Static pipelines hardcode every value in YAML. Dynamic pipelines bind reusable [dynamic sources](../reference/dynamic-sources.md) into pipeline variables or transformation includes. Sources can fetch from HTTP APIs, local commands, files, or NATS subjects, and the same source can also be consumed by [`lookup` enrichers](enrichers.md#using-dynamic-sources-with-lookup-enrichers). pySigma later added similar file, HTTP, and command placeholder transformations for conversion ([SigmaHQ/pySigma#470](https://github.com/SigmaHQ/pySigma/issues/470)), inspired by this RSigma work. RSigma's model adds features aimed at streaming engines: detached `--source` files, refresh policies (`once`, interval, `watch`, `push`, `on_demand`), NATS, include directives, and hot-reload through the daemon HTTP API, most of which might not be relevant to rule conversion.
+
+The complete binding syntax is in the [Dynamic Pipelines reference](../reference/dynamic-pipelines.md). Source declaration, refresh, and error semantics are in the separate [Dynamic Sources reference](../reference/dynamic-sources.md).
 
 Typical use cases:
 - A threat-intel feed publishes IOC lists. Reference them inside an `add_condition` so detection rules update without rule edits.
@@ -328,7 +330,7 @@ Typical use cases:
 
 ### Source declaration
 
-Declare sources in a standalone YAML file with a top-level `sources:` block and load it into the daemon with the repeatable `--source` flag. The pipeline file then references each source by its `id` through `${source.<id>}` expansion inside `vars:` (or inline `include:` directives); rules pick up the resolved values via the standard Sigma `%placeholder%` syntax handled by the `value_placeholders` transformation.
+Declare sources in a standalone YAML file with a top-level `sources:` block and load it into the daemon with the repeatable `--source` flag. Declarations are independent of pipelines and can be shared with enrichers. The pipeline file references each source by its `id` through `${source.<id>}` expansion inside `vars:` (or inline `include:` directives); rules pick up the resolved values via the standard Sigma `%placeholder%` syntax handled by the `value_placeholders` transformation.
 
 ```yaml
 # sources.yml -- loaded via `--source sources.yml`
@@ -531,7 +533,8 @@ Use them as templates and copy/customize for your schema. They are typical examp
 
 - [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) for issue #330 scope (ECS, CIM, OCSF eval, Falcon).
 - [Builtin Pipelines reference](../reference/builtin-pipelines.md) for `ecs_windows`, `ecs_linux`, `sysmon`, `fibratus_windows`, and path-only canonicalizers.
-- [Dynamic Sources reference](../reference/dynamic-sources.md) for the full source spec, extract language details, and benchmarks.
+- [Dynamic Pipelines reference](../reference/dynamic-pipelines.md) for source binding through `vars:` and `include:`.
+- [Dynamic Sources reference](../reference/dynamic-sources.md) for the reusable source spec, extract languages, refresh, and errors.
 - [Custom Attributes reference](../reference/custom-attributes.md) for every `rsigma.*` and `postgres.*` knob.
 - [Security Hardening reference](../reference/security.md) for the resource limits enforced on dynamic sources.
 - [CLI reference: `pipeline resolve`](../cli/pipeline/resolve.md) for the offline source-testing command.

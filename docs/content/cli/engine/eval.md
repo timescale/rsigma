@@ -54,7 +54,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 |------|-------------|
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Accepts the builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable; applied in priority order. |
 
-Dynamic pipeline sources are not resolved by `engine eval`. Dynamic references stay unresolved and a stderr note points you at [`pipeline resolve`](../pipeline/resolve.md) or [`engine daemon`](daemon.md).
+Dynamic sources referenced by pipelines are not resolved by `engine eval`. Dynamic references stay unresolved and a stderr note points you at [`pipeline resolve`](../pipeline/resolve.md) or [`engine daemon`](daemon.md).
 
 ### Output
 

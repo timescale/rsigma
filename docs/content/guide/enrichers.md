@@ -40,6 +40,45 @@ enrichers:
     # ... primitive-specific fields below ...
 ```
 
+## Using dynamic sources with `lookup` enrichers
+
+{{ added "0.13.0" }}
+
+Dynamic sources are not owned by processing pipelines. The daemon loads standalone `--source` declarations into a shared cache before it builds the enrichment pipeline. A `type: lookup` enricher reads that cache directly, so it can use a dynamic source without any `-p` pipeline:
+
+```yaml
+# sources.yml
+sources:
+  - id: asset_inventory
+    type: file
+    path: /etc/rsigma/assets.json
+    format: json
+    refresh: watch
+```
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: asset_context
+    kind: detection
+    type: lookup
+    inject_field: asset
+    source: asset_inventory
+    extract: '."${detection.fields.HostName}"'
+    extract_type: jq
+    default: "unknown"
+```
+
+```bash
+rsigma engine daemon -r rules/ \
+    --source sources.yml \
+    --enrichers enrichers.yml
+```
+
+The same source can also be referenced by dynamic pipelines or by additional `lookup` enrichers. It is resolved and refreshed once, and every consumer reads the shared cached value. Among enricher primitives, only `lookup` consumes dynamic sources by ID. `template`, `stix`, `http`, and `command` use their own configuration and do not read the dynamic-source cache.
+
+Source declarations, fetch types, refresh policies, and error handling are documented in [Dynamic Sources](../reference/dynamic-sources.md). Pipeline-specific `${source.<id>}` syntax is documented separately in [Dynamic Pipelines](../reference/dynamic-pipelines.md).
+
 ## Kind and template namespaces
 
 Every enricher declares a `kind: detection | correlation`. The kind drives two checks:
@@ -95,9 +134,9 @@ The cheapest primitive: it does no I/O and cannot fail past config-load-time tem
   template: "https://wiki.internal/runbooks/${detection.rule.id}"
 ```
 
-### `lookup`: read from the dynamic-pipelines source cache
+### `lookup`: read from the dynamic source cache
 
-Reads a value from the dynamic-pipelines [source cache](../reference/dynamic-sources.md) by `source_id` and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. Zero-network-cost for anything already loaded as a dynamic source.
+Reads a value from the shared dynamic [source cache](../reference/dynamic-sources.md) by source ID and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. The source can be shared with pipelines and other lookup enrichers without another fetch.
 
 ```yaml
 - id: asset_context_corr
@@ -118,7 +157,7 @@ The decision matrix:
 - **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
 
-`lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache. (Source declarations live only in `--source` files; pipeline-embedded `sources:` is removed. See the [Dynamic Sources reference](../reference/dynamic-sources.md#source-declaration).)
+`lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache. Source declarations live only in standalone `--source` files. A pipeline is not required. See [Using dynamic sources with `lookup` enrichers](#using-dynamic-sources-with-lookup-enrichers).
 
 ### `stix`: local STIX store lookup
 
@@ -316,7 +355,7 @@ enrichers:
 
 ### `enrich_cve_kev`: known-exploited-vulnerability flag
 
-Pulls the CISA KEV catalog as a dynamic-pipelines source, then flags CVEs that appear in it.
+Pulls the CISA KEV catalog as a dynamic source, then flags CVEs that appear in it.
 
 ```yaml
 # sources.yml
@@ -411,7 +450,8 @@ Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` ro
 ## See also
 
 - [`engine daemon` reference](../cli/engine/daemon.md#post-evaluation-enrichment) for the `--enrichers` flag.
-- [Dynamic Pipeline Sources](../reference/dynamic-sources.md) for the source cache that `lookup` reads from.
+- [Dynamic Sources](../reference/dynamic-sources.md) for the shared source cache that `lookup` reads from.
+- [Dynamic Pipelines](../reference/dynamic-pipelines.md) for consuming the same sources before rule evaluation.
 - [Security Hardening](../reference/security.md#http-egress-policy-ssrf-defense) for egress policy on HTTP enrichers and body size caps.
 - [Prometheus metrics](../reference/metrics.md#enrichment-6-metrics) for the full metric definitions.
 - [Adding enrichers](../developers/adding-enrichers.md) for shipping a bespoke `register_builtin` type.

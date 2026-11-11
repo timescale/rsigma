@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Dynamic source documentation separates reusable sources from consumers (#691)
+
+The Dynamic Sources reference now documents source declarations, fetch types, refresh, errors, and limits independently of their consumers. A new Dynamic Pipelines reference covers `${source.*}`, `vars:`, and `include:` binding, while the Enrichers guide makes clear that `lookup` enrichers can consume the same shared source cache without a pipeline. Navigation, API, metrics, security, CLI, and library pages use the same consumer-neutral terminology.
+
 ### Canonicalizing pipelines (issue #330) (#675)
 
 Adds path-only eval rule-rewrite pipelines for Splunk CIM, OCSF live JSON, and CrowdStrike Falcon Windows. The portable Sigma categories `process_creation`, `network_connection`, `file_event`, `image_load`, and `dns_query` are implemented for each target. Integration tests live under `crates/rsigma-eval/tests/*_pipeline.rs` with per-category positives and negative controls without `-p`.

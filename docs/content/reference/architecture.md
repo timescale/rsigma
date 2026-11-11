@@ -188,9 +188,9 @@ On every rule-load (including reloads), the `DaemonSourceRegistry` collects sour
 2. Parse the response according to `format:` (`json`, `yaml`, `lines`, `csv`).
 3. Apply the `extract:` expression (`jq` via `jaq`, JSONPath via `serde_json_path`, or CEL).
 4. Store in `SourceCache` (in-memory by default; SQLite-backed under `--state-db`).
-5. `TemplateExpander` substitutes the resolved values into the pipeline's `vars:` entries.
+5. `TemplateExpander` substitutes the resolved values into dynamic pipeline `vars:` entries, while `lookup` enrichers read the same cache directly.
 
-Refresh policies and on-error behavior are documented in [Dynamic Pipeline Sources](dynamic-sources.md).
+Refresh policies and on-error behavior are documented in [Dynamic Sources](dynamic-sources.md). Pipeline binding is documented separately in [Dynamic Pipelines](dynamic-pipelines.md).
 
 ## Performance posture
 

@@ -165,7 +165,7 @@ For a 50 K/s ingest target, `--buffer-size 50000 --batch-size 64 --drain-timeout
 Three triggers cause the daemon to re-read its rules and pipelines, debounced at 500 ms:
 
 1. A file system change to any `.yml` or `.yaml` file under the rules directory or to any pipeline file passed via `-p`.
-2. A `SIGHUP` signal (Unix only). This also triggers re-resolution of dynamic pipeline sources.
+2. A `SIGHUP` signal (Unix only). This also triggers re-resolution of dynamic sources.
 3. A `POST /api/v1/reload` request.
 
 If the new configuration fails to parse, the daemon keeps the old engine running and increments `rsigma_reloads_failed_total`. Successful reloads atomically swap the in-memory engine via `ArcSwap`, so in-flight events finish on the old engine and new events evaluate against the new one without dropping any.
@@ -219,7 +219,7 @@ The table below is a subset of the core surface. The full catalog (incidents, si
 | `/api/v1/rules` | GET | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | Trigger an immediate rules reload. |
 | `/api/v1/events` | POST | Ingest events (only when `--input http`). NDJSON body. |
-| `/api/v1/sources` | GET | Status of dynamic pipeline sources. |
+| `/api/v1/sources` | GET | Status of dynamic sources. |
 | `/api/v1/sources/resolve` | POST | Force re-resolution of all (or some) dynamic sources. |
 | `/api/v1/tap` | GET | Stream a bounded, redactable window of the live event stream as NDJSON. Disabled by default; enable with `daemon.tap.enabled: true`. See [`engine tap`](../cli/engine/tap.md). |
 | `/api/v1/detections/stream` | GET | Stream live detections as NDJSON, with optional `level` and `rule` filters. Disabled by default; enable with `daemon.tail.enabled: true`. See [`engine tail`](../cli/engine/tail.md). |

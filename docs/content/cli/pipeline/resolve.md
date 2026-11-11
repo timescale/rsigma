@@ -1,12 +1,12 @@
 ---
-description: "Reference for rsigma pipeline resolve: resolve dynamic pipeline sources (HTTP, file, command, NATS) offline, with an optional dry-run mode."
+description: "Reference for rsigma pipeline resolve: resolve reusable dynamic sources offline for pipeline inspection, with an optional dry-run mode."
 ---
 
 # `rsigma pipeline resolve`
 
 {{ added "0.12.0" }}
 
-Offline resolution of dynamic pipeline sources, with an optional dry-run mode.
+Offline resolution of dynamic sources used by pipelines, with an optional dry-run mode.
 
 ## Synopsis
 
@@ -22,7 +22,7 @@ Source declarations live in standalone YAML files with a top-level `sources:` bl
 
 This command does not load rules or evaluate events. It is the offline counterpart of what [`engine daemon`](../engine/daemon.md) does at rule-load time for dynamic sources. Use it locally before pushing a dynamic pipeline to production, and in CI as a gate for [`rule validate --resolve-sources`](../rule/validate.md).
 
-For narrative coverage see [Processing Pipelines: dynamic pipelines](../../guide/processing-pipelines.md#dynamic-pipelines).
+For binding syntax see [Dynamic Pipelines](../../reference/dynamic-pipelines.md). For the reusable source specification see [Dynamic Sources](../../reference/dynamic-sources.md).
 
 ## Flags
 
@@ -97,7 +97,8 @@ For a stricter CI gate that also validates rules, pair with [`rule validate --re
 
 ## See also
 
-- [Processing Pipelines](../../guide/processing-pipelines.md) for the dynamic-source spec, extract languages, refresh policies, and the `vars` + `value_placeholders` pattern.
+- [Dynamic Pipelines](../../reference/dynamic-pipelines.md) for the `vars` + `value_placeholders` binding pattern.
+- [Processing Pipelines](../../guide/processing-pipelines.md) for the broader pipeline model.
 - [`rule validate --resolve-sources`](../rule/validate.md) for the CI-gate variant that also validates rules at the same time.
 - [`rule migrate-sources`](../rule/migrate-sources.md) for extracting legacy inline `sources:` blocks.
 - [Dynamic Sources reference](../../reference/dynamic-sources.md) for the full source type catalog and security limits.

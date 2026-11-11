@@ -28,7 +28,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | `reload:execute` | Trigger an immediate rules + pipelines reload. |
 | `/api/v1/events` | POST | `events:ingest` | NDJSON event ingest. Only enabled with `--input http`. |
-| `/api/v1/sources` | GET | `sources:read` | Dynamic pipeline sources currently registered. |
+| `/api/v1/sources` | GET | `sources:read` | Dynamic sources currently registered. |
 | `/api/v1/sources/resolve` | POST | `sources:write` | Force re-resolution of all dynamic sources (with no body) or one specific source (with `{"source_id":"..."}`). |
 | `/api/v1/sources/resolve/{source_id}` | POST | `sources:write` | Force re-resolution of a single source by path parameter (no body). Equivalent to the body variant above; useful when the caller has to fit inside an HTTP client that does not send a JSON body on `POST`. |
 | `/api/v1/sources/cache/{source_id}` | DELETE | `sources:write` | Invalidate one source's cache so the next read fetches fresh. |
@@ -49,7 +49,7 @@ The Permission column applies only when authentication is enabled; without it ev
 
 Endpoint details are split across three pages:
 
-- This page: probes, authentication, reload, event ingest, dynamic pipeline sources, and OTLP ingest.
+- This page: probes, authentication, reload, event ingest, dynamic sources, and OTLP ingest.
 - [HTTP API: Detection State](http-api-state.md): status and counters, correlations, incidents and incident bundles, risk, silences, the audit trail, dispositions, and rules.
 - [HTTP API: Live Observability](http-api-observability.md): field and schema observability, the live event tap, and the live detection tail.
 
@@ -149,11 +149,11 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/events \
 
 Lines that fail to parse increment `rsigma_events_parse_errors_total` and are dropped silently. To inspect parse errors, scrape `/metrics` or watch the daemon's stderr log.
 
-## Dynamic pipeline sources
+## Dynamic sources
 
 ### `GET /api/v1/sources`
 
-Lists every dynamic source registered by the loaded pipelines, with its type, refresh policy, and `required` flag.
+Lists every dynamic source registered by the daemon, with its type, declaration site, refresh policy, and `required` flag. The source may be consumed by a dynamic pipeline, a `lookup` enricher, or both.
 
 ```bash
 curl -sS http://127.0.0.1:9090/api/v1/sources
@@ -180,7 +180,7 @@ curl -sS http://127.0.0.1:9090/api/v1/sources
 }
 ```
 
-When no pipelines declare sources:
+When no dynamic sources are configured:
 
 ```json
 {"sources":[]}
@@ -264,5 +264,6 @@ See [OTLP Integration](../guide/otlp-integration.md) for full agent recipes (Gra
 - [OTLP Integration](../guide/otlp-integration.md) for `/v1/logs` agent recipes.
 - [Prometheus Metrics](metrics.md) for `/metrics` definitions and alert recipes.
 - [Observability](../guide/observability.md) for the broader `tracing` and metrics story.
-- [Processing Pipelines: dynamic pipelines](../guide/processing-pipelines.md#dynamic-pipelines) for the source declarations exposed by `/api/v1/sources`.
+- [Dynamic Sources](dynamic-sources.md) for the declarations exposed by `/api/v1/sources`.
+- [Dynamic Pipelines](dynamic-pipelines.md) and [Enrichers](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers) for the two consumers.
 - [Security: TLS termination for the API listener](security.md#tls-termination-for-the-api-listener) for the optional `daemon-tls` build feature and the `--tls-*` flag set.
