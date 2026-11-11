@@ -190,7 +190,7 @@ Priority: `20`. Source: [`pipelines/cim_events.yml`](https://github.com/timescal
 |----------|---------------------------|
 | `process_creation` | `CommandLine` to `process`, `Image` to `process_path`, `ProcessId` to `process_id`, `User` to `user`, `ParentCommandLine` to `parent_process`, `ParentImage` to `parent_process_path`, `ParentProcessId` to `parent_process_id` |
 | `network_connection` | `SourceIp` to `src_ip`, `SourceHostname` to `src`, `SourcePort` to `src_port`, `DestinationIp` to `dest_ip`, `DestinationHostname` to `dest`, `DestinationPort` to `dest_port`, `DestinationPortName` to `app`, `Protocol` to `transport`, `User` to `user` |
-| `file_event` | `TargetFilename` to `file_path`, `Image` to `process_path`, `User` to `user` |
+| `file_event` | `TargetFilename` to `file_path`, `Image` to `image`, `User` to `user` |
 | `image_load` | `ImageLoaded` to `loaded_file`, `Image` to `process_path`, `User` to `user` |
 | `dns_query` | `QueryName` to `query` |
 

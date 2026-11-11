@@ -51,7 +51,7 @@ transformations:
     type: field_name_mapping
     mapping:
       TargetFilename: file_path
-      Image: process_path
+      Image: image
       User: user
     rule_conditions:
       - type: logsource

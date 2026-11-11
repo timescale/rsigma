@@ -85,9 +85,13 @@ logsource:
 detection:
     selection:
         TargetFilename: '/tmp/evil.bin'
+        Image: '/usr/bin/bash'
     condition: selection
 "#;
-    let file_val = json!({"file_path": "/tmp/evil.bin"});
+    let file_val = json!({
+        "file_path": "/tmp/evil.bin",
+        "image": "/usr/bin/bash"
+    });
     let file_event = JsonEvent::borrow(&file_val);
     let mut engine = Engine::new();
     engine
