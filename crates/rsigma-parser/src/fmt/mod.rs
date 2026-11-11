@@ -268,14 +268,7 @@ mod tests {
     #[test]
     fn reports_yaml_syntax_position() {
         let error = format_yaml("title: [unclosed\n").unwrap_err();
-        assert!(matches!(
-            error,
-            FormatError::Yaml {
-                line: 1,
-                column: _,
-                ..
-            }
-        ));
+        assert!(matches!(error, FormatError::Yaml { line: 1, .. }));
     }
 
     #[test]

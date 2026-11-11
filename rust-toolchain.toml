@@ -8,6 +8,6 @@
 # CI and release workflows use, so toolchain drift is reproducible
 # locally before a PR reaches CI.
 [toolchain]
-channel = "1.96.0"
+channel = "1.97.1"
 components = ["rustfmt", "clippy", "rust-analyzer"]
 profile = "minimal"
