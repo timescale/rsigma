@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### YAML edit dependencies 1.32.0
+
+The rule formatter and fixer move from `yamlpath` 1.27.0 and `yamlpatch` 1.26.1 to 1.32.0, now that their `tree-sitter-iter` dependency is compatible with the workspace MSRV. The parser and fuzz harness move their direct `tree-sitter` dependency from 0.26 to the required 0.27 release.
+
 ### Bound MCP client response bodies (#696)
 
 `rmcp` moves from 3.8.0 to 3.9.0 to resolve RUSTSEC-2026-0462. Streamable HTTP clients now reject successful JSON response bodies larger than 16 MiB and error response bodies larger than 64 KiB instead of buffering unbounded data from a malicious or compromised MCP server.
