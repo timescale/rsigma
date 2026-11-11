@@ -57,9 +57,9 @@ These counters carry labels that identify which rule fired. They surface on `/me
 
 These two families feed the silence and noisy signals of [`rule hygiene`](../cli/rule/hygiene.md) (and the production-volume column of [`rule scorecard`](../cli/rule/scorecard.md)): pass a saved scrape or a live endpoint as `--metrics` and they join per-rule by `rule_title`.
 
-## Dynamic pipeline sources (5 metrics)
+## Dynamic sources (5 metrics)
 
-Exposed when one or more pipelines declare dynamic sources. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
+Exposed when one or more dynamic sources are configured. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|

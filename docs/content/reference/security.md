@@ -4,7 +4,7 @@ description: "RSigma security hardening reference: input size caps, resource lim
 
 # Security Hardening
 
-RSigma deliberately bounds every input and every external resource it touches. This page catalogues the hard limits, the parsing safeguards, the operational concerns (process signals, lock primitives, daemon listener exposure), and the dynamic-pipeline-specific protections. None of these are configurable through CLI flags today; they are compile-time constants. Operators wanting different limits should fork and document the deviation locally.
+RSigma deliberately bounds every input and every external resource it touches. This page catalogues the hard limits, the parsing safeguards, the operational concerns (process signals, lock primitives, daemon listener exposure), and the dynamic-source protections. None of these are configurable through CLI flags today; they are compile-time constants. Operators wanting different limits should fork and document the deviation locally.
 
 For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-policy.md).
 
@@ -23,7 +23,7 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 
 These limits are sized so that the engine remains bounded under pathological input (a single rule of unbounded size, a single event of unbounded size, or an attacker-controlled JSON document with multi-megabyte nesting). They were chosen to be larger than every plausible real Sigma rule and well above any legitimate JSON event.
 
-## Dynamic pipeline resource limits
+## Dynamic source resource limits
 
 `engine daemon` and `pipeline resolve` enforce additional bounds on dynamic sources:
 
@@ -37,7 +37,7 @@ These limits are sized so that the engine remains bounded under pathological inp
 | Include nesting depth | `MAX_INCLUDE_DEPTH` | 1 | not configurable |
 | Remote include resolution | none | off | `--allow-remote-include` daemon flag |
 
-Each limit produces a `SourceErrorKind::ResourceLimit` failure with a descriptive message. The full source-level catalogue lives at [Dynamic Pipeline Sources: resource limits](dynamic-sources.md#resource-limits).
+Each limit produces a `SourceErrorKind::ResourceLimit` failure with a descriptive message. The full source-level catalogue lives at [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits).
 
 ### Include directive security model
 
@@ -287,9 +287,9 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 ## See also
 
 - [`SECURITY.md`](../security-policy.md) for the disclosure policy.
-- [Dynamic Pipeline Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
+- [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
 - [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
-- [Prometheus metrics: dynamic pipeline sources](metrics.md#dynamic-pipeline-sources-5-metrics) for observability of limit hits.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

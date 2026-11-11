@@ -42,7 +42,7 @@ The streaming runtime (event sources, sinks, daemon plumbing, dynamic pipelines)
 
 | Feature | Default | Pulls in | What it enables |
 |---------|---------|----------|-----------------|
-| `nats` | no | `async-nats`, `tokio-stream`, `time`, `futures` | NATS source, sink, and dynamic-pipeline source type. |
+| `nats` | no | `async-nats`, `tokio-stream`, `time`, `futures` | NATS event source, sink, and dynamic source type. |
 | `otlp` | no | `opentelemetry-proto`, `prost` | OTLP log decoding. |
 | `logfmt` | no | (none beyond the parser) | `logfmt` input parser. |
 | `cef` | no | (none beyond the parser) | `cef` input parser. |

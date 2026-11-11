@@ -4,7 +4,7 @@ description: "How to add a dynamic pipeline source type to RSigma, such as S3 or
 
 # Adding a dynamic source type
 
-Dynamic pipeline sources (`http`, `command`, `file`, `nats`) live behind one trait: `SourceResolver`. Each `DynamicSource` carries a typed `SourceType` plus shared metadata (`id`, refresh policy, error policy, optional extract). The shipped `DefaultSourceResolver` dispatches on `SourceType`, hits the right adapter, and stores the result in a shared `Arc<SourceCache>`. This page walks through adding a new source type (S3, BigQuery, Redis, an internal HTTP endpoint with non-standard auth) and wiring it into the parser, resolver, and CLI.
+Dynamic sources (`http`, `command`, `file`, `nats`) live behind one trait: `SourceResolver`. Each `DynamicSource` carries a typed `SourceType` plus shared metadata (`id`, refresh policy, error policy, optional extract). The shipped `DefaultSourceResolver` dispatches on `SourceType`, hits the right adapter, and stores the result in a shared `Arc<SourceCache>` for pipelines and `lookup` enrichers. This page walks through adding a new source type (S3, BigQuery, Redis, an internal HTTP endpoint with non-standard auth) and wiring it into the parser, resolver, and CLI.
 
 Source declarations live in standalone YAML loaded with `--source` or `--source-file`. Each file has a top-level `sources:` list. Pipeline-embedded `sources:` is rejected (hard parse error pointing at `rsigma rule migrate-sources`).
 
@@ -279,6 +279,7 @@ Source resolution touches the network and the filesystem; before merging:
 
 ## See also
 
-- [Dynamic Pipeline Sources](../reference/dynamic-sources.md): operator-facing reference for every shipped source type.
+- [Dynamic Sources](../reference/dynamic-sources.md): operator-facing reference for every shipped source type.
+- [Dynamic Pipelines](../reference/dynamic-pipelines.md): pipeline-specific source binding.
 - [`rsigma-runtime`](../library/runtime.md): the `SourceResolver` trait and `DefaultSourceResolver`.
 - [Adding an enricher](adding-enrichers.md): the analogous walkthrough for bespoke enrichers, which read from the same `SourceCache` via the `lookup` primitive.
