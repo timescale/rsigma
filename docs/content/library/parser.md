@@ -123,7 +123,7 @@ println!("applied {} fix(es)", outcome.applied);
 
 ## Formatting
 
-{{ added "unreleased" }}
+{{ added "0.27.0" }}
 
 `format_yaml` rewrites a whole Sigma file into the canonical layout used by `rsigma rule fmt` and the LSP. It keeps comments, anchors, aliases, tags, and directives, and it runs a semantic guard before returning changed text. `format_yaml_range` formats only the smallest block mapping that contains a byte range and returns the replacement plus the byte span to splice; it returns `Ok(None)` when that mapping is already canonical.
 

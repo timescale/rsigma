@@ -4,7 +4,7 @@ description: "Reference for rsigma rule fmt: rewrite Sigma rules into a canonica
 
 # `rsigma rule fmt`
 
-{{ added "unreleased" }}
+{{ added "0.27.0" }}
 
 Rewrite Sigma rules into rsigma's canonical layout while keeping their comments and meaning.
 
