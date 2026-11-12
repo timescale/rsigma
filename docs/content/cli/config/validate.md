@@ -47,7 +47,7 @@ warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-s
 Config is valid.
 ```
 
-An ignored key is a security-sensitive key set in a project file (`./rsigma.yaml` or `.rsigmarc`), which rsigma drops; see [Project config trust](../../reference/configuration.md#project-config-trust). Ignored keys do not fail validation, even with `--strict`. {{ added "unreleased" }}
+An ignored key is a security-sensitive key set in a project file (`./rsigma.yaml` or `.rsigmarc`), which rsigma drops; see [Project config trust](../../reference/configuration.md#project-config-trust). Ignored keys do not fail validation, even with `--strict`. {{ added "0.27.0" }}
 
 ### JSON mode
 
@@ -67,7 +67,7 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
 }
 ```
 
-`ignored_keys` {{ added "unreleased" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 

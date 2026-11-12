@@ -255,7 +255,7 @@ curl -sS http://127.0.0.1:9090/api/v1/silences
 
 Create a silence. The body is a JSON object with `matchers` (required; each `{selector, op, value}` where `op` is `=`, `!=`, `=~`, or `!~`), optional `starts_at` and `ends_at` (RFC 3339), `created_by`, and `comment`. Returns `201` with the assigned `id`. A missing matcher list or a bad regex returns `400`. Once the dynamic-silence cap (`max_silences`, default 1000) is reached it returns `429`; delete silences or raise the cap.
 
-{{ added "unreleased" }} The alert pipeline's silence limits also return `400`, with an `error` and a `hint`:
+{{ added "0.27.0" }} The alert pipeline's silence limits also return `400`, with an `error` and a `hint`:
 
 - `ends_at` is required and must be no more than `max_silence_duration` (default `720h`) from now. `max_silence_duration: 0` removes the bound.
 - At least one matcher must be `=` with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, unless `allow_broad_silences: true` is set. `rule =~ .*`, `rule != x`, or `level = high` alone is refused.

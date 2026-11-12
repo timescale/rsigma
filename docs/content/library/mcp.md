@@ -42,7 +42,7 @@ rsigma-mcp = "{{ rsigma.version }}"
 | `RsigmaMcp::default()` | A handler with no root, default lint configuration, and delegation disabled. |
 | `serve_stdio(handler)` | Serve the handler over stdio, blocking until the client disconnects. The caller owns the tokio runtime. |
 | `serve_http` / `http_router` (`http` feature) | Serve over Streamable HTTP (`/mcp`), or obtain the axum router for embedding. The optional bearer token is the only setting, and only loopback `Host` headers are accepted. |
-| `serve_http_with` / `http_router_with(handler, HttpOptions)` (`http` feature) | Same, with `HttpOptions { auth_token, allowed_hosts }`. `AllowedHosts` is `Loopback` (`LOOPBACK_HOSTS`, the default), `List(hosts)` (empty means loopback), or `Any`; requests with any other `Host`, or with an `Origin` that names any other host, get `403`. `Any` turns off both checks, so use it only when a bearer token guards the endpoint. Both types are `#[non_exhaustive]`: start from `HttpOptions::default()` and set the fields. {{ added "unreleased" }} |
+| `serve_http_with` / `http_router_with(handler, HttpOptions)` (`http` feature) | Same, with `HttpOptions { auth_token, allowed_hosts }`. `AllowedHosts` is `Loopback` (`LOOPBACK_HOSTS`, the default), `List(hosts)` (empty means loopback), or `Any`; requests with any other `Host`, or with an `Origin` that names any other host, get `403`. `Any` turns off both checks, so use it only when a bearer token guards the endpoint. Both types are `#[non_exhaustive]`: start from `HttpOptions::default()` and set the fields. {{ added "0.27.0" }} |
 
 The handler implements `rmcp::ServerHandler`, so it can also be served over any rmcp transport.
 

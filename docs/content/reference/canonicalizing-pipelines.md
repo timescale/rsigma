@@ -4,7 +4,7 @@ description: "Reference for the optional ECS, CIM, OCSF, and Falcon pipelines th
 
 # Canonicalizing Pipelines
 
-{{ added "unreleased" }}
+{{ added "0.27.0" }}
 
 Canonicalizing pipelines rewrite Sigma rule field names to match the schema of indexed events. They are optional and run only when selected with `-p`. RSigma ships canonicalizers for ECS, Splunk CIM, OCSF, and CrowdStrike Falcon.
 

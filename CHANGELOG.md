@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-12
+
+**TL;DR**
+RSigma v0.27.0 adds `rsigma rule fmt`, a Sigma formatter that keeps comments, adds canonicalizing pipelines for ECS Linux, Splunk CIM, OCSF, and CrowdStrike Falcon, and closes security gaps in project config files, MCP HTTP, API silences, and the egress policy.
+* Formatter: `rsigma rule fmt` rewrites rules, correlations, filters, and action-chain fragments into one canonical layout, keeps comments, anchors, and tags, and refuses any rewrite that would change the parsed document. `--check`, `--diff`, `--write`, and `--stdout` cover CI, review, and editor use. The MCP server exposes it as `format_rules`, the LSP advertises document and range formatting, and `rsigma-parser` exposes `format_yaml` behind the default `fmt` feature (#673).
+* Pipelines: `-p ecs_linux` is a new builtin for ECS-shaped Linux events, and the path-only `cim_events.yml`, `ocsf_events.yml`, and `falcon_windows.yml` rewrite rules for Splunk CIM, live OCSF JSON, and Falcon Windows sensor events (#674, #675, thanks to @SecurityEnthusiast).
+* Security: a `./rsigma.yaml` or `.rsigmarc` in a cloned repository can no longer open MCP server gates or configure daemon sources, enrichers, sinks, or API access (#655, #656). MCP HTTP requires a token off loopback and validates `Origin` (#659). API silences are bounded in duration and scope (#658). The egress policy covers IP-literal URLs, redirects, IPv6 forms of IPv4 addresses, and more cloud metadata addresses (#654). MCP `evaluate_events` refuses `${ENV_VAR}` in template enrichers (#653), delegated `convert_rules` no longer follows symlinks out of the rules root (#657), and the VS Code extension ignores `rsigma.serverPath` in workspace settings (#651).
+* Dependencies: `rmcp` 3.9.0 for RUSTSEC-2026-0462 (#696), `minimatch` 11.0.3 in the VS Code extension for GHSA-g3hv-75wg-m249 along with the Dependabot roll-up (#672), and `yamlpath` and `yamlpatch` 1.32.0 (#697). The MSRV moves to Rust 1.97.1 (#695).
+* Breaking: `mcp serve --http` on a non-loopback address refuses to start without `--auth-token` or `--allow-unauthenticated` (#659). Protected `mcp.*` and `daemon.*` keys in project config files are ignored, and jq filters lose the `env` builtin (#655, #656). API silences need `ends_at` and a scoped `=` matcher, and `POST /api/v1/silences` returns `409` without an alert pipeline (#658). In the libraries, `rsigma-mcp`'s `http_router_with` and `serve_http_with` take `HttpOptions` (#659), `AlertPipeline::new` takes `SilenceLimits` (#658), and the `rsigma-parser` emitter quotes and orders its output differently (#673). See the migration notes in the entries below.
+* Docs and CI: every docs page has a meta description and link preview (#676), breadcrumb structured data passes Google validation (#677), the dynamic sources and canonicalizing pipelines references describe current behavior directly (#691, #692, #694), docs-only PRs skip the build and test jobs behind one `CI result` check (#669), and CI runs for merge queues and stacked PRs (#652).
+
 ### YAML edit dependencies 1.32.0 (#697)
 
 The rule formatter and fixer move from `yamlpath` 1.27.0 and `yamlpatch` 1.26.1 to 1.32.0, now that their `tree-sitter-iter` dependency is compatible with the workspace MSRV. The parser and fuzz harness move their direct `tree-sitter` dependency from 0.26 to the required 0.27 release.
@@ -28,17 +39,16 @@ The Canonicalizing Pipelines page now presents the shipped ECS, CIM, OCSF, and F
 
 The Dynamic Sources reference now documents source declarations, fetch types, refresh, errors, and limits independently of their consumers. A new Dynamic Pipelines reference covers `${source.*}`, `vars:`, and `include:` binding, while the Enrichers guide makes clear that `lookup` enrichers can consume the same shared source cache without a pipeline. Navigation, API, metrics, security, CLI, and library pages use the same consumer-neutral terminology.
 
-### Canonicalizing pipelines (issue #330) (#675)
+### Canonicalizing pipelines for ECS Linux, Splunk CIM, OCSF, and CrowdStrike Falcon (#674, #675)
 
-Adds path-only eval rule-rewrite pipelines for Splunk CIM, OCSF live JSON, and CrowdStrike Falcon Windows. The portable Sigma categories `process_creation`, `network_connection`, `file_event`, `image_load`, and `dns_query` are implemented for each target. Integration tests live under `crates/rsigma-eval/tests/*_pipeline.rs` with per-category positives and negative controls without `-p`.
+Canonicalizing pipelines rewrite Sigma rule field names to match the schema of the indexed events, and run only when selected with `-p`. Each new pipeline covers the portable categories `process_creation`, `network_connection`, `file_event`, `image_load`, and `dns_query`.
 
-- **CIM:** [`cim_events.yml`](crates/rsigma-eval/pipelines/cim_events.yml) (Splunk CIM; replaces the earlier network-only filename).
-- **OCSF eval:** [`ocsf_events.yml`](crates/rsigma-eval/pipelines/ocsf_events.yml) on live input (not sink `?format=ocsf`, not [`ocsf_postgres.yml`](crates/rsigma-convert/pipelines/ocsf_postgres.yml)).
-- **Falcon:** [`falcon_windows.yml`](crates/rsigma-eval/pipelines/falcon_windows.yml) for Windows sensor JSON, including `event_simpleName` gates.
+- **ECS Linux:** `-p ecs_linux` is a new builtin that maps Sysmon-style Sigma fields to ECS for `product: linux` rules, matching the corresponding `ecs_windows` blocks. Use it with Filebeat, Elastic Agent, or other Linux shippers that emit ECS JSON.
+- **Splunk CIM:** `cim_events.yml` maps the same categories to Splunk CIM field names.
+- **OCSF:** `ocsf_events.yml` rewrites rules for OCSF JSON events on input. It is separate from the `?format=ocsf` sink output, which writes OCSF findings, and from the `ocsf_postgres.yml` conversion pipeline.
+- **CrowdStrike Falcon:** `falcon_windows.yml` covers Falcon Windows sensor JSON and gates each category on its `event_simpleName` values.
 
-Scope and exclusions: [Canonicalizing Pipelines](docs/content/reference/canonicalizing-pipelines.md). Field tables: [Builtin Pipelines](docs/content/reference/builtin-pipelines.md). Relates to [#330](https://github.com/timescale/rsigma/issues/330).
-
-Registers `ecs_linux` in the embedded pipeline registry so `-p ecs_linux` resolves without a YAML file path. Docs and MCP list four builtins (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`); `gcp_audit` remains path-only.
+The CIM, OCSF, and Falcon pipelines ship under `crates/rsigma-eval/pipelines/` and load by path, such as `-p crates/rsigma-eval/pipelines/cim_events.yml`. The builtins are now `ecs_windows`, `ecs_linux`, `fibratus_windows`, and `sysmon`, which the MCP `list_builtin_pipelines` and `resolve_pipeline` tools list too, and `gcp_audit.yml` stays path-only. Windows-only categories on non-ECS targets, Falcon macOS and Linux events, and `NetworkConnectIP6` are out of scope. See [Canonicalizing Pipelines](https://rsigma.io/reference/canonicalizing-pipelines/) for the scope and [Builtin Pipelines](https://rsigma.io/reference/builtin-pipelines/) for the field maps.
 
 ### Docs site breadcrumb structured data passes Google validation (#677)
 
@@ -49,10 +59,6 @@ Google Search Console rejected the breadcrumb structured data on most rsigma.io 
 Every page on rsigma.io now has a written meta description in its frontmatter, so search results, link previews, and `llms.txt` show a summary of the page instead of an empty description. The docs plugin fails the build when a page has no description or one over 160 characters. The home page title and heading now read "RSigma: Sigma Detection Engineering Toolkit in Rust" instead of "Welcome to RSigma's documentation!".
 
 The RSigma social banner, which now lists the formatter among the capabilities, is committed as `assets/social-banner.png`, and every page references it through `og:image` and `twitter:image`, with its size and alt text. The docs plugin also adds `og:site_name`, a schema.org `SoftwareApplication` description of RSigma on the home page with the version and license from `Cargo.toml`, and a `<lastmod>` to every sitemap entry from the last commit to the page's source, or to the root file it inlines, such as `CHANGELOG.md` for the release notes. The home page no longer declares a structured-data search URL, because the site search does not read a query from the URL.
-
-### Path-only `ecs_linux` pipeline for ECS-shaped Linux events (#674)
-
-Adds [`crates/rsigma-eval/pipelines/ecs_linux.yml`](crates/rsigma-eval/pipelines/ecs_linux.yml): load with `-p crates/rsigma-eval/pipelines/ecs_linux.yml` (not a builtin short name). Maps Sysmon-style Sigma fields to ECS for `product: linux` in `process_creation`, `network_connection`, `image_load`, `file_event`, and `dns_query`, matching the corresponding `ecs_windows` blocks. Integration tests in `crates/rsigma-eval/tests/ecs_linux_pipeline.rs` pin synthetic ECS events for each category; [Builtin Pipelines](docs/content/reference/builtin-pipelines.md) includes the full field map, [Processing Pipelines](docs/content/guide/processing-pipelines.md) documents path-only use, and [`crates/rsigma-eval/README.md`](crates/rsigma-eval/README.md) links the file. Issue: [#330](https://github.com/timescale/rsigma/issues/330).
 
 ### `rsigma rule fmt` formats Sigma rules and keeps their comments (#673)
 
@@ -164,6 +170,8 @@ A `template` enricher passed to the MCP server's `evaluate_events` tool, inline 
 `rsigma.serverPath` is the program the extension starts, and it starts on opening any folder with a `.yml` or `.yaml` file. A repository could commit a `.vscode/settings.json` that pointed it at a script of its own, and a developer who opened and trusted that folder would run the script. The setting now has `machine` scope, so VS Code reads it only from user settings, or from remote settings in a remote window, and ignores it in a workspace or folder `.vscode/settings.json`.
 
 Migration: if you set `rsigma.serverPath` in a `.vscode/settings.json`, VS Code now ignores it and the extension starts `rsigma-lsp` from `$PATH`, or fails to start if it is not there. Move the value to your user settings, or to remote settings for Remote-SSH, WSL, and Dev Containers, where the path is on the remote host. Settings Sync does not carry `machine`-scoped values, so set a custom path on each machine.
+
+[v0.26.0...v0.27.0](https://github.com/timescale/rsigma/compare/v0.26.0...v0.27.0)
 
 ## [0.26.0] - 2026-11-02
 
@@ -3643,6 +3651,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.27.0]: https://github.com/timescale/rsigma/releases/tag/v0.27.0
 [0.26.0]: https://github.com/timescale/rsigma/releases/tag/v0.26.0
 [0.25.0]: https://github.com/timescale/rsigma/releases/tag/v0.25.0
 [0.24.0]: https://github.com/timescale/rsigma/releases/tag/v0.24.0

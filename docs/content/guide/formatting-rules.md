@@ -4,7 +4,7 @@ description: "Format Sigma rules consistently with rsigma rule fmt: the canonica
 
 # Formatting Rules
 
-{{ added "unreleased" }}
+{{ added "0.27.0" }}
 
 `rsigma rule fmt` rewrites Sigma rules into one canonical layout so that diffs stay small and reviews focus on behavior. The formatter keeps comments, anchors, aliases, tags, and directives, and it refuses any rewrite that would change what a rule means.
 

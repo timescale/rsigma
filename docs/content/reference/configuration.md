@@ -14,7 +14,7 @@ From highest to lowest:
 
 1. **CLI flags** on the command line (e.g. `--rules /tmp/r`).
 2. **Environment variables**: uniform `RSIGMA_<SECTION>__<KEY>` (see [Environment layer](#environment-layer)) plus the legacy clap-bound names listed in [Environment Variables](environment-variables.md).
-3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "unreleased" }}
+3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "0.27.0" }}
 4. **User config**: `$XDG_CONFIG_HOME/rsigma/config.yaml` (defaulting to `~/.config/rsigma/config.yaml`).
 5. **System config**: `/etc/rsigma/config.yaml`.
 6. **Compiled defaults** baked into the binary.
@@ -33,7 +33,7 @@ The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explic
 
 ## Project config trust
 
-{{ added "unreleased" }}
+{{ added "0.27.0" }}
 
 A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` above the current directory) ships with whatever repository is checked out, so running `rsigma` inside a cloned repository would otherwise let that repository configure the process. Project files can still set ordinary keys such as rule paths, pipelines, and output formats, but the keys below open a listener, a write path, a subprocess, or a network client, or weaken a guard, so rsigma ignores them when they come from a project file:
 
@@ -71,7 +71,7 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.engine.egress_policy` | Can turn off the SSRF defense for HTTP sources and enrichers. |
 | `daemon.engine.allow_remote_include` | Lets pipelines include remote (HTTP or NATS) sources. |
 
-The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "unreleased" }}
+The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "0.27.0" }}
 
 Each ignored key prints a warning naming the file:
 
