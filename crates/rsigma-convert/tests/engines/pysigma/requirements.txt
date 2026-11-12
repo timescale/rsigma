@@ -178,13 +178,9 @@ charset-normalizer==3.5.2 \
     --hash=sha256:fd1fbe0f116b6e55da77aca2c6ddcddcfac2186cbf78bdebf40fc156efca389d \
     --hash=sha256:fe9753dfee015c570d73df76f899f18444d41388bffcde097deba51c4fadbb9f
     # via requests
-diskcache==5.6.3 \
-    --hash=sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc \
-    --hash=sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19
-    # via pysigma
-diskcache-stubs==5.6.3.6.20240818 \
-    --hash=sha256:b6eb43899e906b3167a20ac09a9a226f30267a306a96542ea720ebbfc3282796 \
-    --hash=sha256:e1db90940b344140730976abe79f57f5b43ca296cbb43fa95da0c69b12d5de4f
+diskcache-community==5.8.5 \
+    --hash=sha256:a4f603839e2f802fb49a29f7239206017b12e001eb1e26a696af4fa0290cd7df \
+    --hash=sha256:f9d771b4ab53606cd9a4111d6dd065370e6a42eb2a6c22ea22d6558b85e62f12
     # via pysigma
 google-re2==1.1.20251105 \
     --hash=sha256:03156291269f145eccddff63118f2df02d395792f51fc039f09955818943815a \
@@ -474,9 +470,9 @@ pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
     # via pysigma
-pysigma==2.0.1 \
-    --hash=sha256:7769a8f22177e732094312fb4c3a08f9fdd8af152a5905a4c549ff59dc7708e6 \
-    --hash=sha256:7bb0188e1cfae1bec56da1f5703a091df158925caf32cf033594bab60b97f49f
+pysigma==2.0.2 \
+    --hash=sha256:8fb128597a5d3812219d4dd17c76426bc480ea9875325c5eeeac114d6d8ebbec \
+    --hash=sha256:c8fac45d24adfa14aeebcbab95929066116b2dbcc0816498066af56dda039832
     # via -r requirements.in
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
@@ -561,10 +557,6 @@ types-pyyaml==6.0.12.20260906 \
     --hash=sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b \
     --hash=sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212
     # via pysigma
-typing-extensions==4.16.0 \
-    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
-    --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
-    # via diskcache-stubs
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
