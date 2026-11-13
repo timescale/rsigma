@@ -32,6 +32,7 @@ cli_features! {
     "hunt-postgres",
     "logfmt",
     "mcp",
+    "mmdb-enrich",
     "stix-enrich",
     "taxii-sync",
 }
