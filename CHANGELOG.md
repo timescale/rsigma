@@ -12,7 +12,11 @@ The database is checked for replacement about once a minute. A changed file is r
 
 The daemon exposes `rsigma_enrichment_mmdb_hits_total`, `rsigma_enrichment_mmdb_misses_total`, `rsigma_enrichment_mmdb_reloads_total`, and `rsigma_enrichment_mmdb_build_epoch_seconds`, so operators can alert on a stale database and watch the miss-to-hit ratio. The enricher is gated behind the `mmdb-enrich` feature in `rsigma-runtime` and the CLI, and is included in the prebuilt binaries and the Docker image.
 
-The library surface adds `MmdbEnricher`, `MmdbDatabase`, `MmdbFields`, and `MmdbLookupError`, six `MetricsHook` methods for hits, misses, reloads, build epoch, and label pre-registration, and an `EnrichersConfigError::Database` variant for a database that fails to open at config load. See [Enrichers](https://rsigma.io/guide/enrichers/#mmdb-local-mmdb-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
+The library surface adds `MmdbEnricher`, `MmdbDatabase`, `MmdbFields`, and `MmdbLookupError`, six `MetricsHook` methods for hits, misses, reloads, build epoch, and label pre-registration, and an `EnrichersConfigError::Database` variant for a database that fails to open at config load.
+
+Breaking changes: `EnrichersConfigError` is not `#[non_exhaustive]`, so an exhaustive `match` on it needs an arm for `Database`. `EnricherConfig` has three new public fields, so code that builds it with a struct literal must add `db_path: None`, `key: None`, and `fields: BTreeMap::new()`. YAML configs are unaffected.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#mmdb-local-mmdb-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
 
 ## [0.27.0] - 2026-11-12
 
