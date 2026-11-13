@@ -155,10 +155,32 @@ struct FileStamp {
 
 impl FileStamp {
     fn read(path: &Path) -> std::io::Result<Self> {
-        let metadata = std::fs::metadata(path)?;
-        Ok(Self {
+        Ok(Self::from_metadata(&std::fs::metadata(path)?))
+    }
+
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
             modified: metadata.modified().ok(),
             len: metadata.len(),
+        }
+    }
+}
+
+impl Loaded {
+    /// Read `path` and stamp it from the same open handle, so the stamp
+    /// always describes the bytes that were loaded even if the file is
+    /// replaced concurrently.
+    fn from_file(path: &Path) -> Result<Self, String> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let stamp = FileStamp::from_metadata(&file.metadata().map_err(|e| e.to_string())?);
+        let mut bytes = Vec::with_capacity(usize::try_from(stamp.len).unwrap_or(0));
+        file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        let reader = Reader::from_source(bytes).map_err(|e| e.to_string())?;
+        Ok(Self {
+            reader,
+            stamp: Some(stamp),
         })
     }
 }
@@ -181,12 +203,11 @@ impl MmdbDatabase {
         check_interval: Duration,
     ) -> Result<Self, String> {
         let path = path.as_ref().to_path_buf();
-        let reader = Reader::open_readfile(&path).map_err(|e| e.to_string())?;
-        let stamp = FileStamp::read(&path).ok();
+        let loaded = Loaded::from_file(&path)?;
         Ok(Self {
             database_label: path.display().to_string(),
             path: Some(path),
-            current: ArcSwap::from_pointee(Loaded { reader, stamp }),
+            current: ArcSwap::from_pointee(loaded),
             check_interval,
             next_check: Mutex::new(Instant::now()),
             reloading: AtomicBool::new(false),
@@ -294,13 +315,10 @@ impl MmdbDatabase {
             return;
         }
 
-        match Reader::open_readfile(path) {
-            Ok(reader) => {
-                let build_epoch = reader.metadata().build_epoch;
-                self.current.store(Arc::new(Loaded {
-                    reader,
-                    stamp: Some(stamp),
-                }));
+        match Loaded::from_file(path) {
+            Ok(loaded) => {
+                let build_epoch = loaded.reader.metadata().build_epoch;
+                self.current.store(Arc::new(loaded));
                 self.metrics
                     .on_enrichment_mmdb_reload(&self.database_label, true);
                 self.metrics
