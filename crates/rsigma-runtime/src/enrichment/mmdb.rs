@@ -895,17 +895,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_is_throttled_and_single_flight() {
+    async fn refresh_is_throttled() {
         let (_dir, path) = temp_copy("city-test.mmdb");
         let db = Arc::new(MmdbDatabase::open(&path).unwrap());
 
-        let first = db.maybe_refresh();
-        assert!(first.is_some(), "the first check is due");
+        db.maybe_refresh()
+            .expect("the first check is due")
+            .await
+            .unwrap();
         assert!(
             db.maybe_refresh().is_none(),
-            "a second call inside the interval must not spawn"
+            "a call inside the interval must not spawn after the first check finished"
         );
-        first.unwrap().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_is_single_flight() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open_with_check_interval(&path, Duration::ZERO).unwrap());
+
+        db.reloading.store(true, Ordering::Release);
+        assert!(
+            db.maybe_refresh().is_none(),
+            "a check must not spawn while another reload is running"
+        );
+        db.reloading.store(false, Ordering::Release);
+        db.maybe_refresh().expect("a check is due").await.unwrap();
     }
 
     #[derive(Default)]
@@ -1091,6 +1106,24 @@ mod tests {
             vec![(label, 1_704_067_200)],
             "a failed reload must not change the published build epoch"
         );
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_file_is_not_reloaded() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let m = Arc::new(CollectingMetrics::default());
+        let db = Arc::new(
+            MmdbDatabase::open_with_check_interval(&path, Duration::ZERO)
+                .unwrap()
+                .with_metrics(
+                    Arc::clone(&m) as Arc<dyn crate::MetricsHook>,
+                    path.display().to_string(),
+                ),
+        );
+
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert!(m.reloads.lock().unwrap().is_empty());
     }
 
     #[test]

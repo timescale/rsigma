@@ -1227,9 +1227,15 @@ enrichers:
             mmdb_databases: HashMap::new(),
         };
         let path = PathBuf::from(mmdb_fixture("city-test.mmdb"));
+        let respelled = PathBuf::from(format!(
+            "{}/tests/fixtures/./mmdb/../mmdb/city-test.mmdb",
+            env!("CARGO_MANIFEST_DIR")
+        ));
         let a = open_mmdb_database(&mut ctx, "a", &path).unwrap();
         let b = open_mmdb_database(&mut ctx, "b", &path).unwrap();
+        let c = open_mmdb_database(&mut ctx, "c", &respelled).unwrap();
         assert!(std::sync::Arc::ptr_eq(&a, &b));
+        assert!(std::sync::Arc::ptr_eq(&a, &c));
     }
 
     #[cfg(not(feature = "mmdb-enrich"))]
