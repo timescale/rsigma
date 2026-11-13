@@ -356,19 +356,27 @@ pub fn build_enrichers_full(
             enricher_id: "<global>".to_string(),
             message,
         })?;
+    let mut ctx = BuildContext {
+        http_client,
+        resources: &resources,
+        metrics: metrics.clone(),
+    };
     let mut enrichers: Vec<Box<dyn crate::Enricher>> = Vec::with_capacity(file.enrichers.len());
     for cfg in file.enrichers {
-        enrichers.push(build_one(
-            cfg,
-            http_client.clone(),
-            &resources,
-            metrics.clone(),
-        )?);
+        enrichers.push(build_one(cfg, &mut ctx)?);
     }
     let cap = file
         .max_concurrent_enrichments
         .unwrap_or(DEFAULT_MAX_CONCURRENT_ENRICHMENTS);
     Ok(EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics))
+}
+
+/// State shared by every [`build_one`] call in one
+/// [`build_enrichers_full`] invocation.
+struct BuildContext<'a> {
+    http_client: HttpEnricherClient,
+    resources: &'a EnricherResources,
+    metrics: std::sync::Arc<dyn MetricsHook>,
 }
 
 /// Build a single [`Enricher`](crate::Enricher) from one YAML config block.
@@ -378,9 +386,7 @@ pub fn build_enrichers_full(
 /// extending one match arm.
 fn build_one(
     cfg: EnricherConfig,
-    http_client: HttpEnricherClient,
-    resources: &EnricherResources,
-    metrics: std::sync::Arc<dyn MetricsHook>,
+    ctx: &mut BuildContext<'_>,
 ) -> Result<Box<dyn crate::Enricher>, EnrichersConfigError> {
     let kind: EnricherKind = cfg.kind.into();
     let on_error: OnError = cfg.on_error.into();
@@ -451,10 +457,10 @@ fn build_one(
                     on_error,
                     scope,
                     extract,
-                    http_client,
+                    ctx.http_client.clone(),
                     cache,
                 )
-                .with_metrics(metrics),
+                .with_metrics(ctx.metrics.clone()),
             ))
         }
         "command" => {
@@ -487,7 +493,7 @@ fn build_one(
                     field: "source",
                 })?;
             let cache =
-                resources
+                ctx.resources
                     .source_cache
                     .clone()
                     .ok_or(EnrichersConfigError::MissingField {
@@ -512,7 +518,7 @@ fn build_one(
         }
         #[cfg(feature = "stix-enrich")]
         "stix" => {
-            let store = resources
+            let store = ctx.resources
                 .stix_store
                 .clone()
                 .ok_or(EnrichersConfigError::MissingField {
