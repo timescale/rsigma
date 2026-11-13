@@ -11,10 +11,13 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use maxminddb::{PathElement, Reader};
+use parking_lot::Mutex;
 use rsigma_eval::EvaluationResult;
 use serde_json::Value;
 
@@ -22,6 +25,9 @@ use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
     template::render_template,
 };
+
+/// How often an opened database is checked for replacement by default.
+pub(crate) const DEFAULT_MMDB_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Failure while looking up or decoding an MMDB record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +132,31 @@ enum LookupOutcome {
 /// ```
 pub struct MmdbDatabase {
     path: Option<PathBuf>,
+    current: ArcSwap<Loaded>,
+    check_interval: Duration,
+    next_check: Mutex<Instant>,
+    reloading: AtomicBool,
+}
+
+struct Loaded {
     reader: Reader<Vec<u8>>,
+    stamp: Option<FileStamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        })
+    }
 }
 
 impl MmdbDatabase {
@@ -135,18 +165,44 @@ impl MmdbDatabase {
     /// The file is read eagerly rather than memory-mapped, so rewriting it in
     /// place cannot raise `SIGBUS`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
+        Self::open_with_check_interval(path, DEFAULT_MMDB_CHECK_INTERVAL)
+    }
+
+    /// Load an MMDB file and set how often it is checked for replacement.
+    ///
+    /// A zero interval makes every enrichment check the file, which is useful
+    /// in tests.
+    pub fn open_with_check_interval(
+        path: impl AsRef<Path>,
+        check_interval: Duration,
+    ) -> Result<Self, String> {
         let path = path.as_ref().to_path_buf();
         let reader = Reader::open_readfile(&path).map_err(|e| e.to_string())?;
+        let stamp = FileStamp::read(&path).ok();
         Ok(Self {
             path: Some(path),
-            reader,
+            current: ArcSwap::from_pointee(Loaded { reader, stamp }),
+            check_interval,
+            next_check: Mutex::new(Instant::now()),
+            reloading: AtomicBool::new(false),
         })
     }
 
     /// Build a database from bytes already in memory.
+    ///
+    /// A database built this way has no file to watch and never reloads.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
         let reader = Reader::from_source(bytes).map_err(|e| e.to_string())?;
-        Ok(Self { path: None, reader })
+        Ok(Self {
+            path: None,
+            current: ArcSwap::from_pointee(Loaded {
+                reader,
+                stamp: None,
+            }),
+            check_interval: DEFAULT_MMDB_CHECK_INTERVAL,
+            next_check: Mutex::new(Instant::now()),
+            reloading: AtomicBool::new(false),
+        })
     }
 
     /// The file this database was opened from, or `None` for
@@ -170,12 +226,80 @@ impl MmdbDatabase {
         }
     }
 
+    /// Check the backing file for a replacement and reload it off the hot
+    /// path.
+    ///
+    /// Returns the background job so callers that need to observe the reload
+    /// (tests) can await it. The current lookup never waits: it keeps using
+    /// the reader that is already loaded. A failed reload keeps the previous
+    /// reader and retries after the next interval.
+    pub(crate) fn maybe_refresh(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
+        let path = self.path.clone()?;
+        {
+            let mut next_check = self.next_check.lock();
+            if Instant::now() < *next_check {
+                return None;
+            }
+            *next_check = Instant::now() + self.check_interval;
+        }
+        if self.reloading.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+
+        let this = Arc::clone(self);
+        Some(tokio::task::spawn_blocking(move || {
+            this.refresh_blocking(&path);
+            this.reloading.store(false, Ordering::Release);
+        }))
+    }
+
+    fn refresh_blocking(&self, path: &Path) {
+        let stamp = match FileStamp::read(path) {
+            Ok(stamp) => stamp,
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "mmdb refresh failed; keeping previous database"
+                );
+                return;
+            }
+        };
+
+        if self.current.load().stamp.as_ref() == Some(&stamp) {
+            return;
+        }
+
+        match Reader::open_readfile(path) {
+            Ok(reader) => {
+                let build_epoch = reader.metadata().build_epoch;
+                self.current.store(Arc::new(Loaded {
+                    reader,
+                    stamp: Some(stamp),
+                }));
+                tracing::info!(
+                    path = %path.display(),
+                    build_epoch,
+                    "reloaded mmdb database"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "mmdb reload failed; keeping previous database"
+                );
+            }
+        }
+    }
+
     fn lookup_outcome(
         &self,
         ip: IpAddr,
         fields: Option<&MmdbFields>,
     ) -> Result<LookupOutcome, MmdbLookupError> {
-        let result = self
+        let loaded = self.current.load();
+        let result = loaded
             .reader
             .lookup(ip)
             .map_err(|e| MmdbLookupError::Lookup(e.to_string()))?;
@@ -341,6 +465,8 @@ impl Enricher for MmdbEnricher {
                 "key '{key}' is not an IP address"
             )))
         })?;
+
+        let _ = self.db.maybe_refresh();
 
         let outcome = self
             .db
@@ -625,5 +751,93 @@ mod tests {
             matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no projected fields")),
             "got {err}"
         );
+    }
+
+    fn temp_copy(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("city.mmdb");
+        std::fs::copy(fixture(name), &path).unwrap();
+        (dir, path)
+    }
+
+    fn lookup_country(db: &MmdbDatabase) -> String {
+        db.lookup("192.0.2.10".parse().unwrap(), None)
+            .unwrap()
+            .unwrap()["country"]["iso_code"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn replace_with(path: &Path, name: &str, mtime: SystemTime) {
+        let staging = path.with_file_name("city.staging");
+        std::fs::copy(fixture(name), &staging).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&staging)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        std::fs::rename(&staging, path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_reloads_a_replaced_file() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open_with_check_interval(&path, Duration::ZERO).unwrap());
+        assert_eq!(lookup_country(&db), "US");
+
+        replace_with(
+            &path,
+            "city-test-updated.mmdb",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
+        );
+
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert_eq!(lookup_country(&db), "CA");
+    }
+
+    #[tokio::test]
+    async fn failed_reload_keeps_the_previous_reader_and_a_later_valid_file_reloads() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open_with_check_interval(&path, Duration::ZERO).unwrap());
+        assert_eq!(lookup_country(&db), "US");
+
+        std::fs::write(&path, b"not an mmdb").unwrap();
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert_eq!(lookup_country(&db), "US");
+
+        replace_with(
+            &path,
+            "city-test-updated.mmdb",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_001),
+        );
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert_eq!(lookup_country(&db), "CA");
+    }
+
+    #[tokio::test]
+    async fn deleted_file_keeps_the_previous_reader() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open_with_check_interval(&path, Duration::ZERO).unwrap());
+        assert_eq!(lookup_country(&db), "US");
+
+        std::fs::remove_file(&path).unwrap();
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert_eq!(lookup_country(&db), "US");
+    }
+
+    #[tokio::test]
+    async fn refresh_is_throttled_and_single_flight() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open(&path).unwrap());
+
+        let first = db.maybe_refresh();
+        assert!(first.is_some(), "the first check is due");
+        assert!(
+            db.maybe_refresh().is_none(),
+            "a second call inside the interval must not spawn"
+        );
+        first.unwrap().await.unwrap();
     }
 }

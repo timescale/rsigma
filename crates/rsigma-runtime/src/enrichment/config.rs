@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+#[cfg(feature = "mmdb-enrich")]
+use super::mmdb::DEFAULT_MMDB_CHECK_INTERVAL;
 use crate::{
     CommandEnricher, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, MetricsHook, NoopMetrics, OnError, OutputFormat, Scope,
@@ -393,6 +395,8 @@ pub fn build_enrichers_full(
         http_client,
         resources: &resources,
         metrics: metrics.clone(),
+        #[cfg(feature = "mmdb-enrich")]
+        mmdb_databases: HashMap::new(),
     };
     let mut enrichers: Vec<Box<dyn crate::Enricher>> = Vec::with_capacity(file.enrichers.len());
     for cfg in file.enrichers {
@@ -410,6 +414,10 @@ struct BuildContext<'a> {
     http_client: HttpEnricherClient,
     resources: &'a EnricherResources,
     metrics: std::sync::Arc<dyn MetricsHook>,
+    /// Databases opened during this build, keyed by canonical path, so
+    /// several enricher entries for one file share a single reader.
+    #[cfg(feature = "mmdb-enrich")]
+    mmdb_databases: HashMap<PathBuf, std::sync::Arc<MmdbDatabase>>,
 }
 
 /// Build a single [`Enricher`](crate::Enricher) from one YAML config block.
@@ -620,12 +628,7 @@ fn build_one(
                     }
                 })?)
             };
-            let db =
-                MmdbDatabase::open(&db_path).map_err(|message| EnrichersConfigError::Database {
-                    enricher_id: cfg.id.clone(),
-                    path: db_path.clone(),
-                    message,
-                })?;
+            let db = open_mmdb_database(ctx, &cfg.id, &db_path)?;
             Ok(Box::new(MmdbEnricher::new(
                 cfg.id,
                 kind,
@@ -636,7 +639,7 @@ fn build_one(
                 timeout,
                 on_error,
                 scope,
-                std::sync::Arc::new(db),
+                db,
             )))
         }
         #[cfg(not(feature = "mmdb-enrich"))]
@@ -663,6 +666,30 @@ fn build_one(
             })
         }
     }
+}
+
+/// Open an MMDB database, reusing one already opened in this build.
+#[cfg(feature = "mmdb-enrich")]
+fn open_mmdb_database(
+    ctx: &mut BuildContext<'_>,
+    enricher_id: &str,
+    db_path: &Path,
+) -> Result<std::sync::Arc<MmdbDatabase>, EnrichersConfigError> {
+    let key = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
+    if let Some(db) = ctx.mmdb_databases.get(&key) {
+        return Ok(std::sync::Arc::clone(db));
+    }
+    let db = std::sync::Arc::new(
+        MmdbDatabase::open_with_check_interval(db_path, DEFAULT_MMDB_CHECK_INTERVAL).map_err(
+            |message| EnrichersConfigError::Database {
+                enricher_id: enricher_id.to_string(),
+                path: db_path.to_path_buf(),
+                message,
+            },
+        )?,
+    );
+    ctx.mmdb_databases.insert(key, std::sync::Arc::clone(&db));
+    Ok(db)
 }
 
 /// Build an [`ExtractExpr`](rsigma_eval::pipeline::sources::ExtractExpr)
@@ -1181,6 +1208,22 @@ enrichers:
         let err = build_enrichers(parsed).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("wrong namespace"), "got: {msg}");
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_databases_are_shared_within_one_build() {
+        let resources = EnricherResources::default();
+        let mut ctx = BuildContext {
+            http_client: build_default_http_client().unwrap(),
+            resources: &resources,
+            metrics: std::sync::Arc::new(NoopMetrics),
+            mmdb_databases: HashMap::new(),
+        };
+        let path = PathBuf::from(mmdb_fixture("city-test.mmdb"));
+        let a = open_mmdb_database(&mut ctx, "a", &path).unwrap();
+        let b = open_mmdb_database(&mut ctx, "b", &path).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
     }
 
     #[cfg(not(feature = "mmdb-enrich"))]
