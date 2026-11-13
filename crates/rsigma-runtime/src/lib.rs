@@ -101,6 +101,8 @@ pub use enrichment::{
     TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
     validate_template_namespace,
 };
+#[cfg(feature = "mmdb-enrich")]
+pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
 pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;

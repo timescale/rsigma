@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 rsigma-parser = { path = "../crates/rsigma-parser" }
 rsigma-eval = { path = "../crates/rsigma-eval" }
 rsigma-convert = { path = "../crates/rsigma-convert" }
-rsigma-runtime = { path = "../crates/rsigma-runtime", features = ["logfmt", "cef", "otlp"] }
+rsigma-runtime = { path = "../crates/rsigma-runtime", features = ["logfmt", "cef", "otlp", "mmdb-enrich"] }
 prost = "0.14"
 serde = "1"
 serde_json = "1"
@@ -166,4 +166,9 @@ doc = false
 [[bin]]
 name = "fuzz_rule_fmt"
 path = "fuzz_targets/fuzz_rule_fmt.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mmdb_record"
+path = "fuzz_targets/fuzz_mmdb_record.rs"
 doc = false

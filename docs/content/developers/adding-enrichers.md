@@ -4,14 +4,14 @@ description: "How to add a bespoke enricher to the RSigma runtime: implement the
 
 # Adding an enricher
 
-The four primitives `template`, `lookup`, `http`, and `command` cover almost every operational use case via [recipes](../guide/enrichers.md#composing-enrichers-recipes). When they don't, the runtime ships a bespoke enricher API: implement the `Enricher` trait, register it under a stable `type:` name with `register_builtin(name, factory)`, and operators reference it from their YAML by that name.
+The six primitives `template`, `lookup`, `http`, `command`, `stix`, and `mmdb` cover almost every operational use case via [recipes](../guide/enrichers.md#composing-enrichers-recipes). When they don't, the runtime ships a bespoke enricher API: implement the `Enricher` trait, register it under a stable `type:` name with `register_builtin(name, factory)`, and operators reference it from their YAML by that name.
 
 ## Decide whether you actually need a bespoke enricher
 
 A bespoke Rust-coded enricher is justified only when at least one of these holds; the [user-facing guide](../guide/enrichers.md#promoting-a-recipe-to-a-bespoke-enricher) walks through the same criteria from the operator's angle:
 
 1. **It bundles non-trivial data**: a dataset committed to the repo and `include_bytes!`-ed at compile time (a MITRE ATT&CK STIX bundle, a vendored mini-IOC list). Recipes can't express vendored data.
-2. **It needs a parser the YAML primitives don't expose**: MaxMind's binary GeoLite2, the STIX 2.1 graph with parent/child resolution, a binary signature database. Adding the parser as a generic source might cost more than just shipping the enricher.
+2. **It needs a parser the YAML primitives don't expose**: a proprietary binary format such as a PCAP-derived flow table, a columnar file, or a binary signature database. Adding the parser as a generic source might cost more than just shipping the enricher.
 3. **It provides a stable named contract**: downstream consumers reference a specific `enrichments.<field>` shape directly. A recipe-driven approach lets every operator pick their own `inject_field`, which is fine for ad-hoc enrichment but bad for a contract that crosses team or organizational boundaries.
 4. **It implements a non-obvious algorithm**: e.g. coalescing per-result hash lookups into one batched-GET request. This is implementable as a recipe, but the implementation is fragile.
 
@@ -164,7 +164,7 @@ A few invariants the runtime guarantees, so you don't have to defend against the
 - The call is wrapped in `tokio::time::timeout(self.timeout(), …)`. Timeouts surface as `EnrichErrorKind::Timeout` to the pipeline, then `OnError` decides whether to skip, null, or drop.
 - `result.header.enrichments` is initialised lazily by `inject_enrichment`, so the `skip_serializing_if = "Option::is_none"` contract is preserved if every enricher errors.
 
-Step 2: wire `register_builtin`. The factory takes the raw YAML config block (after `serde_json::to_value`) and returns a `Box<dyn Enricher>`. Names are checked against four reserved primitives (`template`, `lookup`, `http`, `command`); duplicate registrations of the same name are rejected to keep the global registry append-only.
+Step 2: wire `register_builtin`. The factory takes the raw YAML config block (after `serde_json::to_value`) and returns a `Box<dyn Enricher>`. Names are checked against six reserved primitives (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`); duplicate registrations of the same name are rejected to keep the global registry append-only.
 
 ```rust
 // my-enrichers/src/lib.rs
@@ -198,7 +198,7 @@ fn main() {
 
 ## YAML reference
 
-The config block is identical to the four primitives' shape; only `type:` differs. Operators do not need to know whether a type came from the primitive set or from a `register_builtin` call.
+The config block is identical to the six primitives' shape; only `type:` differs. Operators do not need to know whether a type came from the primitive set or from a `register_builtin` call.
 
 ```yaml
 enrichers:
@@ -250,6 +250,6 @@ Three places to update when you ship the type:
 
 ## See also
 
-- [Enrichers](../guide/enrichers.md): the operator-facing guide for the YAML schema, the four primitives, and the recipe catalog.
+- [Enrichers](../guide/enrichers.md): the operator-facing guide for the YAML schema, the six primitives, and the recipe catalog.
 - [`rsigma-runtime`](../library/runtime.md): the public surface (`Enricher`, `EnrichmentPipeline`, `register_builtin`).
 - [Adding a dynamic source](adding-sources.md): the analogous walkthrough for new pipeline source types.

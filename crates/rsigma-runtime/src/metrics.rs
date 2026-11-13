@@ -62,6 +62,25 @@ pub trait MetricsHook: Send + Sync {
     /// HTTP enrichment cache lookup found an expired entry and evicted it.
     fn on_enrichment_http_cache_expiration(&self, _enricher_id: &str) {}
 
+    /// An MMDB enrichment lookup found a record and, when a field projection
+    /// was configured, produced a non-empty object.
+    fn on_enrichment_mmdb_hit(&self, _enricher_id: &str) {}
+    /// An MMDB enrichment lookup had no record for the IP, or its field
+    /// projection was empty. Counted whether or not a `default` was injected.
+    fn on_enrichment_mmdb_miss(&self, _enricher_id: &str) {}
+    /// An MMDB database reload attempt finished. `success` is false when the
+    /// old reader was kept because the file was missing, partial, or corrupt.
+    fn on_enrichment_mmdb_reload(&self, _database: &str, _success: bool) {}
+    /// Set the build epoch of the currently loaded MMDB database, so operators
+    /// can alert on staleness.
+    fn set_enrichment_mmdb_build_epoch(&self, _database: &str, _epoch_seconds: u64) {}
+    /// Pre-register an MMDB enricher's hit and miss label sets so those
+    /// counters appear on `/metrics` from startup.
+    fn register_mmdb_enricher(&self, _enricher_id: &str) {}
+    /// Pre-register an MMDB database's reload counter label sets and its
+    /// build-epoch gauge so they appear on `/metrics` from startup.
+    fn register_mmdb_database(&self, _database: &str) {}
+
     /// Pre-register an enricher's `enricher_id` + `kind` label set so
     /// `rsigma_enrichment_total{...}` and
     /// `rsigma_enrichment_duration_seconds{...}` are emitted with their

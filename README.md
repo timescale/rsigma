@@ -79,7 +79,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 
 ### Alert & Triage
 
-* **[Enrichment](https://rsigma.io/guide/enrichers/):** Injects context (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via `template`, `lookup`, `http`, and `command` primitives
+* **[Enrichment](https://rsigma.io/guide/enrichers/):** Injects context (asset info, IP reputation, identity, GeoIP, runbook URLs, ...) into detection and correlation results via `template`, `lookup`, `http`, `command`, `stix`, and `mmdb` primitives
 * **[Risk-based alerting](https://rsigma.io/guide/risk-based-alerting/):** Scores each firing per entity (user, host, source IP) and raises a single incident when an entity's accumulated risk crosses a threshold
 * **[Alert pipeline](https://rsigma.io/guide/alert-pipeline/):** Silences, inhibits, and deduplicates results, then groups the survivors into incidents, modeled on Alertmanager
 * **[Webhook alerts](https://rsigma.io/guide/webhooks/):** Delivers detections to Slack, Teams, Discord, PagerDuty, or any HTTP endpoint with templated payloads, HMAC request signing, per-webhook retry, rate limiting, and DLQ

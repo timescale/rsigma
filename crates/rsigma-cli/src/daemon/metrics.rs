@@ -47,6 +47,10 @@ pub struct Metrics {
     pub enrichment_http_cache_hits_total: IntCounterVec,
     pub enrichment_http_cache_misses_total: IntCounterVec,
     pub enrichment_http_cache_expirations_total: IntCounterVec,
+    pub enrichment_mmdb_hits_total: IntCounterVec,
+    pub enrichment_mmdb_misses_total: IntCounterVec,
+    pub enrichment_mmdb_reloads_total: IntCounterVec,
+    pub enrichment_mmdb_build_epoch_seconds: IntGaugeVec,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_requests: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
@@ -500,6 +504,38 @@ impl Metrics {
             &["enricher_id"],
         )
         .unwrap();
+        let enrichment_mmdb_hits_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_mmdb_hits_total",
+                "MMDB enricher lookups that found a record and a non-empty projection",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_mmdb_misses_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_mmdb_misses_total",
+                "MMDB enricher lookups with no record or an empty projection",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_mmdb_reloads_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_mmdb_reloads_total",
+                "MMDB database reload attempts that reopened a changed file",
+            ),
+            &["database", "result"],
+        )
+        .unwrap();
+        let enrichment_mmdb_build_epoch_seconds = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_enrichment_mmdb_build_epoch_seconds",
+                "Build epoch of the loaded MMDB database",
+            ),
+            &["database"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(enrichment_total.clone()))
@@ -518,6 +554,18 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(enrichment_http_cache_expirations_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_mmdb_hits_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_mmdb_misses_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_mmdb_reloads_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_mmdb_build_epoch_seconds.clone()))
             .unwrap();
 
         #[cfg(feature = "daemon-otlp")]
@@ -1207,6 +1255,10 @@ impl Metrics {
             enrichment_http_cache_hits_total,
             enrichment_http_cache_misses_total,
             enrichment_http_cache_expirations_total,
+            enrichment_mmdb_hits_total,
+            enrichment_mmdb_misses_total,
+            enrichment_mmdb_reloads_total,
+            enrichment_mmdb_build_epoch_seconds,
             #[cfg(feature = "daemon-otlp")]
             otlp_requests,
             #[cfg(feature = "daemon-otlp")]
@@ -1612,6 +1664,50 @@ impl MetricsHook for Metrics {
             .inc();
     }
 
+    fn on_enrichment_mmdb_hit(&self, enricher_id: &str) {
+        self.enrichment_mmdb_hits_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_mmdb_miss(&self, enricher_id: &str) {
+        self.enrichment_mmdb_misses_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_mmdb_reload(&self, database: &str, success: bool) {
+        self.enrichment_mmdb_reloads_total
+            .with_label_values(&[database, if success { "success" } else { "failure" }])
+            .inc();
+    }
+
+    fn set_enrichment_mmdb_build_epoch(&self, database: &str, epoch_seconds: u64) {
+        self.enrichment_mmdb_build_epoch_seconds
+            .with_label_values(&[database])
+            .set(epoch_seconds as i64);
+    }
+
+    fn register_mmdb_enricher(&self, enricher_id: &str) {
+        self.enrichment_mmdb_hits_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+        self.enrichment_mmdb_misses_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+    }
+
+    fn register_mmdb_database(&self, database: &str) {
+        for result in ["success", "failure"] {
+            self.enrichment_mmdb_reloads_total
+                .with_label_values(&[database, result])
+                .inc_by(0);
+        }
+        self.enrichment_mmdb_build_epoch_seconds
+            .with_label_values(&[database])
+            .set(0);
+    }
+
     fn register_enricher(&self, enricher_id: &str, kind: &str) {
         // Pre-create label sets so `# HELP` / `# TYPE` lines for the
         // per-enricher metrics show up on the first /metrics scrape,
@@ -1762,6 +1858,69 @@ mod tests {
         assert!(output.contains("rsigma_correlation_matches_by_rule_total"));
         assert!(output.contains(r#"rule_title="Corr Rule""#));
         assert!(output.contains(r#"correlation_type="event_count""#));
+    }
+
+    #[test]
+    fn mmdb_metrics_record_hits_misses_reloads_and_epoch() {
+        let m = Metrics::new();
+        m.on_enrichment_mmdb_hit("geo");
+        m.on_enrichment_mmdb_hit("geo");
+        m.on_enrichment_mmdb_miss("geo");
+        m.on_enrichment_mmdb_reload("/var/lib/geoip/city.mmdb", true);
+        m.on_enrichment_mmdb_reload("/var/lib/geoip/city.mmdb", false);
+        m.set_enrichment_mmdb_build_epoch("/var/lib/geoip/city.mmdb", 1_735_689_600);
+
+        assert_eq!(
+            m.enrichment_mmdb_hits_total
+                .with_label_values(&["geo"])
+                .get(),
+            2
+        );
+        assert_eq!(
+            m.enrichment_mmdb_misses_total
+                .with_label_values(&["geo"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            m.enrichment_mmdb_reloads_total
+                .with_label_values(&["/var/lib/geoip/city.mmdb", "success"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            m.enrichment_mmdb_reloads_total
+                .with_label_values(&["/var/lib/geoip/city.mmdb", "failure"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            m.enrichment_mmdb_build_epoch_seconds
+                .with_label_values(&["/var/lib/geoip/city.mmdb"])
+                .get(),
+            1_735_689_600
+        );
+    }
+
+    #[test]
+    fn mmdb_label_sets_are_pre_registered_in_encoded_output() {
+        let m = Metrics::new();
+        m.register_mmdb_enricher("geo");
+        m.register_mmdb_database("/var/lib/geoip/city.mmdb");
+
+        let output = m.encode();
+        for family in [
+            "rsigma_enrichment_mmdb_hits_total",
+            "rsigma_enrichment_mmdb_misses_total",
+            "rsigma_enrichment_mmdb_reloads_total",
+            "rsigma_enrichment_mmdb_build_epoch_seconds",
+        ] {
+            assert!(output.contains(family), "missing {family}");
+        }
+        assert!(output.contains(r#"enricher_id="geo""#));
+        assert!(output.contains(r#"database="/var/lib/geoip/city.mmdb""#));
+        assert!(output.contains(r#"result="success""#));
+        assert!(output.contains(r#"result="failure""#));
     }
 
     #[test]
