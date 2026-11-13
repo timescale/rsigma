@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Native MMDB enricher
+
+`rsigma-runtime` adds a `type: mmdb` enricher that looks up an IP address in an operator-supplied MaxMind DB file and injects the decoded record under `enrichments.<field>`. Any MMDB layout works (GeoLite2 and GeoIP2 City or ASN, IP2Location, IP2Proxy, and databases you build yourself) because records are decoded generically into JSON, and an optional `fields:` map projects values through dotted paths where numeric segments are array indexes. Entries that name the same `db_path` share one loaded reader, for both detection and correlation kinds.
+
+The database is checked for replacement about once a minute. A changed file is reopened and swapped in off the hot path, and the previous reader stays active if the reopen fails. Replace databases atomically; a single-file bind mount pins the original inode, so mount the containing directory instead. `default` covers a miss or an empty projection, and `on_error` covers key and decode errors.
+
+The daemon exposes `rsigma_enrichment_mmdb_hits_total`, `rsigma_enrichment_mmdb_misses_total`, `rsigma_enrichment_mmdb_reloads_total`, and `rsigma_enrichment_mmdb_build_epoch_seconds`, so operators can alert on a stale database and watch the miss-to-hit ratio. The enricher is gated behind the `mmdb-enrich` feature in `rsigma-runtime` and the CLI, and is included in the prebuilt binaries and the Docker image.
+
+The library surface adds `MmdbEnricher`, `MmdbDatabase`, `MmdbFields`, and `MmdbLookupError`, six `MetricsHook` methods for hits, misses, reloads, build epoch, and label pre-registration, and an `EnrichersConfigError::Database` variant for a database that fails to open at config load. See [Enrichers](https://rsigma.io/guide/enrichers/#mmdb-local-mmdb-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
+
 ## [0.27.0] - 2026-11-12
 
 **TL;DR**

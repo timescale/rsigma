@@ -1,5 +1,5 @@
 ---
-description: "Enrich Sigma detections in the RSigma daemon with asset, identity, IP reputation, GeoIP, and runbook context using template, lookup, HTTP, and command steps."
+description: "Enrich Sigma detections with asset, identity, IP reputation, GeoIP, and runbook context using template, lookup, HTTP, command, STIX, or MMDB steps."
 ---
 
 # Enrichers
@@ -8,7 +8,7 @@ description: "Enrich Sigma detections in the RSigma daemon with asset, identity,
 
 Post-evaluation enrichers run after `engine.evaluate()` produces each `EvaluationResult` and before that result is serialized to a sink. They inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs) into the `enrichments.<field>` map on each detection or correlation, so every downstream consumer (RSoar, Grafana, Loki, custom scripts) sees the same structured context without re-fetching it.
 
-This page covers what to put in `--enrichers <path>`, how the five primitives compose into the `enrich_<keyfield>_<target>` recipe catalog, and how to promote a recipe to a Rust-coded named enricher when one of the five primitives is not enough. The CLI flag itself is documented under [`engine daemon`](../cli/engine/daemon.md#post-evaluation-enrichment); per-call Prometheus metrics live in [Prometheus metrics](../reference/metrics.md#enrichment-6-metrics).
+This page covers what to put in `--enrichers <path>`, how the six primitives compose into the `enrich_<keyfield>_<target>` recipe catalog, and how to promote a recipe to a Rust-coded named enricher when one of the six primitives is not enough. The CLI flag itself is documented under [`engine daemon`](../cli/engine/daemon.md#post-evaluation-enrichment); per-call Prometheus metrics live in [Prometheus metrics](../reference/metrics.md#enrichment-10-metrics).
 
 ## Why post-evaluation, not in-pipeline
 
@@ -29,7 +29,7 @@ max_concurrent_enrichments: 16
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
     kind: detection | correlation  # required, see "Kind and template namespaces"
-    type: template | lookup | http | command  # required, the primitive
+    type: template | lookup | http | command | stix | mmdb  # required, the primitive
     inject_field: <field-name>     # required, key under enrichments.<...>
     timeout: 5s                    # optional, humantime; default 5s
     on_error: skip | null | drop   # optional; default skip
@@ -120,7 +120,7 @@ For enrichers that conceptually apply to both kinds (identity lookups, runbook U
 
 There is no `scope.kinds` axis: the top-level `kind` already gates which result variant the enricher sees. Axes are AND-ed; an empty axis is not a filter.
 
-## The five primitives
+## The six primitives
 
 ### `template`: pure string interpolation
 
@@ -195,6 +195,106 @@ Operational loop:
 2. `rsigma engine daemon --stix-store ./attck-store --enrichers enrichers.yml …`. A store synced with `--allow-custom` (MITRE ATT&CK `x-mitre-*` objects) also needs `--stix-store-allow-custom` on the daemon.
 3. Enricher hot-reload re-reads the store from disk so a re-sync is visible without restarting the daemon.
 
+### `mmdb`: local MMDB lookup
+
+{{ added "unreleased" }}
+
+Look up an IP address in an operator-supplied MaxMind DB (MMDB) file and inject the decoded record. The lookup is vendor-neutral: any MMDB layout works, including GeoLite2 and GeoIP2 City or ASN, IP2Location, IP2Proxy, and databases you build yourself, because records are decoded generically into JSON. Requires the `mmdb-enrich` feature, which is included in the prebuilt binaries. Databases are not bundled; point `db_path` at a file you downloaded or generated.
+
+```yaml
+- id: geo_src
+  kind: detection
+  type: mmdb
+  inject_field: geo
+  db_path: /var/lib/geoip/GeoLite2-City.mmdb
+  key: "${detection.fields.SourceIp}"
+  fields:                          # optional; omit to inject the full decoded record
+    country_code: country.iso_code
+    country_name: country.names.en
+    region: subdivisions.0.iso_code
+    lat: location.latitude
+  default: { country_code: "unknown" }   # optional; used on miss
+  on_error: skip
+```
+
+A correlation-kind entry reads the same database from the group key. Entries that name the same `db_path` share one loaded reader, so a reload happens once per file.
+
+```yaml
+- id: geo_corr
+  kind: correlation
+  type: mmdb
+  inject_field: geo
+  db_path: /var/lib/geoip/GeoLite2-City.mmdb
+  key: "${correlation.group_key.SourceIp}"
+```
+
+Field-path syntax: each value in `fields` is a dotted path into the record. A segment made only of ASCII digits is always an array index, so `subdivisions.0.iso_code` reads the first subdivision's code and `usage_types.1` reads the second array element. Every other segment is a map key. An empty path, an empty segment, or an empty field name is rejected at config load. A path that does not exist is omitted from the injected object; a type mismatch (for example an index into a map) fails the lookup.
+
+Miss and error handling:
+
+| Situation | Result |
+|---|---|
+| Record found and, with `fields`, at least one path present | Inject the object (hit) |
+| No record for the IP | Inject `default` when configured, otherwise apply `on_error` |
+| `fields` configured but no path present | Inject `default` when configured, otherwise apply `on_error` |
+| `key` renders empty | Fetch error, then `on_error` |
+| `key` is not an IP address | Parse error, then `on_error` |
+| Record decode or path type mismatch | Parse error, then `on_error` |
+| IPv6 key against an IPv4-only database, or another lookup failure | Fetch error, then `on_error` |
+
+The database is checked for replacement about once a minute. A changed file is reopened and swapped in off the hot path, and the previous reader stays active if the reopen fails. An unchanged file is not reloaded. Replace databases atomically: write the new file next to the old one, then `mv` it over the old path. `geoipupdate` already does this. A single-file bind mount pins the original inode, so mount the containing directory instead.
+
+GeoLite2-City example with a field projection:
+
+```yaml
+- id: geo_city
+  kind: detection
+  type: mmdb
+  inject_field: geo
+  db_path: /var/lib/geoip/GeoLite2-City.mmdb
+  key: "${detection.fields.SourceIp}"
+  fields:
+    country: country.iso_code
+    region: subdivisions.0.iso_code
+    city: city.names.en
+    latitude: location.latitude
+    longitude: location.longitude
+```
+
+ASN example against a GeoLite2-ASN database:
+
+```yaml
+- id: geo_asn
+  kind: detection
+  type: mmdb
+  inject_field: asn
+  db_path: /var/lib/geoip/GeoLite2-ASN.mmdb
+  key: "${detection.fields.SourceIp}"
+  fields:
+    number: autonomous_system_number
+    organization: autonomous_system_organization
+```
+
+IP2Proxy example against a proxy database:
+
+```yaml
+- id: geo_proxy
+  kind: detection
+  type: mmdb
+  inject_field: proxy
+  db_path: /var/lib/geoip/IP2PROXY-LITE-PX11.MMDB
+  key: "${detection.fields.SourceIp}"
+  fields:
+    is_proxy: is_proxy
+    proxy_type: proxy_type
+    country_code: country_code
+```
+
+Operational metrics for this primitive:
+
+- Alert on staleness with `(time() - rsigma_enrichment_mmdb_build_epoch_seconds{database="/var/lib/geoip/GeoLite2-City.mmdb"}) > 86400 * 7`.
+- Catch a wrong `key` field with the misses-to-hits ratio: `sum(rate(rsigma_enrichment_mmdb_misses_total[5m])) / clamp_min(sum(rate(rsigma_enrichment_mmdb_hits_total[5m])), 1) > 0.5`.
+
 ### `http`: per-result HTTP fetch with optional response cache
 
 Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on `(method, url, body_hash)` with a configurable TTL; mandatory in practice for any rate-limited API.
@@ -241,7 +341,7 @@ Per-result `tokio::process::Command` invocation with template-expanded argv and 
 
 ## Composing enrichers (recipes)
 
-The four primitives cover almost every operational use case via composition. Recipes are *field-parametric*: substitute the field names your pipeline actually produces (`SourceIp`, `cip`, `client.ip`, `ClientIp`, ...) for the placeholders below.
+The six primitives cover almost every operational use case via composition. Recipes are *field-parametric*: substitute the field names your pipeline actually produces (`SourceIp`, `cip`, `client.ip`, `ClientIp`, ...) for the placeholders below.
 
 ### `enrich_ip_employee`: identity lookup by source IP
 
@@ -303,7 +403,25 @@ enrichers:
 
 ### `enrich_ip_geoip`: country/city/ASN by IP
 
-Prefer `lookup` if a GeoIP dump fits in memory:
+Use `type: mmdb` with a local GeoLite2 or GeoIP2 database. This is the native path: the lookup stays local and no per-result network call is made.
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_geoip
+    kind: detection
+    type: mmdb
+    inject_field: geoip
+    db_path: /var/lib/geoip/GeoLite2-City.mmdb
+    key: "${detection.fields.SourceIp}"
+    fields:
+      country: country.iso_code
+      region: subdivisions.0.iso_code
+      city: city.names.en
+    default: { country: "unknown" }
+```
+
+If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead:
 
 ```yaml
 # sources.yml
@@ -396,17 +514,18 @@ enrichers:
 
 ### When to pick which primitive
 
-- Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, GeoIP dump).
+- Prefer `mmdb` for GeoIP, ASN, and proxy data that ships as a MaxMind DB file.
+- Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, a JSON GeoIP dump).
 - Prefer `http` only when the data is genuinely per-result or too large to cache. Always set `cache_ttl` for rate-limited APIs.
 - Prefer `command` only when no other primitive will do (a binary parser, a vendored CLI tool, an existing script).
 - Never use `template` for anything that could be a YAML literal.
 
 ## Promoting a recipe to a bespoke enricher
 
-The four primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
+The six primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
 
 1. **It bundles non-trivial data** (a dataset committed to the repo and `include_bytes!`-ed at compile time). Recipes can't express vendored data.
-2. **It needs a parser the YAML primitives don't expose** (e.g. MaxMind's binary GeoLite2 format, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
+2. **It needs a parser the YAML primitives don't expose** (e.g. a proprietary binary format such as a PCAP-derived flow table, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
 3. **It provides a stable named contract**: downstream consumers reference a specific `enrichments.<field>` shape directly. A recipe-driven approach lets every operator pick their own `inject_field`, which is fine for ad-hoc enrichment but bad for a contract that crosses team or organizational boundaries.
 4. **It implements a non-obvious algorithm** (e.g. coalescing per-result hash lookups into one batched-GET request). This is implementable as a recipe but the implementation is fragile.
 
@@ -424,7 +543,7 @@ register_builtin(
 ).unwrap();
 ```
 
-Reserved names (`template`, `lookup`, `http`, `command`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind`, `scope`, and template rules as the four primitives; promotion does not change the YAML shape, only the `type:` value.
+Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind`, `scope`, and template rules as the six primitives; promotion does not change the YAML shape, only the `type:` value.
 
 ## Output shape
 
@@ -444,8 +563,12 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
+| `rsigma_enrichment_mmdb_hits_total` | `enricher_id` | MMDB lookups that found a record and a non-empty projection |
+| `rsigma_enrichment_mmdb_misses_total` | `enricher_id` | MMDB lookups with no record or an empty projection, including misses where `default` was injected |
+| `rsigma_enrichment_mmdb_reloads_total` | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file, or failed and kept the old reader |
+| `rsigma_enrichment_mmdb_build_epoch_seconds` | `database` | Build epoch of the loaded MMDB database; alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds` |
 
-Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` row is pre-registered at startup, so all six families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, and both MMDB reload `result` values are pre-registered at startup, so all ten families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## See also
 
@@ -453,6 +576,6 @@ Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` ro
 - [Dynamic Sources](../reference/dynamic-sources.md) for the shared source cache that `lookup` reads from.
 - [Dynamic Pipelines](../reference/dynamic-pipelines.md) for consuming the same sources before rule evaluation.
 - [Security Hardening](../reference/security.md#http-egress-policy-ssrf-defense) for egress policy on HTTP enrichers and body size caps.
-- [Prometheus metrics](../reference/metrics.md#enrichment-6-metrics) for the full metric definitions.
+- [Prometheus metrics](../reference/metrics.md#enrichment-10-metrics) for the full metric definitions.
 - [Adding enrichers](../developers/adding-enrichers.md) for shipping a bespoke `register_builtin` type.
 - [`rsigma-runtime`](../library/runtime.md) for the `Enricher` trait, `EnrichmentPipeline`, and `register_builtin` API.

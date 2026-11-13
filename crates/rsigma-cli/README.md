@@ -1414,7 +1414,7 @@ max_concurrent_enrichments: 16
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
     kind: detection | correlation  # required, see "Kind and template namespaces"
-    type: template | lookup | http | command | stix  # required; stix needs stix-enrich + --stix-store
+    type: template | lookup | http | command | stix | mmdb  # required; stix needs stix-enrich + --stix-store, mmdb needs mmdb-enrich
     inject_field: <field-name>     # required, key under enrichments.<...>
     timeout: 5s                    # optional, humantime; default 5s
     on_error: skip | null | drop   # optional; default skip
@@ -1574,7 +1574,7 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 
 ### Composing enrichers (recipe catalog)
 
-Operators rarely need new Rust code. Every recipe below composes one of the four primitives against a dynamic-pipelines source or a remote API. Field names like `${detection.fields.SourceIp}` are illustrative; substitute the names your pipeline actually produces.
+Operators rarely need new Rust code. Every recipe below composes one of the six primitives against a dynamic-pipelines source, a local database, or a remote API. Field names like `${detection.fields.SourceIp}` are illustrative; substitute the names your pipeline actually produces.
 
 #### `enrich_ip_employee`: identity lookup by source IP
 
@@ -1624,7 +1624,25 @@ Same source as above, key by username instead:
 
 #### `enrich_ip_geoip`: country/city/ASN by IP
 
-Prefer `lookup` if a GeoIP dump fits in memory; fall back to `http` for vendor APIs:
+Use `mmdb` with a local GeoLite2 or GeoIP2 database. The lookup stays local, and the database is reloaded when the file changes:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_geoip
+    kind: detection
+    type: mmdb
+    inject_field: geoip
+    db_path: /var/lib/geoip/GeoLite2-City.mmdb
+    key: "${detection.fields.SourceIp}"
+    fields:
+      country: country.iso_code
+      region: subdivisions.0.iso_code
+      city: city.names.en
+    default: { country: "unknown" }
+```
+
+If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead; fall back to `http` for vendor APIs:
 
 ```yaml
 # sources.yml
@@ -1710,17 +1728,18 @@ Pure string interpolation, no I/O. Use this any time a downstream consumer (Slac
 
 #### When to pick which primitive
 
-- Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, GeoIP dump).
+- Prefer `mmdb` for GeoIP, ASN, and proxy data that ships as a MaxMind DB file.
+- Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, a JSON GeoIP dump).
 - Prefer `http` only when the data is genuinely per-result or too large to cache. Always set `cache_ttl` for rate-limited APIs.
 - Prefer `command` only when no other primitive will do (a binary parser, a vendored CLI tool, anything that already exists as a script).
 - Never use `template` for anything that could be a YAML literal.
 
 ### Bespoke (Rust-coded) enrichers
 
-The four primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
+The six primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
 
 1. **It bundles non-trivial data** (e.g. a dataset committed to the repo and `include_bytes!`-ed at compile time). Recipes can't express vendored data.
-2. **It needs a parser the YAML primitives don't expose** (e.g. MaxMind's binary GeoLite2 format, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
+2. **It needs a parser the YAML primitives don't expose** (e.g. a proprietary binary format such as a PCAP-derived flow table, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
 3. **It provides a stable named contract**: downstream consumers reference a specific `enrichments.<field>` shape directly. A recipe-driven approach lets every operator choose their own `inject_field`, which is fine for ad-hoc enrichment but bad for a contract that crosses team or organisational boundaries.
 4. **It implements a non-obvious algorithm** (e.g. coalescing per-result hash lookups into one batched-GET request). This is implementable as a recipe but the implementation is fragile.
 
@@ -1742,11 +1761,11 @@ register_builtin(
 ).unwrap();
 ```
 
-Reserved names (`template`, `lookup`, `http`, `command`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind` / `scope` / template rules as the four primitives; promotion does not change the YAML shape, only the `type:` value.
+Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind` / `scope` / template rules as the six primitives; promotion does not change the YAML shape, only the `type:` value.
 
 ### Metrics
 
-The enrichment pipeline reports six Prometheus metrics:
+The enrichment pipeline reports ten Prometheus metrics:
 
 | Metric | Labels | Description |
 |---|---|---|
@@ -1756,8 +1775,12 @@ The enrichment pipeline reports six Prometheus metrics:
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
+| `rsigma_enrichment_mmdb_hits_total` | `enricher_id` | MMDB lookups that found a record and a non-empty projection |
+| `rsigma_enrichment_mmdb_misses_total` | `enricher_id` | MMDB lookups with no record or an empty projection, including misses where `default` was injected |
+| `rsigma_enrichment_mmdb_reloads_total` | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file, or failed and kept the old reader |
+| `rsigma_enrichment_mmdb_build_epoch_seconds` | `database` | Build epoch of the loaded MMDB database; alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds` |
 
-The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination is pre-registered at startup, so all six families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination, including the MMDB hit and miss `enricher_id` rows and both MMDB reload `result` values, is pre-registered at startup, so all ten families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## Environment Variables
 
