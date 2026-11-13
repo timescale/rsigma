@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### UDM canonicalizing pipeline (issue #690)
+### UDM canonicalizing pipeline (issue #690) (#705)
 
 Adds path-only [`udm_events.yml`](crates/rsigma-eval/pipelines/udm_events.yml) for Google SecOps UDM-shaped eval input (Chronicle / Bindplane-style nested JSON). Maps the portable five Sigma categories with `metadata.event_type` gates. Relates to [#690](https://github.com/timescale/rsigma/issues/690).
 
