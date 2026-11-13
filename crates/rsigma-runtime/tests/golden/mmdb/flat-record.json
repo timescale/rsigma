@@ -1,0 +1,11 @@
+{
+  "geo": {
+    "country_code": "US",
+    "is_proxy": true,
+    "proxy_type": "VPN",
+    "usage_types": [
+      "DCH",
+      "VPN"
+    ]
+  }
+}
