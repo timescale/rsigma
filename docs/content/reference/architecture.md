@@ -174,7 +174,7 @@ The bounded mpsc channels apply back-pressure: when the engine cannot keep up, t
 
 ### Post-evaluation enrichment (`rsigma-runtime::enrichment`)
 
-Between the engine and the sinks, the `EnrichmentPipeline` injects context (asset info, IP reputation, identity, GeoIP, KEV flags, runbook URLs, ...) into each result's `RuleHeader.enrichments` map. Four primitives (`template`, `lookup`, `http`, `command`) compose into recipes. Kind-aware template namespaces (`${detection.*}` for detection-kind enrichers, `${correlation.*}` for correlation-kind) are validated at config-load time. An optional HTTP response cache, scope filtering by rule glob, tag set, and severity, and `on_error` policies (`skip`, `null`, `drop`) round it out. See [Enrichment](../guide/enrichers.md).
+Between the engine and the sinks, the `EnrichmentPipeline` injects context (asset info, IP reputation, identity, GeoIP, KEV flags, runbook URLs, ...) into each result's `RuleHeader.enrichments` map. Six primitives (`template`, `lookup`, `http`, `command`, `stix`, and `mmdb`) compose into recipes; `stix` needs `stix-enrich` and `mmdb` needs `mmdb-enrich`. Kind-aware template namespaces (`${detection.*}` for detection-kind enrichers, `${correlation.*}` for correlation-kind) are validated at config-load time. An optional HTTP response cache, scope filtering by rule glob, tag set, and severity, and `on_error` policies (`skip`, `null`, `drop`) round it out. See [Enrichment](../guide/enrichers.md).
 
 ### Post-engine layers (`rsigma-runtime::risk`, `::alert_pipeline`, `::dispositions`)
 

@@ -22,6 +22,8 @@ uds = ["tokio/net"]
 daachorse-index = ["rsigma-eval/daachorse-index"]
 # Post-evaluation STIX store enricher (`type: stix` in enrichers YAML).
 stix-enrich = ["dep:rstix", "rstix/store", "rstix/store-fs"]
+# Post-evaluation MMDB lookup enricher (`type: mmdb` in enrichers YAML).
+mmdb-enrich = ["dep:maxminddb"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.27.0" }
@@ -65,6 +67,7 @@ async-nats = { version = "0.51", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.15.1", optional = true, default-features = false }
+maxminddb = { version = "0.33", optional = true }
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }
 prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
@@ -107,6 +110,11 @@ harness = false
 [[bench]]
 name = "enrichment"
 harness = false
+
+[[bench]]
+name = "mmdb"
+harness = false
+required-features = ["mmdb-enrich"]
 
 [[bench]]
 name = "input_formats"

@@ -518,7 +518,7 @@ fn registry_test_lock() -> &'static std::sync::Mutex<()> {
 fn register_builtin_rejects_reserved_names() {
     let _guard = registry_test_lock().lock().unwrap();
     super::clear_builtin_registry();
-    for reserved in ["template", "lookup", "http", "command"] {
+    for reserved in ["template", "lookup", "http", "command", "stix", "mmdb"] {
         let err = register_builtin(
             reserved,
             std::sync::Arc::new(|_| Err::<Box<dyn Enricher>, _>("unused".to_string())),

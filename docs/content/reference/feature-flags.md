@@ -26,6 +26,7 @@ The crate that produces the `rsigma` binary.
 | `hunt-postgres` | no | `tokio-postgres`, `tokio-postgres-rustls`, `rustls-native-certs`, `tokio`, `tokio-stream` | `hunt run --emit events`: read-only hunt execution against PostgreSQL/TimescaleDB with TLS and DSN redaction. `hunt run --emit sql` works without it. See [Hunting in the archive](../guide/hunting.md). {{ added "0.22.0" }} |
 | `taxii-sync` | no | `rstix` (`taxii-store`, `store-fs`, `validate`), `tokio` | `taxii sync` (paginated TAXII ingest) and `taxii store` (local bundle JSON → [`FsStore`](../library/rstix.md#rstix-graph-marking-store)) with validate-on-ingest (`producer_strict`). See [`taxii sync`](../cli/taxii/sync.md) and [`taxii store`](../cli/taxii/store.md). {{ added "0.23.0" }} |
 | `stix-enrich` | no | `daemon`, `rstix` (`store`, `store-fs`), `rsigma-runtime/stix-enrich` | `engine daemon --stix-store` and enrichers `type: stix` for post-evaluation lookup against a local STIX store (same layout as `taxii sync --store`). See [Enrichers](../guide/enrichers.md#stix-local-stix-store-lookup). {{ added "0.23.0" }} |
+| `mmdb-enrich` | no | `daemon`, `rsigma-runtime/mmdb-enrich` | Enrichers `type: mmdb` for post-evaluation lookup against an operator-supplied MaxMind DB file, with a generic record decode and an optional dotted-path field map. Included in the prebuilt binaries and the Docker image (`--all-features`). See [Enrichers](../guide/enrichers.md#mmdb-local-mmdb-lookup). {{ added "unreleased" }} |
 
 ## `rsigma-eval`
 
@@ -50,6 +51,7 @@ The streaming runtime (event sources, sinks, daemon plumbing, dynamic pipelines)
 | `uds` | no | (Unix only) | Unix-domain socket event source and sink. Pulled in by the CLI `daemon` feature on Unix. |
 | `daachorse-index` | no | `rsigma-eval/daachorse-index` | Cross-rule AC support when used from `rsigma-runtime` consumers. |
 | `stix-enrich` | no | `rstix` (`store`, `store-fs`) | `type: stix` enricher primitive and [`EnricherResources::stix_store`](../library/runtime.md#post-evaluation-enrichment). Pulled in by the CLI `stix-enrich` feature. {{ added "0.23.0" }} |
+| `mmdb-enrich` | no | `maxminddb` | `type: mmdb` enricher primitive and the `MmdbEnricher`, `MmdbDatabase`, `MmdbFields`, and `MmdbLookupError` library surface. Pulled in by the CLI `mmdb-enrich` feature. {{ added "unreleased" }} |
 
 ## `rsigma-convert`
 

@@ -12,18 +12,22 @@
 //! field. This lives in `rsigma-runtime` (rather than the CLI) so every
 //! in-process consumer of the enrichment pipeline shares one loader.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
 
+#[cfg(feature = "mmdb-enrich")]
+use super::mmdb::DEFAULT_MMDB_CHECK_INTERVAL;
 use crate::{
     CommandEnricher, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, MetricsHook, NoopMetrics, OnError, OutputFormat, Scope,
     SourceCache, TemplateEnricher, build_default_http_client, lookup_builtin,
     validate_template_namespace,
 };
+#[cfg(feature = "mmdb-enrich")]
+use crate::{MmdbDatabase, MmdbEnricher, MmdbFields};
 #[cfg(feature = "stix-enrich")]
 use crate::{StixEnricher, StixEnricherQuery};
 #[cfg(feature = "stix-enrich")]
@@ -165,6 +169,17 @@ pub struct EnricherConfig {
     /// `stix`: maximum objects to inject (default **1**).
     #[serde(default)]
     pub max_results: Option<usize>,
+
+    /// `mmdb`: path to an operator-supplied MaxMind DB file.
+    #[serde(default)]
+    pub db_path: Option<PathBuf>,
+    /// `mmdb`: template-expanded IP address to look up.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// `mmdb`: optional dotted record paths to project into the injected
+    /// object. Numeric segments are array indexes.
+    #[serde(default)]
+    pub fields: BTreeMap<String, String>,
 }
 
 /// `kind:` discriminator. Lower-case in YAML, parses to
@@ -267,6 +282,12 @@ pub enum EnrichersConfigError {
         enricher_id: String,
         message: String,
     },
+    /// An `mmdb` database could not be opened.
+    Database {
+        enricher_id: String,
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for EnrichersConfigError {
@@ -281,9 +302,14 @@ impl std::fmt::Display for EnrichersConfigError {
                 type_name,
             } => write!(
                 f,
-                "enricher '{enricher_id}': unknown type '{type_name}' (built-ins: template, lookup, http, command{STIX_BUILTIN}; bespoke types must register_builtin() before daemon start)",
+                "enricher '{enricher_id}': unknown type '{type_name}' (built-ins: template, lookup, http, command{STIX_BUILTIN}{MMDB_BUILTIN}; bespoke types must register_builtin() before daemon start)",
                 STIX_BUILTIN = if cfg!(feature = "stix-enrich") {
                     ", stix"
+                } else {
+                    ""
+                },
+                MMDB_BUILTIN = if cfg!(feature = "mmdb-enrich") {
+                    ", mmdb"
                 } else {
                     ""
                 }
@@ -307,6 +333,15 @@ impl std::fmt::Display for EnrichersConfigError {
             } => write!(
                 f,
                 "enricher '{enricher_id}': bespoke factory rejected config: {message}"
+            ),
+            EnrichersConfigError::Database {
+                enricher_id,
+                path,
+                message,
+            } => write!(
+                f,
+                "enricher '{enricher_id}': cannot open database '{}': {message}",
+                path.display()
             ),
         }
     }
@@ -356,19 +391,33 @@ pub fn build_enrichers_full(
             enricher_id: "<global>".to_string(),
             message,
         })?;
+    let mut ctx = BuildContext {
+        http_client,
+        resources: &resources,
+        metrics: metrics.clone(),
+        #[cfg(feature = "mmdb-enrich")]
+        mmdb_databases: HashMap::new(),
+    };
     let mut enrichers: Vec<Box<dyn crate::Enricher>> = Vec::with_capacity(file.enrichers.len());
     for cfg in file.enrichers {
-        enrichers.push(build_one(
-            cfg,
-            http_client.clone(),
-            &resources,
-            metrics.clone(),
-        )?);
+        enrichers.push(build_one(cfg, &mut ctx)?);
     }
     let cap = file
         .max_concurrent_enrichments
         .unwrap_or(DEFAULT_MAX_CONCURRENT_ENRICHMENTS);
     Ok(EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics))
+}
+
+/// State shared by every [`build_one`] call in one
+/// [`build_enrichers_full`] invocation.
+struct BuildContext<'a> {
+    http_client: HttpEnricherClient,
+    resources: &'a EnricherResources,
+    metrics: std::sync::Arc<dyn MetricsHook>,
+    /// Databases opened during this build, keyed by canonical path, so
+    /// several enricher entries for one file share a single reader.
+    #[cfg(feature = "mmdb-enrich")]
+    mmdb_databases: HashMap<PathBuf, std::sync::Arc<MmdbDatabase>>,
 }
 
 /// Build a single [`Enricher`](crate::Enricher) from one YAML config block.
@@ -378,9 +427,7 @@ pub fn build_enrichers_full(
 /// extending one match arm.
 fn build_one(
     cfg: EnricherConfig,
-    http_client: HttpEnricherClient,
-    resources: &EnricherResources,
-    metrics: std::sync::Arc<dyn MetricsHook>,
+    ctx: &mut BuildContext<'_>,
 ) -> Result<Box<dyn crate::Enricher>, EnrichersConfigError> {
     let kind: EnricherKind = cfg.kind.into();
     let on_error: OnError = cfg.on_error.into();
@@ -451,10 +498,10 @@ fn build_one(
                     on_error,
                     scope,
                     extract,
-                    http_client,
+                    ctx.http_client.clone(),
                     cache,
                 )
-                .with_metrics(metrics),
+                .with_metrics(ctx.metrics.clone()),
             ))
         }
         "command" => {
@@ -487,7 +534,7 @@ fn build_one(
                     field: "source",
                 })?;
             let cache =
-                resources
+                ctx.resources
                     .source_cache
                     .clone()
                     .ok_or(EnrichersConfigError::MissingField {
@@ -512,15 +559,16 @@ fn build_one(
         }
         #[cfg(feature = "stix-enrich")]
         "stix" => {
-            let store = resources
-                .stix_store
-                .clone()
-                .ok_or(EnrichersConfigError::MissingField {
-                    enricher_id: cfg.id.clone(),
-                    type_name: cfg.type_name.clone(),
-                    field: "<stix_store: no STIX store configured; \
+            let store =
+                ctx.resources
+                    .stix_store
+                    .clone()
+                    .ok_or(EnrichersConfigError::MissingField {
+                        enricher_id: cfg.id.clone(),
+                        type_name: cfg.type_name.clone(),
+                        field: "<stix_store: no STIX store configured; \
                         pass --stix-store <dir> to the daemon (same layout as taxii sync --store)>",
-                })?;
+                    })?;
             if cfg.stix_id.is_none() && cfg.text_search.is_none() && !cfg.attack_technique {
                 return Err(EnrichersConfigError::MissingField {
                     enricher_id: cfg.id.clone(),
@@ -555,6 +603,53 @@ fn build_one(
             enricher_id: cfg.id.clone(),
             message: "stix enricher requires the stix-enrich feature".into(),
         }),
+        #[cfg(feature = "mmdb-enrich")]
+        "mmdb" => {
+            let db_path = cfg
+                .db_path
+                .clone()
+                .ok_or(EnrichersConfigError::MissingField {
+                    enricher_id: cfg.id.clone(),
+                    type_name: cfg.type_name.clone(),
+                    field: "db_path",
+                })?;
+            let key = cfg.key.clone().ok_or(EnrichersConfigError::MissingField {
+                enricher_id: cfg.id.clone(),
+                type_name: cfg.type_name.clone(),
+                field: "key",
+            })?;
+            let fields = if cfg.fields.is_empty() {
+                None
+            } else {
+                Some(MmdbFields::parse(&cfg.fields).map_err(|message| {
+                    EnrichersConfigError::Scope {
+                        enricher_id: cfg.id.clone(),
+                        message,
+                    }
+                })?)
+            };
+            let db = open_mmdb_database(ctx, &cfg.id, &db_path)?;
+            Ok(Box::new(
+                MmdbEnricher::new(
+                    cfg.id,
+                    kind,
+                    cfg.inject_field,
+                    key,
+                    fields,
+                    cfg.default,
+                    timeout,
+                    on_error,
+                    scope,
+                    db,
+                )
+                .with_metrics(std::sync::Arc::clone(&ctx.metrics)),
+            ))
+        }
+        #[cfg(not(feature = "mmdb-enrich"))]
+        "mmdb" => Err(EnrichersConfigError::BespokeFactory {
+            enricher_id: cfg.id.clone(),
+            message: "mmdb enricher requires the mmdb-enrich feature".into(),
+        }),
         other => {
             // Bespoke type: look up factory and pass the raw config block.
             let factory = lookup_builtin(other).ok_or(EnrichersConfigError::UnknownType {
@@ -574,6 +669,33 @@ fn build_one(
             })
         }
     }
+}
+
+/// Open an MMDB database, reusing one already opened in this build.
+#[cfg(feature = "mmdb-enrich")]
+fn open_mmdb_database(
+    ctx: &mut BuildContext<'_>,
+    enricher_id: &str,
+    db_path: &Path,
+) -> Result<std::sync::Arc<MmdbDatabase>, EnrichersConfigError> {
+    let key = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
+    if let Some(db) = ctx.mmdb_databases.get(&key) {
+        return Ok(std::sync::Arc::clone(db));
+    }
+    let db = std::sync::Arc::new(
+        MmdbDatabase::open_with_check_interval(db_path, DEFAULT_MMDB_CHECK_INTERVAL)
+            .map_err(|message| EnrichersConfigError::Database {
+                enricher_id: enricher_id.to_string(),
+                path: db_path.to_path_buf(),
+                message,
+            })?
+            .with_metrics(
+                std::sync::Arc::clone(&ctx.metrics),
+                db_path.display().to_string(),
+            ),
+    );
+    ctx.mmdb_databases.insert(key, std::sync::Arc::clone(&db));
+    Ok(db)
 }
 
 /// Build an [`ExtractExpr`](rsigma_eval::pipeline::sources::ExtractExpr)
@@ -660,6 +782,9 @@ fn validate_templated_fields(
     }
     if let Some(search) = &cfg.text_search {
         check(search, "text_search")?;
+    }
+    if let Some(key) = &cfg.key {
+        check(key, "key")?;
     }
     Ok(())
 }
@@ -750,6 +875,15 @@ impl serde::Serialize for EnricherConfig {
         }
         if let Some(max) = &self.max_results {
             m.serialize_entry("max_results", max)?;
+        }
+        if let Some(path) = &self.db_path {
+            m.serialize_entry("db_path", path)?;
+        }
+        if let Some(key) = &self.key {
+            m.serialize_entry("key", key)?;
+        }
+        if !self.fields.is_empty() {
+            m.serialize_entry("fields", &self.fields)?;
         }
         m.end()
     }
@@ -968,6 +1102,159 @@ enrichers:
         let msg = format!("{err}");
         assert!(
             msg.contains("stix_id | text_search | attack_technique"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    fn mmdb_fixture(name: &str) -> String {
+        format!("{}/tests/fixtures/mmdb/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_enricher_requires_db_path() {
+        let yaml = r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    key: "${detection.fields.SourceIp}"
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing required field 'db_path'"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_enricher_requires_key() {
+        let yaml = format!(
+            r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: {}
+"#,
+            mmdb_fixture("city-test.mmdb")
+        );
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("missing required field 'key'"), "got: {msg}");
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_enricher_rejects_missing_database() {
+        let yaml = r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: /definitely/not/here.mmdb
+    key: "${detection.fields.SourceIp}"
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("cannot open database '/definitely/not/here.mmdb'"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_enricher_rejects_bad_field_path() {
+        let yaml = format!(
+            r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: {}
+    key: "${{detection.fields.SourceIp}}"
+    fields:
+      country: country..iso_code
+"#,
+            mmdb_fixture("city-test.mmdb")
+        );
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("empty segment"), "got: {msg}");
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_enricher_rejects_cross_namespace_key() {
+        let yaml = format!(
+            r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: {}
+    key: "${{correlation.group_key.SourceIp}}"
+"#,
+            mmdb_fixture("city-test.mmdb")
+        );
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("wrong namespace"), "got: {msg}");
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    #[test]
+    fn mmdb_databases_are_shared_within_one_build() {
+        let resources = EnricherResources::default();
+        let mut ctx = BuildContext {
+            http_client: build_default_http_client().unwrap(),
+            resources: &resources,
+            metrics: std::sync::Arc::new(NoopMetrics),
+            mmdb_databases: HashMap::new(),
+        };
+        let path = PathBuf::from(mmdb_fixture("city-test.mmdb"));
+        let respelled = PathBuf::from(format!(
+            "{}/tests/fixtures/./mmdb/../mmdb/city-test.mmdb",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+        let a = open_mmdb_database(&mut ctx, "a", &path).unwrap();
+        let b = open_mmdb_database(&mut ctx, "b", &path).unwrap();
+        let c = open_mmdb_database(&mut ctx, "c", &respelled).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+        assert!(std::sync::Arc::ptr_eq(&a, &c));
+    }
+
+    #[cfg(not(feature = "mmdb-enrich"))]
+    #[test]
+    fn mmdb_enricher_requires_the_feature() {
+        let yaml = r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: /tmp/city.mmdb
+    key: "${detection.fields.SourceIp}"
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("requires the mmdb-enrich feature"),
             "got: {msg}"
         );
     }

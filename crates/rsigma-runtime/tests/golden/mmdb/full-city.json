@@ -1,0 +1,28 @@
+{
+  "geo": {
+    "city": {
+      "names": {
+        "en": "Seattle"
+      }
+    },
+    "country": {
+      "iso_code": "US",
+      "names": {
+        "en": "United States"
+      }
+    },
+    "location": {
+      "latitude": 47.6062,
+      "longitude": -122.3321,
+      "time_zone": "America/Los_Angeles"
+    },
+    "subdivisions": [
+      {
+        "iso_code": "WA",
+        "names": {
+          "en": "Washington"
+        }
+      }
+    ]
+  }
+}

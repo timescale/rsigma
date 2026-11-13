@@ -71,9 +71,9 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 
 The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, and NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 
-## Enrichment (6 metrics)
+## Enrichment (10 metrics)
 
-Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple and every HTTP-cache `enricher_id` row is pre-registered at startup, so all six families render with their `# HELP` and `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
+Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, and both MMDB reload `result` values are pre-registered at startup, so all ten families render with their `# HELP` and `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -83,6 +83,12 @@ Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Ever
 | `rsigma_enrichment_http_cache_hits_total` | counter | `enricher_id` | HTTP enricher response-cache hits. Mandatory signal for any rate-limited API recipe. |
 | `rsigma_enrichment_http_cache_misses_total` | counter | `enricher_id` | HTTP enricher response-cache misses. |
 | `rsigma_enrichment_http_cache_expirations_total` | counter | `enricher_id` | HTTP enricher response-cache entries evicted on expiry. |
+| `rsigma_enrichment_mmdb_hits_total` | counter | `enricher_id` | MMDB lookups that found a record and, when `fields` is configured, produced a non-empty projection. |
+| `rsigma_enrichment_mmdb_misses_total` | counter | `enricher_id` | MMDB lookups where there was no record for the IP or the projection was empty, whether or not `default` was injected. |
+| `rsigma_enrichment_mmdb_reloads_total` | counter | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file (`success`) and failed reopens that kept the old reader (`failure`). An unchanged file is not counted. |
+| `rsigma_enrichment_mmdb_build_epoch_seconds` | gauge | `database` | Build epoch from the loaded database's metadata. Alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds > <max age>`. |
+
+The `database` label is the `db_path` exactly as configured. Reload and build-epoch metrics are labeled per database rather than per enricher because one database can back several enrichers. Key errors and decode errors are not hits or misses; they appear in `rsigma_enrichment_total{status}`.
 
 The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
 
