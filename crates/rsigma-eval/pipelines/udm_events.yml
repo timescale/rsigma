@@ -49,7 +49,8 @@ transformations:
       SourcePort: principal.port
       DestinationIp: target.ip
       DestinationPort: target.port
-      Protocol: network.application_protocol
+      Protocol: network.ip_protocol
+      DestinationHostname: target.hostname
       Image: principal.process.file.full_path
       User: principal.user.userid
     rule_conditions:
@@ -99,7 +100,6 @@ transformations:
       metadata.event_type:
         - FILE_MODIFICATION
         - FILE_CREATION
-        - FILE_OPEN
     rule_conditions:
       - type: logsource
         category: file_event

@@ -19,7 +19,7 @@ Field maps are defined in the pipeline YAML and documented in [Builtin Pipelines
 | Splunk CIM | `-p crates/rsigma-eval/pipelines/cim_events.yml` | [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) |
 | OCSF live JSON | `-p crates/rsigma-eval/pipelines/ocsf_events.yml` | [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) |
 | CrowdStrike Falcon (Windows sensor JSON) | `-p crates/rsigma-eval/pipelines/falcon_windows.yml` | [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) |
-| Google SecOps UDM | `-p crates/rsigma-eval/pipelines/udm_events.yml` | [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) |
+| Google SecOps UDM | `-p crates/rsigma-eval/pipelines/udm_events.yml` | [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) {{ added "unreleased" }} |
 
 The path-only [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) helper strips SigmaHQ `data.` prefixes from GCP audit rules. It is not a schema canonicalizer.
 
@@ -31,7 +31,7 @@ The canonicalizers share a portable core of five `logsource.category` values:
 |----------|-------------------|-----|-----------|----------------|-----|
 | `process_creation` | yes | yes | yes | yes (`ProcessRollup2`) | yes (`PROCESS_LAUNCH`) |
 | `network_connection` | yes | yes | yes | yes (`NetworkConnectIP4`) | yes (`NETWORK_CONNECTION`) |
-| `file_event` | yes | yes | yes | yes (`PeFileWritten`, `FileWritten`, `NewFileWritten`) | yes (`FILE_MODIFICATION`, `FILE_CREATION`, `FILE_OPEN`) |
+| `file_event` | yes | yes | yes | yes (`PeFileWritten`, `FileWritten`, `NewFileWritten`) | yes (`FILE_MODIFICATION`, `FILE_CREATION`) |
 | `image_load` | yes | yes | yes | yes (`ImageLoadRollup2`) | yes (`PROCESS_MODULE_LOAD`) |
 | `dns_query` | yes | yes | yes | yes (`DnsRequest`) | yes (`NETWORK_DNS`) |
 
@@ -46,7 +46,7 @@ Field-level maps live in [Builtin Pipelines](builtin-pipelines.md) (builtins and
 | OCSF **Detection Finding** sink output (`?format=ocsf`) | [OCSF Findings](../guide/ocsf-findings.md) |
 | Postgres **convert** OCSF layout | `rsigma-convert/pipelines/ocsf_postgres*.yml` |
 | `backend convert -t crowdstrike` | pySigma via [sigma-cli](backends/sigma-cli.md) |
-| Full UDM vocabulary, YARA-L, or Chronicle detections | [Google UDM usage guide](https://docs.cloud.google.com/chronicle/docs/unified-data-model/udm-usage); UDM is not RSigma's native schema |
+| Full UDM vocabulary, YARA-L, or Chronicle detections | [Google UDM usage guide](https://docs.cloud.google.com/chronicle/docs/unified-data-model/udm-usage); UDM is not RSigma's native schema {{ added "unreleased" }} |
 
 ## OCSF input, output, and conversion
 

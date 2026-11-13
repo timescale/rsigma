@@ -51,7 +51,7 @@ fn udm_network_connection_event() -> serde_json::Value {
             "port": 443
         },
         "network": {
-            "application_protocol": "tcp"
+            "ip_protocol": "TCP"
         }
     })
 }
@@ -136,6 +136,138 @@ detection:
         .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
         .expect("compile");
     assert_eq!(engine.evaluate(&event).len(), 1);
+}
+
+#[test]
+fn udm_events_maps_destination_hostname() {
+    let rule = r#"
+title: UDM net hostname
+id: 00000000-0000-0000-0000-0000000000u3b
+logsource:
+    category: network_connection
+detection:
+    selection:
+        DestinationHostname|endswith: '.ngrok.io'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(UDM_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let event_val = json!({
+        "metadata": { "event_type": "NETWORK_CONNECTION" },
+        "target": { "hostname": "abc.ngrok.io", "port": 443 }
+    });
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .expect("compile");
+    assert_eq!(engine.evaluate(&event).len(), 1);
+}
+
+#[test]
+fn udm_events_wrong_event_type_does_not_match_network_rule() {
+    let rule = r#"
+title: net gate
+id: 00000000-0000-0000-0000-0000000000u8
+logsource:
+    category: network_connection
+detection:
+    selection:
+        DestinationIp: '93.184.216.34'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(UDM_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let mut event_val = udm_network_connection_event();
+    event_val["metadata"]["event_type"] = json!("NETWORK_HTTP");
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .expect("compile");
+    assert!(engine.evaluate(&event).is_empty());
+}
+
+#[test]
+fn udm_events_wrong_event_type_does_not_match_dns_rule() {
+    let rule = r#"
+title: dns gate
+id: 00000000-0000-0000-0000-0000000000u9
+logsource:
+    category: dns_query
+detection:
+    selection:
+        QueryName: 'www.acme.com'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(UDM_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let event_val = json!({
+        "metadata": { "event_type": "NETWORK_CONNECTION" },
+        "network": {
+            "dns": { "questions": { "name": "www.acme.com" } }
+        }
+    });
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .expect("compile");
+    assert!(engine.evaluate(&event).is_empty());
+}
+
+#[test]
+fn udm_events_wrong_event_type_does_not_match_image_load_rule() {
+    let rule = r#"
+title: module gate
+id: 00000000-0000-0000-0000-0000000000ua
+logsource:
+    category: image_load
+detection:
+    selection:
+        ImageLoaded: '/lib/evil.so'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(UDM_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let event_val = json!({
+        "metadata": { "event_type": "PROCESS_LAUNCH" },
+        "target": {
+            "process": { "file": { "full_path": "/lib/evil.so" } }
+        }
+    });
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .expect("compile");
+    assert!(engine.evaluate(&event).is_empty());
+}
+
+#[test]
+fn udm_events_wrong_event_type_does_not_match_file_rule_on_file_open() {
+    let rule = r#"
+title: file gate
+id: 00000000-0000-0000-0000-0000000000ub
+logsource:
+    category: file_event
+detection:
+    selection:
+        TargetFilename|endswith: '\\lsass.dmp'
+    condition: selection
+"#;
+    let pipeline = parse_pipeline(UDM_PIPELINE).expect("parse");
+    let collection = parse_sigma_yaml(rule).expect("rule");
+    let event_val = json!({
+        "metadata": { "event_type": "FILE_OPEN" },
+        "target": { "file": { "full_path": "C:\\Temp\\lsass.dmp" } }
+    });
+    let event = JsonEvent::borrow(&event_val);
+    let mut engine = Engine::new();
+    engine
+        .add_collection_with_pipelines(&collection, std::slice::from_ref(&pipeline))
+        .expect("compile");
+    assert!(engine.evaluate(&event).is_empty());
 }
 
 #[test]
