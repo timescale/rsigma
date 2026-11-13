@@ -629,18 +629,21 @@ fn build_one(
                 })?)
             };
             let db = open_mmdb_database(ctx, &cfg.id, &db_path)?;
-            Ok(Box::new(MmdbEnricher::new(
-                cfg.id,
-                kind,
-                cfg.inject_field,
-                key,
-                fields,
-                cfg.default,
-                timeout,
-                on_error,
-                scope,
-                db,
-            )))
+            Ok(Box::new(
+                MmdbEnricher::new(
+                    cfg.id,
+                    kind,
+                    cfg.inject_field,
+                    key,
+                    fields,
+                    cfg.default,
+                    timeout,
+                    on_error,
+                    scope,
+                    db,
+                )
+                .with_metrics(std::sync::Arc::clone(&ctx.metrics)),
+            ))
         }
         #[cfg(not(feature = "mmdb-enrich"))]
         "mmdb" => Err(EnrichersConfigError::BespokeFactory {
@@ -680,13 +683,16 @@ fn open_mmdb_database(
         return Ok(std::sync::Arc::clone(db));
     }
     let db = std::sync::Arc::new(
-        MmdbDatabase::open_with_check_interval(db_path, DEFAULT_MMDB_CHECK_INTERVAL).map_err(
-            |message| EnrichersConfigError::Database {
+        MmdbDatabase::open_with_check_interval(db_path, DEFAULT_MMDB_CHECK_INTERVAL)
+            .map_err(|message| EnrichersConfigError::Database {
                 enricher_id: enricher_id.to_string(),
                 path: db_path.to_path_buf(),
                 message,
-            },
-        )?,
+            })?
+            .with_metrics(
+                std::sync::Arc::clone(&ctx.metrics),
+                db_path.display().to_string(),
+            ),
     );
     ctx.mmdb_databases.insert(key, std::sync::Arc::clone(&db));
     Ok(db)

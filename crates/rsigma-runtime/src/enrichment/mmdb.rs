@@ -21,6 +21,8 @@ use parking_lot::Mutex;
 use rsigma_eval::EvaluationResult;
 use serde_json::Value;
 
+use crate::metrics::{MetricsHook, NoopMetrics};
+
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
     template::render_template,
@@ -136,6 +138,8 @@ pub struct MmdbDatabase {
     check_interval: Duration,
     next_check: Mutex<Instant>,
     reloading: AtomicBool,
+    metrics: Arc<dyn MetricsHook>,
+    database_label: String,
 }
 
 struct Loaded {
@@ -180,11 +184,13 @@ impl MmdbDatabase {
         let reader = Reader::open_readfile(&path).map_err(|e| e.to_string())?;
         let stamp = FileStamp::read(&path).ok();
         Ok(Self {
+            database_label: path.display().to_string(),
             path: Some(path),
             current: ArcSwap::from_pointee(Loaded { reader, stamp }),
             check_interval,
             next_check: Mutex::new(Instant::now()),
             reloading: AtomicBool::new(false),
+            metrics: Arc::new(NoopMetrics),
         })
     }
 
@@ -202,7 +208,23 @@ impl MmdbDatabase {
             check_interval: DEFAULT_MMDB_CHECK_INTERVAL,
             next_check: Mutex::new(Instant::now()),
             reloading: AtomicBool::new(false),
+            metrics: Arc::new(NoopMetrics),
+            database_label: "<memory>".to_string(),
         })
+    }
+
+    /// Report this database's reload and build-epoch metrics under
+    /// `database_label`.
+    ///
+    /// Call before wrapping the database in an [`Arc`]; it pre-registers the
+    /// metric label sets and publishes the initially loaded build epoch.
+    pub fn with_metrics(mut self, metrics: Arc<dyn MetricsHook>, database_label: String) -> Self {
+        metrics.register_mmdb_database(&database_label);
+        let build_epoch = self.current.load().reader.metadata().build_epoch;
+        metrics.set_enrichment_mmdb_build_epoch(&database_label, build_epoch);
+        self.metrics = metrics;
+        self.database_label = database_label;
+        self
     }
 
     /// The file this database was opened from, or `None` for
@@ -262,6 +284,8 @@ impl MmdbDatabase {
                     %error,
                     "mmdb refresh failed; keeping previous database"
                 );
+                self.metrics
+                    .on_enrichment_mmdb_reload(&self.database_label, false);
                 return;
             }
         };
@@ -277,6 +301,10 @@ impl MmdbDatabase {
                     reader,
                     stamp: Some(stamp),
                 }));
+                self.metrics
+                    .on_enrichment_mmdb_reload(&self.database_label, true);
+                self.metrics
+                    .set_enrichment_mmdb_build_epoch(&self.database_label, build_epoch);
                 tracing::info!(
                     path = %path.display(),
                     build_epoch,
@@ -284,6 +312,8 @@ impl MmdbDatabase {
                 );
             }
             Err(error) => {
+                self.metrics
+                    .on_enrichment_mmdb_reload(&self.database_label, false);
                 tracing::warn!(
                     path = %path.display(),
                     %error,
@@ -395,6 +425,7 @@ pub struct MmdbEnricher {
     on_error: OnError,
     scope: Scope,
     db: Arc<MmdbDatabase>,
+    metrics: Arc<dyn MetricsHook>,
 }
 
 impl MmdbEnricher {
@@ -422,7 +453,18 @@ impl MmdbEnricher {
             on_error,
             scope,
             db,
+            metrics: Arc::new(NoopMetrics),
         }
+    }
+
+    /// Report this enricher's hit and miss counters into `metrics`.
+    ///
+    /// Pre-registers the label set so the counters appear on `/metrics` from
+    /// startup.
+    pub fn with_metrics(mut self, metrics: Arc<dyn MetricsHook>) -> Self {
+        metrics.register_mmdb_enricher(&self.id);
+        self.metrics = metrics;
+        self
     }
 
     fn error(&self, kind: EnrichErrorKind) -> EnrichError {
@@ -478,25 +520,32 @@ impl Enricher for MmdbEnricher {
 
         match outcome {
             LookupOutcome::Hit(value) => {
+                self.metrics.on_enrichment_mmdb_hit(&self.id);
                 inject_enrichment(result, &self.inject_field, value);
                 Ok(())
             }
-            LookupOutcome::NoRecord => match &self.default {
-                Some(default) => {
-                    inject_enrichment(result, &self.inject_field, default.clone());
-                    Ok(())
+            LookupOutcome::NoRecord => {
+                self.metrics.on_enrichment_mmdb_miss(&self.id);
+                match &self.default {
+                    Some(default) => {
+                        inject_enrichment(result, &self.inject_field, default.clone());
+                        Ok(())
+                    }
+                    None => Err(self.error(EnrichErrorKind::Fetch(format!("no record for {ip}")))),
                 }
-                None => Err(self.error(EnrichErrorKind::Fetch(format!("no record for {ip}")))),
-            },
-            LookupOutcome::EmptyProjection => match &self.default {
-                Some(default) => {
-                    inject_enrichment(result, &self.inject_field, default.clone());
-                    Ok(())
+            }
+            LookupOutcome::EmptyProjection => {
+                self.metrics.on_enrichment_mmdb_miss(&self.id);
+                match &self.default {
+                    Some(default) => {
+                        inject_enrichment(result, &self.inject_field, default.clone());
+                        Ok(())
+                    }
+                    None => Err(self.error(EnrichErrorKind::Fetch(format!(
+                        "no projected fields for {ip}"
+                    )))),
                 }
-                None => Err(self.error(EnrichErrorKind::Fetch(format!(
-                    "no projected fields for {ip}"
-                )))),
-            },
+            }
         }
     }
 }
@@ -839,5 +888,228 @@ mod tests {
             "a second call inside the interval must not spawn"
         );
         first.unwrap().await.unwrap();
+    }
+
+    #[derive(Default)]
+    struct CollectingMetrics {
+        hits: std::sync::Mutex<Vec<String>>,
+        misses: std::sync::Mutex<Vec<String>>,
+        reloads: std::sync::Mutex<Vec<(String, bool)>>,
+        build_epochs: std::sync::Mutex<Vec<(String, u64)>>,
+        registered_enrichers: std::sync::Mutex<Vec<String>>,
+        registered_databases: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl crate::MetricsHook for CollectingMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+        fn on_enrichment_mmdb_hit(&self, enricher_id: &str) {
+            self.hits.lock().unwrap().push(enricher_id.to_string());
+        }
+        fn on_enrichment_mmdb_miss(&self, enricher_id: &str) {
+            self.misses.lock().unwrap().push(enricher_id.to_string());
+        }
+        fn on_enrichment_mmdb_reload(&self, database: &str, success: bool) {
+            self.reloads
+                .lock()
+                .unwrap()
+                .push((database.to_string(), success));
+        }
+        fn set_enrichment_mmdb_build_epoch(&self, database: &str, epoch_seconds: u64) {
+            self.build_epochs
+                .lock()
+                .unwrap()
+                .push((database.to_string(), epoch_seconds));
+        }
+        fn register_mmdb_enricher(&self, enricher_id: &str) {
+            self.registered_enrichers
+                .lock()
+                .unwrap()
+                .push(enricher_id.to_string());
+        }
+        fn register_mmdb_database(&self, database: &str) {
+            self.registered_databases
+                .lock()
+                .unwrap()
+                .push(database.to_string());
+        }
+    }
+
+    fn metrics_enricher(
+        metrics: &Arc<CollectingMetrics>,
+        db_path: &str,
+        key: &str,
+        default: Option<Value>,
+    ) -> MmdbEnricher {
+        MmdbEnricher::new(
+            "geo".into(),
+            EnricherKind::Detection,
+            "geo".into(),
+            key.into(),
+            None,
+            default,
+            Duration::from_secs(5),
+            OnError::Skip,
+            Scope::default(),
+            Arc::new(MmdbDatabase::open(db_path).unwrap()),
+        )
+        .with_metrics(Arc::clone(metrics) as Arc<dyn crate::MetricsHook>)
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_hit() {
+        let m = Arc::new(CollectingMetrics::default());
+        let e = metrics_enricher(
+            &m,
+            &fixture("city-test.mmdb"),
+            "${detection.fields.SourceIp}",
+            None,
+        );
+        let mut result = detection_result("SourceIp", serde_json::json!("192.0.2.10"));
+        e.enrich(&mut result).await.unwrap();
+        assert_eq!(m.hits.lock().unwrap().clone(), vec!["geo".to_string()]);
+        assert!(m.misses.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_miss_with_and_without_default() {
+        let m = Arc::new(CollectingMetrics::default());
+        let e = metrics_enricher(
+            &m,
+            &fixture("city-test.mmdb"),
+            "${detection.fields.SourceIp}",
+            Some(serde_json::json!({"country_code": "unknown"})),
+        );
+        let mut result = detection_result("SourceIp", serde_json::json!("203.0.113.5"));
+        e.enrich(&mut result).await.unwrap();
+        assert_eq!(m.misses.lock().unwrap().clone(), vec!["geo".to_string()]);
+        assert!(m.hits.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_non_ip_key_as_neither_hit_nor_miss() {
+        let m = Arc::new(CollectingMetrics::default());
+        let e = metrics_enricher(
+            &m,
+            &fixture("city-test.mmdb"),
+            "${detection.fields.Host}",
+            None,
+        );
+        let mut result = detection_result("Host", serde_json::json!("web-01"));
+        e.enrich(&mut result).await.unwrap_err();
+        assert!(m.hits.lock().unwrap().is_empty());
+        assert!(m.misses.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_successful_reload_and_its_build_epoch() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let m = Arc::new(CollectingMetrics::default());
+        let label = path.display().to_string();
+        let db = Arc::new(
+            MmdbDatabase::open_with_check_interval(&path, Duration::ZERO)
+                .unwrap()
+                .with_metrics(Arc::clone(&m) as Arc<dyn crate::MetricsHook>, label.clone()),
+        );
+
+        assert_eq!(
+            m.registered_databases.lock().unwrap().clone(),
+            vec![label.clone()]
+        );
+        assert_eq!(
+            m.build_epochs.lock().unwrap().clone(),
+            vec![(label.clone(), 1_704_067_200)]
+        );
+
+        replace_with(
+            &path,
+            "city-test-updated.mmdb",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
+        );
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+
+        assert_eq!(
+            m.reloads.lock().unwrap().clone(),
+            vec![(label.clone(), true)]
+        );
+        assert_eq!(
+            m.build_epochs.lock().unwrap().clone(),
+            vec![
+                (label.clone(), 1_704_067_200),
+                (label.clone(), 1_735_689_600)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_failed_reload() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let m = Arc::new(CollectingMetrics::default());
+        let label = path.display().to_string();
+        let db = Arc::new(
+            MmdbDatabase::open_with_check_interval(&path, Duration::ZERO)
+                .unwrap()
+                .with_metrics(Arc::clone(&m) as Arc<dyn crate::MetricsHook>, label.clone()),
+        );
+
+        std::fs::write(&path, b"not an mmdb").unwrap();
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+
+        assert_eq!(
+            m.reloads.lock().unwrap().clone(),
+            vec![(label.clone(), false)]
+        );
+        assert_eq!(
+            m.build_epochs.lock().unwrap().clone(),
+            vec![(label, 1_704_067_200)],
+            "a failed reload must not change the published build epoch"
+        );
+    }
+
+    #[test]
+    fn metrics_builders_pre_register_label_sets() {
+        let m = Arc::new(CollectingMetrics::default());
+        let db_label = "geo.mmdb".to_string();
+        let db = MmdbDatabase::open(fixture("city-test.mmdb"))
+            .unwrap()
+            .with_metrics(
+                Arc::clone(&m) as Arc<dyn crate::MetricsHook>,
+                db_label.clone(),
+            );
+        assert_eq!(
+            m.registered_databases.lock().unwrap().clone(),
+            vec![db_label.clone()]
+        );
+        assert_eq!(
+            m.build_epochs.lock().unwrap().clone(),
+            vec![(db_label, 1_704_067_200)]
+        );
+
+        let _ = MmdbEnricher::new(
+            "geo".into(),
+            EnricherKind::Detection,
+            "geo".into(),
+            "${detection.fields.SourceIp}".into(),
+            None,
+            None,
+            Duration::from_secs(5),
+            OnError::Skip,
+            Scope::default(),
+            Arc::new(db),
+        )
+        .with_metrics(Arc::clone(&m) as Arc<dyn crate::MetricsHook>);
+        assert_eq!(
+            m.registered_enrichers.lock().unwrap().clone(),
+            vec!["geo".to_string()]
+        );
     }
 }
