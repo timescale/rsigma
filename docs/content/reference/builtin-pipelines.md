@@ -4,7 +4,7 @@ description: "Reference for the processing pipelines built into RSigma, includin
 
 # Builtin Pipelines
 
-For the supported ECS, CIM, OCSF eval, and Falcon schemas and categories, see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
+For the supported ECS, CIM, OCSF eval, Falcon, and UDM schemas and categories, see [Canonicalizing Pipelines](canonicalizing-pipelines.md).
 
 RSigma embeds four ready-to-use processing pipelines in the binary so common Windows and Linux ECS deployments work with no external YAML file. Reference them by name from any subcommand that accepts `-p`:
 
@@ -18,7 +18,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "0.27.0" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "0.27.0" }} The same directory also ships [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) (Sigma to Google SecOps UDM nested JSON for eval). {{ added "unreleased" }}
 
 ## `ecs_windows`
 
@@ -235,6 +235,30 @@ Priority: `20`. Source: [`pipelines/falcon_windows.yml`](https://github.com/time
 | `image_load` | `ImageLoaded` to `FileName`, `Image` to `ImageFileName`; adds `event_simpleName: ImageLoadRollup2` |
 
 Falcon macOS/Linux shapes and `NetworkConnectIP6` are outside this file; see [Canonicalizing Pipelines](canonicalizing-pipelines.md). {{ added "0.27.0" }}
+
+## `udm_events` (path-only)
+
+{{ added "unreleased" }}
+
+Maps Sysmon-style Sigma fields to [Google SecOps UDM](https://docs.cloud.google.com/chronicle/docs/unified-data-model/udm-usage) attribute paths on nested JSON (Chronicle exports, Bindplane/BigQuery UDM-shaped rows). Injects `metadata.event_type` gates per category. **Not** a builtin; does not register UDM as RSigma's native schema or wire schema routing.
+
+```bash
+rsigma engine eval -r rules/ \
+    -p crates/rsigma-eval/pipelines/udm_events.yml \
+    -e '{"metadata":{"event_type":"PROCESS_LAUNCH"},"target":{"process":{"file":{"full_path":"/bin/bash"}}}}'
+```
+
+Priority: `20`. Source: [`pipelines/udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml).
+
+| Category | Sigma fields to UDM paths |
+|----------|-------------------------|
+| `process_creation` | `CommandLine` to `target.process.command_line`, `Image` to `target.process.file.full_path`, `ProcessId` to `target.process.pid`, `User` to `principal.user.userid`, parents on `principal.process.*`; gate `metadata.event_type: PROCESS_LAUNCH` |
+| `network_connection` | `SourceIp`/`DestinationIp` to `principal.ip`/`target.ip` (array values supported by eval), ports on `principal.port`/`target.port`, `Protocol` to `network.ip_protocol`, `DestinationHostname` to `target.hostname`, `Image`/`User` on `principal.process.file.full_path` / `principal.user.userid`; gate `NETWORK_CONNECTION` |
+| `file_event` | `TargetFilename` to `target.file.full_path`, `Image` to `principal.process.file.full_path`; gate `FILE_MODIFICATION` or `FILE_CREATION` |
+| `image_load` | `ImageLoaded` to `target.process.file.full_path`, `Image` to `principal.process.file.full_path`; gate `PROCESS_MODULE_LOAD` |
+| `dns_query` | `QueryName` to `network.dns.questions.name`; gate `NETWORK_DNS` |
+
+Limitations: only the listed `metadata.event_type` values; `principal` vs `target` semantics differ by event type (for example `PROCESS_LAUNCH` puts the new process on `target.process`); `User` maps to `principal.user.userid` only; export shape variants outside tested fixtures are unsupported.
 
 ## See also
 
