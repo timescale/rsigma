@@ -240,6 +240,7 @@ fn templated_fields(cfg: &EnricherConfig) -> impl Iterator<Item = &str> {
         cfg.extract.as_deref(),
         cfg.stix_id.as_deref(),
         cfg.text_search.as_deref(),
+        cfg.key.as_deref(),
     ]
     .into_iter()
     .flatten()
