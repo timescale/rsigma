@@ -1,0 +1,43 @@
+# Google Security Operations Unified Data Model (UDM) field mapping for eval.
+#
+# Maps generic Sigma / Sysmon-style field names to UDM attribute paths on nested
+# JSON (Chronicle exports, Bindplane/BigQuery UDM-shaped rows). Rule rewrite only;
+# events are not converted into UDM and UDM is not RSigma's native schema.
+#
+# Provenance: UDM usage guide event-type examples and field list:
+# https://docs.cloud.google.com/chronicle/docs/unified-data-model/udm-usage
+# https://docs.cloud.google.com/chronicle/docs/reference/udm-field-list
+#
+# PROCESS_LAUNCH: created process on target.process; parent on principal.process.
+#
+# Path-only: load by file path (not a builtin short name).
+#
+# Usage:
+#   rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/udm_events.yml -e @event.json
+
+name: udm_events
+priority: 20
+
+transformations:
+  - id: udm_process_creation_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: target.process.command_line
+      Image: target.process.file.full_path
+      ProcessId: target.process.pid
+      User: principal.user.userid
+      ParentCommandLine: principal.process.command_line
+      ParentImage: principal.process.file.full_path
+      ParentProcessId: principal.process.pid
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+
+  - id: udm_process_creation_event_type
+    type: add_condition
+    prepend: true
+    conditions:
+      metadata.event_type: PROCESS_LAUNCH
+    rule_conditions:
+      - type: logsource
+        category: process_creation
