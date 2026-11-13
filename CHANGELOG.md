@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Native MMDB enricher
+### Native MMDB enricher (#706)
 
 `rsigma-runtime` adds a `type: mmdb` enricher that looks up an IP address in an operator-supplied MaxMind DB file and injects the decoded record under `enrichments.<field>`. Any MMDB layout works (GeoLite2 and GeoIP2 City or ASN, IP2Location, IP2Proxy, and databases you build yourself) because records are decoded generically into JSON, and an optional `fields:` map projects values through dotted paths where numeric segments are array indexes. Entries that name the same `db_path` share one loaded reader, for both detection and correlation kinds.
 
