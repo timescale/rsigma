@@ -41,3 +41,84 @@ transformations:
     rule_conditions:
       - type: logsource
         category: process_creation
+
+  - id: udm_network_connection_fields
+    type: field_name_mapping
+    mapping:
+      SourceIp: principal.ip
+      SourcePort: principal.port
+      DestinationIp: target.ip
+      DestinationPort: target.port
+      Protocol: network.application_protocol
+      Image: principal.process.file.full_path
+      User: principal.user.userid
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  - id: udm_network_connection_event_type
+    type: add_condition
+    prepend: true
+    conditions:
+      metadata.event_type: NETWORK_CONNECTION
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+
+  - id: udm_dns_query_fields
+    type: field_name_mapping
+    mapping:
+      QueryName: network.dns.questions.name
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+
+  - id: udm_dns_query_event_type
+    type: add_condition
+    prepend: true
+    conditions:
+      metadata.event_type: NETWORK_DNS
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+
+  - id: udm_file_event_fields
+    type: field_name_mapping
+    mapping:
+      TargetFilename: target.file.full_path
+      Image: principal.process.file.full_path
+      User: principal.user.userid
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  - id: udm_file_event_event_type
+    type: add_condition
+    prepend: true
+    conditions:
+      metadata.event_type:
+        - FILE_MODIFICATION
+        - FILE_CREATION
+        - FILE_OPEN
+    rule_conditions:
+      - type: logsource
+        category: file_event
+
+  - id: udm_image_load_fields
+    type: field_name_mapping
+    mapping:
+      ImageLoaded: target.process.file.full_path
+      Image: principal.process.file.full_path
+      User: principal.user.userid
+    rule_conditions:
+      - type: logsource
+        category: image_load
+
+  - id: udm_image_load_event_type
+    type: add_condition
+    prepend: true
+    conditions:
+      metadata.event_type: PROCESS_MODULE_LOAD
+    rule_conditions:
+      - type: logsource
+        category: image_load
