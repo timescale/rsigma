@@ -112,6 +112,11 @@ name = "enrichment"
 harness = false
 
 [[bench]]
+name = "mmdb"
+harness = false
+required-features = ["mmdb-enrich"]
+
+[[bench]]
 name = "input_formats"
 harness = false
 required-features = ["logfmt", "cef", "evtx"]
