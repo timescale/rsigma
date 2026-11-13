@@ -1,8 +1,8 @@
 // Generates the synthetic MMDB fixtures used by the rsigma-runtime tests.
 //
 // Run `go run .` from this directory; it writes city-test.mmdb,
-// city-test-updated.mmdb, asn-test.mmdb, and flat-test.mmdb into the parent
-// directory. The data is synthetic: it uses only the RFC 5737 and RFC 3849
+// city-test-updated.mmdb, city-test-v4.mmdb, asn-test.mmdb, and flat-test.mmdb
+// into the parent directory. The data is synthetic: it uses only the RFC 5737 and RFC 3849
 // documentation ranges, so IncludeReservedNetworks is required. Regenerate
 // only when a test needs a different record shape or network, and re-run the
 // golden tests with RSIGMA_UPDATE_GOLDEN=1 afterwards.

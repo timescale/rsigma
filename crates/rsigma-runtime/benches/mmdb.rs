@@ -39,11 +39,10 @@ fn detection(ip: String) -> EvaluationResult {
 
 fn hit_ip(i: usize) -> String {
     let octet = i % 256;
-    match i % 4 {
+    match i % 3 {
         0 => format!("192.0.2.{octet}"),
         1 => format!("198.51.100.{octet}"),
-        2 => format!("2001:db8::{octet:x}"),
-        _ => format!("203.0.113.{octet}"),
+        _ => format!("2001:db8::{octet:x}"),
     }
 }
 
