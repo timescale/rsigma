@@ -18,6 +18,10 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+#[cfg(feature = "dns-enrich")]
+use super::dns::{
+    DEFAULT_DNS_CACHE_MAX_ENTRIES, DEFAULT_DNS_CACHE_TTL, DEFAULT_DNS_NEGATIVE_CACHE_TTL,
+};
 #[cfg(feature = "mmdb-enrich")]
 use super::mmdb::DEFAULT_MMDB_CHECK_INTERVAL;
 use crate::{
@@ -26,6 +30,8 @@ use crate::{
     SourceCache, TemplateEnricher, build_default_http_client, lookup_builtin,
     validate_template_namespace,
 };
+#[cfg(feature = "dns-enrich")]
+use crate::{DnsEnricher, DnsRecordType, DnsResolverConfig};
 #[cfg(feature = "mmdb-enrich")]
 use crate::{MmdbDatabase, MmdbEnricher, MmdbFields};
 #[cfg(feature = "stix-enrich")]
@@ -84,8 +90,8 @@ pub struct EnricherConfig {
     pub id: String,
     /// Required kind (`detection` or `correlation`).
     pub kind: KindLabel,
-    /// Primitive type name (`template`, `lookup`, `http`, `command`, `stix`) or
-    /// the `type:` of a bespoke enricher registered via
+    /// Primitive type name (`template`, `lookup`, `http`, `command`, `stix`,
+    /// `mmdb`, `dns`) or the `type:` of a bespoke enricher registered via
     /// [`register_builtin`](crate::register_builtin).
     #[serde(rename = "type")]
     pub type_name: String,
@@ -125,15 +131,16 @@ pub struct EnricherConfig {
     /// `http`: optional request body.
     #[serde(default)]
     pub body: Option<String>,
-    /// `http`: response cache TTL. Off by default.
+    /// `http` response cache TTL, or `dns` positive-answer TTL cap. Off by
+    /// default on `http`; the `dns` default is 5 minutes.
     #[serde(default, with = "humantime_opt")]
     pub cache_ttl: Option<Duration>,
-    /// `http` / `lookup`: optional extract expression applied to the
+    /// `http` / `lookup` / `dns`: optional extract expression applied to the
     /// fetched value before injection.
     #[serde(default)]
     pub extract: Option<String>,
-    /// `http` / `lookup`: extract language (`jq` / `jsonpath` / `cel`).
-    /// Defaults to `jq` inside the primitive.
+    /// `http` / `lookup` / `dns`: extract language (`jq` / `jsonpath` /
+    /// `cel`). Defaults to `jq` inside the primitive.
     #[serde(default)]
     pub extract_type: Option<String>,
     /// `command`: argv. The first element is the program; remaining
@@ -149,7 +156,7 @@ pub struct EnricherConfig {
     /// `lookup`: source ID of a dynamic source configured on the daemon.
     #[serde(default)]
     pub source: Option<String>,
-    /// `lookup`: default value injected on cache miss / no extract match.
+    /// `lookup` / `dns`: default value injected on cache miss / no records.
     /// Overrides `on_error` when configured.
     #[serde(default)]
     pub default: Option<serde_json::Value>,
@@ -173,13 +180,30 @@ pub struct EnricherConfig {
     /// `mmdb`: path to an operator-supplied MaxMind DB file.
     #[serde(default)]
     pub db_path: Option<PathBuf>,
-    /// `mmdb`: template-expanded IP address to look up.
+    /// `mmdb` / `dns`: template-expanded key (an IP address for `mmdb`, a
+    /// name or IP address for `dns`).
     #[serde(default)]
     pub key: Option<String>,
     /// `mmdb`: optional dotted record paths to project into the injected
     /// object. Numeric segments are array indexes.
     #[serde(default)]
     pub fields: BTreeMap<String, String>,
+
+    /// `dns`: required record type. One of the supported data types or the
+    /// `IP` pseudo-type, case-insensitive.
+    #[serde(default)]
+    pub record_type: Option<String>,
+    /// `dns`: optional nameservers (`IP` or `IP:port`). Empty uses the
+    /// system resolver.
+    #[serde(default)]
+    pub nameservers: Vec<String>,
+    /// `dns`: cap on negative (NXDOMAIN and NODATA) TTLs. Defaults to 1
+    /// minute.
+    #[serde(default, with = "humantime_opt")]
+    pub negative_cache_ttl: Option<Duration>,
+    /// `dns`: maximum number of cached responses. Defaults to 10000.
+    #[serde(default)]
+    pub cache_max_entries: Option<u64>,
 }
 
 /// `kind:` discriminator. Lower-case in YAML, parses to
@@ -302,7 +326,7 @@ impl std::fmt::Display for EnrichersConfigError {
                 type_name,
             } => write!(
                 f,
-                "enricher '{enricher_id}': unknown type '{type_name}' (built-ins: template, lookup, http, command{STIX_BUILTIN}{MMDB_BUILTIN}; bespoke types must register_builtin() before daemon start)",
+                "enricher '{enricher_id}': unknown type '{type_name}' (built-ins: template, lookup, http, command{STIX_BUILTIN}{MMDB_BUILTIN}{DNS_BUILTIN}; bespoke types must register_builtin() before daemon start)",
                 STIX_BUILTIN = if cfg!(feature = "stix-enrich") {
                     ", stix"
                 } else {
@@ -310,6 +334,11 @@ impl std::fmt::Display for EnrichersConfigError {
                 },
                 MMDB_BUILTIN = if cfg!(feature = "mmdb-enrich") {
                     ", mmdb"
+                } else {
+                    ""
+                },
+                DNS_BUILTIN = if cfg!(feature = "dns-enrich") {
+                    ", dns"
                 } else {
                     ""
                 }
@@ -650,6 +679,79 @@ fn build_one(
             enricher_id: cfg.id.clone(),
             message: "mmdb enricher requires the mmdb-enrich feature".into(),
         }),
+        #[cfg(feature = "dns-enrich")]
+        "dns" => {
+            let key = cfg.key.clone().ok_or(EnrichersConfigError::MissingField {
+                enricher_id: cfg.id.clone(),
+                type_name: cfg.type_name.clone(),
+                field: "key",
+            })?;
+            let record_type_raw =
+                cfg.record_type
+                    .clone()
+                    .ok_or(EnrichersConfigError::MissingField {
+                        enricher_id: cfg.id.clone(),
+                        type_name: cfg.type_name.clone(),
+                        field: "record_type",
+                    })?;
+            let record_type = DnsRecordType::parse(&record_type_raw).map_err(|message| {
+                EnrichersConfigError::Scope {
+                    enricher_id: cfg.id.clone(),
+                    message,
+                }
+            })?;
+            let nameservers = cfg
+                .nameservers
+                .iter()
+                .map(|raw| DnsResolverConfig::parse_nameserver(raw))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|message| EnrichersConfigError::Scope {
+                    enricher_id: cfg.id.clone(),
+                    message,
+                })?;
+            let cache_max_entries = cfg
+                .cache_max_entries
+                .unwrap_or(DEFAULT_DNS_CACHE_MAX_ENTRIES);
+            if cache_max_entries == 0 {
+                return Err(EnrichersConfigError::Scope {
+                    enricher_id: cfg.id.clone(),
+                    message: "cache_max_entries must be greater than 0".into(),
+                });
+            }
+            let resolver = DnsResolverConfig {
+                nameservers,
+                timeout,
+                cache_ttl: cfg.cache_ttl.unwrap_or(DEFAULT_DNS_CACHE_TTL),
+                negative_cache_ttl: cfg
+                    .negative_cache_ttl
+                    .unwrap_or(DEFAULT_DNS_NEGATIVE_CACHE_TTL),
+                cache_max_entries,
+            };
+            let extract = build_extract_expr(&cfg)?;
+            let enricher = DnsEnricher::new(
+                cfg.id.clone(),
+                kind,
+                cfg.inject_field,
+                key,
+                record_type,
+                extract,
+                cfg.default,
+                timeout,
+                on_error,
+                scope,
+                resolver,
+            )
+            .map_err(|message| EnrichersConfigError::Scope {
+                enricher_id: cfg.id.clone(),
+                message,
+            })?;
+            Ok(Box::new(enricher))
+        }
+        #[cfg(not(feature = "dns-enrich"))]
+        "dns" => Err(EnrichersConfigError::BespokeFactory {
+            enricher_id: cfg.id.clone(),
+            message: "dns enricher requires the dns-enrich feature".into(),
+        }),
         other => {
             // Bespoke type: look up factory and pass the raw config block.
             let factory = lookup_builtin(other).ok_or(EnrichersConfigError::UnknownType {
@@ -843,6 +945,9 @@ impl serde::Serialize for EnricherConfig {
         if let Some(c) = &self.cache_ttl {
             m.serialize_entry("cache_ttl_ms", &(c.as_millis() as u64))?;
         }
+        if let Some(t) = &self.negative_cache_ttl {
+            m.serialize_entry("negative_cache_ttl_ms", &(t.as_millis() as u64))?;
+        }
         if let Some(e) = &self.extract {
             m.serialize_entry("extract", e)?;
         }
@@ -884,6 +989,15 @@ impl serde::Serialize for EnricherConfig {
         }
         if !self.fields.is_empty() {
             m.serialize_entry("fields", &self.fields)?;
+        }
+        if let Some(record_type) = &self.record_type {
+            m.serialize_entry("record_type", record_type)?;
+        }
+        if !self.nameservers.is_empty() {
+            m.serialize_entry("nameservers", &self.nameservers)?;
+        }
+        if let Some(max) = &self.cache_max_entries {
+            m.serialize_entry("cache_max_entries", max)?;
         }
         m.end()
     }
@@ -1255,6 +1369,139 @@ enrichers:
         let msg = format!("{err}");
         assert!(
             msg.contains("requires the mmdb-enrich feature"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    fn dns_yaml(extra: &str) -> String {
+        format!(
+            r#"
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    key: "${{detection.fields.Domain}}"
+{extra}"#
+        )
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_requires_key() {
+        let yaml = r#"
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    record_type: A
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("missing required field 'key'"), "got: {msg}");
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_requires_record_type() {
+        let yaml = r#"
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    key: "${detection.fields.Domain}"
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing required field 'record_type'"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_rejects_unsupported_record_type() {
+        let yaml = dns_yaml("    record_type: RRSIG\n");
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("unsupported record_type"), "got: {msg}");
+        assert!(msg.contains("supported: IP"), "got: {msg}");
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_rejects_bad_nameserver() {
+        let yaml = dns_yaml("    record_type: A\n    nameservers: [resolver.example.com]\n");
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("invalid nameserver"), "got: {msg}");
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_rejects_zero_cache_max_entries() {
+        let yaml = dns_yaml("    record_type: A\n    cache_max_entries: 0\n");
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("cache_max_entries must be greater than 0"),
+            "got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_rejects_cross_namespace_key() {
+        let yaml = r#"
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    key: "${correlation.group_key.Domain}"
+    record_type: A
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("wrong namespace"), "got: {msg}");
+    }
+
+    #[cfg(feature = "dns-enrich")]
+    #[test]
+    fn dns_enricher_builds_with_explicit_nameserver() {
+        let yaml = dns_yaml("    record_type: A\n    nameservers: [\"127.0.0.1:5353\"]\n");
+        let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+        let pipeline = build_enrichers(parsed).unwrap();
+        assert_eq!(pipeline.len(), 1);
+    }
+
+    #[cfg(not(feature = "dns-enrich"))]
+    #[test]
+    fn dns_enricher_requires_the_feature() {
+        let yaml = r#"
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    key: "${detection.fields.Domain}"
+    record_type: A
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("requires the dns-enrich feature"),
             "got: {msg}"
         );
     }
