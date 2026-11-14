@@ -102,7 +102,7 @@ pub use enrichment::{
     validate_template_namespace,
 };
 #[cfg(feature = "dns-enrich")]
-pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig};
+pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
 #[cfg(feature = "mmdb-enrich")]
 pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]

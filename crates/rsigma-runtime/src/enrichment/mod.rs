@@ -65,7 +65,7 @@ mod tests;
 pub use crate::scope::Scope;
 pub use command::{CommandEnricher, OutputFormat};
 #[cfg(feature = "dns-enrich")]
-pub use dns::{DnsEnricher, DnsRecordType, DnsResolverConfig};
+pub use dns::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
 pub use http::{
     DEFAULT_ENRICHER_MAX_RESPONSE_BYTES, HttpEnricher, HttpEnricherClient,
     build_default_http_client,
