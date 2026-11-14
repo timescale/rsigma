@@ -18,6 +18,9 @@ use rsigma_runtime::{
 };
 use serde_json::{Value, json};
 
+#[cfg(feature = "dns-enrich")]
+pub mod dns;
+
 /// Absolute path to a committed MMDB fixture.
 pub fn mmdb_fixture(name: &str) -> String {
     format!("{}/tests/fixtures/mmdb/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -116,6 +119,23 @@ pub fn city_yaml(extra: &str) -> String {
 /// A default object used by miss cases.
 pub fn unknown_default() -> Value {
     json!({"country_code": "unknown"})
+}
+
+/// A YAML block for a single DNS enricher against `addr`.
+#[cfg(feature = "dns-enrich")]
+pub fn dns_yaml(addr: std::net::SocketAddr, record_type: &str, key: &str, extra: &str) -> String {
+    format!(
+        r#"
+enrichers:
+  - id: resolved
+    kind: detection
+    type: dns
+    inject_field: resolved
+    record_type: {record_type}
+    key: "{key}"
+    nameservers: ["{addr}"]
+{extra}"#
+    )
 }
 
 /// Rebuild every object with its keys in sorted order.
