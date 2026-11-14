@@ -51,6 +51,9 @@ pub struct Metrics {
     pub enrichment_mmdb_misses_total: IntCounterVec,
     pub enrichment_mmdb_reloads_total: IntCounterVec,
     pub enrichment_mmdb_build_epoch_seconds: IntGaugeVec,
+    pub enrichment_dns_cache_hits_total: IntCounterVec,
+    pub enrichment_dns_cache_misses_total: IntCounterVec,
+    pub enrichment_dns_queries_total: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_requests: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
@@ -536,6 +539,30 @@ impl Metrics {
             &["database"],
         )
         .unwrap();
+        let enrichment_dns_cache_hits_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_dns_cache_hits_total",
+                "DNS enricher queries answered from the response cache, including cached negative answers",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_dns_cache_misses_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_dns_cache_misses_total",
+                "DNS enricher queries that went to a nameserver",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
+        let enrichment_dns_queries_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_dns_queries_total",
+                "DNS enricher queries by result: answer, no_records, or error",
+            ),
+            &["enricher_id", "result"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(enrichment_total.clone()))
@@ -566,6 +593,15 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(enrichment_mmdb_build_epoch_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_dns_cache_hits_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_dns_cache_misses_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_dns_queries_total.clone()))
             .unwrap();
 
         #[cfg(feature = "daemon-otlp")]
@@ -1259,6 +1295,9 @@ impl Metrics {
             enrichment_mmdb_misses_total,
             enrichment_mmdb_reloads_total,
             enrichment_mmdb_build_epoch_seconds,
+            enrichment_dns_cache_hits_total,
+            enrichment_dns_cache_misses_total,
+            enrichment_dns_queries_total,
             #[cfg(feature = "daemon-otlp")]
             otlp_requests,
             #[cfg(feature = "daemon-otlp")]
@@ -1708,6 +1747,38 @@ impl MetricsHook for Metrics {
             .set(0);
     }
 
+    fn on_enrichment_dns_cache_hit(&self, enricher_id: &str) {
+        self.enrichment_dns_cache_hits_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_dns_cache_miss(&self, enricher_id: &str) {
+        self.enrichment_dns_cache_misses_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
+    fn on_enrichment_dns_query(&self, enricher_id: &str, result: &'static str) {
+        self.enrichment_dns_queries_total
+            .with_label_values(&[enricher_id, result])
+            .inc();
+    }
+
+    fn register_dns_enricher(&self, enricher_id: &str) {
+        self.enrichment_dns_cache_hits_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+        self.enrichment_dns_cache_misses_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
+        for result in ["answer", "no_records", "error"] {
+            self.enrichment_dns_queries_total
+                .with_label_values(&[enricher_id, result])
+                .inc_by(0);
+        }
+    }
+
     fn register_enricher(&self, enricher_id: &str, kind: &str) {
         // Pre-create label sets so `# HELP` / `# TYPE` lines for the
         // per-enricher metrics show up on the first /metrics scrape,
@@ -1921,6 +1992,61 @@ mod tests {
         assert!(output.contains(r#"database="/var/lib/geoip/city.mmdb""#));
         assert!(output.contains(r#"result="success""#));
         assert!(output.contains(r#"result="failure""#));
+    }
+
+    #[test]
+    fn dns_metrics_record_hits_misses_and_query_results() {
+        let m = Metrics::new();
+        m.on_enrichment_dns_cache_hit("resolve");
+        m.on_enrichment_dns_cache_hit("resolve");
+        m.on_enrichment_dns_cache_miss("resolve");
+        m.on_enrichment_dns_query("resolve", "answer");
+        m.on_enrichment_dns_query("resolve", "no_records");
+        m.on_enrichment_dns_query("resolve", "error");
+
+        assert_eq!(
+            m.enrichment_dns_cache_hits_total
+                .with_label_values(&["resolve"])
+                .get(),
+            2
+        );
+        assert_eq!(
+            m.enrichment_dns_cache_misses_total
+                .with_label_values(&["resolve"])
+                .get(),
+            1
+        );
+        for result in ["answer", "no_records", "error"] {
+            assert_eq!(
+                m.enrichment_dns_queries_total
+                    .with_label_values(&["resolve", result])
+                    .get(),
+                1,
+                "missing result {result}"
+            );
+        }
+    }
+
+    #[test]
+    fn dns_label_sets_are_pre_registered_in_encoded_output() {
+        let m = Metrics::new();
+        m.register_dns_enricher("resolve");
+
+        let output = m.encode();
+        for family in [
+            "rsigma_enrichment_dns_cache_hits_total",
+            "rsigma_enrichment_dns_cache_misses_total",
+            "rsigma_enrichment_dns_queries_total",
+        ] {
+            assert!(output.contains(family), "missing {family}");
+        }
+        assert!(output.contains(r#"enricher_id="resolve""#));
+        for result in ["answer", "no_records", "error"] {
+            assert!(
+                output.contains(&format!(r#"result="{result}""#)),
+                "missing result {result}"
+            );
+        }
     }
 
     #[test]
