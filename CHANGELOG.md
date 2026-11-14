@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### DNS enricher
+### DNS enricher (#708)
 
 `rsigma-runtime` adds a `type: dns` enricher that resolves forward and reverse DNS queries for an event-supplied value and injects the answers under `enrichments.<field>`. The `record_type` value selects the query: the pseudo-type `IP` runs an A and an AAAA query and merges them, and the data types `A`, `AAAA`, `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`, `NAPTR`, `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SOA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`, and `TXT` are supported. `PTR` requires an IP address in `key`, and every other type rejects one. The injected value is a JSON array of presentation-format strings filtered to the queried type, with the trailing root dot stripped from the record types whose text ends in a domain name, TXT character-strings joined the way SPF and DKIM consumers expect, and duplicates removed. `extract` and `extract_type` apply to the array.
 
