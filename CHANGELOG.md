@@ -6,7 +6,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ### UDM canonicalizing pipeline (#705)
 
-Adds path-only [`udm_events.yml`](crates/rsigma-eval/pipelines/udm_events.yml) for Google SecOps UDM-shaped eval input (Chronicle / Bindplane-style nested JSON). Maps the portable five Sigma categories with `metadata.event_type` gates.
+Adds path-only udm_events.yml for Google SecOps UDM-shaped eval input (Chronicle / Bindplane-style nested JSON). Maps the portable five Sigma categories with `metadata.event_type` gates.
 
 ### Native MMDB enricher (#706)
 
