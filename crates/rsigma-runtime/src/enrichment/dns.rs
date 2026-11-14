@@ -23,6 +23,8 @@ use rsigma_eval::EvaluationResult;
 use rsigma_eval::pipeline::sources::ExtractExpr;
 use serde_json::Value;
 
+use crate::metrics::{MetricsHook, NoopMetrics};
+
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
     template::render_template,
@@ -298,12 +300,24 @@ type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 struct DnsCache {
     cache: Option<ResponseCache>,
     clock: Clock,
+    enricher_id: String,
+    metrics: Arc<dyn MetricsHook>,
 }
 
 impl DnsCache {
-    fn new(config: &DnsResolverConfig, clock: Clock) -> Self {
+    fn new(
+        config: &DnsResolverConfig,
+        clock: Clock,
+        enricher_id: String,
+        metrics: Arc<dyn MetricsHook>,
+    ) -> Self {
         if config.cache_ttl.is_zero() && config.negative_cache_ttl.is_zero() {
-            return Self { cache: None, clock };
+            return Self {
+                cache: None,
+                clock,
+                enricher_id,
+                metrics,
+            };
         }
         let mut opts = ResolverOpts::default();
         opts.positive_max_ttl = Some(config.cache_ttl);
@@ -312,11 +326,26 @@ impl DnsCache {
         Self {
             cache: Some(ResponseCache::new(config.cache_max_entries, ttl_config)),
             clock,
+            enricher_id,
+            metrics,
         }
     }
 
     fn get(&self, query: &Query) -> Option<Result<Message, NetError>> {
-        self.cache.as_ref()?.get(query, (self.clock)())
+        let cached = self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.get(query, (self.clock)()));
+        match cached {
+            Some(result) => {
+                self.metrics.on_enrichment_dns_cache_hit(&self.enricher_id);
+                Some(result)
+            }
+            None => {
+                self.metrics.on_enrichment_dns_cache_miss(&self.enricher_id);
+                None
+            }
+        }
     }
 
     fn insert(&self, query: Query, result: Result<Message, NetError>) {
@@ -344,6 +373,24 @@ impl DnsBackend for HickoryBackend {
             .lookup(query.name().clone(), query.query_type())
             .await
             .map(Message::from)
+    }
+}
+
+/// Classify a backend result for the `rsigma_enrichment_dns_queries_total`
+/// `result` label.
+fn query_result_label(query_type: RecordType, result: &Result<Message, NetError>) -> &'static str {
+    match result {
+        Ok(message)
+            if message
+                .answers
+                .iter()
+                .any(|r| r.record_type() == query_type) =>
+        {
+            "answer"
+        }
+        Ok(_) => "no_records",
+        Err(NetError::Dns(DnsError::NoRecordsFound(_))) => "no_records",
+        Err(_) => "error",
     }
 }
 
@@ -408,6 +455,7 @@ pub struct DnsEnricher {
     scope: Scope,
     backend: Arc<dyn DnsBackend>,
     cache: DnsCache,
+    metrics: Arc<dyn MetricsHook>,
 }
 
 impl DnsEnricher {
@@ -428,7 +476,12 @@ impl DnsEnricher {
         let backend = Arc::new(HickoryBackend {
             resolver: build_resolver(&resolver)?,
         });
-        let cache = DnsCache::new(&resolver, Arc::new(Instant::now));
+        let cache = DnsCache::new(
+            &resolver,
+            Arc::new(Instant::now),
+            id.clone(),
+            Arc::new(NoopMetrics),
+        );
         Ok(Self {
             id,
             kind,
@@ -442,7 +495,20 @@ impl DnsEnricher {
             scope,
             backend,
             cache,
+            metrics: Arc::new(NoopMetrics),
         })
+    }
+
+    /// Report this enricher's cache and query counters into `metrics`.
+    ///
+    /// Pre-registers the label sets so the counters appear on `/metrics` from
+    /// startup.
+    pub fn with_metrics(mut self, metrics: Arc<dyn MetricsHook>) -> Self {
+        metrics.register_dns_enricher(&self.id);
+        self.cache.enricher_id = self.id.clone();
+        self.cache.metrics = Arc::clone(&metrics);
+        self.metrics = metrics;
+        self
     }
 
     #[cfg(test)]
@@ -462,7 +528,7 @@ impl DnsEnricher {
         resolver: DnsResolverConfig,
         clock: Clock,
     ) -> Self {
-        let cache = DnsCache::new(&resolver, clock);
+        let cache = DnsCache::new(&resolver, clock, id.clone(), Arc::new(NoopMetrics));
         Self {
             id,
             kind,
@@ -476,6 +542,7 @@ impl DnsEnricher {
             scope,
             backend,
             cache,
+            metrics: Arc::new(NoopMetrics),
         }
     }
 
@@ -492,6 +559,8 @@ impl DnsEnricher {
             return self.outcome_from_result(result);
         }
         let result = self.backend.query(&query).await;
+        self.metrics
+            .on_enrichment_dns_query(&self.id, query_result_label(query.query_type(), &result));
         self.cache.insert(query, result.clone());
         self.outcome_from_result(result)
     }
@@ -847,6 +916,46 @@ mod tests {
         entries: Vec<((Name, RecordType), Result<Message, NetError>)>,
     ) -> HashMap<(Name, RecordType), Result<Message, NetError>> {
         entries.into_iter().collect()
+    }
+
+    #[derive(Default)]
+    struct CollectingMetrics {
+        hits: Mutex<Vec<String>>,
+        misses: Mutex<Vec<String>>,
+        queries: Mutex<Vec<(String, &'static str)>>,
+        registered: Mutex<Vec<String>>,
+    }
+
+    impl MetricsHook for CollectingMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+        fn on_enrichment_dns_cache_hit(&self, enricher_id: &str) {
+            self.hits.lock().unwrap().push(enricher_id.to_string());
+        }
+        fn on_enrichment_dns_cache_miss(&self, enricher_id: &str) {
+            self.misses.lock().unwrap().push(enricher_id.to_string());
+        }
+        fn on_enrichment_dns_query(&self, enricher_id: &str, result: &'static str) {
+            self.queries
+                .lock()
+                .unwrap()
+                .push((enricher_id.to_string(), result));
+        }
+        fn register_dns_enricher(&self, enricher_id: &str) {
+            self.registered
+                .lock()
+                .unwrap()
+                .push(enricher_id.to_string());
+        }
     }
 
     #[test]
@@ -1429,5 +1538,143 @@ mod tests {
             result.header.enrichments.unwrap()["out"],
             serde_json::json!(["192.0.2.10", "2001:db8::10"])
         );
+    }
+
+    #[test]
+    fn metrics_pre_register_the_enricher() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let backend = Arc::new(FakeBackend::new(HashMap::new()));
+        let _e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            backend,
+        )
+        .with_metrics(Arc::clone(&metrics) as Arc<dyn MetricsHook>);
+
+        assert_eq!(metrics.registered.lock().unwrap().clone(), vec!["dns"]);
+    }
+
+    #[tokio::test]
+    async fn metrics_record_a_miss_then_a_hit() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Ok(a_message("host.example.com.", &["192.0.2.10"])),
+        )])));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        )
+        .with_metrics(Arc::clone(&metrics) as Arc<dyn MetricsHook>);
+
+        enrich_ok(&e, "host.example.com").await;
+        enrich_ok(&e, "host.example.com").await;
+
+        assert_eq!(metrics.misses.lock().unwrap().clone(), vec!["dns"]);
+        assert_eq!(metrics.hits.lock().unwrap().clone(), vec!["dns"]);
+        assert_eq!(
+            metrics.queries.lock().unwrap().clone(),
+            vec![("dns".to_string(), "answer")]
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_record_answer_no_records_and_error_results() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let backend = Arc::new(FakeBackend::new(responses(vec![
+            (
+                (name("host.example.com."), RecordType::A),
+                Ok(a_message("host.example.com.", &["192.0.2.10"])),
+            ),
+            (
+                (name("fail.example.com."), RecordType::A),
+                Err(NetError::Dns(DnsError::ResponseCode(
+                    hickory_resolver::proto::op::ResponseCode::ServFail,
+                ))),
+            ),
+        ])));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            Some(serde_json::json!([])),
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        )
+        .with_metrics(Arc::clone(&metrics) as Arc<dyn MetricsHook>);
+
+        enrich_ok(&e, "host.example.com").await;
+        enrich_ok(&e, "missing.example.com").await;
+        let mut result = detection_result("Host", serde_json::json!("fail.example.com"));
+        e.enrich(&mut result).await.unwrap_err();
+
+        assert_eq!(
+            metrics.queries.lock().unwrap().clone(),
+            vec![
+                ("dns".to_string(), "answer"),
+                ("dns".to_string(), "no_records"),
+                ("dns".to_string(), "error"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_count_both_ip_queries() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let backend = Arc::new(FakeBackend::new(responses(vec![
+            (
+                (name("host.example.com."), RecordType::A),
+                Ok(a_message("host.example.com.", &["192.0.2.10"])),
+            ),
+            (
+                (name("host.example.com."), RecordType::AAAA),
+                Ok(aaaa_message("host.example.com.", &["2001:db8::10"])),
+            ),
+        ])));
+        let e = enricher(
+            DnsRecordType::parse("IP").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        )
+        .with_metrics(Arc::clone(&metrics) as Arc<dyn MetricsHook>);
+
+        enrich_ok(&e, "host.example.com").await;
+
+        let queries = metrics.queries.lock().unwrap().clone();
+        assert_eq!(queries.len(), 2, "IP must count two queries: {queries:?}");
+        assert!(
+            queries
+                .iter()
+                .all(|(id, result)| id == "dns" && *result == "answer"),
+            "got {queries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_ignore_key_errors() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let backend = Arc::new(FakeBackend::new(HashMap::new()));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Missing}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        )
+        .with_metrics(Arc::clone(&metrics) as Arc<dyn MetricsHook>);
+
+        let mut result = detection_result("Host", serde_json::json!("host.example.com"));
+        e.enrich(&mut result).await.unwrap_err();
+
+        assert!(metrics.hits.lock().unwrap().is_empty());
+        assert!(metrics.misses.lock().unwrap().is_empty());
+        assert!(metrics.queries.lock().unwrap().is_empty());
+        assert_eq!(backend.calls(), 0);
     }
 }

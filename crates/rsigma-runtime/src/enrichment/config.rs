@@ -744,7 +744,8 @@ fn build_one(
             .map_err(|message| EnrichersConfigError::Scope {
                 enricher_id: cfg.id.clone(),
                 message,
-            })?;
+            })?
+            .with_metrics(std::sync::Arc::clone(&ctx.metrics));
             Ok(Box::new(enricher))
         }
         #[cfg(not(feature = "dns-enrich"))]

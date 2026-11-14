@@ -81,6 +81,21 @@ pub trait MetricsHook: Send + Sync {
     /// build-epoch gauge so they appear on `/metrics` from startup.
     fn register_mmdb_database(&self, _database: &str) {}
 
+    /// A DNS enrichment query was answered from the response cache, including
+    /// cached negative answers.
+    fn on_enrichment_dns_cache_hit(&self, _enricher_id: &str) {}
+    /// A DNS enrichment query went to a nameserver, including every query when
+    /// caching is disabled.
+    fn on_enrichment_dns_cache_miss(&self, _enricher_id: &str) {}
+    /// A DNS enrichment query completed with `result`, one of `answer` (at
+    /// least one record of the queried type), `no_records` (NXDOMAIN or
+    /// NODATA), or `error` (SERVFAIL, refused, I/O, or a resolver timeout).
+    fn on_enrichment_dns_query(&self, _enricher_id: &str, _result: &'static str) {}
+    /// Pre-register a DNS enricher's cache hit and miss label sets and all
+    /// three `result` values so the counters appear on `/metrics` from
+    /// startup.
+    fn register_dns_enricher(&self, _enricher_id: &str) {}
+
     /// Pre-register an enricher's `enricher_id` + `kind` label set so
     /// `rsigma_enrichment_total{...}` and
     /// `rsigma_enrichment_duration_seconds{...}` are emitted with their
