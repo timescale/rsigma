@@ -10,15 +10,15 @@ use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hickory_resolver::TokioResolver;
-use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
+use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
 use hickory_resolver::proto::op::{Message, Query};
 use hickory_resolver::proto::rr::{Name, RecordType};
+use hickory_resolver::{ResponseCache, TokioResolver, TtlConfig};
 use rsigma_eval::EvaluationResult;
 use rsigma_eval::pipeline::sources::ExtractExpr;
 use serde_json::Value;
@@ -287,6 +287,45 @@ fn build_resolver(config: &DnsResolverConfig) -> Result<TokioResolver, String> {
     builder.build().map_err(|e| e.to_string())
 }
 
+type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
+/// Per-enricher DNS response cache.
+///
+/// The resolver is built with hickory's internal cache disabled, so this is
+/// the only cache on the query path. Negative answers (NXDOMAIN and NODATA)
+/// are cached from the SOA TTL clamped to `negative_cache_ttl`; transient
+/// errors are never cached.
+struct DnsCache {
+    cache: Option<ResponseCache>,
+    clock: Clock,
+}
+
+impl DnsCache {
+    fn new(config: &DnsResolverConfig, clock: Clock) -> Self {
+        if config.cache_ttl.is_zero() && config.negative_cache_ttl.is_zero() {
+            return Self { cache: None, clock };
+        }
+        let mut opts = ResolverOpts::default();
+        opts.positive_max_ttl = Some(config.cache_ttl);
+        opts.negative_max_ttl = Some(config.negative_cache_ttl);
+        let ttl_config = TtlConfig::from_opts(&opts);
+        Self {
+            cache: Some(ResponseCache::new(config.cache_max_entries, ttl_config)),
+            clock,
+        }
+    }
+
+    fn get(&self, query: &Query) -> Option<Result<Message, NetError>> {
+        self.cache.as_ref()?.get(query, (self.clock)())
+    }
+
+    fn insert(&self, query: Query, result: Result<Message, NetError>) {
+        if let Some(cache) = &self.cache {
+            cache.insert(query, result, (self.clock)());
+        }
+    }
+}
+
 /// A DNS query backend. The production implementation wraps a hickory
 /// resolver; unit tests inject a fake.
 #[async_trait]
@@ -368,6 +407,7 @@ pub struct DnsEnricher {
     on_error: OnError,
     scope: Scope,
     backend: Arc<dyn DnsBackend>,
+    cache: DnsCache,
 }
 
 impl DnsEnricher {
@@ -388,6 +428,7 @@ impl DnsEnricher {
         let backend = Arc::new(HickoryBackend {
             resolver: build_resolver(&resolver)?,
         });
+        let cache = DnsCache::new(&resolver, Arc::new(Instant::now));
         Ok(Self {
             id,
             kind,
@@ -400,6 +441,7 @@ impl DnsEnricher {
             on_error,
             scope,
             backend,
+            cache,
         })
     }
 
@@ -417,7 +459,10 @@ impl DnsEnricher {
         on_error: OnError,
         scope: Scope,
         backend: Arc<dyn DnsBackend>,
+        resolver: DnsResolverConfig,
+        clock: Clock,
     ) -> Self {
+        let cache = DnsCache::new(&resolver, clock);
         Self {
             id,
             kind,
@@ -430,6 +475,7 @@ impl DnsEnricher {
             on_error,
             scope,
             backend,
+            cache,
         }
     }
 
@@ -442,7 +488,16 @@ impl DnsEnricher {
 
     async fn run_query(&self, name: Name, record_type: RecordType) -> QueryOutcome {
         let query = Query::query(name, record_type);
-        match self.backend.query(&query).await {
+        if let Some(result) = self.cache.get(&query) {
+            return self.outcome_from_result(result);
+        }
+        let result = self.backend.query(&query).await;
+        self.cache.insert(query, result.clone());
+        self.outcome_from_result(result)
+    }
+
+    fn outcome_from_result(&self, result: Result<Message, NetError>) -> QueryOutcome {
+        match result {
             Ok(message) => {
                 let answers = format_message(self.record_type, &message);
                 if answers.is_empty() {
@@ -679,6 +734,38 @@ mod tests {
         )))
     }
 
+    fn no_records_with_soa(query: Query, negative_ttl: u32) -> NetError {
+        let mut records =
+            NoRecords::new(query, hickory_resolver::proto::op::ResponseCode::NXDomain);
+        records.negative_ttl = Some(negative_ttl);
+        NetError::Dns(DnsError::NoRecordsFound(records))
+    }
+
+    /// A clock the tests can move forward without sleeping.
+    struct TestClock {
+        offset_secs: AtomicU64,
+    }
+
+    impl TestClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                offset_secs: AtomicU64::new(0),
+            })
+        }
+
+        fn advance(&self, duration: Duration) {
+            self.offset_secs
+                .fetch_add(duration.as_secs(), Ordering::SeqCst);
+        }
+
+        fn clock(self: &Arc<Self>) -> Clock {
+            let clock = Arc::clone(self);
+            Arc::new(move || {
+                Instant::now() + Duration::from_secs(clock.offset_secs.load(Ordering::SeqCst))
+            })
+        }
+    }
+
     struct FakeBackend {
         responses: Mutex<HashMap<(Name, RecordType), Result<Message, NetError>>>,
         calls: AtomicU64,
@@ -718,6 +805,27 @@ mod tests {
         extract: Option<ExtractExpr>,
         backend: Arc<dyn DnsBackend>,
     ) -> DnsEnricher {
+        enricher_with_config(
+            record_type,
+            key,
+            default,
+            extract,
+            backend,
+            DnsResolverConfig::default(),
+            Arc::new(Instant::now),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enricher_with_config(
+        record_type: DnsRecordType,
+        key: &str,
+        default: Option<Value>,
+        extract: Option<ExtractExpr>,
+        backend: Arc<dyn DnsBackend>,
+        resolver: DnsResolverConfig,
+        clock: Clock,
+    ) -> DnsEnricher {
         DnsEnricher::with_backend(
             "dns".into(),
             EnricherKind::Detection,
@@ -730,6 +838,8 @@ mod tests {
             OnError::Skip,
             Scope::default(),
             backend,
+            resolver,
+            clock,
         )
     }
 
@@ -1114,6 +1224,210 @@ mod tests {
         assert_eq!(
             result.header.enrichments.unwrap()["out"],
             serde_json::json!("192.0.2.10")
+        );
+    }
+
+    async fn enrich_ok(e: &DnsEnricher, host: &str) -> EvaluationResult {
+        let mut result = detection_result("Host", serde_json::json!(host));
+        e.enrich(&mut result).await.unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn cache_serves_repeated_queries_without_backend_calls() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Ok(a_message("host.example.com.", &["192.0.2.10"])),
+        )])));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        );
+
+        let first = enrich_ok(&e, "host.example.com").await;
+        let second = enrich_ok(&e, "host.example.com").await;
+
+        assert_eq!(backend.calls(), 1);
+        let expected = serde_json::json!(["192.0.2.10"]);
+        assert_eq!(first.header.enrichments.unwrap()["out"], expected);
+        assert_eq!(second.header.enrichments.unwrap()["out"], expected);
+    }
+
+    #[tokio::test]
+    async fn cache_re_queries_after_the_positive_ttl_cap() {
+        let clock = TestClock::new();
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Ok(a_message("host.example.com.", &["192.0.2.10"])),
+        )])));
+        let resolver = DnsResolverConfig {
+            cache_ttl: Duration::from_secs(1),
+            ..DnsResolverConfig::default()
+        };
+        let e = enricher_with_config(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            resolver,
+            clock.clock(),
+        );
+
+        enrich_ok(&e, "host.example.com").await;
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 1);
+
+        clock.advance(Duration::from_secs(2));
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn cache_re_queries_after_the_negative_ttl_cap() {
+        let clock = TestClock::new();
+        let query = Query::query(name("missing.example.com."), RecordType::A);
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("missing.example.com."), RecordType::A),
+            Err(no_records_with_soa(query, 60)),
+        )])));
+        let resolver = DnsResolverConfig {
+            negative_cache_ttl: Duration::from_secs(10),
+            ..DnsResolverConfig::default()
+        };
+        let e = enricher_with_config(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            Some(serde_json::json!([])),
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            resolver,
+            clock.clock(),
+        );
+
+        let first = enrich_ok(&e, "missing.example.com").await;
+        let second = enrich_ok(&e, "missing.example.com").await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(
+            first.header.enrichments.unwrap()["out"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            second.header.enrichments.unwrap()["out"],
+            serde_json::json!([])
+        );
+
+        clock.advance(Duration::from_secs(11));
+        enrich_ok(&e, "missing.example.com").await;
+        assert_eq!(backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn cache_does_not_store_transient_errors() {
+        for error in [
+            NetError::Timeout,
+            NetError::Dns(DnsError::ResponseCode(
+                hickory_resolver::proto::op::ResponseCode::ServFail,
+            )),
+        ] {
+            let backend = Arc::new(FakeBackend::new(responses(vec![(
+                (name("host.example.com."), RecordType::A),
+                Err(error.clone()),
+            )])));
+            let e = enricher(
+                DnsRecordType::parse("A").unwrap(),
+                "${detection.fields.Host}",
+                None,
+                None,
+                Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            );
+
+            for _ in 0..2 {
+                let mut result = detection_result("Host", serde_json::json!("host.example.com"));
+                e.enrich(&mut result).await.unwrap_err();
+            }
+            assert_eq!(backend.calls(), 2, "error should not be cached: {error:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_ttls_disable_the_cache() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Ok(a_message("host.example.com.", &["192.0.2.10"])),
+        )])));
+        let resolver = DnsResolverConfig {
+            cache_ttl: Duration::ZERO,
+            negative_cache_ttl: Duration::ZERO,
+            ..DnsResolverConfig::default()
+        };
+        let e = enricher_with_config(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            resolver,
+            Arc::new(Instant::now),
+        );
+
+        enrich_ok(&e, "host.example.com").await;
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn cache_keys_ignore_key_case() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Ok(a_message("host.example.com.", &["192.0.2.10"])),
+        )])));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        );
+
+        enrich_ok(&e, "HOST.Example.COM").await;
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn ip_caches_a_and_aaaa_entries_separately() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![
+            (
+                (name("host.example.com."), RecordType::A),
+                Ok(a_message("host.example.com.", &["192.0.2.10"])),
+            ),
+            (
+                (name("host.example.com."), RecordType::AAAA),
+                Ok(aaaa_message("host.example.com.", &["2001:db8::10"])),
+            ),
+        ])));
+        let e = enricher(
+            DnsRecordType::parse("IP").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+        );
+
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 2);
+
+        // A second pass is served from the two cache entries. If A and AAAA
+        // shared a key, one side would be re-queried here.
+        let result = enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 2);
+        assert_eq!(
+            result.header.enrichments.unwrap()["out"],
+            serde_json::json!(["192.0.2.10", "2001:db8::10"])
         );
     }
 }
