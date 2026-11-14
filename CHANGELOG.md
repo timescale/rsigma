@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### The rsigma agent skill covers schema pipelines, hunting, and rule set review
+
+The `skills/rsigma` skill now tells agents to pass a canonicalizing pipeline with `-p` for ECS, Splunk CIM, OCSF, CrowdStrike Falcon, and Google SecOps UDM events, and notes that the path-only pipelines ship in the repository rather than in release binaries. It adds the `hunt` and `taxii` groups, `engine incidents`, and the `rule` review commands (`coverage`, `scorecard`, `visibility`, `hygiene`, `doc`), and lists the features each command needs. It also covers the bounded API silences, `--strict-rules` and the `rsigma_rule_parse_errors` gauge, and the daemon enrichers, including `mmdb`.
+
 ### UDM canonicalizing pipeline (#705)
 
 Adds path-only `udm_events.yml` for Google SecOps UDM-shaped eval input (Chronicle / Bindplane-style nested JSON). Maps the portable five Sigma categories with `metadata.event_type` gates.
