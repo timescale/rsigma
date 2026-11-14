@@ -4,7 +4,7 @@ description: "How to add a bespoke enricher to the RSigma runtime: implement the
 
 # Adding an enricher
 
-The six primitives `template`, `lookup`, `http`, `command`, `stix`, and `mmdb` cover almost every operational use case via [recipes](../guide/enrichers.md#composing-enrichers-recipes). When they don't, the runtime ships a bespoke enricher API: implement the `Enricher` trait, register it under a stable `type:` name with `register_builtin(name, factory)`, and operators reference it from their YAML by that name.
+The seven primitives `template`, `lookup`, `http`, `command`, `stix`, `mmdb`, and `dns` cover almost every operational use case via [recipes](../guide/enrichers.md#composing-enrichers-recipes). When they don't, the runtime ships a bespoke enricher API: implement the `Enricher` trait, register it under a stable `type:` name with `register_builtin(name, factory)`, and operators reference it from their YAML by that name.
 
 ## Decide whether you actually need a bespoke enricher
 
@@ -164,7 +164,7 @@ A few invariants the runtime guarantees, so you don't have to defend against the
 - The call is wrapped in `tokio::time::timeout(self.timeout(), …)`. Timeouts surface as `EnrichErrorKind::Timeout` to the pipeline, then `OnError` decides whether to skip, null, or drop.
 - `result.header.enrichments` is initialised lazily by `inject_enrichment`, so the `skip_serializing_if = "Option::is_none"` contract is preserved if every enricher errors.
 
-Step 2: wire `register_builtin`. The factory takes the raw YAML config block (after `serde_json::to_value`) and returns a `Box<dyn Enricher>`. Names are checked against six reserved primitives (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`); duplicate registrations of the same name are rejected to keep the global registry append-only.
+Step 2: wire `register_builtin`. The factory takes the raw YAML config block (after `serde_json::to_value`) and returns a `Box<dyn Enricher>`. Names are checked against seven reserved primitives (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`, `dns`); duplicate registrations of the same name are rejected to keep the global registry append-only.
 
 ```rust
 // my-enrichers/src/lib.rs
@@ -198,7 +198,7 @@ fn main() {
 
 ## YAML reference
 
-The config block is identical to the six primitives' shape; only `type:` differs. Operators do not need to know whether a type came from the primitive set or from a `register_builtin` call.
+The config block is identical to the seven primitives' shape; only `type:` differs. Operators do not need to know whether a type came from the primitive set or from a `register_builtin` call.
 
 ```yaml
 enrichers:
@@ -250,6 +250,6 @@ Three places to update when you ship the type:
 
 ## See also
 
-- [Enrichers](../guide/enrichers.md): the operator-facing guide for the YAML schema, the six primitives, and the recipe catalog.
+- [Enrichers](../guide/enrichers.md): the operator-facing guide for the YAML schema, the seven primitives, and the recipe catalog.
 - [`rsigma-runtime`](../library/runtime.md): the public surface (`Enricher`, `EnrichmentPipeline`, `register_builtin`).
 - [Adding a dynamic source](adding-sources.md): the analogous walkthrough for new pipeline source types.

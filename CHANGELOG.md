@@ -4,6 +4,20 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### DNS enricher
+
+`rsigma-runtime` adds a `type: dns` enricher that resolves forward and reverse DNS queries for an event-supplied value and injects the answers under `enrichments.<field>`. The `record_type` value selects the query: the pseudo-type `IP` runs an A and an AAAA query and merges them, and the data types `A`, `AAAA`, `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`, `NAPTR`, `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SOA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`, and `TXT` are supported. `PTR` requires an IP address in `key`, and every other type rejects one. The injected value is a JSON array of presentation-format strings filtered to the queried type, with the trailing root dot stripped from the record types whose text ends in a domain name, TXT character-strings joined the way SPF and DKIM consumers expect, and duplicates removed. `extract` and `extract_type` apply to the array.
+
+Answers and negative answers are cached in hickory's response cache. Record TTLs are capped by `cache_ttl` (default 5m), and NXDOMAIN and NODATA answers are cached for the SOA negative TTL capped by `negative_cache_ttl` (default 1m). Transient errors such as timeouts and SERVFAIL are never cached, and setting both TTLs to `0s` disables the cache. `cache_max_entries` (default 10000) bounds the cache. `nameservers` takes `IP` or `IP:port` entries and falls back to the system resolver when empty. A miss injects `default` when it is set and otherwise reports a miss, and `on_error` applies to timeouts and resolver errors.
+
+The daemon exposes `rsigma_enrichment_dns_cache_hits_total`, `rsigma_enrichment_dns_cache_misses_total`, and `rsigma_enrichment_dns_queries_total{result}`, so operators can watch cache effectiveness and resolver health. The enricher is gated behind the `dns-enrich` feature in `rsigma-runtime` and the CLI, and is included in the prebuilt binaries and the Docker image.
+
+The library surface adds `DnsEnricher`, `DnsRecordType`, `DnsResolverConfig`, and `SUPPORTED_DNS_RECORD_TYPES`, plus four `MetricsHook` methods for cache hits, cache misses, query results, and label pre-registration.
+
+Breaking changes: `EnricherConfig` has four new public fields, so code that builds it with a struct literal must add `record_type: None`, `nameservers: Vec::new()`, `negative_cache_ttl: None`, and `cache_max_entries: None`. YAML configs are unaffected.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#dns-dns-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
+
 ### The rsigma agent skill covers schema pipelines, hunting, and rule set review (#707)
 
 The `skills/rsigma` skill now tells agents to pass a canonicalizing pipeline with `-p` for ECS, Splunk CIM, OCSF, CrowdStrike Falcon, and Google SecOps UDM events, and notes that the path-only pipelines ship in the repository rather than in release binaries. It adds the `hunt` and `taxii` groups, `engine incidents`, and the `rule` review commands (`coverage`, `scorecard`, `visibility`, `hygiene`, `doc`), and lists the features each command needs. It also covers the bounded API silences, `--strict-rules` and the `rsigma_rule_parse_errors` gauge, and the daemon enrichers, including `mmdb`.
