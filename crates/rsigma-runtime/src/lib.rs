@@ -125,9 +125,10 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use processor::{BatchProcessOutcome, EventFilter, LogProcessor};
 pub use risk::{
-    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskFile,
-    RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState, RiskStateSnapshot,
-    SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file, parse_risk_config,
+    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskEvent,
+    RiskFile, RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState,
+    RiskStateSnapshot, SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file,
+    parse_risk_config,
 };
 pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};

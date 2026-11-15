@@ -383,6 +383,209 @@ pub fn risk_incident_finding_with(incident: &RiskIncidentResult, src: &dyn Findi
     Value::Object(finding)
 }
 
+/// Serialize a dedup `repeat` / `resolved` summary line as a Detection Finding.
+pub fn dedup_summary_finding(wire: &Value) -> Value {
+    dedup_summary_finding_with(wire, &SystemSource)
+}
+
+/// [`dedup_summary_finding`] against an injected time and identity source.
+pub fn dedup_summary_finding_with(wire: &Value, src: &dyn FindingSource) -> Value {
+    let state = wire
+        .get("enrichments")
+        .and_then(|enr| enr.get("dedup_state"))
+        .and_then(Value::as_str)
+        .unwrap_or("repeat");
+    let result = dedup_wire_to_evaluation_result(wire);
+    let mut finding = dedup_summary_finding_from_result_with(&result, state, src);
+    nest_dedup_enrichments_from_wire(&mut finding, wire);
+    finding
+}
+
+/// Serialize a dedup summary from a typed [`EvaluationResult`].
+pub fn dedup_summary_finding_from_result(result: &EvaluationResult, dedup_state: &str) -> Value {
+    dedup_summary_finding_from_result_with(result, dedup_state, &SystemSource)
+}
+
+/// [`dedup_summary_finding_from_result`] against an injected source.
+pub fn dedup_summary_finding_from_result_with(
+    result: &EvaluationResult,
+    dedup_state: &str,
+    src: &dyn FindingSource,
+) -> Value {
+    let (activity, status) = match dedup_state {
+        "resolved" => (Activity::Close, Status::Resolved),
+        _ => (Activity::Update, Status::New),
+    };
+    let mut finding = detection_finding_with(result, src);
+    patch_lifecycle(&mut finding, activity, status);
+    finding
+}
+
+/// Serialize a compact risk event as a Detection Finding.
+pub fn risk_event_finding(event: &crate::risk::RiskEvent) -> Value {
+    risk_event_finding_with(event, &SystemSource)
+}
+
+/// [`risk_event_finding`] against an injected time and identity source.
+pub fn risk_event_finding_with(event: &crate::risk::RiskEvent, src: &dyn FindingSource) -> Value {
+    let title = event.rule_title.as_str();
+    let time_ms = event.timestamp.saturating_mul(1000);
+
+    let mut analytic = Map::new();
+    analytic.insert("type_id".to_string(), json!(1));
+    analytic.insert("type".to_string(), json!("Rule"));
+    analytic.insert("name".to_string(), json!(title));
+    analytic.insert("uid".to_string(), json!(event.rule));
+
+    let mut finding_info = Map::new();
+    finding_info.insert("title".to_string(), json!(title));
+    finding_info.insert("uid".to_string(), json!(src.uid()));
+    finding_info.insert("analytic".to_string(), Value::Object(analytic));
+
+    let resources = json!([{
+        "type": event.risk_object.object_type,
+        "name": event.risk_object.value,
+    }]);
+    let actor = (event.risk_object.object_type == "user")
+        .then(|| json!({ "user": { "name": event.risk_object.value } }));
+
+    let mut unmapped = Map::new();
+    unmapped.insert("risk_event".to_string(), json!(true));
+    unmapped.insert("timestamp".to_string(), json!(event.timestamp));
+
+    let mut finding = base_finding(
+        src,
+        Activity::Create,
+        Status::New,
+        severity_from_name(event.level.as_deref()),
+        time_ms,
+        title,
+    );
+    finding.insert("finding_info".to_string(), Value::Object(finding_info));
+    finding.insert("risk_score".to_string(), json!(event.risk_score));
+    finding.insert("resources".to_string(), resources);
+    insert_if(&mut finding, "actor", actor);
+    finding.insert("unmapped".to_string(), Value::Object(unmapped));
+    Value::Object(finding)
+}
+
+fn patch_lifecycle(finding: &mut Value, activity: Activity, status: Status) {
+    let Some(obj) = finding.as_object_mut() else {
+        return;
+    };
+    let activity_id = activity as i64;
+    obj.insert("activity_id".to_string(), json!(activity_id));
+    obj.insert("activity_name".to_string(), json!(activity.name()));
+    obj.insert("type_uid".to_string(), json!(CLASS_UID * 100 + activity_id));
+    obj.insert(
+        "type_name".to_string(),
+        json!(format!("Detection Finding: {}", activity.name())),
+    );
+    obj.insert("status_id".to_string(), json!(status as i64));
+    obj.insert("status".to_string(), json!(status.name()));
+}
+
+/// Move `dedup_*` keys under `unmapped.enrichments` for the wire mapping path.
+fn nest_dedup_enrichments_from_wire(finding: &mut Value, wire: &Value) {
+    let Some(enrichments) = wire.get("enrichments").and_then(Value::as_object) else {
+        return;
+    };
+    let dedup: Map<String, Value> = enrichments
+        .iter()
+        .filter(|(key, _)| key.starts_with("dedup_"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if dedup.is_empty() {
+        return;
+    }
+    let unmapped = finding
+        .as_object_mut()
+        .expect("finding object")
+        .entry("unmapped".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let map = unmapped.as_object_mut().expect("unmapped object");
+    map.insert("enrichments".to_string(), Value::Object(dedup));
+}
+
+/// Rebuild a detection [`EvaluationResult`] from a dedup summary wire line.
+fn dedup_wire_to_evaluation_result(wire: &Value) -> EvaluationResult {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use rsigma_eval::{DetectionBody, FieldMatch, ResultBody};
+
+    let rule_title = wire
+        .get("rule_title")
+        .and_then(Value::as_str)
+        .unwrap_or("dedup summary")
+        .to_string();
+    let rule_id = wire
+        .get("rule_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let level = wire
+        .get("level")
+        .and_then(Value::as_str)
+        .and_then(|s| match s {
+            "informational" => Some(Level::Informational),
+            "low" => Some(Level::Low),
+            "medium" => Some(Level::Medium),
+            "high" => Some(Level::High),
+            "critical" => Some(Level::Critical),
+            _ => None,
+        });
+    let tags: Vec<String> = wire
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let enrichments = wire.get("enrichments").and_then(|v| v.as_object()).cloned();
+    let matched_selections: Vec<String> = wire
+        .get("matched_selections")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let matched_fields: Vec<FieldMatch> = wire
+        .get("matched_fields")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let field = entry.get("field")?.as_str()?.to_string();
+                    let value = entry.get("value")?.clone();
+                    Some(FieldMatch::new(field, value))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    EvaluationResult {
+        header: rsigma_eval::RuleHeader {
+            rule_title,
+            rule_id,
+            level,
+            tags,
+            custom_attributes: Arc::new(HashMap::new()),
+            enrichments,
+        },
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections,
+            matched_fields,
+            event: None,
+        }),
+    }
+}
+
 /// The fields every Detection Finding carries, whatever it was built from.
 fn base_finding(
     src: &dyn FindingSource,

@@ -36,6 +36,7 @@ pub use score::DEFAULT_SCORE_ATTRIBUTE;
 pub use snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{MetricsHook, Scope};
@@ -49,6 +50,19 @@ pub(crate) const RISK_SCORE_KEY: &str = "risk.score";
 /// Reserved enrichment key carrying the extracted risk objects.
 pub(crate) const RISK_OBJECTS_KEY: &str = "risk.objects";
 
+/// Compact wire shape for one per-entity risk event (additive incident-channel line).
+#[derive(Debug, Clone, Serialize)]
+pub struct RiskEvent {
+    pub risk_event: bool,
+    pub timestamp: i64,
+    pub rule: String,
+    pub rule_title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    pub risk_score: i64,
+    pub risk_object: RiskObject,
+}
+
 /// Output of [`RiskLayer::process`]: the annotated pass-through results and the
 /// additive risk events (opt-in).
 #[derive(Debug, Default)]
@@ -58,7 +72,7 @@ pub struct RiskOutput {
     /// Compact risk events, one per `(detection, risk object)` pair, dispatched
     /// as additive NDJSON (optionally to a dedicated subject). Empty unless
     /// `emit_risk_events` is set.
-    pub risk_events: Vec<Value>,
+    pub risk_events: Vec<RiskEvent>,
     /// High-fidelity risk incidents emitted when an entity crossed a threshold,
     /// dispatched via the incident path (optionally to a dedicated subject).
     pub incidents: Vec<RiskIncidentResult>,
@@ -300,36 +314,20 @@ fn strip_event_payloads(result: &mut EvaluationResult) {
 
 /// Build one compact risk event for a `(detection, risk object)` pair. The
 /// `risk_event` marker key disambiguates it on the wire.
-fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i64) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("risk_event".to_string(), Value::Bool(true));
-    map.insert("timestamp".to_string(), Value::from(now));
-    map.insert(
-        "rule".to_string(),
-        Value::String(
-            result
-                .header
-                .rule_id
-                .clone()
-                .unwrap_or_else(|| result.header.rule_title.clone()),
-        ),
-    );
-    map.insert(
-        "rule_title".to_string(),
-        Value::String(result.header.rule_title.clone()),
-    );
-    if let Some(level) = result.header.level {
-        map.insert(
-            "level".to_string(),
-            Value::String(level.as_str().to_string()),
-        );
+fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i64) -> RiskEvent {
+    RiskEvent {
+        risk_event: true,
+        timestamp: now,
+        rule: result
+            .header
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| result.header.rule_title.clone()),
+        rule_title: result.header.rule_title.clone(),
+        level: result.header.level.map(|l| l.as_str().to_string()),
+        risk_score: score,
+        risk_object: object.clone(),
     }
-    map.insert("risk_score".to_string(), Value::from(score));
-    map.insert(
-        "risk_object".to_string(),
-        serde_json::to_value(object).unwrap_or(Value::Null),
-    );
-    Value::Object(map)
 }
 
 #[cfg(test)]
@@ -427,10 +425,10 @@ mod tests {
         );
         assert_eq!(out.risk_events.len(), 1);
         let ev = &out.risk_events[0];
-        assert_eq!(ev["risk_event"], serde_json::json!(true));
-        assert_eq!(ev["risk_score"], serde_json::json!(5));
-        assert_eq!(ev["timestamp"], serde_json::json!(1234));
-        assert_eq!(ev["risk_object"]["value"], serde_json::json!("10.0.0.1"));
+        assert!(ev.risk_event);
+        assert_eq!(ev.risk_score, 5);
+        assert_eq!(ev.timestamp, 1234);
+        assert_eq!(ev.risk_object.value, "10.0.0.1");
     }
 
     #[test]

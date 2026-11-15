@@ -26,8 +26,10 @@ use rsigma_eval::{
     CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
+use rsigma_runtime::RiskEvent;
 use rsigma_runtime::ocsf::{
-    self, FindingSource, detection_finding_with, incident_finding_with, risk_incident_finding_with,
+    self, FindingSource, dedup_summary_finding_with, detection_finding_with, incident_finding_with,
+    risk_event_finding_with, risk_incident_finding_with,
 };
 use rsigma_runtime::{IncidentRef, IncidentResult, RiskIncidentResult, RiskRef};
 use serde_json::{Value, json};
@@ -283,6 +285,73 @@ fn risk_incident_carries_score_and_entity() {
 /// The default entry points mint a distinct `metadata.uid` per finding, so a
 /// consumer can deduplicate a replayed batch.
 #[test]
+fn dedup_repeat_summary_is_an_update_finding() {
+    let wire = serde_json::json!({
+        "rule_title": "Malware execution",
+        "rule_id": "rule-1",
+        "level": "high",
+        "tags": ["attack.t1059"],
+        "enrichments": {
+            "dedup_state": "repeat",
+            "dedup_fingerprint": "13bf5ab591909123",
+            "dedup_fire_count": 2,
+            "dedup_first_seen": 1000,
+            "dedup_last_seen": 1005,
+            "dedup_fields": {"rule": "rule-1", "match.CommandLine": "malware.exe"}
+        },
+        "matched_selections": ["selection"],
+        "matched_fields": [{"field": "CommandLine", "value": "malware.exe"}]
+    });
+    check(
+        "dedup_repeat",
+        &dedup_summary_finding_with(&wire, &FixedSource::new()),
+    );
+}
+
+#[test]
+fn dedup_resolved_summary_is_a_close_finding() {
+    let wire = serde_json::json!({
+        "rule_title": "Malware execution",
+        "rule_id": "rule-1",
+        "level": "high",
+        "tags": ["attack.t1059"],
+        "enrichments": {
+            "dedup_state": "resolved",
+            "dedup_fingerprint": "13bf5ab591909123",
+            "dedup_fire_count": 2,
+            "dedup_first_seen": 1000,
+            "dedup_last_seen": 1005,
+            "dedup_fields": {"rule": "rule-1", "match.CommandLine": "malware.exe"}
+        },
+        "matched_selections": ["selection"],
+        "matched_fields": [{"field": "CommandLine", "value": "malware.exe"}]
+    });
+    check(
+        "dedup_resolved",
+        &dedup_summary_finding_with(&wire, &FixedSource::new()),
+    );
+}
+
+#[test]
+fn risk_event_is_a_create_finding() {
+    let event = RiskEvent {
+        risk_event: true,
+        timestamp: 1234,
+        rule: "rule-1".to_string(),
+        rule_title: "Brute force".to_string(),
+        level: Some("high".to_string()),
+        risk_score: 25,
+        risk_object: rsigma_runtime::RiskObject {
+            object_type: "src_ip".to_string(),
+            value: "203.0.113.4".to_string(),
+        },
+    };
+    check(
+        "risk_event",
+        &risk_event_finding_with(&event, &FixedSource::new()),
+    );
+}
+
 fn minted_uids_are_unique_across_a_batch() {
     let result = EvaluationResult {
         header: header(None),
