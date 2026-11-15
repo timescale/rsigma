@@ -195,7 +195,7 @@ An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF de
 
 {{ added "unreleased" }}
 
-An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding as a JSON string, the same bytes a line sink would write. The record keeps the severity mapped from the Sigma level and carries no attributes, because the finding already holds every native field.
+An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding as a JSON string, the same bytes a line sink would write. The record keeps the severity mapped from the Sigma level and the same attributes a native OTLP record carries, including `rule_title`, `rule_id`, `level`, and `tags`.
 
 ```bash
 rsigma engine daemon -r rules/ --input http \

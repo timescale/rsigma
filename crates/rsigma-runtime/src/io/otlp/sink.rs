@@ -67,8 +67,8 @@ const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// In the default format each result becomes a log record whose body is the
 /// rule title and whose attributes are the native result fields. With
-/// [`SinkFormat::Ocsf`] the body is the OCSF Detection Finding as a JSON string
-/// and the record carries no attributes.
+/// [`SinkFormat::Ocsf`] the body is the OCSF Detection Finding as a JSON string.
+/// The record keeps the native attribute set.
 ///
 /// The gRPC channel connects lazily, so a collector that is not yet reachable
 /// does not fail daemon startup; delivery failures are surfaced to the
@@ -584,7 +584,11 @@ mod tests {
         let got = received.lock().await;
         let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
         assert_eq!(record.severity_text, "ERROR");
-        assert!(record.attributes.is_empty());
+        assert!(
+            record.attributes.iter().any(|kv| kv.key == "rule_title"),
+            "native attributes stay on the record: {:?}",
+            record.attributes,
+        );
         let Some(any_value::Value::StringValue(raw)) =
             record.body.as_ref().and_then(|b| b.value.as_ref())
         else {

@@ -399,8 +399,9 @@ fn ocsf_otlp_sink_exports_the_finding_as_the_log_body() {
         "severity still follows the level"
     );
     assert!(
-        record.attributes.is_empty(),
-        "the finding replaces the native attributes"
+        record.attributes.iter().any(|kv| kv.key == "rule_title"),
+        "native attributes stay on the OCSF record: {:?}",
+        record.attributes,
     );
     let encoded = any_value_json(record.body.as_ref().expect("a log body"));
     let raw = encoded

@@ -200,8 +200,9 @@ pub fn evaluation_results_to_logs_request(
 ///
 /// `finding` returns the finding for the result at an index. Each record's
 /// body is that finding as a JSON string, and its severity follows the
-/// Sigma level as in [`evaluation_results_to_logs_request`]. The record carries
-/// no attributes, because the finding already holds every native field.
+/// Sigma level as in [`evaluation_results_to_logs_request`]. The attribute
+/// set is the same one a native record carries, so a collector can still
+/// route on `rule_title`, `rule_id`, `level`, and `tags`.
 pub(crate) fn ocsf_findings_to_logs_request(
     results: &[EvaluationResult],
     finding: impl Fn(usize, &EvaluationResult) -> Value,
@@ -264,19 +265,11 @@ fn result_to_log_record(result: &EvaluationResult) -> LogRecord {
 }
 
 fn ocsf_log_record(result: &EvaluationResult, finding: &Value) -> LogRecord {
-    let now = now_unix_nanos();
-    let (severity_number, severity_text) =
-        severity_from_level(result.header.level.as_ref().map(|l| l.as_str()));
-    LogRecord {
-        time_unix_nano: now,
-        observed_time_unix_nano: now,
-        severity_number,
-        severity_text: severity_text.to_string(),
-        body: Some(string_any_value(
-            &serde_json::to_string(finding).unwrap_or_else(|_| "{}".to_string()),
-        )),
-        ..Default::default()
-    }
+    let mut record = result_to_log_record(result);
+    record.body = Some(string_any_value(
+        &serde_json::to_string(finding).unwrap_or_else(|_| "{}".to_string()),
+    ));
+    record
 }
 
 /// Map a Sigma level to an OTLP severity `(number, text)`. Unknown or absent
@@ -813,8 +806,8 @@ mod tests {
         );
         assert_eq!(record.severity_text, "WARN");
         assert!(
-            record.attributes.is_empty(),
-            "the finding replaces the native attributes: {:?}",
+            record.attributes.iter().any(|kv| kv.key == "rule_title"),
+            "native attributes stay on the record: {:?}",
             record.attributes,
         );
         let body = record.body.as_ref().unwrap();
