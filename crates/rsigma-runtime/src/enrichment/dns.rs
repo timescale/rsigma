@@ -667,8 +667,7 @@ impl Enricher for DnsEnricher {
         debug_assert!(all_miss);
         match &self.default {
             Some(default) => {
-                let value = self.maybe_extract(default.clone())?;
-                inject_enrichment(result, &self.inject_field, value);
+                inject_enrichment(result, &self.inject_field, default.clone());
                 Ok(())
             }
             None => Err(self.error(EnrichErrorKind::Fetch(format!(
@@ -848,7 +847,6 @@ mod tests {
             }
         }
 
-        #[allow(dead_code)]
         fn calls(&self) -> u64 {
             self.calls.load(Ordering::SeqCst)
         }
@@ -1333,6 +1331,24 @@ mod tests {
         assert_eq!(
             result.header.enrichments.unwrap()["out"],
             serde_json::json!("192.0.2.10")
+        );
+    }
+
+    #[tokio::test]
+    async fn default_is_injected_without_extract() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![])));
+        let e = enricher(
+            DnsRecordType::parse("PTR").unwrap(),
+            "${detection.fields.Ip}",
+            Some(serde_json::json!("unknown")),
+            Some(ExtractExpr::Jq(".[0]".into())),
+            backend,
+        );
+        let mut result = detection_result("Ip", serde_json::json!("192.0.2.99"));
+        e.enrich(&mut result).await.unwrap();
+        assert_eq!(
+            result.header.enrichments.unwrap()["out"],
+            serde_json::json!("unknown")
         );
     }
 
