@@ -1,6 +1,11 @@
 /* Compact reference tables (metrics, lint rules, CLI flags). */
-.md-typeset table:not([class]) {
-  font-size: 0.78rem;
+.main-content .table-wrapper table {
+  font-size: 0.88rem;
+}
+
+.docmd-anchor-alias {
+  display: inline;
+  scroll-margin-top: calc(var(--sticky-top-offset, 0px) + var(--space-8, 2rem));
 }
 
 .sidebar-header .logo-link img {

@@ -312,7 +312,7 @@ detection:
 
 The `condition:` expression references `selection_keywords`, but the only selection defined in the `detection:` block is `selection`. The rule will fail to compile; this lint catches it before runtime. No auto-fix because the linter cannot tell which selection name was intended. A selector such as `1 of filter_*` that matches no detection is reported the same way, and each unresolved reference gets its own finding.
 
-### `deprecated_aggregation_syntax`
+### `deprecated_aggregation_syntax` {#deprecated_aggregation_syntax}
 
 Trigger:
 
