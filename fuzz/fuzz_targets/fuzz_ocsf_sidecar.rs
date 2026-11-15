@@ -4,10 +4,6 @@ use libfuzzer_sys::fuzz_target;
 use rsigma_runtime::ocsf::{dedup_summary_finding_opts, OcsfOptions, OcsfVersion};
 
 /// Exercise the dedup sidecar serializer on arbitrary JSON.
-///
-/// Incident and risk wires leak labels into the process for the daemon's
-/// `'static` result types, so this target stays on the dedup path, which
-/// owns its strings.
 fuzz_target!(|data: &[u8]| {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) else {
         return;

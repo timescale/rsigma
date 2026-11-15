@@ -233,6 +233,10 @@ pub struct FormattedIncidentEnvelope {
 }
 
 /// Resolve the wire line for an incident envelope and one sink's format/options.
+///
+/// An OCSF sink receives only a line the producer attached for those exact
+/// options. A missing line is a permanent error: the native NDJSON is not a
+/// finding, and it is not re-parsed here.
 pub(crate) fn formatted_incident_line(
     env: &FormattedIncidentEnvelope,
     format: SinkFormat,
@@ -240,26 +244,18 @@ pub(crate) fn formatted_incident_line(
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(env.native().json.clone()),
-        SinkFormat::Ocsf => match env.ocsf_line(ocsf) {
-            Some(line) => Ok(line.to_string()),
-            None => remap_native_incident(env, ocsf),
-        },
+        SinkFormat::Ocsf => env.ocsf_line(ocsf).map(str::to_string).ok_or_else(|| {
+            let group = ocsf
+                .assignee_group()
+                .map(|name| format!(" assignee_group={name}"))
+                .unwrap_or_default();
+            RuntimeError::Permanent(format!(
+                "no pre-serialized OCSF incident line for version {} class {}{group}",
+                ocsf.version(),
+                ocsf.incident_class(),
+            ))
+        }),
     }
-}
-
-/// The OCSF line for a sink whose options the producer did not pre-serialize:
-/// the native line for the default options (the producer emitted no OCSF at
-/// all), otherwise a mapping of the native line.
-fn remap_native_incident(
-    env: &FormattedIncidentEnvelope,
-    ocsf: &crate::ocsf::OcsfOptions,
-) -> Result<String, RuntimeError> {
-    if ocsf == &crate::ocsf::OcsfOptions::default() {
-        return Ok(env.line(SinkFormat::Ocsf).to_string());
-    }
-    let finding = crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf.clone())
-        .map_err(|e| RuntimeError::Permanent(format!("OCSF incident mapping failed: {e}")))?;
-    Ok(serde_json::to_string(&finding)?)
 }
 
 impl FormattedIncidentEnvelope {
@@ -797,6 +793,31 @@ mod tests {
             "a line added by format still serves the default options",
         );
         assert_eq!(legacy.ocsf_line(&incident_2005), None);
+        let missing = formatted_incident_line(&env, SinkFormat::Ocsf, &v13).unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .contains("no pre-serialized OCSF incident line"),
+            "{missing}",
+        );
+    }
+
+    #[test]
+    fn an_ocsf_sink_does_not_receive_the_native_incident_line() {
+        use crate::ocsf::OcsfOptions;
+
+        let env = FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+            "{\"incident_id\":\"i-1\"}".to_string(),
+            None,
+        ));
+        let err = formatted_incident_line(&env, SinkFormat::Ocsf, &OcsfOptions::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no pre-serialized OCSF incident line"),
+            "{err}"
+        );
+        assert!(!err.contains("incident_id"), "{err}");
     }
 
     #[test]

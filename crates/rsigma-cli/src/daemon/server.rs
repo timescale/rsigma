@@ -2641,8 +2641,9 @@ async fn shutdown_signal() {
 }
 
 /// Attach one OCSF line per distinct sink option set to an incident-path
-/// envelope. A serialization failure is logged and leaves that option set to
-/// the delivery layer's fallback.
+/// envelope. A serialization failure is logged and that option set is left
+/// unset; delivery then rejects the incident instead of rebuilding it from
+/// the native line.
 fn with_ocsf_lines(
     mut env: FormattedIncidentEnvelope,
     ocsf_options: &[rsigma_runtime::ocsf::OcsfOptions],
