@@ -46,7 +46,7 @@
 mod attack;
 mod version;
 
-pub use version::{OcsfOptions, OcsfVersion};
+pub use version::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
 
 use serde_json::{Map, Value, json};
 
@@ -701,6 +701,24 @@ pub fn risk_incident_finding_2005_with_opts(
     Value::Object(finding)
 }
 
+/// Serialize an alert-pipeline incident in the class `opts.incident_class`
+/// selects, at `opts.version`.
+pub fn incident_finding_in_class(incident: &IncidentResult, opts: OcsfOptions) -> Value {
+    match opts.incident_class {
+        OcsfIncidentClass::DetectionFinding => incident_finding_opts(incident, opts),
+        OcsfIncidentClass::IncidentFinding => incident_finding_2005_opts(incident, opts),
+    }
+}
+
+/// Serialize a risk incident in the class `opts.incident_class` selects, at
+/// `opts.version`.
+pub fn risk_incident_finding_in_class(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
+    match opts.incident_class {
+        OcsfIncidentClass::DetectionFinding => risk_incident_finding_opts(incident, opts),
+        OcsfIncidentClass::IncidentFinding => risk_incident_finding_2005_opts(incident, opts),
+    }
+}
+
 /// One `finding_info_list[]` entry describing a contributing detection.
 fn contributor_info(uid: &str, title: &str, rule_id: Option<&str>) -> Value {
     let mut analytic = Map::new();
@@ -859,22 +877,23 @@ pub fn risk_event_finding_with_opts(
     Value::Object(finding)
 }
 
-/// Map one native incident NDJSON line to an OCSF finding at `opts.version`.
+/// Map one native incident NDJSON line to an OCSF finding with `opts`.
 ///
-/// Used when sinks select different schema versions from the envelope the daemon
-/// built at the default version.
+/// Used when a sink selects options the producer did not pre-serialize a line
+/// for. The native line carries no contributor finding uids, so an Incident
+/// Finding mapped here always uses the per-rule `finding_info_list` fallback.
 pub fn native_incident_finding_opts(native_json: &str, opts: OcsfOptions) -> Result<Value, String> {
     let value: Value = serde_json::from_str(native_json)
         .map_err(|e| format!("invalid native incident JSON: {e}"))?;
     if value.get("risk_incident_id").is_some() {
         let wire: RiskIncidentWire = serde_json::from_value(value)
             .map_err(|e| format!("invalid risk incident wire: {e}"))?;
-        return Ok(risk_incident_finding_opts(&wire.into_result(), opts));
+        return Ok(risk_incident_finding_in_class(&wire.into_result(), opts));
     }
     if value.get("incident_id").is_some() {
         let wire: IncidentWire = serde_json::from_value(value)
             .map_err(|e| format!("invalid alert incident wire: {e}"))?;
-        return Ok(incident_finding_opts(&wire.into_result(), opts));
+        return Ok(incident_finding_in_class(&wire.into_result(), opts));
     }
     if value.get("risk_event").and_then(Value::as_bool) == Some(true) {
         let event: RiskEventWire =

@@ -2043,14 +2043,18 @@ pub async fn run_daemon(config: DaemonConfig) {
             }
         }
     }
-    // Incidents are serialized centrally, once per format the leaf sinks
-    // actually ask for, so an all-NDJSON daemon never pays for an OCSF line.
-    let ocsf_incidents = leaves
-        .iter()
-        .any(|(sink, _, _)| sink.format() == Some(SinkFormat::Ocsf));
+    // Incidents are serialized centrally, once per distinct set of OCSF options
+    // the leaf sinks ask for, so an all-NDJSON daemon never pays for an OCSF
+    // line.
+    let mut ocsf_options: Vec<rsigma_runtime::ocsf::OcsfOptions> = Vec::new();
+    for options in leaves.iter().filter_map(|(sink, _, _)| sink.ocsf_options()) {
+        if !ocsf_options.contains(&options) {
+            ocsf_options.push(options);
+        }
+    }
     // Finding uids are minted before the risk layer and alert pipeline so an
     // incident can reference the Detection Finding each contributor emitted.
-    let link_findings = ocsf_incidents;
+    let link_findings = !ocsf_options.is_empty();
     tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
 
     // Bridge the delivery layer's terminal failures into the existing DLQ
@@ -2163,24 +2167,18 @@ pub async fn run_daemon(config: DaemonConfig) {
                             for event in out.risk_events {
                                 match serde_json::to_string(&event) {
                                     Ok(json) => {
-                                        let mut env = FormattedIncidentEnvelope::new(
-                                            IncidentEnvelope::new(json, subject.clone()),
+                                        let env = with_ocsf_lines(
+                                            FormattedIncidentEnvelope::new(
+                                                IncidentEnvelope::new(json, subject.clone()),
+                                            ),
+                                            &ocsf_options,
+                                            "risk event",
+                                            |opts| {
+                                                rsigma_runtime::ocsf::risk_event_finding_opts(
+                                                    &event, opts,
+                                                )
+                                            },
                                         );
-                                        if ocsf_incidents {
-                                            let finding =
-                                                rsigma_runtime::ocsf::risk_event_finding(&event);
-                                            match serde_json::to_string(&finding) {
-                                                Ok(line) => {
-                                                    env = env.with_line(SinkFormat::Ocsf, line);
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        error = %e,
-                                                        "Failed to serialize OCSF risk event"
-                                                    );
-                                                }
-                                            }
-                                        }
                                         dispatcher.dispatch_formatted_incident(env).await;
                                     }
                                     Err(e) => {
@@ -2195,23 +2193,18 @@ pub async fn run_daemon(config: DaemonConfig) {
                             for incident in out.incidents {
                                 match serde_json::to_string(&incident) {
                                     Ok(json) => {
-                                        let mut env = FormattedIncidentEnvelope::new(
-                                            IncidentEnvelope::new(json, subject.clone()),
+                                        let env = with_ocsf_lines(
+                                            FormattedIncidentEnvelope::new(
+                                                IncidentEnvelope::new(json, subject.clone()),
+                                            ),
+                                            &ocsf_options,
+                                            "risk incident",
+                                            |opts| {
+                                                rsigma_runtime::ocsf::risk_incident_finding_in_class(
+                                                    &incident, opts,
+                                                )
+                                            },
                                         );
-                                        if ocsf_incidents {
-                                            let finding =
-                                                rsigma_runtime::ocsf::risk_incident_finding(
-                                                    &incident,
-                                                );
-                                            match serde_json::to_string(&finding) {
-                                                Ok(line) => {
-                                                    env = env.with_line(SinkFormat::Ocsf, line);
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(error = %e, "Failed to serialize OCSF risk incident");
-                                                }
-                                            }
-                                        }
                                         dispatcher.dispatch_formatted_incident(env).await;
                                     }
                                     Err(e) => {
@@ -2328,22 +2321,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     continue;
                                 }
                             };
-                            let mut env =
-                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None));
-                            if ocsf_incidents {
-                                let finding = rsigma_runtime::ocsf::dedup_summary_finding(line);
-                                match serde_json::to_string(&finding) {
-                                    Ok(ocsf_line) => {
-                                        env = env.with_line(SinkFormat::Ocsf, ocsf_line);
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            error = %e,
-                                            "Failed to serialize OCSF dedup summary"
-                                        );
-                                    }
-                                }
-                            }
+                            let env = with_ocsf_lines(
+                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None)),
+                                &ocsf_options,
+                                "dedup summary",
+                                |opts| rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts),
+                            );
                             dispatcher.dispatch_formatted_incident(env).await;
                         }
                         let subject =
@@ -2351,21 +2334,19 @@ pub async fn run_daemon(config: DaemonConfig) {
                         for incident in out.incidents {
                             match serde_json::to_string(&incident) {
                                 Ok(json) => {
-                                    let mut env = FormattedIncidentEnvelope::new(
-                                        IncidentEnvelope::new(json, subject.clone()),
+                                    let env = with_ocsf_lines(
+                                        FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+                                            json,
+                                            subject.clone(),
+                                        )),
+                                        &ocsf_options,
+                                        "incident",
+                                        |opts| {
+                                            rsigma_runtime::ocsf::incident_finding_in_class(
+                                                &incident, opts,
+                                            )
+                                        },
                                     );
-                                    if ocsf_incidents {
-                                        let finding =
-                                            rsigma_runtime::ocsf::incident_finding(&incident);
-                                        match serde_json::to_string(&finding) {
-                                            Ok(line) => {
-                                                env = env.with_line(SinkFormat::Ocsf, line);
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(error = %e, "Failed to serialize OCSF incident finding");
-                                            }
-                                        }
-                                    }
                                     dispatcher.dispatch_formatted_incident(env).await;
                                 }
                                 Err(e) => {
@@ -2659,6 +2640,24 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received");
 }
 
+/// Attach one OCSF line per distinct sink option set to an incident-path
+/// envelope. A serialization failure is logged and leaves that option set to
+/// the delivery layer's fallback.
+fn with_ocsf_lines(
+    mut env: FormattedIncidentEnvelope,
+    ocsf_options: &[rsigma_runtime::ocsf::OcsfOptions],
+    what: &str,
+    build: impl Fn(rsigma_runtime::ocsf::OcsfOptions) -> serde_json::Value,
+) -> FormattedIncidentEnvelope {
+    for &opts in ocsf_options {
+        match serde_json::to_string(&build(opts)) {
+            Ok(line) => env = env.with_ocsf_line(opts, line),
+            Err(e) => tracing::warn!(error = %e, what, "Failed to serialize OCSF line"),
+        }
+    }
+    env
+}
+
 /// Split an output spec into its base (scheme + target) and `key=value` query
 /// parameters: `file:///p?on_full=drop`, `otlp://host:4317?compression=gzip`.
 pub(super) fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
@@ -2728,31 +2727,44 @@ fn ocsf_options_from_params(
     role: SinkRole,
     format: SinkFormat,
 ) -> rsigma_runtime::ocsf::OcsfOptions {
-    use rsigma_runtime::ocsf::OcsfVersion;
-    let mut versions = params
+    use rsigma_runtime::ocsf::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
+    let version: Option<OcsfVersion> = ocsf_param(params, "ocsf_version", base, role, format);
+    let incident_class: Option<OcsfIncidentClass> =
+        ocsf_param(params, "ocsf_incident_class", base, role, format);
+    OcsfOptions::new(version.unwrap_or_default())
+        .with_incident_class(incident_class.unwrap_or_default())
+}
+
+/// Parse one optional OCSF sink parameter, exiting when it repeats, appears
+/// without `format=ocsf`, or names a value outside its closed set.
+fn ocsf_param<T: std::str::FromStr<Err = String>>(
+    params: &[(&str, &str)],
+    key: &str,
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> Option<T> {
+    let mut values = params
         .iter()
-        .filter(|(key, _)| *key == "ocsf_version")
+        .filter(|(k, _)| *k == key)
         .map(|(_, value)| *value);
-    let Some(value) = versions.next() else {
-        return rsigma_runtime::ocsf::OcsfOptions::default();
-    };
-    if versions.next().is_some() {
-        tracing::error!(spec = base, "ocsf_version= may be specified only once");
+    let value = values.next()?;
+    if values.next().is_some() {
+        tracing::error!(spec = base, "{key}= may be specified only once");
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
     if format != SinkFormat::Ocsf {
         tracing::error!(
             spec = base,
             channel = role.label(),
-            "ocsf_version= is only valid with format=ocsf"
+            "{key}= is only valid with format=ocsf"
         );
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
-    let version: OcsfVersion = value.parse().unwrap_or_else(|e| {
-        tracing::error!(spec = base, value, error = %e, "Invalid ocsf_version");
+    Some(value.parse().unwrap_or_else(|e: String| {
+        tracing::error!(spec = base, value, error = %e, "Invalid {key}");
         std::process::exit(crate::exit_code::CONFIG_ERROR);
-    });
-    rsigma_runtime::ocsf::OcsfOptions::new(version)
+    }))
 }
 
 fn format_from_params(params: &[(&str, &str)], base: &str, role: SinkRole) -> SinkFormat {

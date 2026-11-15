@@ -52,15 +52,73 @@ impl fmt::Display for OcsfVersion {
     }
 }
 
-/// Per-sink OCSF serializer options (version today; incident class lands in Task 4).
+/// The OCSF class alert-pipeline and risk incidents serialize into.
+///
+/// Detections, correlations, dedup summaries, and risk events are always
+/// Detection Findings; only the two incident shapes can be Incident Findings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OcsfIncidentClass {
+    /// Detection Finding (2004), the default.
+    #[default]
+    DetectionFinding,
+    /// Incident Finding (2005), referencing contributing Detection Findings.
+    IncidentFinding,
+}
+
+impl OcsfIncidentClass {
+    /// The OCSF `class_uid`, as written in a sink spec.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DetectionFinding => "2004",
+            Self::IncidentFinding => "2005",
+        }
+    }
+}
+
+impl FromStr for OcsfIncidentClass {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "2004" => Ok(Self::DetectionFinding),
+            "2005" => Ok(Self::IncidentFinding),
+            other => Err(format!(
+                "unsupported OCSF incident class '{other}' (supported: 2004, 2005)"
+            )),
+        }
+    }
+}
+
+impl fmt::Display for OcsfIncidentClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Per-sink OCSF serializer options.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct OcsfOptions {
+    /// Schema version recorded in `metadata.version`.
     pub version: OcsfVersion,
+    /// Class the incident shapes serialize into.
+    pub incident_class: OcsfIncidentClass,
 }
 
 impl OcsfOptions {
+    /// Options for `version` with the default incident class.
     pub fn new(version: OcsfVersion) -> Self {
-        Self { version }
+        Self {
+            version,
+            incident_class: OcsfIncidentClass::default(),
+        }
+    }
+
+    /// Select the class incidents serialize into.
+    #[must_use]
+    pub fn with_incident_class(mut self, incident_class: OcsfIncidentClass) -> Self {
+        self.incident_class = incident_class;
+        self
     }
 }
 
@@ -72,6 +130,24 @@ mod tests {
     fn parses_supported_versions() {
         assert_eq!("1.1.0".parse::<OcsfVersion>().unwrap(), OcsfVersion::V1_1_0);
         assert_eq!("1.3.0".parse::<OcsfVersion>().unwrap(), OcsfVersion::V1_3_0);
+    }
+
+    #[test]
+    fn parses_incident_classes_and_rejects_others() {
+        assert_eq!(
+            "2004".parse::<OcsfIncidentClass>().unwrap(),
+            OcsfIncidentClass::DetectionFinding
+        );
+        assert_eq!(
+            "2005".parse::<OcsfIncidentClass>().unwrap(),
+            OcsfIncidentClass::IncidentFinding
+        );
+        let err = "2003".parse::<OcsfIncidentClass>().unwrap_err();
+        assert!(err.contains("2004, 2005"), "{err}");
+        assert_eq!(
+            OcsfOptions::default().incident_class,
+            OcsfIncidentClass::DetectionFinding
+        );
     }
 
     #[test]

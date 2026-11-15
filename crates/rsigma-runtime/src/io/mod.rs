@@ -219,6 +219,7 @@ impl IncidentEnvelope {
 pub struct FormattedIncidentEnvelope {
     native: IncidentEnvelope,
     lines: Vec<(SinkFormat, String)>,
+    ocsf_lines: Vec<(crate::ocsf::OcsfOptions, String)>,
 }
 
 /// Resolve the wire line for an incident envelope and one sink's format/options.
@@ -229,18 +230,26 @@ pub(crate) fn formatted_incident_line(
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(env.native().json.clone()),
-        SinkFormat::Ocsf if ocsf == crate::ocsf::OcsfOptions::default() => {
-            Ok(env.line(SinkFormat::Ocsf).to_string())
-        }
-        SinkFormat::Ocsf => {
-            let finding =
-                crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf)
-                    .map_err(|e| {
-                        RuntimeError::Permanent(format!("OCSF incident mapping failed: {e}"))
-                    })?;
-            Ok(serde_json::to_string(&finding)?)
-        }
+        SinkFormat::Ocsf => match env.ocsf_line(ocsf) {
+            Some(line) => Ok(line.to_string()),
+            None => remap_native_incident(env, ocsf),
+        },
     }
+}
+
+/// The OCSF line for a sink whose options the producer did not pre-serialize:
+/// the native line for the default options (the producer emitted no OCSF at
+/// all), otherwise a mapping of the native line.
+fn remap_native_incident(
+    env: &FormattedIncidentEnvelope,
+    ocsf: crate::ocsf::OcsfOptions,
+) -> Result<String, RuntimeError> {
+    if ocsf == crate::ocsf::OcsfOptions::default() {
+        return Ok(env.line(SinkFormat::Ocsf).to_string());
+    }
+    let finding = crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf)
+        .map_err(|e| RuntimeError::Permanent(format!("OCSF incident mapping failed: {e}")))?;
+    Ok(serde_json::to_string(&finding)?)
 }
 
 impl FormattedIncidentEnvelope {
@@ -248,8 +257,40 @@ impl FormattedIncidentEnvelope {
     pub fn new(native: IncidentEnvelope) -> Self {
         Self {
             lines: vec![(SinkFormat::Ndjson, native.json.clone())],
+            ocsf_lines: Vec::new(),
             native,
         }
+    }
+
+    /// Add the OCSF line serialized with `options`, replacing any line already
+    /// held for them. Sinks whose options match get this line verbatim.
+    #[must_use]
+    pub fn with_ocsf_line(mut self, options: crate::ocsf::OcsfOptions, json: String) -> Self {
+        match self.ocsf_lines.iter_mut().find(|(o, _)| *o == options) {
+            Some((_, existing)) => *existing = json,
+            None => self.ocsf_lines.push((options, json)),
+        }
+        self
+    }
+
+    /// The OCSF line serialized with `options`, if one was added. The
+    /// default options also match a line added with
+    /// [`with_line`](Self::with_line)`(SinkFormat::Ocsf, ..)`.
+    pub fn ocsf_line(&self, options: crate::ocsf::OcsfOptions) -> Option<&str> {
+        self.ocsf_lines
+            .iter()
+            .find(|(o, _)| *o == options)
+            .map(|(_, json)| json.as_str())
+            .or_else(|| {
+                (options == crate::ocsf::OcsfOptions::default())
+                    .then(|| {
+                        self.lines
+                            .iter()
+                            .find(|(f, _)| *f == SinkFormat::Ocsf)
+                            .map(|(_, json)| json.as_str())
+                    })
+                    .flatten()
+            })
     }
 
     /// Add the line for another format, replacing any line already held for it.
@@ -578,6 +619,23 @@ impl Sink {
         }
     }
 
+    /// The OCSF serializer options of a line-oriented sink in OCSF format.
+    ///
+    /// `None` for NDJSON line sinks, for sinks that own their encoding, and
+    /// for a `FanOut`.
+    pub fn ocsf_options(&self) -> Option<crate::ocsf::OcsfOptions> {
+        let options = match self {
+            Sink::Stdout(s) => s.ocsf_options(),
+            Sink::File(s) => s.ocsf_options(),
+            #[cfg(feature = "nats")]
+            Sink::Nats(s) => s.ocsf_options(),
+            #[cfg(all(unix, feature = "uds"))]
+            Sink::Unix(s) => s.ocsf_options(),
+            _ => return None,
+        };
+        (self.format() == Some(SinkFormat::Ocsf)).then_some(options)
+    }
+
     /// Short label for the sink variant, used in structured logs and per-sink
     /// delivery metrics.
     pub(crate) fn kind_label(&self) -> &'static str {
@@ -693,6 +751,41 @@ mod tests {
                 .with_line(SinkFormat::Ndjson, "second".to_string());
         assert_eq!(native.line(SinkFormat::Ndjson), "second");
         assert_eq!(native.native().json, "second");
+    }
+
+    #[test]
+    fn envelope_serves_each_ocsf_option_set_its_own_line() {
+        use crate::ocsf::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
+
+        let incident_2005 =
+            OcsfOptions::default().with_incident_class(OcsfIncidentClass::IncidentFinding);
+        let v13 = OcsfOptions::new(OcsfVersion::V1_3_0);
+        let env = FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
+            .with_ocsf_line(OcsfOptions::default(), "2004".to_string())
+            .with_ocsf_line(incident_2005, "first".to_string())
+            .with_ocsf_line(incident_2005, "2005".to_string());
+
+        assert_eq!(env.ocsf_line(OcsfOptions::default()), Some("2004"));
+        assert_eq!(env.ocsf_line(incident_2005), Some("2005"));
+        assert_eq!(env.ocsf_line(v13), None);
+        assert_eq!(
+            formatted_incident_line(&env, SinkFormat::Ocsf, incident_2005).unwrap(),
+            "2005",
+        );
+        assert_eq!(
+            formatted_incident_line(&env, SinkFormat::Ndjson, incident_2005).unwrap(),
+            "native",
+        );
+
+        let legacy =
+            FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
+                .with_line(SinkFormat::Ocsf, "finding".to_string());
+        assert_eq!(
+            legacy.ocsf_line(OcsfOptions::default()),
+            Some("finding"),
+            "a line added by format still serves the default options",
+        );
+        assert_eq!(legacy.ocsf_line(incident_2005), None);
     }
 
     #[test]

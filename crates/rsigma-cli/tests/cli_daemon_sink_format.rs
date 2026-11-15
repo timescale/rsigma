@@ -169,6 +169,41 @@ fn duplicate_ocsf_version_parameter_is_a_startup_error() {
         .stderr(contains("ocsf_version= may be specified only once"));
 }
 
+#[test]
+fn unknown_ocsf_incident_class_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2003",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("Invalid ocsf_incident_class"));
+}
+
+#[test]
+fn ocsf_incident_class_without_ocsf_format_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!("file://{}?ocsf_incident_class=2005", out.path().display());
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_incident_class= is only valid with format=ocsf",
+        ));
+}
+
+#[test]
+fn duplicate_ocsf_incident_class_parameter_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2004&ocsf_incident_class=2005",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_incident_class= may be specified only once"));
+}
+
 #[cfg(feature = "daemon-otlp")]
 #[test]
 fn format_on_an_otlp_sink_is_a_startup_error() {
@@ -366,5 +401,65 @@ fn incidents_and_dedup_lines_are_ocsf_findings_on_ocsf_sink() {
     assert_eq!(
         closed["finding_info"]["uid"], created["finding_info"]["uid"],
         "both emissions describe the same incident",
+    );
+}
+
+/// With `ocsf_incident_class=2005` an incident is an Incident Finding whose
+/// `finding_info_list` points at the Detection Finding the same sink emitted
+/// for its contributor, while the native sibling keeps the flat incident wire.
+#[test]
+fn incident_finding_references_the_emitted_detection_finding() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let pipeline = temp_file(".yml", GROUP_AND_DEDUP_PIPELINE);
+    let native = temp_file(".ndjson", "");
+    let native_spec = format!("file://{}", native.path().display());
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005",
+        ocsf.path().display()
+    );
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--alert-pipeline",
+            pipeline.path().to_str().unwrap(),
+            "--output",
+            &native_spec,
+            "--output",
+            &ocsf_spec,
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let detection = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the detection never reached the OCSF sink as a Detection Finding");
+    let incident = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2005)
+        .expect("the incident never reached the OCSF sink as an Incident Finding");
+    assert_eq!(incident["activity_name"], "Create");
+    assert_eq!(incident["type_uid"], 200501);
+    assert_eq!(incident["status"], "New");
+    assert!(incident.get("action_id").is_none(), "{incident}");
+    assert!(incident.get("finding_info").is_none(), "{incident}");
+    assert_eq!(
+        incident["finding_info_list"][0]["uid"], detection["finding_info"]["uid"],
+        "the incident references the Detection Finding of its contributor",
+    );
+    assert_eq!(incident["finding_info_list"][0]["title"], SIMPLE_RULE_ID);
+
+    let native_incident = wait_for_line(native.path(), |line| line["state"] == "open")
+        .expect("the incident never reached the native sink");
+    assert!(
+        native_incident.get("class_uid").is_none(),
+        "the native sink keeps the flat incident wire: {native_incident}",
+    );
+    assert_eq!(
+        incident["metadata"]["correlation_uid"],
+        native_incident["incident_id"],
+    );
+    assert!(
+        !native_incident.to_string().contains("finding_uid"),
+        "finding uids never reach the native wire: {native_incident}",
     );
 }
