@@ -465,6 +465,94 @@ fn dedup_repeat_from_a_pipeline_tick_keeps_sample_enrichments() {
     });
 }
 
+/// A correlation repeat summary is the pipeline sample, not a detection with
+/// the correlation fields discarded. The pipeline strips event bodies before
+/// it stores the sample; a line that still carries them keeps them too.
+#[test]
+fn dedup_repeat_from_a_correlation_keeps_the_correlation_body() {
+    let pipeline = parse_alert_pipeline_config(
+        "dedup:\n  fingerprint: [rule]\n  repeat_interval: 10s\n  resolve_timeout: 30s\n",
+    )
+    .unwrap();
+    let mut state = AlertPipelineState::default();
+    let metrics = NoopMetrics;
+    let _ = pipeline.process(vec![correlation_detection()], &mut state, 1000, &metrics);
+    let _ = pipeline.process(vec![correlation_detection()], &mut state, 1005, &metrics);
+    let lines = pipeline.tick(&mut state, 1011, &metrics).dedup_lines;
+    assert_eq!(lines.len(), 1, "one repeat summary is due");
+    let wire = &lines[0];
+    assert_eq!(wire["correlation_type"], "event_count");
+    assert_eq!(wire["group_key"], json!([["SourceIP", "203.0.113.4"]]));
+    assert_eq!(wire["aggregated_value"], json!(73.0));
+    assert_eq!(wire["timespan_secs"], 300);
+    assert_eq!(wire["custom_attributes"]["ticket"], "SOC-9");
+    assert!(
+        wire.get("events").is_none(),
+        "the stored sample is event-stripped"
+    );
+    assert!(wire.get("matched_fields").is_none());
+
+    let mut retained = wire.clone();
+    retained["events"] = json!([{"User": "alice"}]);
+    retained["event_refs"] = json!([{"id": "e-1"}]);
+    let retained_finding =
+        dedup_summary_finding_with_opts(&retained, &FixedSource::new(), OcsfOptions::default());
+    assert_eq!(
+        retained_finding["evidences"][0]["data"]["events"][0]["User"],
+        "alice"
+    );
+    assert_eq!(
+        retained_finding["evidences"][0]["data"]["event_refs"][0]["id"],
+        "e-1"
+    );
+    assert_eq!(
+        retained_finding["unmapped"]["correlation_type"],
+        "event_count"
+    );
+    assert_eq!(
+        retained_finding["unmapped"]["custom_attributes"]["ticket"],
+        "SOC-9"
+    );
+
+    check_both_versions("dedup_repeat_correlation", |opts| {
+        let finding = dedup_summary_finding_with_opts(wire, &FixedSource::new(), opts);
+        assert_eq!(finding["unmapped"]["correlation_type"], "event_count");
+        assert_eq!(
+            finding["unmapped"]["group_key"],
+            json!([["SourceIP", "203.0.113.4"]])
+        );
+        assert_eq!(finding["unmapped"]["aggregated_value"], json!(73.0));
+        assert_eq!(finding["unmapped"]["timespan_secs"], 300);
+        assert_eq!(finding["unmapped"]["custom_attributes"]["ticket"], "SOC-9");
+        assert!(finding["unmapped"].get("matched_selections").is_none());
+        assert!(finding.get("evidences").is_none());
+        finding
+    });
+}
+
+fn correlation_detection() -> EvaluationResult {
+    let mut attributes = HashMap::new();
+    attributes.insert("ticket".to_string(), json!("SOC-9"));
+    EvaluationResult {
+        header: RuleHeader {
+            rule_title: "SSH brute force".to_string(),
+            rule_id: Some("corr-1".to_string()),
+            level: Some(Level::Critical),
+            tags: vec!["attack.credential_access".to_string()],
+            custom_attributes: Arc::new(attributes),
+            enrichments: None,
+        },
+        body: ResultBody::Correlation(CorrelationBody {
+            correlation_type: CorrelationType::EventCount,
+            group_key: vec![("SourceIP".to_string(), "203.0.113.4".to_string())],
+            aggregated_value: 73.0,
+            timespan_secs: 300,
+            events: Some(vec![json!({"User": "alice"})]),
+            event_refs: None,
+        }),
+    }
+}
+
 fn enriched_detection() -> EvaluationResult {
     let mut enrichments = serde_json::Map::new();
     enrichments.insert(

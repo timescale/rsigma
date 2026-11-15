@@ -204,18 +204,17 @@ pub fn risk_incident_finding_opts(incident: &RiskIncidentResult, opts: OcsfOptio
 }
 
 fn detection_finding_with_inner(
-    result: &EvaluationResult,
+    subject: &impl FindingSubject,
     src: &dyn FindingSource,
     opts: OcsfOptions,
 ) -> Value {
-    let header = &result.header;
-    let title = header.rule_title.as_str();
+    let title = subject.title();
 
     let mut analytic = Map::new();
     analytic.insert("type_id".to_string(), json!(1));
     analytic.insert("type".to_string(), json!("Rule"));
     analytic.insert("name".to_string(), json!(title));
-    if let Some(uid) = &header.rule_id {
+    if let Some(uid) = subject.rule_id() {
         analytic.insert("uid".to_string(), json!(uid));
     }
 
@@ -225,57 +224,35 @@ fn detection_finding_with_inner(
     // and one rule produces many. Rule identity lives in `analytic.uid`.
     finding_info.insert("uid".to_string(), json!(src.uid()));
     finding_info.insert("analytic".to_string(), Value::Object(analytic));
-    if let Some(attacks) = attack::attacks_from_tags(&header.tags) {
+    let tags = subject.tags();
+    if let Some(attacks) = attack::attacks_from_tags(tags.as_ref()) {
         finding_info.insert("attacks".to_string(), attacks);
     }
 
     // The risk layer's reserved enrichments have real OCSF homes; the rest of
     // the enrichment map rides under `unmapped`.
-    let lifted = LiftedRisk::from_enrichments(header.enrichments.as_ref());
+    let enrichments = subject.enrichments();
+    let lifted = LiftedRisk::from_enrichments(enrichments);
 
     let mut unmapped = Map::new();
     insert_if(
         &mut unmapped,
         "tags",
-        (!header.tags.is_empty()).then(|| json!(header.tags)),
+        (!tags.is_empty()).then(|| json!(tags.as_ref())),
     );
     insert_if(
         &mut unmapped,
         "custom_attributes",
-        (!header.custom_attributes.is_empty())
-            .then(|| serde_json::to_value(&*header.custom_attributes).unwrap_or(Value::Null)),
+        subject.custom_attributes(),
     );
     insert_if(&mut unmapped, "enrichments", lifted.remaining.clone());
-
-    let evidences = match &result.body {
-        ResultBody::Detection(body) => {
-            unmapped.insert(
-                "matched_selections".to_string(),
-                json!(body.matched_selections),
-            );
-            // Also under `unmapped` in full fidelity: `evidences[]` flattens
-            // matched fields to field/value pairs, which drops the detail keys
-            // (`selection`, `matcher`, `pattern`) a `match_detail` run adds.
-            unmapped.insert(
-                "matched_fields".to_string(),
-                serde_json::to_value(&body.matched_fields).unwrap_or(Value::Null),
-            );
-            detection_evidences(body)
-        }
-        ResultBody::Correlation(body) => {
-            unmapped.insert("correlation_type".to_string(), json!(body.correlation_type));
-            unmapped.insert("group_key".to_string(), json!(body.group_key));
-            unmapped.insert("aggregated_value".to_string(), json!(body.aggregated_value));
-            unmapped.insert("timespan_secs".to_string(), json!(body.timespan_secs));
-            correlation_evidences(body)
-        }
-    };
+    let evidences = subject.write_body(&mut unmapped);
 
     let mut finding = base_finding(
         src,
         Activity::Create,
         Status::New,
-        severity_from_level(header.level.as_ref()),
+        subject.severity_id(),
         // `EvaluationResult` carries no event timestamp, so the honest value
         // is the serialization clock. Consumers needing event time enable
         // `rsigma.include_event` and read it from `evidences[].data`.
@@ -289,9 +266,7 @@ fn detection_finding_with_inner(
     insert_if(&mut finding, "resources", lifted.resources.clone());
     insert_if(&mut finding, "actor", lifted.actor.clone());
     declare_host_if_actor(&mut finding);
-    if let Some(id) = header
-        .enrichments
-        .as_ref()
+    if let Some(id) = enrichments
         .and_then(|enr| enr.get("incident_id"))
         .and_then(Value::as_str)
     {
@@ -299,6 +274,153 @@ fn detection_finding_with_inner(
     }
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
+}
+
+/// What a Detection Finding is built from.
+///
+/// [`EvaluationResult`] is the live detection and correlation path.
+/// [`DedupWire`] is the alert pipeline's stored sample, borrowed so a
+/// correlation summary keeps its body and `custom_attributes` instead of
+/// being rebuilt as an empty detection.
+trait FindingSubject {
+    fn title(&self) -> &str;
+    fn rule_id(&self) -> Option<&str>;
+    fn tags(&self) -> std::borrow::Cow<'_, [String]>;
+    fn severity_id(&self) -> i64;
+    fn custom_attributes(&self) -> Option<Value>;
+    fn enrichments(&self) -> Option<&Map<String, Value>>;
+    fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value>;
+}
+
+impl FindingSubject for EvaluationResult {
+    fn title(&self) -> &str {
+        self.header.rule_title.as_str()
+    }
+
+    fn rule_id(&self) -> Option<&str> {
+        self.header.rule_id.as_deref()
+    }
+
+    fn tags(&self) -> std::borrow::Cow<'_, [String]> {
+        std::borrow::Cow::Borrowed(&self.header.tags)
+    }
+
+    fn severity_id(&self) -> i64 {
+        severity_from_level(self.header.level.as_ref())
+    }
+
+    fn custom_attributes(&self) -> Option<Value> {
+        (!self.header.custom_attributes.is_empty())
+            .then(|| serde_json::to_value(&*self.header.custom_attributes).unwrap_or(Value::Null))
+    }
+
+    fn enrichments(&self) -> Option<&Map<String, Value>> {
+        self.header.enrichments.as_ref()
+    }
+
+    fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value> {
+        match &self.body {
+            ResultBody::Detection(body) => {
+                unmapped.insert(
+                    "matched_selections".to_string(),
+                    json!(body.matched_selections),
+                );
+                // Also under `unmapped` in full fidelity: `evidences[]` flattens
+                // matched fields to field/value pairs, which drops the detail keys
+                // (`selection`, `matcher`, `pattern`) a `match_detail` run adds.
+                unmapped.insert(
+                    "matched_fields".to_string(),
+                    serde_json::to_value(&body.matched_fields).unwrap_or(Value::Null),
+                );
+                detection_evidences(body)
+            }
+            ResultBody::Correlation(body) => {
+                unmapped.insert("correlation_type".to_string(), json!(body.correlation_type));
+                unmapped.insert("group_key".to_string(), json!(body.group_key));
+                unmapped.insert("aggregated_value".to_string(), json!(body.aggregated_value));
+                unmapped.insert("timespan_secs".to_string(), json!(body.timespan_secs));
+                correlation_evidences(body)
+            }
+        }
+    }
+}
+
+/// A dedup summary line, borrowed. The pipeline stores the serialized sample
+/// and then adds `dedup_*` enrichments; this reads that JSON in place.
+struct DedupWire<'a>(&'a Value);
+
+impl FindingSubject for DedupWire<'_> {
+    fn title(&self) -> &str {
+        self.0
+            .get("rule_title")
+            .and_then(Value::as_str)
+            .unwrap_or("dedup summary")
+    }
+
+    fn rule_id(&self) -> Option<&str> {
+        self.0.get("rule_id").and_then(Value::as_str)
+    }
+
+    fn tags(&self) -> std::borrow::Cow<'_, [String]> {
+        let tags = self
+            .0
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        std::borrow::Cow::Owned(tags)
+    }
+
+    fn severity_id(&self) -> i64 {
+        severity_from_name(self.0.get("level").and_then(Value::as_str))
+    }
+
+    fn custom_attributes(&self) -> Option<Value> {
+        self.0.get("custom_attributes").and_then(|value| {
+            let object = value.as_object()?;
+            (!object.is_empty()).then(|| value.clone())
+        })
+    }
+
+    fn enrichments(&self) -> Option<&Map<String, Value>> {
+        self.0.get("enrichments").and_then(Value::as_object)
+    }
+
+    fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value> {
+        if self.0.get("correlation_type").is_some() {
+            for key in [
+                "correlation_type",
+                "group_key",
+                "aggregated_value",
+                "timespan_secs",
+            ] {
+                if let Some(value) = self.0.get(key) {
+                    unmapped.insert(key.to_string(), value.clone());
+                }
+            }
+            return wire_correlation_evidences(self.0);
+        }
+        unmapped.insert(
+            "matched_selections".to_string(),
+            self.0
+                .get("matched_selections")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        );
+        unmapped.insert(
+            "matched_fields".to_string(),
+            self.0
+                .get("matched_fields")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        );
+        wire_detection_evidences(self.0)
+    }
 }
 
 /// [`incident_finding`] against an injected time and identity source.
@@ -812,8 +934,12 @@ pub fn dedup_summary_finding_with_opts(
         .and_then(|enr| enr.get("dedup_state"))
         .and_then(Value::as_str)
         .unwrap_or("repeat");
-    let result = dedup_wire_to_evaluation_result(wire);
-    let mut finding = dedup_summary_finding_from_result_with(&result, state, src, opts);
+    let (activity, status) = match state {
+        "resolved" => (Activity::Close, Status::Resolved),
+        _ => (Activity::Update, Status::New),
+    };
+    let mut finding = detection_finding_with_inner(&DedupWire(wire), src, opts);
+    patch_lifecycle(&mut finding, activity, status);
     apply_dedup_window(&mut finding, wire);
     drop_lifted_dedup_keys(&mut finding);
     finding
@@ -990,85 +1116,6 @@ fn apply_dedup_window(finding: &mut Value, wire: &Value) {
     }
     if let Some(count) = count {
         obj.insert("count".to_string(), json!(count));
-    }
-}
-
-/// Rebuild a detection [`EvaluationResult`] from a dedup summary wire line.
-fn dedup_wire_to_evaluation_result(wire: &Value) -> EvaluationResult {
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
-    use rsigma_eval::{DetectionBody, FieldMatch, ResultBody};
-
-    let rule_title = wire
-        .get("rule_title")
-        .and_then(Value::as_str)
-        .unwrap_or("dedup summary")
-        .to_string();
-    let rule_id = wire
-        .get("rule_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let level = wire
-        .get("level")
-        .and_then(Value::as_str)
-        .and_then(|s| match s {
-            "informational" => Some(Level::Informational),
-            "low" => Some(Level::Low),
-            "medium" => Some(Level::Medium),
-            "high" => Some(Level::High),
-            "critical" => Some(Level::Critical),
-            _ => None,
-        });
-    let tags: Vec<String> = wire
-        .get("tags")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let enrichments = wire.get("enrichments").and_then(|v| v.as_object()).cloned();
-    let matched_selections: Vec<String> = wire
-        .get("matched_selections")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let matched_fields: Vec<FieldMatch> = wire
-        .get("matched_fields")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|entry| {
-                    let field = entry.get("field")?.as_str()?.to_string();
-                    let value = entry.get("value")?.clone();
-                    Some(FieldMatch::new(field, value))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    EvaluationResult {
-        header: rsigma_eval::RuleHeader {
-            rule_title,
-            rule_id,
-            level,
-            tags,
-            custom_attributes: Arc::new(HashMap::new()),
-            enrichments,
-        },
-        body: ResultBody::Detection(DetectionBody {
-            matched_selections,
-            matched_fields,
-            event: None,
-        }),
     }
 }
 
@@ -1262,6 +1309,42 @@ fn correlation_evidences(body: &rsigma_eval::CorrelationBody) -> Option<Value> {
     }
     if let Some(refs) = &body.event_refs {
         data.insert("event_refs".to_string(), json!(refs));
+    }
+    (!data.is_empty()).then(|| json!([{ "data": Value::Object(data) }]))
+}
+
+/// Evidence for a dedup sample that still carries a detection event or matched fields.
+fn wire_detection_evidences(wire: &Value) -> Option<Value> {
+    let mut data = Map::new();
+    if let Some(event) = wire.get("event") {
+        data.insert("event".to_string(), event.clone());
+    }
+    if let Some(fields) = wire.get("matched_fields").and_then(Value::as_array)
+        && !fields.is_empty()
+    {
+        let matched: Map<String, Value> = fields
+            .iter()
+            .filter_map(|entry| {
+                let field = entry.get("field")?.as_str()?;
+                let value = entry.get("value")?;
+                Some((field.to_string(), value.clone()))
+            })
+            .collect();
+        if !matched.is_empty() {
+            data.insert("matched_fields".to_string(), Value::Object(matched));
+        }
+    }
+    (!data.is_empty()).then(|| json!([{ "data": Value::Object(data) }]))
+}
+
+/// Evidence for a dedup sample that still carries correlation events or refs.
+fn wire_correlation_evidences(wire: &Value) -> Option<Value> {
+    let mut data = Map::new();
+    if let Some(events) = wire.get("events") {
+        data.insert("events".to_string(), events.clone());
+    }
+    if let Some(refs) = wire.get("event_refs") {
+        data.insert("event_refs".to_string(), refs.clone());
     }
     (!data.is_empty()).then(|| json!([{ "data": Value::Object(data) }]))
 }
