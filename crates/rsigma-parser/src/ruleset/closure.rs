@@ -421,6 +421,26 @@ mod tests {
     }
 
     #[test]
+    fn include_and_drop_handle_a_reference_in_no_source() {
+        let candidates = vec![correlation("c", &["missing"], "c.yml")];
+        let error = close("test", &spec("include", vec![], vec![]), &candidates).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .ends_with("references 'missing', which exists in no source"),
+            "{error}"
+        );
+
+        let closure = close("test", &spec("drop", vec![], vec![]), &candidates).unwrap();
+        assert_eq!(
+            closure.decisions[0],
+            Decision::Dropped {
+                reason: "references 'missing', which exists in no source".into()
+            }
+        );
+    }
+
+    #[test]
     fn drop_cascades_to_a_parent() {
         let candidates = vec![
             detection("base", "base.yml"),

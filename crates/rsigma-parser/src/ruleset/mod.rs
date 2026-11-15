@@ -68,23 +68,36 @@ pub fn resolve_ruleset(
 /// A resolved ruleset: the kept collection plus per-document decisions.
 #[derive(Debug, Clone)]
 pub struct ResolvedRuleset {
+    /// The ruleset name.
     pub name: String,
+    /// The kept documents, with overlays applied.
     pub collection: SigmaCollection,
+    /// One entry per candidate, kept or not, in candidate order.
     pub entries: Vec<RuleEntry>,
+    /// Source files read.
     pub files: Vec<SourceFile>,
+    /// Overlay files read.
     pub overlay_files: Vec<SourceFile>,
+    /// Dropped correlations and skipped stale overlays.
     pub warnings: Vec<String>,
 }
 
 /// Why one candidate is in or out of the resolved collection.
 #[derive(Debug, Clone)]
 pub struct RuleEntry {
+    /// The document kind.
     pub kind: DocumentKind,
+    /// The document `id`.
     pub id: Option<String>,
+    /// The document `name`.
     pub name: Option<String>,
+    /// The document title.
     pub title: String,
+    /// Where the document was read from.
     pub origin: RuleOrigin,
+    /// Whether and why the document is kept.
     pub decision: Decision,
+    /// Overlays applied to the document, in order.
     pub overlays: Vec<AppliedOverlay>,
 }
 

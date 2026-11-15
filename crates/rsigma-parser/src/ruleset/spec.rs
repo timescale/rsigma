@@ -49,22 +49,32 @@ pub struct RulesetSpec {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RuleSelector {
+    /// Rule ids, case-insensitive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub id: Vec<String>,
+    /// Rule `name` values, exact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub name: Vec<String>,
+    /// Title globs, case-insensitive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub title: Vec<String>,
+    /// Tag globs, case-insensitive; a document matches when any tag does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Levels, in their exact lowercase Sigma spelling.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub level: Vec<String>,
+    /// Statuses, in their exact lowercase Sigma spelling.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub status: Vec<String>,
+    /// Document kinds: `detection`, `correlation`, or `filter`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kind: Vec<String>,
+    /// Globs over the file path relative to its source root; `*` does not
+    /// cross `/`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<String>,
+    /// Logsource fields; a correlation matches through the rules it references.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logsource: Option<LogsourceSelector>,
     /// Unknown keys, rejected at validation time.
@@ -76,10 +86,13 @@ pub struct RuleSelector {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LogsourceSelector {
+    /// Logsource products.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub product: Vec<String>,
+    /// Logsource categories.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub category: Vec<String>,
+    /// Logsource services.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub service: Vec<String>,
     /// Unknown keys, rejected at validation time.
@@ -92,14 +105,19 @@ pub struct LogsourceSelector {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OverlayEntry {
+    /// Id or name of the document an inline entry patches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Overlay file holding a list of inline entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<PathBuf>,
+    /// Directory of overlay files, applied in sorted order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<PathBuf>,
+    /// Keys to replace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set: Option<OverlayPatch>,
+    /// Lists to extend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub append: Option<OverlayPatch>,
     /// Unknown keys, rejected at validation time.
@@ -111,22 +129,31 @@ pub struct OverlayEntry {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OverlayPatch {
+    /// Replacement level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
+    /// Replacement status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Replacement description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Replacement author.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Tags to set or append; appended tags are deduplicated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// References to set or append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<Vec<String>>,
+    /// False positives to set or append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub falsepositives: Option<Vec<String>>,
+    /// Fields to set or append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fields: Option<Vec<String>>,
+    /// Custom attributes merged per key; `null` under `set` removes a key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_attributes: Option<BTreeMap<String, serde_json::Value>>,
     /// Unknown keys, rejected at validation time.
@@ -137,12 +164,16 @@ pub struct OverlayPatch {
 /// Policy for unresolved correlation references.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyPolicy {
+    /// Fail resolution.
     Error,
+    /// Pull the referenced rule in.
     Include,
+    /// Drop the correlation, with a warning.
     Drop,
 }
 
 impl DependencyPolicy {
+    /// Parse the config spelling.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "error" => Ok(Self::Error),
@@ -154,6 +185,7 @@ impl DependencyPolicy {
         }
     }
 
+    /// The config spelling.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Error => "error",
@@ -166,11 +198,14 @@ impl DependencyPolicy {
 /// Policy for overlays that match no kept rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StaleOverlayPolicy {
+    /// Fail resolution.
     Error,
+    /// Skip the overlay, with a warning.
     Warn,
 }
 
 impl StaleOverlayPolicy {
+    /// Parse the config spelling.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "error" => Ok(Self::Error),
@@ -181,6 +216,7 @@ impl StaleOverlayPolicy {
         }
     }
 
+    /// The config spelling.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Error => "error",

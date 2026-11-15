@@ -204,15 +204,36 @@ fn overlays_apply_from_files_and_inline_in_order() {
 
 #[test]
 fn resolved_documents_survive_emit_and_reparse() {
+    let overlays = fixtures().join("overlays");
     let spec = RulesetSpec {
         sources: vec![fixtures().join("vendor"), fixtures().join("local")],
         exclude: vec![RuleSelector {
             path: vec!["fork.yml".into()],
             ..Default::default()
         }],
+        overlays: vec![
+            OverlayEntry {
+                file: Some(overlays.join("levels.yml")),
+                ..Default::default()
+            },
+            OverlayEntry {
+                file: Some(overlays.join("exemplars.yml")),
+                ..Default::default()
+            },
+        ],
         ..Default::default()
     };
     let resolved = resolve_ruleset("vendor", &spec, &ResolveOptions::default()).unwrap();
+    assert!(!resolved.collection.rules.is_empty());
+    assert!(!resolved.collection.correlations.is_empty());
+    assert!(!resolved.collection.filters.is_empty());
+    assert!(
+        resolved
+            .entries
+            .iter()
+            .any(|entry| !entry.overlays.is_empty()),
+        "the round trip must cover overlaid documents"
+    );
 
     for rule in &resolved.collection.rules {
         let emitted = emit_rule_yaml(rule);

@@ -47,6 +47,7 @@ impl fmt::Display for OverlayOrigin {
 /// An overlay that was applied to a kept document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedOverlay {
+    /// Where the overlay entry was declared.
     pub origin: OverlayOrigin,
     /// Key paths that were set, such as `level` or
     /// `custom_attributes.rsigma.exemplars`.
@@ -58,6 +59,7 @@ pub struct AppliedOverlay {
 /// Expands `file` and `dir` overlay entries. Inline entries are handled by the
 /// resolver and are never passed to a loader.
 pub trait OverlayLoader {
+    /// Expand one `file` or `dir` entry into its inline entries, in order.
     fn load(
         &self,
         entry: &OverlayEntry,
@@ -71,11 +73,13 @@ pub trait OverlayLoader {
 
 /// Reads overlay files and directories from disk, recording what it read.
 pub struct FsOverlayLoader {
+    /// Reject overlay paths outside this root.
     pub confine_to: Option<PathBuf>,
     files: Mutex<Vec<SourceFile>>,
 }
 
 impl FsOverlayLoader {
+    /// A loader confined to `confine_to`, when set.
     pub fn new(confine_to: Option<PathBuf>) -> Self {
         Self {
             confine_to,
@@ -1322,5 +1326,162 @@ mod tests {
         assert_eq!(overlay.origin, OverlayOrigin::Inline { index: 0 });
         assert_eq!(overlay.set, ["level"]);
         assert_eq!(overlay.appended, ["tags"]);
+    }
+
+    fn attr_patch(key: &str, value: serde_json::Value) -> OverlayPatch {
+        OverlayPatch {
+            custom_attributes: Some([(key.to_string(), value)].into_iter().collect()),
+            ..Default::default()
+        }
+    }
+
+    /// Resolve `detection("d")` with one file or dir overlay entry through the
+    /// filesystem loader, optionally confined to `root`.
+    fn resolve_fs(
+        entry: OverlayEntry,
+        root: Option<&Path>,
+    ) -> Result<ResolvedRuleset, RulesetError> {
+        let spec = spec_with_overlays(vec![entry]);
+        crate::ruleset::resolve_loaded(
+            "test",
+            &spec,
+            crate::ruleset::LoadedSources {
+                candidates: vec![detection("d")],
+                ..Default::default()
+            },
+            &FsOverlayLoader::new(root.map(Path::to_path_buf)),
+        )
+    }
+
+    fn file_entry(path: PathBuf) -> OverlayEntry {
+        OverlayEntry {
+            file: Some(path),
+            ..Default::default()
+        }
+    }
+
+    fn dir_entry(path: PathBuf) -> OverlayEntry {
+        OverlayEntry {
+            dir: Some(path),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ads_exempt_must_be_a_boolean() {
+        let patch = attr_patch("rsigma.ads.exempt", serde_json::json!("yes"));
+        let spec = spec_with_overlays(vec![inline("d", Some(patch), None)]);
+        let error = resolve_with("test", &spec, vec![detection("d")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("rsigma.ads.exempt must be a boolean"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn appending_a_non_sequence_errors() {
+        let patch = attr_patch("team", serde_json::json!("blue"));
+        let spec = spec_with_overlays(vec![inline("d", None, Some(patch))]);
+        let error = resolve_with("test", &spec, vec![detection("d")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("append custom_attributes.team must be a sequence"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn file_or_dir_inside_an_overlay_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlay.yml");
+        std::fs::write(
+            &path,
+            "- id: d\n  file: other.yml\n  set:\n    level: low\n",
+        )
+        .unwrap();
+        let error = resolve_fs(file_entry(path), None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must not use file or dir inside an overlay file"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_missing_overlay_directory_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let error = resolve_fs(dir_entry(missing.clone()), None).unwrap_err();
+        assert!(
+            matches!(&error, RulesetError::Io { path, .. } if *path == missing),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("overlay directory does not exist"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_overlay_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlay.yml");
+        std::fs::write(&path, "- id: [unclosed\n").unwrap();
+        let error = resolve_fs(file_entry(path), None).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot parse overlay file"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_filesystem_loader_confines_overlay_files_and_dirs() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("overlay.yml");
+        std::fs::write(&outside_file, "- id: d\n  set:\n    level: low\n").unwrap();
+
+        let error = resolve_fs(file_entry(outside_file.clone()), Some(root.path())).unwrap_err();
+        assert!(matches!(error, RulesetError::Confinement { .. }), "{error}");
+
+        #[cfg(unix)]
+        {
+            let overlays = root.path().join("overlays");
+            std::fs::create_dir(&overlays).unwrap();
+            std::os::unix::fs::symlink(&outside_file, overlays.join("link.yml")).unwrap();
+            let error = resolve_fs(dir_entry(overlays), Some(root.path())).unwrap_err();
+            assert!(matches!(error, RulesetError::Confinement { .. }), "{error}");
+        }
+    }
+
+    #[test]
+    fn stale_overlays_name_unselected_and_dropped_targets() {
+        let mut spec = spec_with_overlays(vec![inline("d", Some(level_patch("low")), None)]);
+        spec.include = vec![RuleSelector {
+            id: vec!["other".into()],
+            ..Default::default()
+        }];
+        let error =
+            resolve_with("test", &spec, vec![detection("d"), detection("other")]).unwrap_err();
+        assert!(
+            error.to_string().contains("is not matched by include"),
+            "{error}"
+        );
+
+        let mut spec = spec_with_overlays(vec![inline("c", Some(level_patch("low")), None)]);
+        spec.dependencies = Some("drop".into());
+        spec.exclude = vec![RuleSelector {
+            id: vec!["base".into()],
+            ..Default::default()
+        }];
+        let error =
+            resolve_with("test", &spec, vec![detection("base"), correlation("c")]).unwrap_err();
+        assert!(error.to_string().contains("was dropped"), "{error}");
     }
 }
