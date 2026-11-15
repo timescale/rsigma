@@ -91,7 +91,7 @@ version: 1
 
 global:
   log_format: text         # text | json (maps to --log-format)
-  output_format: json      # json | ndjson | table | csv | tsv (maps to --output-format)
+  output_format: json      # json | ndjson | table | csv | tsv | ocsf (maps to --output-format)
   color: auto              # auto | always | never (maps to --color)
 
 daemon:

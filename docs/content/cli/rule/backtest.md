@@ -43,7 +43,7 @@ Without an `--expectations` file, backtest still runs and prints per-rule statis
 | `--config <PATH>` | unset | Load a specific YAML config file instead of running the discovery chain. |
 | `--dry-run` | off | Print the effective `backtest` section and exit `0` without running. |
 
-The global `--output-format` applies: `table` (the TTY default) renders the human report, `json` emits the single report document, and `ndjson`/`csv`/`tsv` emit one row per rule.
+The global `--output-format` applies: `table` (the TTY default) renders the human report, `json` emits the single report document, and `ndjson`/`csv`/`tsv` emit one row per rule. With `ocsf`, stdout carries one OCSF class-2004 finding per corpus fire (compact NDJSON); the backtest summary stays on stderr and `--report` stays native JSON. {{ added "unreleased" }}
 
 ## Expectations file
 

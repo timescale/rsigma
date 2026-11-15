@@ -127,6 +127,10 @@ The risk enrichments are the one place keys move: `risk.score` and `risk.objects
 
 An `EvaluationResult` has no event-timestamp field (the native NDJSON has none either), so a detection or correlation finding stamps `time` with the serialization clock. When you need event time, either retain the event (`--include-event` or `rsigma.include_event`) and read it from `evidences[].data.event`, or consume the incident shapes, whose `start_time` and `end_time` are real observed bounds.
 
+### Batch commands
+
+`engine eval` and `rule backtest` honor the global `--output-format ocsf` selector. Each rule fire becomes one OCSF Detection Finding (class 2004) on stdout as compact NDJSON; `--pretty` pretty-prints each finding when stdout is a TTY. On backtest, the human summary stays on stderr and `--report` continues to write the native JSON report regardless of `--output-format`. {{ added "unreleased" }} See [Output Formats](../reference/output.md).
+
 ### Sidecar lines stay native
 
 Two payloads travel the incident channel as opaque native JSON and are **not** mapped to class 2004: the alert pipeline's dedup `repeat` and `resolved` summary records, and the compact risk events emitted with `emit_risk_events: true`. They appear as native NDJSON lines even on an OCSF sink. If your consumer requires a homogeneous OCSF stream, route those to their own sink (the risk layer supports a dedicated NATS subject) or filter them by their distinguishing keys (`enrichments.dedup_state` and `risk_event`).

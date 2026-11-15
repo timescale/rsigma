@@ -166,6 +166,8 @@ rsigma engine eval -r rules/ -e @events.ndjson --output-format table
 
 A width-aligned `LEVEL | RULE | TYPE | DETAIL` table appears on stdout. Use `--output-format csv` or `--output-format tsv` to pipe into a spreadsheet instead. See [Output Formats](../../reference/output.md).
 
+Use `--output-format ocsf` when a downstream collector expects OCSF Detection Finding JSON: stdout receives one class-2004 object per match (compact NDJSON), using the same serializer as the daemon's `?format=ocsf` sink. {{ added "unreleased" }}
+
 ### EVTX file (Windows Event Log)
 
 ```bash

@@ -9,7 +9,7 @@ Structured rsigma commands can emit results in one of five formats. Artifact pro
 ## Selector
 
 ```text
---output-format <FORMAT>   # json | ndjson | table | csv | tsv
+--output-format <FORMAT>   # json | ndjson | table | csv | tsv | ocsf
 ```
 
 | Format | When to use it |
@@ -19,6 +19,7 @@ Structured rsigma commands can emit results in one of five formats. Artifact pro
 | `table` | Width-aligned text table. Numeric columns are right-aligned. |
 | `csv` | RFC 4180-style comma-separated values. Header row first, then one row per record. |
 | `tsv` | Tab-separated equivalent of `csv`. Friendlier for `cut` and `awk`. |
+| `ocsf` | OCSF Detection Finding (class 2004): one compact JSON object per detection fire on `engine eval` and `rule backtest`. Other commands warn and fall back. {{ added "unreleased" }} |
 
 ## Resolution
 
@@ -86,7 +87,7 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 
 | Command | Implicit default | Notes |
 |---------|------------------|-------|
-| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--pretty` still forces pretty JSON for backwards compatibility. |
+| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--output-format ocsf` emits one OCSF class-2004 finding per match (NDJSON on stdout). {{ added "unreleased" }} `--pretty` still forces pretty JSON for backwards compatibility. |
 | `engine explain` | Human table/tree | Explicit selector overrides. |
 | `engine classify` | TTY-aware json/ndjson | Full five-format support. |
 | `engine discover-schemas` | TTY-aware json/ndjson | Full five-format support. |
@@ -94,7 +95,8 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 | `engine tail` | TTY-aware json/ndjson | Streaming detections. |
 | `rule lint` | Coloured human view | Explicit `json` emits `{summary, findings}`; `ndjson` one finding per line; `csv`/`tsv` use `PATH,SEVERITY,RULE,LINE,MESSAGE`. |
 | `rule fields` | Table (even when piped) | Hidden `--json` aliases `--output-format json`. |
-| `rule backtest`/`coverage`/`scorecard`/`visibility`/`hygiene` | TTY-aware or table | Full five-format support. |
+| `rule backtest` | TTY-aware or table | Full five-format support. With `ocsf`, stdout carries one class-2004 finding per corpus fire; the summary stays on stderr and `--report` stays native JSON. {{ added "unreleased" }} |
+| `rule coverage`/`scorecard`/`visibility`/`hygiene` | TTY-aware or table | Full five-format support. |
 | `rule draft --emit report` | TTY-aware | Full five-format support. |
 | `rule validate` | Human summary | Explicit selector emits `{summary, …}` for `json` and `PATH,STATUS,ERRORS` rows for table/csv/tsv/ndjson. |
 | `backend targets`/`backend formats` | Human listing | Explicit selector emits `PROVIDER,NAME,DESCRIPTION` or `TARGET,KIND,NAME,DESCRIPTION` rows. |
