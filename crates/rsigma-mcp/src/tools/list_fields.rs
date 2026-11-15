@@ -112,7 +112,10 @@ mod tests {
     fn list_fields_accepts_a_ruleset() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
-        let rulesets = BTreeMap::from([("base".to_string(), ruleset_spec(&["rule.yml"], &[]))]);
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
         let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
             .run_list_fields(FieldsInput {
                 yaml: None,

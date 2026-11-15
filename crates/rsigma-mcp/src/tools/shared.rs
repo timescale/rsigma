@@ -6,7 +6,7 @@
 //! on [`RsigmaMcp`].
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rmcp::{
     ErrorData as McpError,
@@ -197,23 +197,14 @@ impl RsigmaMcp {
         }
     }
 
-    /// The pipelines a ruleset declares, or an empty list for an unknown name.
-    pub(crate) fn ruleset_pipelines(&self, name: &str) -> Vec<String> {
-        self.state
-            .rulesets
-            .get(name)
-            .map(|spec| spec.pipelines.clone())
-            .unwrap_or_default()
-    }
-
     /// Resolve a named ruleset from the server's configuration, confined to
     /// `--rules-dir` when one is set.
     pub(crate) fn resolve_ruleset(
         &self,
         name: &str,
     ) -> Result<(SigmaCollection, Vec<String>), McpError> {
-        let Some(spec) = self.state.rulesets.get(name) else {
-            let defined: Vec<&str> = self.state.rulesets.keys().map(String::as_str).collect();
+        let Some(spec) = self.rulesets.get(name) else {
+            let defined: Vec<&str> = self.rulesets.keys().map(String::as_str).collect();
             let message = if defined.is_empty() {
                 format!("unknown ruleset '{name}'; no rulesets are defined")
             } else {
@@ -228,20 +219,36 @@ impl RsigmaMcp {
         let options = ResolveOptions {
             confine_to: self.root().map(Path::to_path_buf),
         };
+        let pipelines = confined.pipelines.clone();
         resolve_ruleset(name, &confined, &options)
-            .map(|resolved| (resolved.collection, self.ruleset_pipelines(name)))
-            .map_err(|error| invalid(format!("ruleset '{name}': {error}")))
+            .map(|resolved| (resolved.collection, pipelines))
+            .map_err(|error| {
+                let message = error.to_string();
+                if message.starts_with(&format!("ruleset '{name}'")) {
+                    invalid(message)
+                } else {
+                    invalid(format!("ruleset '{name}': {message}"))
+                }
+            })
     }
 
-    /// Resolve every source, overlay, and pipeline file path against the
-    /// configured root before the resolver walks it.
+    /// Check every source, overlay, and pipeline file path against the
+    /// configured root before the resolver walks it. Relative paths in
+    /// `rsigma.yaml` resolve against the working directory, as they do on the
+    /// CLI, not against `--rules-dir`.
     fn confine_spec(&self, spec: &RulesetSpec) -> Result<RulesetSpec, McpError> {
         let Some(root) = self.root() else {
             return Ok(spec.clone());
         };
+        let confine = |path: &Path| -> Result<PathBuf, McpError> {
+            let absolute = std::path::absolute(path).map_err(|error| {
+                invalid(format!("cannot resolve '{}': {error}", path.display()))
+            })?;
+            resolve_confined_path(&absolute.to_string_lossy(), Some(root))
+        };
         let mut confined = spec.clone();
         for source in &mut confined.sources {
-            let resolved = resolve_confined_path(&source.to_string_lossy(), Some(root))?;
+            let resolved = confine(source)?;
             if resolved.is_dir() {
                 ensure_no_symlinks(&resolved, Some(root))?;
             }
@@ -249,18 +256,19 @@ impl RsigmaMcp {
         }
         for overlay in &mut confined.overlays {
             if let Some(file) = &overlay.file {
-                overlay.file = Some(resolve_confined_path(&file.to_string_lossy(), Some(root))?);
+                overlay.file = Some(confine(file)?);
             }
             if let Some(dir) = &overlay.dir {
-                let resolved = resolve_confined_path(&dir.to_string_lossy(), Some(root))?;
+                let resolved = confine(dir)?;
                 ensure_no_symlinks(&resolved, Some(root))?;
                 overlay.dir = Some(resolved);
             }
         }
         for pipeline in &mut confined.pipelines {
             if resolve_builtin_pipeline(pipeline).is_none() {
-                let resolved = resolve_confined_path(pipeline, Some(root))?;
-                *pipeline = resolved.to_string_lossy().into_owned();
+                *pipeline = confine(Path::new(pipeline.as_str()))?
+                    .to_string_lossy()
+                    .into_owned();
             }
         }
         Ok(confined)

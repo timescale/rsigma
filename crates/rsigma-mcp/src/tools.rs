@@ -86,8 +86,6 @@ struct State {
     /// Whether the two mutating operate tools register. Ignored when `daemon`
     /// is `None`.
     allow_operate_writes: bool,
-    /// Named rulesets declared in the server's configuration.
-    rulesets: BTreeMap<String, RulesetSpec>,
 }
 
 /// The rsigma MCP handler. Cloned per request by rmcp; the real state lives
@@ -96,6 +94,8 @@ struct State {
 pub struct RsigmaMcp {
     tool_router: ToolRouter<Self>,
     state: Arc<State>,
+    /// Named rulesets declared in the server's configuration.
+    rulesets: Arc<BTreeMap<String, RulesetSpec>>,
 }
 
 impl RsigmaMcp {
@@ -145,16 +145,14 @@ impl RsigmaMcp {
                 delegate_permits: tokio::sync::Semaphore::new(DELEGATE_MAX_CONCURRENT),
                 daemon,
                 allow_operate_writes: has_daemon && allow_operate_writes,
-                rulesets: BTreeMap::new(),
             }),
+            rulesets: Arc::new(BTreeMap::new()),
         })
     }
 
     /// Attach the named rulesets declared in the server's configuration.
     pub fn with_rulesets(mut self, rulesets: BTreeMap<String, RulesetSpec>) -> Self {
-        let state = Arc::get_mut(&mut self.state)
-            .expect("the handler state is unique while the builder runs");
-        state.rulesets = rulesets;
+        self.rulesets = Arc::new(rulesets);
         self
     }
 
@@ -375,11 +373,13 @@ pub(crate) fn ruleset_handler(
     RsigmaMcp::new(root, LintConfig::default(), false).with_rulesets(rulesets)
 }
 
-/// A ruleset spec with the given sources and pipelines.
+/// A ruleset spec with the given sources, relative ones joined onto `root`
+/// (config paths resolve against the working directory, not `--rules-dir`),
+/// and pipelines.
 #[cfg(test)]
-pub(crate) fn ruleset_spec(sources: &[&str], pipelines: &[&str]) -> RulesetSpec {
+pub(crate) fn ruleset_spec(root: &Path, sources: &[&str], pipelines: &[&str]) -> RulesetSpec {
     RulesetSpec {
-        sources: sources.iter().map(PathBuf::from).collect(),
+        sources: sources.iter().map(|source| root.join(source)).collect(),
         pipelines: pipelines.iter().map(|name| (*name).to_string()).collect(),
         ..Default::default()
     }

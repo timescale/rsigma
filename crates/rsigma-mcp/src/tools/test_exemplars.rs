@@ -311,8 +311,8 @@ custom_attributes:
     fn test_exemplars_runs_an_overlaid_exemplar() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rule.yml"), RULE).unwrap();
-        let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(
-            "sources: [rule.yml]
+        let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(&format!(
+            "sources: [{}]
 overlays:
   - id: 11111111-2222-3333-4444-555555555555
     set:
@@ -323,7 +323,8 @@ overlays:
             event:
               CommandLine: whoami /all
 ",
-        )
+            dir.path().join("rule.yml").display()
+        ))
         .unwrap();
         let server = ruleset_handler(
             Some(dir.path().to_path_buf()),

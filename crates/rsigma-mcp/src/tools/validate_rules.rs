@@ -236,7 +236,10 @@ mod tests {
     fn validate_rules_accepts_a_ruleset() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
-        let rulesets = BTreeMap::from([("base".to_string(), ruleset_spec(&["rule.yml"], &[]))]);
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
         let value = block_on(
             ruleset_handler(Some(dir.path().to_path_buf()), rulesets).run_validate_rules(
                 ValidateInput {
@@ -259,8 +262,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
         let rulesets = BTreeMap::from([
-            ("base".to_string(), ruleset_spec(&["rule.yml"], &[])),
-            ("other".to_string(), ruleset_spec(&["rule.yml"], &[])),
+            (
+                "base".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
+            (
+                "other".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
         ]);
         let error = block_on(
             ruleset_handler(Some(dir.path().to_path_buf()), rulesets).run_validate_rules(

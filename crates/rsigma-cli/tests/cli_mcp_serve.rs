@@ -37,7 +37,7 @@ fn http_with_allow_unconfined_paths_starts() {
             "127.0.0.1:0",
             "--allow-unconfined-paths",
         ])
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(2))
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -57,7 +57,7 @@ fn http_with_allow_unconfined_paths_from_config_starts() {
         .current_dir(cwd.path())
         .args(["mcp", "serve", "--http", "127.0.0.1:0", "--config"])
         .arg(&config)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(2))
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -75,7 +75,7 @@ fn http_with_rules_dir_starts() {
         .current_dir(cwd.path())
         .args(["mcp", "serve", "--http", "127.0.0.1:0", "--rules-dir"])
         .arg(rules.path())
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(2))
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -127,7 +127,7 @@ tags:
         r#"rulesets:
   overlay:
     sources:
-      - rule.yml
+      - rules/rule.yml
     overlays:
       - id: 8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a
         set:

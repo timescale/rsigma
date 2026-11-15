@@ -454,7 +454,7 @@ mod tests {
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
         let rulesets = BTreeMap::from([(
             "base".to_string(),
-            ruleset_spec(&["rule.yml"], &["ecs_windows"]),
+            ruleset_spec(dir.path(), &["rule.yml"], &["ecs_windows"]),
         )]);
         let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
             .run_convert_rules(ConvertInput {
@@ -478,7 +478,10 @@ mod tests {
     fn convert_rules_unknown_ruleset_lists_names() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
-        let rulesets = BTreeMap::from([("base".to_string(), ruleset_spec(&["rule.yml"], &[]))]);
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
         let error = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
             .run_convert_rules(ConvertInput {
                 yaml: None,

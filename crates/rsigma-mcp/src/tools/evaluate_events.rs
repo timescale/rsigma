@@ -575,7 +575,7 @@ enrichers:
         std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
         let rulesets = BTreeMap::from([(
             "base".to_string(),
-            ruleset_spec(&["rule.yml"], &["ecs_windows"]),
+            ruleset_spec(dir.path(), &["rule.yml"], &["ecs_windows"]),
         )]);
         let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
             .run_evaluate_events(EvaluateInput {

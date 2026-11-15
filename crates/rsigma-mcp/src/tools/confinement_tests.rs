@@ -313,7 +313,7 @@ fn a_ruleset_source_outside_the_root_is_rejected() {
     let outside = fx.outside.path().join("rule.yml");
     let rulesets = BTreeMap::from([(
         "base".to_string(),
-        ruleset_spec(&[&outside.display().to_string()], &[]),
+        ruleset_spec(fx.root.path(), &[&outside.display().to_string()], &[]),
     )]);
     let server = ruleset_handler(Some(fx.root.path().to_path_buf()), rulesets);
     let error = block_on(server.run_validate_rules(ValidateInput {
@@ -341,7 +341,8 @@ fn a_ruleset_overlay_outside_the_root_is_rejected() {
     )
     .unwrap();
     let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(&format!(
-        "sources: [rule.yml]\noverlays:\n  - file: {}\n",
+        "sources: [{}]\noverlays:\n  - file: {}\n",
+        fx.root.path().join("rule.yml").display(),
         outside.display()
     ))
     .unwrap();
@@ -358,10 +359,93 @@ fn a_ruleset_overlay_outside_the_root_is_rejected() {
         fail_level: Default::default(),
     }))
     .unwrap_err();
+    let text = format!("{error:?}");
     assert!(
-        format!("{error:?}").contains("escapes the configured --rules-dir"),
-        "{error:?}"
+        text.contains("escapes the configured --rules-dir")
+            && text.contains(&outside.display().to_string()),
+        "{text}"
     );
+}
+
+/// Validate a ruleset whose single source sits inside the root and whose
+/// remaining spec (overlays or pipelines) is `rest`.
+fn validate_rooted_ruleset(fx: &Fixture, rest: &str) -> Result<serde_json::Value, rmcp::ErrorData> {
+    let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(&format!(
+        "sources: [{}]\n{rest}",
+        fx.root.path().join("rule.yml").display()
+    ))
+    .unwrap();
+    let server = ruleset_handler(
+        Some(fx.root.path().to_path_buf()),
+        BTreeMap::from([("base".to_string(), spec)]),
+    );
+    block_on(server.run_validate_rules(ValidateInput {
+        yaml: None,
+        path: None,
+        ruleset: Some("base".to_string()),
+        pipelines: vec![],
+        resolve_sources: false,
+        fail_level: Default::default(),
+    }))
+}
+
+#[test]
+fn a_ruleset_overlay_dir_outside_the_root_is_rejected() {
+    let fx = Fixture::new();
+    let dir = fx.outside.path().display().to_string();
+    let error = validate_rooted_ruleset(&fx, &format!("overlays:\n  - dir: {dir}\n")).unwrap_err();
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("escapes the configured --rules-dir") && text.contains(&dir),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_ruleset_pipeline_outside_the_root_is_rejected() {
+    let fx = Fixture::new();
+    let pipeline = fx.outside.path().join("pipeline.yml").display().to_string();
+    let error = validate_rooted_ruleset(&fx, &format!("pipelines: [{pipeline}]\n")).unwrap_err();
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("escapes the configured --rules-dir") && text.contains(&pipeline),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_ruleset_pipeline_inside_the_root_and_a_builtin_are_accepted() {
+    let fx = Fixture::new();
+    let pipeline = fx.root.path().join("pipeline.yml").display().to_string();
+    let value =
+        validate_rooted_ruleset(&fx, &format!("pipelines: [{pipeline}, ecs_windows]\n")).unwrap();
+    assert_eq!(value["ok"], true, "{value}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_ruleset_source_dir_with_a_symlink_is_rejected() {
+    let fx = Fixture::new();
+    let rules = fx.root.path().join("rules");
+    std::fs::create_dir(&rules).unwrap();
+    std::os::unix::fs::symlink(fx.outside.path().join("rule.yml"), rules.join("link.yml")).unwrap();
+    let server = ruleset_handler(
+        Some(fx.root.path().to_path_buf()),
+        BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(fx.root.path(), &["rules"], &[]),
+        )]),
+    );
+    let error = block_on(server.run_validate_rules(ValidateInput {
+        yaml: None,
+        path: None,
+        ruleset: Some("base".to_string()),
+        pipelines: vec![],
+        resolve_sources: false,
+        fail_level: Default::default(),
+    }))
+    .unwrap_err();
+    assert!(format!("{error:?}").contains("symlink"), "{error:?}");
 }
 
 #[test]
