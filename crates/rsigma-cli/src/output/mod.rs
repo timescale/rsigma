@@ -355,8 +355,12 @@ pub(crate) fn write_ocsf_finding<W: Write>(
     writer: &mut W,
     result: &rsigma_eval::EvaluationResult,
     pretty: bool,
+    version: rsigma_runtime::ocsf::OcsfVersion,
 ) -> io::Result<()> {
-    let finding = rsigma_runtime::ocsf::detection_finding(result);
+    let finding = rsigma_runtime::ocsf::detection_finding_opts(
+        result,
+        rsigma_runtime::ocsf::OcsfOptions::new(version),
+    );
     let line = if pretty {
         serde_json::to_string_pretty(&finding)?
     } else {
@@ -367,9 +371,13 @@ pub(crate) fn write_ocsf_finding<W: Write>(
 
 /// Write one OCSF finding to stdout (compact NDJSON unless `pretty`).
 #[cfg(feature = "ocsf")]
-pub(crate) fn render_ocsf_finding(result: &rsigma_eval::EvaluationResult, pretty: bool) {
+pub(crate) fn render_ocsf_finding(
+    result: &rsigma_eval::EvaluationResult,
+    pretty: bool,
+    version: rsigma_runtime::ocsf::OcsfVersion,
+) {
     let mut out = io::stdout().lock();
-    if let Err(e) = write_ocsf_finding(&mut out, result, pretty) {
+    if let Err(e) = write_ocsf_finding(&mut out, result, pretty, version) {
         eprintln!("OCSF serialization error: {e}");
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }

@@ -1,6 +1,9 @@
 {
   "activity_id": 3,
   "activity_name": "Close",
+  "assignee_group": {
+    "name": "soc"
+  },
   "category_name": "Findings",
   "category_uid": 2,
   "class_name": "Incident Finding",

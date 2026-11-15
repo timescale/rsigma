@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = ["daemon"]
-# Batch CLI OCSF output (`--output-format ocsf`). Implied by `daemon`.
+# Batch CLI OCSF output (`--finding-format ocsf`). Implied by `daemon`.
 ocsf = ["dep:rsigma-runtime"]
 daemon = [
     "ocsf",

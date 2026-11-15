@@ -255,6 +255,8 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
             output: None,
             fail_on_detection: Some(false),
+            finding_format: None,
+            ocsf_version: None,
             schema: Some(SchemaPartial {
                 observe: None,
                 discover: None,
@@ -283,6 +285,9 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             input_format: Some(INPUT_FORMAT.to_string()),
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
+            findings: None,
+            finding_format: None,
+            ocsf_version: None,
         }),
         // The `coverage` section has no compiled defaults: the cross-reference
         // inputs are opt-in and `fail_on_gaps` defaults to off via clap.

@@ -292,7 +292,7 @@ fn incident_open_2005_references_its_detection_findings() {
         },
     ]);
     check_both_versions("incident_open_2005", |opts| {
-        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts)
+        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts.with_assignee_group("soc"))
     });
 }
 
@@ -303,7 +303,7 @@ fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
         incident_finding_2005_with_opts(
             &incident("resolved", "resolved"),
             &FixedSource::new(),
-            opts,
+            opts.with_assignee_group("soc"),
         )
     });
 }
@@ -315,7 +315,11 @@ fn risk_incident_2005_references_its_detection_findings() {
         refs[0].finding_uid = Some("msg_89ab_0000_0".to_string());
     }
     check_both_versions("risk_incident_2005", |opts| {
-        risk_incident_finding_2005_with_opts(&incident, &FixedSource::new(), opts)
+        risk_incident_finding_2005_with_opts(
+            &incident,
+            &FixedSource::new(),
+            opts.with_assignee_group("soc"),
+        )
     });
 }
 

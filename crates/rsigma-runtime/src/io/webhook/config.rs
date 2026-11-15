@@ -91,6 +91,10 @@ pub struct WebhookConfig {
     /// Per-request timeout. Accepts humantime strings (`5s`, `200ms`).
     #[serde(default, with = "humantime_opt")]
     pub timeout: Option<Duration>,
+    /// OCSF schema version for `${detection.ocsf}` / `${correlation.ocsf}`.
+    /// Default `1.1.0`. A load error when set and the body does not use the variable.
+    #[serde(default)]
+    pub ocsf_version: Option<String>,
     /// Retry tuning. Overrides the daemon's `--sink-*` delivery defaults.
     #[serde(default)]
     pub retry: Option<RetryConfig>,
@@ -310,6 +314,8 @@ pub enum WebhookConfigError {
         reference: String,
         field: &'static str,
     },
+    /// `ocsf_version` was unknown, or set on a webhook whose body does not insert a finding.
+    InvalidOcsfVersion { webhook_id: String, message: String },
     /// `retry` settings were invalid (e.g. zero attempts).
     InvalidRetry { webhook_id: String, message: String },
     /// `rate_limit` settings were invalid.
@@ -372,6 +378,10 @@ impl std::fmt::Display for WebhookConfigError {
                 f,
                 "webhook '{webhook_id}': '${{{reference}}}' in field '{field}' is only valid in body, as a whole JSON value (for example \"finding\": ${{{reference}}}), not inside a string"
             ),
+            WebhookConfigError::InvalidOcsfVersion {
+                webhook_id,
+                message,
+            } => write!(f, "webhook '{webhook_id}': {message}"),
             WebhookConfigError::InvalidRetry {
                 webhook_id,
                 message,
@@ -543,10 +553,33 @@ fn build_one(
     };
 
     metrics.register_webhook(&cfg.id);
+    let uses_ocsf = cfg
+        .body
+        .as_deref()
+        .is_some_and(|body| body.contains(".ocsf}"));
+    let ocsf = match cfg.ocsf_version.as_deref() {
+        None => crate::ocsf::OcsfOptions::default(),
+        Some(raw) => {
+            if !uses_ocsf {
+                return Err(WebhookConfigError::InvalidOcsfVersion {
+                    webhook_id: cfg.id.clone(),
+                    message: "ocsf_version is only valid when body uses ${detection.ocsf} or ${correlation.ocsf}".to_string(),
+                });
+            }
+            let version =
+                raw.parse()
+                    .map_err(|e: String| WebhookConfigError::InvalidOcsfVersion {
+                        webhook_id: cfg.id.clone(),
+                        message: e,
+                    })?;
+            crate::ocsf::OcsfOptions::new(version)
+        }
+    };
     let sink = WebhookSink::new(
         cfg.id, kind, method, cfg.url, headers, cfg.body, timeout, scope, limiter, client, metrics,
         signer,
-    );
+    )
+    .with_ocsf_options(ocsf);
     Ok(BuiltWebhook { sink, delivery })
 }
 
@@ -982,6 +1015,37 @@ webhooks:
 "#,
         )
         .expect("a whole-value OCSF reference is valid");
+    }
+
+    #[test]
+    fn ocsf_version_without_a_finding_variable_is_rejected() {
+        let err = build_err(
+            r#"
+webhooks:
+  - id: siem
+    kind: detection
+    url: https://example.test/hook
+    ocsf_version: "1.3.0"
+    body: '{"source": "rsigma"}'
+"#,
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("ocsf_version is only valid"), "{msg}");
+    }
+
+    #[test]
+    fn ocsf_version_1_3_0_is_accepted_with_the_finding_variable() {
+        build(
+            r#"
+webhooks:
+  - id: siem
+    kind: detection
+    url: https://example.test/hook
+    ocsf_version: "1.3.0"
+    body: '{"finding": ${detection.ocsf}}'
+"#,
+        )
+        .expect("ocsf_version 1.3.0 with a finding variable loads");
     }
 
     #[test]

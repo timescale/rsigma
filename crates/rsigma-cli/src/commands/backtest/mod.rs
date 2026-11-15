@@ -13,8 +13,8 @@
 pub(crate) mod expectations;
 mod report;
 
-use std::fs::File;
-use std::io::BufReader;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
@@ -102,6 +102,18 @@ pub(crate) struct BacktestArgs {
     /// Write the full JSON report to a file regardless of the stdout format.
     #[arg(long = "report", value_name = "PATH")]
     pub report: Option<PathBuf>,
+
+    /// Write one finding per fire (native JSON or OCSF) to this file.
+    #[arg(long = "findings", value_name = "PATH")]
+    pub findings: Option<PathBuf>,
+
+    /// Finding wire shape written to `--findings`: `native` (default) or `ocsf`.
+    #[arg(long = "finding-format", value_parser = ["native", "ocsf"])]
+    pub finding_format: Option<String>,
+
+    /// OCSF schema version for `--finding-format ocsf` (`1.1.0` or `1.3.0`).
+    #[arg(long = "ocsf-version")]
+    pub ocsf_version: Option<String>,
 }
 
 /// Overlay the `backtest` config section (defaults < file < env) onto `args`
@@ -172,13 +184,77 @@ fn overlay_backtest_config(
         {
             args.syslog_strip_bom = v;
         }
+        if !explicit("findings")
+            && let Some(v) = bt.findings
+        {
+            args.findings = Some(v);
+        }
+        if !explicit("finding_format")
+            && let Some(v) = bt.finding_format
+        {
+            args.finding_format = Some(v);
+        }
+        if !explicit("ocsf_version")
+            && let Some(v) = bt.ocsf_version
+        {
+            args.ocsf_version = Some(v);
+        }
     }
 }
 
 /// Run the backtest. Returns the process exit code (0 pass, 1 findings,
 /// 2 rule error, 3 config error). Rule and config errors exit directly.
-pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
+pub(crate) fn cmd_backtest(args: BacktestArgs, mut ctx: OutputCtx) -> i32 {
     ctx.ensure_ocsf_available("rule backtest");
+    if args.finding_format.as_deref() == Some("ocsf") {
+        match ctx.format {
+            crate::output::OutputFormat::Csv
+            | crate::output::OutputFormat::Tsv
+            | crate::output::OutputFormat::Table => {
+                eprintln!(
+                    "error: --finding-format ocsf cannot be combined with table, csv, or tsv output"
+                );
+                return exit_code::CONFIG_ERROR;
+            }
+            _ => ctx.format = crate::output::OutputFormat::Ocsf,
+        }
+    }
+    if let Some(version) = &args.ocsf_version {
+        if args.finding_format.as_deref() != Some("ocsf")
+            && ctx.format != crate::output::OutputFormat::Ocsf
+        {
+            eprintln!("error: --ocsf-version requires --finding-format ocsf");
+            return exit_code::CONFIG_ERROR;
+        }
+        #[cfg(feature = "ocsf")]
+        if version
+            .parse::<rsigma_runtime::ocsf::OcsfVersion>()
+            .is_err()
+        {
+            eprintln!("error: --ocsf-version must be 1.1.0 or 1.3.0");
+            return exit_code::CONFIG_ERROR;
+        }
+        #[cfg(not(feature = "ocsf"))]
+        let _ = version;
+    }
+    if let Some(findings) = &args.findings {
+        let mut collisions = args
+            .corpus
+            .iter()
+            .chain(args.report.iter())
+            .chain(args.junit.iter());
+        if collisions.any(|p| p == findings) {
+            eprintln!("error: --findings must not be the corpus, --report, or --junit path");
+            return exit_code::CONFIG_ERROR;
+        }
+        if let Err(e) = File::create(findings) {
+            eprintln!(
+                "error: cannot create --findings {}: {e}",
+                findings.display()
+            );
+            return exit_code::CONFIG_ERROR;
+        }
+    }
     let Some(rules_path) = args.rules.clone() else {
         eprintln!("error: no rules path; set --rules or backtest.rules in the config file");
         return exit_code::CONFIG_ERROR;
@@ -319,9 +395,54 @@ fn stream_corpus_file<P: EventProcessor>(
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);
+        if let Some(path) = &args.findings {
+            let mut file = match OpenOptions::new().append(true).open(path) {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!("error: cannot append --findings {}: {e}", path.display());
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+            };
+            #[cfg(feature = "ocsf")]
+            if emit_ocsf {
+                if let Err(e) = crate::output::write_ocsf_finding(
+                    &mut file,
+                    m,
+                    false,
+                    args.ocsf_version
+                        .as_deref()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or_default(),
+                ) {
+                    eprintln!("OCSF serialization error: {e}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+                return;
+            }
+            match serde_json::to_string(m) {
+                Ok(line) => {
+                    if writeln!(file, "{line}").is_err() {
+                        eprintln!("error: failed to write --findings {}", path.display());
+                        process::exit(exit_code::CONFIG_ERROR);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: failed to serialize finding: {e}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+            }
+            return;
+        }
         #[cfg(feature = "ocsf")]
         if emit_ocsf {
-            crate::output::render_ocsf_finding(m, false);
+            crate::output::render_ocsf_finding(
+                m,
+                false,
+                args.ocsf_version
+                    .as_deref()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_default(),
+            );
         }
     };
 

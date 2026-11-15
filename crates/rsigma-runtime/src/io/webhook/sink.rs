@@ -104,6 +104,7 @@ pub struct WebhookSink {
     /// Optional HMAC request signer. When set, every delivery carries
     /// signature headers over the rendered body bytes.
     signer: Option<WebhookSigner>,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl WebhookSink {
@@ -137,7 +138,14 @@ impl WebhookSink {
             client,
             metrics,
             signer,
+            ocsf: crate::ocsf::OcsfOptions::default(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
     }
 
     /// The webhook id, used as the webhook-specific metric label.
@@ -216,7 +224,10 @@ impl WebhookSink {
                 let finding = crate::io::ocsf_finding(
                     eval,
                     Some((ctx, idx)),
-                    crate::ocsf::OcsfOptions::default(),
+                    crate::ocsf::OcsfOptions {
+                        version: self.ocsf.version,
+                        ..crate::ocsf::OcsfOptions::default()
+                    },
                 );
                 serde_json::to_string(&finding).unwrap_or_else(|_| "null".to_string())
             })

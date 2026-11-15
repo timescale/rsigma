@@ -103,6 +103,10 @@ pub struct OcsfOptions {
     pub version: OcsfVersion,
     /// Class the incident shapes serialize into.
     pub incident_class: OcsfIncidentClass,
+    /// Group name required on class-2005 findings (`assignee_group.name`).
+    ///
+    /// Process-lifetime: the daemon leaks the sink-spec value so options stay `Copy`.
+    pub assignee_group: Option<&'static str>,
 }
 
 impl OcsfOptions {
@@ -111,6 +115,7 @@ impl OcsfOptions {
         Self {
             version,
             incident_class: OcsfIncidentClass::default(),
+            assignee_group: None,
         }
     }
 
@@ -118,6 +123,15 @@ impl OcsfOptions {
     #[must_use]
     pub fn with_incident_class(mut self, incident_class: OcsfIncidentClass) -> Self {
         self.incident_class = incident_class;
+        self
+    }
+
+    /// Name the `assignee_group` class 2005 requires.
+    ///
+    /// `name` must already be `'static` (the daemon leaks the sink-spec value).
+    #[must_use]
+    pub fn with_assignee_group(mut self, name: &'static str) -> Self {
+        self.assignee_group = Some(name);
         self
     }
 }

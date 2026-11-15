@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### OCSF finding output depth
+
+`engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are rejected. `--output-format ocsf` remains accepted. Backtest keeps the human summary on stderr.
+
+Class 2004 findings always set `metadata.profiles` to `security_control`, and append `host` when an `actor` is present. Dedup summaries use `finding_info.uid` `dedup-<fingerprint>-<first_seen>` and lift the window onto `count`, `start_time`, and `end_time`. Risk events set `finding_info.types` to `Risk Event`. A detection whose enrichments carry `incident_id` sets `metadata.correlation_uid` to that id.
+
+Line sinks accept `?format=ocsf` with optional `?ocsf_version=1.1.0|1.3.0` (default `1.1.0`), optional `?ocsf_incident_class=2004|2005` (default `2004`), and `?ocsf_assignee_group=<name>`, which is required when the class is 2005 and rejected otherwise. Class 2005 incidents list contributing Detection Finding uids minted before the alert pipeline runs. OTLP sinks accept `format=ocsf` and put the finding JSON string in the log-record body. Webhook bodies may use `${detection.ocsf}` and `${correlation.ocsf}` as whole JSON values, and an optional `ocsf_version` field selects `1.1.0` or `1.3.0`.
+
+See [OCSF Findings](https://rsigma.io/guide/ocsf-findings/) and [Output formats](https://rsigma.io/reference/output/).
+
 ### Documentation home page redesign, flat anchor aliases, and fragment validation (#710)
 
 The `rsigma.io` home page opens with a split hero, a tabbed quick-run snippet (`Evaluate`, `Daemon`, `Convert`, `Rust`), a tabbed install bar, a four-card benchmark strip, the detection-loop diagram paired with workflow cards, grouped downstream integrations, and a minimal footer, with focus mode (`Alt+F`) enabled site-wide. The version-tag legend moves to [Release Notes](https://rsigma.io/release-notes/#version-tags).

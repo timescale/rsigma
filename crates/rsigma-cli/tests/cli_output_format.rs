@@ -79,6 +79,64 @@ fn eval_output_format_ocsf_emits_detection_finding() {
     validate_ocsf_finding(&finding);
 }
 
+/// `--finding-format ocsf` composes with JSON output and honors `--ocsf-version`.
+#[test]
+fn eval_finding_format_ocsf_sets_version_and_profile() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let out = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+            "--output-format",
+            "json",
+            "--finding-format",
+            "ocsf",
+            "--ocsf-version",
+            "1.3.0",
+            "--quiet",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let finding: serde_json::Value = serde_json::from_slice(&out.stdout).expect("one JSON finding");
+    assert_eq!(finding["class_uid"], 2004);
+    assert_eq!(finding["metadata"]["version"], "1.3.0");
+    assert_eq!(finding["metadata"]["profiles"][0], "security_control");
+    validate_ocsf_finding(&finding);
+}
+
+/// OCSF findings cannot be projected as a table.
+#[test]
+fn eval_finding_format_ocsf_rejects_table() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+            "--output-format",
+            "table",
+            "--finding-format",
+            "ocsf",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "--finding-format ocsf requires --output-format json or ndjson",
+        ));
+}
+
 /// Unsupported commands warn and fall back when `--output-format ocsf` is set.
 #[test]
 fn lint_output_format_ocsf_warns_and_falls_back() {

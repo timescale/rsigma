@@ -322,6 +322,9 @@ eval:
   # Write results to a file instead of stdout (NDJSON unless --output-format is set).
   # output: ./detections.ndjson
   fail_on_detection: false
+  # Finding wire shape for each fire: native (default) or ocsf.
+  # finding_format: native
+  # ocsf_version: "1.1.0"
   # Schema routing for `engine eval` (see daemon.schema for details). `observe`
   # has no effect here; eval has no schema observer.
   schema:
@@ -354,6 +357,10 @@ backtest:
   syslog_tz: "+00:00"
   # Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Set false to keep it.
   syslog_strip_bom: true
+  # One finding per fire. Must not collide with the corpus, report, or junit path.
+  # findings: ./findings.ndjson
+  # finding_format: native
+  # ocsf_version: "1.1.0"
 
 coverage:
   # Default rule file(s) or directory(ies) to map onto ATT&CK (repeatable).

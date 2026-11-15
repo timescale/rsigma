@@ -69,7 +69,7 @@ This is what lets `rsigma engine eval … | jq '.rule_title'` work cleanly: `jq`
 
 ## Not the same as a daemon sink format
 
-`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a line or OTLP sink spec (optional `?ocsf_version=<v>` and `?ocsf_incident_class=2004|2005` with `format=ocsf`), which chooses between rsigma's native NDJSON and [OCSF finding](../guide/ocsf-findings.md) JSON per sink. `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
+`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a line or OTLP sink spec (optional `?ocsf_version=<v>`, `?ocsf_incident_class=2004|2005`, and `?ocsf_assignee_group=<name>` with `format=ocsf`), which chooses between rsigma's native NDJSON and [OCSF finding](../guide/ocsf-findings.md) JSON per sink. {{ added "unreleased" }} `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
 
 ## Unsupported formats
 
@@ -87,7 +87,7 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 
 | Command | Implicit default | Notes |
 |---------|------------------|-------|
-| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--output-format ocsf` emits one OCSF class-2004 finding per match (NDJSON on stdout). {{ added "unreleased" }} `--pretty` still forces pretty JSON for backwards compatibility. |
+| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--finding-format ocsf` (or `--output-format ocsf`) emits one OCSF class-2004 finding per match. {{ added "unreleased" }} `--pretty` still forces pretty JSON for backwards compatibility. |
 | `engine explain` | Human table/tree | Explicit selector overrides. |
 | `engine classify` | TTY-aware json/ndjson | Full five-format support. |
 | `engine discover-schemas` | TTY-aware json/ndjson | Full five-format support. |

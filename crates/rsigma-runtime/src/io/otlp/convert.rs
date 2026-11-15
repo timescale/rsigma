@@ -199,7 +199,7 @@ pub fn evaluation_results_to_logs_request(
 /// bodies are OCSF findings.
 ///
 /// `finding` returns the finding for the result at an index. Each record's
-/// body is that finding lowered to a `kvlist`, and its severity follows the
+/// body is that finding as a JSON string, and its severity follows the
 /// Sigma level as in [`evaluation_results_to_logs_request`]. The record carries
 /// no attributes, because the finding already holds every native field.
 pub(crate) fn ocsf_findings_to_logs_request(
@@ -272,7 +272,9 @@ fn ocsf_log_record(result: &EvaluationResult, finding: &Value) -> LogRecord {
         observed_time_unix_nano: now,
         severity_number,
         severity_text: severity_text.to_string(),
-        body: Some(json_to_any_value(finding)),
+        body: Some(string_any_value(
+            &serde_json::to_string(finding).unwrap_or_else(|_| "{}".to_string()),
+        )),
         ..Default::default()
     }
 }
@@ -777,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn ocsf_body_is_the_finding_as_a_kvlist() {
+    fn ocsf_body_is_the_finding_as_json() {
         use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
         use std::collections::HashMap;
         use std::sync::Arc;
@@ -816,11 +818,10 @@ mod tests {
             record.attributes,
         );
         let body = record.body.as_ref().unwrap();
-        assert!(matches!(body.value, Some(any_value::Value::KvlistValue(_))));
-        assert_eq!(
-            any_value_to_json(body),
-            golden,
-            "the kvlist body round-trips to the finding",
-        );
+        let serde_json::Value::String(raw) = any_value_to_json(body) else {
+            panic!("the body must be a JSON string: {body:?}");
+        };
+        let parsed: Value = serde_json::from_str(&raw).expect("finding JSON");
+        assert_eq!(parsed, golden, "the string body is the finding");
     }
 }

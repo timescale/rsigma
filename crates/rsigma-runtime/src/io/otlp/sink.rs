@@ -67,7 +67,7 @@ const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// In the default format each result becomes a log record whose body is the
 /// rule title and whose attributes are the native result fields. With
-/// [`SinkFormat::Ocsf`] the body is the OCSF Detection Finding as a `kvlist`
+/// [`SinkFormat::Ocsf`] the body is the OCSF Detection Finding as a JSON string
 /// and the record carries no attributes.
 ///
 /// The gRPC channel connects lazily, so a collector that is not yet reachable
@@ -585,39 +585,18 @@ mod tests {
         let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
         assert_eq!(record.severity_text, "ERROR");
         assert!(record.attributes.is_empty());
-        let Some(any_value::Value::KvlistValue(body)) =
+        let Some(any_value::Value::StringValue(raw)) =
             record.body.as_ref().and_then(|b| b.value.as_ref())
         else {
-            panic!("the body must be the finding kvlist: {:?}", record.body);
+            panic!(
+                "the body must be the finding JSON string: {:?}",
+                record.body
+            );
         };
-        let field = |key: &str| {
-            body.values
-                .iter()
-                .find(|kv| kv.key == key)
-                .and_then(|kv| kv.value.as_ref())
-                .and_then(|v| v.value.clone())
-        };
-        assert_eq!(field("class_uid"), Some(any_value::Value::IntValue(2004)));
-        let Some(any_value::Value::KvlistValue(info)) = field("finding_info") else {
-            panic!("finding_info must be a kvlist");
-        };
-        let uid = info
-            .values
-            .iter()
-            .find(|kv| kv.key == "uid")
-            .and_then(|kv| kv.value.as_ref())
-            .and_then(|v| v.value.clone());
-        assert_eq!(
-            uid,
-            Some(any_value::Value::StringValue(ctx.finding_uid(0))),
-            "the finding uid matches every other sink of the same dispatch",
-        );
-        let Some(any_value::Value::KvlistValue(metadata)) = field("metadata") else {
-            panic!("metadata must be a kvlist");
-        };
-        assert!(metadata.values.iter().any(|kv| kv.key == "version"
-            && kv.value.as_ref().and_then(|v| v.value.clone())
-                == Some(any_value::Value::StringValue("1.3.0".to_string()))));
+        let finding: serde_json::Value = serde_json::from_str(raw).expect("finding JSON");
+        assert_eq!(finding["class_uid"], 2004);
+        assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(0));
+        assert_eq!(finding["metadata"]["version"], "1.3.0");
         server.abort();
     }
 

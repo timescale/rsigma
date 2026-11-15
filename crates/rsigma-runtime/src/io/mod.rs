@@ -52,8 +52,7 @@ use crate::metrics::MetricsHook;
 /// Selected per sink with the `format` query parameter on an output spec
 /// (`file:///findings.ndjson?format=ocsf`). Transport-independent: every
 /// line sink (stdout, file, NATS, unix socket) accepts every format. An OTLP
-/// sink uses it to choose its log-record body, and webhooks render from
-/// templates.
+/// sink uses it to choose its log-record body, and webhooks render from templates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SinkFormat {

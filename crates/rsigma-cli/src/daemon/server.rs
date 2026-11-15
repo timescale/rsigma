@@ -2717,14 +2717,18 @@ struct ResolvedSinkFormat {
 /// emits a format the operator did not ask for.
 fn resolve_sink_format(params: &[(&str, &str)], base: &str, role: SinkRole) -> ResolvedSinkFormat {
     let format = format_from_params(params, base, role);
-    let ocsf = ocsf_options_from_params(params, base, role, format);
-    if base.starts_with("otlp") && params.iter().any(|(k, _)| *k == "ocsf_incident_class") {
+    if base.starts_with("otlp")
+        && params
+            .iter()
+            .any(|(k, _)| *k == "ocsf_incident_class" || *k == "ocsf_assignee_group")
+    {
         tracing::error!(
             spec = base,
-            "ocsf_incident_class= is not supported on OTLP sinks (they carry no incidents)"
+            "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks"
         );
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
+    let ocsf = ocsf_options_from_params(params, base, role, format);
     ResolvedSinkFormat { format, ocsf }
 }
 
@@ -2738,8 +2742,59 @@ fn ocsf_options_from_params(
     let version: Option<OcsfVersion> = ocsf_param(params, "ocsf_version", base, role, format);
     let incident_class: Option<OcsfIncidentClass> =
         ocsf_param(params, "ocsf_incident_class", base, role, format);
-    OcsfOptions::new(version.unwrap_or_default())
-        .with_incident_class(incident_class.unwrap_or_default())
+    let mut opts = OcsfOptions::new(version.unwrap_or_default())
+        .with_incident_class(incident_class.unwrap_or_default());
+    if let Some(group) = ocsf_raw_param(params, "ocsf_assignee_group", base, role, format) {
+        if group.trim().is_empty() {
+            tracing::error!(spec = base, "ocsf_assignee_group= must not be empty");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        opts = opts.with_assignee_group(Box::leak(group.to_string().into_boxed_str()));
+    }
+    let class_2005 = opts.incident_class == OcsfIncidentClass::IncidentFinding;
+    if class_2005 && opts.assignee_group.is_none() {
+        tracing::error!(
+            spec = base,
+            "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    if !class_2005 && opts.assignee_group.is_some() {
+        tracing::error!(
+            spec = base,
+            "ocsf_assignee_group= is only valid with ocsf_incident_class=2005"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    opts
+}
+
+/// Parse one optional free-form OCSF sink parameter.
+fn ocsf_raw_param<'a>(
+    params: &'a [(&str, &str)],
+    key: &str,
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> Option<&'a str> {
+    let mut values = params
+        .iter()
+        .filter(|(k, _)| *k == key)
+        .map(|(_, value)| *value);
+    let value = values.next()?;
+    if values.next().is_some() {
+        tracing::error!(spec = base, "{key}= may be specified only once");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    if format != SinkFormat::Ocsf {
+        tracing::error!(
+            spec = base,
+            channel = role.label(),
+            "{key}= is only valid with format=ocsf"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    Some(value)
 }
 
 /// Parse one optional OCSF sink parameter, exiting when it repeats, appears

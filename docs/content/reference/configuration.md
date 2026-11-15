@@ -111,7 +111,7 @@ daemon:
     batch_size: 128        # capped at buffer_size
   output:
     sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
-                           # query params: ?on_full=drop, ?format=ndjson|ocsf (line and OTLP sinks), ?ocsf_version=<v> and ?ocsf_incident_class=2004|2005 (with format=ocsf; defaults 1.1.0 and 2004), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
+                           # query params: ?on_full=drop, ?format=ndjson|ocsf (line and OTLP sinks), ?ocsf_version=<v>, ?ocsf_incident_class=2004|2005, and ?ocsf_assignee_group=<name> (with format=ocsf; defaults 1.1.0 and 2004; assignee group is required for class 2005), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
     drain_timeout: 5
     # webhooks: [/etc/rsigma/webhooks/]   # template-driven HTTP sinks
   correlation:
@@ -162,6 +162,8 @@ eval:
   pipelines: [sysmon]
   input_format: auto
   fail_on_detection: false
+  # finding_format: native   # native | ocsf. ocsf composes with json/ndjson output.
+  # ocsf_version: "1.1.0"    # 1.1.0 | 1.3.0, only with finding_format: ocsf
   schema:
     routing: false          # opt-in: route each event to its schema's pipeline-set (or --schema-routing)
     # config: ./schema.yml
@@ -194,6 +196,9 @@ backtest:
   expectations: ./ci/expectations.yml
   # unexpected: warn   # fail | warn | ignore; unset lets the expectations-file default apply
   input_format: auto
+  # findings: ./findings.ndjson
+  # finding_format: native   # native | ocsf
+  # ocsf_version: "1.1.0"
 
 coverage:
   # rules: [./rules]

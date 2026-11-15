@@ -1,6 +1,9 @@
 {
   "activity_id": 1,
   "activity_name": "Create",
+  "assignee_group": {
+    "name": "soc"
+  },
   "attacks": [
     {
       "tactic": {

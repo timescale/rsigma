@@ -107,7 +107,7 @@ By default all four emitted shapes (detections, correlations, alert-pipeline inc
 | `time` | Detections, correlations, and alert-pipeline incidents: the serialization/emission clock. Risk incidents: `window_end`. Always UTC milliseconds, with `timezone_offset: 0`. |
 | `start_time` / `end_time` | `first_seen` / `last_seen` on incidents, `window_start` / `window_end` on risk incidents. |
 | `message` | The same string as `finding_info.title`, so a consumer that renders only `message` still shows something readable. |
-| `metadata` | `product` names `rsigma` and its version, `version` is the OCSF schema version (`1.1.0`), and `uid` uniquely identifies the emitted event. Daemon delivery derives it from stable per-dispatch state, so fan-out and retries preserve it. |
+| `metadata` | `product` names `rsigma` and its version, `version` is the OCSF schema version (`1.1.0` by default), and `uid` uniquely identifies the emitted event. Daemon delivery derives it from stable per-dispatch state, so fan-out and retries preserve it. Class 2004 sets `profiles` to `["security_control"]`, and appends `"host"` when the finding has an `actor`. A detection whose enrichments include a string `incident_id` copies it to `correlation_uid`. |
 | `finding_info.title` | The rule title for detections and correlations. Incidents carry no rule name, so the title is synthesized: the busiest contributing rule plus the count of the others (`rule-1 and 2 other rules`, or `rule-1 and 1 other rule` for a single peer), falling back to the group key (`incident for match.User=alice`) and then the bare id. A risk incident names what crossed and for whom (`risk threshold crossed for user alice`). |
 | `finding_info.uid` | The incident id for the two incident shapes (re-emissions of one incident share it). Per-result findings use an identifier minted once per dispatch and preserved across sinks and retries. OCSF requires this to identify the finding, and one rule produces many, so rule identity lives in `analytic.uid` instead. |
 | `finding_info.analytic` | `{type_id: 1, type: "Rule", name: <rule title>, uid: <rule id>}` for detections and correlations. Incidents name the `alert pipeline`, risk incidents the `risk accumulator`, with their contributing rules in `related_analytics`. |
@@ -131,7 +131,9 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 
 ### Batch commands
 
-`engine eval` and `rule backtest` honor the global `--output-format ocsf` selector. Each rule fire becomes one OCSF Detection Finding (class 2004) on stdout as compact NDJSON; `--pretty` pretty-prints each finding when stdout is a TTY. On backtest, the human summary stays on stderr and `--report` continues to write the native JSON report regardless of `--output-format`. {{ added "unreleased" }} See [Output Formats](../reference/output.md).
+`engine eval` accepts `--finding-format ocsf` (and `--ocsf-version 1.1.0|1.3.0`). Each rule fire becomes one OCSF Detection Finding (class 2004). The flag composes with `--output-format json` or `ndjson`; `table`, `csv`, and `tsv` are a config error. `--output-format ocsf` is still accepted. `--pretty` pretty-prints each finding when stdout is a TTY.
+
+`rule backtest` accepts the same flags plus `--findings <PATH>`, which must not collide with the corpus, `--report`, or `--junit`. The human summary stays on stderr and `--report` continues to write the native JSON report. {{ added "unreleased" }} See [Output Formats](../reference/output.md).
 
 ### Dedup and risk-event sidecars
 
@@ -141,7 +143,7 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 | Dedup `resolved` summary | Close | Resolved |
 | Risk event (`risk_event: true`) | Create | New |
 
-On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detections. The native NDJSON wire is unchanged on an NDJSON sink. Dedup `dedup_*` keys live under `unmapped.enrichments`; risk events keep `risk_event: true` in `unmapped`. {{ added "unreleased" }}
+On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detections. The native NDJSON wire is unchanged on an NDJSON sink. A dedup finding's `finding_info.uid` is `dedup-<fingerprint>-<first_seen>`. `dedup_fire_count`, `dedup_first_seen`, and `dedup_last_seen` become `count`, `start_time`, and `end_time` (epoch milliseconds); the fingerprint, state, and matched fields stay under `unmapped.enrichments`. A risk event sets `finding_info.types` to `["Risk Event"]` and adds the `host` profile when its actor is a user. {{ added "unreleased" }}
 
 ## Incident Finding (class 2005)
 
@@ -181,7 +183,8 @@ A risk contributor that the alert pipeline later folds into a dedup alert or sil
 | `status_id` / `status` | `1` (`New`), or `4` (`Resolved`) for a resolved incident. |
 | `severity_id` / `severity` | The incident's `max_level`. A risk incident carries no rule level, so its severity is `0` (`Unknown`). |
 | `time`, `start_time`, `end_time`, `count`, `message` | As in class 2004. |
-| `metadata.correlation_uid` | The incident id (`incident_id` or `risk_incident_id`). Every emission of one incident shares it. |
+| `metadata.correlation_uid` | The incident id (`incident_id` or `risk_incident_id`). Every emission of one incident shares it. Class 2005 does not set `metadata.profiles`. |
+| `assignee_group` | `{name}` from `?ocsf_assignee_group=<name>`. Required when `ocsf_incident_class=2005` and rejected on any other class, including OTLP. |
 | `finding_info_list[]` | One `{uid, title, analytic}` entry per linked contributor, or the per-rule fallback described above. `analytic` names the rule (`type: "Rule"`) and carries its id as `analytic.uid` when a retained result supplies it. |
 | `attacks[]` | Risk incidents only: the contributing tactics, mapped as in class 2004. |
 | `unmapped` | Alert-pipeline incidents: `state`, `trigger`, `rule_counts`, `group_by`, `entities`, `refs`, and `results`. Risk incidents: `entity_type`, `entity_value`, `trigger`, `score`, `score_threshold`, `tactic_count`, `tactic_count_threshold`, `sources`, `source_count`, `refs`, and `results`. |
@@ -192,7 +195,7 @@ An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF de
 
 {{ added "unreleased" }}
 
-An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding, encoded as an OTLP `kvlist` (JSON objects become key-value lists, arrays become array values). The record keeps the severity mapped from the Sigma level and carries no attributes, because the finding already holds every native field.
+An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding as a JSON string, the same bytes a line sink would write. The record keeps the severity mapped from the Sigma level and carries no attributes, because the finding already holds every native field.
 
 ```bash
 rsigma engine daemon -r rules/ --input http \
@@ -217,14 +220,14 @@ webhooks:
     body: '{"source": "rsigma", "finding": ${detection.ocsf}}'
 ```
 
-The reference must stand where a whole JSON value can: as an object member value, an array element, or the entire body. Startup fails when it appears inside a string literal, in key position, in `url` or a header, or in any enricher template. Webhook findings use OCSF `1.1.0`. See [Webhooks](webhooks.md#templating).
+The reference must stand where a whole JSON value can: as an object member value, an array element, or the entire body. Startup fails when it appears inside a string literal, in key position, in `url` or a header, or in any enricher template. Set `ocsf_version` to `1.1.0` (the default) or `1.3.0`. Startup fails when `ocsf_version` is set and the body does not contain `${detection.ocsf}` or `${correlation.ocsf}`. See [Webhooks](webhooks.md#templating).
 
 ## Consumer notes
 
 - **Splunk**: ingest as `_json` and let the OCSF add-on map the class, or index the file directly. `finding_info.title` and `message` are the human-readable fields; `unmapped` survives as a nested object.
 - **Elastic**: OCSF findings ingest cleanly through Filebeat or an Elastic Agent `filestream` input with a JSON parser. Map `severity_id` if you want an ECS `event.severity`.
 - **CrowdStrike NG-SIEM**: third-party OCSF ingest expects one finding per line, which is exactly the sink's shape.
-- **Amazon Security Lake**: a custom source requires OCSF **in Parquet**, which RSigma does not write. Land the JSON in S3 and transcode with Firehose, Glue, or any collector that converts JSON to Parquet.
+- **Amazon Security Lake**: a custom source requires OCSF in Parquet, which RSigma does not write. Land the JSON in S3 and transcode with Firehose, Glue, or any collector that converts JSON to Parquet.
 
 ## Schema versions
 

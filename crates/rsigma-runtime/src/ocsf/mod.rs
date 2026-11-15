@@ -288,6 +288,15 @@ fn detection_finding_with_inner(
     insert_if(&mut finding, "risk_score", lifted.score.clone());
     insert_if(&mut finding, "resources", lifted.resources.clone());
     insert_if(&mut finding, "actor", lifted.actor.clone());
+    declare_host_if_actor(&mut finding);
+    if let Some(id) = header
+        .enrichments
+        .as_ref()
+        .and_then(|enr| enr.get("incident_id"))
+        .and_then(Value::as_str)
+    {
+        set_correlation_uid(&mut finding, id);
+    }
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
 }
@@ -374,6 +383,7 @@ pub fn incident_finding_with_opts(
         "resources",
         (!resources.is_empty()).then_some(Value::Array(resources)),
     );
+    set_correlation_uid(&mut finding, &incident.incident_id);
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
 }
@@ -469,6 +479,8 @@ pub fn risk_incident_finding_with_opts(
             json!({ "user": { "name": incident.entity_value } }),
         );
     }
+    declare_host_if_actor(&mut finding);
+    set_correlation_uid(&mut finding, &incident.risk_incident_id);
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
 }
@@ -574,6 +586,7 @@ pub fn incident_finding_2005_with_opts(
     // is what OCSF's correlation uid is for.
     set_correlation_uid(&mut finding, &incident.incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
+    insert_assignee_group(&mut finding, opts);
     finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
     finding.insert("end_time".to_string(), json!(incident.last_seen * 1000));
     finding.insert("count".to_string(), json!(incident.result_count));
@@ -686,6 +699,7 @@ pub fn risk_incident_finding_2005_with_opts(
     );
     set_correlation_uid(&mut finding, &incident.risk_incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
+    insert_assignee_group(&mut finding, opts);
     insert_if(
         &mut finding,
         "attacks",
@@ -756,6 +770,12 @@ fn set_correlation_uid(finding: &mut Map<String, Value>, uid: &str) {
     }
 }
 
+fn insert_assignee_group(finding: &mut Map<String, Value>, opts: OcsfOptions) {
+    if let Some(name) = opts.assignee_group {
+        finding.insert("assignee_group".to_string(), json!({ "name": name }));
+    }
+}
+
 /// Serialize a dedup `repeat` / `resolved` summary line as a Detection Finding.
 pub fn dedup_summary_finding(wire: &Value) -> Value {
     dedup_summary_finding_opts(wire, OcsfOptions::default())
@@ -784,6 +804,7 @@ pub fn dedup_summary_finding_with_opts(
         .unwrap_or("repeat");
     let result = dedup_wire_to_evaluation_result(wire);
     let mut finding = dedup_summary_finding_from_result_with(&result, state, src, opts);
+    apply_dedup_window(&mut finding, wire);
     nest_dedup_enrichments_from_wire(&mut finding, wire);
     finding
 }
@@ -847,6 +868,7 @@ pub fn risk_event_finding_with_opts(
     let mut finding_info = Map::new();
     finding_info.insert("title".to_string(), json!(title));
     finding_info.insert("uid".to_string(), json!(src.uid()));
+    finding_info.insert("types".to_string(), json!(["Risk Event"]));
     finding_info.insert("analytic".to_string(), Value::Object(analytic));
 
     let resources = json!([{
@@ -873,6 +895,7 @@ pub fn risk_event_finding_with_opts(
     finding.insert("risk_score".to_string(), json!(event.risk_score));
     finding.insert("resources".to_string(), resources);
     insert_if(&mut finding, "actor", actor);
+    declare_host_if_actor(&mut finding);
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
 }
@@ -1053,14 +1076,18 @@ fn patch_lifecycle(finding: &mut Value, activity: Activity, status: Status) {
     obj.insert("status".to_string(), json!(status.name()));
 }
 
-/// Move `dedup_*` keys under `unmapped.enrichments` for the wire mapping path.
+/// Move `dedup_*` keys that stay enrichment-only under `unmapped.enrichments`.
+///
+/// `dedup_fire_count`, `dedup_first_seen`, and `dedup_last_seen` are lifted to
+/// `count`, `start_time`, and `end_time`.
 fn nest_dedup_enrichments_from_wire(finding: &mut Value, wire: &Value) {
     let Some(enrichments) = wire.get("enrichments").and_then(Value::as_object) else {
         return;
     };
+    const LIFTED: &[&str] = &["dedup_fire_count", "dedup_first_seen", "dedup_last_seen"];
     let dedup: Map<String, Value> = enrichments
         .iter()
-        .filter(|(key, _)| key.starts_with("dedup_"))
+        .filter(|(key, _)| key.starts_with("dedup_") && !LIFTED.contains(&key.as_str()))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if dedup.is_empty() {
@@ -1073,6 +1100,45 @@ fn nest_dedup_enrichments_from_wire(finding: &mut Value, wire: &Value) {
         .or_insert_with(|| Value::Object(Map::new()));
     let map = unmapped.as_object_mut().expect("unmapped object");
     map.insert("enrichments".to_string(), Value::Object(dedup));
+}
+
+fn apply_dedup_window(finding: &mut Value, wire: &Value) {
+    let Some(obj) = finding.as_object_mut() else {
+        return;
+    };
+    let enr = wire.get("enrichments");
+    let fingerprint = enr
+        .and_then(|v| v.get("dedup_fingerprint"))
+        .and_then(Value::as_str);
+    let first = enr
+        .and_then(|v| v.get("dedup_first_seen"))
+        .and_then(Value::as_i64);
+    let last = enr
+        .and_then(|v| v.get("dedup_last_seen"))
+        .and_then(Value::as_i64);
+    let count = enr
+        .and_then(|v| v.get("dedup_fire_count"))
+        .and_then(Value::as_i64);
+    if let (Some(fp), Some(first_seen)) = (fingerprint, first)
+        && let Some(info) = obj.get_mut("finding_info").and_then(Value::as_object_mut)
+    {
+        info.insert("uid".to_string(), json!(format!("dedup-{fp}-{first_seen}")));
+    }
+    if let Some(first_seen) = first {
+        obj.insert(
+            "start_time".to_string(),
+            json!(first_seen.saturating_mul(1000)),
+        );
+    }
+    if let Some(last_seen) = last {
+        obj.insert(
+            "end_time".to_string(),
+            json!(last_seen.saturating_mul(1000)),
+        );
+    }
+    if let Some(count) = count {
+        obj.insert("count".to_string(), json!(count));
+    }
 }
 
 /// Rebuild a detection [`EvaluationResult`] from a dedup summary wire line.
@@ -1233,7 +1299,34 @@ fn base_finding_of(
             "uid": src.uid(),
         }),
     );
+    if matches!(class, FindingClass::Detection) {
+        declare_profile(&mut finding, "security_control");
+    }
     finding
+}
+
+const PROFILE_HOST: &str = "host";
+
+/// Append `profile` to `metadata.profiles` without duplicating it.
+fn declare_profile(finding: &mut Map<String, Value>, profile: &str) {
+    let Some(metadata) = finding.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let profiles = metadata
+        .entry("profiles")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(list) = profiles.as_array_mut() else {
+        return;
+    };
+    if !list.iter().any(|item| item.as_str() == Some(profile)) {
+        list.push(json!(profile));
+    }
+}
+
+fn declare_host_if_actor(finding: &mut Map<String, Value>) {
+    if finding.contains_key("actor") {
+        declare_profile(finding, PROFILE_HOST);
+    }
 }
 
 /// The risk layer's reserved enrichments, lifted out of the enrichment map.

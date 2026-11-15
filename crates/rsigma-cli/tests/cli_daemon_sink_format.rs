@@ -206,6 +206,46 @@ fn duplicate_ocsf_incident_class_parameter_is_a_startup_error() {
         .stderr(contains("ocsf_incident_class= may be specified only once"));
 }
 
+#[test]
+fn class_2005_without_assignee_group_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>",
+        ));
+}
+
+#[test]
+fn assignee_group_without_class_2005_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_assignee_group=soc",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_assignee_group= is only valid with ocsf_incident_class=2005",
+        ));
+}
+
+#[test]
+fn empty_assignee_group_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005&ocsf_assignee_group=   ",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_assignee_group= must not be empty"));
+}
+
 #[cfg(feature = "daemon-otlp")]
 #[test]
 fn unknown_format_on_an_otlp_sink_is_a_startup_error() {
@@ -223,7 +263,20 @@ fn ocsf_incident_class_on_an_otlp_sink_is_a_startup_error() {
     ])
     .failure()
     .stderr(contains(
-        "ocsf_incident_class= is not supported on OTLP sinks",
+        "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks",
+    ));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_assignee_group_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ocsf&ocsf_assignee_group=soc",
+    ])
+    .failure()
+    .stderr(contains(
+        "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks",
     ));
 }
 
@@ -291,8 +344,9 @@ fn any_value_json(value: &opentelemetry_proto::tonic::common::v1::AnyValue) -> V
     }
 }
 
-/// An OTLP sink with `format=ocsf` exports the OCSF finding as the log-record
-/// body, with the same identity an OCSF line sink gets for the same detection.
+/// An OTLP sink with `format=ocsf` exports the OCSF finding as a JSON string
+/// in the log-record body, with the same identity an OCSF line sink gets for
+/// the same detection.
 #[cfg(feature = "daemon-otlp")]
 #[test]
 fn ocsf_otlp_sink_exports_the_finding_as_the_log_body() {
@@ -348,7 +402,11 @@ fn ocsf_otlp_sink_exports_the_finding_as_the_log_body() {
         record.attributes.is_empty(),
         "the finding replaces the native attributes"
     );
-    let finding = any_value_json(record.body.as_ref().expect("a log body"));
+    let encoded = any_value_json(record.body.as_ref().expect("a log body"));
+    let raw = encoded
+        .as_str()
+        .expect("the OCSF body is a JSON string, not a kvlist");
+    let finding: Value = serde_json::from_str(raw).expect("the OCSF body parses");
     validate_ocsf_finding(&finding);
     assert_eq!(finding["class_uid"], 2004);
     assert_eq!(finding["metadata"]["version"], "1.3.0");
@@ -522,7 +580,7 @@ fn incident_finding_references_the_emitted_detection_finding() {
     let native_spec = format!("file://{}", native.path().display());
     let ocsf = temp_file(".ndjson", "");
     let ocsf_spec = format!(
-        "file://{}?format=ocsf&ocsf_incident_class=2005",
+        "file://{}?format=ocsf&ocsf_incident_class=2005&ocsf_assignee_group=soc",
         ocsf.path().display()
     );
     let daemon = DaemonProcess::spawn_http_with_args(
@@ -549,6 +607,7 @@ fn incident_finding_references_the_emitted_detection_finding() {
     assert_eq!(incident["status"], "New");
     assert!(incident.get("action_id").is_none(), "{incident}");
     assert!(incident.get("finding_info").is_none(), "{incident}");
+    assert_eq!(incident["assignee_group"]["name"], "soc");
     assert_eq!(
         incident["finding_info_list"][0]["uid"], detection["finding_info"]["uid"],
         "the incident references the Detection Finding of its contributor",
