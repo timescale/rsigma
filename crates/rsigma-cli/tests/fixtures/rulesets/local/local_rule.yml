@@ -1,0 +1,16 @@
+title: Local powershell download
+id: eeeeeeee-0000-4000-8000-000000000001
+status: test
+description: Local rule for PowerShell downloads.
+author: Local Author
+level: medium
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'Invoke-WebRequest'
+    condition: selection
+tags:
+    - attack.execution
+    - attack.t1059.004

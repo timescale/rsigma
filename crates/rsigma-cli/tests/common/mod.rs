@@ -32,6 +32,30 @@ pub fn temp_file(suffix: &str, contents: &str) -> NamedTempFile {
     f
 }
 
+/// Compare `actual` with `tests/golden/<rel>`, rewriting the golden first
+/// when `RSIGMA_UPDATE_GOLDEN` is set.
+pub fn assert_golden(rel: &str, actual: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(rel);
+    if std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, actual)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual,
+        expected,
+        "golden mismatch for {}; rerun with RSIGMA_UPDATE_GOLDEN=1",
+        path.display()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Daemon HTTP process helper
 // ---------------------------------------------------------------------------
