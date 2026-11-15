@@ -137,6 +137,45 @@ fn eval_finding_format_ocsf_rejects_table() {
         ));
 }
 
+/// Builds without the `ocsf` feature must reject the flag instead of printing
+/// a native JSON finding.
+#[test]
+fn finding_format_ocsf_requires_the_ocsf_feature() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let out = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+            "--finding-format",
+            "ocsf",
+            "--quiet",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if cfg!(feature = "ocsf") {
+        assert!(out.status.success(), "stderr={stderr}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("\"class_uid\""),
+            "the feature build emits a finding"
+        );
+    } else {
+        assert_eq!(out.status.code(), Some(3), "stderr={stderr}");
+        assert!(
+            stderr.contains("not available"),
+            "expected a feature error, got: {stderr}"
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "a build without OCSF must not write a finding"
+        );
+    }
+}
+
 /// `ocsf` is a finding format, not a global output format.
 #[test]
 fn output_format_ocsf_is_rejected() {
