@@ -56,7 +56,7 @@ pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
         ruleset: ruleset.as_deref(),
         config: config.as_deref(),
     };
-    let collection = input.collection(&ctx);
+    let collection = input.single_path_collection(&ctx);
     let pipelines = crate::load_pipelines(&input.pipelines(&pipeline_paths));
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {

@@ -493,6 +493,22 @@ hygiene:
 }
 
 #[test]
+fn single_path_commands_accept_a_path_without_detection_rules() {
+    let dir = fixture_copy();
+    fs::create_dir(dir.path().join("filters")).unwrap();
+    fs::copy(
+        dir.path().join("vendor/filter.yml"),
+        dir.path().join("filters/filter.yml"),
+    )
+    .unwrap();
+    let eval = run(dir.path(), &["engine", "eval", "-r", "filters", "-e", "{}"]);
+    assert!(eval.status.success(), "{}", stderr(&eval));
+    let fields = run(dir.path(), &["rule", "fields", "-r", "filters"]);
+    assert!(fields.status.success(), "{}", stderr(&fields));
+    assert!(stdout(&fields).contains("User"), "{}", stdout(&fields));
+}
+
+#[test]
 fn explicit_pipeline_overrides_the_ruleset_pipeline() {
     let dir = fixture_copy();
     let output = run(

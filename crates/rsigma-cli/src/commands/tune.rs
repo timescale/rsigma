@@ -116,7 +116,7 @@ pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
         ruleset: args.ruleset.as_deref(),
         config: args.config.as_deref(),
     };
-    let collection = input.collection(&ctx);
+    let collection = input.single_path_collection(&ctx);
     let mut rule = match select_rule(&collection.rules, args.rule.as_deref()) {
         Ok(rule) => rule.clone(),
         Err(error) => {
@@ -194,7 +194,7 @@ fn cmd_tune_from_dispositions(args: TuneArgs, ctx: OutputCtx) {
         ruleset: args.ruleset.as_deref(),
         config: args.config.as_deref(),
     };
-    let collection = input.collection(&ctx);
+    let collection = input.single_path_collection(&ctx);
     let pipelines = crate::load_pipelines(&input.pipelines(&args.pipelines));
     let resolved_expectations =
         args.expectations.as_ref().map(

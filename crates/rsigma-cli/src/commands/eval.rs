@@ -513,7 +513,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     }
 
     let rules_label = input.label();
-    let collection = input.collection(&ctx);
+    let collection = input.single_path_collection(&ctx);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {

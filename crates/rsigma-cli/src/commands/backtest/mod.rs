@@ -227,7 +227,7 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
         ruleset: args.ruleset.as_deref(),
         config: args.config.as_deref(),
     };
-    let collection = input.collection(&ctx);
+    let collection = input.single_path_collection(&ctx);
     let pipelines = crate::load_pipelines(&args.pipelines);
     let event_filter = crate::build_event_filter(args.jq.clone(), args.jsonpath.clone());
 

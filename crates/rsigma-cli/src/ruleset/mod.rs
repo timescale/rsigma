@@ -106,6 +106,17 @@ impl RuleInput<'_> {
         }
     }
 
+    /// Like [`collection`](Self::collection), but a single explicit path loads
+    /// through [`crate::load_collection`], which accepts a path holding no
+    /// detection rules. For the commands whose `--rules` takes one path.
+    pub(crate) fn single_path_collection(&self, ctx: &OutputCtx) -> SigmaCollection {
+        match (self.resolved(ctx), self.rules) {
+            (Some(resolved), _) => resolved.collection,
+            (None, [path]) => crate::load_collection(path),
+            (None, paths) => crate::load_collection_multi(paths),
+        }
+    }
+
     /// Resolve the selected ruleset, when one is selected.
     pub(crate) fn resolved(&self, ctx: &OutputCtx) -> Option<ResolvedRuleset> {
         self.ruleset
