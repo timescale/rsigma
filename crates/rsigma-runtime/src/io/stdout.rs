@@ -9,6 +9,7 @@ use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 pub struct StdoutSink {
     pretty: bool,
     format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl StdoutSink {
@@ -16,6 +17,7 @@ impl StdoutSink {
         StdoutSink {
             pretty,
             format: SinkFormat::default(),
+            ocsf: crate::ocsf::OcsfOptions::default(),
         }
     }
 
@@ -26,9 +28,19 @@ impl StdoutSink {
         self
     }
 
+    #[must_use]
+    pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
+    }
+
     /// The wire format this sink serializes results into.
     pub fn format(&self) -> SinkFormat {
         self.format
+    }
+
+    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
+        self.ocsf
     }
 
     /// Serialize and write a ProcessResult to stdout.
@@ -57,7 +69,13 @@ impl StdoutSink {
         let mut out = stdout.lock();
 
         for (index, m) in result.iter().enumerate() {
-            let json = serialize_result(m, self.format, self.pretty, ctx.map(|ctx| (ctx, index)))?;
+            let json = serialize_result(
+                m,
+                self.format,
+                self.pretty,
+                ctx.map(|ctx| (ctx, index)),
+                self.ocsf,
+            )?;
             writeln!(out, "{json}")?;
         }
 

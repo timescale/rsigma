@@ -81,6 +81,7 @@ pub(crate) fn serialize_result(
     format: SinkFormat,
     pretty: bool,
     delivery: Option<(&DeliveryContext, usize)>,
+    ocsf: crate::ocsf::OcsfOptions,
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(if pretty {
@@ -92,9 +93,9 @@ pub(crate) fn serialize_result(
             let finding = match delivery {
                 Some((ctx, index)) => {
                     let source = DeliveryFindingSource::new(ctx, index);
-                    crate::ocsf::detection_finding_with(result, &source)
+                    crate::ocsf::detection_finding_with_opts(result, &source, ocsf)
                 }
-                None => crate::ocsf::detection_finding(result),
+                None => crate::ocsf::detection_finding_opts(result, ocsf),
             };
             Ok(if pretty {
                 serde_json::to_string_pretty(&finding)?
@@ -214,6 +215,28 @@ impl IncidentEnvelope {
 pub struct FormattedIncidentEnvelope {
     native: IncidentEnvelope,
     lines: Vec<(SinkFormat, String)>,
+}
+
+/// Resolve the wire line for an incident envelope and one sink's format/options.
+pub(crate) fn formatted_incident_line(
+    env: &FormattedIncidentEnvelope,
+    format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
+) -> Result<String, RuntimeError> {
+    match format {
+        SinkFormat::Ndjson => Ok(env.native().json.clone()),
+        SinkFormat::Ocsf if ocsf == crate::ocsf::OcsfOptions::default() => {
+            Ok(env.line(SinkFormat::Ocsf).to_string())
+        }
+        SinkFormat::Ocsf => {
+            let finding =
+                crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf)
+                    .map_err(|e| {
+                        RuntimeError::Permanent(format!("OCSF incident mapping failed: {e}"))
+                    })?;
+            Ok(serde_json::to_string(&finding)?)
+        }
+    }
 }
 
 impl FormattedIncidentEnvelope {
@@ -492,18 +515,28 @@ impl Sink {
     {
         Box::pin(async move {
             match self {
-                Sink::Stdout(s) => blocking_write(|| s.send_raw(env.line(s.format()))),
-                Sink::File(s) => blocking_write(|| s.send_raw(env.line(s.format()))),
+                Sink::Stdout(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    blocking_write(|| s.send_raw(&line))
+                }
+                Sink::File(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    blocking_write(|| s.send_raw(&line))
+                }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
-                    s.send_incident(env.line(s.format()), env.native().nats_subject.as_deref())
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    s.send_incident(&line, env.native().nats_subject.as_deref())
                         .await
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
                 Sink::Webhook(_) => Ok(()),
                 #[cfg(all(unix, feature = "uds"))]
-                Sink::Unix(s) => s.send_raw(env.line(s.format())).await,
+                Sink::Unix(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    s.send_raw(&line).await
+                }
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_formatted_incident(env).await {

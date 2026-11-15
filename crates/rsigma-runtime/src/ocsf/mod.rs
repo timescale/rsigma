@@ -40,14 +40,17 @@
 //! ```
 
 mod attack;
+mod version;
+
+pub use version::{OcsfOptions, OcsfVersion};
 
 use serde_json::{Map, Value, json};
 
 use rsigma_eval::{EvaluationResult, ResultBody};
 use rsigma_parser::Level;
 
-use crate::alert_pipeline::IncidentResult;
-use crate::risk::{RISK_OBJECTS_KEY, RISK_SCORE_KEY, RiskIncidentResult};
+use crate::alert_pipeline::{IncidentRef, IncidentResult};
+use crate::risk::{RISK_OBJECTS_KEY, RISK_SCORE_KEY, RiskIncidentResult, RiskRef};
 
 /// OCSF class: Detection Finding.
 const CLASS_UID: i64 = 2004;
@@ -57,7 +60,12 @@ const CATEGORY_UID: i64 = 2;
 ///
 /// One pinned version, bumped deliberately: a change here is visible in the
 /// goldens and the committed conformance schema.
+/// Default OCSF schema version (see [`OcsfVersion::V1_1_0`]).
 pub const OCSF_VERSION: &str = "1.1.0";
+
+fn metadata_version(opts: OcsfOptions) -> &'static str {
+    opts.version.as_str()
+}
 
 /// Time and identity source for a finding.
 ///
@@ -124,21 +132,53 @@ impl Status {
 
 /// Serialize a detection or correlation result as a Detection Finding.
 pub fn detection_finding(result: &EvaluationResult) -> Value {
-    detection_finding_with(result, &SystemSource)
+    detection_finding_opts(result, OcsfOptions::default())
+}
+
+/// Serialize with explicit [`OcsfOptions`] (schema version).
+pub fn detection_finding_opts(result: &EvaluationResult, opts: OcsfOptions) -> Value {
+    detection_finding_with_opts(result, &SystemSource, opts)
+}
+
+/// Serialize a detection or correlation result as a Detection Finding.
+pub fn detection_finding_with(result: &EvaluationResult, src: &dyn FindingSource) -> Value {
+    detection_finding_with_opts(result, src, OcsfOptions::default())
+}
+
+/// [`detection_finding_with`] with explicit [`OcsfOptions`].
+pub fn detection_finding_with_opts(
+    result: &EvaluationResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
+    detection_finding_with_inner(result, src, opts)
 }
 
 /// Serialize an alert-pipeline incident as a Detection Finding.
 pub fn incident_finding(incident: &IncidentResult) -> Value {
-    incident_finding_with(incident, &SystemSource)
+    incident_finding_opts(incident, OcsfOptions::default())
+}
+
+/// Serialize with explicit [`OcsfOptions`].
+pub fn incident_finding_opts(incident: &IncidentResult, opts: OcsfOptions) -> Value {
+    incident_finding_with_opts(incident, &SystemSource, opts)
 }
 
 /// Serialize a risk incident as a Detection Finding.
 pub fn risk_incident_finding(incident: &RiskIncidentResult) -> Value {
-    risk_incident_finding_with(incident, &SystemSource)
+    risk_incident_finding_opts(incident, OcsfOptions::default())
 }
 
-/// [`detection_finding`] against an injected time and identity source.
-pub fn detection_finding_with(result: &EvaluationResult, src: &dyn FindingSource) -> Value {
+/// Serialize with explicit [`OcsfOptions`].
+pub fn risk_incident_finding_opts(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
+    risk_incident_finding_with_opts(incident, &SystemSource, opts)
+}
+
+fn detection_finding_with_inner(
+    result: &EvaluationResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
     let header = &result.header;
     let title = header.rule_title.as_str();
 
@@ -212,6 +252,7 @@ pub fn detection_finding_with(result: &EvaluationResult, src: &dyn FindingSource
         // `rsigma.include_event` and read it from `evidences[].data`.
         src.now_ms(),
         title,
+        metadata_version(opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     insert_if(&mut finding, "evidences", evidences);
@@ -224,6 +265,15 @@ pub fn detection_finding_with(result: &EvaluationResult, src: &dyn FindingSource
 
 /// [`incident_finding`] against an injected time and identity source.
 pub fn incident_finding_with(incident: &IncidentResult, src: &dyn FindingSource) -> Value {
+    incident_finding_with_opts(incident, src, OcsfOptions::default())
+}
+
+/// [`incident_finding`] against an injected source and schema version.
+pub fn incident_finding_with_opts(
+    incident: &IncidentResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
     let title = incident_title(incident);
     let resolved = incident.state == "resolved";
 
@@ -284,6 +334,7 @@ pub fn incident_finding_with(incident: &IncidentResult, src: &dyn FindingSource)
         // start_time/end_time and timestamp the lifecycle event itself here.
         src.now_ms(),
         &title,
+        metadata_version(opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
@@ -300,6 +351,15 @@ pub fn incident_finding_with(incident: &IncidentResult, src: &dyn FindingSource)
 
 /// [`risk_incident_finding`] against an injected time and identity source.
 pub fn risk_incident_finding_with(incident: &RiskIncidentResult, src: &dyn FindingSource) -> Value {
+    risk_incident_finding_with_opts(incident, src, OcsfOptions::default())
+}
+
+/// [`risk_incident_finding`] against an injected source and schema version.
+pub fn risk_incident_finding_with_opts(
+    incident: &RiskIncidentResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
     let title = risk_incident_title(incident);
 
     let mut analytic = Map::new();
@@ -360,6 +420,7 @@ pub fn risk_incident_finding_with(incident: &RiskIncidentResult, src: &dyn Findi
         0,
         incident.window_end * 1000,
         &title,
+        metadata_version(opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert(
@@ -385,25 +446,44 @@ pub fn risk_incident_finding_with(incident: &RiskIncidentResult, src: &dyn Findi
 
 /// Serialize a dedup `repeat` / `resolved` summary line as a Detection Finding.
 pub fn dedup_summary_finding(wire: &Value) -> Value {
-    dedup_summary_finding_with(wire, &SystemSource)
+    dedup_summary_finding_opts(wire, OcsfOptions::default())
+}
+
+/// Serialize with explicit [`OcsfOptions`].
+pub fn dedup_summary_finding_opts(wire: &Value, opts: OcsfOptions) -> Value {
+    dedup_summary_finding_with_opts(wire, &SystemSource, opts)
 }
 
 /// [`dedup_summary_finding`] against an injected time and identity source.
 pub fn dedup_summary_finding_with(wire: &Value, src: &dyn FindingSource) -> Value {
+    dedup_summary_finding_with_opts(wire, src, OcsfOptions::default())
+}
+
+/// [`dedup_summary_finding`] with an injected source and schema version.
+pub fn dedup_summary_finding_with_opts(
+    wire: &Value,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
     let state = wire
         .get("enrichments")
         .and_then(|enr| enr.get("dedup_state"))
         .and_then(Value::as_str)
         .unwrap_or("repeat");
     let result = dedup_wire_to_evaluation_result(wire);
-    let mut finding = dedup_summary_finding_from_result_with(&result, state, src);
+    let mut finding = dedup_summary_finding_from_result_with(&result, state, src, opts);
     nest_dedup_enrichments_from_wire(&mut finding, wire);
     finding
 }
 
 /// Serialize a dedup summary from a typed [`EvaluationResult`].
 pub fn dedup_summary_finding_from_result(result: &EvaluationResult, dedup_state: &str) -> Value {
-    dedup_summary_finding_from_result_with(result, dedup_state, &SystemSource)
+    dedup_summary_finding_from_result_with(
+        result,
+        dedup_state,
+        &SystemSource,
+        OcsfOptions::default(),
+    )
 }
 
 /// [`dedup_summary_finding_from_result`] against an injected source.
@@ -411,23 +491,38 @@ pub fn dedup_summary_finding_from_result_with(
     result: &EvaluationResult,
     dedup_state: &str,
     src: &dyn FindingSource,
+    opts: OcsfOptions,
 ) -> Value {
     let (activity, status) = match dedup_state {
         "resolved" => (Activity::Close, Status::Resolved),
         _ => (Activity::Update, Status::New),
     };
-    let mut finding = detection_finding_with(result, src);
+    let mut finding = detection_finding_with_opts(result, src, opts);
     patch_lifecycle(&mut finding, activity, status);
     finding
 }
 
 /// Serialize a compact risk event as a Detection Finding.
 pub fn risk_event_finding(event: &crate::risk::RiskEvent) -> Value {
-    risk_event_finding_with(event, &SystemSource)
+    risk_event_finding_opts(event, OcsfOptions::default())
+}
+
+/// Serialize with explicit [`OcsfOptions`].
+pub fn risk_event_finding_opts(event: &crate::risk::RiskEvent, opts: OcsfOptions) -> Value {
+    risk_event_finding_with_opts(event, &SystemSource, opts)
 }
 
 /// [`risk_event_finding`] against an injected time and identity source.
 pub fn risk_event_finding_with(event: &crate::risk::RiskEvent, src: &dyn FindingSource) -> Value {
+    risk_event_finding_with_opts(event, src, OcsfOptions::default())
+}
+
+/// [`risk_event_finding`] with an injected source and schema version.
+pub fn risk_event_finding_with_opts(
+    event: &crate::risk::RiskEvent,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
     let title = event.rule_title.as_str();
     let time_ms = event.timestamp.saturating_mul(1000);
 
@@ -460,6 +555,7 @@ pub fn risk_event_finding_with(event: &crate::risk::RiskEvent, src: &dyn Finding
         severity_from_name(event.level.as_deref()),
         time_ms,
         title,
+        metadata_version(opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert("risk_score".to_string(), json!(event.risk_score));
@@ -467,6 +563,163 @@ pub fn risk_event_finding_with(event: &crate::risk::RiskEvent, src: &dyn Finding
     insert_if(&mut finding, "actor", actor);
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
+}
+
+/// Map one native incident NDJSON line to an OCSF finding at `opts.version`.
+///
+/// Used when sinks select different schema versions from the envelope the daemon
+/// built at the default version.
+pub fn native_incident_finding_opts(native_json: &str, opts: OcsfOptions) -> Result<Value, String> {
+    let value: Value = serde_json::from_str(native_json)
+        .map_err(|e| format!("invalid native incident JSON: {e}"))?;
+    if value.get("risk_incident_id").is_some() {
+        let wire: RiskIncidentWire = serde_json::from_value(value)
+            .map_err(|e| format!("invalid risk incident wire: {e}"))?;
+        return Ok(risk_incident_finding_opts(&wire.into_result(), opts));
+    }
+    if value.get("incident_id").is_some() {
+        let wire: IncidentWire = serde_json::from_value(value)
+            .map_err(|e| format!("invalid alert incident wire: {e}"))?;
+        return Ok(incident_finding_opts(&wire.into_result(), opts));
+    }
+    if value.get("risk_event").and_then(Value::as_bool) == Some(true) {
+        let event: RiskEventWire =
+            serde_json::from_value(value).map_err(|e| format!("invalid risk event wire: {e}"))?;
+        return Ok(risk_event_finding_opts(&event.into_event(), opts));
+    }
+    if value
+        .get("enrichments")
+        .and_then(|enr| enr.get("dedup_state"))
+        .is_some()
+    {
+        return Ok(dedup_summary_finding_opts(&value, opts));
+    }
+    Err("native incident line is not a recognized incident, risk, or dedup shape".to_string())
+}
+
+#[derive(serde::Deserialize)]
+struct IncidentWire {
+    incident_id: String,
+    state: String,
+    trigger: String,
+    first_seen: i64,
+    last_seen: i64,
+    #[serde(default)]
+    max_level: Option<String>,
+    result_count: u64,
+    #[serde(default)]
+    rule_counts: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    group_by: serde_json::Map<String, Value>,
+    #[serde(default)]
+    entities: serde_json::Map<String, Value>,
+    #[serde(default)]
+    refs: Option<Vec<IncidentRef>>,
+    #[serde(default)]
+    results: Option<Vec<Value>>,
+    #[serde(default)]
+    sample_mode: Option<crate::alert_pipeline::SampleMode>,
+    #[serde(default)]
+    bundle_ready: Option<bool>,
+}
+
+impl IncidentWire {
+    fn into_result(self) -> IncidentResult {
+        IncidentResult {
+            incident_id: self.incident_id,
+            state: leak_label(self.state),
+            trigger: leak_label(self.trigger),
+            first_seen: self.first_seen,
+            last_seen: self.last_seen,
+            max_level: self.max_level,
+            result_count: self.result_count,
+            rule_counts: self.rule_counts,
+            group_by: self.group_by,
+            entities: self.entities,
+            refs: self.refs,
+            results: self.results,
+            sample_mode: self.sample_mode,
+            bundle_ready: self.bundle_ready,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RiskIncidentWire {
+    risk_incident_id: String,
+    entity_type: String,
+    entity_value: String,
+    trigger: String,
+    score: i64,
+    #[serde(default)]
+    score_threshold: Option<i64>,
+    tactic_count: u64,
+    #[serde(default)]
+    tactic_count_threshold: Option<u64>,
+    tactics: Vec<String>,
+    sources: Vec<String>,
+    source_count: u64,
+    window_start: i64,
+    window_end: i64,
+    result_count: u64,
+    #[serde(default)]
+    refs: Option<Vec<RiskRef>>,
+    #[serde(default)]
+    results: Option<Vec<Value>>,
+}
+
+impl RiskIncidentWire {
+    fn into_result(self) -> RiskIncidentResult {
+        RiskIncidentResult {
+            risk_incident_id: self.risk_incident_id,
+            entity_type: self.entity_type,
+            entity_value: self.entity_value,
+            trigger: leak_label(self.trigger),
+            score: self.score,
+            score_threshold: self.score_threshold,
+            tactic_count: self.tactic_count,
+            tactic_count_threshold: self.tactic_count_threshold,
+            tactics: self.tactics,
+            sources: self.sources,
+            source_count: self.source_count,
+            window_start: self.window_start,
+            window_end: self.window_end,
+            result_count: self.result_count,
+            refs: self.refs,
+            results: self.results,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RiskEventWire {
+    risk_event: bool,
+    timestamp: i64,
+    rule: String,
+    rule_title: String,
+    #[serde(default)]
+    level: Option<String>,
+    risk_score: i64,
+    risk_object: crate::risk::RiskObject,
+}
+
+impl RiskEventWire {
+    fn into_event(self) -> crate::risk::RiskEvent {
+        crate::risk::RiskEvent {
+            risk_event: self.risk_event,
+            timestamp: self.timestamp,
+            rule: self.rule,
+            rule_title: self.rule_title,
+            level: self.level,
+            risk_score: self.risk_score,
+            risk_object: self.risk_object,
+        }
+    }
+}
+
+/// Promote a wire label to a process-lifetime `&'static str` for typed incident structs.
+fn leak_label(label: String) -> &'static str {
+    Box::leak(label.into_boxed_str())
 }
 
 fn patch_lifecycle(finding: &mut Value, activity: Activity, status: Status) {
@@ -594,6 +847,7 @@ fn base_finding(
     severity_id: i64,
     time_ms: i64,
     title: &str,
+    ocsf_version: &str,
 ) -> Map<String, Value> {
     let activity_id = activity as i64;
     let mut finding = Map::new();
@@ -630,7 +884,7 @@ fn base_finding(
                 "vendor_name": "rsigma",
                 "version": env!("CARGO_PKG_VERSION"),
             },
-            "version": OCSF_VERSION,
+            "version": ocsf_version,
             "uid": src.uid(),
         }),
     );

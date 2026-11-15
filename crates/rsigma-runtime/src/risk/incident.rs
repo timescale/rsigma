@@ -1,6 +1,6 @@
 //! The risk-incident wire shape and the open-entity admin view.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// How much contributing-detection detail to embed in a [`RiskIncidentResult`].
@@ -13,7 +13,7 @@ pub enum IncludeMode {
 }
 
 /// A lightweight reference to a contributing detection.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskRef {
     /// Rule id, falling back to the rule title.
     pub rule: String,

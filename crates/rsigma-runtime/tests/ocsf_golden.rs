@@ -3,8 +3,8 @@
 //! One golden per emitted shape lives in `tests/golden/ocsf/` and is compared
 //! as pretty-printed JSON, so a field rename, an enum drift, or a changed
 //! `unmapped` contract shows up as a reviewable diff. Every golden is then
-//! validated against the committed minimal class-2004 schema in
-//! `tests/fixtures/ocsf/class_2004.schema.json` (profiles off, no network).
+//! validated against the committed minimal class-2004 schema under
+//! `tests/fixtures/ocsf/<version>/class_2004.schema.json` (profiles off, no network).
 //!
 //! Time and the minted uids come from a fixed [`FindingSource`], so the
 //! goldens are byte-stable.
@@ -28,8 +28,9 @@ use rsigma_eval::{
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::RiskEvent;
 use rsigma_runtime::ocsf::{
-    self, FindingSource, dedup_summary_finding_with, detection_finding_with, incident_finding_with,
-    risk_event_finding_with, risk_incident_finding_with,
+    self, FindingSource, OcsfOptions, OcsfVersion, dedup_summary_finding_with_opts,
+    detection_finding_with_opts, incident_finding_with_opts, risk_event_finding_with_opts,
+    risk_incident_finding_with_opts,
 };
 use rsigma_runtime::{IncidentRef, IncidentResult, RiskIncidentResult, RiskRef};
 use serde_json::{Value, json};
@@ -66,6 +67,12 @@ fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ocsf")
 }
 
+fn golden_path(version: OcsfVersion, name: &str) -> PathBuf {
+    golden_dir()
+        .join(version.fixture_dir())
+        .join(format!("{name}.json"))
+}
+
 /// Rebuild every object with its keys in sorted order.
 ///
 /// `serde_json`'s `preserve_order` feature switches maps from sorted to
@@ -89,30 +96,46 @@ fn canonical(value: &Value) -> Value {
 
 /// Compare a finding to its golden, then validate it against the class-2004
 /// conformance schema.
-fn check(name: &str, finding: &Value) {
-    let path = golden_dir().join(format!("{name}.json"));
+fn check_version(version: OcsfVersion, name: &str, finding: &Value) {
+    let path = golden_path(version, name);
     let actual = format!(
         "{}\n",
         serde_json::to_string_pretty(&canonical(finding)).unwrap()
     );
 
     if std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some() {
-        fs::create_dir_all(golden_dir()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &actual)
             .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
     } else {
         let expected = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
             .replace("\r\n", "\n");
-        assert_eq!(actual, expected, "OCSF golden mismatch for '{name}'");
+        assert_eq!(
+            actual,
+            expected,
+            "OCSF golden mismatch for '{name}' ({})",
+            version.as_str()
+        );
     }
 
-    validate_class_2004(name, finding);
+    validate_class_2004(name, finding, version);
 }
 
-fn validate_class_2004(name: &str, finding: &Value) {
-    let schema_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocsf/class_2004.schema.json");
+fn check_both_versions(name: &str, build: impl Fn(OcsfOptions) -> Value) {
+    check_version(OcsfVersion::V1_1_0, name, &build(OcsfOptions::default()));
+    check_version(
+        OcsfVersion::V1_3_0,
+        name,
+        &build(OcsfOptions::new(OcsfVersion::V1_3_0)),
+    );
+}
+
+fn validate_class_2004(name: &str, finding: &Value, version: OcsfVersion) {
+    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "tests/fixtures/ocsf/{}/class_2004.schema.json",
+        version.fixture_dir()
+    ));
     let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_path).unwrap()).unwrap();
     let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
 
@@ -179,10 +202,9 @@ fn detection_with_matched_fields_and_risk_enrichments() {
         }),
     };
 
-    check(
-        "detection",
-        &detection_finding_with(&result, &FixedSource::new()),
-    );
+    check_both_versions("detection", |opts| {
+        detection_finding_with_opts(&result, &FixedSource::new(), opts)
+    });
 }
 
 #[test]
@@ -206,10 +228,9 @@ fn correlation_with_group_key() {
         }),
     };
 
-    check(
-        "correlation",
-        &detection_finding_with(&result, &FixedSource::new()),
-    );
+    check_both_versions("correlation", |opts| {
+        detection_finding_with_opts(&result, &FixedSource::new(), opts)
+    });
 }
 
 fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
@@ -236,18 +257,16 @@ fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
 
 #[test]
 fn incident_open_is_a_create_finding() {
-    check(
-        "incident_open",
-        &incident_finding_with(&incident("open", "group_wait"), &FixedSource::new()),
-    );
+    check_both_versions("incident_open", |opts| {
+        incident_finding_with_opts(&incident("open", "group_wait"), &FixedSource::new(), opts)
+    });
 }
 
 #[test]
 fn incident_resolved_is_a_close_finding() {
-    check(
-        "incident_resolved",
-        &incident_finding_with(&incident("resolved", "resolved"), &FixedSource::new()),
-    );
+    check_both_versions("incident_resolved", |opts| {
+        incident_finding_with_opts(&incident("resolved", "resolved"), &FixedSource::new(), opts)
+    });
 }
 
 #[test]
@@ -276,10 +295,9 @@ fn risk_incident_carries_score_and_entity() {
         results: None,
     };
 
-    check(
-        "risk_incident",
-        &risk_incident_finding_with(&incident, &FixedSource::new()),
-    );
+    check_both_versions("risk_incident", |opts| {
+        risk_incident_finding_with_opts(&incident, &FixedSource::new(), opts)
+    });
 }
 
 /// The default entry points mint a distinct `metadata.uid` per finding, so a
@@ -302,10 +320,9 @@ fn dedup_repeat_summary_is_an_update_finding() {
         "matched_selections": ["selection"],
         "matched_fields": [{"field": "CommandLine", "value": "malware.exe"}]
     });
-    check(
-        "dedup_repeat",
-        &dedup_summary_finding_with(&wire, &FixedSource::new()),
-    );
+    check_both_versions("dedup_repeat", |opts| {
+        dedup_summary_finding_with_opts(&wire, &FixedSource::new(), opts)
+    });
 }
 
 #[test]
@@ -326,10 +343,9 @@ fn dedup_resolved_summary_is_a_close_finding() {
         "matched_selections": ["selection"],
         "matched_fields": [{"field": "CommandLine", "value": "malware.exe"}]
     });
-    check(
-        "dedup_resolved",
-        &dedup_summary_finding_with(&wire, &FixedSource::new()),
-    );
+    check_both_versions("dedup_resolved", |opts| {
+        dedup_summary_finding_with_opts(&wire, &FixedSource::new(), opts)
+    });
 }
 
 #[test]
@@ -346,10 +362,9 @@ fn risk_event_is_a_create_finding() {
             value: "203.0.113.4".to_string(),
         },
     };
-    check(
-        "risk_event",
-        &risk_event_finding_with(&event, &FixedSource::new()),
-    );
+    check_both_versions("risk_event", |opts| {
+        risk_event_finding_with_opts(&event, &FixedSource::new(), opts)
+    });
 }
 
 #[test]

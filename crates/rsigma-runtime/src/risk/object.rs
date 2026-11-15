@@ -21,7 +21,7 @@ pub struct ObjectSelector {
 }
 
 /// A single extracted risk object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct RiskObject {
     /// The risk-object type, e.g. `user`.
     #[serde(rename = "type")]

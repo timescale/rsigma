@@ -133,6 +133,42 @@ fn duplicate_format_parameter_is_a_startup_error() {
         .stderr(contains("may be specified only once"));
 }
 
+#[test]
+fn unknown_ocsf_version_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_version=9.9.9",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("Invalid ocsf_version"));
+}
+
+#[test]
+fn ocsf_version_without_ocsf_format_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ndjson&ocsf_version=1.3.0",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("only valid with format=ocsf"));
+}
+
+#[test]
+fn duplicate_ocsf_version_parameter_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_version=1.1.0&ocsf_version=1.3.0",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_version= may be specified only once"));
+}
+
 #[cfg(feature = "daemon-otlp")]
 #[test]
 fn format_on_an_otlp_sink_is_a_startup_error() {

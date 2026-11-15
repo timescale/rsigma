@@ -2681,6 +2681,51 @@ impl SinkRole {
 /// all. Unlike the `on_full` warn-and-default path, an unusable `format` is a
 /// startup config error, so a daemon never silently emits a format the
 /// operator did not ask for.
+/// Resolved findings sink wire format and OCSF options.
+struct ResolvedSinkFormat {
+    format: SinkFormat,
+    ocsf: rsigma_runtime::ocsf::OcsfOptions,
+}
+
+fn resolve_sink_format(params: &[(&str, &str)], base: &str, role: SinkRole) -> ResolvedSinkFormat {
+    let format = format_from_params(params, base, role);
+    let ocsf = ocsf_options_from_params(params, base, role, format);
+    ResolvedSinkFormat { format, ocsf }
+}
+
+fn ocsf_options_from_params(
+    params: &[(&str, &str)],
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> rsigma_runtime::ocsf::OcsfOptions {
+    use rsigma_runtime::ocsf::OcsfVersion;
+    let mut versions = params
+        .iter()
+        .filter(|(key, _)| *key == "ocsf_version")
+        .map(|(_, value)| *value);
+    let Some(value) = versions.next() else {
+        return rsigma_runtime::ocsf::OcsfOptions::default();
+    };
+    if versions.next().is_some() {
+        tracing::error!(spec = base, "ocsf_version= may be specified only once");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    if format != SinkFormat::Ocsf {
+        tracing::error!(
+            spec = base,
+            channel = role.label(),
+            "ocsf_version= is only valid with format=ocsf"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    let version: OcsfVersion = value.parse().unwrap_or_else(|e| {
+        tracing::error!(spec = base, value, error = %e, "Invalid ocsf_version");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    });
+    rsigma_runtime::ocsf::OcsfOptions::new(version)
+}
+
 fn format_from_params(params: &[(&str, &str)], base: &str, role: SinkRole) -> SinkFormat {
     let mut formats = params
         .iter()
@@ -2799,11 +2844,17 @@ async fn build_sink(
 ) -> (Sink, OnFull) {
     let (base, params) = split_query(spec);
     let on_full = on_full_from_params(&params);
-    let format = format_from_params(&params, base, role);
+    let resolved = resolve_sink_format(&params, base, role);
+    let format = resolved.format;
+    let ocsf = resolved.ocsf;
 
     if base == "stdout" || base == "stdout://" {
         return (
-            Sink::Stdout(StdoutSink::new(pretty).with_format(format)),
+            Sink::Stdout(
+                StdoutSink::new(pretty)
+                    .with_format(format)
+                    .with_ocsf_options(ocsf),
+            ),
             on_full,
         );
     }
@@ -2813,7 +2864,10 @@ async fn build_sink(
         return match FileSink::open(path) {
             Ok(file_sink) => {
                 tracing::info!(path = %path.display(), "File sink opened");
-                (Sink::File(file_sink.with_format(format)), on_full)
+                (
+                    Sink::File(file_sink.with_format(format).with_ocsf_options(ocsf)),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(path = %path.display(), error = %e, "Failed to open file sink");
@@ -2830,7 +2884,12 @@ async fn build_sink(
         return match rsigma_runtime::NatsSink::connect(&nats_cfg, &subject).await {
             Ok(nats_sink) => {
                 tracing::info!(url = url, subject = subject, "NATS sink started");
-                (Sink::Nats(Box::new(nats_sink.with_format(format))), on_full)
+                (
+                    Sink::Nats(Box::new(
+                        nats_sink.with_format(format).with_ocsf_options(ocsf),
+                    )),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(error = %e, url = url, "Failed to connect NATS sink");
@@ -2898,7 +2957,12 @@ async fn build_sink(
         return match rsigma_runtime::UnixSocketSink::connect(std::path::Path::new(path)).await {
             Ok(unix_sink) => {
                 tracing::info!(path, "Unix socket sink started");
-                (Sink::Unix(Box::new(unix_sink.with_format(format))), on_full)
+                (
+                    Sink::Unix(Box::new(
+                        unix_sink.with_format(format).with_ocsf_options(ocsf),
+                    )),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(path, error = %e, "Failed to connect unix socket sink");

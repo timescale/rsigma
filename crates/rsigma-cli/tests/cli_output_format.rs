@@ -14,7 +14,7 @@ use predicates::prelude::*;
 
 fn validate_class_2004(finding: &serde_json::Value) {
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../rsigma-runtime/tests/fixtures/ocsf/class_2004.schema.json");
+        .join("../rsigma-runtime/tests/fixtures/ocsf/1.1.0/class_2004.schema.json");
     let schema: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
     let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
