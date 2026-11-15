@@ -1504,6 +1504,65 @@ mod tests {
         assert_eq!(backend.calls(), 2);
     }
 
+    fn frozen_clock() -> Clock {
+        let now = Instant::now();
+        Arc::new(move || now)
+    }
+
+    #[tokio::test]
+    async fn zero_positive_ttl_caches_only_negative_answers() {
+        let missing = Query::query(name("missing.example.com."), RecordType::A);
+        let backend = Arc::new(FakeBackend::new(responses(vec![
+            (
+                (name("host.example.com."), RecordType::A),
+                Ok(a_message("host.example.com.", &["192.0.2.10"])),
+            ),
+            (
+                (name("missing.example.com."), RecordType::A),
+                Err(no_records_with_soa(missing, 60)),
+            ),
+        ])));
+        let resolver = DnsResolverConfig {
+            cache_ttl: Duration::ZERO,
+            ..DnsResolverConfig::default()
+        };
+        let e = enricher_with_config(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            Some(serde_json::json!([])),
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            resolver,
+            frozen_clock(),
+        );
+
+        enrich_ok(&e, "host.example.com").await;
+        enrich_ok(&e, "host.example.com").await;
+        assert_eq!(backend.calls(), 2);
+
+        enrich_ok(&e, "missing.example.com").await;
+        enrich_ok(&e, "missing.example.com").await;
+        assert_eq!(backend.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn negative_answers_without_an_soa_are_not_cached() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![])));
+        let e = enricher_with_config(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            Some(serde_json::json!([])),
+            None,
+            Arc::clone(&backend) as Arc<dyn DnsBackend>,
+            DnsResolverConfig::default(),
+            frozen_clock(),
+        );
+
+        enrich_ok(&e, "missing.example.com").await;
+        enrich_ok(&e, "missing.example.com").await;
+        assert_eq!(backend.calls(), 2);
+    }
+
     #[tokio::test]
     async fn cache_keys_ignore_key_case() {
         let backend = Arc::new(FakeBackend::new(responses(vec![(
