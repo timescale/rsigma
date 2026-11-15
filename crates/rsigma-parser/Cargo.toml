@@ -43,6 +43,10 @@ tempfile = "3"
 name = "parse"
 harness = false
 
+[[bench]]
+name = "ruleset"
+harness = false
+
 [[test]]
 name = "fmt_golden"
 required-features = ["fmt"]
