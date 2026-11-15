@@ -33,7 +33,8 @@
 /* Home page layout and hero polish (scoped via body[data-source-file="content/index.md"]). */
 body[data-source-file="content/index.md"] .docmd-hero {
   margin: 0.5rem 0 2rem;
-  padding: 1.5rem 0 1.75rem;
+  padding: 1.25rem 0 1.5rem;
+  max-width: 100%;
 }
 
 body[data-source-file="content/index.md"] .docmd-hero.hero-split {
@@ -41,8 +42,14 @@ body[data-source-file="content/index.md"] .docmd-hero.hero-split {
   gap: 2rem;
 }
 
+body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-content,
+body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
+  min-width: 0;
+  max-width: 100%;
+}
+
 body[data-source-file="content/index.md"] .hero-content h1 {
-  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  font-size: clamp(1.9rem, 3vw, 2.65rem);
   font-weight: 800;
   line-height: 1.12;
   letter-spacing: -0.03em;
@@ -92,16 +99,24 @@ body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
 
 body[data-source-file="content/index.md"] .hero-side .docmd-tabs {
   width: 100%;
+  max-width: 100%;
   margin: 0;
 }
 
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs-nav-item {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+}
+
 body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content {
-  padding: 1rem;
+  padding: 0.9rem 1rem;
 }
 
 body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content pre {
-  margin: 0.5rem 0;
-  font-size: 0.82rem;
+  margin: 0.45rem 0;
+  font-size: 0.8rem;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content p:last-child {
@@ -157,10 +172,19 @@ body[data-source-file="content/index.md"] .docmd-container.grids .card li:last-c
   margin-bottom: 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1120px) {
   body[data-source-file="content/index.md"] .docmd-hero.hero-split {
+    flex-direction: column;
+    align-items: stretch;
     text-align: left;
     gap: 1.5rem;
+  }
+
+  body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-content,
+  body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
   }
 
   body[data-source-file="content/index.md"] .hero-content h1 {

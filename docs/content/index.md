@@ -19,15 +19,24 @@ Parse, lint, evaluate, correlate, and convert [Sigma](https://sigmahq.io/) rules
 ::: tabs
 ::: tab "Evaluate" icon:terminal
 ```bash
-rsigma engine eval -r rules/ -e '{"CommandLine":"cmd /c whoami"}'
+rsigma engine eval --pretty -r rules/ \
+  -e '{"CommandLine":"cmd /c whoami"}'
 ```
 ```json
-{"rule_title":"Suspicious whoami invocation","level":"medium","matched_selections":["selection"],"matched_fields":[{"field":"CommandLine","value":"cmd /c whoami"}]}
+{
+  "rule_title": "Suspicious whoami invocation",
+  "level": "medium",
+  "matched_selections": ["selection"],
+  "matched_fields": [
+    {"field": "CommandLine", "value": "cmd /c whoami"}
+  ]
+}
 ```
 :::
 ::: tab "Daemon" icon:radio
 ```bash
-rsigma engine daemon -r rules/ -p ecs_windows --input http --api-addr 127.0.0.1:9090
+rsigma engine daemon -r rules/ -p ecs_windows \
+  --input http --api-addr 127.0.0.1:9090
 ```
 Runs continuously with hot-reload, SQLite-backed correlation windows, NATS/OTLP/HTTP/stdin ingest, enrichers, risk-based alerting, and Prometheus metrics.
 :::
@@ -36,7 +45,8 @@ Runs continuously with hot-reload, SQLite-backed correlation windows, NATS/OTLP/
 rsigma backend convert rules/ -t postgres
 ```
 ```sql
-SELECT * FROM security_events WHERE "CommandLine" ILIKE '%whoami%'
+SELECT * FROM security_events
+WHERE "CommandLine" ILIKE '%whoami%'
 ```
 Native PostgreSQL/TimescaleDB, LynxDB, and Fibratus targets, plus 30+ pySigma backends via `sigma-cli`.
 :::
@@ -45,7 +55,9 @@ Native PostgreSQL/TimescaleDB, LynxDB, and Fibratus targets, plus 30+ pySigma ba
 let collection = parse_sigma_yaml(yaml)?;
 let mut engine = Engine::new();
 engine.add_collection(&collection)?;
-let matches = engine.evaluate(&JsonEvent::borrow(&event));
+let matches = engine.evaluate(
+    &JsonEvent::borrow(&event),
+);
 ```
 Workspace of {{ rsigma.crate_count }} published crates on [crates.io](https://crates.io/crates/rsigma), plus [WebAssembly](reference/wasm-abi.md) support.
 :::
@@ -57,7 +69,8 @@ Workspace of {{ rsigma.crate_count }} published crates on [crates.io](https://cr
 ::: tabs
 ::: tab "Prebuilt binary" icon:download
 ```bash
-curl -fsSL -o rsigma.tar.gz https://github.com/timescale/rsigma/releases/download/v{{ rsigma.version }}/rsigma-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSL -o rsigma.tar.gz \
+  https://github.com/timescale/rsigma/releases/download/v{{ rsigma.version }}/rsigma-x86_64-unknown-linux-gnu.tar.gz
 tar -xzf rsigma.tar.gz && sudo install -m 0755 rsigma /usr/local/bin/rsigma
 gh attestation verify rsigma-x86_64-unknown-linux-gnu.tar.gz --repo timescale/rsigma
 ```
@@ -66,7 +79,10 @@ Archives for Linux, macOS, and Windows (x86_64 and arm64) include SLSA build pro
 ::: tab "Docker" icon:container
 ```bash
 docker pull {{ rsigma.docker_image }}:latest
-docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges:true -v /path/to/rules:/rules:ro {{ rsigma.docker_image }}:latest rule validate /rules/
+docker run --rm --read-only --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  -v /path/to/rules:/rules:ro \
+  {{ rsigma.docker_image }}:latest rule validate /rules/
 ```
 Multi-arch (`linux/amd64`, `linux/arm64`) images signed with keyless cosign, SPDX SBOM, and SLSA Build L3 provenance. See [Docker deployment](deployment/docker.md).
 :::
