@@ -352,6 +352,7 @@ fn risk_event_is_a_create_finding() {
     );
 }
 
+#[test]
 fn minted_uids_are_unique_across_a_batch() {
     let result = EvaluationResult {
         header: header(None),

@@ -217,7 +217,6 @@ fn backtest_output_format_ocsf_emits_finding_per_fire() {
             &fixture("corpus"),
             "--output-format",
             "ocsf",
-            "--quiet",
         ])
         .output()
         .unwrap();
@@ -239,6 +238,10 @@ fn backtest_output_format_ocsf_emits_finding_per_fire() {
     assert!(
         stderr.contains("Backtest:"),
         "expected summary on stderr, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("class_uid"),
+        "summary must stay native on stderr"
     );
 }
 
