@@ -515,15 +515,26 @@ mod tests {
     }
 
     #[test]
-    fn filter_in_include_is_rejected_by_validation_not_selection() {
-        // Selection treats a filter kind include as matching no detection; the
-        // static validator reports the configuration error.
+    fn filter_in_include_is_rejected_before_selection() {
         let candidates = vec![detection("a", "A", &[], "high", "a.yml")];
         let include = vec![RuleSelector {
             kind: vec!["filter".into()],
             ..Default::default()
         }];
-        let decisions = select(spec(include, vec![]), &candidates);
-        assert_eq!(decisions[0], Decision::NotSelected);
+        let loaded = crate::ruleset::LoadedSources {
+            candidates,
+            ..Default::default()
+        };
+        let error = crate::ruleset::resolve_loaded(
+            "test",
+            &spec(include, vec![]),
+            loaded,
+            &crate::ruleset::InlineOnlyOverlayLoader,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, crate::ruleset::RulesetError::InvalidSpec(_)),
+            "{error}"
+        );
     }
 }

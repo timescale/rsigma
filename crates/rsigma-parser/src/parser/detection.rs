@@ -15,6 +15,32 @@ use super::{
     parse_related, parse_sigma_version, val_key,
 };
 
+/// Top-level keys the parser reads; any other top-level key becomes a
+/// custom attribute.
+pub(crate) const STANDARD_RULE_KEYS: &[&str] = &[
+    "title",
+    "sigma-version",
+    "id",
+    "related",
+    "name",
+    "taxonomy",
+    "status",
+    "description",
+    "license",
+    "author",
+    "references",
+    "date",
+    "modified",
+    "logsource",
+    "detection",
+    "fields",
+    "falsepositives",
+    "level",
+    "tags",
+    "scope",
+    "custom_attributes",
+];
+
 // =============================================================================
 // Detection Rule Parsing
 // =============================================================================
@@ -58,30 +84,7 @@ pub(super) fn parse_detection_rule(
     // dedicated `custom_attributes:` mapping. Entries in `custom_attributes:`
     // win over a top-level key of the same name (last-write-wins).
     // Mirrors pySigma's `SigmaRule.custom_attributes` dict.
-    let standard_rule_keys: &[&str] = &[
-        "title",
-        "sigma-version",
-        "id",
-        "related",
-        "name",
-        "taxonomy",
-        "status",
-        "description",
-        "license",
-        "author",
-        "references",
-        "date",
-        "modified",
-        "logsource",
-        "detection",
-        "fields",
-        "falsepositives",
-        "level",
-        "tags",
-        "scope",
-        "custom_attributes",
-    ];
-    let custom_attributes = collect_custom_attributes(m, standard_rule_keys);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_RULE_KEYS);
 
     Ok(SigmaRule {
         title,

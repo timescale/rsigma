@@ -83,6 +83,10 @@ fuzz_target!(|data: &[u8]| {
     };
     let spec = match mode % 3 {
         0 => match yaml_serde::from_str::<RulesetSpec>(text) {
+            Ok(spec) if spec.sources.is_empty() => RulesetSpec {
+                sources: base.sources.clone(),
+                ..spec
+            },
             Ok(spec) => spec,
             Err(_) => return,
         },

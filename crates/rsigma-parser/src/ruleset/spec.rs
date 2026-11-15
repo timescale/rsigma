@@ -473,10 +473,6 @@ fn validate_overlay_entry(
     }
     if let Some(patch) = &entry.append {
         validate_patch(ruleset, patch, at, "append", APPEND_KEYS, problems);
-        for key in patch.unknown.keys() {
-            // The generic patch check already reports unknown keys.
-            let _ = key;
-        }
         if patch.level.is_some() {
             problems.push(format!(
                 "ruleset '{ruleset}': {at}.append cannot set 'level'; use set"
@@ -500,7 +496,15 @@ fn validate_overlay_entry(
     }
 }
 
-fn validate_patch(
+/// Engine keys read from a correlation's top level, which the emitter would
+/// write next to the parsed `window` and `gap`.
+const ENGINE_CORRELATION_KEYS: &[&str] = &["rsigma.window", "rsigma.gap"];
+
+/// Check one `set` or `append` patch: unknown keys, an empty patch, and
+/// custom attributes that would shadow a standard key. The emitter flattens
+/// custom attributes to the document's top level, so such a key would emit a
+/// document that no longer parses.
+pub(crate) fn validate_patch(
     ruleset: &str,
     patch: &OverlayPatch,
     at: &str,
@@ -513,6 +517,37 @@ fn validate_patch(
             "ruleset '{ruleset}': {at}.{form} has unknown key '{key}'{}",
             suggestion(key, allowed)
         ));
+    }
+    let empty = patch.level.is_none()
+        && patch.status.is_none()
+        && patch.description.is_none()
+        && patch.author.is_none()
+        && patch.tags.is_none()
+        && patch.references.is_none()
+        && patch.falsepositives.is_none()
+        && patch.fields.is_none()
+        && patch
+            .custom_attributes
+            .as_ref()
+            .is_none_or(BTreeMap::is_empty)
+        && patch.unknown.is_empty();
+    if empty {
+        problems.push(format!("ruleset '{ruleset}': {at}.{form} is empty"));
+    }
+    for key in patch.custom_attributes.iter().flat_map(BTreeMap::keys) {
+        let reserved = [
+            crate::parser::STANDARD_RULE_KEYS,
+            crate::parser::STANDARD_CORRELATION_KEYS,
+            crate::parser::STANDARD_FILTER_KEYS,
+            ENGINE_CORRELATION_KEYS,
+        ]
+        .iter()
+        .any(|keys| keys.contains(&key.as_str()));
+        if reserved {
+            problems.push(format!(
+                "ruleset '{ruleset}': {at}.{form}.custom_attributes cannot set '{key}', a standard Sigma or engine key"
+            ));
+        }
     }
 }
 
@@ -671,5 +706,59 @@ mod tests {
                 .any(|p| p.contains("at least one of set or append"))
         );
         assert!(problems.iter().any(|p| p.contains("cannot set 'level'")));
+    }
+
+    #[test]
+    fn rejects_empty_patches() {
+        let spec: RulesetSpec = yaml_serde::from_str(
+            "sources: [rules]\noverlays:\n  - id: x\n    set: {}\n  - id: y\n    append:\n      custom_attributes: {}\n",
+        )
+        .unwrap();
+        let problems = validate_spec("test", &spec);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.ends_with("overlays[0].set is empty")),
+            "{problems:?}"
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.ends_with("overlays[1].append is empty")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_custom_attributes_that_shadow_standard_keys() {
+        for key in [
+            "title",
+            "id",
+            "level",
+            "logsource",
+            "detection",
+            "correlation",
+            "filter",
+            "custom_attributes",
+            "rsigma.window",
+            "rsigma.gap",
+        ] {
+            let spec: RulesetSpec = yaml_serde::from_str(&format!(
+                "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        {key}: v\n  - id: y\n    append:\n      custom_attributes:\n        {key}: [v]\n"
+            ))
+            .unwrap();
+            let problems = validate_spec("test", &spec);
+            let shadowing = problems
+                .iter()
+                .filter(|p| p.contains(&format!("custom_attributes cannot set '{key}'")))
+                .count();
+            assert_eq!(shadowing, 2, "{key}: {problems:?}");
+        }
+
+        let spec: RulesetSpec = yaml_serde::from_str(
+            "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        rsigma.suppress: 5m\n        team: blue\n",
+        )
+        .unwrap();
+        assert!(validate_spec("test", &spec).is_empty());
     }
 }

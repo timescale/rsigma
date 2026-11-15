@@ -23,6 +23,7 @@ use super::source::{
 };
 use super::spec::{
     APPEND_KEYS, OverlayEntry, OverlayPatch, RulesetSpec, SET_KEYS, StaleOverlayPolicy, suggestion,
+    validate_patch,
 };
 
 /// Where an applied overlay came from.
@@ -671,7 +672,7 @@ fn validate_expanded(
         ));
     }
     if let Some(patch) = &entry.set {
-        validate_patch(name, &at, patch, "set", SET_KEYS, &mut problems);
+        validate_patch(name, patch, &at, "set", SET_KEYS, &mut problems);
         for value in patch.level.iter() {
             if value.parse::<Level>().is_err() {
                 problems.push(format!(
@@ -688,7 +689,7 @@ fn validate_expanded(
         }
     }
     if let Some(patch) = &entry.append {
-        validate_patch(name, &at, patch, "append", APPEND_KEYS, &mut problems);
+        validate_patch(name, patch, &at, "append", APPEND_KEYS, &mut problems);
         for (key, value) in [
             ("level", patch.level.is_some()),
             ("status", patch.status.is_some()),
@@ -707,22 +708,6 @@ fn validate_expanded(
         Ok(())
     } else {
         Err(RulesetError::InvalidSpec(problems))
-    }
-}
-
-fn validate_patch(
-    name: &str,
-    at: &str,
-    patch: &OverlayPatch,
-    form: &str,
-    allowed: &[&str],
-    problems: &mut Vec<String>,
-) {
-    for key in patch.unknown.keys() {
-        problems.push(format!(
-            "ruleset '{name}': {at}.{form} has unknown key '{key}'{}",
-            suggestion(key, allowed)
-        ));
     }
 }
 
@@ -840,11 +825,10 @@ mod tests {
     fn invalid_level_errors() {
         let spec = spec_with_overlays(vec![inline("d", Some(level_patch("severe")), None)]);
         let error = resolve_with("test", &spec, vec![detection("d")]).unwrap_err();
-        assert!(
-            error.to_string().contains("unknown level 'severe'"),
-            "{error}"
+        assert_eq!(
+            error.to_string(),
+            "ruleset 'test': overlays[0].set has unknown level 'severe'"
         );
-        assert!(error.to_string().contains("inline:0"), "{error}");
     }
 
     #[test]
@@ -1125,6 +1109,41 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("unknown key 'tagz'"), "{message}");
         assert!(message.contains("did you mean 'tags'"), "{message}");
+    }
+
+    #[test]
+    fn a_file_overlay_cannot_shadow_a_standard_key_or_be_empty() {
+        for (body, expected) in [
+            (
+                "- id: d\n  set:\n    custom_attributes:\n      title: Renamed\n",
+                "overlay.yml:0.set.custom_attributes cannot set 'title'",
+            ),
+            ("- id: d\n  append: {}\n", "overlay.yml:0.append is empty"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("overlay.yml");
+            std::fs::write(&path, body).unwrap();
+            let spec = RulesetSpec {
+                sources: vec![PathBuf::from("rules")],
+                overlays: vec![OverlayEntry {
+                    file: Some(path),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let error = crate::ruleset::resolve_loaded(
+                "test",
+                &spec,
+                crate::ruleset::LoadedSources {
+                    candidates: vec![detection("d")],
+                    ..Default::default()
+                },
+                &FsOverlayLoader::new(None),
+            )
+            .unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[test]

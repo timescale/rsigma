@@ -62,7 +62,7 @@ pub fn resolve_ruleset(
     }
     let loader = FsOverlayLoader::new(opts.confine_to.clone());
     let loaded = load_sources(spec, opts).map_err(|e| e.named(name))?;
-    resolve_loaded(name, spec, loaded, &loader)
+    resolve_validated(name, spec, loaded, &loader)
 }
 
 /// A resolved ruleset: the kept collection plus per-document decisions.
@@ -89,7 +89,8 @@ pub struct RuleEntry {
 }
 
 /// Resolve already-loaded sources into a collection, applying metadata
-/// overlays through `loader`.
+/// overlays through `loader`. The spec is validated first, as in
+/// [`resolve_ruleset`].
 ///
 /// ```rust
 /// use std::path::PathBuf;
@@ -131,6 +132,19 @@ pub struct RuleEntry {
 /// assert_eq!(resolved.collection.rules.len(), 1);
 /// ```
 pub fn resolve_loaded(
+    name: &str,
+    spec: &RulesetSpec,
+    loaded: LoadedSources,
+    loader: &dyn OverlayLoader,
+) -> Result<ResolvedRuleset, RulesetError> {
+    let problems = validate_spec(name, spec);
+    if !problems.is_empty() {
+        return Err(RulesetError::InvalidSpec(problems));
+    }
+    resolve_validated(name, spec, loaded, loader)
+}
+
+fn resolve_validated(
     name: &str,
     spec: &RulesetSpec,
     loaded: LoadedSources,

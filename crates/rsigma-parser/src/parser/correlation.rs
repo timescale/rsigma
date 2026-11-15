@@ -13,6 +13,32 @@ use super::{
     parse_sigma_version, val_key,
 };
 
+/// Top-level keys from the Sigma correlation-rules JSON schema plus keys this
+/// parser reads from the document root (including common extensions).
+pub(crate) const STANDARD_CORRELATION_KEYS: &[&str] = &[
+    "author",
+    "correlation",
+    "sigma-version",
+    "custom_attributes",
+    "date",
+    "description",
+    "falsepositives",
+    "fields",
+    "generate",
+    "id",
+    "level",
+    "license",
+    "modified",
+    "name",
+    "references",
+    "related",
+    "scope",
+    "status",
+    "tags",
+    "taxonomy",
+    "title",
+];
+
 // =============================================================================
 // Correlation Rule Parsing
 // =============================================================================
@@ -153,32 +179,7 @@ pub(super) fn parse_correlation_rule(
     // Aliases
     let aliases = parse_correlation_aliases(corr);
 
-    // Top-level keys from the Sigma correlation-rules JSON schema plus keys this
-    // parser reads from the document root (including common extensions).
-    let standard_correlation_keys: &[&str] = &[
-        "author",
-        "correlation",
-        "sigma-version",
-        "custom_attributes",
-        "date",
-        "description",
-        "falsepositives",
-        "fields",
-        "generate",
-        "id",
-        "level",
-        "license",
-        "modified",
-        "name",
-        "references",
-        "related",
-        "scope",
-        "status",
-        "tags",
-        "taxonomy",
-        "title",
-    ];
-    let custom_attributes = collect_custom_attributes(m, standard_correlation_keys);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_CORRELATION_KEYS);
 
     Ok(CorrelationRule {
         title,
