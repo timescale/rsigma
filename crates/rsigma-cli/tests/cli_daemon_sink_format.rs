@@ -570,3 +570,71 @@ fn incident_finding_references_the_emitted_detection_finding() {
         "finding uids never reach the native wire: {native_incident}",
     );
 }
+
+/// A webhook body with `${detection.ocsf}` posts the same finding an OCSF line
+/// sink writes for the detection.
+#[test]
+fn webhook_ocsf_body_carries_the_dispatched_finding() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        server
+    });
+    let webhook = temp_file(
+        ".yml",
+        &format!(
+            "webhooks:\n  - id: siem\n    kind: detection\n    url: {}/hook\n    body: '{{\"source\": \"rsigma\", \"finding\": ${{detection.ocsf}}}}'\n",
+            server.uri()
+        ),
+    );
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--webhook",
+            webhook.path().to_str().unwrap(),
+            "--output",
+            &ocsf_spec,
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let line = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the OCSF line sink never received the finding");
+    let request = poll_until(Duration::from_secs(10), || {
+        rt.block_on(server.received_requests())?.into_iter().next()
+    })
+    .expect("the webhook never made a request");
+    let body: Value = serde_json::from_slice(&request.body).expect("the body is JSON");
+    assert_eq!(body["source"], "rsigma");
+    validate_ocsf_finding(&body["finding"]);
+    assert_eq!(
+        body["finding"], line,
+        "the webhook finding is the finding the line sink wrote",
+    );
+}
+
+#[test]
+fn webhook_ocsf_reference_inside_a_string_is_a_startup_error() {
+    let webhook = temp_file(
+        ".yml",
+        "webhooks:\n  - id: siem\n    kind: detection\n    url: http://127.0.0.1:1/hook\n    body: '{\"finding\": \"${detection.ocsf}\"}'\n",
+    );
+    daemon_startup_failure(&["--webhook", webhook.path().to_str().unwrap()])
+        .failure()
+        .stderr(contains("only valid in body, as a whole JSON value"));
+}

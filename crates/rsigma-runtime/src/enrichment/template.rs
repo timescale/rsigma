@@ -29,6 +29,10 @@
 //! - `aggregated_value` / `timespan_secs`
 //! - `group_key` (joined `field=value,…`) or `group_key.<field>`
 //!
+//! `${detection.ocsf}` and `${correlation.ocsf}` insert the result's OCSF
+//! Detection Finding as raw JSON. They are valid only in a webhook body, as a
+//! whole JSON value; every other templated field rejects them at config load.
+//!
 //! Anything else (unrecognized prefix, dotted env var, etc.) is rejected at
 //! config load, **not** at runtime, so a deployment with a typo never starts
 //! producing partly-rendered enrichments under load.
@@ -50,6 +54,14 @@ use super::{EnrichError, Enricher, EnricherKind, OnError, Scope, inject_enrichme
 /// messages can pinpoint the offending reference.
 static TEMPLATE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$\{([^}]+)\}").unwrap());
 
+/// The path that inserts the result's OCSF finding into a webhook body.
+const OCSF_PATH: &str = "ocsf";
+
+/// Key of the object substituted for an OCSF reference when checking that a
+/// webhook body uses it as a whole JSON value. The quotes make a reference
+/// inside a string literal fail to parse.
+const OCSF_PROBE_KEY: &str = "rsigma_ocsf_probe";
+
 /// Classification of a single `${...}` reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum VarRef {
@@ -62,6 +74,12 @@ enum VarRef {
     /// Anything else (dotted but unknown prefix, empty, …). Always an
     /// error at config load.
     Invalid(String),
+}
+
+impl VarRef {
+    fn is_ocsf(&self) -> bool {
+        matches!(self, VarRef::Detection(path) | VarRef::Correlation(path) if path == OCSF_PATH)
+    }
 }
 
 fn classify_ref(name: &str) -> VarRef {
@@ -94,6 +112,13 @@ pub enum TemplateError {
         reference: String,
         field: &'static str,
     },
+    /// `${detection.ocsf}` / `${correlation.ocsf}` outside a webhook body, or
+    /// inside one but not as a whole JSON value.
+    MisplacedOcsf {
+        enricher_id: String,
+        reference: String,
+        field: &'static str,
+    },
 }
 
 impl std::fmt::Display for TemplateError {
@@ -117,6 +142,14 @@ impl std::fmt::Display for TemplateError {
                 f,
                 "enricher '{enricher_id}': malformed template reference '${{{reference}}}' in field '{field}'; expected ${{detection.*}}, ${{correlation.*}}, or ${{ENV_VAR}}",
             ),
+            TemplateError::MisplacedOcsf {
+                enricher_id,
+                reference,
+                field,
+            } => write!(
+                f,
+                "enricher '{enricher_id}': '${{{reference}}}' in field '{field}' is only valid as a whole JSON value in a webhook body",
+            ),
         }
     }
 }
@@ -131,15 +164,92 @@ impl std::error::Error for TemplateError {}
 /// Called at config load time for every templated config value across every
 /// enricher; rejects the daemon startup on the first failure rather than
 /// the first runtime hit.
+///
+/// `${detection.ocsf}` and `${correlation.ocsf}` are rejected here: they are
+/// valid only in a webhook body, which is checked with
+/// `validate_webhook_body_template` instead.
 pub fn validate_template_namespace(
     text: &str,
     enricher_kind: EnricherKind,
     enricher_id: &str,
     field: &'static str,
 ) -> Result<(), TemplateError> {
+    validate_references(text, enricher_kind, enricher_id, field, false)
+}
+
+/// Validate a webhook body template: the namespace rules of
+/// [`validate_template_namespace`], plus `${detection.ocsf}` /
+/// `${correlation.ocsf}` allowed only where a whole JSON value can stand.
+///
+/// The check substitutes a JSON object for each OCSF reference and `0` for
+/// every other reference, then requires the body to parse and to hold every
+/// substituted object. A reference inside a string literal or in key position
+/// fails. Bodies without an OCSF reference are not parsed, so a non-JSON body
+/// keeps working.
+pub(crate) fn validate_webhook_body_template(
+    text: &str,
+    kind: EnricherKind,
+    webhook_id: &str,
+) -> Result<(), TemplateError> {
+    const FIELD: &str = "body";
+    validate_references(text, kind, webhook_id, FIELD, true)?;
+
+    let mut first_ocsf: Option<String> = None;
+    let mut ocsf_count = 0usize;
+    let probe = TEMPLATE_RE.replace_all(text, |caps: &regex::Captures| {
+        let inner = caps.get(1).unwrap().as_str();
+        if classify_ref(inner).is_ocsf() {
+            ocsf_count += 1;
+            first_ocsf.get_or_insert_with(|| inner.to_string());
+            format!("{{\"{OCSF_PROBE_KEY}\":0}}")
+        } else {
+            "0".to_string()
+        }
+    });
+    let Some(reference) = first_ocsf else {
+        return Ok(());
+    };
+    let whole_values = serde_json::from_str::<serde_json::Value>(&probe)
+        .map(|value| count_ocsf_probes(&value) == ocsf_count)
+        .unwrap_or(false);
+    if whole_values {
+        Ok(())
+    } else {
+        Err(TemplateError::MisplacedOcsf {
+            enricher_id: webhook_id.to_string(),
+            reference,
+            field: FIELD,
+        })
+    }
+}
+
+fn count_ocsf_probes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(map) if map.len() == 1 && map.contains_key(OCSF_PROBE_KEY) => 1,
+        serde_json::Value::Object(map) => map.values().map(count_ocsf_probes).sum(),
+        serde_json::Value::Array(items) => items.iter().map(count_ocsf_probes).sum(),
+        _ => 0,
+    }
+}
+
+fn validate_references(
+    text: &str,
+    enricher_kind: EnricherKind,
+    enricher_id: &str,
+    field: &'static str,
+    allow_ocsf: bool,
+) -> Result<(), TemplateError> {
     for caps in TEMPLATE_RE.captures_iter(text) {
         let inner = caps.get(1).unwrap().as_str();
-        match classify_ref(inner) {
+        let reference = classify_ref(inner);
+        if reference.is_ocsf() && !allow_ocsf {
+            return Err(TemplateError::MisplacedOcsf {
+                enricher_id: enricher_id.to_string(),
+                reference: inner.to_string(),
+                field,
+            });
+        }
+        match reference {
             VarRef::Env(_) => {}
             VarRef::Detection(_) if enricher_kind == EnricherKind::Detection => {}
             VarRef::Correlation(_) if enricher_kind == EnricherKind::Correlation => {}
@@ -206,7 +316,7 @@ pub fn render_template(text: &str, result: &EvaluationResult) -> String {
 pub fn render_template_url(text: &str, result: &EvaluationResult) -> String {
     render_with(text, result, |source, s| match source {
         ValueSource::Env => s,
-        ValueSource::Result => url_component_escape(&s),
+        ValueSource::Result | ValueSource::Ocsf => url_component_escape(&s),
     })
 }
 
@@ -224,12 +334,32 @@ pub fn render_template_json(text: &str, result: &EvaluationResult) -> String {
     render_with(text, result, |_, s| json_escape_value(s))
 }
 
+/// Like [`render_template_json`], but `${detection.ocsf}` /
+/// `${correlation.ocsf}` insert the raw JSON `ocsf` returns, unescaped.
+///
+/// Only a webhook body validated by `validate_webhook_body_template` may
+/// contain those references, so the inserted finding always lands where a
+/// whole JSON value belongs.
+pub(crate) fn render_template_json_with_ocsf(
+    text: &str,
+    result: &EvaluationResult,
+    ocsf: impl Fn() -> String,
+) -> String {
+    render_with(text, result, |source, s| match source {
+        ValueSource::Ocsf => ocsf(),
+        ValueSource::Env | ValueSource::Result => json_escape_value(s),
+    })
+}
+
 /// Where a substituted value came from, so an escaper can treat operator
 /// environment values differently from evaluation-result values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueSource {
     Env,
     Result,
+    /// `${detection.ocsf}` / `${correlation.ocsf}` on a result of the
+    /// matching kind. Renders empty unless the renderer supplies a finding.
+    Ocsf,
 }
 
 /// Shared render core: substitute every `${...}` reference, then run each
@@ -244,20 +374,24 @@ fn render_with<F: Fn(ValueSource, String) -> String>(
             let inner = caps.get(1).unwrap().as_str();
             let (source, raw) = match classify_ref(inner) {
                 VarRef::Env(name) => (ValueSource::Env, std::env::var(name).unwrap_or_default()),
-                VarRef::Detection(path) => (
-                    ValueSource::Result,
-                    match &result.body {
-                        ResultBody::Detection(_) => render_detection_path(&path, result),
-                        ResultBody::Correlation(_) => String::new(),
-                    },
-                ),
-                VarRef::Correlation(path) => (
-                    ValueSource::Result,
-                    match &result.body {
-                        ResultBody::Correlation(_) => render_correlation_path(&path, result),
-                        ResultBody::Detection(_) => String::new(),
-                    },
-                ),
+                VarRef::Detection(path) => match &result.body {
+                    ResultBody::Detection(_) if path == OCSF_PATH => {
+                        (ValueSource::Ocsf, String::new())
+                    }
+                    ResultBody::Detection(_) => {
+                        (ValueSource::Result, render_detection_path(&path, result))
+                    }
+                    ResultBody::Correlation(_) => (ValueSource::Result, String::new()),
+                },
+                VarRef::Correlation(path) => match &result.body {
+                    ResultBody::Correlation(_) if path == OCSF_PATH => {
+                        (ValueSource::Ocsf, String::new())
+                    }
+                    ResultBody::Correlation(_) => {
+                        (ValueSource::Result, render_correlation_path(&path, result))
+                    }
+                    ResultBody::Detection(_) => (ValueSource::Result, String::new()),
+                },
                 VarRef::Invalid(_) => (ValueSource::Result, String::new()),
             };
             escape(source, raw)

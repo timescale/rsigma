@@ -80,6 +80,7 @@ pub use template::{
     TemplateEnricher, TemplateError, env_references, render_template, render_template_json,
     render_template_url, validate_template_namespace,
 };
+pub(crate) use template::{render_template_json_with_ocsf, validate_webhook_body_template};
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.
 ///

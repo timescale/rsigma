@@ -1094,6 +1094,28 @@ enrichers:
     }
 
     #[test]
+    fn rejects_ocsf_reference_in_an_enricher() {
+        let yaml = r#"
+enrichers:
+  - id: bad
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://intel.example/lookup"
+    method: POST
+    body: '{"finding": ${detection.ocsf}}'
+"#;
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let err = build_enrichers(parsed).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("only valid as a whole JSON value in a webhook body"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("field 'body'"), "got: {msg}");
+    }
+
+    #[test]
     fn rejects_unknown_type() {
         let yaml = r#"
 enrichers:

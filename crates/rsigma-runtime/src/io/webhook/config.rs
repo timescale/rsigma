@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 
 use crate::enrichment::{
     EnricherKind, HttpEnricherClient, Scope, TemplateError, build_default_http_client,
-    validate_template_namespace,
+    validate_template_namespace, validate_webhook_body_template,
 };
 use crate::io::DeliveryConfig;
 use crate::metrics::MetricsHook;
@@ -303,6 +303,13 @@ pub enum WebhookConfigError {
         reference: String,
         field: &'static str,
     },
+    /// `${detection.ocsf}` / `${correlation.ocsf}` appeared outside the body,
+    /// or in the body but not as a whole JSON value.
+    MisplacedOcsf {
+        webhook_id: String,
+        reference: String,
+        field: &'static str,
+    },
     /// `retry` settings were invalid (e.g. zero attempts).
     InvalidRetry { webhook_id: String, message: String },
     /// `rate_limit` settings were invalid.
@@ -356,6 +363,14 @@ impl std::fmt::Display for WebhookConfigError {
             } => write!(
                 f,
                 "webhook '{webhook_id}': malformed template reference '${{{reference}}}' in field '{field}'; expected ${{detection.*}}, ${{correlation.*}}, or ${{ENV_VAR}}"
+            ),
+            WebhookConfigError::MisplacedOcsf {
+                webhook_id,
+                reference,
+                field,
+            } => write!(
+                f,
+                "webhook '{webhook_id}': '${{{reference}}}' in field '{field}' is only valid in body, as a whole JSON value (for example \"finding\": ${{{reference}}}), not inside a string"
             ),
             WebhookConfigError::InvalidRetry {
                 webhook_id,
@@ -442,7 +457,8 @@ fn build_one(
         check_template(value, ek, &cfg.id, field)?;
     }
     if let Some(body) = &cfg.body {
-        check_template(body, ek, &cfg.id, "body")?;
+        validate_webhook_body_template(body, ek, &cfg.id)
+            .map_err(|te| template_error(te, ek, &cfg.id))?;
     }
 
     let method = match &cfg.method {
@@ -610,7 +626,11 @@ fn check_template(
     id: &str,
     field: &'static str,
 ) -> Result<(), WebhookConfigError> {
-    validate_template_namespace(text, kind, id, field).map_err(|te| match te {
+    validate_template_namespace(text, kind, id, field).map_err(|te| template_error(te, kind, id))
+}
+
+fn template_error(te: TemplateError, kind: EnricherKind, id: &str) -> WebhookConfigError {
+    match te {
         TemplateError::CrossNamespace {
             reference, field, ..
         } => WebhookConfigError::CrossNamespace {
@@ -626,7 +646,14 @@ fn check_template(
             reference,
             field,
         },
-    })
+        TemplateError::MisplacedOcsf {
+            reference, field, ..
+        } => WebhookConfigError::MisplacedOcsf {
+            webhook_id: id.to_string(),
+            reference,
+            field,
+        },
+    }
 }
 
 /// Validate a `signing:` block and build its [`WebhookSigner`].
@@ -941,6 +968,46 @@ webhooks:
             "{msg}"
         );
         assert!(msg.contains("field 'body'"), "{msg}");
+    }
+
+    #[test]
+    fn ocsf_body_reference_builds_as_a_whole_json_value() {
+        build(
+            r#"
+webhooks:
+  - id: siem
+    kind: correlation
+    url: https://example.test/hook
+    body: '{"source": "rsigma", "finding": ${correlation.ocsf}}'
+"#,
+        )
+        .expect("a whole-value OCSF reference is valid");
+    }
+
+    #[test]
+    fn misplaced_ocsf_reference_is_rejected_per_field() {
+        for (fields, field) in [
+            ("url: https://example.test/${detection.ocsf}", "field 'url'"),
+            (
+                "url: https://example.test/hook\n    headers:\n      X-Finding: '${detection.ocsf}'",
+                "field 'headers.X-Finding'",
+            ),
+            (
+                "url: https://example.test/hook\n    body: '{\"finding\": \"${detection.ocsf}\"}'",
+                "field 'body'",
+            ),
+        ] {
+            let err = build_err(&format!(
+                "webhooks:\n  - id: x\n    kind: detection\n    {fields}\n"
+            ));
+            assert!(
+                matches!(err, WebhookConfigError::MisplacedOcsf { .. }),
+                "{fields}: {err}"
+            );
+            let msg = err.to_string();
+            assert!(msg.contains(field), "{msg}");
+            assert!(msg.contains("whole JSON value"), "{msg}");
+        }
     }
 
     #[test]
