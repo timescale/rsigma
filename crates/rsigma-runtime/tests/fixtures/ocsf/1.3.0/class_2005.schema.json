@@ -15,10 +15,17 @@
     "time",
     "type_uid"
   ],
+  "anyOf": [
+    { "required": ["assignee"] },
+    { "required": ["assignee_group"] }
+  ],
   "not": {
     "anyOf": [
       { "required": ["action_id"] },
-      { "required": ["finding_info"] }
+      { "required": ["finding_info"] },
+      { "required": ["actor"] },
+      { "required": ["resources"] },
+      { "required": ["risk_score"] }
     ]
   },
   "properties": {

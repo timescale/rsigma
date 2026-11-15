@@ -448,3 +448,64 @@ fn minted_uids_are_unique_across_a_batch() {
     let distinct: std::collections::HashSet<&String> = uids.iter().collect();
     assert_eq!(distinct.len(), uids.len(), "metadata.uid must be unique");
 }
+
+fn schema_rejects(version: &str, class_uid: i64, finding: &Value) {
+    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "tests/fixtures/ocsf/{version}/class_{class_uid}.schema.json"
+    ));
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_path).unwrap()).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(
+        !validator.is_valid(finding),
+        "class {class_uid} {version} accepted a finding it must reject: {finding}"
+    );
+}
+
+fn golden_value(version: &str, name: &str) -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/ocsf")
+        .join(version)
+        .join(format!("{name}.json"));
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn class_2005_without_assignee_group_fails_the_fixture() {
+    for version in ["1.1.0", "1.3.0"] {
+        let mut finding = golden_value(version, "incident_open_2005");
+        finding.as_object_mut().unwrap().remove("assignee_group");
+        schema_rejects(version, 2005, &finding);
+    }
+}
+
+#[test]
+fn class_2004_without_security_control_profile_fails_the_fixture() {
+    for version in ["1.1.0", "1.3.0"] {
+        let mut finding = golden_value(version, "detection");
+        finding["metadata"]["profiles"]
+            .as_array_mut()
+            .unwrap()
+            .clear();
+        schema_rejects(version, 2004, &finding);
+    }
+}
+
+#[test]
+fn class_2004_actor_without_host_profile_fails_the_fixture() {
+    for version in ["1.1.0", "1.3.0"] {
+        let mut finding = golden_value(version, "detection");
+        let profiles = finding["metadata"]["profiles"].as_array_mut().unwrap();
+        profiles.retain(|p| p.as_str() != Some("host"));
+        assert!(finding.get("actor").is_some());
+        schema_rejects(version, 2004, &finding);
+    }
+}
+
+#[test]
+fn class_2005_rejects_detection_only_attributes() {
+    for version in ["1.1.0", "1.3.0"] {
+        let mut finding = golden_value(version, "incident_open_2005");
+        finding["actor"] = json!({"user": {"name": "alice"}});
+        schema_rejects(version, 2005, &finding);
+    }
+}
