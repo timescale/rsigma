@@ -1,6 +1,6 @@
 //! `--rules-dir` confinement across every path-accepting tool.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use rsigma_parser::LintConfig;
 use tempfile::TempDir;
@@ -14,7 +14,7 @@ use super::list_fields::FieldsInput;
 use super::resolve_pipeline::ResolvePipelineInput;
 use super::shared::SourceInput;
 use super::validate_rules::ValidateInput;
-use crate::tools::{VALID_RULE, block_on};
+use crate::tools::{VALID_RULE, block_on, ruleset_handler, ruleset_spec};
 
 const PIPELINE: &str = "name: p\ntransformations: []\n";
 const ENRICHERS: &str = "enrichers: []\n";
@@ -77,6 +77,7 @@ fn evaluate() -> EvaluateInput {
     EvaluateInput {
         yaml: Some(VALID_RULE.to_string()),
         path: None,
+        ruleset: None,
         events: None,
         events_path: Some("events.ndjson".to_string()),
         pipelines: vec![],
@@ -130,6 +131,7 @@ fn every_path_input_is_confined_to_rules_dir() {
             s.run_list_fields(FieldsInput {
                 yaml: None,
                 path: Some(p.clone()),
+                ruleset: None,
                 pipelines: vec![],
                 include_filters: false,
             }),
@@ -140,6 +142,7 @@ fn every_path_input_is_confined_to_rules_dir() {
             block_on(s.run_validate_rules(ValidateInput {
                 yaml: None,
                 path: Some(p.clone()),
+                ruleset: None,
                 pipelines: vec![],
                 resolve_sources: false,
                 fail_level: Default::default(),
@@ -151,6 +154,7 @@ fn every_path_input_is_confined_to_rules_dir() {
             s.run_convert_rules(ConvertInput {
                 yaml: None,
                 path: Some(p.clone()),
+                ruleset: None,
                 target: "postgres".to_string(),
                 format: None,
                 pipelines: vec![],
@@ -203,6 +207,7 @@ fn every_path_input_is_confined_to_rules_dir() {
             s.run_list_fields(FieldsInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 pipelines: vec![p.clone()],
                 include_filters: false,
             }),
@@ -294,10 +299,68 @@ fn directory_inputs_reject_nested_symlinks() {
         block_on(fx.server.run_validate_rules(ValidateInput {
             yaml: None,
             path: Some("rules".to_string()),
+            ruleset: None,
             pipelines: vec![],
             resolve_sources: false,
             fail_level: Default::default(),
         })),
+    );
+}
+
+#[test]
+fn a_ruleset_source_outside_the_root_is_rejected() {
+    let fx = Fixture::new();
+    let outside = fx.outside.path().join("rule.yml");
+    let rulesets = BTreeMap::from([(
+        "base".to_string(),
+        ruleset_spec(&[&outside.display().to_string()], &[]),
+    )]);
+    let server = ruleset_handler(Some(fx.root.path().to_path_buf()), rulesets);
+    let error = block_on(server.run_validate_rules(ValidateInput {
+        yaml: None,
+        path: None,
+        ruleset: Some("base".to_string()),
+        pipelines: vec![],
+        resolve_sources: false,
+        fail_level: Default::default(),
+    }))
+    .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("escapes the configured --rules-dir"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_ruleset_overlay_outside_the_root_is_rejected() {
+    let fx = Fixture::new();
+    let outside = fx.outside.path().join("overlay.yml");
+    std::fs::write(
+        &outside,
+        "- id: 8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a\n  set:\n    level: low\n",
+    )
+    .unwrap();
+    let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(&format!(
+        "sources: [rule.yml]\noverlays:\n  - file: {}\n",
+        outside.display()
+    ))
+    .unwrap();
+    let server = ruleset_handler(
+        Some(fx.root.path().to_path_buf()),
+        BTreeMap::from([("base".to_string(), spec)]),
+    );
+    let error = block_on(server.run_validate_rules(ValidateInput {
+        yaml: None,
+        path: None,
+        ruleset: Some("base".to_string()),
+        pipelines: vec![],
+        resolve_sources: false,
+        fail_level: Default::default(),
+    }))
+    .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("escapes the configured --rules-dir"),
+        "{error:?}"
     );
 }
 

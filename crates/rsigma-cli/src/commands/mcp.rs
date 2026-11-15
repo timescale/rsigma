@@ -136,12 +136,16 @@ pub(crate) fn dispatch_mcp(cmd: McpCommands, ctx: crate::output::OutputCtx) {
 }
 
 /// Overlay the `mcp` config section (defaults < file < env) onto any flag the
-/// operator did not set explicitly. The MCP HTTP auth token and the daemon
-/// token are intentionally excluded: secrets stay flag/env-only.
-fn apply_mcp_config(args: &mut McpServeArgs) {
+/// operator did not set explicitly, and return the declared rulesets. The MCP
+/// HTTP auth token and the daemon token are intentionally excluded: secrets
+/// stay flag/env-only.
+fn apply_mcp_config(
+    args: &mut McpServeArgs,
+) -> std::collections::BTreeMap<String, rsigma_parser::ruleset::RulesetSpec> {
     let base = crate::config::load_and_merge(args.config.as_deref());
+    let rulesets = base.rulesets.clone().unwrap_or_default();
     let Some(mcp) = base.mcp else {
-        return;
+        return rulesets;
     };
     if args.http.is_none()
         && let Some(addr) = mcp.http_addr
@@ -183,12 +187,13 @@ fn apply_mcp_config(args: &mut McpServeArgs) {
     {
         args.allow_operate_writes = allow;
     }
+    rulesets
 }
 
 /// Run the MCP server. Builds a multi-thread tokio runtime (same pattern as the
 /// daemon) and serves over stdio or, when `--http` is set, Streamable HTTP.
 pub(crate) fn cmd_mcp_serve(mut args: McpServeArgs) {
-    apply_mcp_config(&mut args);
+    let rulesets = apply_mcp_config(&mut args);
 
     match path_confinement(&args) {
         Confinement::Confined | Confinement::UnconfinedAllowed => {}
@@ -224,7 +229,7 @@ pub(crate) fn cmd_mcp_serve(mut args: McpServeArgs) {
         None => LintConfig::default(),
     };
 
-    let handler = match build_handler(&args, lint_config) {
+    let handler = match build_handler(&args, lint_config, rulesets) {
         Ok(handler) => handler,
         Err(e) => {
             eprintln!("{e}");
@@ -280,13 +285,15 @@ fn path_confinement(args: &McpServeArgs) -> Confinement {
 fn build_handler(
     args: &McpServeArgs,
     lint_config: LintConfig,
+    rulesets: std::collections::BTreeMap<String, rsigma_parser::ruleset::RulesetSpec>,
 ) -> Result<rsigma_mcp::RsigmaMcp, String> {
     let Some(url) = args.daemon_url.clone() else {
         return Ok(rsigma_mcp::RsigmaMcp::new(
             args.rules_dir.clone(),
             lint_config,
             args.allow_sigma_cli,
-        ));
+        )
+        .with_rulesets(rulesets));
     };
     let ca_pem = match &args.daemon_ca {
         Some(path) => Some(
@@ -306,6 +313,7 @@ fn build_handler(
         },
         args.allow_operate_writes,
     )
+    .map(|handler| handler.with_rulesets(rulesets))
     .map_err(|e| format!("invalid daemon client configuration: {e}"))
 }
 

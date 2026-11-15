@@ -26,7 +26,7 @@ impl RsigmaMcp {
     }
 
     pub(crate) fn run_author_ads(&self, input: SourceInput) -> Result<Value, McpError> {
-        let collection = self.load_collection(input.yaml.as_deref(), input.path.as_deref())?;
+        let collection = self.load_collection_only(input.yaml.as_deref(), input.path.as_deref())?;
         let bar = self.lint_config().ads.clone().unwrap_or_default();
         let extra_ns = &self.lint_config().tag_namespaces;
 

@@ -14,6 +14,7 @@
 //! [`ToolRouter`] implements `Add`, so the combined router exposes every tool
 //! exactly as a single `#[tool_router]` block would.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ use rmcp::{
     tool_handler,
 };
 use rsigma_parser::reference::{MITRE_TACTICS, MODIFIERS};
+use rsigma_parser::ruleset::RulesetSpec;
 use rsigma_parser::{LintConfig, ads_catalogue, catalogue};
 use serde_json::{Value, json};
 
@@ -84,6 +86,8 @@ struct State {
     /// Whether the two mutating operate tools register. Ignored when `daemon`
     /// is `None`.
     allow_operate_writes: bool,
+    /// Named rulesets declared in the server's configuration.
+    rulesets: BTreeMap<String, RulesetSpec>,
 }
 
 /// The rsigma MCP handler. Cloned per request by rmcp; the real state lives
@@ -141,8 +145,17 @@ impl RsigmaMcp {
                 delegate_permits: tokio::sync::Semaphore::new(DELEGATE_MAX_CONCURRENT),
                 daemon,
                 allow_operate_writes: has_daemon && allow_operate_writes,
+                rulesets: BTreeMap::new(),
             }),
         })
+    }
+
+    /// Attach the named rulesets declared in the server's configuration.
+    pub fn with_rulesets(mut self, rulesets: BTreeMap<String, RulesetSpec>) -> Self {
+        let state = Arc::get_mut(&mut self.state)
+            .expect("the handler state is unique while the builder runs");
+        state.rulesets = rulesets;
+        self
     }
 
     fn root(&self) -> Option<&Path> {
@@ -351,6 +364,25 @@ pub(crate) fn handler() -> RsigmaMcp {
 #[cfg(test)]
 pub(crate) fn delegating_handler(root: Option<PathBuf>) -> RsigmaMcp {
     RsigmaMcp::new(root, LintConfig::default(), true)
+}
+
+/// A handler carrying the named rulesets under test.
+#[cfg(test)]
+pub(crate) fn ruleset_handler(
+    root: Option<PathBuf>,
+    rulesets: BTreeMap<String, RulesetSpec>,
+) -> RsigmaMcp {
+    RsigmaMcp::new(root, LintConfig::default(), false).with_rulesets(rulesets)
+}
+
+/// A ruleset spec with the given sources and pipelines.
+#[cfg(test)]
+pub(crate) fn ruleset_spec(sources: &[&str], pipelines: &[&str]) -> RulesetSpec {
+    RulesetSpec {
+        sources: sources.iter().map(PathBuf::from).collect(),
+        pipelines: pipelines.iter().map(|name| (*name).to_string()).collect(),
+        ..Default::default()
+    }
 }
 
 /// A handler pointed at `daemon_url`, with write tools gated by `allow_writes`.

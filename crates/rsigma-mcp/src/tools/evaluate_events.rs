@@ -29,6 +29,10 @@ pub struct EvaluateInput {
     /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
     #[serde(default)]
     pub path: Option<String>,
+    /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
+    /// `yaml` and `path`.
+    #[serde(default)]
+    pub ruleset: Option<String>,
     /// Inline events as a JSON array of objects. Mutually exclusive with `events_path`.
     #[serde(default)]
     pub events: Option<Vec<Value>>,
@@ -64,7 +68,7 @@ pub struct EvaluateInput {
 impl RsigmaMcp {
     /// Evaluate JSON events against Sigma rules (detections and correlations).
     #[tool(
-        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Rules via inline `yaml` or `path`; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full)."
+        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Provide exactly one of inline `yaml`, a file/directory `path`, or a named `ruleset` from the server's configuration; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full)."
     )]
     async fn evaluate_events(
         &self,
@@ -77,8 +81,17 @@ impl RsigmaMcp {
         &self,
         input: EvaluateInput,
     ) -> Result<Value, McpError> {
-        let collection = self.load_collection(input.yaml.as_deref(), input.path.as_deref())?;
-        let pipelines = self.load_pipelines(&input.pipelines)?;
+        let (collection, ruleset_pipelines) = self.load_collection(
+            input.yaml.as_deref(),
+            input.path.as_deref(),
+            input.ruleset.as_deref(),
+        )?;
+        let pipeline_specs = if input.pipelines.is_empty() {
+            ruleset_pipelines
+        } else {
+            input.pipelines
+        };
+        let pipelines = self.load_pipelines(&pipeline_specs)?;
         let events = self.load_events(input.events, input.events_path.as_deref())?;
         let detail = parse_match_detail(input.match_detail.as_deref())?;
         let enrichment =
@@ -251,8 +264,10 @@ fn templated_fields(cfg: &EnricherConfig) -> impl Iterator<Item = &str> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
-    use crate::tools::{GOLDEN_RULE, VALID_RULE, handler};
+    use crate::tools::{GOLDEN_RULE, VALID_RULE, handler, ruleset_handler, ruleset_spec};
 
     #[tokio::test]
     async fn evaluate_events_detects_match() {
@@ -260,6 +275,7 @@ mod tests {
             .run_evaluate_events(EvaluateInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -282,6 +298,7 @@ mod tests {
             .run_evaluate_events(EvaluateInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 events: None,
                 events_path: None,
                 pipelines: vec![],
@@ -320,6 +337,7 @@ correlation:
         let input = |emit_detections| EvaluateInput {
             yaml: Some(yaml.to_string()),
             path: None,
+            ruleset: None,
             events: Some(vec![
                 json!({"EventID": 1, "Host": "h1", "timestamp": "2025-01-01T00:00:00Z"}),
                 json!({"EventID": 1, "Host": "h1", "timestamp": "2025-01-01T00:00:01Z"}),
@@ -356,6 +374,7 @@ enrichers:
             .run_evaluate_events(EvaluateInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -389,6 +408,7 @@ enrichers:
             .run_evaluate_events(EvaluateInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -407,6 +427,7 @@ enrichers:
         EvaluateInput {
             yaml: Some(VALID_RULE.to_string()),
             path: None,
+            ruleset: None,
             events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
             events_path: None,
             pipelines: vec![],
@@ -549,11 +570,61 @@ enrichers:
     }
 
     #[tokio::test]
+    async fn evaluate_events_uses_ruleset_pipelines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(&["rule.yml"], &["ecs_windows"]),
+        )]);
+        let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: None,
+                ruleset: Some("base".to_string()),
+                events: Some(vec![json!({ "process.command_line": "cmd /c whoami" })]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["summary"]["detection_matches"], 1);
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rejects_ruleset_and_path() {
+        let error = handler()
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: Some("rule.yml".to_string()),
+                ruleset: Some("base".to_string()),
+                events: Some(vec![json!({})]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"));
+    }
+
+    #[tokio::test]
     async fn golden_evaluate_events() {
         let v = handler()
             .run_evaluate_events(EvaluateInput {
                 yaml: Some(GOLDEN_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 events: Some(vec![
                     json!({ "CommandLine": "cmd /c whoami /priv" }),
                     json!({ "CommandLine": "ipconfig /all" }),

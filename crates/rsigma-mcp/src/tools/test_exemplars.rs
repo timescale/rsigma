@@ -24,6 +24,10 @@ pub struct TestExemplarsInput {
     /// Sigma file or directory path. Confined to `--rules-dir` when configured.
     #[serde(default)]
     pub path: Option<String>,
+    /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
+    /// `yaml` and `path`.
+    #[serde(default)]
+    pub ruleset: Option<String>,
     /// Processing pipelines as builtin names or confined file paths.
     #[serde(default)]
     pub pipelines: Vec<String>,
@@ -33,7 +37,7 @@ pub struct TestExemplarsInput {
 impl RsigmaMcp {
     /// Replay embedded `rsigma.exemplars` against their host rules.
     #[tool(
-        description = "Replay embedded rsigma.exemplars on Sigma detection and correlation rules and return pass/fail results. Provide exactly one of inline `yaml` or a `path` confined to `--rules-dir`. Optional `pipelines` are builtin names or confined YAML files. Shape, identity, and reference problems are configuration errors; a failed assertion is a finding, not a load error."
+        description = "Replay embedded rsigma.exemplars on Sigma detection and correlation rules and return pass/fail results. Provide exactly one of inline `yaml`, a `path` confined to `--rules-dir`, or a named `ruleset` from the server's configuration. Optional `pipelines` are builtin names or confined YAML files. Shape, identity, and reference problems are configuration errors; a failed assertion is a finding, not a load error."
     )]
     async fn test_exemplars(
         &self,
@@ -43,15 +47,23 @@ impl RsigmaMcp {
     }
 
     pub(crate) fn run_test_exemplars(&self, input: TestExemplarsInput) -> Result<Value, McpError> {
-        let (collection, source) =
-            match self.load_test_collection(input.yaml.as_deref(), input.path.as_deref()) {
-                Ok(loaded) => loaded,
-                Err(LoadError::Request(error)) => return Err(error),
-                Err(LoadError::Content(error)) => {
-                    return Ok(json!({ "ok": false, "error": error }));
-                }
-            };
-        let pipelines = match self.load_test_pipelines(&input.pipelines) {
+        let (collection, source, ruleset_pipelines) = match self.load_test_collection(
+            input.yaml.as_deref(),
+            input.path.as_deref(),
+            input.ruleset.as_deref(),
+        ) {
+            Ok(loaded) => loaded,
+            Err(LoadError::Request(error)) => return Err(error),
+            Err(LoadError::Content(error)) => {
+                return Ok(json!({ "ok": false, "error": error }));
+            }
+        };
+        let pipeline_specs = if input.pipelines.is_empty() {
+            ruleset_pipelines
+        } else {
+            input.pipelines
+        };
+        let pipelines = match self.load_test_pipelines(&pipeline_specs) {
             Ok(pipelines) => pipelines,
             Err(LoadError::Request(error)) => return Err(error),
             Err(LoadError::Content(error)) => {
@@ -72,21 +84,24 @@ impl RsigmaMcp {
         &self,
         yaml: Option<&str>,
         path: Option<&str>,
-    ) -> Result<(SigmaCollection, String), LoadError> {
-        match (yaml, path) {
-            (Some(_), Some(_)) => Err(LoadError::Request(invalid(
-                "provide either `yaml` or `path`, not both",
-            ))),
-            (None, None) => Err(LoadError::Request(invalid(
-                "one of `yaml` or `path` is required",
-            ))),
-            (Some(yaml), None) => {
+        ruleset: Option<&str>,
+    ) -> Result<(SigmaCollection, String, Vec<String>), LoadError> {
+        let selected = usize::from(yaml.is_some())
+            + usize::from(path.is_some())
+            + usize::from(ruleset.is_some());
+        if selected != 1 {
+            return Err(LoadError::Request(invalid(
+                "provide exactly one of `yaml`, `path`, or `ruleset`",
+            )));
+        }
+        match (yaml, path, ruleset) {
+            (Some(yaml), None, None) => {
                 let collection = parse_sigma_yaml(yaml)
                     .map_err(|error| LoadError::Content(format!("rule parse error: {error}")))?;
                 check_collection(&collection)?;
-                Ok((collection, "inline".to_string()))
+                Ok((collection, "inline".to_string(), Vec::new()))
             }
-            (None, Some(path)) => {
+            (None, Some(path), None) => {
                 let path = resolve_confined_path(path, self.root()).map_err(LoadError::Request)?;
                 let collection = if path.is_dir() {
                     load_rule_directory(&path)?
@@ -105,8 +120,15 @@ impl RsigmaMcp {
                     })?
                 };
                 check_collection(&collection)?;
-                Ok((collection, path.display().to_string()))
+                Ok((collection, path.display().to_string(), Vec::new()))
             }
+            (None, None, Some(name)) => {
+                let (collection, pipelines) =
+                    self.resolve_ruleset(name).map_err(LoadError::Request)?;
+                check_collection(&collection)?;
+                Ok((collection, format!("ruleset {name}"), pipelines))
+            }
+            _ => unreachable!("exactly one input was selected"),
         }
     }
 
@@ -227,8 +249,10 @@ fn load_rule_directory(root: &Path) -> Result<SigmaCollection, LoadError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
-    use crate::tools::handler;
+    use crate::tools::{handler, ruleset_handler};
 
     const RULE: &str = r#"
 title: Whoami
@@ -255,6 +279,7 @@ custom_attributes:
             .run_test_exemplars(TestExemplarsInput {
                 yaml: Some(RULE.to_string()),
                 path: None,
+                ruleset: None,
                 pipelines: Vec::new(),
             })
             .unwrap();
@@ -275,10 +300,46 @@ custom_attributes:
             .run_test_exemplars(TestExemplarsInput {
                 yaml: None,
                 path: None,
+                ruleset: None,
                 pipelines: Vec::new(),
             })
             .unwrap_err();
         assert!(format!("{error:?}").contains("yaml"));
+    }
+
+    #[test]
+    fn test_exemplars_runs_an_overlaid_exemplar() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), RULE).unwrap();
+        let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(
+            "sources: [rule.yml]
+overlays:
+  - id: 11111111-2222-3333-4444-555555555555
+    set:
+      custom_attributes:
+        rsigma.exemplars:
+          - name: overlaid
+            expect: match
+            event:
+              CommandLine: whoami /all
+",
+        )
+        .unwrap();
+        let server = ruleset_handler(
+            Some(dir.path().to_path_buf()),
+            BTreeMap::from([("base".to_string(), spec)]),
+        );
+        let value = server
+            .run_test_exemplars(TestExemplarsInput {
+                yaml: None,
+                path: None,
+                ruleset: Some("base".to_string()),
+                pipelines: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["report"]["results"][0]["name"], "overlaid");
+        assert_eq!(value["report"]["results"][0]["passed"], true);
     }
 
     #[test]
@@ -295,6 +356,7 @@ custom_attributes:
             .run_test_exemplars(TestExemplarsInput {
                 yaml: None,
                 path: Some(outside.path().display().to_string()),
+                ruleset: None,
                 pipelines: Vec::new(),
             })
             .unwrap_err();
