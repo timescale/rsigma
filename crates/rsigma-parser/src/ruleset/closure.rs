@@ -61,38 +61,36 @@ pub(crate) fn close(
                 if resolved.iter().any(|target| is_kept(&decisions[*target])) {
                     continue;
                 }
-                let excluded = resolved
-                    .iter()
-                    .find(|target| matches!(decisions[**target], Decision::Excluded { .. }))
-                    .copied();
-                let reason = dependency_reason(name, candidate, &reference, &resolved, &decisions);
+                let reason = unresolved_reason(&reference, &resolved, &decisions);
+                let subject = correlation_subject(candidate);
 
                 match policy {
-                    DependencyPolicy::Error => push_unique(&mut errors, reason),
+                    DependencyPolicy::Error => {
+                        push_unique(&mut errors, format!("ruleset '{name}': {subject} {reason}"));
+                    }
                     DependencyPolicy::Include => {
-                        if resolved.is_empty() || excluded.is_some() {
-                            push_unique(&mut errors, reason);
-                        } else {
-                            for target in resolved {
-                                if decisions[target] == Decision::NotSelected {
-                                    decisions[target] = Decision::PulledIn {
-                                        by: correlation_label(candidate),
-                                    };
-                                    changed = true;
-                                }
-                            }
+                        let pullable: Vec<usize> = resolved
+                            .into_iter()
+                            .filter(|target| decisions[*target] == Decision::NotSelected)
+                            .collect();
+                        if pullable.is_empty() {
+                            push_unique(
+                                &mut errors,
+                                format!("ruleset '{name}': {subject} {reason}"),
+                            );
+                        }
+                        for target in pullable {
+                            decisions[target] = Decision::PulledIn {
+                                by: correlation_label(candidate),
+                            };
+                            changed = true;
                         }
                     }
                     DependencyPolicy::Drop => {
-                        decisions[index] = Decision::Dropped {
-                            reason: reason.clone(),
-                        };
                         warnings.push(format!(
-                            "ruleset '{name}': dropped correlation '{}' from {}: {}",
-                            candidate.title(),
-                            origin_label(&candidate.origin),
-                            reason
+                            "ruleset '{name}': dropped {subject} because it {reason}"
                         ));
+                        decisions[index] = Decision::Dropped { reason };
                         changed = true;
                         break;
                     }
@@ -163,33 +161,33 @@ fn origin_label(origin: &super::source::RuleOrigin) -> String {
     format!("{}#{}", origin.file.display(), origin.ordinal)
 }
 
-fn dependency_reason(
-    name: &str,
-    candidate: &Candidate,
-    reference: &str,
-    resolved: &[usize],
-    decisions: &[Decision],
-) -> String {
-    let because = if resolved.is_empty() {
-        "exists in no source".to_string()
-    } else if let Some(index) = resolved
-        .iter()
-        .find(|index| matches!(decisions[**index], Decision::Excluded { .. }))
-    {
-        match decisions[*index] {
-            Decision::Excluded { selector } => {
-                format!("is excluded by exclude selector {selector}")
-            }
-            _ => "is excluded".to_string(),
-        }
-    } else {
-        "is not matched by include".to_string()
-    };
+fn correlation_subject(candidate: &Candidate) -> String {
     format!(
-        "ruleset '{name}': correlation '{}' from {} references '{reference}', which {because}",
+        "correlation '{}' from {}",
         candidate.title(),
         origin_label(&candidate.origin)
     )
+}
+
+/// Why `reference` resolves to no kept document, preferring the copy that
+/// could still be selected when a forked id has several.
+fn unresolved_reason(reference: &str, resolved: &[usize], decisions: &[Decision]) -> String {
+    let because = if resolved.is_empty() {
+        "exists in no source".to_string()
+    } else if resolved
+        .iter()
+        .any(|index| decisions[*index] == Decision::NotSelected)
+    {
+        "is not matched by include".to_string()
+    } else if let Some(selector) = resolved.iter().find_map(|index| match decisions[*index] {
+        Decision::Excluded { selector } => Some(selector),
+        _ => None,
+    }) {
+        format!("is excluded by exclude selector {selector}")
+    } else {
+        "was dropped".to_string()
+    };
+    format!("references '{reference}', which {because}")
 }
 
 fn check_uniqueness(
@@ -347,7 +345,58 @@ mod tests {
             ..Default::default()
         }];
         let error = close("test", &spec("include", include, exclude), &candidates).unwrap_err();
-        assert!(error.to_string().contains("excluded"), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "ruleset 'test': correlation 'Correlation top' from top.yml#0 references 'base', which is excluded by exclude selector 0"
+        );
+    }
+
+    /// A local fork shares its id with the vendored rule, and `path` excludes
+    /// one copy. The other copy must still be pullable.
+    fn forked(excluded_file: &str) -> (Vec<Candidate>, Vec<RuleSelector>, Vec<RuleSelector>) {
+        let candidates = vec![
+            detection("w1", "vendor.yml"),
+            detection("w1", "fork.yml"),
+            correlation("c", &["w1"], "c.yml"),
+        ];
+        let include = vec![RuleSelector {
+            id: vec!["c".into()],
+            ..Default::default()
+        }];
+        let exclude = vec![RuleSelector {
+            path: vec![excluded_file.into()],
+            ..Default::default()
+        }];
+        (candidates, include, exclude)
+    }
+
+    #[test]
+    fn include_pulls_the_copy_of_a_fork_that_is_not_excluded() {
+        for (excluded, pulled) in [("fork.yml", 0), ("vendor.yml", 1)] {
+            let (candidates, include, exclude) = forked(excluded);
+            let closure = close("test", &spec("include", include, exclude), &candidates).unwrap();
+            assert!(
+                matches!(closure.decisions[pulled], Decision::PulledIn { .. }),
+                "{excluded}: {:?}",
+                closure.decisions
+            );
+            assert!(matches!(
+                closure.decisions[1 - pulled],
+                Decision::Excluded { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn error_policy_names_the_selectable_copy_of_a_fork() {
+        let (candidates, include, exclude) = forked("fork.yml");
+        let error = close("test", &spec("error", include, exclude), &candidates).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .ends_with("references 'w1', which is not matched by include"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -385,7 +434,19 @@ mod tests {
         let closure = close("test", &spec("drop", vec![], exclude), &candidates).unwrap();
         assert!(!is_kept(&closure.decisions[1]));
         assert!(!is_kept(&closure.decisions[2]));
-        assert_eq!(closure.warnings.len(), 2);
+        assert_eq!(
+            closure.warnings,
+            [
+                "ruleset 'test': dropped correlation 'Correlation middle' from middle.yml#0 because it references 'base', which is excluded by exclude selector 0",
+                "ruleset 'test': dropped correlation 'Correlation top' from top.yml#0 because it references 'middle', which was dropped",
+            ]
+        );
+        assert_eq!(
+            closure.decisions[2],
+            Decision::Dropped {
+                reason: "references 'middle', which was dropped".into()
+            }
+        );
     }
 
     #[test]
