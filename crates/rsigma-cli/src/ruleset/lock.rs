@@ -21,20 +21,20 @@ pub(crate) struct Lockfile {
     pub documents: Vec<LockedDocument>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LockedSource {
     pub path: String,
     pub files: usize,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LockedOverlayFile {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LockedDocument {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -586,3 +586,218 @@ fn missing_output_hints_at_the_flag_and_the_spec_key() {
         .stderr(predicate::str::contains("-o <DIR>"))
         .stderr(predicate::str::contains("output"));
 }
+
+fn diff_json(dir: &Path, lock: &str, extra: &[&str]) -> (serde_json::Value, std::process::Output) {
+    let mut command = rsigma();
+    command.current_dir(dir).args([
+        "ruleset",
+        "diff",
+        "vendor",
+        "--config",
+        "vendor-only.yaml",
+        "--lock",
+        lock,
+        "--output-format",
+        "json",
+    ]);
+    command.args(extra);
+    let output = command.assert().get_output().clone();
+    let value = if output.status.success() {
+        serde_json::from_slice(&output.stdout).unwrap()
+    } else {
+        serde_json::Value::Null
+    };
+    (value, output)
+}
+
+fn diff_table(dir: &Path, lock: &str, extra: &[&str]) -> std::process::Output {
+    let mut command = rsigma();
+    command.current_dir(dir).args([
+        "ruleset",
+        "diff",
+        "vendor",
+        "--config",
+        "vendor-only.yaml",
+        "--lock",
+        lock,
+        "--output-format",
+        "table",
+    ]);
+    command.args(extra);
+    command.assert().get_output().clone()
+}
+
+fn remove_document(path: &Path, id: &str) {
+    let text = fs::read_to_string(path).unwrap();
+    let kept: Vec<&str> = text
+        .split("---\n")
+        .filter(|document| !document.contains(id))
+        .collect();
+    fs::write(path, kept.join("---\n")).unwrap();
+}
+
+fn append_inline_overlay(dir: &Path) {
+    let config = dir.join("vendor-only.yaml");
+    let text = fs::read_to_string(&config).unwrap();
+    let marker = "      - file: overlays/exemplars.yml\n";
+    let overlay = format!("{marker}      - id: {W1}\n        set:\n          level: high\n");
+    fs::write(&config, text.replace(marker, &overlay)).unwrap();
+}
+
+#[test]
+fn diff_without_changes_is_clean() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(envelope["added"], serde_json::json!(0));
+    assert_eq!(envelope["removed"], serde_json::json!(0));
+    assert_eq!(envelope["changed"], serde_json::json!(0));
+    assert_eq!(envelope["unchanged"], serde_json::json!(7));
+    assert_eq!(envelope["sources_changed"], serde_json::json!(false));
+    assert_eq!(envelope["overlays_changed"], serde_json::json!(false));
+    assert_eq!(envelope["spec_changed"], serde_json::json!(false));
+}
+
+#[test]
+fn diff_reports_a_rule_edit() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    let source = dir.path().join("vendor/windows/proc_creation.yml");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("title: Windows whoami execution", "title: Whoami changed"),
+    )
+    .unwrap();
+
+    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(envelope["changed"], serde_json::json!(1));
+    let output = diff_table(dir.path(), "out/ruleset.lock.json", &[]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("title"), "{stdout}");
+    assert!(stdout.contains("changed"), "{stdout}");
+}
+
+#[test]
+fn diff_reports_a_new_rule() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    fs::write(
+        dir.path().join("vendor/extra.yml"),
+        "title: Windows extra\nid: aaaaaaaa-0000-4000-8000-000000000009\nstatus: test\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        CommandLine|contains: 'extra'\n    condition: selection\ntags:\n    - attack.t1059.009\n",
+    )
+    .unwrap();
+
+    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(envelope["added"], serde_json::json!(1));
+    let output = diff_table(dir.path(), "out/ruleset.lock.json", &[]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("added"), "{stdout}");
+    assert!(stdout.contains("Windows extra"), "{stdout}");
+}
+
+#[test]
+fn diff_reports_an_overlay_edit_with_the_overlay_field() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    append_inline_overlay(dir.path());
+
+    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(envelope["changed"], serde_json::json!(1));
+    assert_eq!(envelope["spec_changed"], serde_json::json!(true));
+    let output = diff_table(dir.path(), "out/ruleset.lock.json", &[]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("overlays"), "{stdout}");
+}
+
+#[test]
+fn diff_rejects_an_unknown_lock_version() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    let lock = out.join("ruleset.lock.json");
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&lock).unwrap()).unwrap();
+    value["lock_version"] = serde_json::json!(2);
+    fs::write(&lock, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "diff",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "--lock",
+            "out/ruleset.lock.json",
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("lock_version 2"));
+}
+
+#[test]
+fn diff_fail_on_change_exits_one() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    let source = dir.path().join("vendor/windows/proc_creation.yml");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("author: Test Author", "author: Someone Else"),
+    )
+    .unwrap();
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "diff",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "--lock",
+            "out/ruleset.lock.json",
+            "--fail-on-change",
+        ])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn diff_golden_mixed_case() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+
+    let proc_creation = dir.path().join("vendor/windows/proc_creation.yml");
+    let text = fs::read_to_string(&proc_creation).unwrap();
+    fs::write(
+        &proc_creation,
+        text.replace("title: Windows whoami execution", "title: Whoami changed"),
+    )
+    .unwrap();
+    remove_document(&proc_creation, "aaaaaaaa-0000-4000-8000-000000000002");
+    fs::write(
+        dir.path().join("vendor/extra.yml"),
+        "title: Windows extra\nid: aaaaaaaa-0000-4000-8000-000000000009\nstatus: test\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        CommandLine|contains: 'extra'\n    condition: selection\ntags:\n    - attack.t1059.009\n",
+    )
+    .unwrap();
+    append_inline_overlay(dir.path());
+
+    let (_, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_golden("ruleset_diff_mixed.json", &stdout);
+}

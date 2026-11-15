@@ -1,6 +1,7 @@
 //! `rsigma ruleset`: curate named rule sets declared in `rsigma.yaml`.
 
 mod build;
+mod diff;
 mod list;
 mod show;
 
@@ -18,6 +19,8 @@ pub(crate) enum RulesetCommands {
     Show(ShowArgs),
     /// Materialize a ruleset into a directory with a lockfile
     Build(BuildArgs),
+    /// Compare a ruleset with its lockfile
+    Diff(DiffArgs),
 }
 
 #[derive(Args, Debug)]
@@ -73,10 +76,30 @@ pub(crate) struct BuildArgs {
     pub check: bool,
 }
 
+#[derive(Args, Debug)]
+pub(crate) struct DiffArgs {
+    /// Ruleset name
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Configuration file to read rulesets from
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Lockfile to compare against (defaults to the ruleset's `output`)
+    #[arg(long, value_name = "PATH")]
+    pub lock: Option<PathBuf>,
+
+    /// Exit 1 when the ruleset differs from the lockfile
+    #[arg(long)]
+    pub fail_on_change: bool,
+}
+
 pub(crate) fn dispatch(cmd: RulesetCommands, ctx: OutputCtx) {
     match cmd {
         RulesetCommands::List(args) => list::cmd_list(args, ctx),
         RulesetCommands::Show(args) => show::cmd_show(args, ctx),
         RulesetCommands::Build(args) => build::cmd_build(args, ctx),
+        RulesetCommands::Diff(args) => diff::cmd_diff(args, ctx),
     }
 }
