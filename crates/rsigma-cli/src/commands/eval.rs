@@ -425,6 +425,7 @@ fn overlay_eval_config(
 
 /// Returns `true` if any detection or correlation matched.
 pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
+    ctx.ensure_ocsf_available("engine eval");
     let EvalArgs {
         config: _,
         dry_run: _,
@@ -1423,6 +1424,9 @@ fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
 enum RenderState {
     /// Plain JSON (one object per line, pretty if requested).
     Json { pretty: bool },
+    /// OCSF Detection Finding (class 2004), one object per line.
+    #[cfg(feature = "ocsf")]
+    Ocsf { pretty: bool },
     /// Streaming delimited writer (`csv` or `tsv`).
     Delimited(Box<DelimitedWriter>),
     /// Buffer of rows for the width-aligning table renderer.
@@ -1451,6 +1455,12 @@ impl MatchRenderer {
                     pretty: pretty_flag || ctx.pretty_json(),
                 },
                 OutputFormat::Ndjson => RenderState::Json { pretty: false },
+                #[cfg(feature = "ocsf")]
+                OutputFormat::Ocsf => RenderState::Ocsf {
+                    pretty: pretty_flag || ctx.pretty_json(),
+                },
+                #[cfg(not(feature = "ocsf"))]
+                OutputFormat::Ocsf => RenderState::Json { pretty: false },
                 OutputFormat::Csv => RenderState::Delimited(Box::new(delimited(',', &mut file))),
                 OutputFormat::Tsv => RenderState::Delimited(Box::new(delimited('\t', &mut file))),
                 OutputFormat::Table => RenderState::Table(Vec::new()),
@@ -1473,6 +1483,14 @@ impl MatchRenderer {
                 }
                 None => crate::output::render_json(m, *pretty),
             },
+            #[cfg(feature = "ocsf")]
+            RenderState::Ocsf { pretty } => match &mut self.file {
+                Some(file) => {
+                    let result = crate::output::write_ocsf_finding(&mut file.writer, m, *pretty);
+                    file.check(result);
+                }
+                None => crate::output::render_ocsf_finding(m, *pretty),
+            },
             RenderState::Delimited(writer) => {
                 let row = EvalRow::from_result(m).row();
                 writer.push(&row);
@@ -1493,6 +1511,8 @@ impl MatchRenderer {
             },
             RenderState::Delimited(writer) => writer.finish(),
             RenderState::Json { .. } => {}
+            #[cfg(feature = "ocsf")]
+            RenderState::Ocsf { .. } => {}
         }
         if let Some(file) = &mut self.file {
             let result = file.writer.flush();
