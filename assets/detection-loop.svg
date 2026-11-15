@@ -222,11 +222,11 @@
     <circle cx="40" cy="375.3" r="2" fill="#93c5fd"/>
     <text class="ink" fill="#374151" x="48" y="379" font-size="10.5"><a class="lnk" href="https://github.com/timescale/rsigma-action" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rsigma-action</tspan></a> PR gate in CI</text>
     <circle cx="40" cy="390.3" r="2" fill="#93c5fd"/>
-    <text class="ink" fill="#374151" x="48" y="394" font-size="10.5"><a class="lnk" href="https://rsigma.io/reference/configuration/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rsigma config</tspan></a> layered defaults</text>
+    <text class="ink" fill="#374151" x="48" y="394" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/rulesets/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">ruleset build</tspan></a> curated set + lockfile</text>
     <circle cx="40" cy="405.3" r="2" fill="#93c5fd"/>
     <text class="ink" fill="#374151" x="48" y="409" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">hot reload</tspan></a> rules + pipelines</text>
     <circle cx="40" cy="420.3" r="2" fill="#93c5fd"/>
-    <text class="muted" fill="#6b7280" x="48" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/deployment/docker/" target="_top">Docker</a> · <a class="lnk" href="https://rsigma.io/deployment/kubernetes/" target="_top">K8s</a> · <a class="lnk" href="https://rsigma.io/getting-started/installation/#installation-prebuilt-binaries" target="_top">signed binaries</a></text>
+    <text class="muted" fill="#6b7280" x="48" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/reference/configuration/" target="_top">config</a> · <a class="lnk" href="https://rsigma.io/deployment/docker/" target="_top">Docker</a> · <a class="lnk" href="https://rsigma.io/deployment/kubernetes/" target="_top">K8s</a> · <a class="lnk" href="https://rsigma.io/getting-started/installation/#installation-prebuilt-binaries" target="_top">signed binaries</a></text>
   </g>
   <g class="stage stageR" id="stage-detect">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-detect" target="_top">

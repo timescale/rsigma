@@ -18,6 +18,8 @@ The MCP tools `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules
 
 `rsigma-cli` now depends on `sha2` unconditionally, so a `--no-default-features` build includes it.
 
+The detection-loop, architecture, and crate dependency diagrams show `ruleset build` and the `ruleset` command group.
+
 ### Documentation home page redesign, flat anchor aliases, and fragment validation (#710)
 
 The `rsigma.io` home page opens with a split hero, a tabbed quick-run snippet (`Evaluate`, `Daemon`, `Convert`, `Rust`), a tabbed install bar, a four-card benchmark strip, the detection-loop diagram paired with workflow cards, grouped downstream integrations, and a minimal footer, with focus mode (`Alt+F`) enabled site-wide. The version-tag legend moves to [Release Notes](https://rsigma.io/release-notes/#version-tags).
