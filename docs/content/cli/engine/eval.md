@@ -11,7 +11,7 @@ One-shot evaluation of Sigma rules against events from a file, stdin, or an inli
 ## Synopsis
 
 ```text
-rsigma engine eval [OPTIONS] --rules <RULES>
+rsigma engine eval [OPTIONS] [--rules <RULES> | --ruleset <NAME>]
 ```
 
 ## Description
@@ -28,7 +28,8 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. |
+| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | Named ruleset from the configuration to evaluate instead of `--rules`. May also be supplied via `eval.ruleset`. Conflicts with `--rules`. {{ added "unreleased" }} |
 
 ### Configuration
 
@@ -216,7 +217,7 @@ rsigma engine eval -r rules/ --suppress 5m --action reset \
 | `0` | Events processed cleanly. With `--fail-on-detection`, no rule fired. Per-rule parse errors are logged as warnings but do not change the exit code. |
 | `1` | With `--fail-on-detection`, at least one detection or correlation fired. |
 | `2` | The rules path or `--event @path` file could not be read. Use [`rule validate`](../rule/validate.md) for a strict per-rule gate that fails on parse or compile errors. |
-| `3` | Configuration error: missing `--rules`/`eval.rules`, bad `-p`, malformed `--suppress`, invalid `--jq` filter, bad logsource options, etc. |
+| `3` | Configuration error: missing `--rules`/`--ruleset`/`eval.rules`/`eval.ruleset`, an unknown or broken ruleset, bad `-p`, malformed `--suppress`, invalid `--jq` filter, bad logsource options, etc. |
 
 ## See also
 

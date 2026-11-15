@@ -90,6 +90,46 @@ pub struct RuleEntry {
 
 /// Resolve already-loaded sources into a collection, applying metadata
 /// overlays through `loader`.
+///
+/// ```rust
+/// use std::path::PathBuf;
+///
+/// use rsigma_parser::parse_sigma_yaml;
+/// use rsigma_parser::ruleset::{
+///     Candidate, CandidateDoc, InlineOnlyOverlayLoader, LoadedSources, RuleOrigin, RulesetSpec,
+///     resolve_loaded,
+/// };
+///
+/// let yaml = r#"
+/// title: Whoami
+/// id: 11111111-2222-3333-4444-555555555555
+/// logsource:
+///     product: windows
+/// detection:
+///     selection:
+///         CommandLine|contains: whoami
+///     condition: selection
+/// "#;
+/// let rule = parse_sigma_yaml(yaml).unwrap().rules.remove(0);
+/// let loaded = LoadedSources {
+///     candidates: vec![Candidate {
+///         doc: CandidateDoc::Detection(rule),
+///         origin: RuleOrigin {
+///             source: 0,
+///             root: PathBuf::from("."),
+///             file: PathBuf::from("rule.yml"),
+///             ordinal: 0,
+///         },
+///     }],
+///     ..Default::default()
+/// };
+/// let spec = RulesetSpec {
+///     sources: vec![PathBuf::from(".")],
+///     ..Default::default()
+/// };
+/// let resolved = resolve_loaded("example", &spec, loaded, &InlineOnlyOverlayLoader).unwrap();
+/// assert_eq!(resolved.collection.rules.len(), 1);
+/// ```
 pub fn resolve_loaded(
     name: &str,
     spec: &RulesetSpec,

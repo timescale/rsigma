@@ -139,7 +139,7 @@ The per-rule fire counts print on stdout as NDJSON, followed by the summary on s
 Backtest: 2 corpus files, 9 events, 2/2 expectations passed, 0 unexpected fires across 0 rules (policy: fail).
 ```
 
-These three commands are what a [CI pipeline](ci-cd.md) runs on every rule change.
+These three commands are what a [CI pipeline](ci-cd.md) runs on every rule change. When the rules are vendored rather than authored in the repository, a [ruleset](../guide/rulesets.md) overlay can add the exemplars, ADS prose, and metadata without editing the vendor files; `rule test --ruleset` then replays the overlaid exemplars. {{ added "unreleased" }}
 
 ## 3. Deploy: run the daemon
 

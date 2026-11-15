@@ -19,10 +19,10 @@ description: "RSigma exit codes: the four structured codes every subcommand uses
 
 | Command | `0` | `1` | `2` | `3` |
 |---------|-----|-----|-----|-----|
-| `engine eval` | Default; or no match with `--fail-on-detection`. | Detection/correlation fired (with `--fail-on-detection`). | Rules path unreadable. | Bad `-p`, `--jq`, `--jsonpath`, `--suppress`, etc. |
+| `engine eval` | Default; or no match with `--fail-on-detection`. | Detection/correlation fired (with `--fail-on-detection`). | Rules path unreadable. | Bad `-p`, `--jq`, `--jsonpath`, `--suppress`, unknown or broken `--ruleset`, etc. |
 | `engine daemon` | Normal shutdown (including `--dry-run`). | (not used) | Initial rules could not be loaded or compiled. | Bad `--input`, `--output`, pipeline file, TLS/auth/audit misconfiguration, etc. |
 | `rule parse` | File readable; YAML errors and missing-field issues are warnings on stderr and the partial AST still prints. | (not used) | File could not be opened (IO error). | (not used) |
-| `rule validate` | Every rule parsed and compiled. | (not used) | At least one parse or compile error. | Pipeline/`--source` load failure, `--resolve-sources` failure. |
+| `rule validate` | Every rule parsed and compiled. | (not used) | At least one parse or compile error. | Pipeline/`--source` load failure, `--resolve-sources` failure, unknown or broken `--ruleset`. |
 | `rule lint` | No findings at or above `--fail-level`. | Findings at or above `--fail-level` (including schema violations when `--schema` is set). | Rules path unreadable. | Schema argument/load/fetch/parse/compile failure, or other CLI configuration error. |
 | `rule fmt` | Report or write finished, or nothing to change. | `--check` or `--diff`: at least one file would be reformatted. | A file could not be read, parsed, formatted, or written. | Conflicting mode flags, or `--stdout` without exactly one file. |
 | `rule fields` | Listed cleanly. Per-rule parse errors are warnings only. | (not used) | Rules path unreadable. | Pipeline file unreadable. |
@@ -32,6 +32,10 @@ description: "RSigma exit codes: the four structured codes every subcommand uses
 | `backend targets` | Always. | (not used) | (not used) | (not used) |
 | `backend formats` | Formats listed for a native target, or a successful sigma-cli listing. | (not used) | (not used) | Unknown non-native target with no usable sigma-cli result. |
 | `pipeline resolve` | Every source returned `"status": "ok"` (or a successful `--dry-run`). | At least one source returned `"status": "error"`. | Pipeline unreadable, no sources loaded, or no sources matched `-s/--source`. | Bad `--source-file` load or other configuration error. |
+| `ruleset list` | Every declared ruleset resolved. | (not used) | (not used) | A ruleset failed to resolve; other rows are still printed. |
+| `ruleset show` | The requested ruleset and document resolved. | (not used) | (not used) | Unknown ruleset or id, resolution error, or unreadable configuration. |
+| `ruleset build` | The output was written, or `--check` found no drift. | `--check` found drift. | A source had parse errors. | Resolution error, missing output, non-empty directory without `--force`, or unreadable configuration. |
+| `ruleset diff` | No change, or changes without `--fail-on-change`. | Changes were found with `--fail-on-change`. | (not used) | Resolution error, missing or unreadable lockfile, unknown lock version, or unreadable configuration. |
 
 ## Non-obvious behaviors
 

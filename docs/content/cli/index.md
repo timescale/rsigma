@@ -1,5 +1,5 @@
 ---
-description: "Reference for the rsigma CLI: every command group (engine, rule, backend, pipeline, hunt, taxii, mcp, config), config precedence, and feature requirements."
+description: "Every rsigma command group (engine, rule, backend, pipeline, ruleset, hunt, taxii, mcp, config), config precedence, and feature requirements."
 ---
 
 # CLI Reference
@@ -18,6 +18,7 @@ This reference documents every subcommand with its flag table, verified examples
 | [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, format, tune, reverse-convert, backtest, score, and ATT&CK-map Sigma rule files |
 | [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, Fibratus, and delegated sigma-cli targets) |
 | [`pipeline`](pipeline/diff.md) | `diff`, `resolve` | Diff pipeline rewrites and test dynamic sources |
+| [`ruleset`](ruleset/list.md) | `list`, `show`, `build`, `diff` | Curate named rule sets declared in `rsigma.yaml`, materialize them, and compare them with a lockfile |
 | [`hunt`](hunt/run.md) | `run` | Hunt a PostgreSQL/TimescaleDB archive with converted rules, streaming matches back as events |
 | [`mcp`](mcp/serve.md) | `serve` | Run the Model Context Protocol server for agent tooling (`mcp` feature) |
 | [`taxii`](taxii/sync.md) | `sync`, `store` | TAXII collection sync and local bundle import into a STIX store (`taxii-sync` feature) |
@@ -80,6 +81,11 @@ rsigma
 ├── pipeline
 │   ├── diff                   show how pipelines rewrite a rule before evaluation
 │   └── resolve                offline source resolution + dry-run (`daemon` feature)
+├── ruleset
+│   ├── list                   list declared rulesets and their resolution status
+│   ├── show                   show the documents a ruleset resolves to
+│   ├── build                  materialize a ruleset with a lockfile
+│   └── diff                   compare a ruleset with its lockfile
 ├── hunt                       (`hunt-postgres` feature for `--emit events`)
 │   └── run                    hunt a PostgreSQL archive with converted rules
 ├── mcp                        (`mcp` feature)

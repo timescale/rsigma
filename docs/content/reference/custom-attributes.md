@@ -96,9 +96,11 @@ Every exemplar runs with fresh engine state. Detection exemplars evaluate the ta
 
 A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent (`N executable exemplar(s)`). That is metadata presence, not execution proof. Only a passing [`rule test`](../cli/rule/test.md) proves the current rule still matches.
 
+A ruleset overlay can set or append `rsigma.exemplars` without editing the vendor rule file. The resolver validates the resulting exemplars with the rule's kind, so a broken overlay fails resolution before `rule test` runs. See [Rulesets](../guide/rulesets.md#overlays). {{ added "unreleased" }}
+
 ## ADS detection-strategy attributes (`rsigma.ads.*`)
 
-The `rsigma.ads.*` namespace carries the [Palantir Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) sections that a Sigma rule has no standard home for. These values are pure documentation: the engine never interprets them, so they carry zero runtime cost. Four of the nine ADS sections reuse standard fields (`description` for the goal, `attack.*` `tags` for the categorization, `falsepositives`, and `level` for the priority); the rest live here.
+The `rsigma.ads.*` namespace carries the [Palantir Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) sections that a Sigma rule has no standard home for. These values are pure documentation: the engine never interprets them, so they carry zero runtime cost. A ruleset overlay can set or append these attributes, and the resolver validates every touched `rsigma.ads.*` key except `rsigma.ads.exempt`. {{ added "unreleased" }} Four of the nine ADS sections reuse standard fields (`description` for the goal, `attack.*` `tags` for the categorization, `falsepositives`, and `level` for the priority); the rest live here.
 
 | Attribute | ADS section | Value shape |
 |-----------|-------------|-------------|
