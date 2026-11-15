@@ -1,5 +1,5 @@
 ---
-description: "Emit Sigma detections as OCSF Detection Finding (class 2004) JSON from the RSigma daemon, ready for Splunk, Elastic, Amazon Security Lake, and Datadog."
+description: "Emit Sigma detections as OCSF Detection Finding (class 2004) and Incident Finding (class 2005) JSON from the RSigma daemon, ready for Splunk, Elastic, Amazon Security Lake, and Datadog."
 ---
 
 # OCSF Findings
@@ -92,7 +92,7 @@ One JSON object per line, exactly as with NDJSON. A detection:
 
 ## The mapping
 
-All four emitted shapes (detections, correlations, alert-pipeline incidents, and risk incidents) are class 2004, distinguished by their activity.
+By default all four emitted shapes (detections, correlations, alert-pipeline incidents, and risk incidents) are class 2004, distinguished by their activity. A sink can instead emit the two incident shapes as [Incident Findings](#incident-finding-class-2005) (class 2005).
 
 | OCSF field | Source |
 |------------|--------|
@@ -141,6 +141,51 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 
 On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detections. The native NDJSON wire is unchanged on an NDJSON sink. Dedup `dedup_*` keys live under `unmapped.enrichments`; risk events keep `risk_event: true` in `unmapped`. {{ added "unreleased" }}
 
+## Incident Finding (class 2005)
+
+{{ added "unreleased" }}
+
+OCSF has a dedicated class for a grouped incident: **Incident Finding** (class 2005), which references the findings it groups instead of describing one detection. Select it per sink with `ocsf_incident_class`:
+
+```bash
+rsigma engine daemon -r rules/ --alert-pipeline pipeline.yml \
+  --output 'file:///var/log/rsigma/findings.ocsf.ndjson?format=ocsf&ocsf_incident_class=2005'
+```
+
+| Value | Alert-pipeline and risk incidents become |
+|-------|------------------------------------------|
+| `2004` (default) | Detection Findings, as described in [The mapping](#the-mapping). |
+| `2005` | Incident Findings. |
+
+The parameter is valid only with `format=ocsf`, may appear once per sink, and any other value fails startup. It changes only the incident shapes: detections, correlations, and the dedup and risk-event sidecars stay class 2004 on the same sink. Sinks are independent, so one daemon can send class 2005 to one collector and class 2004 or native NDJSON to another.
+
+### Linking an incident to its Detection Findings
+
+Each incident lists its contributors in `finding_info_list[]`. When a contributor's Detection Finding was emitted by this daemon, the entry's `uid` is that finding's `finding_info.uid`, so a consumer can join the incident to the class-2004 findings it groups. The daemon mints that identifier once per detection, before the risk layer and the alert pipeline run, and uses it both for the Detection Finding and for the incident's reference to it.
+
+The link is made for every contributor the incident retains: `refs` (the default `include`) and `results`. When no retained contributor has a known Detection Finding, for example because `include` kept no samples or the incident was restored from a snapshot, `finding_info_list[]` falls back to one entry per contributing rule (or per contributing source on a risk incident), with a `uid` of `<incident id>:<rule>`. OCSF requires a `uid` on every entry, so the fallback always produces one, but it does not match any emitted finding.
+
+The identifier is in memory only. It is not written to the native NDJSON incident, the state database, or the incident API.
+
+A risk contributor that the alert pipeline later folds into a dedup alert or silences keeps the identifier minted for it, even though no Detection Finding with that `uid` reached a sink. A consumer joining on `finding_info_list[].uid` should treat an unmatched entry as a contributor that was suppressed downstream, not as an error.
+
+### The class-2005 mapping
+
+| OCSF field | Source |
+|------------|--------|
+| `class_uid` / `class_name` / `category_uid` / `category_name` | Constants: `2005` / `Incident Finding` / `2` / `Findings`. |
+| `activity_id` / `activity_name` | Alert-pipeline incidents by trigger, as in class 2004: `group_wait` is `1` (`Create`), `group_interval` and `repeat` are `2` (`Update`), `resolved` is `3` (`Close`). Risk incidents: `1` (`Create`). |
+| `type_uid` / `type_name` | `200501` / `200502` / `200503`. |
+| `status_id` / `status` | `1` (`New`), or `4` (`Resolved`) for a resolved incident. |
+| `severity_id` / `severity` | The incident's `max_level`. A risk incident carries no rule level, so its severity is `0` (`Unknown`). |
+| `time`, `start_time`, `end_time`, `count`, `message` | As in class 2004. |
+| `metadata.correlation_uid` | The incident id (`incident_id` or `risk_incident_id`). Every emission of one incident shares it. |
+| `finding_info_list[]` | One `{uid, title, analytic}` entry per linked contributor, or the per-rule fallback described above. `analytic` names the rule (`type: "Rule"`) and carries its id as `analytic.uid` when a retained result supplies it. |
+| `attacks[]` | Risk incidents only: the contributing tactics, mapped as in class 2004. |
+| `unmapped` | Alert-pipeline incidents: `state`, `trigger`, `rule_counts`, `group_by`, `entities`, `refs`, and `results`. Risk incidents: `entity_type`, `entity_value`, `trigger`, `score`, `score_threshold`, `tactic_count`, `tactic_count_threshold`, `sources`, `source_count`, `refs`, and `results`. |
+
+An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF defines neither on class 2005. A risk incident's `risk_score`, `resources[]`, and `actor` are class-2004 fields, so on class 2005 the score, entity, and threshold values ride under `unmapped` instead.
+
 ## Consumer notes
 
 - **Splunk**: ingest as `_json` and let the OCSF add-on map the class, or index the file directly. `finding_info.title` and `message` are the human-readable fields; `unmapped` survives as a nested object.
@@ -150,7 +195,7 @@ On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detection
 
 ## Schema versions
 
-RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal — adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
+RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema per class (2004 and 2005) live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal — adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
 
 ## An output dialect, not an input vocabulary
 
