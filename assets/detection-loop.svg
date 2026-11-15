@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" style="width:100%;height:100%" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="RSigma detection engineering loop">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" style="width:100%;height:100%" font-family="Inter, system-ui, -apple-system, Helvetica, Arial, sans-serif" role="img" aria-label="RSigma detection engineering loop">
   <defs>
     <!-- Lobe gradients are pinned to the handoff points so colors agree at every junction. -->
     <linearGradient id="gradL" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="320">
@@ -33,7 +33,7 @@
       <path d="M476,284 L524,236" stroke="#000000" stroke-width="30"/>
     </mask>
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+      <path class="arrowhead" d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
     <style>
       .lnk { cursor: pointer; }
@@ -51,32 +51,68 @@
       .stageR:hover .node { fill: #ffedd5; }
       .stageS:hover .flow { stroke: #475569; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      /* Light values are presentation attributes on each element;
-         this block only overrides them when the viewer prefers dark. */
+      :root[data-embedded="true"] .bg { fill: transparent; }
+      :root[data-embedded="true"] .divider { stroke: transparent; }
+      :root[data-theme="light"] { color-scheme: light; }
+      /* Light values are presentation attributes on each element.
+         Follow the host page's data-theme when embedded, or prefers-color-scheme standalone. */
+      :root[data-theme="dark"] { color-scheme: dark; }
+      :root[data-theme="dark"] .bg { fill: #0b1220; }
+      :root[data-theme="dark"][data-embedded="true"] .bg { fill: transparent; }
+      :root[data-theme="dark"] .node { fill: #0b1220; }
+      :root[data-theme="dark"] .logo { fill: #f1f5f9; }
+      :root[data-theme="dark"] .logoLine { stroke: #f1f5f9; }
+      :root[data-theme="dark"] .title { fill: #f1f5f9; }
+      :root[data-theme="dark"] .sub { fill: #94a3b8; }
+      :root[data-theme="dark"] .divider { stroke: #1e293b; }
+      :root[data-theme="dark"][data-embedded="true"] .divider { stroke: transparent; }
+      :root[data-theme="dark"] .card { fill: #111b2e; stroke: #22314d; }
+      :root[data-theme="dark"] .hdrL { fill: #142647; }
+      :root[data-theme="dark"] .hdrR { fill: #33200f; }
+      :root[data-theme="dark"] .hdrS { fill: #1a2436; }
+      :root[data-theme="dark"] .tL, :root[data-theme="dark"] .cmdL, :root[data-theme="dark"] .lobeL, :root[data-theme="dark"] .numL { fill: #93c5fd; }
+      :root[data-theme="dark"] .tR, :root[data-theme="dark"] .cmdR, :root[data-theme="dark"] .lobeR, :root[data-theme="dark"] .numR { fill: #fdba74; }
+      :root[data-theme="dark"] .tS, :root[data-theme="dark"] .cmdS { fill: #e2e8f0; }
+      :root[data-theme="dark"] .ink { fill: #cbd5e1; }
+      :root[data-theme="dark"] .strong { fill: #e2e8f0; }
+      :root[data-theme="dark"] .muted { fill: #8b9ab0; }
+      :root[data-theme="dark"] .leadL { stroke: #1e40af; }
+      :root[data-theme="dark"] .leadR { stroke: #9a3412; }
+      :root[data-theme="dark"] .annot { fill: #94a3b8; }
+      :root[data-theme="dark"] .flow { stroke: #64748b; }
+      :root[data-theme="dark"] .arrowhead { fill: #64748b; }
+      :root[data-theme="dark"] .stageL:hover .node { fill: #1e3a8a; }
+      :root[data-theme="dark"] .stageR:hover .node { fill: #7c2d12; }
+      :root[data-theme="dark"] .stageS:hover .flow { stroke: #cbd5e1; }
       @media (prefers-color-scheme: dark) {
-        .bg { fill: #0b1220; }
-        .node { fill: #0b1220; }
-        .logo { fill: #f1f5f9; }
-        .logoLine { stroke: #f1f5f9; }
-        .title { fill: #f1f5f9; }
-        .sub { fill: #94a3b8; }
-        .divider { stroke: #1e293b; }
-        .card { fill: #111b2e; stroke: #22314d; }
-        .hdrL { fill: #142647; }
-        .hdrR { fill: #33200f; }
-        .hdrS { fill: #1a2436; }
-        .tL, .cmdL, .lobeL, .numL { fill: #93c5fd; }
-        .tR, .cmdR, .lobeR, .numR { fill: #fdba74; }
-        .tS, .cmdS { fill: #e2e8f0; }
-        .ink { fill: #cbd5e1; }
-        .strong { fill: #e2e8f0; }
-        .muted { fill: #8b9ab0; }
-        .leadL { stroke: #1e40af; }
-        .leadR { stroke: #9a3412; }
-        .annot { fill: #94a3b8; }
-        .stageL:hover .node { fill: #1e3a8a; }
-        .stageR:hover .node { fill: #7c2d12; }
-        .stageS:hover .flow { stroke: #cbd5e1; }
+        :root:not([data-theme="light"]) { color-scheme: dark; }
+        :root:not([data-theme="light"]) .bg { fill: #0b1220; }
+        :root[data-embedded="true"]:not([data-theme="light"]) .bg { fill: transparent; }
+        :root:not([data-theme="light"]) .node { fill: #0b1220; }
+        :root:not([data-theme="light"]) .logo { fill: #f1f5f9; }
+        :root:not([data-theme="light"]) .logoLine { stroke: #f1f5f9; }
+        :root:not([data-theme="light"]) .title { fill: #f1f5f9; }
+        :root:not([data-theme="light"]) .sub { fill: #94a3b8; }
+        :root:not([data-theme="light"]) .divider { stroke: #1e293b; }
+        :root[data-embedded="true"]:not([data-theme="light"]) .divider { stroke: transparent; }
+        :root:not([data-theme="light"]) .card { fill: #111b2e; stroke: #22314d; }
+        :root:not([data-theme="light"]) .hdrL { fill: #142647; }
+        :root:not([data-theme="light"]) .hdrR { fill: #33200f; }
+        :root:not([data-theme="light"]) .hdrS { fill: #1a2436; }
+        :root:not([data-theme="light"]) .tL, :root:not([data-theme="light"]) .cmdL, :root:not([data-theme="light"]) .lobeL, :root:not([data-theme="light"]) .numL { fill: #93c5fd; }
+        :root:not([data-theme="light"]) .tR, :root:not([data-theme="light"]) .cmdR, :root:not([data-theme="light"]) .lobeR, :root:not([data-theme="light"]) .numR { fill: #fdba74; }
+        :root:not([data-theme="light"]) .tS, :root:not([data-theme="light"]) .cmdS { fill: #e2e8f0; }
+        :root:not([data-theme="light"]) .ink { fill: #cbd5e1; }
+        :root:not([data-theme="light"]) .strong { fill: #e2e8f0; }
+        :root:not([data-theme="light"]) .muted { fill: #8b9ab0; }
+        :root:not([data-theme="light"]) .leadL { stroke: #1e40af; }
+        :root:not([data-theme="light"]) .leadR { stroke: #9a3412; }
+        :root:not([data-theme="light"]) .annot { fill: #94a3b8; }
+        :root:not([data-theme="light"]) .flow { stroke: #64748b; }
+        :root:not([data-theme="light"]) .arrowhead { fill: #64748b; }
+        :root:not([data-theme="light"]) .stageL:hover .node { fill: #1e3a8a; }
+        :root:not([data-theme="light"]) .stageR:hover .node { fill: #7c2d12; }
+        :root:not([data-theme="light"]) .stageS:hover .flow { stroke: #cbd5e1; }
       }
     </style>
   </defs>
@@ -92,7 +128,7 @@
     <g fill="url(#logoGrad)" fill-rule="evenodd"><path d="M744,153.5A293.5 293.5 0 0 0 450.5,447A258 265 0 0 0 966.5,447A258 265 0 0 0 964.2,411.5A163 163 0 0 0 801,270L775,252L764,163.5ZM548.5,446A165.5 176 0 0 1 879.5,446A165.5 176 0 0 1 548.5,446Z"/><path d="M744,155H1035.2A171 171 0 0 1 948.3,252H744Z"/></g>
     <path class="logo" fill="#0f172a" d="M110,257.2L257,355L110,336.8ZM110,379.9L257,500.5L110,476.5ZM110,529.7L240,604L110,593.3ZM872,401L975,361V421ZM856,511L975,445V504Z"/>
   </g>
-  <text class="title" fill="#0f172a" x="92" y="33" font-size="20" font-weight="bold">RSigma</text>
+  <a class="head" href="https://rsigma.io/" target="_top"><text class="title lnk" fill="#0f172a" x="92" y="33" font-size="20" font-weight="bold">RSigma</text></a>
   <text class="sub" fill="#64748b" x="92" y="51" font-size="12.5">Detection engineering loop</text>
   <path class="divider" d="M26,66 H974" stroke="#eef2f7" stroke-width="1"/>
 
@@ -144,9 +180,9 @@
     <circle cx="40" cy="142.3" r="2" fill="#93c5fd"/>
     <text class="ink" fill="#374151" x="48" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/tune/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule tune</tspan></a> FP/TP → verified filter</text>
     <circle cx="40" cy="157.3" r="2" fill="#93c5fd"/>
-    <text class="ink" fill="#374151" x="48" y="161" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/reverse/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule reverse</tspan></a> Lucene query → Sigma</text>
+    <text class="ink" fill="#374151" x="48" y="161" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/reverse/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule reverse</tspan></a> SIEM query → Sigma</text>
     <circle cx="40" cy="172.3" r="2" fill="#93c5fd"/>
-    <text class="muted" fill="#6b7280" x="48" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/linting-rules/" target="_top">lint</a> · <a class="lnk" href="https://rsigma.io/cli/rule/doc/" target="_top">doc</a> · <a class="lnk" href="https://rsigma.io/editors/vscode/" target="_top">LSP</a> · <a class="lnk" href="https://rsigma.io/guide/mcp-server/" target="_top">MCP for AI agents</a></text>
+    <text class="muted" fill="#6b7280" x="48" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/linting-rules/" target="_top">lint</a> · <a class="lnk" href="https://rsigma.io/guide/formatting-rules/" target="_top">fmt</a> · <a class="lnk" href="https://rsigma.io/cli/rule/doc/" target="_top">doc</a> · <a class="lnk" href="https://rsigma.io/editors/vscode/" target="_top">LSP</a> · <a class="lnk" href="https://rsigma.io/guide/mcp-server/" target="_top">MCP agents</a></text>
   </g>
   <g class="stage stageL" id="stage-test">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-engineer-cycle-test" target="_top">
@@ -168,7 +204,7 @@
     <circle cx="40" cy="281.3" r="2" fill="#93c5fd"/>
     <text class="ink" fill="#374151" x="48" y="285" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/pipeline/diff/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">pipeline diff</tspan></a> transform preview</text>
     <circle cx="40" cy="296.3" r="2" fill="#93c5fd"/>
-    <text class="muted" fill="#6b7280" x="48" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/eval/" target="_top"><tspan class="mono">engine eval</tspan></a> one-shot evaluation</text>
+    <text class="muted" fill="#6b7280" x="48" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/eval/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">engine eval</tspan></a> · <a class="lnk" href="https://rsigma.io/cli/rule/test/" target="_top"><tspan class="mono cmdL" fill="#1d4ed8">rule test</tspan></a> exemplars</text>
   </g>
   <g class="stage stageL" id="stage-deploy">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-engineer-cycle-deploy" target="_top">
@@ -190,7 +226,7 @@
     <circle cx="40" cy="405.3" r="2" fill="#93c5fd"/>
     <text class="ink" fill="#374151" x="48" y="409" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">hot reload</tspan></a> rules + pipelines</text>
     <circle cx="40" cy="420.3" r="2" fill="#93c5fd"/>
-    <text class="muted" fill="#6b7280" x="48" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/deployment/docker/" target="_top">Docker</a> · <a class="lnk" href="https://rsigma.io/getting-started/installation/#installation-prebuilt-binaries" target="_top">signed release binaries</a></text>
+    <text class="muted" fill="#6b7280" x="48" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/deployment/docker/" target="_top">Docker</a> · <a class="lnk" href="https://rsigma.io/deployment/kubernetes/" target="_top">K8s</a> · <a class="lnk" href="https://rsigma.io/getting-started/installation/#installation-prebuilt-binaries" target="_top">signed binaries</a></text>
   </g>
   <g class="stage stageR" id="stage-detect">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-detect" target="_top">
@@ -210,9 +246,9 @@
     <circle cx="750" cy="142.3" r="2" fill="#fdba74"/>
     <text class="ink" fill="#374151" x="758" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">correlation</tspan></a> windows · chains</text>
     <circle cx="750" cy="157.3" r="2" fill="#fdba74"/>
-    <text class="ink" fill="#374151" x="758" y="161" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-jsonndjson" target="_top">JSON</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-syslog" target="_top">syslog</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-cefarcsight-feature-gated" target="_top">CEF</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-evtx-windows-event-log-feature-gated" target="_top">EVTX</a> · <a class="lnk" href="https://rsigma.io/guide/otlp-integration/" target="_top">OTLP</a></text>
+    <text class="ink" fill="#374151" x="758" y="161" font-size="10"><a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-jsonndjson" target="_top">JSON</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-syslog" target="_top">syslog</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-logfmt-feature-gated" target="_top">logfmt</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-cefarcsight-feature-gated" target="_top">CEF</a> · <a class="lnk" href="https://rsigma.io/guide/input-formats/#input-formats-evtx-windows-event-log-feature-gated" target="_top">EVTX</a> · <a class="lnk" href="https://rsigma.io/guide/otlp-integration/" target="_top">OTLP</a></text>
     <circle cx="750" cy="172.3" r="2" fill="#fdba74"/>
-    <text class="muted" fill="#6b7280" x="758" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/schema-routing/" target="_top">schema routing</a> · <a class="lnk" href="https://rsigma.io/cli/engine/discover-schemas/" target="_top">discovery</a> · <a class="lnk" href="https://rsigma.io/guide/cloud-collection-recipes/" target="_top">cloud</a></text>
+    <text class="muted" fill="#6b7280" x="758" y="176" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/processing-pipelines/" target="_top">pipelines</a> · <a class="lnk" href="https://rsigma.io/reference/dynamic-sources/" target="_top">sources</a> · <a class="lnk" href="https://rsigma.io/guide/schema-routing/" target="_top">schema routing</a></text>
   </g>
   <g class="stage stageR" id="stage-alert">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-alert-and-triage" target="_top">
@@ -228,13 +264,13 @@
     <text class="tR" fill="#9a3412" x="772" y="225.5" font-size="13" font-weight="bold">Alert &amp; Triage</text>
     </a>
     <circle cx="750" cy="251.3" r="2" fill="#fdba74"/>
-    <text class="ink" fill="#374151" x="758" y="255" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/enrichers/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">enrichment</tspan></a> GeoIP · intel · asset</text>
+    <text class="ink" fill="#374151" x="758" y="255" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/enrichers/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">enrichment</tspan></a> MMDB · DNS · STIX · HTTP</text>
     <circle cx="750" cy="266.3" r="2" fill="#fdba74"/>
     <text class="ink" fill="#374151" x="758" y="270" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/risk-based-alerting/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">risk-based alerting</tspan></a> entity score</text>
     <circle cx="750" cy="281.3" r="2" fill="#fdba74"/>
     <text class="ink" fill="#374151" x="758" y="285" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/alert-pipeline/#alert-pipeline-deduplication" target="_top">dedup</a> · <a class="lnk" href="https://rsigma.io/guide/alert-pipeline/#alert-pipeline-silencing" target="_top">silence</a> · <a class="lnk" href="https://rsigma.io/guide/alert-pipeline/#alert-pipeline-inhibition" target="_top">inhibit</a> · <a class="lnk" href="https://rsigma.io/guide/alert-pipeline/#alert-pipeline-grouping" target="_top">group</a></text>
     <circle cx="750" cy="296.3" r="2" fill="#fdba74"/>
-    <text class="muted" fill="#6b7280" x="758" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/webhooks/" target="_top">webhooks</a>: <a class="lnk" href="https://rsigma.io/guide/webhooks/#webhooks-recipe-catalog-slack" target="_top">Slack</a> · <a class="lnk" href="https://rsigma.io/guide/webhooks/#webhooks-recipe-catalog-pagerduty" target="_top">PagerDuty</a> · <a class="lnk" href="https://rsigma.io/guide/webhooks/#webhooks-recipe-catalog" target="_top">...</a></text>
+    <text class="muted" fill="#6b7280" x="758" y="300" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/webhooks/" target="_top">webhooks</a> (<a class="lnk" href="https://rsigma.io/guide/webhooks/#webhooks-recipe-catalog-slack" target="_top">Slack</a>, <a class="lnk" href="https://rsigma.io/guide/webhooks/#webhooks-recipe-catalog-pagerduty" target="_top">PagerDuty</a>) · <a class="lnk" href="https://rsigma.io/guide/ocsf-findings/" target="_top">OCSF</a></text>
   </g>
   <g class="stage stageR" id="stage-measure">
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-operate-cycle-measure" target="_top">
@@ -256,28 +292,28 @@
     <circle cx="750" cy="405.3" r="2" fill="#fdba74"/>
     <text class="ink" fill="#374151" x="758" y="409" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/visibility-and-data-sources/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">field observability</tspan></a> gap signals</text>
     <circle cx="750" cy="420.3" r="2" fill="#fdba74"/>
-    <text class="muted" fill="#6b7280" x="758" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/scorecard/" target="_top">scorecard</a> · <a class="lnk" href="https://rsigma.io/guide/triage-feedback/" target="_top">FP ratio</a> · <a class="lnk" href="https://rsigma.io/guide/disposition-recipes/" target="_top">dispositions</a></text>
+    <text class="muted" fill="#6b7280" x="758" y="424" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/scorecard/" target="_top">scorecard</a> · <a class="lnk" href="https://rsigma.io/cli/rule/hygiene/" target="_top">hygiene</a> · <a class="lnk" href="https://rsigma.io/guide/disposition-recipes/" target="_top">dispositions</a></text>
   </g>
   <g class="stage stageS" id="stage-hunt">
     <path class="flow" d="M490,308 V394" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
     <path class="flow" d="M510,396 V310" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
     <text class="annot" fill="#64748b" x="482" y="358" font-size="10.5" text-anchor="end">convert</text>
-    <text class="annot" fill="#64748b" x="518" y="358" font-size="10.5">reverse</text>
+    <text class="annot" fill="#64748b" x="518" y="358" font-size="10.5">exemplars</text>
     <a class="head" href="https://rsigma.io/guide/detection-engineering-loop/#detection-engineering-loop-hunt" target="_top">
     <title>Hunt: compile the same rule for historical stores and feed findings back</title>
-    <rect class="card cardS" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="392" y="402" width="216" height="108" rx="10" filter="url(#soft)"/>
-    <path class="hdrS" fill="#f1f5f9" d="M392.5,412 a9.5,9.5 0 0 1 9.5,-9.5 h196 a9.5,9.5 0 0 1 9.5,9.5 v20 h-215 Z"/>
-    <circle cx="412" cy="417" r="9.5" fill="#475569"/>
-    <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"><circle cx="410.8" cy="415.8" r="3.6"/><path d="M413.4,418.4 L416.2,421.2"/></g>
-    <text class="tS" fill="#334155" x="428" y="421.5" font-size="13" font-weight="bold">Hunt</text>
+    <rect class="card cardS" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="384" y="402" width="232" height="108" rx="10" filter="url(#soft)"/>
+    <path class="hdrS" fill="#f1f5f9" d="M384.5,412 a9.5,9.5 0 0 1 9.5,-9.5 h212 a9.5,9.5 0 0 1 9.5,9.5 v20 h-231 Z"/>
+    <circle cx="404" cy="417" r="9.5" fill="#475569"/>
+    <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"><circle cx="402.8" cy="415.8" r="3.6"/><path d="M405.4,418.4 L408.2,421.2"/></g>
+    <text class="tS" fill="#334155" x="420" y="421.5" font-size="13" font-weight="bold">Hunt</text>
     </a>
-    <circle cx="406" cy="447.3" r="2" fill="#cbd5e1"/>
-    <text class="ink" fill="#374151" x="414" y="451" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/backend/convert/" target="_top"><tspan class="mono cmdS" fill="#334155">backend convert</tspan></a> PostgreSQL SQL</text>
-    <circle cx="406" cy="462.3" r="2" fill="#cbd5e1"/>
-    <text class="ink" fill="#374151" x="414" y="466" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/rule-conversion/" target="_top"><tspan class="mono cmdS" fill="#334155">sigma-cli</tspan></a> Splunk · 30+ backends</text>
-    <circle cx="406" cy="477.3" r="2" fill="#cbd5e1"/>
-    <text class="ink" fill="#374151" x="414" y="481" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/fields/" target="_top"><tspan class="mono cmdS" fill="#334155">rule fields</tspan></a> mapping catalog</text>
-    <circle cx="406" cy="492.3" r="2" fill="#cbd5e1"/>
-    <text class="muted" fill="#6b7280" x="414" y="496" font-size="10.5" font-style="italic">findings feed new rules</text>
+    <circle cx="398" cy="447.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="406" y="451" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/hunt/run/" target="_top"><tspan class="mono cmdS" fill="#334155">hunt run</tspan></a> PostgreSQL archive</text>
+    <circle cx="398" cy="462.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="406" y="466" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/backend/convert/" target="_top"><tspan class="mono cmdS" fill="#334155">backend convert</tspan></a> + <a class="lnk" href="https://rsigma.io/guide/rule-conversion/" target="_top"><tspan class="mono cmdS" fill="#334155">sigma-cli</tspan></a> (30+)</text>
+    <circle cx="398" cy="477.3" r="2" fill="#cbd5e1"/>
+    <text class="ink" fill="#374151" x="406" y="481" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/rule/fields/" target="_top"><tspan class="mono cmdS" fill="#334155">rule fields</tspan></a> mapping catalog</text>
+    <circle cx="398" cy="492.3" r="2" fill="#cbd5e1"/>
+    <text class="muted" fill="#6b7280" x="406" y="496" font-size="10.5" font-style="italic"><a class="lnk" href="https://rsigma.io/guide/hunting/" target="_top">matches feed rule draft &amp; backtest</a></text>
   </g>
 </svg>

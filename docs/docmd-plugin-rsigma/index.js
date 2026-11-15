@@ -1079,6 +1079,55 @@ function validateInternalAnchors(outputDir) {
   }
 }
 
+/**
+ * Sync the host page's `data-theme` attribute into embedded `<object class="diagram">`
+ * SVGs so their light/dark palette follows the site theme toggle rather than only OS
+ * `prefers-color-scheme`. Also marks `data-embedded="true"` so the SVG drops its opaque
+ * outer background when embedded on a doc page.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function injectDiagramThemeSync(html) {
+  if (!html.includes('class="diagram"') || html.includes("rsigmaDiagramThemeSync")) {
+    return html;
+  }
+  const script = `    <!-- rsigmaDiagramThemeSync -->
+    <script>
+      (function() {
+        function syncDiagram(obj) {
+          try {
+            var doc = obj.contentDocument;
+            if (!doc || !doc.documentElement) return;
+            var theme = document.documentElement.getAttribute("data-theme") || "dark";
+            doc.documentElement.setAttribute("data-theme", theme);
+            doc.documentElement.setAttribute("data-embedded", "true");
+          } catch (_) {}
+        }
+        function syncAll() {
+          document.querySelectorAll("object.diagram").forEach(function(obj) {
+            syncDiagram(obj);
+            if (!obj.__rsigmaThemeBound) {
+              obj.__rsigmaThemeBound = true;
+              obj.addEventListener("load", function() { syncDiagram(obj); });
+            }
+          });
+        }
+        syncAll();
+        new MutationObserver(syncAll).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"]
+        });
+        new MutationObserver(syncAll).observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      })();
+    </script>
+`;
+  return html.replace("</body>", `${script}</body>`);
+}
+
 export default {
   plugin: {
     name: "docmd-plugin-rsigma",
@@ -1173,6 +1222,7 @@ export default {
         next = injectSoftwareStructuredData(next, homePage?.frontmatter?.description ?? "");
       }
       next = embedInteractiveDiagrams(next, ratios);
+      next = injectDiagramThemeSync(next);
       const withTitles = renderMarkdownTitles(next);
       if (withTitles !== next) {
         titlesRendered += 1;
