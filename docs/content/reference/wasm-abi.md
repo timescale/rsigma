@@ -115,3 +115,9 @@ Hosts must bounds-check every guest pointer and length against the current linea
 ## Relationship to existing wrappers
 
 [detection.studio](https://github.com/northsh/detection.studio/tree/main/rsigma-wasm) demonstrates that `rsigma-parser` and `rsigma-eval` work in browser WASM through `wasm-bindgen`. It validates the underlying portability but does not implement or depend on this raw host/guest ABI.
+
+## See also
+
+- [Library API](../library/index.md) for embedding `rsigma-parser` and `rsigma-eval` in Rust.
+- [Feature Flags](feature-flags.md) for disabling default features (`fix`, `fmt`) on `wasm32-unknown-unknown`.
+- [Testing](../developers/testing.md) for the CI WebAssembly build and Wasmtime smoke check.

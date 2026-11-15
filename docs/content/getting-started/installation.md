@@ -101,14 +101,20 @@ cargo install --locked rsigma --features daemon-otlp
 # In-process TLS/mTLS for the daemon and MCP HTTP listeners
 cargo install --locked rsigma --features daemon-tls
 
-# Windows Event Log (.evtx) input
-cargo install --locked rsigma --features evtx
+# Windows Event Log (.evtx), logfmt, and CEF input formats
+cargo install --locked rsigma --features evtx,logfmt,cef
+
+# PostgreSQL/TimescaleDB archive hunting (`hunt run --emit events`)
+cargo install --locked rsigma --features hunt-postgres
+
+# TAXII 2.1 sync and STIX/MMDB/DNS enrichers
+cargo install --locked rsigma --features taxii-sync,stix-enrich,mmdb-enrich,dns-enrich
 
 # Cross-rule Aho-Corasick prefilter for large rule sets
 cargo install --locked rsigma --features daachorse-index
 ```
 
-The `--locked` flag pins the dependency graph to the published `Cargo.lock`, which is what CI builds and signs. The [LSP server](../editors/vscode.md) ships in its own crate:
+The `--locked` flag pins the dependency graph to the published `Cargo.lock`, which is what CI builds and signs. See [Feature Flags](../reference/feature-flags.md) for the complete matrix, including `mmdb-enrich` and `dns-enrich`. {{ added "unreleased" }} The [LSP server](../editors/vscode.md) ships in its own crate:
 
 ```bash
 cargo install --locked rsigma-lsp
@@ -148,7 +154,7 @@ npx skills add timescale/sigma-rules -y
 npx skills add timescale/rsigma -y
 ```
 
-The rsigma skill is published from `skills/rsigma/` in this repository. It does not replace `rsigma mcp serve`. Connect the MCP server when you want typed tools instead of shelling out.
+The rsigma skill is published from `skills/rsigma/` in this repository. It does not replace [`rsigma mcp serve`](../guide/mcp-server.md). Connect the MCP server when you want typed tools instead of shelling out.
 
 ## Next steps
 

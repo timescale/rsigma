@@ -24,6 +24,8 @@ rsigma-lsp --version
 
 ## Neovim
 
+::: tabs
+::: tab "Native vim.lsp.start" icon:terminal
 The native LSP client needs the smallest setup. Drop this in your config (works as-is in Lua, no plugin manager required):
 
 ```lua
@@ -40,9 +42,8 @@ vim.api.nvim_create_autocmd('FileType', {
 ```
 
 Restart Neovim, open a `.yml` Sigma rule, and `:LspInfo` should show `rsigma-lsp` attached.
-
-### With `nvim-lspconfig`
-
+:::
+::: tab "nvim-lspconfig" icon:settings
 If you use [`nvim-lspconfig`](https://github.com/neovim/nvim-lspconfig), register the server inline:
 
 ```lua
@@ -61,6 +62,8 @@ end
 
 require('lspconfig').rsigma.setup({})
 ```
+:::
+:::
 
 ### Coexisting with `yaml-language-server`
 

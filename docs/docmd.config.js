@@ -25,7 +25,12 @@ export default {
       components: {
         search: true,
         themeSwitch: true,
+        focusMode: true,
       },
+    },
+    footer: {
+      style: "minimal",
+      content: "MIT Licensed · [GitHub](https://github.com/timescale/rsigma) · [crates.io](https://crates.io/crates/rsigma) · [docs.rs](https://docs.rs/rsigma) · [Release Notes](https://rsigma.io/release-notes/) · [Security](https://rsigma.io/security-policy/) · [Privacy](https://rsigma.io/privacy/)",
     },
   },
   cookie: {

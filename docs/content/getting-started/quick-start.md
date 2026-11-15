@@ -128,7 +128,7 @@ See the [streaming detection guide](../guide/streaming-detection.md) for the man
 rsigma backend convert rules/ -t postgres
 ```
 
-The command prints JSON; the SQL is in `queries[].query`:
+On an interactive terminal, the command defaults to JSON (`--output-format json`) with the SQL in `queries[].query`; when piped, it prints the raw SQL query directly unless you pass `--output-format json`:
 
 ```json
 {
