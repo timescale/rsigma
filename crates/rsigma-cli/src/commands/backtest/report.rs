@@ -326,8 +326,7 @@ impl BacktestReport {
 
         // For machine formats the human summary is not on stdout, so emit a
         // one-line recap on stderr (the table view already shows it).
-        if ctx.format != OutputFormat::Table && ctx.format != OutputFormat::Ocsf && ctx.show_stats()
-        {
+        if ctx.format != OutputFormat::Table && ctx.show_stats() {
             eprintln!("{}", self.stderr_summary());
         }
     }
