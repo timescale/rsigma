@@ -13,8 +13,21 @@ use crate::output::{OutputCtx, OutputFormat, render_json};
 #[derive(Args, Debug)]
 pub(crate) struct TuneArgs {
     /// Path to a Sigma rule file or directory.
-    #[arg(short, long)]
-    pub rules: PathBuf,
+    #[arg(
+        short,
+        long,
+        required_unless_present = "ruleset",
+        conflicts_with = "ruleset"
+    )]
+    pub rules: Option<PathBuf>,
+
+    /// Named ruleset from the configuration to tune instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Target rule id, falling back to an exact title.
     /// Required when the ruleset contains more than one detection rule.
@@ -97,7 +110,13 @@ pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
     let false_positives = read_corpus(args.fp.as_deref(), "false-positive");
     let true_positives = read_corpus(args.tp.as_deref(), "true-positive");
 
-    let collection = crate::load_collection(&args.rules);
+    let rules: Vec<PathBuf> = args.rules.iter().cloned().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
     let mut rule = match select_rule(&collection.rules, args.rule.as_deref()) {
         Ok(rule) => rule.clone(),
         Err(error) => {
@@ -106,7 +125,7 @@ pub(crate) fn cmd_tune(args: TuneArgs, ctx: OutputCtx) {
         }
     };
 
-    let pipelines = crate::load_pipelines(&args.pipelines);
+    let pipelines = crate::load_pipelines(&input.pipelines(&args.pipelines));
     if !pipelines.is_empty()
         && let Err(error) = apply_pipelines(&pipelines, &mut rule)
     {
@@ -169,8 +188,14 @@ fn cmd_tune_from_dispositions(args: TuneArgs, ctx: OutputCtx) {
             }
         };
 
-    let collection = crate::load_collection(&args.rules);
-    let pipelines = crate::load_pipelines(&args.pipelines);
+    let rules: Vec<PathBuf> = args.rules.iter().cloned().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
+    let pipelines = crate::load_pipelines(&input.pipelines(&args.pipelines));
     let resolved_expectations =
         args.expectations.as_ref().map(
             |path| match super::backtest::expectations::load_and_resolve(path, &collection) {

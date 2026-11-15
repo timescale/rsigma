@@ -211,7 +211,7 @@ pub(crate) fn wrap_query(
 /// (flat mode) and replace the raw JSONB column with extractions (JSONB
 /// mode). The generated SQL stays opaque to the wrapper either way.
 pub(crate) fn build_hunt_plan(
-    rule_paths: &[PathBuf],
+    mut collection: rsigma_parser::SigmaCollection,
     pipeline_paths: &[PathBuf],
     options: &HashMap<String, String>,
     window: &HuntWindow,
@@ -219,7 +219,6 @@ pub(crate) fn build_hunt_plan(
 ) -> Result<HuntPlan, HuntQueryError> {
     window.validate()?;
 
-    let mut collection = crate::load_collection_multi(rule_paths);
     if !collection.correlations.is_empty() {
         let titles = collection
             .correlations
@@ -485,7 +484,7 @@ level: low
         std::io::Write::write_all(&mut f, rule_yaml.as_bytes()).unwrap();
         let window = window(Some("2026-07-01T00:00:00Z"), Some("2026-07-02T00:00:00Z"));
         build_hunt_plan(
-            std::slice::from_ref(&f.path().to_path_buf()),
+            crate::load_collection_multi(std::slice::from_ref(&f.path().to_path_buf())),
             &[],
             options,
             &window,
@@ -532,7 +531,7 @@ level: low
         let mut f = tempfile::NamedTempFile::new().unwrap();
         std::io::Write::write_all(&mut f, yaml.as_bytes()).unwrap();
         let err = build_hunt_plan(
-            &[f.path().to_path_buf()],
+            crate::load_collection_multi(&[f.path().to_path_buf()]),
             &[],
             &HashMap::new(),
             &HuntWindow::default(),

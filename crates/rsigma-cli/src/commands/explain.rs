@@ -22,8 +22,16 @@ use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Painter, Tabular, 
 #[derive(Args, Debug)]
 pub(crate) struct ExplainArgs {
     /// Sigma rule file(s) or director(ies) to explain. Repeatable.
-    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required = true)]
+    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required_unless_present = "ruleset", conflicts_with = "ruleset")]
     pub rules: Vec<PathBuf>,
+
+    /// Named ruleset from the configuration to explain instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// The event to explain against: inline JSON, `@path` to a JSON file, or
     /// `-` (or omitted) to read a single JSON object from stdin.
@@ -54,8 +62,13 @@ pub(crate) fn cmd_explain(args: ExplainArgs, ctx: OutputCtx) {
         }
     };
 
-    let pipelines = crate::load_pipelines(&args.pipeline);
-    let collection = crate::load_collection_multi(&args.rules);
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let pipelines = crate::load_pipelines(&input.pipelines(&args.pipeline));
+    let collection = input.collection(&ctx);
 
     let mut rules: Vec<&rsigma_parser::SigmaRule> = collection.rules.iter().collect();
     if let Some(id) = &args.rule_id {

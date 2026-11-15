@@ -40,6 +40,10 @@ pub(crate) struct EvalArgs {
     #[arg(short, long)]
     pub rules: Option<PathBuf>,
 
+    /// Named ruleset from the configuration to evaluate instead of `--rules`.
+    #[arg(long, value_name = "NAME", conflicts_with = "rules")]
+    pub ruleset: Option<String>,
+
     /// A single event as a JSON string, or @path to read from a file.
     /// Supports NDJSON files and .evtx (Windows Event Log) files.
     /// If omitted, reads NDJSON from stdin.
@@ -334,15 +338,36 @@ fn overlay_eval_config(
     };
 
     if let Some(eval) = base.eval {
-        if !explicit("rules")
-            && let Some(v) = eval.rules
-        {
+        let cli_rules = explicit("rules");
+        let cli_ruleset = explicit("ruleset");
+        if !cli_rules && !cli_ruleset && eval.rules.is_some() && eval.ruleset.is_some() {
+            eprintln!("error: set either eval.rules or eval.ruleset, not both");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        if !cli_rules && let Some(v) = eval.rules {
             args.rules = Some(v);
         }
-        if !explicit("pipelines")
-            && let Some(v) = eval.pipelines
-        {
-            args.pipelines = v;
+        if !cli_ruleset && let Some(v) = eval.ruleset {
+            args.ruleset = Some(v);
+        }
+        if !explicit("pipelines") {
+            if let Some(name) = &args.ruleset {
+                let declared = base
+                    .rulesets
+                    .as_ref()
+                    .and_then(|rulesets| rulesets.get(name))
+                    .map(crate::ruleset::ruleset_pipelines)
+                    .unwrap_or_default();
+                if declared.is_empty() {
+                    if let Some(v) = eval.pipelines {
+                        args.pipelines = v;
+                    }
+                } else {
+                    args.pipelines = declared;
+                }
+            } else if let Some(v) = eval.pipelines {
+                args.pipelines = v;
+            }
         }
         if !explicit("input_format")
             && let Some(v) = eval.input_format
@@ -426,9 +451,10 @@ fn overlay_eval_config(
 /// Returns `true` if any detection or correlation matched.
 pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let EvalArgs {
-        config: _,
+        config,
         dry_run: _,
         rules: rules_opt,
+        ruleset,
         event: event_json,
         pretty,
         output,
@@ -467,12 +493,21 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         dump_correlation_state,
     } = args;
 
-    let rules_path = rules_opt.unwrap_or_else(|| {
-        eprintln!("error: no rules path; set --rules or eval.rules in the config file");
+    let rules_path: Vec<PathBuf> = rules_opt.into_iter().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules_path,
+        ruleset: ruleset.as_deref(),
+        config: config.as_deref(),
+    };
+    if input.rules.is_empty() && input.ruleset.is_none() {
+        eprintln!(
+            "error: no rules path; set --rules, --ruleset, eval.rules, or eval.ruleset in the config file"
+        );
         process::exit(exit_code::CONFIG_ERROR);
-    });
+    }
 
-    let collection = crate::load_collection(&rules_path);
+    let rules_label = input.label();
+    let collection = input.collection(&ctx);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
@@ -600,7 +635,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
-            &rules_path,
+            &rules_label,
             event_source,
             &mut renderer,
             &pipelines,
@@ -622,7 +657,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     } else {
         cmd_eval_detection_only(
             collection,
-            &rules_path,
+            &rules_label,
             event_source,
             &mut renderer,
             &pipelines,
@@ -877,7 +912,7 @@ fn cmd_eval_routed(
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval_with_correlations(
     collection: SigmaCollection,
-    rules_path: &std::path::Path,
+    rules_label: &str,
     event_source: EventSource,
     renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
@@ -918,13 +953,13 @@ fn cmd_eval_with_correlations(
             "Loaded {} detection rules + {} correlation rules from {}",
             engine.detection_rule_count(),
             engine.correlation_rule_count(),
-            rules_path.display(),
+            rules_label,
         );
     }
     tracing::info!(
         detection_rules = engine.detection_rule_count(),
         correlation_rules = engine.correlation_rule_count(),
-        rules_path = %rules_path.display(),
+        rules_label = %rules_label,
         "Rules loaded",
     );
 
@@ -1079,7 +1114,7 @@ fn dump_correlation_snapshot(engine: &CorrelationEngine) {
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval_detection_only(
     collection: SigmaCollection,
-    rules_path: &std::path::Path,
+    rules_label: &str,
     event_source: EventSource,
     renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
@@ -1114,16 +1149,12 @@ fn cmd_eval_detection_only(
     }
 
     if renderer.ctx().show_progress() {
-        eprintln!(
-            "Loaded {} rules from {}",
-            engine.rule_count(),
-            rules_path.display()
-        );
+        eprintln!("Loaded {} rules from {}", engine.rule_count(), rules_label);
     }
     tracing::info!(
         detection_rules = engine.rule_count(),
         correlation_rules = 0,
-        rules_path = %rules_path.display(),
+        rules_label = %rules_label,
         "Rules loaded",
     );
 

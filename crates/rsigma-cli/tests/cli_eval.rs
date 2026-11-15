@@ -799,7 +799,7 @@ fn eval_nonexistent_rules_path() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Error"));
+        .stderr(predicate::str::contains("Path not found"));
 }
 
 #[test]

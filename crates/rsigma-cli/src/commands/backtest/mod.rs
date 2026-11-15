@@ -48,8 +48,12 @@ pub(crate) struct BacktestArgs {
 
     /// Path to a Sigma rule file or directory of rules.
     /// Required unless supplied via `backtest.rules` in the config file.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "ruleset")]
     pub rules: Option<PathBuf>,
+
+    /// Named ruleset from the configuration to backtest instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
 
     /// Event corpus: a file or a directory walked recursively. Repeatable.
     /// Extension dispatch: `.ndjson`/`.jsonl` as NDJSON, `.evtx` via the
@@ -130,10 +134,17 @@ fn overlay_backtest_config(
     };
 
     if let Some(bt) = base.backtest {
-        if !explicit("rules")
-            && let Some(v) = bt.rules
-        {
+        let cli_rules = explicit("rules");
+        let cli_ruleset = explicit("ruleset");
+        if !cli_rules && !cli_ruleset && bt.rules.is_some() && bt.ruleset.is_some() {
+            eprintln!("error: set either backtest.rules or backtest.ruleset, not both");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        if !cli_rules && let Some(v) = bt.rules {
             args.rules = Some(v);
+        }
+        if !cli_ruleset && let Some(v) = bt.ruleset {
+            args.ruleset = Some(v);
         }
         if !explicit("corpus")
             && let Some(v) = bt.corpus
@@ -152,10 +163,24 @@ fn overlay_backtest_config(
         {
             args.unexpected = Some(v);
         }
-        if !explicit("pipelines")
-            && let Some(v) = bt.pipelines
-        {
-            args.pipelines = v;
+        if !explicit("pipelines") {
+            if let Some(name) = &args.ruleset {
+                let declared = base
+                    .rulesets
+                    .as_ref()
+                    .and_then(|rulesets| rulesets.get(name))
+                    .map(crate::ruleset::ruleset_pipelines)
+                    .unwrap_or_default();
+                if declared.is_empty() {
+                    if let Some(v) = bt.pipelines {
+                        args.pipelines = v;
+                    }
+                } else {
+                    args.pipelines = declared;
+                }
+            } else if let Some(v) = bt.pipelines {
+                args.pipelines = v;
+            }
         }
         if !explicit("input_format")
             && let Some(v) = bt.input_format
@@ -178,17 +203,25 @@ fn overlay_backtest_config(
 /// Run the backtest. Returns the process exit code (0 pass, 1 findings,
 /// 2 rule error, 3 config error). Rule and config errors exit directly.
 pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
-    let Some(rules_path) = args.rules.clone() else {
-        eprintln!("error: no rules path; set --rules or backtest.rules in the config file");
+    if args.rules.is_none() && args.ruleset.is_none() {
+        eprintln!(
+            "error: no rules path; set --rules, --ruleset, backtest.rules, or backtest.ruleset in the config file"
+        );
         return exit_code::CONFIG_ERROR;
-    };
+    }
     if args.corpus.is_empty() {
         eprintln!("error: no corpus; set --corpus or backtest.corpus in the config file");
         return exit_code::CONFIG_ERROR;
     }
 
-    // `load_collection` exits with RULE_ERROR if the rules cannot be parsed.
-    let collection = crate::load_collection(&rules_path);
+    // `RuleInput::collection` exits with RULE_ERROR if the rules cannot be parsed.
+    let rules: Vec<PathBuf> = args.rules.iter().cloned().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
     let pipelines = crate::load_pipelines(&args.pipelines);
     let event_filter = crate::build_event_filter(args.jq.clone(), args.jsonpath.clone());
 

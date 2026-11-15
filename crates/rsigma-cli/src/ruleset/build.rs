@@ -351,7 +351,6 @@ pub(crate) fn check_output(dir: &Path, plan: &[PlannedFile], lock: &Lockfile) ->
 }
 
 /// Write a resolved ruleset into a fresh temporary directory.
-#[allow(dead_code)] // Used by `backend convert` delegated targets.
 pub(crate) fn materialize_temp(
     resolved: &ResolvedRuleset,
     spec: &RulesetSpec,

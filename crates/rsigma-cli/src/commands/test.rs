@@ -14,8 +14,21 @@ use crate::output::{OutputCtx, OutputFormat, Tabular, render_report};
 #[derive(Args, Debug)]
 pub(crate) struct TestArgs {
     /// One or more Sigma rule files or directories (repeatable).
-    #[arg(short, long, required = true)]
+    #[arg(
+        short,
+        long,
+        required_unless_present = "ruleset",
+        conflicts_with = "ruleset"
+    )]
     pub rules: Vec<PathBuf>,
+
+    /// Named ruleset from the configuration to test instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Processing pipeline(s) to apply (repeatable). Accepts builtin names or YAML file paths.
     #[arg(short = 'p', long = "pipeline")]
@@ -79,14 +92,14 @@ pub(crate) fn cmd_test(args: TestArgs, mut ctx: OutputCtx) -> i32 {
         ctx.format = OutputFormat::Table;
     }
 
-    let collection = crate::load_collection_multi(&args.rules);
-    let pipelines = crate::load_pipelines(&args.pipelines);
-    let source = args
-        .rules
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(",");
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
+    let pipelines = crate::load_pipelines(&input.pipelines(&args.pipelines));
+    let source = input.label();
 
     let mut report = match run_exemplars(&collection, &pipelines) {
         Ok(report) => report,

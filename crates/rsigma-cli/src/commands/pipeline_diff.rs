@@ -22,8 +22,16 @@ use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Painter, Tabular, 
 #[derive(Args, Debug)]
 pub(crate) struct PipelineDiffArgs {
     /// Sigma rule file(s) or director(ies) to diff. Repeatable.
-    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required = true)]
+    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required_unless_present = "ruleset", conflicts_with = "ruleset")]
     pub rules: Vec<PathBuf>,
+
+    /// Named ruleset from the configuration to diff instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows,
     /// sysmon) or YAML file paths. Repeatable, applied in priority order.
@@ -74,7 +82,12 @@ pub(crate) fn diff_rule(rule: &SigmaRule, pipelines: &[Pipeline]) -> Result<Rule
 
 pub(crate) fn cmd_pipeline_diff(args: PipelineDiffArgs, ctx: OutputCtx) {
     let pipelines = crate::load_pipelines(&args.pipeline);
-    let collection = crate::load_collection_multi(&args.rules);
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
 
     let mut rules: Vec<&SigmaRule> = collection.rules.iter().collect();
     if let Some(id) = &args.rule_id {
