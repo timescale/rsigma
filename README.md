@@ -321,7 +321,7 @@ See [BENCHMARKS.md](BENCHMARKS.md) for full Criterion results across all subsyst
 ## Reference
 
 - [pySigma](https://github.com/SigmaHQ/pySigma): reference Python implementation
-- [Sigma Specification V2.1.0](https://github.com/SigmaHQ/sigma-specification): formal specification
+- [Sigma Specification V2.1.0](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification): formal specification
 - [sigma-rust](https://github.com/jopohl/sigma-rust): Pratt parsing approach
 - [sigmars](https://github.com/crowdalert/sigmars): correlation support patterns
 - [sigma_engine](https://github.com/SigmaHQ/sigma_engine): official SigmaHQ Rust library for parsing and matching Sigma rules against events

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="686" viewBox="0 0 1000 686" style="width:100%;height:100%" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="RSigma crate dependency graph">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="686" viewBox="0 0 1000 686" style="width:100%;height:100%" font-family="Inter, system-ui, -apple-system, Helvetica, Arial, sans-serif" role="img" aria-label="RSigma crate dependency graph">
   <defs>
     <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
@@ -17,28 +17,53 @@
       .stageR:hover .card, .stageR:focus-within .card { stroke: #fb923c; }
       .stageS:hover .card, .stageS:focus-within .card { stroke: #94a3b8; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      /* Light values are presentation attributes on each element;
-         this block only overrides them when the viewer prefers dark. */
+      :root[data-embedded="true"] .bg { fill: transparent; }
+      :root[data-theme="light"] { color-scheme: light; }
+      /* Light values are presentation attributes on each element.
+         Follow the host page's data-theme when embedded, or prefers-color-scheme standalone. */
+      :root[data-theme="dark"] { color-scheme: dark; }
+      :root[data-theme="dark"] .bg { fill: #0b1220; }
+      :root[data-theme="dark"][data-embedded="true"] .bg { fill: transparent; }
+      :root[data-theme="dark"] .logo { fill: #f1f5f9; }
+      :root[data-theme="dark"] .logoLine { stroke: #f1f5f9; }
+      :root[data-theme="dark"] .title { fill: #f1f5f9; }
+      :root[data-theme="dark"] .sub { fill: #94a3b8; }
+      :root[data-theme="dark"] .group { fill: #120f0c; stroke: #9a3412; }
+      :root[data-theme="dark"] .groupT { fill: #fdba74; }
+      :root[data-theme="dark"] .card { fill: #111b2e; stroke: #22314d; }
+      :root[data-theme="dark"] .hdrL { fill: #142647; }
+      :root[data-theme="dark"] .hdrR { fill: #33200f; }
+      :root[data-theme="dark"] .hdrS { fill: #1a2436; }
+      :root[data-theme="dark"] .tL, :root[data-theme="dark"] .cmdL { fill: #93c5fd; }
+      :root[data-theme="dark"] .tR, :root[data-theme="dark"] .cmdR { fill: #fdba74; }
+      :root[data-theme="dark"] .tS, :root[data-theme="dark"] .cmdS { fill: #e2e8f0; }
+      :root[data-theme="dark"] .ink { fill: #cbd5e1; }
+      :root[data-theme="dark"] .muted { fill: #8b9ab0; }
+      :root[data-theme="dark"] .annot { fill: #94a3b8; }
+      :root[data-theme="dark"] .flow { stroke: #64748b; }
+      :root[data-theme="dark"] .arrowhead { fill: #64748b; }
       @media (prefers-color-scheme: dark) {
-        .bg { fill: #0b1220; }
-        .logo { fill: #f1f5f9; }
-        .logoLine { stroke: #f1f5f9; }
-        .title { fill: #f1f5f9; }
-        .sub { fill: #94a3b8; }
-        .group { fill: #120f0c; stroke: #9a3412; }
-        .groupT { fill: #fdba74; }
-        .card { fill: #111b2e; stroke: #22314d; }
-        .hdrL { fill: #142647; }
-        .hdrR { fill: #33200f; }
-        .hdrS { fill: #1a2436; }
-        .tL, .cmdL { fill: #93c5fd; }
-        .tR, .cmdR { fill: #fdba74; }
-        .tS, .cmdS { fill: #e2e8f0; }
-        .ink { fill: #cbd5e1; }
-        .muted { fill: #8b9ab0; }
-        .annot { fill: #94a3b8; }
-        .flow { stroke: #64748b; }
-        .arrowhead { fill: #64748b; }
+        :root:not([data-theme="light"]) { color-scheme: dark; }
+        :root:not([data-theme="light"]) .bg { fill: #0b1220; }
+        :root[data-embedded="true"]:not([data-theme="light"]) .bg { fill: transparent; }
+        :root:not([data-theme="light"]) .logo { fill: #f1f5f9; }
+        :root:not([data-theme="light"]) .logoLine { stroke: #f1f5f9; }
+        :root:not([data-theme="light"]) .title { fill: #f1f5f9; }
+        :root:not([data-theme="light"]) .sub { fill: #94a3b8; }
+        :root:not([data-theme="light"]) .group { fill: #120f0c; stroke: #9a3412; }
+        :root:not([data-theme="light"]) .groupT { fill: #fdba74; }
+        :root:not([data-theme="light"]) .card { fill: #111b2e; stroke: #22314d; }
+        :root:not([data-theme="light"]) .hdrL { fill: #142647; }
+        :root:not([data-theme="light"]) .hdrR { fill: #33200f; }
+        :root:not([data-theme="light"]) .hdrS { fill: #1a2436; }
+        :root:not([data-theme="light"]) .tL, :root:not([data-theme="light"]) .cmdL { fill: #93c5fd; }
+        :root:not([data-theme="light"]) .tR, :root:not([data-theme="light"]) .cmdR { fill: #fdba74; }
+        :root:not([data-theme="light"]) .tS, :root:not([data-theme="light"]) .cmdS { fill: #e2e8f0; }
+        :root:not([data-theme="light"]) .ink { fill: #cbd5e1; }
+        :root:not([data-theme="light"]) .muted { fill: #8b9ab0; }
+        :root:not([data-theme="light"]) .annot { fill: #94a3b8; }
+        :root:not([data-theme="light"]) .flow { stroke: #64748b; }
+        :root:not([data-theme="light"]) .arrowhead { fill: #64748b; }
       }
     </style>
   </defs>
@@ -80,7 +105,7 @@
     <path class="hdrR" fill="#fff7ed" d="M680.5,94 a9.5,9.5 0 0 1 9.5,-9.5 h270 a9.5,9.5 0 0 1 9.5,9.5 v20 h-289 Z"/>
     <a class="head" href="https://rsigma.io/developers/linter-and-lsp/" target="_top"><text class="tR lnk" fill="#9a3412" x="694" y="103.5" font-size="13" font-weight="bold"><tspan class="mono">rsigma-lsp</tspan></text></a>
     <text class="ink" fill="#374151" x="694" y="130" font-size="10.5"><a class="lnk" href="https://rsigma.io/developers/linter-and-lsp/#connecting-to-the-lsp" target="_top">language server: diagnostics · completion</a></text>
-    <text class="ink" fill="#374151" x="694" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/developers/linter-and-lsp/#extending-the-lsp-itself" target="_top">hover · symbols · code actions</a></text>
+    <text class="ink" fill="#374151" x="694" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/developers/linter-and-lsp/#extending-the-lsp-itself" target="_top">hover · symbols · code actions · format</a></text>
     <text class="muted" fill="#6b7280" x="694" y="162" font-size="10.5"><a class="lnk" href="https://rsigma.io/editors/vscode/" target="_top">VS Code</a> · <a class="lnk" href="https://rsigma.io/editors/neovim/" target="_top">Neovim</a> · <a class="lnk" href="https://rsigma.io/developers/linter-and-lsp/#connecting-to-the-lsp" target="_top">Helix · Zed</a></text>
     <text class="annot" fill="#64748b" x="956" y="103.5" font-size="10" text-anchor="end">binary</text>
   </g>
@@ -142,8 +167,8 @@
     <rect class="card cardS" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" x="680" y="532" width="290" height="88" rx="10" filter="url(#soft)"/>
     <path class="hdrS" fill="#f1f5f9" d="M680.5,542 a9.5,9.5 0 0 1 9.5,-9.5 h270 a9.5,9.5 0 0 1 9.5,9.5 v20 h-289 Z"/>
     <a class="head" href="https://rsigma.io/library/parser/" target="_top"><text class="tS lnk" fill="#334155" x="694" y="551.5" font-size="13" font-weight="bold"><tspan class="mono">rsigma-parser</tspan></text></a>
-    <text class="ink" fill="#374151" x="694" y="578" font-size="10.5"><a class="lnk" href="https://rsigma.io/library/parser/#public-surface" target="_top">YAML to typed AST: rules · correlations</a></text>
-    <text class="ink" fill="#374151" x="694" y="594" font-size="10.5"><a class="lnk" href="https://rsigma.io/getting-started/concepts/#the-three-kinds-of-rules" target="_top">filters</a> · <a class="lnk" href="https://rsigma.io/library/parser/#condition-parsing" target="_top">condition grammar (pest + Pratt)</a></text>
+    <text class="ink" fill="#374151" x="694" y="578" font-size="10.5"><a class="lnk" href="https://rsigma.io/library/parser/#public-surface" target="_top">YAML → AST</a> · <a class="lnk" href="https://rsigma.io/reference/lint-rules/" target="_top">91 lints</a> · <a class="lnk" href="https://rsigma.io/guide/formatting-rules/" target="_top">formatter</a></text>
+    <text class="ink" fill="#374151" x="694" y="594" font-size="10.5"><a class="lnk" href="https://rsigma.io/getting-started/concepts/#the-three-kinds-of-rules" target="_top">rules · correlations · filters</a> · <a class="lnk" href="https://rsigma.io/library/parser/#condition-parsing" target="_top">Pratt</a></text>
     <text class="muted" fill="#6b7280" x="694" y="610" font-size="10.5"><a class="lnk" href="https://rsigma.io/reference/architecture/#crate-responsibilities" target="_top">no internal dependencies</a></text>
     <text class="annot" fill="#64748b" x="956" y="551.5" font-size="10" text-anchor="end">library</text>
   </g>

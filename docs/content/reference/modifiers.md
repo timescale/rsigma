@@ -6,7 +6,7 @@ description: "How RSigma interprets Sigma value modifiers such as contains, re, 
 
 {{ added "0.24.0" }}
 
-This page describes how the evaluator and the converters interpret Sigma value modifiers where the specification leaves room for interpretation. The behavior follows the [Sigma specification](https://github.com/SigmaHQ/sigma-specification) and matches pySigma unless a section says otherwise. For keywords and modifiers without a field name, see [Keywords and Conditions](conditions.md).
+This page describes how the evaluator and the converters interpret Sigma value modifiers where the specification leaves room for interpretation. The behavior follows the [Sigma specification](https://github.com/SigmaHQ/sigma-specification/blob/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification/sigma-appendix-modifiers.md) and matches pySigma unless a section says otherwise. For keywords and modifiers without a field name, see [Keywords and Conditions](conditions.md).
 
 ## Modifier chains
 

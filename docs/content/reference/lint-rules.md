@@ -312,7 +312,7 @@ detection:
 
 The `condition:` expression references `selection_keywords`, but the only selection defined in the `detection:` block is `selection`. The rule will fail to compile; this lint catches it before runtime. No auto-fix because the linter cannot tell which selection name was intended. A selector such as `1 of filter_*` that matches no detection is reported the same way, and each unresolved reference gets its own finding.
 
-### `deprecated_aggregation_syntax`
+### `deprecated_aggregation_syntax` {#deprecated_aggregation_syntax}
 
 Trigger:
 
@@ -452,5 +452,5 @@ Infrastructure findings (`yaml_parse_error`, `not_a_mapping`, `file_read_error`)
 
 - [Linting Rules](../guide/linting-rules.md) for the workflow walkthrough, suppression tiers, auto-fix patterns, and CI integration.
 - [`rule lint` CLI reference](../cli/rule/lint.md) for every flag.
-- [Sigma specification (v2.1.0)](https://github.com/SigmaHQ/sigma-specification/blob/main/specification/sigma-rules-specification.md) for the underlying constraints these rules enforce.
+- [Sigma specification (v2.1.0)](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification) for the underlying constraints these rules enforce.
 - [`crates/rsigma-parser/src/lint`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-parser/src/lint) for the implementation.

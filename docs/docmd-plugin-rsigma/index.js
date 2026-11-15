@@ -896,6 +896,238 @@ function addSitemapLastmod(sitemapPath, pages, root) {
   return dated;
 }
 
+/**
+ * Compute docmd's heading slug for a plain-text string.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function slugifyHeading(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}-]+/gu, "")
+    .replace(/--+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+}
+
+/**
+ * Decode common HTML entities emitted by markdown-it inside headings.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeHeadingEntities(text) {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&rsquo;/g, "'")
+    .replace(/&lsquo;/g, "'")
+    .replace(/&rdquo;/g, '"')
+    .replace(/&ldquo;/g, '"')
+    .replace(/&nbsp;/g, " ");
+}
+
+/**
+ * docmd prefixes nested heading IDs with every ancestor heading slug
+ * (`#http-api-authentication`), whereas Markdown cross-links, SVG diagrams,
+ * and changelog entries commonly target the flat heading slug
+ * (`#authentication`). Keep docmd's hierarchical IDs on the heading element so
+ * TOC highlighting stays intact, and inject a zero-size alias span for each
+ * unique flat slug on the page.
+ *
+ * @param {string} html
+ * @returns {{ html: string, added: number }}
+ */
+function injectFlatAnchorAliases(html) {
+  const existingIds = new Set();
+  for (const m of html.matchAll(/\bid="([^"]+)"/g)) {
+    existingIds.add(m[1]);
+  }
+  const headingRe = /<h([2-4])\b([^>]*\bid="([^"]+)"[^>]*)>([\s\S]*?)<\/h\1>/g;
+  const candidates = [];
+  const counts = new Map();
+  for (const m of html.matchAll(headingRe)) {
+    const id = m[3];
+    const inner = m[4];
+    const plain = decodeHeadingEntities(inner.replace(/<[^>]*>/g, "")).trim();
+    const flat = slugifyHeading(plain);
+    if (!flat || flat === id) {
+      continue;
+    }
+    counts.set(flat, (counts.get(flat) ?? 0) + 1);
+    candidates.push({ id, flat });
+  }
+  const aliasByHeadingId = new Map();
+  for (const { id, flat } of candidates) {
+    if (counts.get(flat) === 1 && !existingIds.has(flat)) {
+      aliasByHeadingId.set(id, flat);
+      existingIds.add(flat);
+    }
+  }
+  if (aliasByHeadingId.size === 0) {
+    return { html, added: 0 };
+  }
+  let added = 0;
+  const next = html.replace(headingRe, (full, level, attrs, id, inner) => {
+    const alias = aliasByHeadingId.get(id);
+    if (!alias) {
+      return full;
+    }
+    added += 1;
+    return `<h${level}${attrs}><span id="${alias}" class="docmd-anchor-alias" aria-hidden="true"></span>${inner}</h${level}>`;
+  });
+  return { html: next, added };
+}
+
+/**
+ * Verify every internal `#anchor` link in the built HTML pages and copied
+ * interactive SVG diagrams resolves to a real `id` in its target HTML page.
+ * `docmd validate` checks file targets only and ignores fragments.
+ *
+ * @param {string} outputDir
+ */
+function validateInternalAnchors(outputDir) {
+  const htmlFiles = collectHtmlFiles(outputDir);
+  /** @type {Map<string, Set<string>>} */
+  const idsByFile = new Map();
+  for (const file of htmlFiles) {
+    const html = fs.readFileSync(file, "utf8");
+    const ids = new Set();
+    for (const m of html.matchAll(/\bid="([^"]+)"/g)) {
+      ids.add(m[1]);
+    }
+    idsByFile.set(path.resolve(file), ids);
+  }
+
+  const basePrefix = siteBase.endsWith("/") ? siteBase : `${siteBase}/`;
+  const resolveTargetHtml = (fromFile, targetPart) => {
+    if (!targetPart) {
+      return path.resolve(fromFile);
+    }
+    let resolved;
+    if (targetPart.startsWith("/")) {
+      const rel = targetPart.startsWith(basePrefix)
+        ? targetPart.slice(basePrefix.length)
+        : targetPart.slice(1);
+      resolved = path.resolve(outputDir, rel);
+    } else {
+      resolved = path.resolve(path.dirname(fromFile), targetPart);
+    }
+    if (!resolved.endsWith(".html")) {
+      resolved = path.join(resolved, "index.html");
+    }
+    return resolved;
+  };
+
+  const broken = [];
+  for (const file of htmlFiles) {
+    const html = fs
+      .readFileSync(file, "utf8")
+      .replace(/<div id="docmd-raw-markdown"[^>]*><\/div>/, "");
+    for (const m of html.matchAll(/\bhref="([^"]+)"/g)) {
+      const href = m[1];
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href) || !href.includes("#")) {
+        continue;
+      }
+      const [targetPart, anchor] = href.split("#", 2);
+      if (!anchor) {
+        continue;
+      }
+      const targetFile = resolveTargetHtml(file, targetPart);
+      const ids = idsByFile.get(targetFile);
+      if (ids && !ids.has(anchor)) {
+        broken.push(`${path.relative(outputDir, file)} -> ${href}`);
+      }
+    }
+  }
+
+  const imagesDir = path.join(outputDir, "assets", "images");
+  for (const name of COPIED_ASSETS) {
+    const svgPath = path.join(imagesDir, name);
+    if (!fs.existsSync(svgPath)) {
+      continue;
+    }
+    const svg = fs.readFileSync(svgPath, "utf8");
+    for (const m of svg.matchAll(/\bhref="([^"]+)"/g)) {
+      const href = m[1];
+      if (!href.startsWith("/") || !href.includes("#")) {
+        continue;
+      }
+      const [targetPart, anchor] = href.split("#", 2);
+      if (!anchor) {
+        continue;
+      }
+      const targetFile = resolveTargetHtml(path.join(outputDir, "index.html"), targetPart);
+      const ids = idsByFile.get(targetFile);
+      if (!ids || !ids.has(anchor)) {
+        broken.push(`assets/images/${name} -> ${href}`);
+      }
+    }
+  }
+
+  if (broken.length > 0) {
+    throw new Error(
+      `docmd-plugin-rsigma: broken internal #anchor links (${broken.length}):\n  ${broken.slice(0, 30).join("\n  ")}`,
+    );
+  }
+}
+
+/**
+ * Sync the host page's `data-theme` attribute into embedded `<object class="diagram">`
+ * SVGs so their light/dark palette follows the site theme toggle rather than only OS
+ * `prefers-color-scheme`. Also marks `data-embedded="true"` so the SVG drops its opaque
+ * outer background when embedded on a doc page.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function injectDiagramThemeSync(html) {
+  if (!html.includes('class="diagram"') || html.includes("rsigmaDiagramThemeSync")) {
+    return html;
+  }
+  const script = `    <!-- rsigmaDiagramThemeSync -->
+    <script>
+      (function() {
+        function syncDiagram(obj) {
+          try {
+            var doc = obj.contentDocument;
+            if (!doc || !doc.documentElement) return;
+            var theme = document.documentElement.getAttribute("data-theme") || "dark";
+            doc.documentElement.setAttribute("data-theme", theme);
+            doc.documentElement.setAttribute("data-embedded", "true");
+          } catch (_) {}
+        }
+        function syncAll() {
+          document.querySelectorAll("object.diagram").forEach(function(obj) {
+            syncDiagram(obj);
+            if (!obj.__rsigmaThemeBound) {
+              obj.__rsigmaThemeBound = true;
+              obj.addEventListener("load", function() { syncDiagram(obj); });
+            }
+          });
+        }
+        syncAll();
+        new MutationObserver(syncAll).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"]
+        });
+        new MutationObserver(syncAll).observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      })();
+    </script>
+`;
+  return html.replace("</body>", `${script}</body>`);
+}
+
 export default {
   plugin: {
     name: "docmd-plugin-rsigma",
@@ -975,6 +1207,7 @@ export default {
     const homePage = pages.find((page) => page.outputPath === "index.html");
     let stripped = 0;
     let titlesRendered = 0;
+    let aliasCount = 0;
     for (const file of collectHtmlFiles(outputDir)) {
       const html = fs.readFileSync(file, "utf8");
       let next = html.replace(/[ \t]*<base\b[^>]*>\n?/i, "");
@@ -989,11 +1222,15 @@ export default {
         next = injectSoftwareStructuredData(next, homePage?.frontmatter?.description ?? "");
       }
       next = embedInteractiveDiagrams(next, ratios);
+      next = injectDiagramThemeSync(next);
       const withTitles = renderMarkdownTitles(next);
       if (withTitles !== next) {
         titlesRendered += 1;
         next = withTitles;
       }
+      const withAliases = injectFlatAnchorAliases(next);
+      aliasCount += withAliases.added;
+      next = withAliases.html;
       if (next !== html) {
         fs.writeFileSync(file, next);
       }
@@ -1019,8 +1256,9 @@ export default {
         );
       }
     }
+    validateInternalAnchors(outputDir);
     log(
-      `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages, rendered Markdown in ${titlesRendered} page titles, checked ${emittedReleaseAnchors.size} version-tag anchors, dated ${dated} sitemap entries`,
+      `docmd-plugin-rsigma: stripped <base> tag from ${stripped} pages, rendered Markdown in ${titlesRendered} page titles, added ${aliasCount} flat anchor aliases, checked ${emittedReleaseAnchors.size} version-tag anchors, dated ${dated} sitemap entries`,
     );
   },
 };

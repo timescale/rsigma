@@ -1,6 +1,11 @@
 /* Compact reference tables (metrics, lint rules, CLI flags). */
-.md-typeset table:not([class]) {
-  font-size: 0.78rem;
+.main-content .table-wrapper table {
+  font-size: 0.88rem;
+}
+
+.docmd-anchor-alias {
+  display: inline;
+  scroll-margin-top: calc(var(--sticky-top-offset, 0px) + var(--space-8, 2rem));
 }
 
 .sidebar-header .logo-link img {
@@ -23,4 +28,166 @@
   display: block;
   width: 100%;
   height: auto;
+}
+
+/* Home page layout and hero polish (scoped via body[data-source-file="content/index.md"]). */
+body[data-source-file="content/index.md"] .docmd-hero {
+  margin: 0.5rem 0 2rem;
+  padding: 1.25rem 0 1.5rem;
+  max-width: 100%;
+}
+
+body[data-source-file="content/index.md"] .docmd-hero.hero-split {
+  align-items: flex-start;
+  gap: 2rem;
+}
+
+body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-content,
+body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body[data-source-file="content/index.md"] .hero-content h1 {
+  font-size: clamp(1.9rem, 3vw, 2.65rem);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  margin-top: 0;
+  margin-bottom: 0.9rem;
+}
+
+body[data-source-file="content/index.md"] .hero-content > p:first-of-type {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  margin-bottom: 1rem;
+}
+
+body[data-source-file="content/index.md"] .hero-content p {
+  font-size: 0.95rem;
+  margin-bottom: 0.85rem;
+}
+
+body[data-source-file="content/index.md"] .hero-content .docmd-tag {
+  margin: 0.15rem 0.35rem 0.35rem 0;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--sidebar-bg);
+  font-size: 0.82rem;
+}
+
+body[data-source-file="content/index.md"] .hero-content .docmd-button {
+  margin: 0.25rem 0.45rem 0.25rem 0;
+  padding: 0.52rem 1rem;
+  font-size: 0.92rem;
+}
+
+body[data-source-file="content/index.md"] .hero-content .docmd-button:not(:first-of-type) {
+  background-color: transparent;
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+body[data-source-file="content/index.md"] .hero-content .docmd-button:not(:first-of-type):hover {
+  border-color: var(--link-color);
+  color: var(--link-color);
+}
+
+body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
+  display: block;
+}
+
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs-nav-item {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+}
+
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content {
+  padding: 0.9rem 1rem;
+}
+
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content pre {
+  margin: 0.45rem 0;
+  font-size: 0.8rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+body[data-source-file="content/index.md"] .hero-side .docmd-tabs-content p:last-child {
+  margin-bottom: 0;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+/* Performance stat cards */
+body[data-source-file="content/index.md"] #performance + .docmd-container.grids .card .card-title {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--link-color);
+}
+
+/* Balanced 2x2 grids for 4-card sections on wider viewports */
+@media (min-width: 900px) {
+  body[data-source-file="content/index.md"] #performance + .docmd-container.grids {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  body[data-source-file="content/index.md"] #lifecycle ~ .docmd-container.grids,
+  body[data-source-file="content/index.md"] #next-steps + .docmd-container.grids {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body[data-source-file="content/index.md"] #built-with-rsigma + .docmd-container.grids,
+  body[data-source-file="content/index.md"] #featured-in + .docmd-container.grids {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+body[data-source-file="content/index.md"] .docmd-container.grids .card {
+  display: flex;
+  flex-direction: column;
+}
+
+body[data-source-file="content/index.md"] .docmd-container.grids .card .card-content {
+  font-size: 0.92rem;
+}
+
+body[data-source-file="content/index.md"] .docmd-container.grids .card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+body[data-source-file="content/index.md"] .docmd-container.grids .card li {
+  margin-bottom: 0.45rem;
+}
+
+body[data-source-file="content/index.md"] .docmd-container.grids .card li:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1120px) {
+  body[data-source-file="content/index.md"] .docmd-hero.hero-split {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    gap: 1.5rem;
+  }
+
+  body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-content,
+  body[data-source-file="content/index.md"] .docmd-hero.hero-split .hero-side {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  body[data-source-file="content/index.md"] .hero-content h1 {
+    font-size: 2rem;
+  }
 }

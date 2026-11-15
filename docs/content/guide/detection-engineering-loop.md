@@ -62,7 +62,7 @@ Hold rules against the live event stream with correlation, schema routing, and b
 
 Turn raw matches into one incident per entity, enrich before the page, and ingest analyst verdicts.
 
-- [Enrichers](enrichers.md): GeoIP, asset context, runbook links on the sink path.
+- [Enrichers](enrichers.md): template interpolation, cache lookups, STIX, MMDB GeoIP, DNS, HTTP, and command enrichment on the sink path.
 - [Risk-based alerting](risk-based-alerting.md): entity-scored alerting with tactic and source multipliers.
 - [Alert pipeline](alert-pipeline.md): deduplication, silences, inhibition, and grouping.
 - [Webhooks](webhooks.md): HMAC-signed delivery to Slack, PagerDuty, or custom endpoints.

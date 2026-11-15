@@ -15,7 +15,7 @@ A short tour of the ideas you run into when working with RSigma. If you already 
 - A **[condition](https://sigmahq.io/docs/basics/conditions.html)** expression combining selections with `and`, `or`, `not`, and quantifiers (`1 of selection_*`, `all of them`).
 - Metadata: title, id, level, tags, references, false positives, and so on.
 
-[SigmaHQ](https://github.com/SigmaHQ/sigma) maintains a large community rule repository. RSigma implements the [Sigma v2.1.0 specification](https://sigmahq.io/sigma-specification/) and is tested against that corpus on every CI run. Authoring questions belong on [SigmaHQ's docs](https://sigmahq.io/docs/guide/getting-started.html); runtime, conversion, and operational questions belong here.
+[SigmaHQ](https://github.com/SigmaHQ/sigma) maintains a large community rule repository. RSigma implements the [Sigma v2.1.0 specification](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification) and is tested against that corpus on every CI run. Authoring questions belong on [SigmaHQ's docs](https://sigmahq.io/docs/guide/getting-started.html); runtime, conversion, and operational questions belong here.
 
 ## The three kinds of rules
 
@@ -43,7 +43,7 @@ detection:
     condition: selection and not filter_ip
 ```
 
-The keys under `detection` are named selections. The `condition` line is a boolean expression over those names. Field modifiers such as `endswith`, `cidr`, `contains`, and `re` change how a field value is matched. RSigma implements the full Sigma modifier set; see the [parser library reference](../library/parser.md) for the complete list.
+The keys under `detection` are named selections. The `condition` line is a boolean expression over those names. Field modifiers such as `endswith`, `cidr`, `contains`, and `re` change how a field value is matched. RSigma implements the full Sigma modifier and condition set; see [Value Modifiers](../reference/modifiers.md) and [Keywords and Conditions](../reference/conditions.md) for the complete reference.
 
 ## Two modes: eval vs daemon
 
@@ -94,7 +94,7 @@ Instead of evaluating rules in process, `rsigma backend convert` emits backend-n
 | Fibratus | `fibratus` | Fibratus rule YAML |
 | Test | `test` | Backend-neutral text (for testing pipelines) |
 
-New backends plug in via the `Backend` trait; see [adding backends](../developers/adding-backends.md) and the [rule conversion guide](../guide/rule-conversion.md).
+New backends plug in via the `Backend` trait; see [adding backends](../developers/adding-backends.md) and the [rule conversion guide](../guide/rule-conversion.md), which also covers delegating 30+ additional SIEM targets (Splunk, Elasticsearch, Microsoft Sentinel, and more) to `sigma-cli`.
 
 ## Input formats
 
@@ -110,8 +110,10 @@ The CLI is noun-led: every group is a noun, every leaf is a verb.
 | `rule` | Operate on rule files (parse, lint, draft, backtest, coverage, and more) |
 | `backend` | Generate backend-native queries |
 | `pipeline` | Diff pipeline rewrites and resolve dynamic sources |
+| `hunt` | Hunt a PostgreSQL/TimescaleDB archive with converted rules (`hunt-postgres` feature for `--emit events`) |
+| `taxii` | Sync TAXII collections and import STIX bundles into a local store (`taxii-sync` feature) |
+| `mcp` | Run the Model Context Protocol server (`mcp` feature) |
 | `config` | Scaffold, validate, and reload layered YAML configuration |
-| `mcp` | Run the Model Context Protocol server (feature-gated) |
 
 See the [CLI reference](../cli/index.md) for every subcommand.
 

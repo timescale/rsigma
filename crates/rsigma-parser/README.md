@@ -278,7 +278,7 @@ The `rsigma.*` spelling wins when both are present. Either spelling maps to `Cor
 
 ## Filter Rules
 
-Filter rules inject exclusion conditions into referenced detection rules, enables centralized tuning without modifying original rule files. See the [Sigma Filters Specification](https://sigmahq.io/sigma-specification/specification/sigma-filters-specification.html) for the full standard.
+Filter rules inject exclusion conditions into referenced detection rules, enables centralized tuning without modifying original rule files. See the [Sigma Filters Specification](https://github.com/SigmaHQ/sigma-specification/blob/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification/sigma-filters-specification.md) for the full standard.
 
 Per the spec, `selection`, `condition`, and `rules` all live inside the `filter` section:
 
