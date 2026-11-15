@@ -90,16 +90,28 @@ impl RefIndex {
 pub enum Decision {
     /// Admitted by the include selector at this index, or by an empty include
     /// list.
-    Included { selector: Option<usize> },
+    Included {
+        /// The matching include selector, or `None` for an empty include list.
+        selector: Option<usize>,
+    },
     /// Rejected by the exclude selector at this index.
-    Excluded { selector: usize },
+    Excluded {
+        /// The matching exclude selector.
+        selector: usize,
+    },
     /// Matched no include selector.
     NotSelected,
     /// Pulled in as a dependency of the correlation with this id, name, or
     /// title.
-    PulledIn { by: String },
+    PulledIn {
+        /// The correlation that referenced it.
+        by: String,
+    },
     /// A correlation dropped for an unresolved reference, and why.
-    Dropped { reason: String },
+    Dropped {
+        /// The unresolved reference and why it did not resolve.
+        reason: String,
+    },
     /// A filter kept because it targets any rule or a kept detection.
     FilterKept,
     /// A filter whose targets are all gone.

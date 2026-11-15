@@ -30,9 +30,17 @@ use super::spec::{
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OverlayOrigin {
     /// An inline entry at this index in the spec.
-    Inline { index: usize },
+    Inline {
+        /// Index into the spec's `overlays`.
+        index: usize,
+    },
     /// An entry at this index in an overlay file.
-    File { path: PathBuf, index: usize },
+    File {
+        /// The overlay file.
+        path: PathBuf,
+        /// Index of the entry in that file.
+        index: usize,
+    },
 }
 
 impl fmt::Display for OverlayOrigin {

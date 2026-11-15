@@ -62,6 +62,7 @@ pub struct SourceFile {
     /// Path relative to the source root (the working directory for overlay
     /// files), with `/` separators.
     pub relative: PathBuf,
+    /// The file's bytes as read, hashed into the lockfile digest.
     pub sha256_input: Vec<u8>,
 }
 

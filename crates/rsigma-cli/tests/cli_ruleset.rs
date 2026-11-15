@@ -728,7 +728,7 @@ fn diff_without_changes_is_clean() {
     let dir = fixture_copy();
     let out = dir.path().join("out");
     build_json(dir.path(), &out, &[]);
-    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
+    let (envelope, output) = diff_json(dir.path(), "out/ruleset.lock.json", &["--fail-on-change"]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(envelope["added"], serde_json::json!(0));
     assert_eq!(envelope["removed"], serde_json::json!(0));
