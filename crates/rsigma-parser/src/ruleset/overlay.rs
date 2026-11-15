@@ -445,13 +445,13 @@ fn apply_set(
             if value.is_null() {
                 meta.custom_attributes.remove(key);
             } else {
-                let converted = yaml_serde::to_value(value).map_err(|e| {
+                let converted = canonical_yaml_value(yaml_serde::to_value(value).map_err(|e| {
                     overlay_error(
                         name,
                         origin,
                         format!("cannot convert custom attribute '{key}': {e}"),
                     )
-                })?;
+                })?);
                 meta.custom_attributes.insert(key.clone(), converted);
             }
             keys.push(format!("custom_attributes.{key}"));
@@ -489,13 +489,13 @@ fn apply_append(
     }
     if let Some(attributes) = &patch.custom_attributes {
         for (key, value) in attributes {
-            let converted = yaml_serde::to_value(value).map_err(|e| {
+            let converted = canonical_yaml_value(yaml_serde::to_value(value).map_err(|e| {
                 overlay_error(
                     name,
                     origin,
                     format!("cannot convert custom attribute '{key}': {e}"),
                 )
-            })?;
+            })?);
             let Value::Sequence(items) = converted else {
                 return Err(overlay_error(
                     name,
@@ -590,6 +590,35 @@ fn validate_touched(
 
 fn overlay_error(name: &str, origin: &OverlayOrigin, detail: impl fmt::Display) -> RulesetError {
     RulesetError::Overlay(format!("ruleset '{name}': overlay {origin}: {detail}"))
+}
+
+/// Sort mapping keys recursively so overlay-derived YAML does not depend on
+/// whether the build enabled `serde_json`'s `preserve_order` feature.
+fn canonical_yaml_value(value: Value) -> Value {
+    match value {
+        Value::Mapping(map) => {
+            let mut entries: Vec<(String, Value)> = map
+                .into_iter()
+                .map(|(key, value)| {
+                    let key = match key {
+                        Value::String(text) => text,
+                        other => format!("{other:?}"),
+                    };
+                    (key, canonical_yaml_value(value))
+                })
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut sorted = yaml_serde::Mapping::new();
+            for (key, value) in entries {
+                sorted.insert(Value::String(key), value);
+            }
+            Value::Mapping(sorted)
+        }
+        Value::Sequence(items) => {
+            Value::Sequence(items.into_iter().map(canonical_yaml_value).collect())
+        }
+        other => other,
+    }
 }
 
 fn validate_expanded(

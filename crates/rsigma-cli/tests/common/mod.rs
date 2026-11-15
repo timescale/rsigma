@@ -56,6 +56,34 @@ pub fn assert_golden(rel: &str, actual: &str) {
     );
 }
 
+/// Compare `actual` with `tests/golden/<rel>` as JSON values, so object key
+/// order does not depend on whether `serde_json/preserve_order` is unified
+/// into the build.
+pub fn assert_json_golden(rel: &str, actual: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(rel);
+    if std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, actual)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let actual: serde_json::Value =
+        serde_json::from_str(actual).unwrap_or_else(|e| panic!("actual is not JSON: {e}"));
+    let expected: serde_json::Value =
+        serde_json::from_str(&expected).unwrap_or_else(|e| panic!("golden is not JSON: {e}"));
+    assert_eq!(
+        actual,
+        expected,
+        "golden mismatch for {}; rerun with RSIGMA_UPDATE_GOLDEN=1",
+        path.display()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Daemon HTTP process helper
 // ---------------------------------------------------------------------------

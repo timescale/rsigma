@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{assert_golden, rsigma};
+use common::{assert_golden, assert_json_golden, rsigma};
 use predicates::prelude::*;
 
 const W1: &str = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -75,16 +75,6 @@ fn walk(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
-/// The lockfile records the rsigma version, which would make the golden
-/// unstable; compare it with the generator replaced by a fixed string.
-fn normalize_lock(contents: &[u8]) -> Vec<u8> {
-    let mut value: serde_json::Value = serde_json::from_slice(contents).unwrap();
-    value["generator"] = serde_json::json!("rsigma <version>");
-    let mut text = serde_json::to_string_pretty(&value).unwrap();
-    text.push('\n');
-    text.into_bytes()
-}
-
 fn assert_build_golden(out: &Path) {
     let files = walk(out);
     let golden_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ruleset_build");
@@ -93,22 +83,37 @@ fn assert_build_golden(out: &Path) {
         let _ = fs::remove_dir_all(&golden_root);
     }
     for (rel, contents) in &files {
-        let contents = if rel == Path::new("ruleset.lock.json") {
-            normalize_lock(contents)
-        } else {
-            contents.clone()
-        };
         let golden = golden_root.join(rel);
+        if rel == Path::new("ruleset.lock.json") {
+            let mut actual: serde_json::Value = serde_json::from_slice(contents).unwrap();
+            actual["generator"] = serde_json::json!("rsigma <version>");
+            if update {
+                fs::create_dir_all(golden.parent().unwrap()).unwrap();
+                let mut text = serde_json::to_string_pretty(&actual).unwrap();
+                text.push('\n');
+                fs::write(&golden, text).unwrap();
+                continue;
+            }
+            let expected: serde_json::Value =
+                serde_json::from_slice(&fs::read(&golden).unwrap()).unwrap();
+            assert_eq!(
+                actual,
+                expected,
+                "golden mismatch for {}; rerun with RSIGMA_UPDATE_GOLDEN=1",
+                golden.display()
+            );
+            continue;
+        }
         if update {
             fs::create_dir_all(golden.parent().unwrap()).unwrap();
-            fs::write(&golden, &contents).unwrap();
+            fs::write(&golden, contents).unwrap();
             continue;
         }
         let expected = fs::read(&golden)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", golden.display()));
         assert_eq!(
             contents,
-            expected,
+            &expected,
             "golden mismatch for {}; rerun with RSIGMA_UPDATE_GOLDEN=1",
             golden.display()
         );
@@ -213,7 +218,7 @@ fn show_all_golden_json() {
         .get_output()
         .stdout
         .clone();
-    assert_golden("ruleset_show.json", &String::from_utf8(output).unwrap());
+    assert_json_golden("ruleset_show.json", &String::from_utf8(output).unwrap());
 }
 
 #[test]
@@ -799,5 +804,5 @@ fn diff_golden_mixed_case() {
     let (_, output) = diff_json(dir.path(), "out/ruleset.lock.json", &[]);
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_golden("ruleset_diff_mixed.json", &stdout);
+    assert_json_golden("ruleset_diff_mixed.json", &stdout);
 }
