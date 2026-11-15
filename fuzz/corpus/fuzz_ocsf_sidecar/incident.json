@@ -1,0 +1,1 @@
+{"incident_id":"inc-1","state":"firing","trigger":"group_wait","max_level":"high","rule_counts":{"rule-a":1},"refs":[]}

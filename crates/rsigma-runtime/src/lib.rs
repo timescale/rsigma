@@ -100,7 +100,7 @@ pub use enrichment::{
     EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
     TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
-    validate_template_namespace,
+    render_webhook_body, validate_template_namespace,
 };
 #[cfg(feature = "dns-enrich")]
 pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};

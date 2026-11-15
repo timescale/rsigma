@@ -351,6 +351,22 @@ pub(crate) fn render_template_json_with_ocsf(
     })
 }
 
+/// Validate a webhook JSON body, then render it.
+///
+/// `${detection.ocsf}` and `${correlation.ocsf}` are inserted as raw JSON only
+/// after [`validate_webhook_body_template`] has accepted them as whole JSON
+/// values. A template that fails that check is not rendered.
+pub fn render_webhook_body(
+    text: &str,
+    kind: EnricherKind,
+    webhook_id: &str,
+    result: &EvaluationResult,
+    ocsf: impl Fn() -> String,
+) -> Result<String, TemplateError> {
+    validate_webhook_body_template(text, kind, webhook_id)?;
+    Ok(render_template_json_with_ocsf(text, result, ocsf))
+}
+
 /// Where a substituted value came from, so an escaper can treat operator
 /// environment values differently from evaluation-result values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

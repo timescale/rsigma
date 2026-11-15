@@ -1,0 +1,1 @@
+{"correlation_type":"event_count","group_key":[["SourceIP","203.0.113.4"]],"aggregated_value":73.0,"timespan_secs":300,"rule_title":"c","tags":["attack.t1071"],"custom_attributes":{"ticket":"SOC-9"},"events":[{"CommandLine":"malware"}],"event_refs":[{"id":"e1"}],"enrichments":{"dedup_state":"repeat","dedup_first_seen":1000,"dedup_last_seen":1500,"dedup_fire_count":3}}

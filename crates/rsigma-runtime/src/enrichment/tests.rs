@@ -14,7 +14,7 @@ use rsigma_parser::{CorrelationType, Level};
 
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, EnrichmentPipeline, OnError, Scope,
-    TemplateEnricher, TemplateError, register_builtin, render_template,
+    TemplateEnricher, TemplateError, register_builtin, render_template, render_webhook_body,
     validate_template_namespace,
 };
 
@@ -361,6 +361,22 @@ fn ocsf_reference_renders_raw_json_only_through_the_webhook_renderer() {
         "",
         "the plain renderer has no finding to insert",
     );
+    let via_webhook = render_webhook_body(body, EnricherKind::Detection, "hook", &result, || {
+        r#"{"class_uid":2004}"#.into()
+    })
+    .expect("whole-value reference");
+    assert_eq!(via_webhook, rendered);
+    let misplaced = render_webhook_body(
+        r#"{"finding": "${detection.ocsf}"}"#,
+        EnricherKind::Detection,
+        "hook",
+        &result,
+        || "{}".into(),
+    );
+    assert!(matches!(
+        misplaced,
+        Err(TemplateError::MisplacedOcsf { .. })
+    ));
 }
 
 // Note: `${}` (empty inner) does not match the `\$\{([^}]+)\}` regex at

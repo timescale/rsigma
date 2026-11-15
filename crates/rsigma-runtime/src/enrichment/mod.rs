@@ -78,7 +78,7 @@ pub use mmdb::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 pub use stix::{StixEnricher, StixEnricherQuery};
 pub use template::{
     TemplateEnricher, TemplateError, env_references, render_template, render_template_json,
-    render_template_url, validate_template_namespace,
+    render_template_url, render_webhook_body, validate_template_namespace,
 };
 pub(crate) use template::{render_template_json_with_ocsf, validate_webhook_body_template};
 
