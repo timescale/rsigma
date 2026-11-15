@@ -16,12 +16,13 @@ use rsigma_eval::{
 };
 use rsigma_runtime::{
     AckToken, AlertPipeline, AlertPipelineState, BatchProcessOutcome, CaptureRing, CaptureRingSink,
-    DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver, FileSink,
-    FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult, IncludeMode, InputFormat,
-    LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState, RoutingSpec, RuntimeEngine,
-    SchemaClassifier, SchemaObserver, Silence, SilenceError, SilenceSpec, Sink, SinkFormat,
-    StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file,
-    load_risk_file, load_schema_signatures, spawn_source, strip_event_payloads,
+    DeliveryConfig, DeliveryContext, DeliveryFailure, Dispatcher, EnrichmentPipeline,
+    FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
+    IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
+    RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
+    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
+    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
+    strip_event_payloads,
 };
 
 use super::bundle::BundleFormat;
@@ -2047,6 +2048,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     let ocsf_incidents = leaves
         .iter()
         .any(|(sink, _, _)| sink.format() == Some(SinkFormat::Ocsf));
+    // Finding uids are minted before the risk layer and alert pipeline so an
+    // incident can reference the Detection Finding each contributor emitted.
+    let link_findings = ocsf_incidents;
     tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
 
     // Bridge the delivery layer's terminal failures into the existing DLQ
@@ -2128,6 +2132,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                     }
 
+                    let mut delivery = DeliveryContext::new();
+                    let mut finding_uids: Option<Vec<String>> = link_findings
+                        .then(|| (0..result.len()).map(|i| delivery.finding_uid(i)).collect());
+
                     // Risk layer: annotate each in-scope firing with a risk
                     // score and risk objects, then (opt-in) emit a compact risk
                     // event per (detection, risk object) pair. Runs before the
@@ -2140,7 +2148,13 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let mut st = risk_state_for_sink
                                 .write()
                                 .unwrap_or_else(|e| e.into_inner());
-                            risk_layer.process(result, &mut st, now, risk_metrics.as_ref())
+                            risk_layer.process_with_finding_uids(
+                                result,
+                                finding_uids.as_deref().unwrap_or_default(),
+                                &mut st,
+                                now,
+                                risk_metrics.as_ref(),
+                            )
                         };
                         result = out.kept;
                         if !out.risk_events.is_empty() {
@@ -2225,34 +2239,44 @@ pub async fn run_daemon(config: DaemonConfig) {
                             // refill them under the retired pipeline's caps.
                             let current = alert_pipeline_swap_for_sink.load_full();
                             let alert_pipeline = current.as_ref().as_ref().unwrap_or(alert_pipeline);
-                            match capture_ring_for_sink.as_ref() {
-                                Some(ring) => {
-                                    let mut ring = ring.lock().unwrap_or_else(|e| e.into_inner());
-                                    let mut sink = CaptureRingSink {
-                                        ring: &mut ring,
-                                        metrics: capture_metrics.as_ref(),
-                                    };
-                                    let mut kept = alert_pipeline.process_with_capture(
-                                        result,
-                                        &mut st,
-                                        now,
-                                        alert_pipeline_metrics.as_ref(),
-                                        Some(&mut sink),
-                                    );
-                                    if !operator_include_event {
-                                        for result in &mut kept {
-                                            strip_event_payloads(result);
-                                        }
-                                    }
+                            let mut ring = capture_ring_for_sink
+                                .as_ref()
+                                .map(|ring| ring.lock().unwrap_or_else(|e| e.into_inner()));
+                            let mut capture_sink = ring.as_mut().map(|ring| CaptureRingSink {
+                                ring,
+                                metrics: capture_metrics.as_ref(),
+                            });
+                            let capture = capture_sink
+                                .as_mut()
+                                .map(|sink| sink as &mut dyn rsigma_runtime::CaptureSink);
+                            let mut kept = match finding_uids.take() {
+                                Some(uids) => {
+                                    let (kept, kept_uids) = alert_pipeline
+                                        .process_with_finding_uids(
+                                            result,
+                                            uids,
+                                            &mut st,
+                                            now,
+                                            alert_pipeline_metrics.as_ref(),
+                                            capture,
+                                        );
+                                    finding_uids = Some(kept_uids);
                                     kept
                                 }
-                                None => alert_pipeline.process(
+                                None => alert_pipeline.process_with_capture(
                                     result,
                                     &mut st,
                                     now,
                                     alert_pipeline_metrics.as_ref(),
+                                    capture,
                                 ),
+                            };
+                            if ring.is_some() && !operator_include_event {
+                                for result in &mut kept {
+                                    strip_event_payloads(result);
+                                }
                             }
+                            kept
                         };
                         if kept.is_empty() {
                             for token in ack_tokens {
@@ -2271,7 +2295,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                         tail.capture(&result);
                     }
 
-                    dispatcher.dispatch(result, ack_tokens).await;
+                    if let Some(uids) = finding_uids {
+                        delivery.set_finding_uids(uids);
+                    }
+                    dispatcher
+                        .dispatch_with_context(result, ack_tokens, delivery)
+                        .await;
                 }
                 _ = alert_tick.tick() => {
                     // Emit any due dedup repeat/resolved records and incident

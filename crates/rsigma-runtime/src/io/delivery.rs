@@ -151,6 +151,7 @@ impl Default for DeliveryConfig {
 pub struct DeliveryContext {
     seq: u64,
     inner: OnceLock<ContextData>,
+    finding_uids: Vec<String>,
 }
 
 struct ContextData {
@@ -165,7 +166,30 @@ impl DeliveryContext {
         DeliveryContext {
             seq: NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
             inner: OnceLock::new(),
+            finding_uids: Vec::new(),
         }
+    }
+
+    /// The OCSF `finding_info.uid` for the result at `index` of this delivery.
+    ///
+    /// Stable for the life of the context. A uid pinned with
+    /// [`Self::set_finding_uids`] wins; otherwise the uid derives from
+    /// [`Self::id_base`] and `index`.
+    pub fn finding_uid(&self, index: usize) -> String {
+        match self.finding_uids.get(index).filter(|uid| !uid.is_empty()) {
+            Some(uid) => uid.clone(),
+            None => format!("{}_{index:04}_0", self.id_base()),
+        }
+    }
+
+    /// Pin the finding uids of the delivered results, index-aligned with the
+    /// dispatched `ProcessResult`.
+    ///
+    /// The daemon mints uids with [`Self::finding_uid`] before the risk layer
+    /// and alert pipeline run, so a result keeps its uid when an earlier
+    /// result in the batch is folded or silenced away.
+    pub fn set_finding_uids(&mut self, finding_uids: Vec<String>) {
+        self.finding_uids = finding_uids;
     }
 
     /// Process-unique number for this delivery, so a sink can recognize a
@@ -342,6 +366,18 @@ impl Dispatcher {
     /// Fan one result and its ack tokens into every worker. Awaits queue space
     /// for `Block` sinks; never blocks for `Drop` sinks.
     pub async fn dispatch(&self, result: ProcessResult, tokens: Vec<AckToken>) {
+        self.dispatch_with_context(result, tokens, DeliveryContext::new())
+            .await;
+    }
+
+    /// [`Self::dispatch`] with a context the caller built, e.g. one whose
+    /// finding uids were minted before the alert pipeline ran.
+    pub async fn dispatch_with_context(
+        &self,
+        result: ProcessResult,
+        tokens: Vec<AckToken>,
+        context: DeliveryContext,
+    ) {
         if self.workers.is_empty() {
             for token in tokens {
                 let _ = self.ack_tx.send(token);
@@ -353,7 +389,7 @@ impl Dispatcher {
             ack_tx: self.ack_tx.clone(),
         });
         let result = Arc::new(result);
-        let context = Arc::new(DeliveryContext::new());
+        let context = Arc::new(context);
         for worker in &self.workers {
             worker
                 .enqueue(DeliveryItem {

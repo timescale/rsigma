@@ -145,6 +145,24 @@ impl RiskLayer {
         now: i64,
         metrics: &dyn MetricsHook,
     ) -> RiskOutput {
+        self.process_with_finding_uids(results, &[], state, now, metrics)
+    }
+
+    /// [`Self::process`] carrying each result's OCSF finding uid.
+    ///
+    /// `finding_uids` is index-aligned with `results`; a missing or empty uid
+    /// records nothing. Each contribution keeps the uid of the firing that
+    /// produced it, so a risk incident can reference the Detection Findings it
+    /// accumulated. `kept` preserves the input order, so the caller's uids stay
+    /// aligned with it.
+    pub fn process_with_finding_uids(
+        &self,
+        results: ProcessResult,
+        finding_uids: &[String],
+        state: &mut RiskState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+    ) -> RiskOutput {
         let start = std::time::Instant::now();
         let mut out = RiskOutput {
             kept: Vec::with_capacity(results.len()),
@@ -152,7 +170,11 @@ impl RiskLayer {
             incidents: Vec::new(),
         };
 
-        for mut result in results {
+        for (index, mut result) in results.into_iter().enumerate() {
+            let finding_uid = finding_uids
+                .get(index)
+                .map(String::as_str)
+                .filter(|uid| !uid.is_empty());
             if !self.scope.matches(&result) {
                 metrics.on_risk_annotation("skipped");
                 out.kept.push(result);
@@ -181,7 +203,17 @@ impl RiskLayer {
             if let Some(cfg) = self.incident.as_ref()
                 && !objects.is_empty()
             {
-                self.accumulate(cfg, &result, score, &objects, state, now, metrics, &mut out);
+                self.accumulate(
+                    cfg,
+                    &result,
+                    finding_uid,
+                    score,
+                    &objects,
+                    state,
+                    now,
+                    metrics,
+                    &mut out,
+                );
             }
 
             if self.strip_event {
@@ -204,6 +236,7 @@ impl RiskLayer {
         &self,
         cfg: &IncidentConfig,
         result: &EvaluationResult,
+        finding_uid: Option<&str>,
         score: i64,
         objects: &[RiskObject],
         state: &mut RiskState,
@@ -234,6 +267,7 @@ impl RiskLayer {
                 rule: rule.clone(),
                 level: level.clone(),
                 result: stored_result.clone(),
+                finding_uid: finding_uid.map(str::to_string),
             };
             let outcome = state.record(cfg, &object.object_type, &object.value, contribution, now);
             if outcome.evicted {
@@ -378,6 +412,54 @@ mod tests {
         assert_eq!(
             enr["risk.objects"],
             serde_json::json!([{"type": "src_ip", "value": "10.0.0.1"}])
+        );
+    }
+
+    #[test]
+    fn risk_incidents_carry_contributing_finding_uids() {
+        let refs = layer(
+            "score:\n  default_score: 60\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\nincident:\n  score_threshold: 100\n",
+        );
+        let mut st = RiskState::default();
+        let out = refs.process_with_finding_uids(
+            vec![
+                detection("10.0.0.1", Level::High, vec![]),
+                detection("10.0.0.1", Level::High, vec![]),
+            ],
+            &["uid-0".to_string(), String::new()],
+            &mut st,
+            0,
+            &NoopMetrics,
+        );
+        assert_eq!(out.kept.len(), 2);
+        let uids: Vec<Option<String>> = out.incidents[0]
+            .refs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|r| r.finding_uid.clone())
+            .collect();
+        assert_eq!(uids, [Some("uid-0".to_string()), None]);
+
+        let results = layer(
+            "score:\n  default_score: 60\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\nincident:\n  score_threshold: 100\n  include: results\n",
+        );
+        let mut st = RiskState::default();
+        let out = results.process_with_finding_uids(
+            vec![
+                detection("10.0.0.1", Level::High, vec![]),
+                detection("10.0.0.1", Level::High, vec![]),
+            ],
+            &["uid-0".to_string(), "uid-1".to_string()],
+            &mut st,
+            0,
+            &NoopMetrics,
+        );
+        let incident = &out.incidents[0];
+        assert_eq!(incident.results.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            incident.result_finding_uids,
+            [Some("uid-0".to_string()), Some("uid-1".to_string())]
         );
     }
 

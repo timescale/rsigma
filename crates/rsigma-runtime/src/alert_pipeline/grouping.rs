@@ -100,6 +100,10 @@ pub struct IncidentRef {
     /// Severity, lowercased.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
+    /// OCSF `finding_info.uid` of the Detection Finding emitted for this
+    /// result, when the daemon minted one. Never serialized or persisted.
+    #[serde(skip)]
+    pub finding_uid: Option<String>,
 }
 
 /// The wire shape emitted for an incident. One flat NDJSON object,
@@ -137,6 +141,10 @@ pub struct IncidentResult {
     /// stored as serialized JSON values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Vec<Value>>,
+    /// OCSF `finding_info.uid` of each retained result's Detection Finding,
+    /// index-aligned with `results` (`None` where unknown). Never serialized.
+    #[serde(skip)]
+    pub result_finding_uids: Vec<Option<String>>,
     /// Which sample kinds the incident actually retained. Snapshot-only: the
     /// emission path omits it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,6 +196,10 @@ pub(crate) struct Incident {
     result_count: u64,
     refs: Vec<IncidentRef>,
     results: Vec<Value>,
+    /// Finding uids index-aligned with `results`; in memory only, so a
+    /// restored incident starts with none.
+    #[serde(skip)]
+    result_uids: Vec<Option<String>>,
 }
 
 /// A grouping outcome the driver records a metric for.
@@ -254,6 +266,7 @@ impl IncidentStore {
 
     /// Assign a result to an incident, returning the incident id to annotate
     /// the pass-through result with. Records guard hits via `on_guard`.
+    #[cfg(test)]
     pub(crate) fn assign(
         &mut self,
         cfg: &GroupConfig,
@@ -261,9 +274,24 @@ impl IncidentStore {
         now: i64,
         mut on_guard: impl FnMut(OvermergeGuard),
     ) -> Option<String> {
+        self.assign_with_finding_uid(cfg, result, None, now, &mut on_guard)
+    }
+
+    /// [`Self::assign`], recording the result's OCSF finding uid on the
+    /// retained sample.
+    pub(crate) fn assign_with_finding_uid(
+        &mut self,
+        cfg: &GroupConfig,
+        result: &EvaluationResult,
+        finding_uid: Option<&str>,
+        now: i64,
+        mut on_guard: impl FnMut(OvermergeGuard),
+    ) -> Option<String> {
         match cfg.mode {
-            GroupMode::GroupBy => self.assign_group_by(cfg, result, now),
-            GroupMode::EntityGraph => self.assign_entity_graph(cfg, result, now, &mut on_guard),
+            GroupMode::GroupBy => self.assign_group_by(cfg, result, finding_uid, now),
+            GroupMode::EntityGraph => {
+                self.assign_entity_graph(cfg, result, finding_uid, now, &mut on_guard)
+            }
         }
     }
 
@@ -271,6 +299,7 @@ impl IncidentStore {
         &mut self,
         cfg: &GroupConfig,
         result: &EvaluationResult,
+        finding_uid: Option<&str>,
         now: i64,
     ) -> Option<String> {
         let (id, key) = group_fingerprint(&cfg.by, result);
@@ -282,7 +311,7 @@ impl IncidentStore {
             .incidents
             .entry(id.clone())
             .or_insert_with(|| Incident::new(id.clone(), now, key.clone()));
-        incident.absorb(result, now, cfg);
+        incident.absorb(result, finding_uid, now, cfg);
         Some(id)
     }
 
@@ -290,6 +319,7 @@ impl IncidentStore {
         &mut self,
         cfg: &GroupConfig,
         result: &EvaluationResult,
+        finding_uid: Option<&str>,
         now: i64,
         on_guard: &mut impl FnMut(OvermergeGuard),
     ) -> Option<String> {
@@ -365,7 +395,7 @@ impl IncidentStore {
                     stored.push((sel, value));
                 }
             }
-            incident.absorb(result, now, cfg);
+            incident.absorb(result, finding_uid, now, cfg);
         }
         for pair in stored {
             *self.value_counts.entry(pair.clone()).or_insert(0) += 1;
@@ -402,10 +432,14 @@ impl IncidentStore {
                 inc.entities.entry(sel).or_default().extend(values);
             }
             inc.refs.append(&mut victim.refs);
+            inc.result_uids.resize(inc.results.len(), None);
+            victim.result_uids.resize(victim.results.len(), None);
             inc.results.append(&mut victim.results);
+            inc.result_uids.append(&mut victim.result_uids);
             // Keep the per-incident cap after merging two incidents' samples.
             inc.refs.truncate(max_results);
             inc.results.truncate(max_results);
+            inc.result_uids.truncate(max_results);
         }
     }
 
@@ -538,6 +572,7 @@ impl IncidentStore {
         for inc in self.incidents.values_mut() {
             inc.refs.truncate(caps.max_results_per_incident);
             inc.results.truncate(caps.max_results_per_incident);
+            inc.result_uids.truncate(caps.max_results_per_incident);
             for (sel, values) in inc.entities.iter_mut() {
                 while values.len() > caps.max_entities_per_incident {
                     let Some(value) = values.pop_last() else {
@@ -580,10 +615,17 @@ impl Incident {
             result_count: 0,
             refs: Vec::new(),
             results: Vec::new(),
+            result_uids: Vec::new(),
         }
     }
 
-    fn absorb(&mut self, result: &EvaluationResult, now: i64, cfg: &GroupConfig) {
+    fn absorb(
+        &mut self,
+        result: &EvaluationResult,
+        finding_uid: Option<&str>,
+        now: i64,
+        cfg: &GroupConfig,
+    ) {
         self.last_seen = now;
         self.dirty = true;
         self.result_count += 1;
@@ -600,6 +642,7 @@ impl Incident {
                     self.refs.push(IncidentRef {
                         rule,
                         level: result.header.level.map(|l| l.as_str().to_string()),
+                        finding_uid: finding_uid.map(str::to_string),
                     });
                 }
             }
@@ -607,8 +650,10 @@ impl Incident {
                 if self.results.len() < cfg.caps.max_results_per_incident {
                     let mut sample = result.clone();
                     strip_event_payloads(&mut sample);
+                    self.result_uids.resize(self.results.len(), None);
                     self.results
                         .push(serde_json::to_value(&sample).unwrap_or(Value::Null));
+                    self.result_uids.push(finding_uid.map(str::to_string));
                 }
             }
         }
@@ -639,6 +684,12 @@ impl Incident {
             (include == IncludeMode::Refs || !self.refs.is_empty()).then(|| self.refs.clone());
         let results = (include == IncludeMode::Results || !self.results.is_empty())
             .then(|| self.results.clone());
+        let result_finding_uids = match &results {
+            Some(results) => (0..results.len())
+                .map(|i| self.result_uids.get(i).cloned().flatten())
+                .collect(),
+            None => Vec::new(),
+        };
         IncidentResult {
             incident_id: self.id.clone(),
             state,
@@ -652,6 +703,7 @@ impl Incident {
             entities,
             refs,
             results,
+            result_finding_uids,
             sample_mode: None,
             bundle_ready: None,
         }
@@ -904,6 +956,70 @@ mod tests {
         let emitted = serde_json::to_value(&emissions[0].result).unwrap();
         assert!(emitted.get("sample_mode").is_none());
         assert!(emitted.get("bundle_ready").is_none());
+    }
+
+    #[test]
+    fn finding_uids_ride_on_samples_but_never_on_the_wire() {
+        let refs_cfg = group_by_cfg();
+        let results_cfg = GroupConfig {
+            include: IncludeMode::Results,
+            ..group_by_cfg()
+        };
+        let mut store = IncidentStore::default();
+        let r1 = detection("r1", "10.0.0.1", "alice", Level::High);
+        let id = store
+            .assign_with_finding_uid(&refs_cfg, &r1, Some("uid-1"), 0, |_| {})
+            .unwrap();
+        let r2 = detection("r2", "10.0.0.1", "bob", Level::Low);
+        store.assign_with_finding_uid(&results_cfg, &r2, None, 1, |_| {});
+        let r3 = detection("r3", "10.0.0.1", "carol", Level::Low);
+        store.assign_with_finding_uid(&results_cfg, &r3, Some("uid-3"), 2, |_| {});
+
+        let snap = store.snapshot_one(&id, results_cfg.include).unwrap();
+        assert_eq!(
+            snap.refs.as_ref().unwrap()[0].finding_uid.as_deref(),
+            Some("uid-1")
+        );
+        assert_eq!(snap.result_finding_uids, [None, Some("uid-3".to_string())]);
+
+        let wire = serde_json::to_string(&snap).unwrap();
+        assert!(!wire.contains("uid-"), "finding uids leaked: {wire}");
+        assert!(!wire.contains("finding_uid"), "{wire}");
+    }
+
+    #[test]
+    fn merged_result_uids_stay_aligned_with_their_results() {
+        let cfg = GroupConfig {
+            include: IncludeMode::Results,
+            ..entity_cfg()
+        };
+        let mut store = IncidentStore::default();
+        let a = detection("r", "10.0.0.1", "alice", Level::High);
+        store.assign_with_finding_uid(&cfg, &a, Some("uid-a"), 0, |_| {});
+        let b = detection("r", "10.0.0.2", "bob", Level::High);
+        store.assign_with_finding_uid(&cfg, &b, None, 1, |_| {});
+        // Bridges both incidents.
+        let c = detection("r", "10.0.0.2", "alice", Level::High);
+        let id = store
+            .assign_with_finding_uid(&cfg, &c, Some("uid-c"), 2, |_| {})
+            .unwrap();
+        assert_eq!(store.len(), 1);
+
+        let snap = store.snapshot_one(&id, cfg.include).unwrap();
+        let results = snap.results.unwrap();
+        assert_eq!(results.len(), snap.result_finding_uids.len());
+        let pairs: Vec<(String, Option<String>)> = results
+            .iter()
+            .zip(&snap.result_finding_uids)
+            .map(|(result, uid)| {
+                let ip = result["matched_fields"][0]["value"].as_str().unwrap();
+                let user = result["matched_fields"][1]["value"].as_str().unwrap();
+                (format!("{ip}/{user}"), uid.clone())
+            })
+            .collect();
+        assert!(pairs.contains(&("10.0.0.1/alice".to_string(), Some("uid-a".to_string()))));
+        assert!(pairs.contains(&("10.0.0.2/bob".to_string(), None)));
+        assert!(pairs.contains(&("10.0.0.2/alice".to_string(), Some("uid-c".to_string()))));
     }
 
     #[test]

@@ -254,7 +254,7 @@ mod tests {
             Some(&ctx),
             crate::ocsf::OcsfOptions::default(),
         )
-            .unwrap();
+        .unwrap();
         out.write_line("{\"next\":true}").unwrap();
 
         let written = String::from_utf8(out.inner.out).unwrap();
@@ -297,7 +297,7 @@ mod tests {
             Some(&next),
             crate::ocsf::OcsfOptions::default(),
         )
-            .unwrap();
+        .unwrap();
         let written = String::from_utf8(out.inner.out).unwrap();
         assert_eq!(written.lines().count(), 4, "{written}");
     }

@@ -94,6 +94,10 @@ pub struct Contribution {
     /// The event-stripped serialized result, retained only for `include: results`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub result: Option<Value>,
+    /// OCSF `finding_info.uid` of the Detection Finding minted for this
+    /// firing, when known. In memory only: never persisted.
+    #[serde(skip)]
+    pub finding_uid: Option<String>,
 }
 
 /// Per-entity sliding-window state.
@@ -390,7 +394,7 @@ fn build_incident<'a>(
         all[all.len() - take..].to_vec()
     };
 
-    let (refs, results) = match cfg.include {
+    let (refs, results, result_finding_uids) = match cfg.include {
         IncludeMode::Refs => {
             let refs = recent
                 .iter()
@@ -399,13 +403,17 @@ fn build_incident<'a>(
                     level: c.level.clone(),
                     score: c.score,
                     timestamp: c.ts,
+                    finding_uid: c.finding_uid.clone(),
                 })
                 .collect();
-            (Some(refs), None)
+            (Some(refs), None, Vec::new())
         }
         IncludeMode::Results => {
-            let results = recent.iter().filter_map(|c| c.result.clone()).collect();
-            (None, Some(results))
+            let (results, uids): (Vec<Value>, Vec<Option<String>>) = recent
+                .iter()
+                .filter_map(|c| Some((c.result.clone()?, c.finding_uid.clone())))
+                .unzip();
+            (None, Some(results), uids)
         }
     };
 
@@ -426,6 +434,7 @@ fn build_incident<'a>(
         result_count: stats.result_count,
         refs,
         results,
+        result_finding_uids,
     }
 }
 
@@ -453,6 +462,7 @@ mod tests {
             rule: rule.to_string(),
             level: Some("high".to_string()),
             result: None,
+            finding_uid: None,
         }
     }
 

@@ -638,6 +638,7 @@ impl IncidentWire {
             entities: self.entities,
             refs: self.refs,
             results: self.results,
+            result_finding_uids: Vec::new(),
             sample_mode: self.sample_mode,
             bundle_ready: self.bundle_ready,
         }
@@ -687,6 +688,7 @@ impl RiskIncidentWire {
             result_count: self.result_count,
             refs: self.refs,
             results: self.results,
+            result_finding_uids: Vec::new(),
         }
     }
 }
@@ -1114,6 +1116,7 @@ mod tests {
             entities: Map::new(),
             refs: None,
             results: None,
+            result_finding_uids: Vec::new(),
             sample_mode: None,
             bundle_ready: None,
         }
@@ -1228,6 +1231,7 @@ mod tests {
             result_count: 2,
             refs: None,
             results: None,
+            result_finding_uids: Vec::new(),
         };
         assert_eq!(
             risk_incident_title(&incident),

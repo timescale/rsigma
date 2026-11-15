@@ -142,6 +142,10 @@ impl crate::ocsf::FindingSource for DeliveryFindingSource<'_> {
     fn uid(&self) -> String {
         let sequence = self.minted.get();
         self.minted.set(sequence.saturating_add(1));
+        // The first uid a serializer asks for is `finding_info.uid`.
+        if sequence == 0 {
+            return self.ctx.finding_uid(self.index);
+        }
         format!("{}_{:04}_{sequence}", self.ctx.id_base(), self.index)
     }
 }
@@ -709,6 +713,29 @@ mod tests {
         assert_eq!(first.now_ms(), second.now_ms());
         assert_eq!(first.uid(), second.uid());
         assert_eq!(first.uid(), second.uid());
+    }
+
+    #[test]
+    fn the_first_minted_uid_is_the_contexts_finding_uid() {
+        let ctx = DeliveryContext::new();
+        assert_eq!(
+            DeliveryFindingSource::new(&ctx, 3).uid(),
+            ctx.finding_uid(3),
+            "an unpinned context derives the uid from its base and the index",
+        );
+
+        let mut pinned = DeliveryContext::new();
+        let minted = pinned.finding_uid(2);
+        pinned.set_finding_uids(vec![minted.clone(), String::new()]);
+        let source = DeliveryFindingSource::new(&pinned, 0);
+        assert_eq!(source.uid(), minted, "a pinned uid survives a reindex");
+        assert_ne!(source.uid(), minted, "later uids stay distinct");
+        assert_eq!(
+            DeliveryFindingSource::new(&pinned, 1).uid(),
+            pinned.finding_uid(1),
+            "an empty pin falls back to the derived uid",
+        );
+        assert!(pinned.finding_uid(1).ends_with("_0001_0"));
     }
 
     #[tokio::test(flavor = "current_thread")]

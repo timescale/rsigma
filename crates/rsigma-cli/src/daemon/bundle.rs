@@ -583,6 +583,7 @@ mod tests {
                 "rule-whoami",
                 json!([{ "type": "user", "value": "alice" }]),
             )]),
+            result_finding_uids: Vec::new(),
             sample_mode: Some(SampleMode::Results),
             bundle_ready: Some(true),
         }
@@ -680,6 +681,7 @@ mod tests {
         incident.refs = Some(vec![IncidentRef {
             rule: "rule-whoami".to_string(),
             level: Some("high".to_string()),
+            finding_uid: None,
         }]);
         incident.sample_mode = Some(SampleMode::Refs);
 

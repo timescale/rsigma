@@ -248,8 +248,10 @@ fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
         refs: Some(vec![IncidentRef {
             rule: "rule-1".to_string(),
             level: Some("high".to_string()),
+            finding_uid: None,
         }]),
         results: None,
+        result_finding_uids: Vec::new(),
         sample_mode: None,
         bundle_ready: None,
     }
@@ -291,8 +293,10 @@ fn risk_incident_carries_score_and_entity() {
             level: Some("high".to_string()),
             score: 75,
             timestamp: 1_767_225_600,
+            finding_uid: None,
         }]),
         results: None,
+        result_finding_uids: Vec::new(),
     };
 
     check_both_versions("risk_incident", |opts| {
