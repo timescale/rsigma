@@ -28,10 +28,12 @@
 //! [`SigmaCollection`]: crate::ast::SigmaCollection
 
 mod error;
+mod select;
 mod source;
 mod spec;
 
 pub use error::RulesetError;
+pub use select::Decision;
 pub use source::{
     Candidate, CandidateDoc, DocumentKind, LoadedSources, ResolveOptions, RuleOrigin, SourceFile,
     load_sources,
@@ -71,13 +73,23 @@ pub struct ResolvedRuleset {
 /// no I/O beyond overlay files, which are loaded by the overlay phase.
 pub fn resolve_loaded(
     name: &str,
-    _spec: &RulesetSpec,
+    spec: &RulesetSpec,
     loaded: LoadedSources,
 ) -> Result<ResolvedRuleset, RulesetError> {
-    // Selection, dependency closure, and overlays are added by later commits.
+    let decisions = select::decide(&loaded.candidates, spec)?;
     let mut collection = SigmaCollection::new();
     collection.diagnostics = loaded.diagnostics;
-    for candidate in loaded.candidates {
+    for (candidate, decision) in loaded.candidates.into_iter().zip(decisions) {
+        let keep = match decision {
+            Decision::Included { .. } | Decision::PulledIn { .. } | Decision::FilterKept => true,
+            // Filters are retained until dependency closure decides whether
+            // their targets survived.
+            Decision::NotSelected if candidate.kind() == DocumentKind::Filter => true,
+            _ => false,
+        };
+        if !keep {
+            continue;
+        }
         match candidate.doc {
             CandidateDoc::Detection(rule) => collection.rules.push(rule),
             CandidateDoc::Correlation(rule) => collection.correlations.push(rule),
