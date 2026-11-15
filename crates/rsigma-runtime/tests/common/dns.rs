@@ -198,7 +198,7 @@ fn answer(request: &Message, query: &Query) -> Message {
         ("example.com.", RecordType::CAA) => {
             response.add_answer(record(
                 "example.com.",
-                RData::CAA(CAA::new_issue(false, Some(name("ca.example.net.")), vec![])),
+                RData::CAA(CAA::new_issue(false, Some(name("ca.example.net")), vec![])),
             ));
         }
         ("_sip._tcp.example.com.", RecordType::SRV) => {
