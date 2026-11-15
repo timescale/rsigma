@@ -273,6 +273,61 @@ fn backtest_finding_format_ocsf_requires_findings() {
 }
 
 #[test]
+fn backtest_findings_dot_slash_does_not_truncate_the_corpus() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("ev2.ndjson");
+    let original = "{\"CommandLine\":\"malware\"}\n";
+    std::fs::write(&corpus, original).unwrap();
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            "ev2.ndjson",
+            "--findings",
+            "./ev2.ndjson",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("same path"));
+    let after = std::fs::read_to_string(&corpus).unwrap();
+    assert_eq!(
+        after, original,
+        "refusing the path must not truncate the corpus"
+    );
+}
+
+#[test]
+fn backtest_findings_inside_the_corpus_directory_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("c");
+    std::fs::create_dir(&corpus).unwrap();
+    std::fs::write(corpus.join("events.ndjson"), "{}\n").unwrap();
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            "c",
+            "--findings",
+            "c/out.ndjson",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("inside the corpus"));
+    assert!(
+        !corpus.join("out.ndjson").exists(),
+        "the findings file must not be created inside the corpus"
+    );
+}
+
+#[test]
 fn backtest_without_expectations_reports_stats_and_exits_zero() {
     // No expectations file: stats-only mode. Every rule fired, but nothing is
     // diffed and nothing is unexpected, so the run succeeds.

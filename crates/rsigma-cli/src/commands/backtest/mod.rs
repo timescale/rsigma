@@ -30,7 +30,7 @@ use super::eval_stream::{CorrelationProcessor, DetectionProcessor, EventProcesso
 use crate::commands::reports::BacktestReport;
 use crate::config;
 use crate::exit_code;
-use crate::output::OutputCtx;
+use crate::output::{OutputCtx, output_path_is_inside, same_output_path};
 use expectations::{ResolvedExpectations, UnexpectedPolicy};
 use report::{Accumulator, result_key};
 
@@ -228,14 +228,8 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
         let _ = version;
     }
     if let Some(findings) = &args.findings {
-        let mut collisions = args
-            .corpus
-            .iter()
-            .chain(args.report.iter())
-            .chain(args.junit.iter());
-        if collisions.any(|p| p == findings) {
-            eprintln!("error: --findings must not be the corpus, --report, or --junit path");
-            return exit_code::CONFIG_ERROR;
+        if let Some(code) = findings_path_collision(findings, &args) {
+            return code;
         }
         if let Err(e) = File::create(findings) {
             eprintln!(
@@ -543,6 +537,38 @@ fn classify(path: &Path) -> CorpusKind {
         Some("evtx") => CorpusKind::Evtx,
         _ => CorpusKind::Other,
     }
+}
+
+/// `--findings` must not name a corpus input, a report output, or a file
+/// inside a corpus directory. Path spelling (`./x` and `x`) does not matter.
+/// Returns a process exit code when the path is refused.
+fn findings_path_collision(findings: &Path, args: &BacktestArgs) -> Option<i32> {
+    for other in args
+        .corpus
+        .iter()
+        .chain(args.report.iter())
+        .chain(args.junit.iter())
+    {
+        if same_output_path(findings, other) {
+            eprintln!(
+                "error: --findings '{}' is the same path as '{}'",
+                findings.display(),
+                other.display()
+            );
+            return Some(exit_code::CONFIG_ERROR);
+        }
+    }
+    for root in &args.corpus {
+        if output_path_is_inside(findings, root) {
+            eprintln!(
+                "error: --findings '{}' is inside the corpus directory '{}'",
+                findings.display(),
+                root.display()
+            );
+            return Some(exit_code::CONFIG_ERROR);
+        }
+    }
+    None
 }
 
 /// Resolve the `--corpus` roots into a sorted list of files. A root may be a

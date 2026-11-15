@@ -21,7 +21,9 @@ use super::eval_stream::{
 use crate::EventFilter;
 use crate::config;
 use crate::exit_code;
-use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular};
+use crate::output::{
+    DelimitedWriter, OutputCtx, OutputFile, OutputFormat, Tabular, same_output_path,
+};
 
 /// Arguments for `rsigma engine eval` (and the deprecated `rsigma eval`).
 #[derive(Args, Debug)]
@@ -1417,41 +1419,9 @@ struct MatchRenderer {
     file: Option<OutputFile>,
 }
 
-/// Buffered `--output` destination. Write failures exit with
-/// [`exit_code::CONFIG_ERROR`] so a truncated results file never looks like
-/// a successful run.
-struct OutputFile {
-    path: PathBuf,
-    writer: io::BufWriter<File>,
-}
-
-impl OutputFile {
-    fn create(path: PathBuf) -> Self {
-        match File::create(&path) {
-            Ok(file) => Self {
-                path,
-                writer: io::BufWriter::new(file),
-            },
-            Err(e) => {
-                eprintln!("error: cannot create output file '{}': {e}", path.display());
-                process::exit(exit_code::CONFIG_ERROR);
-            }
-        }
-    }
-
-    fn check(&self, result: io::Result<()>) {
-        if let Err(e) = result {
-            eprintln!(
-                "error: failed to write output file '{}': {e}",
-                self.path.display()
-            );
-            process::exit(exit_code::CONFIG_ERROR);
-        }
-    }
-}
-
 /// Refuse an `--output` path that names the `--event` input file, which
-/// would otherwise be truncated before it is read.
+/// would otherwise be truncated before it is read. `./x` and `x` are the
+/// same file.
 fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
     let input = match source {
         EventSource::NdjsonFile(p) => p,
@@ -1459,9 +1429,7 @@ fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
         EventSource::EvtxFile(p) => p,
         EventSource::SingleJson(_) | EventSource::Stdin => return,
     };
-    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(output), std::fs::canonicalize(input))
-        && a == b
-    {
+    if same_output_path(output, input) {
         eprintln!(
             "error: --output '{}' is the --event input file",
             output.display()

@@ -18,6 +18,9 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+mod file;
+pub(crate) use file::{OutputFile, output_path_is_inside, same_output_path};
+
 /// Selector for the wire format of structured CLI output.
 ///
 /// `Json` and `Ndjson` mean what they say; `Table` is a width-aligned text
