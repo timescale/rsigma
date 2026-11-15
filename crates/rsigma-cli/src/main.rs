@@ -12,6 +12,7 @@ mod daemon;
 pub(crate) mod exit_code;
 mod features;
 mod fix;
+pub(crate) mod fsutil;
 pub(crate) mod logsource_opts;
 pub(crate) mod metrics_source;
 pub(crate) mod output;

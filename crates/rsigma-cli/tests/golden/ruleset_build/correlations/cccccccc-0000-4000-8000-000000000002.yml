@@ -1,0 +1,18 @@
+title: Discovery burst escalation
+id: cccccccc-0000-4000-8000-000000000002
+status: experimental
+description: A discovery burst repeats.
+author: Test Author
+tags:
+    - attack.discovery
+    - attack.t1059
+correlation:
+    type: event_count
+    rules:
+        - cccccccc-0000-4000-8000-000000000001
+    group-by:
+        - User
+    timespan: 15m
+    condition:
+        gte: 2
+level: high

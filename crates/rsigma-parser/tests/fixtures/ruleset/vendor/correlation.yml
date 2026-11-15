@@ -9,7 +9,7 @@ correlation:
     rules:
         - aaaaaaaa-0000-4000-8000-000000000001
         - aaaaaaaa-0000-4000-8000-000000000003
-    group_by:
+    group-by:
         - User
     timespan: 5m
     condition:
@@ -28,6 +28,8 @@ correlation:
     type: event_count
     rules:
         - cccccccc-0000-4000-8000-000000000001
+    group-by:
+        - User
     timespan: 15m
     condition:
         gte: 2

@@ -1,0 +1,16 @@
+title: Windows powershell encoded command
+id: aaaaaaaa-0000-4000-8000-000000000002
+status: experimental
+description: PowerShell runs an encoded command.
+author: Test Author
+tags:
+    - attack.execution
+    - attack.t1059.003
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: '-EncodedCommand'
+    condition: selection
+level: medium

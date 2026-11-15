@@ -1,0 +1,16 @@
+title: Windows local user enumeration
+id: aaaaaaaa-0000-4000-8000-000000000003
+status: test
+description: net user enumerates local accounts.
+author: Test Author
+tags:
+    - attack.discovery
+    - attack.t1033
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'net user'
+    condition: selection
+level: low

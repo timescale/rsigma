@@ -1,4 +1,4 @@
-//! Integration tests for `rsigma ruleset list` and `rsigma ruleset show`.
+//! Integration tests for `rsigma ruleset list`, `show`, and `build`.
 //!
 //! The fixture directory carries a copy of the parser ruleset fixtures plus
 //! two config files: `rsigma.yaml` declares a working ruleset and a broken
@@ -6,6 +6,8 @@
 
 mod common;
 
+use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use common::{assert_golden, rsigma};
@@ -15,6 +17,110 @@ const W1: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rulesets")
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// A writable copy of the fixtures, so a test can edit sources.
+fn fixture_copy() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    copy_tree(&fixtures(), dir.path());
+    dir
+}
+
+fn build_json(dir: &Path, out: &Path, extra: &[&str]) -> serde_json::Value {
+    let mut command = rsigma();
+    command.current_dir(dir).args([
+        "ruleset",
+        "build",
+        "vendor",
+        "--config",
+        "vendor-only.yaml",
+        "-o",
+        out.to_str().unwrap(),
+        "--output-format",
+        "json",
+    ]);
+    command.args(extra);
+    let output = command.assert().success().get_output().stdout.clone();
+    serde_json::from_slice(&output).unwrap()
+}
+
+fn walk(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                visit(root, &path, files);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                files.insert(rel, fs::read(&path).unwrap());
+            }
+        }
+    }
+    visit(root, root, &mut files);
+    files
+}
+
+/// The lockfile records the rsigma version, which would make the golden
+/// unstable; compare it with the generator replaced by a fixed string.
+fn normalize_lock(contents: &[u8]) -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(contents).unwrap();
+    value["generator"] = serde_json::json!("rsigma <version>");
+    let mut text = serde_json::to_string_pretty(&value).unwrap();
+    text.push('\n');
+    text.into_bytes()
+}
+
+fn assert_build_golden(out: &Path) {
+    let files = walk(out);
+    let golden_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ruleset_build");
+    let update = std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some();
+    if update {
+        let _ = fs::remove_dir_all(&golden_root);
+    }
+    for (rel, contents) in &files {
+        let contents = if rel == Path::new("ruleset.lock.json") {
+            normalize_lock(contents)
+        } else {
+            contents.clone()
+        };
+        let golden = golden_root.join(rel);
+        if update {
+            fs::create_dir_all(golden.parent().unwrap()).unwrap();
+            fs::write(&golden, &contents).unwrap();
+            continue;
+        }
+        let expected = fs::read(&golden)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", golden.display()));
+        assert_eq!(
+            contents,
+            expected,
+            "golden mismatch for {}; rerun with RSIGMA_UPDATE_GOLDEN=1",
+            golden.display()
+        );
+    }
+    if !update {
+        let golden_files = walk(&golden_root);
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            golden_files.keys().collect::<Vec<_>>(),
+            "golden tree has a different file set"
+        );
+    }
 }
 
 #[test]
@@ -264,4 +370,219 @@ fn yaml_requires_an_id() {
         .failure()
         .code(2)
         .stderr(predicate::str::contains("--id"));
+}
+
+#[test]
+fn build_matches_the_golden_tree() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    let envelope = build_json(dir.path(), &out, &[]);
+    assert_eq!(envelope["ruleset"], serde_json::json!("vendor"));
+    assert_eq!(envelope["documents"], serde_json::json!(7));
+    assert_eq!(envelope["written"], serde_json::json!(8));
+    assert_eq!(envelope["unchanged"], serde_json::json!(0));
+    assert_eq!(envelope["removed"], serde_json::json!(0));
+    assert_build_golden(&out);
+}
+
+#[test]
+fn second_build_writes_nothing() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+    let envelope = build_json(dir.path(), &out, &[]);
+    assert_eq!(envelope["written"], serde_json::json!(0));
+    assert_eq!(envelope["unchanged"], serde_json::json!(8));
+    assert_eq!(envelope["removed"], serde_json::json!(0));
+}
+
+#[test]
+fn check_is_clean_then_reports_a_source_edit() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "-o",
+            out.to_str().unwrap(),
+            "--check",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No drift"));
+
+    let source = dir.path().join("vendor/windows/proc_creation.yml");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("title: Windows whoami execution", "title: Whoami changed"),
+    )
+    .unwrap();
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "-o",
+            out.to_str().unwrap(),
+            "--check",
+            "--output-format",
+            "table",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains(format!("rules/{W1}.yml")))
+        .stdout(predicate::str::contains("ruleset.lock.json"));
+}
+
+#[test]
+fn removing_a_source_rule_removes_its_output() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    let extra = dir.path().join("vendor/extra.yml");
+    fs::write(
+        &extra,
+        "title: Windows extra\nid: aaaaaaaa-0000-4000-8000-000000000009\nstatus: test\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        CommandLine|contains: 'extra'\n    condition: selection\ntags:\n    - attack.t1059.009\n",
+    )
+    .unwrap();
+    build_json(dir.path(), &out, &[]);
+    let extra_output = out.join("rules/aaaaaaaa-0000-4000-8000-000000000009.yml");
+    assert!(extra_output.is_file());
+
+    fs::remove_file(&extra).unwrap();
+    let envelope = build_json(dir.path(), &out, &[]);
+    assert_eq!(envelope["removed"], serde_json::json!(1));
+    assert!(!extra_output.exists());
+}
+
+#[test]
+fn refuses_a_non_empty_directory_without_a_lockfile() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("keep.txt"), "not ours").unwrap();
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("--force"));
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "-o",
+            out.to_str().unwrap(),
+            "--force",
+        ])
+        .assert()
+        .success();
+    assert!(out.join("keep.txt").is_file());
+}
+
+#[test]
+fn a_source_parse_error_fails_with_exit_two() {
+    let dir = fixture_copy();
+    fs::write(dir.path().join("vendor/broken.yml"), "title: [unclosed\n").unwrap();
+    let out = dir.path().join("out");
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "vendor-only.yaml",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("parse error"));
+}
+
+#[test]
+fn built_directory_validates_and_lints() {
+    let dir = fixture_copy();
+    let out = dir.path().join("out");
+    build_json(dir.path(), &out, &[]);
+
+    rsigma()
+        .args(["rule", "validate", out.to_str().unwrap()])
+        .assert()
+        .success();
+    rsigma()
+        .args(["rule", "lint", out.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn output_defaults_to_the_spec_output() {
+    let dir = fixture_copy();
+    let config = dir.path().join("with-output.yaml");
+    let text = fs::read_to_string(dir.path().join("vendor-only.yaml"))
+        .unwrap()
+        .replace(
+            "    pipelines: [sysmon]\n",
+            "    pipelines: [sysmon]\n    output: built\n",
+        );
+    fs::write(&config, text).unwrap();
+
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "build",
+            "vendor",
+            "--config",
+            "with-output.yaml",
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success();
+    assert!(dir.path().join("built/ruleset.lock.json").is_file());
+}
+
+#[test]
+fn missing_output_hints_at_the_flag_and_the_spec_key() {
+    let dir = fixture_copy();
+    rsigma()
+        .current_dir(dir.path())
+        .args(["ruleset", "build", "vendor", "--config", "vendor-only.yaml"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("-o <DIR>"))
+        .stderr(predicate::str::contains("output"));
 }

@@ -1,5 +1,6 @@
 //! `rsigma ruleset`: curate named rule sets declared in `rsigma.yaml`.
 
+mod build;
 mod list;
 mod show;
 
@@ -15,6 +16,8 @@ pub(crate) enum RulesetCommands {
     List(ListArgs),
     /// Show the documents a ruleset resolves to
     Show(ShowArgs),
+    /// Materialize a ruleset into a directory with a lockfile
+    Build(BuildArgs),
 }
 
 #[derive(Args, Debug)]
@@ -47,9 +50,33 @@ pub(crate) struct ShowArgs {
     pub yaml: bool,
 }
 
+#[derive(Args, Debug)]
+pub(crate) struct BuildArgs {
+    /// Ruleset name
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Configuration file to read rulesets from
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Output directory (defaults to the ruleset's `output`)
+    #[arg(short = 'o', long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+
+    /// Write into a non-empty directory that has no lockfile
+    #[arg(long)]
+    pub force: bool,
+
+    /// Report drift and exit 1 instead of writing
+    #[arg(long)]
+    pub check: bool,
+}
+
 pub(crate) fn dispatch(cmd: RulesetCommands, ctx: OutputCtx) {
     match cmd {
         RulesetCommands::List(args) => list::cmd_list(args, ctx),
         RulesetCommands::Show(args) => show::cmd_show(args, ctx),
+        RulesetCommands::Build(args) => build::cmd_build(args, ctx),
     }
 }

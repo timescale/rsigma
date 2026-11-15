@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [features]
 default = ["daemon"]
-daemon = ["rsigma-runtime", "rsigma-runtime/uds", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http", "tokio-stream", "dep:sha2", "dep:getrandom"]
+daemon = ["rsigma-runtime", "rsigma-runtime/uds", "tokio", "axum", "async-trait", "prometheus", "notify", "rusqlite", "tower-http", "tokio-stream", "dep:getrandom"]
 # MCP server (`rsigma mcp serve`). Pulls in rmcp via rsigma-mcp and needs a
 # tokio runtime; opt-in, build with --features mcp (the prebuilt binaries and
 # Docker image, built with --all-features, include it).
@@ -98,6 +98,9 @@ anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 arc-swap = "1"
 similar = "3.1.1"
+# Ruleset build digests and live event-tap redaction.
+sha2 = "0.11"
+tempfile = "3.25.0"
 
 # daemon mode dependencies
 tokio = { version = "1", features = ["full"], optional = true }
@@ -107,8 +110,6 @@ prometheus = { version = "0.14", default-features = false, optional = true }
 notify = { version = "8.2", optional = true }
 rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 tower-http = { version = "0.7", features = ["trace"], optional = true }
-# Live event-tap server-side redaction (deterministic salted hashing).
-sha2 = { version = "0.11", optional = true }
 getrandom = { version = "0.4", optional = true }
 async-nats = { version = "0.51", optional = true }
 tokio-stream = { version = "0.1", optional = true }

@@ -1,0 +1,18 @@
+title: Linux SSH login
+id: bbbbbbbb-0000-4000-8000-000000000001
+status: stable
+description: A user logs in over SSH.
+author: Test Author
+tags:
+    - attack.credential_access
+    - attack.t1110
+logsource:
+    product: linux
+    service: sshd
+detection:
+    selection:
+        EventType: login
+    condition: selection
+level: high
+rsigma.ads.blind_spots:
+    - 'Login from a known jump host'

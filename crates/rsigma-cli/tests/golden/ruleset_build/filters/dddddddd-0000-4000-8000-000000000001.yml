@@ -1,0 +1,15 @@
+title: Windows whoami noise
+id: dddddddd-0000-4000-8000-000000000001
+status: stable
+description: Ignore whoami run by the SYSTEM account.
+author: Test Author
+logsource:
+    category: process_creation
+    product: windows
+filter:
+    rules:
+        - aaaaaaaa-0000-4000-8000-000000000001
+    selection:
+        User: SYSTEM
+    condition: selection
+level: low

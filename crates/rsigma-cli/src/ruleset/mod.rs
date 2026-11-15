@@ -1,5 +1,8 @@
 //! Shared loading and resolution of named rulesets for `rsigma ruleset`.
 
+pub(crate) mod build;
+pub(crate) mod lock;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -15,9 +18,9 @@ pub(crate) fn load_specs(config: Option<&Path>) -> BTreeMap<String, RulesetSpec>
     config::load_and_merge(config).rulesets.unwrap_or_default()
 }
 
-/// Resolve one named ruleset, exiting with a configuration error when the
-/// name is unknown or resolution fails.
-pub(crate) fn resolve_named(name: &str, config: Option<&Path>, ctx: &OutputCtx) -> ResolvedRuleset {
+/// Look up one named ruleset, exiting with a configuration error when the
+/// name is unknown.
+pub(crate) fn load_named(name: &str, config: Option<&Path>) -> (String, RulesetSpec) {
     let specs = load_specs(config);
     let Some(spec) = specs.get(name) else {
         let defined: Vec<&str> = specs.keys().map(String::as_str).collect();
@@ -45,7 +48,14 @@ pub(crate) fn resolve_named(name: &str, config: Option<&Path>, ctx: &OutputCtx) 
         }
         process::exit(exit_code::CONFIG_ERROR);
     };
-    resolve_or_exit(name, spec, ctx)
+    (name.to_string(), spec.clone())
+}
+
+/// Resolve one named ruleset, exiting with a configuration error when the
+/// name is unknown or resolution fails.
+pub(crate) fn resolve_named(name: &str, config: Option<&Path>, ctx: &OutputCtx) -> ResolvedRuleset {
+    let (name, spec) = load_named(name, config);
+    resolve_or_exit(&name, &spec, ctx)
 }
 
 /// Resolve a spec and exit 3 on failure, printing diagnostics and warnings.
