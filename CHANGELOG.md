@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### OCSF finding output depth
+### OCSF finding output depth (#711)
 
 `engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are rejected. `--output-format ocsf` remains accepted. Backtest keeps the human summary on stderr.
 
