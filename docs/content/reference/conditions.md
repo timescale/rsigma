@@ -6,7 +6,7 @@ description: "How RSigma interprets Sigma keyword detections and condition selec
 
 {{ added "0.24.0" }}
 
-This page describes how the evaluator and the converters interpret keyword detections and condition selectors where the specification leaves room for interpretation. The behavior follows the [Sigma specification](https://github.com/SigmaHQ/sigma-specification) and matches pySigma unless a section says otherwise. For value modifiers, see [Value Modifiers](modifiers.md).
+This page describes how the evaluator and the converters interpret keyword detections and condition selectors where the specification leaves room for interpretation. The behavior follows the [Sigma specification](https://github.com/SigmaHQ/sigma-specification/blob/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification/sigma-rules-specification.md) and matches pySigma unless a section says otherwise. For value modifiers, see [Value Modifiers](modifiers.md).
 
 ## Keywords
 

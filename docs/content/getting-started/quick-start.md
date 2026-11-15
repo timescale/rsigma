@@ -36,7 +36,7 @@ EOF
 This is the minimum useful Sigma rule. `selection` matches the `CommandLine` field with a case-insensitive substring; `condition: selection` activates that selection.
 
 ::: callout tip "New to Sigma?"
-See [Core Concepts](concepts.md) for an RSigma-oriented overview, and the [SigmaHQ docs](https://sigmahq.io/docs/guide/getting-started.html) for rule authoring. Everything you write against the [Sigma v2.1.0 specification](https://sigmahq.io/sigma-specification/) works in RSigma.
+See [Core Concepts](concepts.md) for an RSigma-oriented overview, and the [SigmaHQ docs](https://sigmahq.io/docs/guide/getting-started.html) for rule authoring. Everything you write against the [Sigma v2.1.0 specification](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification) works in RSigma.
 :::
 
 ## 2. Evaluate a single event

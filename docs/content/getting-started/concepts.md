@@ -15,7 +15,7 @@ A short tour of the ideas you run into when working with RSigma. If you already 
 - A **[condition](https://sigmahq.io/docs/basics/conditions.html)** expression combining selections with `and`, `or`, `not`, and quantifiers (`1 of selection_*`, `all of them`).
 - Metadata: title, id, level, tags, references, false positives, and so on.
 
-[SigmaHQ](https://github.com/SigmaHQ/sigma) maintains a large community rule repository. RSigma implements the [Sigma v2.1.0 specification](https://sigmahq.io/sigma-specification/) and is tested against that corpus on every CI run. Authoring questions belong on [SigmaHQ's docs](https://sigmahq.io/docs/guide/getting-started.html); runtime, conversion, and operational questions belong here.
+[SigmaHQ](https://github.com/SigmaHQ/sigma) maintains a large community rule repository. RSigma implements the [Sigma v2.1.0 specification](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification) and is tested against that corpus on every CI run. Authoring questions belong on [SigmaHQ's docs](https://sigmahq.io/docs/guide/getting-started.html); runtime, conversion, and operational questions belong here.
 
 ## The three kinds of rules
 
