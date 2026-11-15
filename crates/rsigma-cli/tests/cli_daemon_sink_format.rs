@@ -259,13 +259,13 @@ group:
   resolve_timeout: 2s
 "#;
 
-/// Incidents reach an OCSF sink as findings (a `Create` on the first emission,
-/// a `Close` once the incident resolves), while the alert pipeline's dedup
-/// sidecar lines stay native NDJSON on that same sink.
+/// Incidents and dedup sidecar lines reach an OCSF sink as class-2004 findings.
 #[test]
-fn incidents_are_findings_and_dedup_lines_stay_native() {
+fn incidents_and_dedup_lines_are_ocsf_findings_on_ocsf_sink() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let pipeline = temp_file(".yml", GROUP_AND_DEDUP_PIPELINE);
+    let native = temp_file(".ndjson", "");
+    let native_spec = format!("file://{}", native.path().display());
     let ocsf = temp_file(".ndjson", "");
     let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
     let daemon = DaemonProcess::spawn_http_with_args(
@@ -273,6 +273,8 @@ fn incidents_are_findings_and_dedup_lines_stay_native() {
         &[
             "--alert-pipeline",
             pipeline.path().to_str().unwrap(),
+            "--output",
+            &native_spec,
             "--output",
             &ocsf_spec,
         ],
@@ -297,15 +299,21 @@ fn incidents_are_findings_and_dedup_lines_stay_native() {
         SIMPLE_RULE_ID
     );
 
-    // A dedup repeat record is an opaque native payload on the incident
-    // channel, so it stays NDJSON even on an OCSF sink.
-    let dedup = wait_for_line(ocsf.path(), |line| {
+    let dedup_ocsf = wait_for_line(ocsf.path(), |line| line["activity_name"] == "Update")
+        .expect("a dedup repeat finding never reached the OCSF sink");
+    assert_eq!(dedup_ocsf["class_uid"], 2004);
+    assert_eq!(
+        dedup_ocsf["unmapped"]["enrichments"]["dedup_state"],
+        "repeat",
+    );
+
+    let dedup_native = wait_for_line(native.path(), |line| {
         line.pointer("/enrichments/dedup_state").is_some()
     })
-    .expect("a dedup sidecar line never reached the sink");
+    .expect("a dedup sidecar line never reached the native sink");
     assert!(
-        dedup.get("class_uid").is_none(),
-        "dedup sidecar lines are documented as native NDJSON: {dedup}",
+        dedup_native.get("class_uid").is_none(),
+        "native sink keeps the flat summary wire: {dedup_native}",
     );
 
     // Once `resolve_timeout` elapses with no further results, the incident

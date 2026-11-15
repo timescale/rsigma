@@ -2149,12 +2149,25 @@ pub async fn run_daemon(config: DaemonConfig) {
                             for event in out.risk_events {
                                 match serde_json::to_string(&event) {
                                     Ok(json) => {
-                                        dispatcher
-                                            .dispatch_incident(IncidentEnvelope::new(
-                                                json,
-                                                subject.clone(),
-                                            ))
-                                            .await;
+                                        let mut env = FormattedIncidentEnvelope::new(
+                                            IncidentEnvelope::new(json, subject.clone()),
+                                        );
+                                        if ocsf_incidents {
+                                            let finding =
+                                                rsigma_runtime::ocsf::risk_event_finding(&event);
+                                            match serde_json::to_string(&finding) {
+                                                Ok(line) => {
+                                                    env = env.with_line(SinkFormat::Ocsf, line);
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        error = %e,
+                                                        "Failed to serialize OCSF risk event"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        dispatcher.dispatch_formatted_incident(env).await;
                                     }
                                     Err(e) => {
                                         tracing::warn!(error = %e, "Failed to serialize risk event");
@@ -2278,10 +2291,31 @@ pub async fn run_daemon(config: DaemonConfig) {
                             }
                             alert_pipeline.tick(&mut st, now, alert_pipeline_metrics.as_ref())
                         };
-                        for line in out.dedup_lines {
-                            dispatcher
-                                .dispatch_incident(IncidentEnvelope::new(line.to_string(), None))
-                                .await;
+                        for line in &out.dedup_lines {
+                            let json = match serde_json::to_string(line) {
+                                Ok(json) => json,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to serialize dedup summary");
+                                    continue;
+                                }
+                            };
+                            let mut env =
+                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None));
+                            if ocsf_incidents {
+                                let finding = rsigma_runtime::ocsf::dedup_summary_finding(line);
+                                match serde_json::to_string(&finding) {
+                                    Ok(ocsf_line) => {
+                                        env = env.with_line(SinkFormat::Ocsf, ocsf_line);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "Failed to serialize OCSF dedup summary"
+                                        );
+                                    }
+                                }
+                            }
+                            dispatcher.dispatch_formatted_incident(env).await;
                         }
                         let subject =
                             alert_pipeline.incident_nats_subject().map(|s| s.to_string());
