@@ -69,11 +69,13 @@ pub mod fmt;
 pub mod lint;
 pub mod parser;
 pub mod reference;
+pub mod ruleset;
 pub mod selector;
 mod style;
 pub mod validate;
 pub mod value;
 pub mod version;
+mod walk;
 
 // Re-export the most commonly used types and functions at crate root
 pub use ads::{
