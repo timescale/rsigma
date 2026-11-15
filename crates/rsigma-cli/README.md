@@ -1414,7 +1414,7 @@ max_concurrent_enrichments: 16
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
     kind: detection | correlation  # required, see "Kind and template namespaces"
-    type: template | lookup | http | command | stix | mmdb  # required; stix needs stix-enrich + --stix-store, mmdb needs mmdb-enrich
+    type: template | lookup | http | command | stix | mmdb | dns  # required; stix needs stix-enrich + --stix-store, mmdb needs mmdb-enrich, dns needs dns-enrich
     inject_field: <field-name>     # required, key under enrichments.<...>
     timeout: 5s                    # optional, humantime; default 5s
     on_error: skip | null | drop   # optional; default skip
@@ -1574,7 +1574,7 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 
 ### Composing enrichers (recipe catalog)
 
-Operators rarely need new Rust code. Every recipe below composes one of the six primitives against a dynamic-pipelines source, a local database, or a remote API. Field names like `${detection.fields.SourceIp}` are illustrative; substitute the names your pipeline actually produces.
+Operators rarely need new Rust code. Every recipe below composes one of the seven primitives against a dynamic-pipelines source, a local database, or a remote API. Field names like `${detection.fields.SourceIp}` are illustrative; substitute the names your pipeline actually produces.
 
 #### `enrich_ip_employee`: identity lookup by source IP
 
@@ -1641,6 +1641,25 @@ enrichers:
       city: city.names.en
     default: { country: "unknown" }
 ```
+
+#### `enrich_ip_rdns`: reverse DNS for an IP
+
+Use `dns` with `record_type: PTR` to resolve an event-supplied IP address to a hostname. `extract: ".[0]"` keeps the first answer, and `default` covers addresses with no PTR record:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_rdns
+    kind: detection
+    type: dns
+    record_type: PTR
+    key: "${detection.fields.SourceIp}"
+    inject_field: src_hostname
+    extract: ".[0]"
+    default: "unknown"
+```
+
+Forward lookups take `record_type: A`, `AAAA`, or `IP` (both), and `key` then holds a hostname such as `${detection.fields.DestinationHostname}`. See [Enrichers: `dns`](https://rsigma.io/guide/enrichers/#dns-dns-lookup) for the record types and cache behavior.
 
 If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead; fall back to `http` for vendor APIs:
 
@@ -1729,6 +1748,7 @@ Pure string interpolation, no I/O. Use this any time a downstream consumer (Slac
 #### When to pick which primitive
 
 - Prefer `mmdb` for GeoIP, ASN, and proxy data that ships as a MaxMind DB file.
+- Prefer `dns` for PTR, A, AAAA, MX, TXT, and the other DNS record types that a resolver can answer directly.
 - Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, a JSON GeoIP dump).
 - Prefer `http` only when the data is genuinely per-result or too large to cache. Always set `cache_ttl` for rate-limited APIs.
 - Prefer `command` only when no other primitive will do (a binary parser, a vendored CLI tool, anything that already exists as a script).
@@ -1736,7 +1756,7 @@ Pure string interpolation, no I/O. Use this any time a downstream consumer (Slac
 
 ### Bespoke (Rust-coded) enrichers
 
-The six primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
+The seven primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
 
 1. **It bundles non-trivial data** (e.g. a dataset committed to the repo and `include_bytes!`-ed at compile time). Recipes can't express vendored data.
 2. **It needs a parser the YAML primitives don't expose** (e.g. a proprietary binary format such as a PCAP-derived flow table, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
@@ -1761,11 +1781,11 @@ register_builtin(
 ).unwrap();
 ```
 
-Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind` / `scope` / template rules as the six primitives; promotion does not change the YAML shape, only the `type:` value.
+Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`, `dns`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind` / `scope` / template rules as the seven primitives; promotion does not change the YAML shape, only the `type:` value.
 
 ### Metrics
 
-The enrichment pipeline reports ten Prometheus metrics:
+The enrichment pipeline reports thirteen Prometheus metrics:
 
 | Metric | Labels | Description |
 |---|---|---|
@@ -1779,8 +1799,11 @@ The enrichment pipeline reports ten Prometheus metrics:
 | `rsigma_enrichment_mmdb_misses_total` | `enricher_id` | MMDB lookups with no record or an empty projection, including misses where `default` was injected |
 | `rsigma_enrichment_mmdb_reloads_total` | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file, or failed and kept the old reader |
 | `rsigma_enrichment_mmdb_build_epoch_seconds` | `database` | Build epoch of the loaded MMDB database; alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds` |
+| `rsigma_enrichment_dns_cache_hits_total` | `enricher_id` | DNS queries answered from the response cache, including cached negative answers |
+| `rsigma_enrichment_dns_cache_misses_total` | `enricher_id` | DNS queries that went to a nameserver, including every query when caching is disabled |
+| `rsigma_enrichment_dns_queries_total` | `enricher_id`, `result` (`answer`, `no_records`, `error`) | Upstream DNS query results; `error` covers SERVFAIL, refused, I/O, and the resolver's own timeout |
 
-The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination, including the MMDB hit and miss `enricher_id` rows and both MMDB reload `result` values, is pre-registered at startup, so all ten families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention. Every label combination, including the MMDB hit and miss `enricher_id` rows, both MMDB reload `result` values, and all three DNS `result` values, is pre-registered at startup, so all thirteen families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## Environment Variables
 

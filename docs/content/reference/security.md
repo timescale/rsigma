@@ -71,6 +71,14 @@ IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host tha
 
 The policy applies only to those three clients. OTLP sinks, the MCP server's daemon client, and one-shot CLI commands such as `rsigma taxii sync` or `engine status` do not go through it, so point them only at endpoints you trust. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
 
+### DNS enricher
+
+{{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
+
+The egress policy does not apply to the DNS enricher. The enricher sends queries only to the nameservers an operator configured, or to the system resolver when `nameservers` is empty, and it never opens a connection to an address it got back. Filtering the answers would also break common setups, because the AWS VPC resolver at `169.254.169.253` is link-local and the `default` preset denies link-local addresses.
+
+Mitigations: narrow which results trigger the lookup with `scope`, point `nameservers` at an internal resolver when queries should not leave the network, and keep `cache_ttl` and `negative_cache_ttl` at values that bound how often repeated names are re-queried.
+
 Webhook sinks (`--webhook`) use the same egress-filtered client, so the policy governs outbound webhook deliveries too: `strict` blocks RFC1918, so a webhook targeting an internal relay needs `default` or `permissive`. Keep webhook secrets in the environment and reference them with `${ENV_VAR}` in the URL or headers; do not store tokens or signing URLs in the webhook YAML. A webhook may carry a per-entry `tls:` block (a custom CA bundle plus an optional client cert/key for mutual TLS) to reach an internal relay over private PKI; PEM files are read and validated at startup. A webhook may also HMAC-sign each request via a `signing:` block so a receiver can verify authenticity, integrity, and (for the timestamped default) replay freshness; the signing key is read from the environment (`signing.secret_env`) at startup, never stored in the YAML, and the default scheme follows the Standard Webhooks convention. See [webhook signing](../guide/webhooks.md#signing-requests).
 
 ## Parser robustness
@@ -88,7 +96,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, and the conversion backends. Twenty-four harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, and the conversion backends. Twenty-five harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 

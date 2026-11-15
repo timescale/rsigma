@@ -71,9 +71,9 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 
 The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, and NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 
-## Enrichment (10 metrics)
+## Enrichment (13 metrics)
 
-Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, and both MMDB reload `result` values are pre-registered at startup, so all ten families render with their `# HELP` and `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
+Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, both MMDB reload `result` values, every DNS cache hit and miss `enricher_id` row, and all three DNS query `result` values are pre-registered at startup, so all thirteen families render with their `# HELP` and `# TYPE` lines and zeroed counters on the first scrape, even before any event has fired. Filtered (kind- or scope-mismatched) enricher calls do not increment any counter, so cardinality stays bounded by the number of configured enrichers.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -87,8 +87,13 @@ Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Ever
 | `rsigma_enrichment_mmdb_misses_total` | counter | `enricher_id` | MMDB lookups where there was no record for the IP or the projection was empty, whether or not `default` was injected. |
 | `rsigma_enrichment_mmdb_reloads_total` | counter | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file (`success`) and failed reopens that kept the old reader (`failure`). An unchanged file is not counted. |
 | `rsigma_enrichment_mmdb_build_epoch_seconds` | gauge | `database` | Build epoch from the loaded database's metadata. Alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds > <max age>`. |
+| `rsigma_enrichment_dns_cache_hits_total` | counter | `enricher_id` | DNS queries answered from the response cache, including cached negative answers. |
+| `rsigma_enrichment_dns_cache_misses_total` | counter | `enricher_id` | DNS queries that went to a nameserver, including every query when caching is disabled. |
+| `rsigma_enrichment_dns_queries_total` | counter | `enricher_id`, `result` (`answer`, `no_records`, `error`) | Upstream DNS query results. `answer` means at least one record of the queried type; `no_records` means NXDOMAIN or NODATA; `error` covers SERVFAIL, refused, I/O, and the resolver's own timeout. |
 
 The `database` label is the `db_path` exactly as configured. Reload and build-epoch metrics are labeled per database rather than per enricher because one database can back several enrichers. Key errors and decode errors are not hits or misses; they appear in `rsigma_enrichment_total{status}`.
+
+DNS counters are per query, not per enrichment call: an `IP` lookup counts two queries. A query cut off by the pipeline's outer enricher timeout never completes, so it is not counted in `queries_total`; it appears in `rsigma_enrichment_total{status="timeout"}`. Key errors send no query and are not counted.
 
 The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
 

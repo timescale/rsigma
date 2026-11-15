@@ -4737,6 +4737,7 @@ dependencies = [
  "futures",
  "globset",
  "hex",
+ "hickory-resolver",
  "hmac",
  "humantime",
  "jaq-core",

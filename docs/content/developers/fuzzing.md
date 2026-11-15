@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 30 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 24 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 31 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 25 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
@@ -40,8 +40,9 @@ The workspace ships 30 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` STIX bundle parse entrypoint. Seed locally from `tests/fixtures/spec/` or a downloaded ATT&CK bundle (see [rstix: Local MITRE ATT&CK corpus test](../library/rstix.md#rstix-testing-local-mitre-attck-corpus)). | 65536 |
 | `fuzz_rstix_validate_json` | The `rstix::Validator::validate_json_str` Validation Pipeline raw JSON entry (`validate` feature). Seeds in `fuzz/seeds/fuzz_rstix_validate_json/`. | 65536 |
 | `fuzz_mmdb_record` | MMDB decoding and field projection (`mmdb-enrich` feature): `MmdbDatabase::from_bytes` over arbitrary bytes, then lookups for a fixed set of IPv4 and IPv6 addresses with no projection and with a projection that includes an array index. Seeds in `fuzz/corpus/fuzz_mmdb_record/` cover the synthetic fixtures, a truncated file, a metadata-marker-only file, and a file with corrupted search-tree bytes. {{ added "unreleased" }} | 65536 |
+| `fuzz_dns_answer` | DNS answer formatting and query-name normalization (`dns-enrich` feature): the first input byte selects a record type, the rest goes to `DnsRecordType::format_answers` as a wire-format response, and valid UTF-8 input also goes to `query_name` for that type and for `PTR`. Seeds in `fuzz/corpus/fuzz_dns_answer/` cover one response per stub-zone case, a truncated response, a compression-pointer loop, a response with 300 answers, and key inputs with long labels, IDNA text, and IPv6 literals. {{ added "unreleased" }} | 4096 |
 
-All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime` (with `logfmt`, `cef`, `otlp`, and `mmdb-enrich` features), `prost`, and `rstix` (with `serde`, `pattern`, and `validate` features).
+All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime` (with `logfmt`, `cef`, `otlp`, `mmdb-enrich`, and `dns-enrich` features), `prost`, and `rstix` (with `serde`, `pattern`, and `validate` features).
 
 ## Run one target locally
 

@@ -8,7 +8,7 @@ description: "Enrich Sigma detections with asset, identity, IP reputation, GeoIP
 
 Post-evaluation enrichers run after `engine.evaluate()` produces each `EvaluationResult` and before that result is serialized to a sink. They inject contextual data (asset info, IP reputation, identity, GeoIP, runbook URLs) into the `enrichments.<field>` map on each detection or correlation, so every downstream consumer (RSoar, Grafana, Loki, custom scripts) sees the same structured context without re-fetching it.
 
-This page covers what to put in `--enrichers <path>`, how the six primitives compose into the `enrich_<keyfield>_<target>` recipe catalog, and how to promote a recipe to a Rust-coded named enricher when one of the six primitives is not enough. The CLI flag itself is documented under [`engine daemon`](../cli/engine/daemon.md#post-evaluation-enrichment); per-call Prometheus metrics live in [Prometheus metrics](../reference/metrics.md#enrichment-10-metrics).
+This page covers what to put in `--enrichers <path>`, how the seven primitives compose into the `enrich_<keyfield>_<target>` recipe catalog, and how to promote a recipe to a Rust-coded named enricher when one of the seven primitives is not enough. The CLI flag itself is documented under [`engine daemon`](../cli/engine/daemon.md#post-evaluation-enrichment); per-call Prometheus metrics live in [Prometheus metrics](../reference/metrics.md#enrichment-13-metrics).
 
 ## Why post-evaluation, not in-pipeline
 
@@ -29,7 +29,7 @@ max_concurrent_enrichments: 16
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
     kind: detection | correlation  # required, see "Kind and template namespaces"
-    type: template | lookup | http | command | stix | mmdb  # required, the primitive
+    type: template | lookup | http | command | stix | mmdb | dns  # required, the primitive
     inject_field: <field-name>     # required, key under enrichments.<...>
     timeout: 5s                    # optional, humantime; default 5s
     on_error: skip | null | drop   # optional; default skip
@@ -120,7 +120,7 @@ For enrichers that conceptually apply to both kinds (identity lookups, runbook U
 
 There is no `scope.kinds` axis: the top-level `kind` already gates which result variant the enricher sees. Axes are AND-ed; an empty axis is not a filter.
 
-## The six primitives
+## The seven primitives
 
 ### `template`: pure string interpolation
 
@@ -295,6 +295,55 @@ Operational metrics for this primitive:
 - Alert on staleness with `(time() - rsigma_enrichment_mmdb_build_epoch_seconds{database="/var/lib/geoip/GeoLite2-City.mmdb"}) > 86400 * 7`.
 - Catch a wrong `key` field with the misses-to-hits ratio: `sum(rate(rsigma_enrichment_mmdb_misses_total[5m])) / clamp_min(sum(rate(rsigma_enrichment_mmdb_hits_total[5m])), 1) > 0.5`.
 
+### `dns`: DNS lookup
+
+{{ added "unreleased" }}
+
+Resolve a template-expanded name through DNS and inject the answers as presentation-format strings. Requires the `dns-enrich` feature, which is included in the prebuilt binaries. The lookup uses the system resolver unless `nameservers` lists explicit servers.
+
+```yaml
+- id: resolve_domain
+  kind: detection
+  type: dns
+  inject_field: resolved
+  record_type: IP
+  key: "${detection.fields.Domain}"
+  cache_ttl: 5m                    # default 5m; cap on positive TTLs
+  negative_cache_ttl: 1m           # default 1m; cap on negative TTLs
+  cache_max_entries: 10000         # default 10000; must be greater than 0
+  nameservers: ["10.0.0.53", "[2001:db8::53]:5353"]   # optional; empty uses the system resolver
+  default: []                      # optional; used on miss
+  on_error: skip
+```
+
+`record_type` accepts `IP` plus `A`, `AAAA`, `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`, `NAPTR`, `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SOA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`, and `TXT`. `IP` is a shorthand that queries A and AAAA concurrently and merges the answers. Any other value, including the query-only and meta types (`ANY`, `AXFR`, `IXFR`, `OPT`, `TSIG`, `NULL`, `ZERO`) and the DNSSEC types (`DNSKEY`, `DS`, `RRSIG`, `NSEC`, and so on), is rejected at config load with a message that lists the supported values.
+
+Each answer is a string in the record's presentation format, and the injected value is a JSON array filtered to the queried type. A CNAME chain is not included unless `record_type` is `CNAME`. For `PTR`, `CNAME`, `NS`, `ANAME`, `MX`, and `SRV`, one trailing root dot is stripped from the rendered string. TXT character-strings are joined into one lossy string. Duplicate strings are removed while preserving order, and `IP` lists A answers before AAAA answers.
+
+The key is rendered from its template and trimmed. An empty key is a fetch error. `PTR` requires an IP address and converts it to the reverse name; an IPv4-mapped IPv6 address is canonicalized to IPv4. Every other record type rejects an IP literal and asks for `record_type: PTR` instead. Domain names are lowercased, IDNA-encoded, and fully qualified, so the resolver never applies its search list.
+
+Each enricher owns its own response cache. Positive answers are cached for at most `cache_ttl`, and negative answers (NXDOMAIN and NODATA) are cached for at most the SOA-derived negative TTL capped by `negative_cache_ttl`. A negative answer whose response carries no SOA has no TTL to derive, so it is not cached. Timeouts, SERVFAIL, refused, and I/O errors are never cached. Setting both TTLs to `0s` disables the cache; setting one to `0s` disables only that kind of caching. A `cache_max_entries` of `0` is a config error.
+
+`nameservers` entries must be IP literals with an optional port. Hostnames are rejected. An empty list uses the system resolver.
+
+Miss and error handling:
+
+| Situation | Result |
+|---|---|
+| At least one answer of the queried type | Inject the array (hit) |
+| NXDOMAIN or NODATA | Inject `default` when configured, otherwise apply `on_error` |
+| `IP` where one of A or AAAA answers | Inject the answers from the side that answered |
+| `IP` where both sides miss | Inject `default` when configured, otherwise apply `on_error` |
+| `key` renders empty | Fetch error, then `on_error` |
+| `key` has the wrong form for the record type | Parse error, then `on_error` |
+| Resolver timeout | Timeout error, then `on_error` |
+| SERVFAIL, refused, I/O failure, or another resolver error | Fetch error, then `on_error` |
+
+Operational metrics for this primitive:
+
+- Catch a wrong `key` field with the misses-to-hits ratio: `sum(rate(rsigma_enrichment_dns_cache_misses_total[5m])) / clamp_min(sum(rate(rsigma_enrichment_dns_cache_hits_total[5m])), 1) > 0.5`.
+- Alert on resolver health with `sum(rate(rsigma_enrichment_dns_queries_total{result="error"}[5m])) > 0.1`.
+
 ### `http`: per-result HTTP fetch with optional response cache
 
 Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on `(method, url, body_hash)` with a configurable TTL; mandatory in practice for any rate-limited API.
@@ -341,7 +390,7 @@ Per-result `tokio::process::Command` invocation with template-expanded argv and 
 
 ## Composing enrichers (recipes)
 
-The six primitives cover almost every operational use case via composition. Recipes are *field-parametric*: substitute the field names your pipeline actually produces (`SourceIp`, `cip`, `client.ip`, `ClientIp`, ...) for the placeholders below.
+The seven primitives cover almost every operational use case via composition. Recipes are *field-parametric*: substitute the field names your pipeline actually produces (`SourceIp`, `cip`, `client.ip`, `ClientIp`, ...) for the placeholders below.
 
 ### `enrich_ip_employee`: identity lookup by source IP
 
@@ -448,6 +497,28 @@ enrichers:
 
 For vendor APIs, use `http` with a `cache_ttl` instead of shipping a dump (same shape as the VirusTotal recipe below).
 
+### `enrich_ip_rdns`: reverse DNS name by IP
+
+{{ added "unreleased" }}
+
+Use `type: dns` with `record_type: PTR`. The injected value is the first name the reverse zone returns, without its trailing root dot.
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_rdns
+    kind: detection
+    type: dns
+    inject_field: rdns
+    record_type: PTR
+    key: "${detection.fields.SourceIp}"
+    extract: ".[0]"
+    extract_type: jq
+    default: null
+```
+
+Expected `enrichments.rdns` shape: a hostname string such as `host.example.com`, or `null` on miss.
+
 ### `enrich_hash_virustotal`: hash reputation with cache
 
 `cache_ttl` is mandatory for the 4 req/min free tier and saves repeat requests during duplicate-detection bursts on any tier:
@@ -515,6 +586,7 @@ enrichers:
 ### When to pick which primitive
 
 - Prefer `mmdb` for GeoIP, ASN, and proxy data that ships as a MaxMind DB file.
+- Prefer `dns` for forward and reverse name resolution, including MX, TXT, and SRV records.
 - Prefer `lookup` if the data is bounded and refreshes infrequently (employee directory, KEV catalog, a JSON GeoIP dump).
 - Prefer `http` only when the data is genuinely per-result or too large to cache. Always set `cache_ttl` for rate-limited APIs.
 - Prefer `command` only when no other primitive will do (a binary parser, a vendored CLI tool, an existing script).
@@ -522,7 +594,7 @@ enrichers:
 
 ## Promoting a recipe to a bespoke enricher
 
-The six primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
+The seven primitives cover almost every use case via composition. A bespoke Rust-coded enricher is justified only when at least one of these holds:
 
 1. **It bundles non-trivial data** (a dataset committed to the repo and `include_bytes!`-ed at compile time). Recipes can't express vendored data.
 2. **It needs a parser the YAML primitives don't expose** (e.g. a proprietary binary format such as a PCAP-derived flow table, the STIX 2.1 graph with parent/child resolution). Adding the parser as a generic source might cost more than just shipping the enricher.
@@ -543,7 +615,7 @@ register_builtin(
 ).unwrap();
 ```
 
-Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind`, `scope`, and template rules as the six primitives; promotion does not change the YAML shape, only the `type:` value.
+Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`, `dns`) are rejected at registration time; duplicate registrations of the same name are rejected to keep the global registry append-only. Bespoke types follow the same `kind`, `scope`, and template rules as the seven primitives; promotion does not change the YAML shape, only the `type:` value.
 
 ## Output shape
 
@@ -567,8 +639,13 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 | `rsigma_enrichment_mmdb_misses_total` | `enricher_id` | MMDB lookups with no record or an empty projection, including misses where `default` was injected |
 | `rsigma_enrichment_mmdb_reloads_total` | `database`, `result` (`success`, `failure`) | MMDB reload attempts that reopened a changed file, or failed and kept the old reader |
 | `rsigma_enrichment_mmdb_build_epoch_seconds` | `database` | Build epoch of the loaded MMDB database; alert on `time() - rsigma_enrichment_mmdb_build_epoch_seconds` |
+| `rsigma_enrichment_dns_cache_hits_total` | `enricher_id` | DNS queries answered from the response cache, including cached negative answers |
+| `rsigma_enrichment_dns_cache_misses_total` | `enricher_id` | DNS queries that went to a nameserver, including every query when caching is disabled |
+| `rsigma_enrichment_dns_queries_total` | `enricher_id`, `result` (`answer`, `no_records`, `error`) | Upstream DNS query results |
 
-Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, and both MMDB reload `result` values are pre-registered at startup, so all ten families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+DNS counters are per query, not per enrichment call: an `IP` lookup counts two queries. A query cut off by the pipeline's outer enricher timeout never completes, so it is not counted in `queries_total`; it shows up in `rsigma_enrichment_total{status="timeout"}` instead. Key errors send no query and are not counted here.
+
+Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, both MMDB reload `result` values, every DNS cache hit and miss `enricher_id` row, and all three DNS query `result` values are pre-registered at startup, so all thirteen families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## See also
 
@@ -576,6 +653,6 @@ Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, 
 - [Dynamic Sources](../reference/dynamic-sources.md) for the shared source cache that `lookup` reads from.
 - [Dynamic Pipelines](../reference/dynamic-pipelines.md) for consuming the same sources before rule evaluation.
 - [Security Hardening](../reference/security.md#http-egress-policy-ssrf-defense) for egress policy on HTTP enrichers and body size caps.
-- [Prometheus metrics](../reference/metrics.md#enrichment-10-metrics) for the full metric definitions.
+- [Prometheus metrics](../reference/metrics.md#enrichment-13-metrics) for the full metric definitions.
 - [Adding enrichers](../developers/adding-enrichers.md) for shipping a bespoke `register_builtin` type.
 - [`rsigma-runtime`](../library/runtime.md) for the `Enricher` trait, `EnrichmentPipeline`, and `register_builtin` API.

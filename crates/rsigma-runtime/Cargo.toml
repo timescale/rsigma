@@ -24,6 +24,8 @@ daachorse-index = ["rsigma-eval/daachorse-index"]
 stix-enrich = ["dep:rstix", "rstix/store", "rstix/store-fs"]
 # Post-evaluation MMDB lookup enricher (`type: mmdb` in enrichers YAML).
 mmdb-enrich = ["dep:maxminddb"]
+# Post-evaluation DNS lookup enricher (`type: dns` in enrichers YAML).
+dns-enrich = ["dep:hickory-resolver"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.27.0" }
@@ -68,6 +70,7 @@ futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.15.1", optional = true, default-features = false }
 maxminddb = { version = "0.33", optional = true }
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"], optional = true }
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic", "logs", "with-serde"], optional = true }
 prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
@@ -115,6 +118,11 @@ harness = false
 name = "mmdb"
 harness = false
 required-features = ["mmdb-enrich"]
+
+[[bench]]
+name = "dns"
+harness = false
+required-features = ["dns-enrich"]
 
 [[bench]]
 name = "input_formats"

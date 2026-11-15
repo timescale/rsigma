@@ -11,8 +11,8 @@
 //! # Architecture
 //!
 //! A single [`Enricher`] trait covers every primitive (`template`, `lookup`,
-//! `http`, `command`, `stix` when `stix-enrich` is enabled, and `mmdb` when
-//! `mmdb-enrich` is enabled) and any
+//! `http`, `command`, `stix` when `stix-enrich` is enabled, `mmdb` when
+//! `mmdb-enrich` is enabled, and `dns` when `dns-enrich` is enabled) and any
 //! bespoke Rust-coded enrichers. Each enricher
 //! declares an [`EnricherKind`] at config time; the [`EnrichmentPipeline`]
 //! filters results by that declared kind against the
@@ -49,6 +49,8 @@ use crate::metrics::{MetricsHook, NoopMetrics};
 
 mod command;
 pub mod config;
+#[cfg(feature = "dns-enrich")]
+mod dns;
 mod http;
 pub mod http_cache;
 mod lookup;
@@ -62,6 +64,8 @@ mod tests;
 
 pub use crate::scope::Scope;
 pub use command::{CommandEnricher, OutputFormat};
+#[cfg(feature = "dns-enrich")]
+pub use dns::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
 pub use http::{
     DEFAULT_ENRICHER_MAX_RESPONSE_BYTES, HttpEnricher, HttpEnricherClient,
     build_default_http_client,
@@ -180,7 +184,7 @@ impl std::fmt::Display for EnrichErrorKind {
 }
 
 /// Trait implemented by every enrichment primitive (`template`, `lookup`,
-/// `http`, `command`, `stix`, `mmdb`) and by any bespoke Rust-coded named
+/// `http`, `command`, `stix`, `mmdb`, `dns`) and by any bespoke Rust-coded named
 /// enricher registered via [`register_builtin`].
 ///
 /// Implementations read shared rule metadata from [`EvaluationResult::header`]
@@ -585,7 +589,7 @@ fn registry() -> &'static std::sync::RwLock<std::collections::HashMap<String, En
 pub fn register_builtin(name: &str, factory: EnricherFactory) -> Result<(), String> {
     if matches!(
         name,
-        "template" | "lookup" | "http" | "command" | "stix" | "mmdb"
+        "template" | "lookup" | "http" | "command" | "stix" | "mmdb" | "dns"
     ) {
         return Err(format!(
             "cannot register '{name}': name is reserved for a built-in primitive"

@@ -28,6 +28,7 @@ cli_features! {
     "daemon-nats",
     "daemon-otlp",
     "daemon-tls",
+    "dns-enrich",
     "evtx",
     "hunt-postgres",
     "logfmt",

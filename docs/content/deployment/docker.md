@@ -16,7 +16,7 @@ description: "Run RSigma with Docker: the signed multi-arch ghcr.io/timescale/rs
 | Base image | `FROM scratch` (no shell, no package manager) |
 | User | `65534:65534` (`nobody:nogroup`) |
 | Entrypoint | `/rsigma` |
-| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), including `daemon`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `mmdb-enrich`, and `daachorse-index` |
+| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), including `daemon`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `mmdb-enrich`, `dns-enrich`, and `daachorse-index` |
 
 ## Pull and run
 
@@ -220,6 +220,12 @@ docker run --rm \
 Mount the containing directory rather than a single file. A bind mount of one file pins that inode, so when `geoipupdate` replaces the database by writing a new file and renaming it over the old path, the container keeps seeing the old inode and the enricher never observes the change. Mounting the directory means the renamed file appears at the same path inside the container, and the enricher reloads it on its next check (about once a minute). See [Enrichers: `mmdb`](../guide/enrichers.md#mmdb-local-mmdb-lookup) for the enricher schema and reload behavior.
 
 The container runs as uid `65534`, so the database files must be readable by that user; a mode of `0644` on the host works. The enricher only reads the file, so `:ro` is correct.
+
+## DNS lookups
+
+{{ added "unreleased" }} The image includes the `dns-enrich` feature, so `type: dns` enrichers work without a custom build. With no `nameservers` configured, the enricher resolves through the `/etc/resolv.conf` that Docker provides for the container, which points at the host's resolver unless you override it. Nothing needs to be mounted.
+
+To send queries to a specific resolver, list it under `nameservers` in the enricher block, for example `["10.0.0.53"]` or `["[2001:db8::53]:5353"]`. See [Enrichers: `dns`](../guide/enrichers.md#dns-dns-lookup) for the schema and cache behavior.
 
 ## Building from source
 
