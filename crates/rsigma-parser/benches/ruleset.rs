@@ -137,10 +137,13 @@ fn tag_and_status() -> RulesetSpec {
     }
 }
 
+/// Selects the `attack.t1059*` rules (every third ordinal) and the
+/// correlations, pulls in the correlation references the selector misses, and
+/// overlays `n` selected rules.
 fn overlays(n: usize) -> RulesetSpec {
     let overlays = (0..n)
         .map(|index| OverlayEntry {
-            id: Some(format!("bench-rule-{index:06}")),
+            id: Some(format!("bench-rule-{:06}", index * 3)),
             set: Some(OverlayPatch {
                 level: Some("high".into()),
                 ..Default::default()
@@ -150,6 +153,10 @@ fn overlays(n: usize) -> RulesetSpec {
         .collect();
     RulesetSpec {
         sources: vec![PathBuf::from(".")],
+        include: vec![RuleSelector {
+            tags: vec!["attack.t1059*".into(), "attack.discovery".into()],
+            ..Default::default()
+        }],
         dependencies: Some("include".into()),
         overlays,
         ..Default::default()
