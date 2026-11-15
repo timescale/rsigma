@@ -148,9 +148,9 @@ On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detection
 - **CrowdStrike NG-SIEM**: third-party OCSF ingest expects one finding per line, which is exactly the sink's shape.
 - **Amazon Security Lake**: a custom source requires OCSF **in Parquet**, which RSigma does not write. Land the JSON in S3 and transcode with Firehose, Glue, or any collector that converts JSON to Parquet.
 
-## Pinned schema version
+## Schema versions
 
-The serializer targets one OCSF version, `1.1.0`, recorded in `metadata.version` and pinned by a committed conformance fixture that every golden test validates against. Chasing the newest OCSF minor release is not a goal; a version change is deliberate and visible in the goldens.
+RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal — adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
 
 ## An output dialect, not an input vocabulary
 

@@ -69,7 +69,7 @@ This is what lets `rsigma engine eval … | jq '.rule_title'` work cleanly: `jq`
 
 ## Not the same as a daemon sink format
 
-`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a sink spec, which chooses between rsigma's native NDJSON and [OCSF Detection Finding](../guide/ocsf-findings.md) JSON per sink. `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
+`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a sink spec (optional `?ocsf_version=<v>` with `format=ocsf`), which chooses between rsigma's native NDJSON and [OCSF Detection Finding](../guide/ocsf-findings.md) JSON per sink. `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
 
 ## Unsupported formats
 

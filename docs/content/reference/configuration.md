@@ -111,7 +111,7 @@ daemon:
     batch_size: 128        # capped at buffer_size
   output:
     sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
-                           # query params: ?on_full=drop, ?format=ndjson|ocsf (line sinks), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
+                           # query params: ?on_full=drop, ?format=ndjson|ocsf (line sinks), ?ocsf_version=<v> (with format=ocsf; default 1.1.0), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
     drain_timeout: 5
     # webhooks: [/etc/rsigma/webhooks/]   # template-driven HTTP sinks
   correlation:
