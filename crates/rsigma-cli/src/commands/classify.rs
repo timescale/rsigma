@@ -77,7 +77,7 @@ pub(crate) fn cmd_classify(args: ClassifyArgs, ctx: OutputCtx) {
         }
     };
 
-    let format = ctx.resolve_ocsf_unsupported("rule classify", OutputFormat::Table);
+    let format = ctx.format;
     match format {
         OutputFormat::Json => render_json(&report, true),
         OutputFormat::Ndjson => {
@@ -89,7 +89,6 @@ pub(crate) fn cmd_classify(args: ClassifyArgs, ctx: OutputCtx) {
         OutputFormat::Csv => render_delimited(&report, ',', &ctx),
         OutputFormat::Tsv => render_delimited(&report, '\t', &ctx),
         OutputFormat::Table => print_table(&report, &ctx),
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

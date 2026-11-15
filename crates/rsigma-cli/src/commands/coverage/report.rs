@@ -112,7 +112,7 @@ impl CoverageReport {
     /// recap on stderr (gated on `show_stats`) since their stdout carries only
     /// the per-technique rows.
     pub(crate) fn render(&self, ctx: &OutputCtx) {
-        let format = ctx.resolve_ocsf_unsupported("rule coverage", OutputFormat::Json);
+        let format = ctx.format;
         match format {
             OutputFormat::Json => render_json(self, ctx.pretty_json()),
             OutputFormat::Ndjson => {
@@ -123,7 +123,6 @@ impl CoverageReport {
             OutputFormat::Csv => self.render_delimited(','),
             OutputFormat::Tsv => self.render_delimited('\t'),
             OutputFormat::Table => self.render_human(ctx),
-            OutputFormat::Ocsf => unreachable!(),
         }
 
         if ctx.format != OutputFormat::Table && ctx.show_stats() {

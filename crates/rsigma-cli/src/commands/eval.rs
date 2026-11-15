@@ -62,8 +62,7 @@ pub(crate) struct EvalArgs {
     #[arg(long = "finding-format", value_parser = ["native", "ocsf"])]
     pub finding_format: Option<String>,
 
-    /// OCSF schema version (`1.1.0` or `1.3.0`). Requires `--finding-format ocsf`
-    /// or `--output-format ocsf`.
+    /// OCSF schema version (`1.1.0` or `1.3.0`). Requires `--finding-format ocsf`.
     #[arg(long = "ocsf-version")]
     pub ocsf_version: Option<String>,
 
@@ -445,8 +444,7 @@ fn overlay_eval_config(
 }
 
 /// Returns `true` if any detection or correlation matched.
-pub(crate) fn cmd_eval(args: EvalArgs, mut ctx: OutputCtx) -> bool {
-    ctx.ensure_ocsf_available("engine eval");
+pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let EvalArgs {
         config: _,
         dry_run: _,
@@ -587,17 +585,19 @@ pub(crate) fn cmd_eval(args: EvalArgs, mut ctx: OutputCtx) -> bool {
     // The match renderer encapsulates the selected output format. `--pretty`
     // is honoured for backwards compatibility: it implies the JSON branch and
     // turns pretty-printing on even when stdout is not a TTY.
-    if finding_format.as_deref() == Some("ocsf") {
-        match ctx.format {
-            OutputFormat::Csv | OutputFormat::Tsv | OutputFormat::Table => {
-                eprintln!("error: --finding-format ocsf requires --output-format json or ndjson");
-                std::process::exit(crate::exit_code::CONFIG_ERROR);
-            }
-            _ => ctx.format = OutputFormat::Ocsf,
-        }
+    let finding_ocsf = finding_format.as_deref() == Some("ocsf");
+    if finding_ocsf
+        && matches!(
+            ctx.format,
+            OutputFormat::Csv | OutputFormat::Tsv | OutputFormat::Table
+        )
+    {
+        eprintln!("error: --finding-format ocsf requires --output-format json or ndjson");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
+    ctx.ensure_finding_ocsf_available("engine eval", finding_ocsf);
     if let Some(version) = &ocsf_version {
-        if finding_format.as_deref() != Some("ocsf") && ctx.format != OutputFormat::Ocsf {
+        if !finding_ocsf {
             eprintln!("error: --ocsf-version requires --finding-format ocsf");
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
@@ -616,7 +616,8 @@ pub(crate) fn cmd_eval(args: EvalArgs, mut ctx: OutputCtx) -> bool {
         ensure_output_is_not_input(&path, &event_source);
         OutputFile::create(path)
     });
-    let mut renderer = MatchRenderer::new(ctx, pretty, output, ocsf_version.as_deref());
+    let mut renderer =
+        MatchRenderer::new(ctx, pretty, output, finding_ocsf, ocsf_version.as_deref());
 
     if schema_routing {
         let mut router = build_schema_router(
@@ -1489,6 +1490,7 @@ impl MatchRenderer {
         mut ctx: OutputCtx,
         pretty_flag: bool,
         mut file: Option<OutputFile>,
+        finding_ocsf: bool,
         ocsf_version: Option<&str>,
     ) -> Self {
         // A file is never a terminal, and without an explicit format it gets
@@ -1505,7 +1507,21 @@ impl MatchRenderer {
         // turned into compact NDJSON when piped).
         #[cfg(not(feature = "ocsf"))]
         let _ = ocsf_version;
-        let state = if pretty_flag && !ctx.explicit_format {
+        let state = if finding_ocsf {
+            #[cfg(feature = "ocsf")]
+            {
+                RenderState::Ocsf {
+                    pretty: pretty_flag || ctx.pretty_json(),
+                    version: ocsf_version
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or_default(),
+                }
+            }
+            #[cfg(not(feature = "ocsf"))]
+            {
+                unreachable!("--finding-format ocsf exits before the renderer is built");
+            }
+        } else if pretty_flag && !ctx.explicit_format {
             RenderState::Json { pretty: true }
         } else {
             match ctx.format {
@@ -1513,15 +1529,6 @@ impl MatchRenderer {
                     pretty: pretty_flag || ctx.pretty_json(),
                 },
                 OutputFormat::Ndjson => RenderState::Json { pretty: false },
-                #[cfg(feature = "ocsf")]
-                OutputFormat::Ocsf => RenderState::Ocsf {
-                    pretty: pretty_flag || ctx.pretty_json(),
-                    version: ocsf_version
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or_default(),
-                },
-                #[cfg(not(feature = "ocsf"))]
-                OutputFormat::Ocsf => RenderState::Json { pretty: false },
                 OutputFormat::Csv => RenderState::Delimited(Box::new(delimited(',', &mut file))),
                 OutputFormat::Tsv => RenderState::Delimited(Box::new(delimited('\t', &mut file))),
                 OutputFormat::Table => RenderState::Table(Vec::new()),

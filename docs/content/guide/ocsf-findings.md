@@ -131,7 +131,7 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 
 ### Batch commands
 
-`engine eval` accepts `--finding-format ocsf` (and `--ocsf-version 1.1.0|1.3.0`). Each rule fire becomes one OCSF Detection Finding (class 2004). The flag composes with `--output-format json` or `ndjson`; `table`, `csv`, and `tsv` are a config error. `--output-format ocsf` is still accepted. `--pretty` pretty-prints each finding when stdout is a TTY.
+`engine eval` accepts `--finding-format ocsf` (and `--ocsf-version 1.1.0|1.3.0`). Each rule fire becomes one OCSF Detection Finding (class 2004). The flag composes with `--output-format json` or `ndjson`; `table`, `csv`, and `tsv` are a config error. `--pretty` pretty-prints each finding when stdout is a TTY.
 
 `rule backtest` accepts the same flags plus `--findings <PATH>`, which must not collide with the corpus, `--report`, or `--junit`. The human summary stays on stderr and `--report` continues to write the native JSON report. {{ added "unreleased" }} See [Output Formats](../reference/output.md).
 

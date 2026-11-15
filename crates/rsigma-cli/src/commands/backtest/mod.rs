@@ -204,28 +204,18 @@ fn overlay_backtest_config(
 
 /// Run the backtest. Returns the process exit code (0 pass, 1 findings,
 /// 2 rule error, 3 config error). Rule and config errors exit directly.
-pub(crate) fn cmd_backtest(args: BacktestArgs, mut ctx: OutputCtx) -> i32 {
-    ctx.ensure_ocsf_available("rule backtest");
-    if args.finding_format.as_deref() == Some("ocsf") {
-        match ctx.format {
-            crate::output::OutputFormat::Csv
-            | crate::output::OutputFormat::Tsv
-            | crate::output::OutputFormat::Table => {
-                eprintln!(
-                    "error: --finding-format ocsf cannot be combined with table, csv, or tsv output"
-                );
-                return exit_code::CONFIG_ERROR;
-            }
-            _ => ctx.format = crate::output::OutputFormat::Ocsf,
-        }
+pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
+    let finding_ocsf = args.finding_format.as_deref() == Some("ocsf");
+    ctx.ensure_finding_ocsf_available("rule backtest", finding_ocsf);
+    if args.ocsf_version.is_some() && !finding_ocsf {
+        eprintln!("error: --ocsf-version requires --finding-format ocsf");
+        return exit_code::CONFIG_ERROR;
+    }
+    if (finding_ocsf || args.ocsf_version.is_some()) && args.findings.is_none() {
+        eprintln!("error: --finding-format ocsf requires --findings (the report stays on stdout)");
+        return exit_code::CONFIG_ERROR;
     }
     if let Some(version) = &args.ocsf_version {
-        if args.finding_format.as_deref() != Some("ocsf")
-            && ctx.format != crate::output::OutputFormat::Ocsf
-        {
-            eprintln!("error: --ocsf-version requires --finding-format ocsf");
-            return exit_code::CONFIG_ERROR;
-        }
         #[cfg(feature = "ocsf")]
         if version
             .parse::<rsigma_runtime::ocsf::OcsfVersion>()
@@ -388,10 +378,10 @@ fn stream_corpus_file<P: EventProcessor>(
     acc: &mut Accumulator,
 ) -> u64 {
     let file_key = cf.key.clone();
-    #[cfg(feature = "ocsf")]
-    let emit_ocsf = ctx.format == crate::output::OutputFormat::Ocsf;
-    #[cfg(not(feature = "ocsf"))]
     let _ = ctx;
+    let emit_ocsf = args.finding_format.as_deref() == Some("ocsf");
+    #[cfg(not(feature = "ocsf"))]
+    let _ = emit_ocsf;
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);

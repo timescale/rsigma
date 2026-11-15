@@ -205,7 +205,7 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     "compile_errors": compile_errors,
                 });
                 // NDJSON: one row per finding (or a single ok row). JSON: envelope.
-                let format = ctx.resolve_ocsf_unsupported("rule validate", OutputFormat::Ndjson);
+                let format = ctx.format;
                 match format {
                     OutputFormat::Ndjson
                     | OutputFormat::Table
@@ -214,7 +214,6 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     OutputFormat::Json => {
                         crate::output::render_json(&envelope, ctx.pretty_json());
                     }
-                    OutputFormat::Ocsf => unreachable!(),
                 }
             } else {
                 println!("Parsed {total} documents from {}", path.display());

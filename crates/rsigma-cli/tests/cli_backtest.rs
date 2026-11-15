@@ -206,7 +206,8 @@ fn backtest_missing_rules_is_config_error() {
 }
 
 #[test]
-fn backtest_output_format_ocsf_emits_finding_per_fire() {
+fn backtest_finding_format_ocsf_writes_findings_and_keeps_the_report() {
+    let findings = temp_file(".ndjson", "");
     let out = rsigma()
         .args([
             "rule",
@@ -216,7 +217,11 @@ fn backtest_output_format_ocsf_emits_finding_per_fire() {
             "--corpus",
             &fixture("corpus"),
             "--output-format",
+            "json",
+            "--finding-format",
             "ocsf",
+            "--findings",
+            findings.path().to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -225,24 +230,46 @@ fn backtest_output_format_ocsf_emits_finding_per_fire() {
         "stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("\"class_uid\":2004") || stdout.contains("\"class_uid\": 2004"),
-        "expected OCSF findings on stdout, got: {stdout}"
-    );
-    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+    let body = std::fs::read_to_string(findings.path()).unwrap();
+    let mut fires = 0;
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
         let finding: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
         assert_eq!(finding["class_uid"], 2004);
+        fires += 1;
     }
+    assert!(fires > 0, "expected one finding per fire, got: {body}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"duration_ms\""),
+        "stdout must stay the JSON report, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("class_uid"),
+        "findings must not replace the report"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Backtest:"),
         "expected summary on stderr, got: {stderr}"
     );
-    assert!(
-        !stderr.contains("class_uid"),
-        "summary must stay native on stderr"
-    );
+}
+
+#[test]
+fn backtest_finding_format_ocsf_requires_findings() {
+    rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--finding-format",
+            "ocsf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("--findings"));
 }
 
 #[test]

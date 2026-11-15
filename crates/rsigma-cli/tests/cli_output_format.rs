@@ -44,9 +44,9 @@ fn eval_output_format_json_emits_compact_object() {
     assert!(trimmed.contains("\"rule_title\":\"Test Rule\""));
 }
 
-/// `--output-format ocsf` emits one OCSF class-2004 finding per match.
+/// `--finding-format ocsf` emits one OCSF class-2004 finding per match.
 #[test]
-fn eval_output_format_ocsf_emits_detection_finding() {
+fn eval_finding_format_ocsf_emits_detection_finding() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let out = rsigma()
         .args([
@@ -56,7 +56,7 @@ fn eval_output_format_ocsf_emits_detection_finding() {
             rule.path().to_str().unwrap(),
             "--event",
             r#"{"CommandLine": "malware"}"#,
-            "--output-format",
+            "--finding-format",
             "ocsf",
             "--quiet",
         ])
@@ -137,11 +137,11 @@ fn eval_finding_format_ocsf_rejects_table() {
         ));
 }
 
-/// Unsupported commands warn and fall back when `--output-format ocsf` is set.
+/// `ocsf` is a finding format, not a global output format.
 #[test]
-fn lint_output_format_ocsf_warns_and_falls_back() {
+fn output_format_ocsf_is_rejected() {
     let rule = temp_file(".yml", SIMPLE_RULE);
-    let out = rsigma()
+    rsigma()
         .args([
             "rule",
             "lint",
@@ -149,14 +149,9 @@ fn lint_output_format_ocsf_warns_and_falls_back() {
             "--output-format",
             "ocsf",
         ])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("not supported by `rule lint`"),
-        "expected unsupported warning, got: {stderr}"
-    );
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("ocsf"));
 }
 
 /// `--output-format ndjson` makes the stream explicitly compact and

@@ -42,11 +42,11 @@ Without an `--expectations` file, backtest still runs and prints per-rule statis
 | `--report <PATH>` | unset | Write the full JSON report to a file regardless of the stdout format. |
 | `--findings <PATH>` | unset | Write one finding per fire. Must not be the corpus, `--report`, or `--junit` path. Config key: `backtest.findings`. {{ added "unreleased" }} |
 | `--finding-format <FORMAT>` | `native` | `native` or `ocsf` for `--findings` and for stdout when no findings file is set. `ocsf` is rejected with `table`, `csv`, and `tsv`. Config key: `backtest.finding_format`. {{ added "unreleased" }} |
-| `--ocsf-version <VERSION>` | `1.1.0` | `1.1.0` or `1.3.0`. Requires `--finding-format ocsf` or `--output-format ocsf`. Config key: `backtest.ocsf_version`. {{ added "unreleased" }} |
+| `--ocsf-version <VERSION>` | `1.1.0` | `1.1.0` or `1.3.0`. Requires `--finding-format ocsf` and `--findings`. Config key: `backtest.ocsf_version`. {{ added "unreleased" }} |
 | `--config <PATH>` | unset | Load a specific YAML config file instead of running the discovery chain. |
 | `--dry-run` | off | Print the effective `backtest` section and exit `0` without running. |
 
-The global `--output-format` applies: `table` (the TTY default) renders the human report, `json` emits the single report document, and `ndjson`/`csv`/`tsv` emit one row per rule. `--finding-format ocsf` (or `--output-format ocsf`) writes one OCSF class-2004 finding per corpus fire, to stdout or to `--findings`. The backtest summary stays on stderr and `--report` stays native JSON. {{ added "unreleased" }}
+The global `--output-format` applies to the report: `table` (the TTY default) renders the human report, `json` emits the single report document, and `ndjson`/`csv`/`tsv` emit one row per rule. `--finding-format ocsf` writes one OCSF class-2004 finding per corpus fire to `--findings` and does not replace the report. The backtest summary stays on stderr and `--report` stays native JSON. {{ added "unreleased" }}
 
 ## Expectations file
 

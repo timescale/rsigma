@@ -279,7 +279,7 @@ fn render_disposition_reports(reports: &[(rsigma_parser::SigmaRule, TuneReport)]
             report,
         })
         .collect();
-    let format = ctx.resolve_ocsf_unsupported("rule tune", OutputFormat::Json);
+    let format = ctx.format;
     match format {
         OutputFormat::Json => render_json(&named, true),
         OutputFormat::Ndjson => {
@@ -302,7 +302,6 @@ fn render_disposition_reports(reports: &[(rsigma_parser::SigmaRule, TuneReport)]
                 render_report(report, ctx);
             }
         }
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 
@@ -357,7 +356,7 @@ fn select_rule<'a>(
 }
 
 fn render_report(report: &TuneReport, ctx: &OutputCtx) {
-    let format = ctx.resolve_ocsf_unsupported("rule tune", OutputFormat::Json);
+    let format = ctx.format;
     match format {
         OutputFormat::Json => render_json(report, true),
         OutputFormat::Ndjson => render_json(report, false),
@@ -409,7 +408,6 @@ fn render_report(report: &TuneReport, ctx: &OutputCtx) {
                 print!("{}", diff.fragment);
             }
         }
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

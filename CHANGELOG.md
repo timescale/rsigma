@@ -6,7 +6,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ### OCSF finding output depth (#711)
 
-`engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are rejected. `--output-format ocsf` remains accepted. Backtest keeps the human summary on stderr.
+`engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). On eval, OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are a config error. Backtest writes OCSF findings only to `--findings` and keeps the report on stdout in the selected `--output-format`.
 
 Class 2004 findings always set `metadata.profiles` to `security_control`, and append `host` when an `actor` is present. Dedup summaries use `finding_info.uid` `dedup-<fingerprint>-<first_seen>` and lift the window onto `count`, `start_time`, and `end_time`. Risk events set `finding_info.types` to `Risk Event`. A detection whose enrichments carry `incident_id` sets `metadata.correlation_uid` to that id.
 

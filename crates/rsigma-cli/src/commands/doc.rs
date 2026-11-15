@@ -332,7 +332,7 @@ struct DocSummary {
 
 fn render_auto(all: &[RuleDoc], shown: &[&RuleDoc], below: usize, ctx: &OutputCtx) {
     let format = if ctx.explicit_format {
-        ctx.resolve_ocsf_unsupported("rule doc", OutputFormat::Table)
+        ctx.format
     } else {
         OutputFormat::Table
     };
@@ -356,7 +356,6 @@ fn render_auto(all: &[RuleDoc], shown: &[&RuleDoc], below: usize, ctx: &OutputCt
         OutputFormat::Csv => render_delimited(shown, ',', ctx),
         OutputFormat::Tsv => render_delimited(shown, '\t', ctx),
         OutputFormat::Table => print_table(all, shown, below, ctx),
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

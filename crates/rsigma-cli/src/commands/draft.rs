@@ -243,7 +243,7 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
             }
         }
         EmitMode::Report => {
-            let format = ctx.resolve_ocsf_unsupported("rule draft", OutputFormat::Table);
+            let format = ctx.format;
             match format {
                 OutputFormat::Json => render_json(&dto, true),
                 OutputFormat::Ndjson => {
@@ -255,7 +255,6 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
                 OutputFormat::Csv => render_delimited(&dto, ',', &ctx),
                 OutputFormat::Tsv => render_delimited(&dto, '\t', &ctx),
                 OutputFormat::Table => print_table(&dto, &report, &ctx),
-                OutputFormat::Ocsf => unreachable!("resolved above"),
             }
         }
     }
@@ -346,7 +345,7 @@ fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
             }
         }
         EmitMode::Report => {
-            let format = ctx.resolve_ocsf_unsupported("rule draft --groups", OutputFormat::Json);
+            let format = ctx.format;
             match format {
                 OutputFormat::Json => render_json(&report, true),
                 OutputFormat::Ndjson => render_json(&report, false),
@@ -354,7 +353,6 @@ fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
                     print_correlation_summary(&report);
                     print!("{}", report.rule_yaml);
                 }
-                OutputFormat::Ocsf => unreachable!("resolved above"),
             }
         }
     }

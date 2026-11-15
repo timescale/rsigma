@@ -114,7 +114,7 @@ pub(crate) fn cmd_status(args: StatusArgs, ctx: OutputCtx) {
         }
     };
 
-    let format = ctx.resolve_ocsf_unsupported("engine status", OutputFormat::Json);
+    let format = ctx.format;
     match format {
         OutputFormat::Json => output::render_json(&value, ctx.pretty_json()),
         OutputFormat::Ndjson => output::render_ndjson(&value),
@@ -137,7 +137,6 @@ pub(crate) fn cmd_status(args: StatusArgs, ctx: OutputCtx) {
                 _ => output::render_table(&rows),
             }
         }
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

@@ -291,7 +291,7 @@ fn emit_resolve(
         return;
     }
 
-    let format = ctx.resolve_ocsf_unsupported("rule resolve", OutputFormat::Json);
+    let format = ctx.format;
     match format {
         OutputFormat::Json => {
             let pretty = pretty || ctx.pretty_json();
@@ -300,6 +300,5 @@ fn emit_resolve(
         OutputFormat::Ndjson | OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
             render_report(ctx, &envelope, rows)
         }
-        OutputFormat::Ocsf => unreachable!(),
     }
 }

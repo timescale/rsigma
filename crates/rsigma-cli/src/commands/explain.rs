@@ -145,7 +145,7 @@ fn render(
 ) {
     // Human tree is the default; an explicit machine format overrides it.
     let effective = if ctx.explicit_format {
-        ctx.resolve_ocsf_unsupported("rule explain", OutputFormat::Table)
+        ctx.format
     } else {
         OutputFormat::Table
     };
@@ -159,7 +159,6 @@ fn render(
         OutputFormat::Csv => render_delimited(explanations, ','),
         OutputFormat::Tsv => render_delimited(explanations, '\t'),
         OutputFormat::Table => render_human(explanations, summaries, ctx),
-        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

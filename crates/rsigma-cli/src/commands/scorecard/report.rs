@@ -138,7 +138,7 @@ impl Scorecard {
     /// Render to stdout in the selected format, then write the optional
     /// `--report` program artifact.
     pub(crate) fn render(&self, ctx: &OutputCtx, report: Option<(&Path, ReportFormat)>) {
-        let format = ctx.resolve_ocsf_unsupported("rule scorecard", OutputFormat::Json);
+        let format = ctx.format;
         match format {
             OutputFormat::Json => render_json(self, ctx.pretty_json()),
             OutputFormat::Ndjson => {
@@ -149,7 +149,6 @@ impl Scorecard {
             OutputFormat::Csv => self.render_delimited(','),
             OutputFormat::Tsv => self.render_delimited('\t'),
             OutputFormat::Table => self.render_human(ctx),
-            OutputFormat::Ocsf => unreachable!(),
         }
 
         if let Some((path, format)) = report {

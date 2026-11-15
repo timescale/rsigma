@@ -313,9 +313,6 @@ impl BacktestReport {
             OutputFormat::Csv => self.render_delimited(','),
             OutputFormat::Tsv => self.render_delimited('\t'),
             OutputFormat::Table => self.render_human(ctx, policy),
-            OutputFormat::Ocsf => {
-                // One class-2004 finding per fire was written during the corpus walk.
-            }
         }
 
         if let Some(path) = junit_path
