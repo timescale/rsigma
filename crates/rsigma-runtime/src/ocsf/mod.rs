@@ -1,11 +1,15 @@
-//! OCSF Detection Finding (class 2004) serialization.
+//! OCSF Detection Finding (class 2004) and Incident Finding (class 2005)
+//! serialization.
 //!
 //! Renders the three finding shapes rsigma emits, [`EvaluationResult`]
 //! (detections and correlations), [`IncidentResult`], and
 //! [`RiskIncidentResult`], as OCSF Detection Finding JSON objects so findings
-//! land natively in the tools that standardized on OCSF. Selected per sink
-//! with `?format=ocsf` on a line-oriented sink spec; the native NDJSON shapes
-//! are unchanged and remain the default.
+//! land natively in the tools that standardized on OCSF. The two incident
+//! shapes can instead render as Incident Findings
+//! ([`incident_finding_2005`], [`risk_incident_finding_2005`]) that reference
+//! their contributing Detection Findings. Selected per sink with
+//! `?format=ocsf` on a line-oriented sink spec; the native NDJSON shapes are
+//! unchanged and remain the default.
 //!
 //! The mapping is deliberately conservative. Everything with a faithful OCSF
 //! home moves there; everything else rides under `unmapped` with its native
@@ -56,6 +60,31 @@ use crate::risk::{RISK_OBJECTS_KEY, RISK_SCORE_KEY, RiskIncidentResult, RiskRef}
 const CLASS_UID: i64 = 2004;
 /// OCSF category: Findings.
 const CATEGORY_UID: i64 = 2;
+
+/// The two OCSF Findings classes rsigma emits.
+#[derive(Clone, Copy)]
+enum FindingClass {
+    /// Detection Finding (2004).
+    Detection,
+    /// Incident Finding (2005).
+    Incident,
+}
+
+impl FindingClass {
+    fn uid(self) -> i64 {
+        match self {
+            FindingClass::Detection => CLASS_UID,
+            FindingClass::Incident => 2005,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            FindingClass::Detection => "Detection Finding",
+            FindingClass::Incident => "Incident Finding",
+        }
+    }
+}
 /// The OCSF schema version this serializer targets, recorded on every finding.
 ///
 /// One pinned version, bumped deliberately: a change here is visible in the
@@ -442,6 +471,271 @@ pub fn risk_incident_finding_with_opts(
     }
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
     Value::Object(finding)
+}
+
+/// Serialize an alert-pipeline incident as an OCSF Incident Finding (class
+/// 2005).
+///
+/// `finding_info_list[]` holds one entry per retained contributor whose
+/// Detection Finding uid is known, so a consumer can join the incident to the
+/// class-2004 findings the daemon emitted for it. When none is known (no
+/// samples retained, or the incident was restored from a snapshot), it falls
+/// back to one entry per contributing rule, whose uid is synthesized as
+/// `<incident id>:<rule>`.
+pub fn incident_finding_2005(incident: &IncidentResult) -> Value {
+    incident_finding_2005_opts(incident, OcsfOptions::default())
+}
+
+/// [`incident_finding_2005`] with explicit [`OcsfOptions`].
+pub fn incident_finding_2005_opts(incident: &IncidentResult, opts: OcsfOptions) -> Value {
+    incident_finding_2005_with_opts(incident, &SystemSource, opts)
+}
+
+/// [`incident_finding_2005`] against an injected time and identity source.
+pub fn incident_finding_2005_with(incident: &IncidentResult, src: &dyn FindingSource) -> Value {
+    incident_finding_2005_with_opts(incident, src, OcsfOptions::default())
+}
+
+/// [`incident_finding_2005`] against an injected source and schema version.
+pub fn incident_finding_2005_with_opts(
+    incident: &IncidentResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
+    let title = incident_title(incident);
+    let resolved = incident.state == "resolved";
+
+    let mut linked: Vec<Value> = incident
+        .refs
+        .iter()
+        .flatten()
+        .filter_map(|r| {
+            let uid = r.finding_uid.as_deref()?;
+            Some(contributor_info(uid, &r.rule, None))
+        })
+        .collect();
+    linked.extend(linked_result_infos(
+        incident.results.as_deref(),
+        &incident.result_finding_uids,
+    ));
+    let finding_info_list = if linked.is_empty() {
+        incident
+            .rule_counts
+            .keys()
+            .map(|rule| contributor_info(&format!("{}:{rule}", incident.incident_id), rule, None))
+            .collect()
+    } else {
+        linked
+    };
+
+    let mut unmapped = Map::new();
+    unmapped.insert("state".to_string(), json!(incident.state));
+    unmapped.insert("trigger".to_string(), json!(incident.trigger));
+    unmapped.insert("rule_counts".to_string(), json!(incident.rule_counts));
+    insert_if(
+        &mut unmapped,
+        "group_by",
+        (!incident.group_by.is_empty()).then(|| Value::Object(incident.group_by.clone())),
+    );
+    insert_if(
+        &mut unmapped,
+        "entities",
+        (!incident.entities.is_empty()).then(|| Value::Object(incident.entities.clone())),
+    );
+    insert_if(
+        &mut unmapped,
+        "refs",
+        incident
+            .refs
+            .as_ref()
+            .map(|refs| serde_json::to_value(refs).unwrap_or(Value::Null)),
+    );
+    insert_if(
+        &mut unmapped,
+        "results",
+        incident.results.clone().map(Value::from),
+    );
+
+    let mut finding = base_finding_of(
+        FindingClass::Incident,
+        src,
+        incident_activity(incident.trigger),
+        if resolved {
+            Status::Resolved
+        } else {
+            Status::New
+        },
+        severity_from_name(incident.max_level.as_deref()),
+        src.now_ms(),
+        &title,
+        metadata_version(opts),
+    );
+    // The incident id is stable across every emission of one incident, which
+    // is what OCSF's correlation uid is for.
+    set_correlation_uid(&mut finding, &incident.incident_id);
+    finding.insert("finding_info_list".to_string(), json!(finding_info_list));
+    finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
+    finding.insert("end_time".to_string(), json!(incident.last_seen * 1000));
+    finding.insert("count".to_string(), json!(incident.result_count));
+    finding.insert("unmapped".to_string(), Value::Object(unmapped));
+    Value::Object(finding)
+}
+
+/// Serialize a risk incident as an OCSF Incident Finding (class 2005).
+///
+/// `finding_info_list[]` references the Detection Findings of the retained
+/// contributing detections, falling back to one entry per contributing source
+/// (uid `<risk incident id>:<source>`) when none is known, as in
+/// [`incident_finding_2005`].
+pub fn risk_incident_finding_2005(incident: &RiskIncidentResult) -> Value {
+    risk_incident_finding_2005_opts(incident, OcsfOptions::default())
+}
+
+/// [`risk_incident_finding_2005`] with explicit [`OcsfOptions`].
+pub fn risk_incident_finding_2005_opts(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
+    risk_incident_finding_2005_with_opts(incident, &SystemSource, opts)
+}
+
+/// [`risk_incident_finding_2005`] against an injected time and identity source.
+pub fn risk_incident_finding_2005_with(
+    incident: &RiskIncidentResult,
+    src: &dyn FindingSource,
+) -> Value {
+    risk_incident_finding_2005_with_opts(incident, src, OcsfOptions::default())
+}
+
+/// [`risk_incident_finding_2005`] against an injected source and schema version.
+pub fn risk_incident_finding_2005_with_opts(
+    incident: &RiskIncidentResult,
+    src: &dyn FindingSource,
+    opts: OcsfOptions,
+) -> Value {
+    let title = risk_incident_title(incident);
+
+    let mut linked: Vec<Value> = incident
+        .refs
+        .iter()
+        .flatten()
+        .filter_map(|r| {
+            let uid = r.finding_uid.as_deref()?;
+            Some(contributor_info(uid, &r.rule, None))
+        })
+        .collect();
+    linked.extend(linked_result_infos(
+        incident.results.as_deref(),
+        &incident.result_finding_uids,
+    ));
+    let finding_info_list = if linked.is_empty() {
+        incident
+            .sources
+            .iter()
+            .map(|source| {
+                contributor_info(
+                    &format!("{}:{source}", incident.risk_incident_id),
+                    source,
+                    None,
+                )
+            })
+            .collect()
+    } else {
+        linked
+    };
+
+    let mut unmapped = Map::new();
+    unmapped.insert("entity_type".to_string(), json!(incident.entity_type));
+    unmapped.insert("entity_value".to_string(), json!(incident.entity_value));
+    unmapped.insert("trigger".to_string(), json!(incident.trigger));
+    unmapped.insert("score".to_string(), json!(incident.score));
+    insert_if(
+        &mut unmapped,
+        "score_threshold",
+        incident.score_threshold.map(Value::from),
+    );
+    unmapped.insert("tactic_count".to_string(), json!(incident.tactic_count));
+    insert_if(
+        &mut unmapped,
+        "tactic_count_threshold",
+        incident.tactic_count_threshold.map(Value::from),
+    );
+    unmapped.insert("sources".to_string(), json!(incident.sources));
+    unmapped.insert("source_count".to_string(), json!(incident.source_count));
+    insert_if(
+        &mut unmapped,
+        "refs",
+        incident
+            .refs
+            .as_ref()
+            .map(|refs| serde_json::to_value(refs).unwrap_or(Value::Null)),
+    );
+    insert_if(
+        &mut unmapped,
+        "results",
+        incident.results.clone().map(Value::from),
+    );
+
+    // As in the class-2004 mapping, a risk incident has no rule level.
+    let mut finding = base_finding_of(
+        FindingClass::Incident,
+        src,
+        Activity::Create,
+        Status::New,
+        0,
+        incident.window_end * 1000,
+        &title,
+        metadata_version(opts),
+    );
+    set_correlation_uid(&mut finding, &incident.risk_incident_id);
+    finding.insert("finding_info_list".to_string(), json!(finding_info_list));
+    insert_if(
+        &mut finding,
+        "attacks",
+        attack::attacks_from_tactics(&incident.tactics),
+    );
+    finding.insert(
+        "start_time".to_string(),
+        json!(incident.window_start * 1000),
+    );
+    finding.insert("end_time".to_string(), json!(incident.window_end * 1000));
+    finding.insert("count".to_string(), json!(incident.result_count));
+    finding.insert("unmapped".to_string(), Value::Object(unmapped));
+    Value::Object(finding)
+}
+
+/// One `finding_info_list[]` entry describing a contributing detection.
+fn contributor_info(uid: &str, title: &str, rule_id: Option<&str>) -> Value {
+    let mut analytic = Map::new();
+    analytic.insert("type_id".to_string(), json!(1));
+    analytic.insert("type".to_string(), json!("Rule"));
+    analytic.insert("name".to_string(), json!(title));
+    if let Some(rule_id) = rule_id {
+        analytic.insert("uid".to_string(), json!(rule_id));
+    }
+    json!({ "uid": uid, "title": title, "analytic": Value::Object(analytic) })
+}
+
+/// Entries for retained results whose Detection Finding uid is known.
+fn linked_result_infos(results: Option<&[Value]>, uids: &[Option<String>]) -> Vec<Value> {
+    results
+        .unwrap_or_default()
+        .iter()
+        .zip(uids)
+        .filter_map(|(result, uid)| {
+            let uid = uid.as_deref()?;
+            let rule_id = result.get("rule_id").and_then(Value::as_str);
+            let title = result
+                .get("rule_title")
+                .and_then(Value::as_str)
+                .or(rule_id)
+                .unwrap_or("detection");
+            Some(contributor_info(uid, title, rule_id))
+        })
+        .collect()
+}
+
+fn set_correlation_uid(finding: &mut Map<String, Value>, uid: &str) {
+    if let Some(metadata) = finding.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.insert("correlation_uid".to_string(), json!(uid));
+    }
 }
 
 /// Serialize a dedup `repeat` / `resolved` summary line as a Detection Finding.
@@ -851,23 +1145,53 @@ fn base_finding(
     title: &str,
     ocsf_version: &str,
 ) -> Map<String, Value> {
+    base_finding_of(
+        FindingClass::Detection,
+        src,
+        activity,
+        status,
+        severity_id,
+        time_ms,
+        title,
+        ocsf_version,
+    )
+}
+
+/// The fields every finding of `class` carries.
+#[allow(clippy::too_many_arguments)]
+fn base_finding_of(
+    class: FindingClass,
+    src: &dyn FindingSource,
+    activity: Activity,
+    status: Status,
+    severity_id: i64,
+    time_ms: i64,
+    title: &str,
+    ocsf_version: &str,
+) -> Map<String, Value> {
     let activity_id = activity as i64;
     let mut finding = Map::new();
-    // rsigma reports detections but does not itself take a control action.
-    // Detection Finding requires action_id, so report that honestly as
-    // Unknown rather than omitting the required attribute.
-    finding.insert("action_id".to_string(), json!(0));
-    finding.insert("action".to_string(), json!("Unknown"));
+    if matches!(class, FindingClass::Detection) {
+        // rsigma reports detections but does not itself take a control action.
+        // Detection Finding requires action_id, so report that honestly as
+        // Unknown rather than omitting the required attribute. Incident
+        // Finding has no action attribute.
+        finding.insert("action_id".to_string(), json!(0));
+        finding.insert("action".to_string(), json!("Unknown"));
+    }
     finding.insert("activity_id".to_string(), json!(activity_id));
     finding.insert("activity_name".to_string(), json!(activity.name()));
     finding.insert("category_uid".to_string(), json!(CATEGORY_UID));
     finding.insert("category_name".to_string(), json!("Findings"));
-    finding.insert("class_uid".to_string(), json!(CLASS_UID));
-    finding.insert("class_name".to_string(), json!("Detection Finding"));
-    finding.insert("type_uid".to_string(), json!(CLASS_UID * 100 + activity_id));
+    finding.insert("class_uid".to_string(), json!(class.uid()));
+    finding.insert("class_name".to_string(), json!(class.name()));
+    finding.insert(
+        "type_uid".to_string(),
+        json!(class.uid() * 100 + activity_id),
+    );
     finding.insert(
         "type_name".to_string(),
-        json!(format!("Detection Finding: {}", activity.name())),
+        json!(format!("{}: {}", class.name(), activity.name())),
     );
     finding.insert("severity_id".to_string(), json!(severity_id));
     finding.insert("severity".to_string(), json!(severity_name(severity_id)));
@@ -1172,6 +1496,37 @@ mod tests {
         assert_eq!(finding["status"], "Resolved");
         assert_eq!(finding["time"], 99_000);
         assert_eq!(finding["end_time"], 20_000);
+    }
+
+    #[test]
+    fn an_incident_finding_links_retained_results_by_their_finding_uid() {
+        let mut linked = incident(BTreeMap::from([("rule-a".to_string(), 2)]), Map::new());
+        linked.refs = None;
+        linked.results = Some(vec![
+            json!({"rule_title": "Rule A", "rule_id": "rule-a"}),
+            json!({"rule_title": "Rule A", "rule_id": "rule-a"}),
+        ]);
+        linked.result_finding_uids = vec![Some("u-1".to_string()), None];
+
+        let finding = incident_finding_2005_with(&linked, &FixedSource);
+        assert_eq!(finding["class_uid"], 2005);
+        assert_eq!(finding["type_uid"], 200501);
+        assert!(finding.get("action_id").is_none());
+        assert!(finding.get("finding_info").is_none());
+        assert_eq!(finding["metadata"]["correlation_uid"], "i-1");
+        assert_eq!(
+            finding["finding_info_list"],
+            json!([{
+                "uid": "u-1",
+                "title": "Rule A",
+                "analytic": {"type_id": 1, "type": "Rule", "name": "Rule A", "uid": "rule-a"},
+            }]),
+            "only the result with a known uid is referenced",
+        );
+
+        linked.result_finding_uids.clear();
+        let fallback = incident_finding_2005_with(&linked, &FixedSource);
+        assert_eq!(fallback["finding_info_list"][0]["uid"], "i-1:rule-a");
     }
 
     #[test]

@@ -1,10 +1,12 @@
-//! Golden wire-shape and conformance tests for OCSF Detection Finding output.
+//! Golden wire-shape and conformance tests for OCSF Detection Finding and
+//! Incident Finding output.
 //!
 //! One golden per emitted shape lives in `tests/golden/ocsf/` and is compared
 //! as pretty-printed JSON, so a field rename, an enum drift, or a changed
 //! `unmapped` contract shows up as a reviewable diff. Every golden is then
-//! validated against the committed minimal class-2004 schema under
-//! `tests/fixtures/ocsf/<version>/class_2004.schema.json` (profiles off, no network).
+//! validated against the committed minimal schema for its class under
+//! `tests/fixtures/ocsf/<version>/class_<uid>.schema.json` (profiles off, no
+//! network).
 //!
 //! Time and the minted uids come from a fixed [`FindingSource`], so the
 //! goldens are byte-stable.
@@ -29,7 +31,8 @@ use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::RiskEvent;
 use rsigma_runtime::ocsf::{
     self, FindingSource, OcsfOptions, OcsfVersion, dedup_summary_finding_with_opts,
-    detection_finding_with_opts, incident_finding_with_opts, risk_event_finding_with_opts,
+    detection_finding_with_opts, incident_finding_2005_with_opts, incident_finding_with_opts,
+    risk_event_finding_with_opts, risk_incident_finding_2005_with_opts,
     risk_incident_finding_with_opts,
 };
 use rsigma_runtime::{IncidentRef, IncidentResult, RiskIncidentResult, RiskRef};
@@ -94,8 +97,8 @@ fn canonical(value: &Value) -> Value {
     }
 }
 
-/// Compare a finding to its golden, then validate it against the class-2004
-/// conformance schema.
+/// Compare a finding to its golden, then validate it against the conformance
+/// schema for its class.
 fn check_version(version: OcsfVersion, name: &str, finding: &Value) {
     let path = golden_path(version, name);
     let actual = format!(
@@ -119,7 +122,7 @@ fn check_version(version: OcsfVersion, name: &str, finding: &Value) {
         );
     }
 
-    validate_class_2004(name, finding, version);
+    validate_class(name, finding, version);
 }
 
 fn check_both_versions(name: &str, build: impl Fn(OcsfOptions) -> Value) {
@@ -131,9 +134,10 @@ fn check_both_versions(name: &str, build: impl Fn(OcsfOptions) -> Value) {
     );
 }
 
-fn validate_class_2004(name: &str, finding: &Value, version: OcsfVersion) {
+fn validate_class(name: &str, finding: &Value, version: OcsfVersion) {
+    let class_uid = finding["class_uid"].as_i64().unwrap();
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "tests/fixtures/ocsf/{}/class_2004.schema.json",
+        "tests/fixtures/ocsf/{}/class_{class_uid}.schema.json",
         version.fixture_dir()
     ));
     let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_path).unwrap()).unwrap();
@@ -145,12 +149,11 @@ fn validate_class_2004(name: &str, finding: &Value, version: OcsfVersion) {
         .collect();
     assert!(
         errors.is_empty(),
-        "'{name}' is not a conformant class-2004 finding: {errors:#?}"
+        "'{name}' is not a conformant class-{class_uid} finding: {errors:#?}"
     );
 
     // The class/activity arithmetic OCSF requires, asserted directly because a
     // schema cannot express it without repeating every pair.
-    let class_uid = finding["class_uid"].as_i64().unwrap();
     let activity_id = finding["activity_id"].as_i64().unwrap();
     assert_eq!(
         finding["type_uid"].as_i64().unwrap(),
@@ -271,9 +274,53 @@ fn incident_resolved_is_a_close_finding() {
     });
 }
 
+/// Contributors whose Detection Finding uid the daemon minted are referenced
+/// by that uid.
 #[test]
-fn risk_incident_carries_score_and_entity() {
-    let incident = RiskIncidentResult {
+fn incident_open_2005_references_its_detection_findings() {
+    let mut open = incident("open", "group_wait");
+    open.refs = Some(vec![
+        IncidentRef {
+            rule: "rule-1".to_string(),
+            level: Some("high".to_string()),
+            finding_uid: Some("msg_0123_0000_0".to_string()),
+        },
+        IncidentRef {
+            rule: "rule-2".to_string(),
+            level: Some("medium".to_string()),
+            finding_uid: Some("msg_4567_0001_0".to_string()),
+        },
+    ]);
+    check_both_versions("incident_open_2005", |opts| {
+        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts)
+    });
+}
+
+/// With no known contributor uid, each contributing rule gets one entry.
+#[test]
+fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
+    check_both_versions("incident_resolved_2005", |opts| {
+        incident_finding_2005_with_opts(
+            &incident("resolved", "resolved"),
+            &FixedSource::new(),
+            opts,
+        )
+    });
+}
+
+#[test]
+fn risk_incident_2005_references_its_detection_findings() {
+    let mut incident = risk_incident();
+    if let Some(refs) = incident.refs.as_mut() {
+        refs[0].finding_uid = Some("msg_89ab_0000_0".to_string());
+    }
+    check_both_versions("risk_incident_2005", |opts| {
+        risk_incident_finding_2005_with_opts(&incident, &FixedSource::new(), opts)
+    });
+}
+
+fn risk_incident() -> RiskIncidentResult {
+    RiskIncidentResult {
         risk_incident_id: "11111111-1111-4111-8111-111111111111".to_string(),
         entity_type: "user".to_string(),
         entity_value: "alice".to_string(),
@@ -297,8 +344,12 @@ fn risk_incident_carries_score_and_entity() {
         }]),
         results: None,
         result_finding_uids: Vec::new(),
-    };
+    }
+}
 
+#[test]
+fn risk_incident_carries_score_and_entity() {
+    let incident = risk_incident();
     check_both_versions("risk_incident", |opts| {
         risk_incident_finding_with_opts(&incident, &FixedSource::new(), opts)
     });
