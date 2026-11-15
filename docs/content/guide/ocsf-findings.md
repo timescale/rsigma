@@ -8,7 +8,7 @@ description: "Emit Sigma detections and incidents as OCSF Detection Finding (200
 
 The daemon can emit every finding as an [OCSF](https://ocsf.io) **Detection Finding** (class 2004) JSON object instead of RSigma's native NDJSON. OCSF is the finding interchange format Splunk, Elastic, CrowdStrike NG-SIEM, Amazon Security Lake, and Datadog converged on, so a `?format=ocsf` sink drops findings into those pipelines without a transform step of your own.
 
-It is a per-sink serialization choice, not a new sink type and not a new config section: append `?format=ocsf` to any line-oriented sink spec.
+It is a per-sink serialization choice, not a new sink type and not a new config section: append `?format=ocsf` to a line-oriented or OTLP sink spec, or reference the finding from a webhook body.
 
 ```bash
 rsigma engine daemon -r rules/ \
@@ -36,11 +36,13 @@ rsigma engine daemon -r rules/ \
 | Sink | `?format=` |
 |------|------------|
 | `stdout`, `file://`, `nats://`, `unix://` | `ndjson` (default) or `ocsf` |
-| `otlp://`, `otlps://`, `otlphttp://`, `otlphttps://` | Rejected at startup: the OTLP sink emits OTLP log records, which have their own mapping. |
-| Webhooks | No query surface. Webhooks are declared in `--webhook` YAML files; a body template can render whatever JSON the endpoint wants. |
+| `otlp://`, `otlps://`, `otlphttp://`, `otlphttps://` | `ndjson` (default) or `ocsf`. With `ocsf`, each log record's body is the finding. See [OTLP log bodies](#otlp-log-bodies). {{ added "unreleased" }} |
+| Webhooks | No query surface. A body template inserts the finding with `${detection.ocsf}` or `${correlation.ocsf}`. See [Webhook bodies](#webhook-bodies). |
 | `--dlq`, `daemon.api.audit.sink` | Rejected at startup: those channels carry DLQ entries and API audit records, not findings. |
 
 An unusable or unknown `format` value fails startup with a pointed message.
+
+Every sink a dispatch reaches gets the same finding for the same detection: line sinks, OTLP sinks, and webhook bodies share `finding_info.uid`, `metadata.uid`, and `time`, so a consumer can deduplicate across them.
 
 ## What a finding looks like
 
@@ -185,6 +187,37 @@ A risk contributor that the alert pipeline later folds into a dedup alert or sil
 | `unmapped` | Alert-pipeline incidents: `state`, `trigger`, `rule_counts`, `group_by`, `entities`, `refs`, and `results`. Risk incidents: `entity_type`, `entity_value`, `trigger`, `score`, `score_threshold`, `tactic_count`, `tactic_count_threshold`, `sources`, `source_count`, `refs`, and `results`. |
 
 An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF defines neither on class 2005. A risk incident's `risk_score`, `resources[]`, and `actor` are class-2004 fields, so on class 2005 the score, entity, and threshold values ride under `unmapped` instead.
+
+## OTLP log bodies
+
+{{ added "unreleased" }}
+
+An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding, encoded as an OTLP `kvlist` (JSON objects become key-value lists, arrays become array values). The record keeps the severity mapped from the Sigma level and carries no attributes, because the finding already holds every native field.
+
+```bash
+rsigma engine daemon -r rules/ --input http \
+  --output 'otlphttp://otel-collector:4318?format=ocsf'
+```
+
+`?ocsf_version=<v>` selects the schema version as on a line sink. OTLP sinks carry detections and correlations only; alert-pipeline incidents, risk incidents, and the dedup and risk-event sidecars are not exported over OTLP in either format, so `?ocsf_incident_class` on an OTLP sink fails startup.
+
+## Webhook bodies
+
+{{ added "unreleased" }}
+
+A webhook body can insert the result's OCSF Detection Finding as raw JSON with `${detection.ocsf}` (a `kind: detection` webhook) or `${correlation.ocsf}` (a `kind: correlation` webhook):
+
+```yaml
+webhooks:
+  - id: siem
+    kind: detection
+    url: https://siem.example/ingest
+    headers:
+      Content-Type: application/json
+    body: '{"source": "rsigma", "finding": ${detection.ocsf}}'
+```
+
+The reference must stand where a whole JSON value can: as an object member value, an array element, or the entire body. Startup fails when it appears inside a string literal, in key position, in `url` or a header, or in any enricher template. Webhook findings use OCSF `1.1.0`. See [Webhooks](webhooks.md#templating).
 
 ## Consumer notes
 

@@ -101,12 +101,25 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 
 - `${detection.*}` or `${correlation.*}` for result data, matching the webhook's `kind`. Common paths: `${detection.rule.title}`, `${detection.rule.id}`, `${detection.rule.level}`, `${detection.tags}`, `${detection.fields.<Name>}`, `${detection.event.<dotted.path>}`; `${correlation.type}`, `${correlation.aggregated_value}`, `${correlation.group_key.<field>}`.
 - `${ENV_VAR}` (single segment, no dot) for secrets. Resolved from the daemon process environment at render time, so secrets live in the environment, never in the webhook YAML.
+- `${detection.ocsf}` or `${correlation.ocsf}` in `body` only: the result's [OCSF Detection Finding](ocsf-findings.md#webhook-bodies) as raw JSON. {{ added "unreleased" }}
 
 The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload. Header values are not escaped (CR and LF are rejected).
 
 In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so an event value cannot add path segments, start a query, or reach another path on the host. A value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. `${ENV_VAR}` values are inserted verbatim, so `${SLACK_WEBHOOK_PATH}` can still hold a path with `/`. {{ added "0.25.0" }}
 
 Every templated field is validated at startup against the webhook's `kind`: a `${correlation.*}` reference inside a `kind: detection` webhook rejects the daemon with a pointer at the offending field.
+
+`${detection.ocsf}` and `${correlation.ocsf}` are not escaped: they insert a JSON object, so they must stand where a whole JSON value can (an object member value, an array element, or the entire body). Startup fails when one appears inside a string literal, in key position, in `url`, or in a header. The finding shares its identity and time with the same detection on every other sink:
+
+```yaml
+webhooks:
+  - id: siem
+    kind: detection
+    url: https://siem.example/ingest
+    headers:
+      Content-Type: application/json
+    body: '{"source": "rsigma", "finding": ${detection.ocsf}}'
+```
 
 `${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields.
 
