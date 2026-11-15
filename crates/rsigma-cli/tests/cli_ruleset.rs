@@ -178,6 +178,35 @@ fn list_json_reports_counts() {
 }
 
 #[test]
+fn list_reports_source_parse_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_tree(&fixtures(), dir.path());
+    fs::write(dir.path().join("vendor/broken.yml"), "title: [unclosed\n").unwrap();
+    let output = rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "list",
+            "--config",
+            "vendor-only.yaml",
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let ruleset = &envelope["rulesets"][0];
+    assert_eq!(ruleset["status"], serde_json::json!("ok"));
+    assert_eq!(
+        ruleset["error"],
+        serde_json::json!("1 source parse error(s)")
+    );
+}
+
+#[test]
 fn show_all_golden_table() {
     let output = rsigma()
         .current_dir(fixtures())

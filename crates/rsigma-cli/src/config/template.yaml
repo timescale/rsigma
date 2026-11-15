@@ -464,8 +464,9 @@ mcp:
   # allow_operate_writes: false
 
 # Named rule sets: curated sources, selectors, dependency policy, overlays,
-# and pipelines. Use `--ruleset <name>` with engine eval, rule backtest, rule
-# coverage, and rule hygiene, or build a deployable tree with
+# and pipelines. Pass `--ruleset <name>` in place of `--rules` to any
+# rule-loading command, set `ruleset:` in the eval, backtest, coverage, or
+# hygiene section, or build a deployable tree with
 # `rsigma ruleset build`. Sources and overlay paths resolve against the
 # working directory. Rulesets are file-only: the environment layer cannot set
 # them.

@@ -108,7 +108,10 @@ pub(crate) fn cmd_list(args: super::ListArgs, ctx: OutputCtx) {
                     overlays: spec.overlays.len(),
                     pipelines,
                     status: "ok".to_string(),
-                    error: String::new(),
+                    error: match resolved.collection.error_count() {
+                        0 => String::new(),
+                        count => format!("{count} source parse error(s)"),
+                    },
                 });
             }
             Err(error) => {

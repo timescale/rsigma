@@ -73,9 +73,9 @@ where
         }
         let path: Vec<String> = rest.split("__").map(|s| s.to_ascii_lowercase()).collect();
         if path.first().is_some_and(|segment| segment == "rulesets") {
-            eprintln!(
+            super::warn_once(format!(
                 "warning: ignoring environment variable {key}: rulesets are configured in files only"
-            );
+            ));
             continue;
         }
         // Parse the value as a YAML scalar so ints/bools/lists coerce.
@@ -84,7 +84,9 @@ where
         insert_nested(&mut obj, &path, scalar);
         match serde_json::from_value::<RsigmaConfigPartial>(Value::Object(obj)) {
             Ok(partial) => acc = acc.merge(partial),
-            Err(e) => eprintln!("warning: ignoring environment variable {key}: {e}"),
+            Err(e) => {
+                super::warn_once(format!("warning: ignoring environment variable {key}: {e}"))
+            }
         }
     }
     acc
