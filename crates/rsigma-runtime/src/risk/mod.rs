@@ -36,7 +36,7 @@ pub use score::DEFAULT_SCORE_ATTRIBUTE;
 pub use snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{MetricsHook, Scope};
@@ -51,13 +51,13 @@ pub(crate) const RISK_SCORE_KEY: &str = "risk.score";
 pub(crate) const RISK_OBJECTS_KEY: &str = "risk.objects";
 
 /// Compact wire shape for one per-entity risk event (additive incident-channel line).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskEvent {
     pub risk_event: bool,
     pub timestamp: i64,
     pub rule: String,
     pub rule_title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
     pub risk_score: i64,
     pub risk_object: RiskObject,
@@ -71,11 +71,15 @@ pub struct RiskOutput {
     pub kept: ProcessResult,
     /// Compact risk events, one per `(detection, risk object)` pair, dispatched
     /// as additive NDJSON (optionally to a dedicated subject). Empty unless
-    /// `emit_risk_events` is set.
-    pub risk_events: Vec<RiskEvent>,
+    /// `emit_risk_events` is set. Values are the serialized [`RiskEvent`]
+    /// shape, so this field stays a JSON array for callers that already
+    /// forward it as NDJSON.
+    pub risk_events: Vec<Value>,
     /// High-fidelity risk incidents emitted when an entity crossed a threshold,
     /// dispatched via the incident path (optionally to a dedicated subject).
     pub incidents: Vec<RiskIncidentResult>,
+    /// Detection Finding uids index-aligned with [`Self::incidents`].
+    pub finding_links: Vec<crate::FindingLinks>,
 }
 
 /// A validated, runnable risk layer.
@@ -168,6 +172,7 @@ impl RiskLayer {
             kept: Vec::with_capacity(results.len()),
             risk_events: Vec::new(),
             incidents: Vec::new(),
+            finding_links: Vec::new(),
         };
 
         for (index, mut result) in results.into_iter().enumerate() {
@@ -195,8 +200,10 @@ impl RiskLayer {
 
             if self.emit_risk_events {
                 for object in &objects {
-                    out.risk_events
-                        .push(risk_event(&result, score, object, now));
+                    out.risk_events.push(
+                        serde_json::to_value(risk_event(&result, score, object, now))
+                            .unwrap_or(Value::Null),
+                    );
                 }
             }
 
@@ -276,6 +283,7 @@ impl RiskLayer {
             if let Some(incident) = outcome.incident {
                 metrics.on_risk_incident_emitted(incident.trigger);
                 out.incidents.push(incident);
+                out.finding_links.push(outcome.links);
             }
         }
     }
@@ -432,14 +440,7 @@ mod tests {
             &NoopMetrics,
         );
         assert_eq!(out.kept.len(), 2);
-        let uids: Vec<Option<String>> = out.incidents[0]
-            .refs
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|r| r.finding_uid.clone())
-            .collect();
-        assert_eq!(uids, [Some("uid-0".to_string()), None]);
+        assert_eq!(out.finding_links[0].refs, [Some("uid-0".to_string()), None]);
 
         let results = layer(
             "score:\n  default_score: 60\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\nincident:\n  score_threshold: 100\n  include: results\n",
@@ -458,7 +459,7 @@ mod tests {
         let incident = &out.incidents[0];
         assert_eq!(incident.results.as_ref().unwrap().len(), 2);
         assert_eq!(
-            incident.result_finding_uids,
+            out.finding_links[0].results,
             [Some("uid-0".to_string()), Some("uid-1".to_string())]
         );
     }
@@ -507,10 +508,10 @@ mod tests {
         );
         assert_eq!(out.risk_events.len(), 1);
         let ev = &out.risk_events[0];
-        assert!(ev.risk_event);
-        assert_eq!(ev.risk_score, 5);
-        assert_eq!(ev.timestamp, 1234);
-        assert_eq!(ev.risk_object.value, "10.0.0.1");
+        assert_eq!(ev["risk_event"], serde_json::json!(true));
+        assert_eq!(ev["risk_score"], 5);
+        assert_eq!(ev["timestamp"], 1234);
+        assert_eq!(ev["risk_object"]["value"], "10.0.0.1");
     }
 
     #[test]

@@ -100,10 +100,6 @@ pub struct IncidentRef {
     /// Severity, lowercased.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
-    /// OCSF `finding_info.uid` of the Detection Finding emitted for this
-    /// result, when the daemon minted one. Never serialized or persisted.
-    #[serde(skip)]
-    pub finding_uid: Option<String>,
 }
 
 /// The wire shape emitted for an incident. One flat NDJSON object,
@@ -141,10 +137,6 @@ pub struct IncidentResult {
     /// stored as serialized JSON values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Vec<Value>>,
-    /// OCSF `finding_info.uid` of each retained result's Detection Finding,
-    /// index-aligned with `results` (`None` where unknown). Never serialized.
-    #[serde(skip)]
-    pub result_finding_uids: Vec<Option<String>>,
     /// Which sample kinds the incident actually retained. Snapshot-only: the
     /// emission path omits it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -195,6 +187,9 @@ pub(crate) struct Incident {
     rule_counts: BTreeMap<String, u64>,
     result_count: u64,
     refs: Vec<IncidentRef>,
+    /// Finding uids index-aligned with `refs`; in memory only.
+    #[serde(skip)]
+    ref_uids: Vec<Option<String>>,
     results: Vec<Value>,
     /// Finding uids index-aligned with `results`; in memory only, so a
     /// restored incident starts with none.
@@ -206,6 +201,8 @@ pub(crate) struct Incident {
 pub(crate) struct IncidentEmission {
     pub trigger: &'static str,
     pub result: IncidentResult,
+    /// Detection Finding uids for `result`, absent from the wire.
+    pub links: crate::FindingLinks,
 }
 
 /// In-memory incident store, owned single-threaded by the sink task (or shared
@@ -431,13 +428,18 @@ impl IncidentStore {
             for (sel, values) in victim.entities {
                 inc.entities.entry(sel).or_default().extend(values);
             }
+            let refs_before = inc.refs.len();
+            inc.ref_uids.resize(refs_before, None);
+            victim.ref_uids.resize(victim.refs.len(), None);
             inc.refs.append(&mut victim.refs);
+            inc.ref_uids.append(&mut victim.ref_uids);
             inc.result_uids.resize(inc.results.len(), None);
             victim.result_uids.resize(victim.results.len(), None);
             inc.results.append(&mut victim.results);
             inc.result_uids.append(&mut victim.result_uids);
             // Keep the per-incident cap after merging two incidents' samples.
             inc.refs.truncate(max_results);
+            inc.ref_uids.truncate(max_results);
             inc.results.truncate(max_results);
             inc.result_uids.truncate(max_results);
         }
@@ -456,9 +458,11 @@ impl IncidentStore {
         for (id, inc) in self.incidents.iter_mut() {
             if !inc.opened {
                 if now - inc.first_seen >= group_wait {
+                    let (result, links) = inc.to_result("open", "group_wait", cfg.include);
                     out.push(IncidentEmission {
                         trigger: "group_wait",
-                        result: inc.to_result("open", "group_wait", cfg.include),
+                        result,
+                        links,
                     });
                     inc.opened = true;
                     inc.dirty = false;
@@ -468,23 +472,29 @@ impl IncidentStore {
                 continue;
             }
             if now - inc.last_seen >= resolve {
+                let (result, links) = inc.to_result("resolved", "resolved", cfg.include);
                 out.push(IncidentEmission {
                     trigger: "resolved",
-                    result: inc.to_result("resolved", "resolved", cfg.include),
+                    result,
+                    links,
                 });
                 resolved.push(id.clone());
             } else if inc.dirty && now - inc.last_emitted >= group_interval {
+                let (result, links) = inc.to_result("open", "group_interval", cfg.include);
                 out.push(IncidentEmission {
                     trigger: "group_interval",
-                    result: inc.to_result("open", "group_interval", cfg.include),
+                    result,
+                    links,
                 });
                 inc.dirty = false;
                 inc.last_emitted = now;
                 inc.emitted_count = inc.result_count;
             } else if repeat > 0 && now - inc.last_emitted >= repeat {
+                let (result, links) = inc.to_result("open", "repeat", cfg.include);
                 out.push(IncidentEmission {
                     trigger: "repeat",
-                    result: inc.to_result("open", "repeat", cfg.include),
+                    result,
+                    links,
                 });
                 inc.last_emitted = now;
             }
@@ -614,6 +624,7 @@ impl Incident {
             rule_counts: BTreeMap::new(),
             result_count: 0,
             refs: Vec::new(),
+            ref_uids: Vec::new(),
             results: Vec::new(),
             result_uids: Vec::new(),
         }
@@ -642,8 +653,8 @@ impl Incident {
                     self.refs.push(IncidentRef {
                         rule,
                         level: result.header.level.map(|l| l.as_str().to_string()),
-                        finding_uid: finding_uid.map(str::to_string),
                     });
+                    self.ref_uids.push(finding_uid.map(str::to_string));
                 }
             }
             IncludeMode::Results => {
@@ -664,7 +675,7 @@ impl Incident {
         state: &'static str,
         trigger: &'static str,
         include: IncludeMode,
-    ) -> IncidentResult {
+    ) -> (IncidentResult, crate::FindingLinks) {
         let group_by: serde_json::Map<String, Value> = self.group_by.iter().cloned().collect();
         let entities: serde_json::Map<String, Value> = self
             .entities
@@ -684,35 +695,44 @@ impl Incident {
             (include == IncludeMode::Refs || !self.refs.is_empty()).then(|| self.refs.clone());
         let results = (include == IncludeMode::Results || !self.results.is_empty())
             .then(|| self.results.clone());
-        let result_finding_uids = match &results {
-            Some(results) => (0..results.len())
-                .map(|i| self.result_uids.get(i).cloned().flatten())
-                .collect(),
-            None => Vec::new(),
+        let links = crate::FindingLinks {
+            refs: refs.as_ref().map_or_else(Vec::new, |refs| {
+                (0..refs.len())
+                    .map(|i| self.ref_uids.get(i).cloned().flatten())
+                    .collect()
+            }),
+            results: results.as_ref().map_or_else(Vec::new, |results| {
+                (0..results.len())
+                    .map(|i| self.result_uids.get(i).cloned().flatten())
+                    .collect()
+            }),
         };
-        IncidentResult {
-            incident_id: self.id.clone(),
-            state,
-            trigger,
-            first_seen: self.first_seen,
-            last_seen: self.last_seen,
-            max_level: self.max_level.map(|l| l.as_str().to_string()),
-            result_count: self.result_count,
-            rule_counts: self.rule_counts.clone(),
-            group_by,
-            entities,
-            refs,
-            results,
-            result_finding_uids,
-            sample_mode: None,
-            bundle_ready: None,
-        }
+        (
+            IncidentResult {
+                incident_id: self.id.clone(),
+                state,
+                trigger,
+                first_seen: self.first_seen,
+                last_seen: self.last_seen,
+                max_level: self.max_level.map(|l| l.as_str().to_string()),
+                result_count: self.result_count,
+                rule_counts: self.rule_counts.clone(),
+                group_by,
+                entities,
+                refs,
+                results,
+                sample_mode: None,
+                bundle_ready: None,
+            },
+            links,
+        )
     }
 
     /// The read-only view served by the admin API: the emitted shape plus the
     /// retention and lifecycle facts a caller needs to interpret it.
+    /// Finding uids stay off this view.
     fn to_snapshot(&self, include: IncludeMode) -> IncidentResult {
-        let mut out = self.to_result("open", "snapshot", include);
+        let (mut out, _) = self.to_result("open", "snapshot", include);
         out.sample_mode = Some(self.sample_mode());
         out.bundle_ready = Some(self.opened);
         out
@@ -975,16 +995,21 @@ mod tests {
         let r3 = detection("r3", "10.0.0.1", "carol", Level::Low);
         store.assign_with_finding_uid(&results_cfg, &r3, Some("uid-3"), 2, |_| {});
 
-        let snap = store.snapshot_one(&id, results_cfg.include).unwrap();
+        let emissions = store.tick(&results_cfg, 30);
+        assert_eq!(emissions[0].links.refs, [Some("uid-1".to_string())]);
         assert_eq!(
-            snap.refs.as_ref().unwrap()[0].finding_uid.as_deref(),
-            Some("uid-1")
+            emissions[0].links.results,
+            [None, Some("uid-3".to_string())]
         );
-        assert_eq!(snap.result_finding_uids, [None, Some("uid-3".to_string())]);
-
-        let wire = serde_json::to_string(&snap).unwrap();
+        let wire = serde_json::to_string(&emissions[0].result).unwrap();
         assert!(!wire.contains("uid-"), "finding uids leaked: {wire}");
         assert!(!wire.contains("finding_uid"), "{wire}");
+        let snap = store.snapshot_one(&id, results_cfg.include).unwrap();
+        let snap_wire = serde_json::to_string(&snap).unwrap();
+        assert!(
+            !snap_wire.contains("uid-"),
+            "snapshot leaked uids: {snap_wire}"
+        );
     }
 
     #[test]
@@ -1005,12 +1030,12 @@ mod tests {
             .unwrap();
         assert_eq!(store.len(), 1);
 
-        let snap = store.snapshot_one(&id, cfg.include).unwrap();
-        let results = snap.results.unwrap();
-        assert_eq!(results.len(), snap.result_finding_uids.len());
+        let inc = &store.incidents[&id];
+        let results = &inc.results;
+        assert_eq!(results.len(), inc.result_uids.len());
         let pairs: Vec<(String, Option<String>)> = results
             .iter()
-            .zip(&snap.result_finding_uids)
+            .zip(&inc.result_uids)
             .map(|(result, uid)| {
                 let ip = result["matched_fields"][0]["value"].as_str().unwrap();
                 let user = result["matched_fields"][1]["value"].as_str().unwrap();

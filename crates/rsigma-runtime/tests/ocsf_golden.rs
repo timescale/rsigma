@@ -254,10 +254,8 @@ fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
         refs: Some(vec![IncidentRef {
             rule: "rule-1".to_string(),
             level: Some("high".to_string()),
-            finding_uid: None,
         }]),
         results: None,
-        result_finding_uids: Vec::new(),
         sample_mode: None,
         bundle_ready: None,
     }
@@ -286,17 +284,23 @@ fn incident_open_2005_references_its_detection_findings() {
         IncidentRef {
             rule: "rule-1".to_string(),
             level: Some("high".to_string()),
-            finding_uid: Some("msg_0123_0000_0".to_string()),
         },
         IncidentRef {
             rule: "rule-2".to_string(),
             level: Some("medium".to_string()),
-            finding_uid: Some("msg_4567_0001_0".to_string()),
         },
     ]);
+    let links = rsigma_runtime::FindingLinks {
+        refs: vec![
+            Some("msg_0123_0000_0".to_string()),
+            Some("msg_4567_0001_0".to_string()),
+        ],
+        results: Vec::new(),
+    };
     check_both_versions("incident_open_2005", |opts| {
         incident_finding_2005_with_opts(
             &open,
+            &links,
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
@@ -309,6 +313,7 @@ fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
     check_both_versions("incident_resolved_2005", |opts| {
         incident_finding_2005_with_opts(
             &incident("resolved", "resolved"),
+            &rsigma_runtime::FindingLinks::default(),
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
@@ -317,13 +322,15 @@ fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
 
 #[test]
 fn risk_incident_2005_references_its_detection_findings() {
-    let mut incident = risk_incident();
-    if let Some(refs) = incident.refs.as_mut() {
-        refs[0].finding_uid = Some("msg_89ab_0000_0".to_string());
-    }
+    let incident = risk_incident();
+    let links = rsigma_runtime::FindingLinks {
+        refs: vec![Some("msg_89ab_0000_0".to_string())],
+        results: Vec::new(),
+    };
     check_both_versions("risk_incident_2005", |opts| {
         risk_incident_finding_2005_with_opts(
             &incident,
+            &links,
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
@@ -351,10 +358,8 @@ fn risk_incident() -> RiskIncidentResult {
             level: Some("high".to_string()),
             score: 75,
             timestamp: 1_767_225_600,
-            finding_uid: None,
         }]),
         results: None,
-        result_finding_uids: Vec::new(),
     }
 }
 

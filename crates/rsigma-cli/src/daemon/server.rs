@@ -2165,32 +2165,44 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let subject =
                                 risk_layer.risk_event_nats_subject().map(|s| s.to_string());
                             for event in out.risk_events {
-                                match serde_json::to_string(&event) {
-                                    Ok(json) => {
-                                        let env = with_ocsf_lines(
-                                            FormattedIncidentEnvelope::new(
-                                                IncidentEnvelope::new(json, subject.clone()),
-                                            ),
-                                            &ocsf_options,
-                                            "risk event",
-                                            |opts| {
-                                                rsigma_runtime::ocsf::risk_event_finding_opts(
-                                                    &event, opts,
-                                                )
-                                            },
-                                        );
-                                        dispatcher.dispatch_formatted_incident(env).await;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "Failed to serialize risk event");
-                                    }
+                                let Ok(json) = serde_json::to_string(&event) else {
+                                    tracing::warn!("Failed to serialize risk event");
+                                    continue;
+                                };
+                                let typed = serde_json::from_value::<rsigma_runtime::RiskEvent>(
+                                    event.clone(),
+                                );
+                                if typed.is_err() && !ocsf_options.is_empty() {
+                                    tracing::warn!("risk event JSON is not a risk event");
                                 }
+                                let ocsf = if typed.is_ok() {
+                                    ocsf_options.as_slice()
+                                } else {
+                                    &[]
+                                };
+                                let env = with_ocsf_lines(
+                                    FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+                                        json,
+                                        subject.clone(),
+                                    )),
+                                    ocsf,
+                                    "risk event",
+                                    |opts| {
+                                        rsigma_runtime::ocsf::risk_event_finding_opts(
+                                            typed.as_ref().expect("risk event"),
+                                            opts,
+                                        )
+                                    },
+                                );
+                                dispatcher.dispatch_formatted_incident(env).await;
                             }
                         }
                         if !out.incidents.is_empty() {
                             let subject =
                                 risk_layer.incident_nats_subject().map(|s| s.to_string());
-                            for incident in out.incidents {
+                            for (incident, links) in
+                                out.incidents.into_iter().zip(out.finding_links)
+                            {
                                 match serde_json::to_string(&incident) {
                                     Ok(json) => {
                                         let env = with_ocsf_lines(
@@ -2201,7 +2213,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                                             "risk incident",
                                             |opts| {
                                                 rsigma_runtime::ocsf::risk_incident_finding_in_class(
-                                                    &incident, opts,
+                                                    &incident, &links, opts,
                                                 )
                                             },
                                         );
@@ -2331,7 +2343,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                         let subject =
                             alert_pipeline.incident_nats_subject().map(|s| s.to_string());
-                        for incident in out.incidents {
+                        for (incident, links) in out.incidents.into_iter().zip(out.finding_links) {
                             match serde_json::to_string(&incident) {
                                 Ok(json) => {
                                     let env = with_ocsf_lines(
@@ -2343,7 +2355,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                                         "incident",
                                         |opts| {
                                             rsigma_runtime::ocsf::incident_finding_in_class(
-                                                &incident, opts,
+                                                &incident, &links, opts,
                                             )
                                         },
                                     );

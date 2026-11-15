@@ -50,6 +50,7 @@ pub mod egress;
 pub mod engine;
 pub mod enrichment;
 pub mod error;
+pub mod finding_links;
 pub mod input;
 pub mod io;
 pub mod metrics;
@@ -108,6 +109,7 @@ pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
 pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;
+pub use finding_links::FindingLinks;
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::webhook::{
     BuiltWebhook, WebhookConfig, WebhookConfigError, WebhookKind, WebhookSink, WebhooksFile,

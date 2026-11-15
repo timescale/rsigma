@@ -619,6 +619,7 @@ pub fn risk_incident_finding_with_opts(
 pub fn incident_finding_2005(incident: &IncidentResult, assignee_group: &str) -> Value {
     incident_finding_2005_opts(
         incident,
+        &crate::FindingLinks::default(),
         OcsfOptions::default()
             .with_incident_finding(assignee_group)
             .expect("assignee group"),
@@ -626,36 +627,48 @@ pub fn incident_finding_2005(incident: &IncidentResult, assignee_group: &str) ->
 }
 
 /// [`incident_finding_2005`] with explicit [`OcsfOptions`].
-pub fn incident_finding_2005_opts(incident: &IncidentResult, opts: OcsfOptions) -> Value {
-    incident_finding_2005_with_opts(incident, &SystemSource, opts)
+pub fn incident_finding_2005_opts(
+    incident: &IncidentResult,
+    links: &crate::FindingLinks,
+    opts: OcsfOptions,
+) -> Value {
+    incident_finding_2005_with_opts(incident, links, &SystemSource, opts)
 }
 
 /// [`incident_finding_2005`] against an injected time and identity source.
-pub fn incident_finding_2005_with(incident: &IncidentResult, src: &dyn FindingSource) -> Value {
-    incident_finding_2005_with_opts(incident, src, OcsfOptions::default())
+pub fn incident_finding_2005_with(
+    incident: &IncidentResult,
+    links: &crate::FindingLinks,
+    src: &dyn FindingSource,
+) -> Value {
+    incident_finding_2005_with_opts(incident, links, src, OcsfOptions::default())
 }
 
 /// [`incident_finding_2005`] against an injected source and schema version.
+///
+/// `links` carries the Detection Finding uids aligned with `incident.refs`
+/// and `incident.results`. It is not part of the incident wire.
 pub fn incident_finding_2005_with_opts(
     incident: &IncidentResult,
+    links: &crate::FindingLinks,
     src: &dyn FindingSource,
     opts: OcsfOptions,
 ) -> Value {
     let title = incident_title(incident);
     let resolved = incident.state == "resolved";
 
-    let mut linked: Vec<Value> = incident
-        .refs
-        .iter()
-        .flatten()
-        .filter_map(|r| {
-            let uid = r.finding_uid.as_deref()?;
-            Some(contributor_info(uid, &r.rule, None))
-        })
-        .collect();
+    let mut linked = Vec::new();
+    if let Some(refs) = &incident.refs {
+        for (index, r) in refs.iter().enumerate() {
+            let Some(uid) = links.refs.get(index).and_then(|uid| uid.as_deref()) else {
+                continue;
+            };
+            linked.push(contributor_info(uid, &r.rule, None));
+        }
+    }
     linked.extend(linked_result_infos(
         incident.results.as_deref(),
-        &incident.result_finding_uids,
+        &links.results,
     ));
     let finding_info_list = if linked.is_empty() {
         incident
@@ -730,6 +743,7 @@ pub fn incident_finding_2005_with_opts(
 pub fn risk_incident_finding_2005(incident: &RiskIncidentResult, assignee_group: &str) -> Value {
     risk_incident_finding_2005_opts(
         incident,
+        &crate::FindingLinks::default(),
         OcsfOptions::default()
             .with_incident_finding(assignee_group)
             .expect("assignee group"),
@@ -737,38 +751,44 @@ pub fn risk_incident_finding_2005(incident: &RiskIncidentResult, assignee_group:
 }
 
 /// [`risk_incident_finding_2005`] with explicit [`OcsfOptions`].
-pub fn risk_incident_finding_2005_opts(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
-    risk_incident_finding_2005_with_opts(incident, &SystemSource, opts)
+pub fn risk_incident_finding_2005_opts(
+    incident: &RiskIncidentResult,
+    links: &crate::FindingLinks,
+    opts: OcsfOptions,
+) -> Value {
+    risk_incident_finding_2005_with_opts(incident, links, &SystemSource, opts)
 }
 
 /// [`risk_incident_finding_2005`] against an injected time and identity source.
 pub fn risk_incident_finding_2005_with(
     incident: &RiskIncidentResult,
+    links: &crate::FindingLinks,
     src: &dyn FindingSource,
 ) -> Value {
-    risk_incident_finding_2005_with_opts(incident, src, OcsfOptions::default())
+    risk_incident_finding_2005_with_opts(incident, links, src, OcsfOptions::default())
 }
 
 /// [`risk_incident_finding_2005`] against an injected source and schema version.
 pub fn risk_incident_finding_2005_with_opts(
     incident: &RiskIncidentResult,
+    links: &crate::FindingLinks,
     src: &dyn FindingSource,
     opts: OcsfOptions,
 ) -> Value {
     let title = risk_incident_title(incident);
 
-    let mut linked: Vec<Value> = incident
-        .refs
-        .iter()
-        .flatten()
-        .filter_map(|r| {
-            let uid = r.finding_uid.as_deref()?;
-            Some(contributor_info(uid, &r.rule, None))
-        })
-        .collect();
+    let mut linked = Vec::new();
+    if let Some(refs) = &incident.refs {
+        for (index, r) in refs.iter().enumerate() {
+            let Some(uid) = links.refs.get(index).and_then(|uid| uid.as_deref()) else {
+                continue;
+            };
+            linked.push(contributor_info(uid, &r.rule, None));
+        }
+    }
     linked.extend(linked_result_infos(
         incident.results.as_deref(),
-        &incident.result_finding_uids,
+        &links.results,
     ));
     let finding_info_list = if linked.is_empty() {
         incident
@@ -849,19 +869,29 @@ pub fn risk_incident_finding_2005_with_opts(
 
 /// Serialize an alert-pipeline incident in the class `opts.incident_class`
 /// selects, at `opts.version`.
-pub fn incident_finding_in_class(incident: &IncidentResult, opts: OcsfOptions) -> Value {
+pub fn incident_finding_in_class(
+    incident: &IncidentResult,
+    links: &crate::FindingLinks,
+    opts: OcsfOptions,
+) -> Value {
     match opts.incident_class() {
         OcsfIncidentClass::DetectionFinding => incident_finding_opts(incident, opts),
-        OcsfIncidentClass::IncidentFinding => incident_finding_2005_opts(incident, opts),
+        OcsfIncidentClass::IncidentFinding => incident_finding_2005_opts(incident, links, opts),
     }
 }
 
 /// Serialize a risk incident in the class `opts.incident_class` selects, at
 /// `opts.version`.
-pub fn risk_incident_finding_in_class(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
+pub fn risk_incident_finding_in_class(
+    incident: &RiskIncidentResult,
+    links: &crate::FindingLinks,
+    opts: OcsfOptions,
+) -> Value {
     match opts.incident_class() {
         OcsfIncidentClass::DetectionFinding => risk_incident_finding_opts(incident, opts),
-        OcsfIncidentClass::IncidentFinding => risk_incident_finding_2005_opts(incident, opts),
+        OcsfIncidentClass::IncidentFinding => {
+            risk_incident_finding_2005_opts(incident, links, opts)
+        }
     }
 }
 
@@ -1487,7 +1517,6 @@ mod tests {
             entities: Map::new(),
             refs: None,
             results: None,
-            result_finding_uids: Vec::new(),
             sample_mode: None,
             bundle_ready: None,
         }
@@ -1553,9 +1582,12 @@ mod tests {
             json!({"rule_title": "Rule A", "rule_id": "rule-a"}),
             json!({"rule_title": "Rule A", "rule_id": "rule-a"}),
         ]);
-        linked.result_finding_uids = vec![Some("u-1".to_string()), None];
+        let links = crate::FindingLinks {
+            refs: Vec::new(),
+            results: vec![Some("u-1".to_string()), None],
+        };
 
-        let finding = incident_finding_2005_with(&linked, &FixedSource);
+        let finding = incident_finding_2005_with(&linked, &links, &FixedSource);
         assert_eq!(finding["class_uid"], 2005);
         assert_eq!(finding["type_uid"], 200501);
         assert!(finding.get("action_id").is_none());
@@ -1571,8 +1603,8 @@ mod tests {
             "only the result with a known uid is referenced",
         );
 
-        linked.result_finding_uids.clear();
-        let fallback = incident_finding_2005_with(&linked, &FixedSource);
+        let fallback =
+            incident_finding_2005_with(&linked, &crate::FindingLinks::default(), &FixedSource);
         assert_eq!(fallback["finding_info_list"][0]["uid"], "i-1:rule-a");
     }
 
@@ -1633,7 +1665,6 @@ mod tests {
             result_count: 2,
             refs: None,
             results: None,
-            result_finding_uids: Vec::new(),
         };
         assert_eq!(
             risk_incident_title(&incident),

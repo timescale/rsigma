@@ -24,10 +24,6 @@ pub struct RiskRef {
     pub score: i64,
     /// Contributing-detection timestamp (unix seconds).
     pub timestamp: i64,
-    /// OCSF `finding_info.uid` of the Detection Finding minted for the
-    /// contributing detection, when known. Never serialized or persisted.
-    #[serde(skip)]
-    pub finding_uid: Option<String>,
 }
 
 /// The wire shape emitted when an entity crosses a risk threshold. One flat
@@ -72,10 +68,6 @@ pub struct RiskIncidentResult {
     /// stored as serialized JSON values, bounded by `max_results_per_incident`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Vec<Value>>,
-    /// OCSF `finding_info.uid` of each retained result's Detection Finding,
-    /// index-aligned with `results` (`None` where unknown). Never serialized.
-    #[serde(skip)]
-    pub result_finding_uids: Vec<Option<String>>,
 }
 
 /// A read-only view of one open entity, served by `GET /api/v1/risk`.
@@ -127,10 +119,8 @@ mod tests {
                 level: Some("high".to_string()),
                 score: 60,
                 timestamp: 1000,
-                finding_uid: Some("not-on-the-wire".to_string()),
             }]),
             results: None,
-            result_finding_uids: Vec::new(),
         };
         let json = serde_json::to_string(&incident).unwrap();
         let expected = concat!(

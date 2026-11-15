@@ -65,6 +65,9 @@ pub struct TickOutput {
     pub dedup_lines: Vec<Value>,
     /// Incident emissions, dispatched via the incident path.
     pub incidents: Vec<IncidentResult>,
+    /// Detection Finding uids index-aligned with [`Self::incidents`].
+    /// Absent from the incident NDJSON.
+    pub finding_links: Vec<crate::FindingLinks>,
 }
 
 /// A validated, runnable alert-processing pipeline.
@@ -428,6 +431,7 @@ impl AlertPipeline {
             for emission in state.incidents.tick(gcfg, now) {
                 metrics.on_incident_emitted(emission.trigger);
                 out.incidents.push(emission.result);
+                out.finding_links.push(emission.links);
             }
             metrics.set_incidents_open(state.incidents.len() as i64);
         }
@@ -672,14 +676,16 @@ mod tests {
         assert_eq!(kept.len(), 2, "the duplicate folds");
         assert_eq!(uids, ["uid-0", "uid-2"]);
 
-        let emitted = p.tick(&mut st, 0, &NoopMetrics).incidents;
-        let mut linked: Vec<String> = emitted
+        let out = p.tick(&mut st, 0, &NoopMetrics);
+        let mut linked: Vec<String> = out
+            .finding_links
             .iter()
-            .flat_map(|inc| inc.refs.clone().unwrap_or_default())
-            .filter_map(|r| r.finding_uid)
+            .flat_map(|links| links.refs.iter().filter_map(|uid| uid.clone()))
             .collect();
         linked.sort();
         assert_eq!(linked, ["uid-0", "uid-2"]);
+        let wire = serde_json::to_string(&out.incidents).unwrap();
+        assert!(!wire.contains("uid-"), "{wire}");
     }
 
     #[test]
