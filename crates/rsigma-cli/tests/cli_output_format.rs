@@ -7,8 +7,26 @@
 
 mod common;
 
+use std::path::Path;
+
 use common::{SIMPLE_RULE, rsigma, temp_file};
 use predicates::prelude::*;
+
+fn validate_class_2004(finding: &serde_json::Value) {
+    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../rsigma-runtime/tests/fixtures/ocsf/class_2004.schema.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+    let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
+    let errors: Vec<String> = validator
+        .iter_errors(finding)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "finding is not conformant class-2004: {errors:#?}"
+    );
+}
 
 /// JSON detection format is the explicit baseline -- one line, the
 /// detection envelope on stdout.
@@ -42,6 +60,64 @@ fn eval_output_format_json_emits_compact_object() {
     // Compact: no newlines inside the body.
     assert_eq!(trimmed.matches('\n').count(), 0);
     assert!(trimmed.contains("\"rule_title\":\"Test Rule\""));
+}
+
+/// `--output-format ocsf` emits one OCSF class-2004 finding per match.
+#[test]
+fn eval_output_format_ocsf_emits_detection_finding() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let out = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"CommandLine": "malware"}"#,
+            "--output-format",
+            "ocsf",
+            "--quiet",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .expect("finding line");
+    let finding: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
+    assert_eq!(finding["class_uid"], 2004);
+    assert_eq!(finding["metadata"]["version"], "1.1.0");
+    assert!(finding["finding_info"]["title"].is_string());
+    validate_class_2004(&finding);
+}
+
+/// Unsupported commands warn and fall back when `--output-format ocsf` is set.
+#[test]
+fn lint_output_format_ocsf_warns_and_falls_back() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let out = rsigma()
+        .args([
+            "rule",
+            "lint",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--output-format",
+            "ocsf",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not supported by `rule lint`"),
+        "expected unsupported warning, got: {stderr}"
+    );
 }
 
 /// `--output-format ndjson` makes the stream explicitly compact and

@@ -206,6 +206,43 @@ fn backtest_missing_rules_is_config_error() {
 }
 
 #[test]
+fn backtest_output_format_ocsf_emits_finding_per_fire() {
+    let out = rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--output-format",
+            "ocsf",
+            "--quiet",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"class_uid\":2004") || stdout.contains("\"class_uid\": 2004"),
+        "expected OCSF findings on stdout, got: {stdout}"
+    );
+    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let finding: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+        assert_eq!(finding["class_uid"], 2004);
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Backtest:"),
+        "expected summary on stderr, got: {stderr}"
+    );
+}
+
+#[test]
 fn backtest_without_expectations_reports_stats_and_exits_zero() {
     // No expectations file: stats-only mode. Every rule fired, but nothing is
     // diffed and nothing is unexpected, so the run succeeds.

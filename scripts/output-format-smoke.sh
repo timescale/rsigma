@@ -203,6 +203,11 @@ check "eval ndjson" '"rule_title"' engine eval -r "$RULE" -e @"$EVENTS" --output
 check "eval table" 'LEVEL' engine eval -r "$RULE" -e @"$EVENTS" --output-format table --quiet
 check "eval csv" 'LEVEL,RULE' engine eval -r "$RULE" -e @"$EVENTS" --output-format csv --quiet
 check "eval tsv" $'LEVEL\tRULE' engine eval -r "$RULE" -e @"$EVENTS" --output-format tsv --quiet
+check "eval ocsf" '"class_uid":2004' engine eval -r "$RULE" -e @"$EVENTS" --output-format ocsf --quiet
+
+mkdir -p "$TMP/corpus"
+cp "$EVENTS" "$TMP/corpus/events.ndjson"
+check "backtest ocsf" '"class_uid":2004' rule backtest -r "$RULEDIR" --corpus "$TMP/corpus" --output-format ocsf --quiet
 
 note "engine explain / classify / discover"
 check "explain table" 'Test Rule' engine explain -r "$RULE" -e '{"CommandLine":"malware"}' --output-format table --color never
