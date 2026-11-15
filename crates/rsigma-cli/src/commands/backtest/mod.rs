@@ -13,7 +13,7 @@
 pub(crate) mod expectations;
 mod report;
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -227,18 +227,14 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
         #[cfg(not(feature = "ocsf"))]
         let _ = version;
     }
-    if let Some(findings) = &args.findings {
+    let mut findings_file = if let Some(findings) = &args.findings {
         if let Some(code) = findings_path_collision(findings, &args) {
             return code;
         }
-        if let Err(e) = File::create(findings) {
-            eprintln!(
-                "error: cannot create --findings {}: {e}",
-                findings.display()
-            );
-            return exit_code::CONFIG_ERROR;
-        }
-    }
+        Some(crate::output::OutputFile::create(findings.clone()))
+    } else {
+        None
+    };
     let Some(rules_path) = args.rules.clone() else {
         eprintln!("error: no rules path; set --rules or backtest.rules in the config file");
         return exit_code::CONFIG_ERROR;
@@ -274,12 +270,12 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
 
     let report = match run(
         &args,
-        &ctx,
         collection,
         &pipelines,
         &event_filter,
         resolved,
         policy,
+        &mut findings_file,
     ) {
         Ok(report) => report,
         Err(e) => {
@@ -313,12 +309,12 @@ fn resolve_policy(
 /// the report.
 fn run(
     args: &BacktestArgs,
-    ctx: &crate::output::OutputCtx,
     collection: SigmaCollection,
     pipelines: &[Pipeline],
     event_filter: &crate::EventFilter,
     resolved: Option<ResolvedExpectations>,
     policy: UnexpectedPolicy,
+    findings: &mut Option<crate::output::OutputFile>,
 ) -> Result<BacktestReport, String> {
     let corpus_files = collect_corpus_files(&args.corpus)?;
     if corpus_files.is_empty() {
@@ -342,16 +338,20 @@ fn run(
             let mut processor = CorrelationProcessor {
                 engine: &mut engine,
             };
-            stream_corpus_file(cf, &mut processor, event_filter, args, ctx, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc, findings)
         } else {
             let engine = detection_engine.as_ref().expect("detection engine built");
             let mut processor = DetectionProcessor { engine };
-            stream_corpus_file(cf, &mut processor, event_filter, args, ctx, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc, findings)
         };
         acc.add_events(events);
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
+    if let Some(file) = findings {
+        let flushed = file.writer.flush();
+        file.check(flushed);
+    }
     Ok(BacktestReport::build(
         acc,
         &collection,
@@ -368,65 +368,39 @@ fn stream_corpus_file<P: EventProcessor>(
     processor: &mut P,
     event_filter: &crate::EventFilter,
     args: &BacktestArgs,
-    ctx: &crate::output::OutputCtx,
     acc: &mut Accumulator,
+    findings: &mut Option<crate::output::OutputFile>,
 ) -> u64 {
     let file_key = cf.key.clone();
-    let _ = ctx;
     let emit_ocsf = args.finding_format.as_deref() == Some("ocsf");
     #[cfg(not(feature = "ocsf"))]
     let _ = emit_ocsf;
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);
-        if let Some(path) = &args.findings {
-            let mut file = match OpenOptions::new().append(true).open(path) {
-                Ok(file) => file,
-                Err(e) => {
-                    eprintln!("error: cannot append --findings {}: {e}", path.display());
-                    process::exit(exit_code::CONFIG_ERROR);
-                }
-            };
-            #[cfg(feature = "ocsf")]
-            if emit_ocsf {
-                if let Err(e) = crate::output::write_ocsf_finding(
-                    &mut file,
-                    m,
-                    false,
-                    args.ocsf_version
-                        .as_deref()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or_default(),
-                ) {
-                    eprintln!("OCSF serialization error: {e}");
-                    process::exit(exit_code::CONFIG_ERROR);
-                }
-                return;
-            }
-            match serde_json::to_string(m) {
-                Ok(line) => {
-                    if writeln!(file, "{line}").is_err() {
-                        eprintln!("error: failed to write --findings {}", path.display());
-                        process::exit(exit_code::CONFIG_ERROR);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("error: failed to serialize finding: {e}");
-                    process::exit(exit_code::CONFIG_ERROR);
-                }
-            }
+        let Some(file) = findings.as_mut() else {
             return;
-        }
+        };
         #[cfg(feature = "ocsf")]
         if emit_ocsf {
-            crate::output::render_ocsf_finding(
-                m,
-                false,
-                args.ocsf_version
-                    .as_deref()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or_default(),
-            );
+            let version = args
+                .ocsf_version
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_default();
+            let result = crate::output::write_ocsf_finding(&mut file.writer, m, false, version);
+            file.check(result);
+            return;
+        }
+        match serde_json::to_string(m) {
+            Ok(line) => {
+                let result = writeln!(file.writer, "{line}");
+                file.check(result);
+            }
+            Err(e) => {
+                eprintln!("error: failed to serialize finding: {e}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
         }
     };
 

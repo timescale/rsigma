@@ -328,6 +328,45 @@ fn backtest_findings_inside_the_corpus_directory_are_refused() {
 }
 
 #[test]
+fn backtest_native_findings_line_count_matches_report_fires() {
+    let findings = temp_file(".ndjson", "");
+    let out = rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--output-format",
+            "json",
+            "--findings",
+            findings.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    let fires: u64 = report["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .map(|rule| rule["fires"].as_u64().unwrap_or(0))
+        .sum();
+    let lines = std::fs::read_to_string(findings.path())
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count() as u64;
+    assert!(fires > 0);
+    assert_eq!(lines, fires);
+}
+
+#[test]
 fn backtest_without_expectations_reports_stats_and_exits_zero() {
     // No expectations file: stats-only mode. Every rule fired, but nothing is
     // diffed and nothing is unexpected, so the run succeeds.
