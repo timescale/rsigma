@@ -153,8 +153,8 @@ impl OtlpSink {
     }
 
     /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
-    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
-        self.ocsf
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Set the deadline for one export attempt. An attempt that exceeds it
@@ -195,7 +195,7 @@ impl OtlpSink {
         let request = match self.format {
             SinkFormat::Ndjson => evaluation_results_to_logs_request(result),
             SinkFormat::Ocsf => {
-                let ocsf = self.ocsf;
+                let ocsf = &self.ocsf;
                 ocsf_findings_to_logs_request(result, |index, r| {
                     ocsf_finding(r, ctx.map(|c| (c, index)), ocsf)
                 })

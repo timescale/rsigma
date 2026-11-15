@@ -51,13 +51,13 @@ impl FileSink {
     }
 
     /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
-    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
-        self.ocsf
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and append a ProcessResult to the file.
     pub fn send(&mut self, result: &ProcessResult) -> Result<(), RuntimeError> {
-        self.out.write_result(result, self.format, None, self.ocsf)
+        self.out.write_result(result, self.format, None, &self.ocsf)
     }
 
     pub(crate) fn send_with_context(
@@ -66,7 +66,7 @@ impl FileSink {
         ctx: &DeliveryContext,
     ) -> Result<(), RuntimeError> {
         self.out
-            .write_result(result, self.format, Some(ctx), self.ocsf)
+            .write_result(result, self.format, Some(ctx), &self.ocsf)
     }
 
     /// Write a pre-serialized JSON string directly to the file.
@@ -97,7 +97,7 @@ impl<W: Write> LineWriter<W> {
         result: &ProcessResult,
         format: SinkFormat,
         ctx: Option<&DeliveryContext>,
-        ocsf: crate::ocsf::OcsfOptions,
+        ocsf: &crate::ocsf::OcsfOptions,
     ) -> Result<(), RuntimeError> {
         if result.is_empty() {
             return Ok(());
@@ -226,7 +226,7 @@ mod tests {
                     SinkFormat::default(),
                     false,
                     None,
-                    crate::ocsf::OcsfOptions::default(),
+                    &crate::ocsf::OcsfOptions::default(),
                 )
                 .unwrap()
             })
@@ -243,7 +243,7 @@ mod tests {
                 &result,
                 SinkFormat::default(),
                 Some(&ctx),
-                crate::ocsf::OcsfOptions::default(),
+                &crate::ocsf::OcsfOptions::default(),
             )
             .is_err()
         );
@@ -252,7 +252,7 @@ mod tests {
             &result,
             SinkFormat::default(),
             Some(&ctx),
-            crate::ocsf::OcsfOptions::default(),
+            &crate::ocsf::OcsfOptions::default(),
         )
         .unwrap();
         out.write_line("{\"next\":true}").unwrap();
@@ -285,7 +285,7 @@ mod tests {
                 &result,
                 SinkFormat::default(),
                 Some(&failed),
-                crate::ocsf::OcsfOptions::default(),
+                &crate::ocsf::OcsfOptions::default(),
             )
             .is_err()
         );
@@ -295,7 +295,7 @@ mod tests {
             &result,
             SinkFormat::default(),
             Some(&next),
-            crate::ocsf::OcsfOptions::default(),
+            &crate::ocsf::OcsfOptions::default(),
         )
         .unwrap();
         let written = String::from_utf8(out.inner.out).unwrap();

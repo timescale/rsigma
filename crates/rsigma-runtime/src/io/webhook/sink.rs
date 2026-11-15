@@ -221,14 +221,8 @@ impl WebhookSink {
         // OCSF line and OTLP sinks of the same dispatch.
         let body = self.body.as_ref().map(|b| {
             render_template_json_with_ocsf(b, eval, || {
-                let finding = crate::io::ocsf_finding(
-                    eval,
-                    Some((ctx, idx)),
-                    crate::ocsf::OcsfOptions {
-                        version: self.ocsf.version,
-                        ..crate::ocsf::OcsfOptions::default()
-                    },
-                );
+                let options = crate::ocsf::OcsfOptions::new(self.ocsf.version());
+                let finding = crate::io::ocsf_finding(eval, Some((ctx, idx)), &options);
                 serde_json::to_string(&finding).unwrap_or_else(|_| "null".to_string())
             })
         });

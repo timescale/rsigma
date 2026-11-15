@@ -22,14 +22,6 @@ impl OcsfVersion {
             Self::V1_3_0 => "1.3.0",
         }
     }
-
-    /// Directory name under `tests/fixtures/ocsf/` for conformance schemas.
-    pub fn fixture_dir(self) -> &'static str {
-        match self {
-            Self::V1_1_0 => "1.1.0",
-            Self::V1_3_0 => "1.3.0",
-        }
-    }
 }
 
 impl FromStr for OcsfVersion {
@@ -96,43 +88,97 @@ impl fmt::Display for OcsfIncidentClass {
     }
 }
 
+/// Why [`OcsfOptions`] could not be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OcsfOptionsError {
+    message: &'static str,
+}
+
+impl fmt::Display for OcsfOptionsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message)
+    }
+}
+
+impl std::error::Error for OcsfOptionsError {}
+
 /// Per-sink OCSF serializer options.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+///
+/// Class 2005 is only representable through [`OcsfOptions::with_incident_finding`],
+/// which requires a non-empty assignee group. Fields stay private so a later
+/// option is not a breaking change.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct OcsfOptions {
-    /// Schema version recorded in `metadata.version`.
-    pub version: OcsfVersion,
-    /// Class the incident shapes serialize into.
-    pub incident_class: OcsfIncidentClass,
-    /// Group name required on class-2005 findings (`assignee_group.name`).
-    ///
-    /// Process-lifetime: the daemon leaks the sink-spec value so options stay `Copy`.
-    pub assignee_group: Option<&'static str>,
+    version: OcsfVersion,
+    incident_class: OcsfIncidentClass,
+    assignee_group: Option<String>,
+}
+
+impl Default for OcsfOptions {
+    fn default() -> Self {
+        Self::new(OcsfVersion::default())
+    }
 }
 
 impl OcsfOptions {
-    /// Options for `version` with the default incident class.
+    /// Class 2004 options for `version`, with no assignee group.
     pub fn new(version: OcsfVersion) -> Self {
         Self {
             version,
-            incident_class: OcsfIncidentClass::default(),
+            incident_class: OcsfIncidentClass::DetectionFinding,
             assignee_group: None,
         }
     }
 
-    /// Select the class incidents serialize into.
-    #[must_use]
-    pub fn with_incident_class(mut self, incident_class: OcsfIncidentClass) -> Self {
-        self.incident_class = incident_class;
-        self
+    /// Schema version recorded in `metadata.version`.
+    pub fn version(&self) -> OcsfVersion {
+        self.version
     }
 
-    /// Name the `assignee_group` class 2005 requires.
+    /// Class the incident shapes serialize into.
+    pub fn incident_class(&self) -> OcsfIncidentClass {
+        self.incident_class
+    }
+
+    /// `assignee_group.name` when these options select class 2005.
+    pub fn assignee_group(&self) -> Option<&str> {
+        self.assignee_group.as_deref()
+    }
+
+    /// Keep class 2004. Passing class 2005 is rejected: use [`Self::with_incident_finding`].
+    pub fn with_incident_class(
+        self,
+        incident_class: OcsfIncidentClass,
+    ) -> Result<Self, OcsfOptionsError> {
+        match incident_class {
+            OcsfIncidentClass::DetectionFinding => Ok(Self {
+                incident_class: OcsfIncidentClass::DetectionFinding,
+                assignee_group: None,
+                ..self
+            }),
+            OcsfIncidentClass::IncidentFinding => Err(OcsfOptionsError {
+                message: "class 2005 requires with_incident_finding(<non-empty group>)",
+            }),
+        }
+    }
+
+    /// Select class 2005 and name its `assignee_group`.
     ///
-    /// `name` must already be `'static` (the daemon leaks the sink-spec value).
-    #[must_use]
-    pub fn with_assignee_group(mut self, name: &'static str) -> Self {
-        self.assignee_group = Some(name);
-        self
+    /// An empty or whitespace-only name is rejected, so a class-2005 finding
+    /// built from these options always has a group.
+    pub fn with_incident_finding(self, name: impl AsRef<str>) -> Result<Self, OcsfOptionsError> {
+        let name = name.as_ref().trim();
+        if name.is_empty() {
+            return Err(OcsfOptionsError {
+                message: "assignee group name must not be empty",
+            });
+        }
+        Ok(Self {
+            incident_class: OcsfIncidentClass::IncidentFinding,
+            assignee_group: Some(name.to_string()),
+            ..self
+        })
     }
 }
 
@@ -159,9 +205,27 @@ mod tests {
         let err = "2003".parse::<OcsfIncidentClass>().unwrap_err();
         assert!(err.contains("2004, 2005"), "{err}");
         assert_eq!(
-            OcsfOptions::default().incident_class,
+            OcsfOptions::default().incident_class(),
             OcsfIncidentClass::DetectionFinding
         );
+    }
+
+    #[test]
+    fn class_2005_requires_a_non_empty_assignee_group() {
+        let err = OcsfOptions::default()
+            .with_incident_class(OcsfIncidentClass::IncidentFinding)
+            .unwrap_err();
+        assert!(err.to_string().contains("with_incident_finding"));
+        assert!(
+            OcsfOptions::default()
+                .with_incident_finding("   ")
+                .is_err()
+        );
+        let opts = OcsfOptions::default()
+            .with_incident_finding("soc")
+            .unwrap();
+        assert_eq!(opts.incident_class(), OcsfIncidentClass::IncidentFinding);
+        assert_eq!(opts.assignee_group(), Some("soc"));
     }
 
     #[test]

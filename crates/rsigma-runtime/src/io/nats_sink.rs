@@ -77,8 +77,8 @@ impl NatsSink {
         self.format
     }
 
-    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
-        self.ocsf
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and publish a ProcessResult to the configured JetStream subject.
@@ -113,7 +113,7 @@ impl NatsSink {
                 self.format,
                 false,
                 ctx.map(|ctx| (ctx, index)),
-                self.ocsf,
+                &self.ocsf,
             )?;
             self.publish_one(&self.subject, &json).await?;
             published += 1;

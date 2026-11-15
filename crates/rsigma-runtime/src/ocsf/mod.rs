@@ -46,7 +46,7 @@
 mod attack;
 mod version;
 
-pub use version::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
+pub use version::{OcsfIncidentClass, OcsfOptions, OcsfOptionsError, OcsfVersion};
 
 use serde_json::{Map, Value, json};
 
@@ -92,8 +92,8 @@ impl FindingClass {
 /// Default OCSF schema version (see [`OcsfVersion::V1_1_0`]).
 pub const OCSF_VERSION: &str = "1.1.0";
 
-fn metadata_version(opts: OcsfOptions) -> &'static str {
-    opts.version.as_str()
+fn metadata_version(opts: &OcsfOptions) -> &'static str {
+    opts.version().as_str()
 }
 
 /// Time and identity source for a finding.
@@ -281,7 +281,7 @@ fn detection_finding_with_inner(
         // `rsigma.include_event` and read it from `evidences[].data`.
         src.now_ms(),
         title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     insert_if(&mut finding, "evidences", evidences);
@@ -372,7 +372,7 @@ pub fn incident_finding_with_opts(
         // start_time/end_time and timestamp the lifecycle event itself here.
         src.now_ms(),
         &title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
@@ -459,7 +459,7 @@ pub fn risk_incident_finding_with_opts(
         0,
         incident.window_end * 1000,
         &title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert(
@@ -494,8 +494,13 @@ pub fn risk_incident_finding_with_opts(
 /// samples retained, or the incident was restored from a snapshot), it falls
 /// back to one entry per contributing rule, whose uid is synthesized as
 /// `<incident id>:<rule>`.
-pub fn incident_finding_2005(incident: &IncidentResult) -> Value {
-    incident_finding_2005_opts(incident, OcsfOptions::default())
+pub fn incident_finding_2005(incident: &IncidentResult, assignee_group: &str) -> Value {
+    incident_finding_2005_opts(
+        incident,
+        OcsfOptions::default()
+            .with_incident_finding(assignee_group)
+            .expect("assignee group"),
+    )
 }
 
 /// [`incident_finding_2005`] with explicit [`OcsfOptions`].
@@ -580,13 +585,13 @@ pub fn incident_finding_2005_with_opts(
         severity_from_name(incident.max_level.as_deref()),
         src.now_ms(),
         &title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     // The incident id is stable across every emission of one incident, which
     // is what OCSF's correlation uid is for.
     set_correlation_uid(&mut finding, &incident.incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
-    insert_assignee_group(&mut finding, opts);
+    insert_assignee_group(&mut finding, &opts);
     finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
     finding.insert("end_time".to_string(), json!(incident.last_seen * 1000));
     finding.insert("count".to_string(), json!(incident.result_count));
@@ -600,8 +605,13 @@ pub fn incident_finding_2005_with_opts(
 /// contributing detections, falling back to one entry per contributing source
 /// (uid `<risk incident id>:<source>`) when none is known, as in
 /// [`incident_finding_2005`].
-pub fn risk_incident_finding_2005(incident: &RiskIncidentResult) -> Value {
-    risk_incident_finding_2005_opts(incident, OcsfOptions::default())
+pub fn risk_incident_finding_2005(incident: &RiskIncidentResult, assignee_group: &str) -> Value {
+    risk_incident_finding_2005_opts(
+        incident,
+        OcsfOptions::default()
+            .with_incident_finding(assignee_group)
+            .expect("assignee group"),
+    )
 }
 
 /// [`risk_incident_finding_2005`] with explicit [`OcsfOptions`].
@@ -695,11 +705,11 @@ pub fn risk_incident_finding_2005_with_opts(
         0,
         incident.window_end * 1000,
         &title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     set_correlation_uid(&mut finding, &incident.risk_incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
-    insert_assignee_group(&mut finding, opts);
+    insert_assignee_group(&mut finding, &opts);
     insert_if(
         &mut finding,
         "attacks",
@@ -718,7 +728,7 @@ pub fn risk_incident_finding_2005_with_opts(
 /// Serialize an alert-pipeline incident in the class `opts.incident_class`
 /// selects, at `opts.version`.
 pub fn incident_finding_in_class(incident: &IncidentResult, opts: OcsfOptions) -> Value {
-    match opts.incident_class {
+    match opts.incident_class() {
         OcsfIncidentClass::DetectionFinding => incident_finding_opts(incident, opts),
         OcsfIncidentClass::IncidentFinding => incident_finding_2005_opts(incident, opts),
     }
@@ -727,7 +737,7 @@ pub fn incident_finding_in_class(incident: &IncidentResult, opts: OcsfOptions) -
 /// Serialize a risk incident in the class `opts.incident_class` selects, at
 /// `opts.version`.
 pub fn risk_incident_finding_in_class(incident: &RiskIncidentResult, opts: OcsfOptions) -> Value {
-    match opts.incident_class {
+    match opts.incident_class() {
         OcsfIncidentClass::DetectionFinding => risk_incident_finding_opts(incident, opts),
         OcsfIncidentClass::IncidentFinding => risk_incident_finding_2005_opts(incident, opts),
     }
@@ -770,8 +780,8 @@ fn set_correlation_uid(finding: &mut Map<String, Value>, uid: &str) {
     }
 }
 
-fn insert_assignee_group(finding: &mut Map<String, Value>, opts: OcsfOptions) {
-    if let Some(name) = opts.assignee_group {
+fn insert_assignee_group(finding: &mut Map<String, Value>, opts: &OcsfOptions) {
+    if let Some(name) = opts.assignee_group() {
         finding.insert("assignee_group".to_string(), json!({ "name": name }));
     }
 }
@@ -889,7 +899,7 @@ pub fn risk_event_finding_with_opts(
         severity_from_name(event.level.as_deref()),
         time_ms,
         title,
-        metadata_version(opts),
+        metadata_version(&opts),
     );
     finding.insert("finding_info".to_string(), Value::Object(finding_info));
     finding.insert("risk_score".to_string(), json!(event.risk_score));

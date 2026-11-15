@@ -81,7 +81,7 @@ pub(crate) fn serialize_result(
     format: SinkFormat,
     pretty: bool,
     delivery: Option<(&DeliveryContext, usize)>,
-    ocsf: crate::ocsf::OcsfOptions,
+    ocsf: &crate::ocsf::OcsfOptions,
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(if pretty {
@@ -105,14 +105,14 @@ pub(crate) fn serialize_result(
 pub(crate) fn ocsf_finding(
     result: &EvaluationResult,
     delivery: Option<(&DeliveryContext, usize)>,
-    ocsf: crate::ocsf::OcsfOptions,
+    ocsf: &crate::ocsf::OcsfOptions,
 ) -> serde_json::Value {
     match delivery {
         Some((ctx, index)) => {
             let source = DeliveryFindingSource::new(ctx, index);
-            crate::ocsf::detection_finding_with_opts(result, &source, ocsf)
+            crate::ocsf::detection_finding_with_opts(result, &source, ocsf.clone())
         }
-        None => crate::ocsf::detection_finding_opts(result, ocsf),
+        None => crate::ocsf::detection_finding_opts(result, ocsf.clone()),
     }
 }
 
@@ -236,7 +236,7 @@ pub struct FormattedIncidentEnvelope {
 pub(crate) fn formatted_incident_line(
     env: &FormattedIncidentEnvelope,
     format: SinkFormat,
-    ocsf: crate::ocsf::OcsfOptions,
+    ocsf: &crate::ocsf::OcsfOptions,
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(env.native().json.clone()),
@@ -252,12 +252,12 @@ pub(crate) fn formatted_incident_line(
 /// all), otherwise a mapping of the native line.
 fn remap_native_incident(
     env: &FormattedIncidentEnvelope,
-    ocsf: crate::ocsf::OcsfOptions,
+    ocsf: &crate::ocsf::OcsfOptions,
 ) -> Result<String, RuntimeError> {
-    if ocsf == crate::ocsf::OcsfOptions::default() {
+    if ocsf == &crate::ocsf::OcsfOptions::default() {
         return Ok(env.line(SinkFormat::Ocsf).to_string());
     }
-    let finding = crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf)
+    let finding = crate::ocsf::native_incident_finding_opts(env.native().json.as_str(), ocsf.clone())
         .map_err(|e| RuntimeError::Permanent(format!("OCSF incident mapping failed: {e}")))?;
     Ok(serde_json::to_string(&finding)?)
 }
@@ -286,13 +286,13 @@ impl FormattedIncidentEnvelope {
     /// The OCSF line serialized with `options`, if one was added. The
     /// default options also match a line added with
     /// [`with_line`](Self::with_line)`(SinkFormat::Ocsf, ..)`.
-    pub fn ocsf_line(&self, options: crate::ocsf::OcsfOptions) -> Option<&str> {
+    pub fn ocsf_line(&self, options: &crate::ocsf::OcsfOptions) -> Option<&str> {
         self.ocsf_lines
             .iter()
-            .find(|(o, _)| *o == options)
+            .find(|(o, _)| o == options)
             .map(|(_, json)| json.as_str())
             .or_else(|| {
-                (options == crate::ocsf::OcsfOptions::default())
+                (options == &crate::ocsf::OcsfOptions::default())
                     .then(|| {
                         self.lines
                             .iter()
@@ -645,7 +645,7 @@ impl Sink {
             Sink::Unix(s) => s.ocsf_options(),
             _ => return None,
         };
-        (self.format() == Some(SinkFormat::Ocsf)).then_some(options)
+        (self.format() == Some(SinkFormat::Ocsf)).then(|| options.clone())
     }
 
     /// Short label for the sink variant, used in structured logs and per-sink
@@ -767,25 +767,24 @@ mod tests {
 
     #[test]
     fn envelope_serves_each_ocsf_option_set_its_own_line() {
-        use crate::ocsf::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
+        use crate::ocsf::{OcsfOptions, OcsfVersion};
 
-        let incident_2005 =
-            OcsfOptions::default().with_incident_class(OcsfIncidentClass::IncidentFinding);
+        let incident_2005 = OcsfOptions::default().with_incident_finding("soc").unwrap();
         let v13 = OcsfOptions::new(OcsfVersion::V1_3_0);
         let env = FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
             .with_ocsf_line(OcsfOptions::default(), "2004".to_string())
-            .with_ocsf_line(incident_2005, "first".to_string())
-            .with_ocsf_line(incident_2005, "2005".to_string());
+            .with_ocsf_line(incident_2005.clone(), "first".to_string())
+            .with_ocsf_line(incident_2005.clone(), "2005".to_string());
 
-        assert_eq!(env.ocsf_line(OcsfOptions::default()), Some("2004"));
-        assert_eq!(env.ocsf_line(incident_2005), Some("2005"));
-        assert_eq!(env.ocsf_line(v13), None);
+        assert_eq!(env.ocsf_line(&OcsfOptions::default()), Some("2004"));
+        assert_eq!(env.ocsf_line(&incident_2005), Some("2005"));
+        assert_eq!(env.ocsf_line(&v13), None);
         assert_eq!(
-            formatted_incident_line(&env, SinkFormat::Ocsf, incident_2005).unwrap(),
+            formatted_incident_line(&env, SinkFormat::Ocsf, &incident_2005).unwrap(),
             "2005",
         );
         assert_eq!(
-            formatted_incident_line(&env, SinkFormat::Ndjson, incident_2005).unwrap(),
+            formatted_incident_line(&env, SinkFormat::Ndjson, &incident_2005).unwrap(),
             "native",
         );
 
@@ -793,11 +792,11 @@ mod tests {
             FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
                 .with_line(SinkFormat::Ocsf, "finding".to_string());
         assert_eq!(
-            legacy.ocsf_line(OcsfOptions::default()),
+            legacy.ocsf_line(&OcsfOptions::default()),
             Some("finding"),
             "a line added by format still serves the default options",
         );
-        assert_eq!(legacy.ocsf_line(incident_2005), None);
+        assert_eq!(legacy.ocsf_line(&incident_2005), None);
     }
 
     #[test]

@@ -2649,8 +2649,9 @@ fn with_ocsf_lines(
     what: &str,
     build: impl Fn(rsigma_runtime::ocsf::OcsfOptions) -> serde_json::Value,
 ) -> FormattedIncidentEnvelope {
-    for &opts in ocsf_options {
-        match serde_json::to_string(&build(opts)) {
+    for opts in ocsf_options {
+        let opts = opts.clone();
+        match serde_json::to_string(&build(opts.clone())) {
             Ok(line) => env = env.with_ocsf_line(opts, line),
             Err(e) => tracing::warn!(error = %e, what, "Failed to serialize OCSF line"),
         }
@@ -2742,31 +2743,41 @@ fn ocsf_options_from_params(
     let version: Option<OcsfVersion> = ocsf_param(params, "ocsf_version", base, role, format);
     let incident_class: Option<OcsfIncidentClass> =
         ocsf_param(params, "ocsf_incident_class", base, role, format);
-    let mut opts = OcsfOptions::new(version.unwrap_or_default())
-        .with_incident_class(incident_class.unwrap_or_default());
-    if let Some(group) = ocsf_raw_param(params, "ocsf_assignee_group", base, role, format) {
-        if group.trim().is_empty() {
-            tracing::error!(spec = base, "ocsf_assignee_group= must not be empty");
+    let version = version.unwrap_or_default();
+    let class = incident_class.unwrap_or_default();
+    let group = ocsf_raw_param(params, "ocsf_assignee_group", base, role, format);
+    match class {
+        OcsfIncidentClass::IncidentFinding => {
+            let Some(group) = group else {
+                tracing::error!(
+                    spec = base,
+                    "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>"
+                );
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            };
+            match OcsfOptions::new(version).with_incident_finding(group) {
+                Ok(opts) => opts,
+                Err(_) => {
+                    tracing::error!(spec = base, "ocsf_assignee_group= must not be empty");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        OcsfIncidentClass::DetectionFinding => {
+            if group.is_some() {
+                tracing::error!(
+                    spec = base,
+                    "ocsf_assignee_group= is only valid with ocsf_incident_class=2005"
+                );
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+            OcsfOptions::new(version)
+        }
+        _ => {
+            tracing::error!(spec = base, "unsupported OCSF incident class");
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
-        opts = opts.with_assignee_group(Box::leak(group.to_string().into_boxed_str()));
     }
-    let class_2005 = opts.incident_class == OcsfIncidentClass::IncidentFinding;
-    if class_2005 && opts.assignee_group.is_none() {
-        tracing::error!(
-            spec = base,
-            "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>"
-        );
-        std::process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-    if !class_2005 && opts.assignee_group.is_some() {
-        tracing::error!(
-            spec = base,
-            "ocsf_assignee_group= is only valid with ocsf_incident_class=2005"
-        );
-        std::process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-    opts
 }
 
 /// Parse one optional free-form OCSF sink parameter.

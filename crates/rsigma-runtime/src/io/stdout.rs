@@ -39,8 +39,8 @@ impl StdoutSink {
         self.format
     }
 
-    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
-        self.ocsf
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and write a ProcessResult to stdout.
@@ -74,7 +74,7 @@ impl StdoutSink {
                 self.format,
                 self.pretty,
                 ctx.map(|ctx| (ctx, index)),
-                self.ocsf,
+                &self.ocsf,
             )?;
             writeln!(out, "{json}")?;
         }

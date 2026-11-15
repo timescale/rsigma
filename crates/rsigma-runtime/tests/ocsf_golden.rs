@@ -72,7 +72,7 @@ fn golden_dir() -> PathBuf {
 
 fn golden_path(version: OcsfVersion, name: &str) -> PathBuf {
     golden_dir()
-        .join(version.fixture_dir())
+        .join(version.as_str())
         .join(format!("{name}.json"))
 }
 
@@ -138,7 +138,7 @@ fn validate_class(name: &str, finding: &Value, version: OcsfVersion) {
     let class_uid = finding["class_uid"].as_i64().unwrap();
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "tests/fixtures/ocsf/{}/class_{class_uid}.schema.json",
-        version.fixture_dir()
+        version.as_str()
     ));
     let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_path).unwrap()).unwrap();
     let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
@@ -292,7 +292,7 @@ fn incident_open_2005_references_its_detection_findings() {
         },
     ]);
     check_both_versions("incident_open_2005", |opts| {
-        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts.with_assignee_group("soc"))
+        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts.with_incident_finding("soc").unwrap())
     });
 }
 
@@ -303,7 +303,7 @@ fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
         incident_finding_2005_with_opts(
             &incident("resolved", "resolved"),
             &FixedSource::new(),
-            opts.with_assignee_group("soc"),
+            opts.with_incident_finding("soc").unwrap(),
         )
     });
 }
@@ -318,7 +318,7 @@ fn risk_incident_2005_references_its_detection_findings() {
         risk_incident_finding_2005_with_opts(
             &incident,
             &FixedSource::new(),
-            opts.with_assignee_group("soc"),
+            opts.with_incident_finding("soc").unwrap(),
         )
     });
 }

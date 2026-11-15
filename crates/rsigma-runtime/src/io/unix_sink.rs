@@ -59,8 +59,8 @@ impl UnixSocketSink {
         self.format
     }
 
-    pub fn ocsf_options(&self) -> crate::ocsf::OcsfOptions {
-        self.ocsf
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and deliver each entry of a `ProcessResult` as one line.
@@ -92,7 +92,7 @@ impl UnixSocketSink {
                 self.format,
                 false,
                 ctx.map(|ctx| (ctx, index)),
-                self.ocsf,
+                &self.ocsf,
             )?);
         }
         match self.write_batch(&batch).await {
