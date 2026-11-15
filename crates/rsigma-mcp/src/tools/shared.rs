@@ -14,7 +14,7 @@ use rmcp::{
 };
 use rsigma_convert::Backend;
 use rsigma_eval::{MatchDetailLevel, Pipeline, parse_pipeline_file, resolve_builtin_pipeline};
-use rsigma_parser::ruleset::{ResolveOptions, RulesetSpec, resolve_ruleset};
+use rsigma_parser::ruleset::{ResolveOptions, RulesetError, RulesetSpec, resolve_ruleset};
 use rsigma_parser::{
     CollectionDiagnostic, LintWarning, SigmaCollection, parse_sigma_directory, parse_sigma_file,
     parse_sigma_yaml,
@@ -22,6 +22,15 @@ use rsigma_parser::{
 use serde_json::{Value, json};
 
 use crate::input::{ensure_no_symlinks, resolve_confined_path};
+
+/// Why a named ruleset could not be resolved.
+pub(crate) enum RulesetFailure {
+    /// The name, a path, or the spec is wrong.
+    Request(McpError),
+    /// The rules themselves do not resolve: an unresolved correlation
+    /// reference, a duplicate id, or an overlay that fails or matches nothing.
+    Content(String),
+}
 
 use super::RsigmaMcp;
 
@@ -203,6 +212,19 @@ impl RsigmaMcp {
         &self,
         name: &str,
     ) -> Result<(SigmaCollection, Vec<String>), McpError> {
+        self.resolve_ruleset_classified(name)
+            .map_err(|failure| match failure {
+                RulesetFailure::Request(error) => error,
+                RulesetFailure::Content(message) => invalid(message),
+            })
+    }
+
+    /// [`Self::resolve_ruleset`], keeping failures in the rules apart from
+    /// failures in the request or the server configuration.
+    pub(crate) fn resolve_ruleset_classified(
+        &self,
+        name: &str,
+    ) -> Result<(SigmaCollection, Vec<String>), RulesetFailure> {
         let Some(spec) = self.rulesets.get(name) else {
             let defined: Vec<&str> = self.rulesets.keys().map(String::as_str).collect();
             let message = if defined.is_empty() {
@@ -213,9 +235,9 @@ impl RsigmaMcp {
                     defined.join(", ")
                 )
             };
-            return Err(invalid(message));
+            return Err(RulesetFailure::Request(invalid(message)));
         };
-        let confined = self.confine_spec(spec)?;
+        let confined = self.confine_spec(spec).map_err(RulesetFailure::Request)?;
         let options = ResolveOptions {
             confine_to: self.root().map(Path::to_path_buf),
         };
@@ -223,11 +245,23 @@ impl RsigmaMcp {
         resolve_ruleset(name, &confined, &options)
             .map(|resolved| (resolved.collection, pipelines))
             .map_err(|error| {
+                let content = matches!(
+                    error,
+                    RulesetError::Dependency(_)
+                        | RulesetError::Duplicate(_)
+                        | RulesetError::Overlay(_)
+                        | RulesetError::StaleOverlay(_)
+                );
                 let message = error.to_string();
-                if message.starts_with(&format!("ruleset '{name}'")) {
-                    invalid(message)
+                let message = if message.starts_with(&format!("ruleset '{name}'")) {
+                    message
                 } else {
-                    invalid(format!("ruleset '{name}': {message}"))
+                    format!("ruleset '{name}': {message}")
+                };
+                if content {
+                    RulesetFailure::Content(message)
+                } else {
+                    RulesetFailure::Request(invalid(message))
                 }
             })
     }

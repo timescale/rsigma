@@ -13,15 +13,16 @@ use serde_json::{Value, json};
 use crate::input::resolve_confined_path;
 
 use super::RsigmaMcp;
-use super::shared::{invalid, json_result, to_value};
+use super::shared::{RulesetFailure, invalid, json_result, to_value};
 
 /// Input for `test_exemplars`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TestExemplarsInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
     /// Sigma file or directory path. Confined to `--rules-dir` when configured.
+    /// Mutually exclusive with `yaml` and `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
@@ -29,6 +30,7 @@ pub struct TestExemplarsInput {
     #[serde(default)]
     pub ruleset: Option<String>,
     /// Processing pipelines as builtin names or confined file paths.
+    /// When set, these replace the pipelines of a `ruleset`.
     #[serde(default)]
     pub pipelines: Vec<String>,
 }
@@ -124,7 +126,11 @@ impl RsigmaMcp {
             }
             (None, None, Some(name)) => {
                 let (collection, pipelines) =
-                    self.resolve_ruleset(name).map_err(LoadError::Request)?;
+                    self.resolve_ruleset_classified(name)
+                        .map_err(|failure| match failure {
+                            RulesetFailure::Request(error) => LoadError::Request(error),
+                            RulesetFailure::Content(message) => LoadError::Content(message),
+                        })?;
                 check_collection(&collection)?;
                 Ok((collection, format!("ruleset {name}"), pipelines))
             }
@@ -362,5 +368,84 @@ overlays:
             })
             .unwrap_err();
         assert!(format!("{error:?}").contains("escapes"));
+    }
+
+    fn rooted_ruleset(dir: &std::path::Path, spec: &str) -> crate::tools::RsigmaMcp {
+        std::fs::write(dir.join("rule.yml"), RULE).unwrap();
+        let spec: rsigma_parser::ruleset::RulesetSpec = yaml_serde::from_str(&format!(
+            "sources: [{}]\n{spec}",
+            dir.join("rule.yml").display()
+        ))
+        .unwrap();
+        ruleset_handler(
+            Some(dir.to_path_buf()),
+            BTreeMap::from([("base".to_string(), spec)]),
+        )
+    }
+
+    fn ruleset_input(pipelines: Vec<String>) -> TestExemplarsInput {
+        TestExemplarsInput {
+            yaml: None,
+            path: None,
+            ruleset: Some("base".to_string()),
+            pipelines,
+        }
+    }
+
+    #[test]
+    fn test_exemplars_reports_an_unresolvable_ruleset_as_a_failed_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = rooted_ruleset(
+            dir.path(),
+            "stale_overlays: error\noverlays:\n  - id: no-such-rule\n    set: { level: high }\n",
+        );
+        let value = server
+            .run_test_exemplars(ruleset_input(Vec::new()))
+            .unwrap();
+        assert_eq!(value["ok"], false, "{value}");
+        assert!(
+            value["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("ruleset 'base': "),
+            "{value}"
+        );
+    }
+
+    #[test]
+    fn test_exemplars_explicit_pipelines_replace_the_ruleset_pipelines() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = dir.path().join("broken.yml");
+        std::fs::write(&broken, "transformations: [").unwrap();
+        let server = rooted_ruleset(
+            dir.path(),
+            &format!("pipelines: ['{}']\n", broken.display()),
+        );
+        let value = server
+            .run_test_exemplars(ruleset_input(Vec::new()))
+            .unwrap();
+        assert_eq!(value["ok"], false, "{value}");
+        assert!(
+            value["error"].as_str().unwrap().contains("broken.yml"),
+            "{value}"
+        );
+
+        let value = server
+            .run_test_exemplars(ruleset_input(vec!["sysmon".to_string()]))
+            .unwrap();
+        assert_eq!(value["ok"], true, "{value}");
+    }
+
+    #[test]
+    fn test_exemplars_rejects_ruleset_and_path() {
+        let error = handler()
+            .run_test_exemplars(TestExemplarsInput {
+                yaml: None,
+                path: Some("rule.yml".to_string()),
+                ruleset: Some("base".to_string()),
+                pipelines: Vec::new(),
+            })
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"), "{error:?}");
     }
 }
