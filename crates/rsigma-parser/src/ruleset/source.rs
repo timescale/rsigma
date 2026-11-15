@@ -14,22 +14,28 @@ use super::spec::RulesetSpec;
 /// Options that constrain a resolution.
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
-    /// Reject any source, overlay, or pipeline path outside this root.
+    /// Reject any source or overlay path outside this root. Pipelines are not
+    /// resolved here, so callers confine pipeline paths themselves.
     pub confine_to: Option<PathBuf>,
 }
 
 /// A rule document together with where it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
+    /// The parsed document.
     pub doc: CandidateDoc,
+    /// Where the document was read from.
     pub origin: RuleOrigin,
 }
 
 /// A parsed document from a ruleset source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CandidateDoc {
+    /// A detection rule.
     Detection(SigmaRule),
+    /// A correlation rule.
     Correlation(CorrelationRule),
+    /// A filter rule.
     Filter(FilterRule),
 }
 
@@ -49,8 +55,12 @@ pub struct RuleOrigin {
 /// A file read while resolving a ruleset, with the bytes used to hash it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
+    /// Index of the source in the spec; always 0 for overlay files.
     pub source: usize,
+    /// The path as read.
     pub path: PathBuf,
+    /// Path relative to the source root (the working directory for overlay
+    /// files), with `/` separators.
     pub relative: PathBuf,
     pub sha256_input: Vec<u8>,
 }
@@ -58,8 +68,11 @@ pub struct SourceFile {
 /// Everything read from a spec's sources.
 #[derive(Debug, Clone, Default)]
 pub struct LoadedSources {
+    /// Every parsed document, in source and file order.
     pub candidates: Vec<Candidate>,
+    /// Every file read.
     pub files: Vec<SourceFile>,
+    /// Parse diagnostics, with file paths.
     pub diagnostics: Vec<CollectionDiagnostic>,
 }
 
@@ -67,12 +80,16 @@ pub struct LoadedSources {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentKind {
+    /// A detection rule.
     Detection,
+    /// A correlation rule.
     Correlation,
+    /// A filter rule.
     Filter,
 }
 
 impl DocumentKind {
+    /// The lowercase name used in selectors and reports.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Detection => "detection",
@@ -83,6 +100,7 @@ impl DocumentKind {
 }
 
 impl Candidate {
+    /// The document kind.
     pub fn kind(&self) -> DocumentKind {
         match self.doc {
             CandidateDoc::Detection(_) => DocumentKind::Detection,
@@ -91,6 +109,7 @@ impl Candidate {
         }
     }
 
+    /// The document `id`.
     pub fn id(&self) -> Option<&str> {
         match &self.doc {
             CandidateDoc::Detection(rule) => rule.id.as_deref(),
@@ -99,6 +118,7 @@ impl Candidate {
         }
     }
 
+    /// The document `name`.
     pub fn name(&self) -> Option<&str> {
         match &self.doc {
             CandidateDoc::Detection(rule) => rule.name.as_deref(),
@@ -107,6 +127,7 @@ impl Candidate {
         }
     }
 
+    /// The document title.
     pub fn title(&self) -> &str {
         match &self.doc {
             CandidateDoc::Detection(rule) => &rule.title,
@@ -115,6 +136,7 @@ impl Candidate {
         }
     }
 
+    /// The document logsource; correlations have none of their own.
     pub fn logsource(&self) -> Option<&LogSource> {
         match &self.doc {
             CandidateDoc::Detection(rule) => Some(&rule.logsource),
@@ -123,6 +145,7 @@ impl Candidate {
         }
     }
 
+    /// The document tags.
     pub fn tags(&self) -> &[String] {
         match &self.doc {
             CandidateDoc::Detection(rule) => &rule.tags,
@@ -131,6 +154,7 @@ impl Candidate {
         }
     }
 
+    /// The document level.
     pub fn level(&self) -> Option<crate::ast::Level> {
         match &self.doc {
             CandidateDoc::Detection(rule) => rule.level,
@@ -139,6 +163,7 @@ impl Candidate {
         }
     }
 
+    /// The document status.
     pub fn status(&self) -> Option<crate::ast::Status> {
         match &self.doc {
             CandidateDoc::Detection(rule) => rule.status,
@@ -174,7 +199,6 @@ pub fn load_sources(
     opts: &ResolveOptions,
 ) -> Result<LoadedSources, RulesetError> {
     let mut loaded = LoadedSources::default();
-    let mut visited = HashSet::new();
 
     for (source_index, source) in spec.sources.iter().enumerate() {
         if !source.exists() {
@@ -194,6 +218,9 @@ pub fn load_sources(
 
         let mut paths = Vec::new();
         if source.is_dir() {
+            // Per source, so overlapping sources each see their full tree and
+            // the uniqueness check reports the overlap.
+            let mut visited = HashSet::new();
             crate::walk::collect_yaml_files(&root, &root, None, &mut paths, &mut visited).map_err(
                 |e| RulesetError::Io {
                     ruleset: None,
@@ -364,6 +391,36 @@ mod tests {
         assert_eq!(loaded.candidates[0].origin.ordinal, 0);
         assert_eq!(loaded.candidates[1].origin.ordinal, 0);
         assert_eq!(loaded.candidates[2].origin.ordinal, 0);
+    }
+
+    #[test]
+    fn overlapping_sources_load_the_same_files_in_either_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(&root.join("rules/windows/w.yml"), &rule("w", "W"));
+        write(&root.join("rules/l.yml"), &rule("l", "L"));
+        for sources in [
+            vec![root.join("rules"), root.join("rules/windows")],
+            vec![root.join("rules/windows"), root.join("rules")],
+        ] {
+            let spec = RulesetSpec {
+                sources,
+                ..Default::default()
+            };
+            let loaded = load_sources(&spec, &ResolveOptions::default()).unwrap();
+            let per_source: Vec<usize> = (0..2)
+                .map(|index| {
+                    loaded
+                        .candidates
+                        .iter()
+                        .filter(|c| c.origin.source == index)
+                        .count()
+                })
+                .collect();
+            let windows_first = spec.sources[0].ends_with("windows");
+            let expected = if windows_first { [1, 2] } else { [2, 1] };
+            assert_eq!(per_source, expected, "{:?}", spec.sources);
+        }
     }
 
     #[test]

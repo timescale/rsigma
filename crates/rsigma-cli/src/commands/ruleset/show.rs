@@ -63,6 +63,7 @@ fn decision_label(decision: &Decision) -> String {
         Decision::FilterKept => "filter_kept".to_string(),
         Decision::FilterOrphaned => "filter_orphaned".to_string(),
         Decision::NotSelected => "not_selected".to_string(),
+        other => other.as_str().to_string(),
     }
 }
 
@@ -80,6 +81,7 @@ fn decision_reason(decision: &Decision) -> String {
         Decision::FilterKept => "filter retained because its target is kept".to_string(),
         Decision::FilterOrphaned => "filter dropped because its target is not kept".to_string(),
         Decision::NotSelected => "not matched by any include selector".to_string(),
+        other => other.as_str().to_string(),
     }
 }
 

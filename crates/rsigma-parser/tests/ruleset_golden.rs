@@ -38,6 +38,7 @@ fn decision_label(decision: &Decision) -> String {
         Decision::FilterKept => "filter_kept".to_string(),
         Decision::FilterOrphaned => "filter_orphaned".to_string(),
         Decision::NotSelected => "not_selected".to_string(),
+        other => other.as_str().to_string(),
     }
 }
 

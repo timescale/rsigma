@@ -86,17 +86,28 @@ impl RefIndex {
 
 /// Why a candidate was kept or dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Decision {
+    /// Admitted by the include selector at this index, or by an empty include
+    /// list.
     Included { selector: Option<usize> },
+    /// Rejected by the exclude selector at this index.
     Excluded { selector: usize },
+    /// Matched no include selector.
     NotSelected,
+    /// Pulled in as a dependency of the correlation with this id, name, or
+    /// title.
     PulledIn { by: String },
+    /// A correlation dropped for an unresolved reference, and why.
     Dropped { reason: String },
+    /// A filter kept because it targets any rule or a kept detection.
     FilterKept,
+    /// A filter whose targets are all gone.
     FilterOrphaned,
 }
 
 impl Decision {
+    /// The snake_case label used in reports.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Included { .. } => "included",
@@ -251,13 +262,7 @@ impl CompiledSelector {
             return false;
         }
         if let Some(logsource) = &self.logsource
-            && !logsource_matches(
-                candidate_index,
-                candidates,
-                refs,
-                logsource,
-                &mut HashSet::new(),
-            )
+            && !logsource_matches(candidate_index, candidates, refs, logsource)
         {
             return false;
         }
@@ -265,29 +270,39 @@ impl CompiledSelector {
     }
 }
 
+/// Whether a candidate's logsource matches; a correlation matches when any
+/// document reachable through its references does. Walks with an explicit
+/// stack, since a crafted ruleset can chain thousands of correlations.
 fn logsource_matches(
     index: usize,
     candidates: &[Candidate],
     refs: &RefIndex,
     selector: &CompiledLogsource,
-    visited: &mut HashSet<usize>,
 ) -> bool {
-    if !visited.insert(index) {
-        return false;
+    let mut visited = HashSet::new();
+    let mut stack = vec![index];
+    while let Some(index) = stack.pop() {
+        if !visited.insert(index) {
+            continue;
+        }
+        let matched = match &candidates[index].doc {
+            CandidateDoc::Detection(rule) => logsource_fields_match(&rule.logsource, selector),
+            CandidateDoc::Filter(rule) => rule
+                .logsource
+                .as_ref()
+                .is_some_and(|logsource| logsource_fields_match(logsource, selector)),
+            CandidateDoc::Correlation(rule) => {
+                for reference in &rule.rules {
+                    stack.extend(refs.resolve(reference));
+                }
+                false
+            }
+        };
+        if matched {
+            return true;
+        }
     }
-    let candidate = &candidates[index];
-    match &candidate.doc {
-        CandidateDoc::Detection(rule) => logsource_fields_match(&rule.logsource, selector),
-        CandidateDoc::Filter(rule) => rule
-            .logsource
-            .as_ref()
-            .is_some_and(|logsource| logsource_fields_match(logsource, selector)),
-        CandidateDoc::Correlation(rule) => rule.rules.iter().any(|reference| {
-            refs.resolve(reference)
-                .into_iter()
-                .any(|target| logsource_matches(target, candidates, refs, selector, visited))
-        }),
-    }
+    false
 }
 
 fn logsource_fields_match(logsource: &crate::ast::LogSource, selector: &CompiledLogsource) -> bool {
@@ -505,13 +520,50 @@ mod tests {
     }
 
     #[test]
+    fn a_deep_correlation_chain_does_not_exhaust_the_stack() {
+        const DEPTH: usize = 2_000;
+        let mut candidates = vec![detection("c0", "Base", &[], "high", "base.yml")];
+        for depth in 1..=DEPTH {
+            candidates.push(candidate(
+                &format!(
+                    "title: C{depth}\nid: c{depth}\ncorrelation:\n    type: event_count\n    rules:\n        - c{}\n    timespan: 5m\n    condition:\n        gte: 2\n",
+                    depth - 1
+                ),
+                "chain.yml",
+            ));
+        }
+        let include = vec![RuleSelector {
+            logsource: Some(LogsourceSelector {
+                product: vec!["windows".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }];
+        let decisions = std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(move || select(spec(include, vec![]), &candidates))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(decisions[DEPTH], Decision::Included { selector: Some(0) });
+    }
+
+    #[test]
     fn level_and_status_are_exact_and_case_sensitive_enums() {
         let candidates = vec![detection("a", "A", &[], "high", "a.yml")];
         let include = vec![RuleSelector {
             level: vec!["HIGH".into()],
             ..Default::default()
         }];
-        assert!(decide(&candidates, &spec(include, vec![])).is_err());
+        let error = decide(&candidates, &spec(include, vec![])).unwrap_err();
+        assert!(error.to_string().contains("'HIGH'"), "{error}");
+
+        let include = vec![RuleSelector {
+            status: vec!["Stable".into()],
+            ..Default::default()
+        }];
+        let error = decide(&candidates, &spec(include, vec![])).unwrap_err();
+        assert!(error.to_string().contains("'Stable'"), "{error}");
     }
 
     #[test]

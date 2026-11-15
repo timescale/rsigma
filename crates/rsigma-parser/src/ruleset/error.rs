@@ -15,34 +15,51 @@ use thiserror::Error;
 /// which is `None` only when they come straight from
 /// [`load_sources`](super::load_sources) or an [`OverlayLoader`](super::OverlayLoader).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RulesetError {
+    /// The spec failed static validation; one message per problem.
     #[error("{}", .0.join("; "))]
     InvalidSpec(Vec<String>),
+    /// A declared source does not exist.
     #[error("{}source path does not exist: {}", prefix(ruleset), path.display())]
     MissingSource {
+        /// The ruleset, once known.
         ruleset: Option<String>,
+        /// The missing source.
         path: PathBuf,
     },
+    /// A source or overlay file could not be read.
     #[error("{}cannot read {}: {source}", prefix(ruleset), path.display())]
     Io {
+        /// The ruleset, once known.
         ruleset: Option<String>,
+        /// The path that failed.
         path: PathBuf,
+        /// The underlying error.
         #[source]
         source: std::io::Error,
     },
+    /// A path resolved outside [`ResolveOptions::confine_to`](super::ResolveOptions::confine_to).
     #[error("{}path escapes the confined root: {}", prefix(ruleset), path.display())]
     Confinement {
+        /// The ruleset, once known.
         ruleset: Option<String>,
+        /// The offending path.
         path: PathBuf,
     },
+    /// A selector could not be compiled.
     #[error("{0}")]
     Selector(String),
+    /// Correlation references that do not resolve under the policy.
     #[error("{}", .0.join("; "))]
     Dependency(Vec<String>),
+    /// Two kept documents share an id or name.
     #[error("{0}")]
     Duplicate(String),
+    /// An overlay could not be loaded or applied.
     #[error("{0}")]
     Overlay(String),
+    /// Overlays that match no kept document under `stale_overlays: error`.
     #[error("{}", .0.join("; "))]
     StaleOverlay(Vec<String>),
 }
