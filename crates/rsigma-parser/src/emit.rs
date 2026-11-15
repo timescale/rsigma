@@ -333,6 +333,7 @@ pub fn emit_filter_yaml(rule: &FilterRule) -> String {
     for (name, det) in sorted_named(&rule.detection.named) {
         emit_named_detection(&mut out, name, det, "    ");
     }
+    emit_timeframe(&mut out, "    ", &rule.detection);
     emit_condition_at(&mut out, "    ", &rule.detection.conditions);
 
     emit_string_list(&mut out, "fields", &rule.fields, ScalarCtx::Prose);
@@ -494,7 +495,20 @@ fn emit_detection(out: &mut String, detection: &Detections) {
     for (name, det) in sorted_named(&detection.named) {
         emit_named_detection(out, name, det, STEP);
     }
+    emit_timeframe(out, STEP, detection);
     emit_condition(out, &detection.conditions);
+}
+
+fn emit_timeframe(out: &mut String, indent: &str, detection: &Detections) {
+    if let Some(timeframe) = &detection.timeframe {
+        push_scalar(
+            out,
+            indent,
+            Lead::Key("timeframe"),
+            timeframe,
+            ScalarCtx::Value,
+        );
+    }
 }
 
 fn emit_condition(out: &mut String, conditions: &[ConditionExpr]) {
@@ -1404,5 +1418,21 @@ rsigma.suppress:
         assert!(emitted.contains("rules:"), "{emitted}");
         assert!(emitted.contains("whoami_rule"), "{emitted}");
         assert!(emitted.contains("filter_main_system"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_a_detection_timeframe() {
+        let emitted = assert_round_trips(
+            "title: Burst\nlogsource:\n    product: windows\ndetection:\n    selection:\n        EventID: 4625\n    condition: selection\n    timeframe: 5m\n",
+        );
+        assert!(emitted.contains("    timeframe: 5m\n"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_a_filter_timeframe() {
+        let emitted = assert_filter_round_trips(
+            "title: Drop bursts\nlogsource:\n    product: windows\nfilter:\n    selection:\n        User: SYSTEM\n    condition: selection\n    timeframe: 5m\n",
+        );
+        assert!(emitted.contains("    timeframe: 5m\n"), "{emitted}");
     }
 }
