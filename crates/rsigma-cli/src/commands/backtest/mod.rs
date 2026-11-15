@@ -140,10 +140,16 @@ fn overlay_backtest_config(
             eprintln!("error: set either backtest.rules or backtest.ruleset, not both");
             process::exit(exit_code::CONFIG_ERROR);
         }
-        if !cli_rules && let Some(v) = bt.rules {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = bt.rules
+        {
             args.rules = Some(v);
         }
-        if !cli_ruleset && let Some(v) = bt.ruleset {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = bt.ruleset
+        {
             args.ruleset = Some(v);
         }
         if !explicit("corpus")

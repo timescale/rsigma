@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{assert_golden, assert_json_golden, rsigma};
+use common::{assert_golden, assert_json_golden, rsigma_isolated as rsigma};
 use predicates::prelude::*;
 
 const W1: &str = "aaaaaaaa-0000-4000-8000-000000000001";

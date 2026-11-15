@@ -344,10 +344,16 @@ fn overlay_eval_config(
             eprintln!("error: set either eval.rules or eval.ruleset, not both");
             process::exit(exit_code::CONFIG_ERROR);
         }
-        if !cli_rules && let Some(v) = eval.rules {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = eval.rules
+        {
             args.rules = Some(v);
         }
-        if !cli_ruleset && let Some(v) = eval.ruleset {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = eval.ruleset
+        {
             args.ruleset = Some(v);
         }
         if !explicit("pipelines") {

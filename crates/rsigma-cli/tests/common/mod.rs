@@ -15,6 +15,22 @@ pub fn rsigma() -> Command {
     Command::cargo_bin("rsigma").expect("binary not found")
 }
 
+/// `rsigma()` isolated from the developer's user config and `RSIGMA_*`
+/// environment, for tests whose result depends on config discovery.
+pub fn rsigma_isolated() -> Command {
+    let home = std::env::temp_dir().join("rsigma-isolated-home");
+    let mut command = rsigma();
+    command
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("RSIGMA_") {
+            command.env_remove(key);
+        }
+    }
+    command
+}
+
 /// Path to the freshly-built `rsigma` binary for tests that need to spawn
 /// it directly via `std::process::Command` (long-running daemon processes).
 pub fn rsigma_bin() -> String {

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use common::rsigma;
+use common::rsigma_isolated as rsigma;
 use serde_json::Value;
 
 const W1: &str = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -263,6 +263,235 @@ fn eval_rejects_rules_and_ruleset_in_the_same_config() {
     assert!(stderr(&output).contains("set either eval.rules or eval.ruleset"));
 }
 
+/// Every config section that accepts a ruleset points at `vendor`, whose
+/// pipeline is sysmon.
+fn section_ruleset_config() -> &'static str {
+    "rulesets:
+  vendor:
+    sources: [vendor]
+    pipelines: [sysmon]
+eval:
+  ruleset: vendor
+backtest:
+  ruleset: vendor
+coverage:
+  ruleset: vendor
+hygiene:
+  ruleset: vendor
+"
+}
+
+/// Every config section that accepts rules points at `local`.
+fn section_rules_config() -> &'static str {
+    "rulesets:
+  vendor:
+    sources: [vendor]
+eval:
+  rules: local
+backtest:
+  rules: local
+coverage:
+  rules: [local]
+hygiene:
+  rules: [local]
+"
+}
+
+#[test]
+fn explicit_rules_beat_a_configured_ruleset() {
+    let dir = fixture_copy();
+    write_file(dir.path(), "sections.yaml", section_ruleset_config());
+    fs::write(dir.path().join("corpus.ndjson"), "{}\n").unwrap();
+    let config = ["--config", "sections.yaml", "-r", "local"];
+
+    let eval = run(
+        dir.path(),
+        &[&["engine", "eval"], &config[..], &["--event", "{}"]].concat(),
+    );
+    assert!(eval.status.success(), "{}", stderr(&eval));
+    assert!(
+        stderr(&eval).contains("Loaded 2 rules from local"),
+        "{}",
+        stderr(&eval)
+    );
+    assert!(!stderr(&eval).contains("sysmon"), "{}", stderr(&eval));
+
+    let backtest = run(
+        dir.path(),
+        &[
+            &["rule", "backtest"],
+            &config[..],
+            &["--corpus", "corpus.ndjson", "--output-format", "json"],
+        ]
+        .concat(),
+    );
+    assert!(backtest.status.success(), "{}", stderr(&backtest));
+    assert_eq!(json_stdout(&backtest)["summary"]["rules_loaded"], 2);
+
+    let coverage = run(dir.path(), &[&["rule", "coverage"], &config[..]].concat());
+    assert!(coverage.status.success(), "{}", stderr(&coverage));
+    assert!(
+        stderr(&coverage).contains("from 2/2 tagged rules"),
+        "{}",
+        stderr(&coverage)
+    );
+
+    let hygiene = run(
+        dir.path(),
+        &[
+            &["rule", "hygiene"],
+            &config[..],
+            &["--output-format", "json"],
+        ]
+        .concat(),
+    );
+    assert!(hygiene.status.success(), "{}", stderr(&hygiene));
+    assert_eq!(json_stdout(&hygiene)["summary"]["rules_total"], 2);
+}
+
+#[test]
+fn an_explicit_ruleset_beats_configured_rules() {
+    let dir = fixture_copy();
+    write_file(dir.path(), "sections.yaml", section_rules_config());
+    fs::write(dir.path().join("corpus.ndjson"), "{}\n").unwrap();
+    let config = ["--config", "sections.yaml", "--ruleset", "vendor"];
+
+    let eval = run(
+        dir.path(),
+        &[&["engine", "eval"], &config[..], &["--event", "{}"]].concat(),
+    );
+    assert!(eval.status.success(), "{}", stderr(&eval));
+    assert!(
+        stderr(&eval).contains("from ruleset vendor"),
+        "{}",
+        stderr(&eval)
+    );
+
+    let backtest = run(
+        dir.path(),
+        &[
+            &["rule", "backtest"],
+            &config[..],
+            &["--corpus", "corpus.ndjson", "--output-format", "json"],
+        ]
+        .concat(),
+    );
+    assert!(backtest.status.success(), "{}", stderr(&backtest));
+    assert_eq!(json_stdout(&backtest)["summary"]["rules_loaded"], 10);
+
+    let coverage = run(dir.path(), &[&["rule", "coverage"], &config[..]].concat());
+    assert!(coverage.status.success(), "{}", stderr(&coverage));
+    assert!(
+        stderr(&coverage).contains("from 10/10 tagged rules"),
+        "{}",
+        stderr(&coverage)
+    );
+
+    let hygiene = run(
+        dir.path(),
+        &[
+            &["rule", "hygiene"],
+            &config[..],
+            &["--output-format", "json"],
+        ]
+        .concat(),
+    );
+    assert!(hygiene.status.success(), "{}", stderr(&hygiene));
+    assert_eq!(json_stdout(&hygiene)["summary"]["rules_total"], 10);
+}
+
+#[test]
+fn backtest_coverage_and_hygiene_read_the_ruleset_from_the_config() {
+    let dir = fixture_copy();
+    write_file(dir.path(), "sections.yaml", section_ruleset_config());
+    fs::write(dir.path().join("corpus.ndjson"), "{}\n").unwrap();
+
+    let backtest = run(
+        dir.path(),
+        &[
+            "rule",
+            "backtest",
+            "--config",
+            "sections.yaml",
+            "--corpus",
+            "corpus.ndjson",
+            "--output-format",
+            "json",
+        ],
+    );
+    assert!(backtest.status.success(), "{}", stderr(&backtest));
+    assert_eq!(json_stdout(&backtest)["summary"]["rules_loaded"], 10);
+
+    let coverage = run(
+        dir.path(),
+        &["rule", "coverage", "--config", "sections.yaml"],
+    );
+    assert!(coverage.status.success(), "{}", stderr(&coverage));
+    assert!(
+        stderr(&coverage).contains("from 10/10 tagged rules"),
+        "{}",
+        stderr(&coverage)
+    );
+
+    let hygiene = run(
+        dir.path(),
+        &[
+            "rule",
+            "hygiene",
+            "--config",
+            "sections.yaml",
+            "--output-format",
+            "json",
+        ],
+    );
+    assert!(hygiene.status.success(), "{}", stderr(&hygiene));
+    assert_eq!(json_stdout(&hygiene)["summary"]["rules_total"], 10);
+}
+
+#[test]
+fn backtest_coverage_and_hygiene_reject_rules_and_ruleset_in_one_section() {
+    let dir = fixture_copy();
+    write_file(
+        dir.path(),
+        "both.yaml",
+        "rulesets:
+  vendor:
+    sources: [vendor]
+backtest:
+  rules: local
+  ruleset: vendor
+coverage:
+  rules: [local]
+  ruleset: vendor
+hygiene:
+  rules: [local]
+  ruleset: vendor
+",
+    );
+    fs::write(dir.path().join("corpus.ndjson"), "{}\n").unwrap();
+    for (command, extra) in [
+        ("backtest", vec!["--corpus", "corpus.ndjson"]),
+        ("coverage", vec![]),
+        ("hygiene", vec![]),
+    ] {
+        let output = run(
+            dir.path(),
+            &[&["rule", command, "--config", "both.yaml"], &extra[..]].concat(),
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{command}: {}",
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains(&format!("set either {command}.rules or {command}.ruleset")),
+            "{command}: {}",
+            stderr(&output)
+        );
+    }
+}
+
 #[test]
 fn explicit_pipeline_overrides_the_ruleset_pipeline() {
     let dir = fixture_copy();
@@ -464,6 +693,11 @@ fn backend_convert_uses_the_resolved_ruleset() {
     let text = stdout(&output);
     assert!(text.contains("Image endswith"), "{text}");
     assert!(text.contains("whoami.exe"), "{text}");
+    assert!(
+        !text.contains("EventID=1"),
+        "the sysmon pipeline leaked: {text}"
+    );
+    assert!(!stderr(&output).contains("sysmon"), "{}", stderr(&output));
 }
 
 #[test]
@@ -487,6 +721,11 @@ fn pipeline_diff_uses_only_the_explicit_pipeline() {
     assert!(output.status.success(), "{}", stderr(&output));
     let text = stdout(&output);
     assert!(text.contains("process.executable"), "{text}");
+    assert!(
+        !text.contains("sysmon_"),
+        "the sysmon pipeline leaked: {text}"
+    );
+    assert!(!stderr(&output).contains("sysmon"), "{}", stderr(&output));
 }
 
 #[test]

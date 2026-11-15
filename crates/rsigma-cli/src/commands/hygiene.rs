@@ -152,12 +152,16 @@ fn overlay_hygiene_config(
         // Repeatable inputs with no clap default: an empty vec means the
         // operator left them off, so the config layer fills them.
         if !cli_rules
+            && !cli_ruleset
             && args.rules.is_empty()
             && let Some(v) = h.rules
         {
             args.rules = v;
         }
-        if !cli_ruleset && let Some(v) = h.ruleset {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = h.ruleset
+        {
             args.ruleset = Some(v);
         }
         if args.fail_on.is_empty()

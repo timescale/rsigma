@@ -152,12 +152,16 @@ fn overlay_coverage_config(
         // `--rules` is repeatable with no clap default, so an empty vec means
         // the operator left it off; let the config layer fill it.
         if !cli_rules
+            && !cli_ruleset
             && args.rules.is_empty()
             && let Some(v) = cov.rules
         {
             args.rules = v;
         }
-        if !cli_ruleset && let Some(v) = cov.ruleset {
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = cov.ruleset
+        {
             args.ruleset = Some(v);
         }
         // `--atomics`/`--baseline` have no clap default, so `is_none` means the
