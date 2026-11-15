@@ -242,18 +242,22 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
                 }
             }
         }
-        EmitMode::Report => match ctx.format {
-            OutputFormat::Json => render_json(&dto, true),
-            OutputFormat::Ndjson => {
-                for f in &dto.fields {
-                    render_json(f, false);
+        EmitMode::Report => {
+            let format = ctx.resolve_ocsf_unsupported("rule draft", OutputFormat::Table);
+            match format {
+                OutputFormat::Json => render_json(&dto, true),
+                OutputFormat::Ndjson => {
+                    for f in &dto.fields {
+                        render_json(f, false);
+                    }
+                    print_summary_stderr(&dto, &ctx);
                 }
-                print_summary_stderr(&dto, &ctx);
+                OutputFormat::Csv => render_delimited(&dto, ',', &ctx),
+                OutputFormat::Tsv => render_delimited(&dto, '\t', &ctx),
+                OutputFormat::Table => print_table(&dto, &report, &ctx),
+                OutputFormat::Ocsf => unreachable!("resolved above"),
             }
-            OutputFormat::Csv => render_delimited(&dto, ',', &ctx),
-            OutputFormat::Tsv => render_delimited(&dto, '\t', &ctx),
-            OutputFormat::Table => print_table(&dto, &report, &ctx),
-        },
+        }
     }
 }
 
@@ -341,14 +345,18 @@ fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
                 print_correlation_summary(&report);
             }
         }
-        EmitMode::Report => match ctx.format {
-            OutputFormat::Json => render_json(&report, true),
-            OutputFormat::Ndjson => render_json(&report, false),
-            OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
-                print_correlation_summary(&report);
-                print!("{}", report.rule_yaml);
+        EmitMode::Report => {
+            let format = ctx.resolve_ocsf_unsupported("rule draft --groups", OutputFormat::Json);
+            match format {
+                OutputFormat::Json => render_json(&report, true),
+                OutputFormat::Ndjson => render_json(&report, false),
+                OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
+                    print_correlation_summary(&report);
+                    print!("{}", report.rule_yaml);
+                }
+                OutputFormat::Ocsf => unreachable!("resolved above"),
             }
-        },
+        }
     }
 }
 

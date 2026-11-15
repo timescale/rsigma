@@ -185,7 +185,8 @@ enum RenderState {
 
 impl TailRenderer {
     fn new(ctx: OutputCtx) -> Self {
-        let state = match ctx.format {
+        let format = ctx.resolve_ocsf_unsupported("engine tail", OutputFormat::Ndjson);
+        let state = match format {
             OutputFormat::Json => RenderState::Json {
                 pretty: ctx.pretty_json(),
             },
@@ -197,6 +198,7 @@ impl TailRenderer {
                 RenderState::Delimited(Box::new(DelimitedWriter::new('\t', TAIL_HEADERS)))
             }
             OutputFormat::Table => RenderState::Table(Vec::new()),
+            OutputFormat::Ocsf => unreachable!(),
         };
         Self { state }
     }

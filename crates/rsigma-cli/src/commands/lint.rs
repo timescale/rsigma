@@ -145,7 +145,7 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
     //    when the operator did not explicitly set `--output-format` (the
     //    TTY-aware NDJSON fallback would regress the existing UX).
     let effective_format = if ctx.explicit_format {
-        ctx.format
+        ctx.resolve_ocsf_unsupported("rule lint", OutputFormat::Table)
     } else {
         OutputFormat::Table
     };
@@ -197,6 +197,7 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
         OutputFormat::Table => {
             // Fall through to the existing human-friendly renderer below.
         }
+        OutputFormat::Ocsf => unreachable!(),
     }
 
     // 6. Per-file rendering (the human view).

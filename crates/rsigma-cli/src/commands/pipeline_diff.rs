@@ -101,7 +101,7 @@ pub(crate) fn cmd_pipeline_diff(args: PipelineDiffArgs, ctx: OutputCtx) {
     }
 
     let effective = if ctx.explicit_format {
-        ctx.format
+        ctx.resolve_ocsf_unsupported("pipeline diff", OutputFormat::Table)
     } else {
         OutputFormat::Table
     };
@@ -116,6 +116,7 @@ pub(crate) fn cmd_pipeline_diff(args: PipelineDiffArgs, ctx: OutputCtx) {
         OutputFormat::Tsv => render_diff_delimited(&diffs, '\t'),
         // Implicit/table: human unified diff.
         OutputFormat::Table => render_human(&diffs, &ctx),
+        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

@@ -108,7 +108,8 @@ impl AtomicsPlan {
     }
 
     pub(crate) fn render(&self, ctx: &OutputCtx) {
-        match ctx.format {
+        let format = ctx.resolve_ocsf_unsupported("rule coverage plan", OutputFormat::Json);
+        match format {
             OutputFormat::Json => render_json(self, ctx.pretty_json()),
             OutputFormat::Ndjson => {
                 for row in self.rows() {
@@ -118,6 +119,7 @@ impl AtomicsPlan {
             OutputFormat::Csv => self.render_delimited(','),
             OutputFormat::Tsv => self.render_delimited('\t'),
             OutputFormat::Table => self.render_human(ctx),
+            OutputFormat::Ocsf => unreachable!(),
         }
 
         if ctx.format != OutputFormat::Table && ctx.show_stats() {

@@ -97,5 +97,9 @@ fn emit_ast<T: serde::Serialize>(command: &str, ctx: &OutputCtx, value: &T, pret
             ctx.warn_unsupported(command, "json");
             render_json(value, pretty_flag);
         }
+        OutputFormat::Ocsf => {
+            ctx.warn_unsupported(command, "json");
+            render_json(value, pretty_flag);
+        }
     }
 }

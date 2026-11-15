@@ -194,7 +194,8 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
             // text remains the default (and the only path when `--output` is
             // set). Table/csv/tsv warn and fall back to raw text.
             if ctx.explicit_format && output.is_none() {
-                match ctx.format {
+                let out_format = ctx.resolve_ocsf_unsupported("rule convert", OutputFormat::Json);
+                match out_format {
                     OutputFormat::Json => {
                         let queries: Vec<serde_json::Value> = output_data
                             .queries
@@ -237,8 +238,9 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
                         return;
                     }
                     OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
-                        ctx.warn_unsupported("backend convert", "raw query text");
+                        ctx.warn_unsupported("rule convert", "raw query text");
                     }
+                    OutputFormat::Ocsf => unreachable!("resolved above"),
                 }
             }
             let all_queries: Vec<String> = output_data
@@ -348,7 +350,8 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
     // the same envelope shape the native path emits. sigma-cli text backends
     // emit one query per line, so each non-empty line becomes a query object.
     if ctx.explicit_format && output.is_none() {
-        match ctx.format {
+        let out_format = ctx.resolve_ocsf_unsupported("rule convert", OutputFormat::Json);
+        match out_format {
             OutputFormat::Json => {
                 let query_objs: Vec<serde_json::Value> = conversion
                     .queries
@@ -381,8 +384,9 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
                 return;
             }
             OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
-                ctx.warn_unsupported("backend convert", "raw query text");
+                ctx.warn_unsupported("rule convert", "raw query text");
             }
+            OutputFormat::Ocsf => unreachable!("resolved above"),
         }
     }
 

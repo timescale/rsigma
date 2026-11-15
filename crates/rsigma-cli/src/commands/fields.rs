@@ -56,7 +56,7 @@ pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
     let format = if json {
         OutputFormat::Json
     } else if ctx.explicit_format {
-        ctx.format
+        ctx.resolve_ocsf_unsupported("rule fields", OutputFormat::Table)
     } else {
         OutputFormat::Table
     };
@@ -73,6 +73,7 @@ pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
         OutputFormat::Csv => render_fields_delimited(&report, ',', &ctx),
         OutputFormat::Tsv => render_fields_delimited(&report, '\t', &ctx),
         OutputFormat::Table => print_table(&report, &ctx),
+        OutputFormat::Ocsf => unreachable!(),
     }
 }
 

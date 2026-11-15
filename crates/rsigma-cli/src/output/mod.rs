@@ -2,7 +2,7 @@
 //!
 //! Two global, command-agnostic switches drive every renderer:
 //!
-//! * `--output-format <json|ndjson|table|csv|tsv>` selects the wire format
+//! * `--output-format <json|ndjson|table|csv|tsv|ocsf>` selects the wire format
 //!   for any tabular data the command emits. The default is TTY-aware: when
 //!   stdout is a terminal it prints pretty JSON, when piped it prints
 //!   newline-delimited JSON (NDJSON).
@@ -30,6 +30,8 @@ pub(crate) enum OutputFormat {
     Table,
     Csv,
     Tsv,
+    /// OCSF Detection Finding (class 2004), one JSON object per line.
+    Ocsf,
 }
 
 impl OutputFormat {
@@ -43,7 +45,24 @@ impl OutputFormat {
             "table" => Some(Self::Table),
             "csv" => Some(Self::Csv),
             "tsv" => Some(Self::Tsv),
+            "ocsf" => Some(Self::Ocsf),
             _ => None,
+        }
+    }
+
+    /// When `requested` is `ocsf` but the command does not emit findings,
+    /// warn once and return `fallback` (#389 contract).
+    pub(crate) fn resolve_ocsf_unsupported(
+        requested: Self,
+        ctx: &OutputCtx,
+        command: &str,
+        fallback: Self,
+    ) -> Self {
+        if requested == Self::Ocsf {
+            ctx.warn_unsupported(command, fallback.as_str());
+            fallback
+        } else {
+            requested
         }
     }
 
@@ -55,6 +74,7 @@ impl OutputFormat {
             Self::Table => "table",
             Self::Csv => "csv",
             Self::Tsv => "tsv",
+            Self::Ocsf => "ocsf",
         }
     }
 }
@@ -260,10 +280,36 @@ impl OutputCtx {
     /// `ndjson` this is always false.
     pub(crate) fn pretty_json(&self) -> bool {
         match self.format {
-            OutputFormat::Ndjson => false,
+            OutputFormat::Ndjson | OutputFormat::Ocsf => false,
             OutputFormat::Json => self.stdout_is_tty || !self.explicit_format,
             // The other formats do not emit JSON.
             _ => false,
+        }
+    }
+
+    /// When the resolved format is `ocsf` but the command does not emit
+    /// findings, warn once and return `fallback` (#389 contract).
+    pub(crate) fn resolve_ocsf_unsupported(
+        &self,
+        command: &str,
+        fallback: OutputFormat,
+    ) -> OutputFormat {
+        OutputFormat::resolve_ocsf_unsupported(self.format, self, command, fallback)
+    }
+
+    pub(crate) fn ensure_ocsf_available(&self, command: &str) {
+        if self.format != OutputFormat::Ocsf {
+            return;
+        }
+        #[cfg(feature = "ocsf")]
+        let _ = command;
+        #[cfg(not(feature = "ocsf"))]
+        {
+            eprintln!(
+                "error: `--output-format ocsf` is not supported by `{command}` \
+                 in this build (enable default features or the `ocsf` feature)"
+            );
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
     }
 
@@ -305,6 +351,32 @@ pub(crate) trait Tabular {
 /// Render `value` as JSON to stdout (pretty when `pretty` is `true`). Exits
 /// the process with `CONFIG_ERROR` on serialization failure -- the same
 /// behaviour the previous `print_json` had.
+/// Serialize one [`EvaluationResult`] as an OCSF class-2004 finding.
+#[cfg(feature = "ocsf")]
+pub(crate) fn write_ocsf_finding<W: Write>(
+    writer: &mut W,
+    result: &rsigma_eval::EvaluationResult,
+    pretty: bool,
+) -> io::Result<()> {
+    let finding = rsigma_runtime::ocsf::detection_finding(result);
+    let line = if pretty {
+        serde_json::to_string_pretty(&finding)?
+    } else {
+        serde_json::to_string(&finding)?
+    };
+    writeln!(writer, "{line}")
+}
+
+/// Write one OCSF finding to stdout (compact NDJSON unless `pretty`).
+#[cfg(feature = "ocsf")]
+pub(crate) fn render_ocsf_finding(result: &rsigma_eval::EvaluationResult, pretty: bool) {
+    let mut out = io::stdout().lock();
+    if let Err(e) = write_ocsf_finding(&mut out, result, pretty) {
+        eprintln!("OCSF serialization error: {e}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+}
+
 pub(crate) fn render_json<T: Serialize>(value: &T, pretty: bool) {
     let json = if pretty {
         serde_json::to_string_pretty(value)
@@ -363,6 +435,11 @@ where
         OutputFormat::Table => render_table(rows),
         OutputFormat::Csv => render_delimited(rows, ','),
         OutputFormat::Tsv => render_delimited(rows, '\t'),
+        OutputFormat::Ocsf => {
+            for row in rows {
+                render_ndjson(row);
+            }
+        }
     }
 }
 
@@ -377,6 +454,10 @@ pub(crate) fn render_json_only<T: Serialize>(command: &str, ctx: &OutputCtx, val
         OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
             ctx.warn_unsupported(command, "json");
             render_json(value, ctx.pretty_json() || ctx.stdout_is_tty);
+        }
+        OutputFormat::Ocsf => {
+            ctx.warn_unsupported(command, "json");
+            render_json(value, false);
         }
     }
 }
@@ -627,6 +708,7 @@ mod tests {
         assert_eq!(OutputFormat::parse("Table"), Some(OutputFormat::Table));
         assert_eq!(OutputFormat::parse("csv"), Some(OutputFormat::Csv));
         assert_eq!(OutputFormat::parse("tsv"), Some(OutputFormat::Tsv));
+        assert_eq!(OutputFormat::parse("ocsf"), Some(OutputFormat::Ocsf));
         assert_eq!(OutputFormat::parse("xml"), None);
     }
 

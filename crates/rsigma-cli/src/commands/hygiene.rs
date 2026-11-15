@@ -847,7 +847,7 @@ fn extract_missing(value: &serde_json::Value) -> BTreeSet<String> {
 /// otherwise a TTY gets the human table and a pipe gets NDJSON.
 fn effective_format(ctx: &OutputCtx) -> OutputFormat {
     if ctx.explicit_format {
-        ctx.format
+        ctx.resolve_ocsf_unsupported("rule hygiene", OutputFormat::Table)
     } else if ctx.stdout_is_tty {
         OutputFormat::Table
     } else {
@@ -866,6 +866,7 @@ fn render(report: &HygieneReport, ctx: &OutputCtx) {
         OutputFormat::Csv => render_delimited(report, ',', ctx),
         OutputFormat::Tsv => render_delimited(report, '\t', ctx),
         OutputFormat::Table => render_table(report, ctx),
+        OutputFormat::Ocsf => unreachable!(),
     }
 }
 
