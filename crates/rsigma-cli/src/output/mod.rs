@@ -348,10 +348,8 @@ pub(crate) trait Tabular {
     fn row(&self) -> Vec<String>;
 }
 
-/// Render `value` as JSON to stdout (pretty when `pretty` is `true`). Exits
-/// the process with `CONFIG_ERROR` on serialization failure -- the same
-/// behaviour the previous `print_json` had.
-/// Serialize one [`EvaluationResult`] as an OCSF class-2004 finding.
+/// Serialize one [`EvaluationResult`](rsigma_eval::EvaluationResult) as an
+/// OCSF class-2004 finding.
 #[cfg(feature = "ocsf")]
 pub(crate) fn write_ocsf_finding<W: Write>(
     writer: &mut W,
@@ -377,6 +375,9 @@ pub(crate) fn render_ocsf_finding(result: &rsigma_eval::EvaluationResult, pretty
     }
 }
 
+/// Render `value` as JSON to stdout (pretty when `pretty` is `true`). Exits
+/// the process with `CONFIG_ERROR` on serialization failure -- the same
+/// behaviour the previous `print_json` had.
 pub(crate) fn render_json<T: Serialize>(value: &T, pretty: bool) {
     let json = if pretty {
         serde_json::to_string_pretty(value)

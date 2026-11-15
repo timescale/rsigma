@@ -105,7 +105,6 @@ fn lint_output_format_ocsf_warns_and_falls_back() {
         .args([
             "rule",
             "lint",
-            "--rules",
             rule.path().to_str().unwrap(),
             "--output-format",
             "ocsf",

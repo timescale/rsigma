@@ -314,6 +314,8 @@ fn stream_corpus_file<P: EventProcessor>(
     let file_key = cf.key.clone();
     #[cfg(feature = "ocsf")]
     let emit_ocsf = ctx.format == crate::output::OutputFormat::Ocsf;
+    #[cfg(not(feature = "ocsf"))]
+    let _ = ctx;
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);
