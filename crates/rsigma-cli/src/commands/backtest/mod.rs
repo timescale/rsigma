@@ -178,6 +178,7 @@ fn overlay_backtest_config(
 /// Run the backtest. Returns the process exit code (0 pass, 1 findings,
 /// 2 rule error, 3 config error). Rule and config errors exit directly.
 pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
+    ctx.ensure_ocsf_available("rule backtest");
     let Some(rules_path) = args.rules.clone() else {
         eprintln!("error: no rules path; set --rules or backtest.rules in the config file");
         return exit_code::CONFIG_ERROR;
@@ -213,6 +214,7 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
 
     let report = match run(
         &args,
+        &ctx,
         collection,
         &pipelines,
         &event_filter,
@@ -251,6 +253,7 @@ fn resolve_policy(
 /// the report.
 fn run(
     args: &BacktestArgs,
+    ctx: &crate::output::OutputCtx,
     collection: SigmaCollection,
     pipelines: &[Pipeline],
     event_filter: &crate::EventFilter,
@@ -279,11 +282,11 @@ fn run(
             let mut processor = CorrelationProcessor {
                 engine: &mut engine,
             };
-            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, ctx, &mut acc)
         } else {
             let engine = detection_engine.as_ref().expect("detection engine built");
             let mut processor = DetectionProcessor { engine };
-            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, ctx, &mut acc)
         };
         acc.add_events(events);
     }
@@ -305,12 +308,19 @@ fn stream_corpus_file<P: EventProcessor>(
     processor: &mut P,
     event_filter: &crate::EventFilter,
     args: &BacktestArgs,
+    ctx: &crate::output::OutputCtx,
     acc: &mut Accumulator,
 ) -> u64 {
     let file_key = cf.key.clone();
+    #[cfg(feature = "ocsf")]
+    let emit_ocsf = ctx.format == crate::output::OutputFormat::Ocsf;
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);
+        #[cfg(feature = "ocsf")]
+        if emit_ocsf {
+            crate::output::render_ocsf_finding(m, false);
+        }
     };
 
     match cf.kind {
