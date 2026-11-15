@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Rulesets
+### Rulesets (#712)
 
 A `rulesets:` section in `rsigma.yaml` declares named curations of Sigma rules. Each ruleset lists source files or directories, selectors that include or exclude candidates by id, name, title, tags, level, status, kind, logsource, or path, and a dependency policy for correlation references. `dependencies: include` pulls a referenced rule back in, while `drop` removes a correlation whose references are not kept and warns. Metadata overlays can set or append level, status, description, author, tags, references, false positives, fields, and custom attributes without editing the vendor files. Overlays validate exemplars and ADS attributes after application, so an overlay can add `rsigma.exemplars` for a vendored rule and `rule test` replays them.
 
