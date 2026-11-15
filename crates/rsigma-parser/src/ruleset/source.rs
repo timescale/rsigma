@@ -235,44 +235,38 @@ pub fn load_sources(
                 sha256_input: bytes,
             });
 
-            let mut detection_ordinal = 0;
-            for rule in collection.rules {
+            for (ordinal, rule) in collection.rules.into_iter().enumerate() {
                 loaded.candidates.push(Candidate {
                     doc: CandidateDoc::Detection(rule),
                     origin: RuleOrigin {
                         source: source_index,
                         root: root.clone(),
                         file: relative.clone(),
-                        ordinal: detection_ordinal,
+                        ordinal,
                     },
                 });
-                detection_ordinal += 1;
             }
-            let mut correlation_ordinal = 0;
-            for rule in collection.correlations {
+            for (ordinal, rule) in collection.correlations.into_iter().enumerate() {
                 loaded.candidates.push(Candidate {
                     doc: CandidateDoc::Correlation(rule),
                     origin: RuleOrigin {
                         source: source_index,
                         root: root.clone(),
                         file: relative.clone(),
-                        ordinal: correlation_ordinal,
+                        ordinal,
                     },
                 });
-                correlation_ordinal += 1;
             }
-            let mut filter_ordinal = 0;
-            for rule in collection.filters {
+            for (ordinal, rule) in collection.filters.into_iter().enumerate() {
                 loaded.candidates.push(Candidate {
                     doc: CandidateDoc::Filter(rule),
                     origin: RuleOrigin {
                         source: source_index,
                         root: root.clone(),
                         file: relative.clone(),
-                        ordinal: filter_ordinal,
+                        ordinal,
                     },
                 });
-                filter_ordinal += 1;
             }
         }
     }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::error::RulesetError;
 use super::select::{Decision, RefIndex, decide};
-use super::source::{Candidate, CandidateDoc, DocumentKind};
+use super::source::{Candidate, DocumentKind};
 use super::spec::{DependencyPolicy, RulesetSpec};
 
 /// The result of closure: one decision per candidate plus warnings.
@@ -221,7 +221,7 @@ fn check_uniqueness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ruleset::source::RuleOrigin;
+    use crate::ruleset::source::{CandidateDoc, RuleOrigin};
     use crate::ruleset::spec::{RuleSelector, RulesetSpec};
 
     fn candidate(yaml: &str, file: &str, ordinal: usize) -> Candidate {

@@ -50,6 +50,7 @@ impl RulesetError {
                 "ruleset '{name}': path escapes the confined root: {}",
                 path.display()
             )),
+            Self::Overlay(message) => Self::Overlay(format!("ruleset '{name}': {message}")),
             other => other,
         }
     }

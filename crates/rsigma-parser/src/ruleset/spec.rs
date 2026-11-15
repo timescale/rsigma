@@ -213,7 +213,7 @@ pub fn validate_ruleset_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-const SET_KEYS: &[&str] = &[
+pub(crate) const SET_KEYS: &[&str] = &[
     "level",
     "status",
     "description",
@@ -224,7 +224,7 @@ const SET_KEYS: &[&str] = &[
     "fields",
     "custom_attributes",
 ];
-const APPEND_KEYS: &[&str] = &[
+pub(crate) const APPEND_KEYS: &[&str] = &[
     "tags",
     "references",
     "falsepositives",

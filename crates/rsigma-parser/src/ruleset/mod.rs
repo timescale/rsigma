@@ -35,7 +35,9 @@ mod source;
 mod spec;
 
 pub use error::RulesetError;
-pub use overlay::{AppliedOverlay, OverlayOrigin};
+pub use overlay::{
+    AppliedOverlay, FsOverlayLoader, InlineOnlyOverlayLoader, OverlayLoader, OverlayOrigin,
+};
 pub use select::Decision;
 pub use source::{
     Candidate, CandidateDoc, DocumentKind, LoadedSources, ResolveOptions, RuleOrigin, SourceFile,
@@ -58,8 +60,9 @@ pub fn resolve_ruleset(
     if !problems.is_empty() {
         return Err(RulesetError::InvalidSpec(problems));
     }
+    let loader = FsOverlayLoader::new(opts.confine_to.clone());
     let loaded = load_sources(spec, opts).map_err(|e| e.named(name))?;
-    resolve_loaded(name, spec, loaded)
+    resolve_loaded(name, spec, loaded, &loader)
 }
 
 /// A resolved ruleset: the kept collection plus per-document decisions.
@@ -85,31 +88,38 @@ pub struct RuleEntry {
     pub overlays: Vec<AppliedOverlay>,
 }
 
-/// Resolve already-loaded sources into a collection.
+/// Resolve already-loaded sources into a collection, applying metadata
+/// overlays through `loader`.
 pub fn resolve_loaded(
     name: &str,
     spec: &RulesetSpec,
     loaded: LoadedSources,
+    loader: &dyn OverlayLoader,
 ) -> Result<ResolvedRuleset, RulesetError> {
     let closure = closure::close(name, spec, &loaded.candidates)?;
-    let entries: Vec<RuleEntry> = loaded
-        .candidates
+    let mut candidates = loaded.candidates;
+    let expanded = overlay::expand_overlays(name, spec, loader)?;
+    let (applied, overlay_warnings) =
+        overlay::apply_overlays(name, spec, &mut candidates, &closure.decisions, expanded)?;
+
+    let entries: Vec<RuleEntry> = candidates
         .iter()
         .zip(&closure.decisions)
-        .map(|(candidate, decision)| RuleEntry {
+        .enumerate()
+        .map(|(index, (candidate, decision))| RuleEntry {
             kind: candidate.kind(),
             id: candidate.id().map(str::to_string),
             name: candidate.name().map(str::to_string),
             title: candidate.title().to_string(),
             origin: candidate.origin.clone(),
             decision: decision.clone(),
-            overlays: Vec::new(),
+            overlays: applied[index].clone(),
         })
         .collect();
 
     let mut collection = SigmaCollection::new();
     collection.diagnostics = loaded.diagnostics;
-    for (candidate, decision) in loaded.candidates.into_iter().zip(closure.decisions) {
+    for (candidate, decision) in candidates.into_iter().zip(closure.decisions) {
         if !closure::is_kept(&decision) {
             continue;
         }
@@ -119,13 +129,15 @@ pub fn resolve_loaded(
             CandidateDoc::Filter(rule) => collection.filters.push(rule),
         }
     }
+    let mut warnings = closure.warnings;
+    warnings.extend(overlay_warnings);
     Ok(ResolvedRuleset {
         name: name.to_string(),
         collection,
         entries,
         files: loaded.files,
-        overlay_files: Vec::new(),
-        warnings: closure.warnings,
+        overlay_files: loader.files(),
+        warnings,
     })
 }
 
@@ -161,7 +173,7 @@ mod tests {
             sources: vec![std::path::PathBuf::from(".")],
             ..Default::default()
         };
-        let resolved = resolve_loaded("test", &spec, loaded).unwrap();
+        let resolved = resolve_loaded("test", &spec, loaded, &InlineOnlyOverlayLoader).unwrap();
         assert_eq!(resolved.collection.rules.len(), 1);
         assert_eq!(resolved.name, "test");
     }
