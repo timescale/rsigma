@@ -2701,23 +2701,30 @@ impl SinkRole {
     }
 }
 
-/// Resolve the wire format from query params, exiting on any spec that cannot
-/// honor it.
-///
-/// `format` is accepted only on a line-oriented findings sink: OTLP owns its
-/// log-record mapping, and the DLQ and audit channels do not carry findings at
-/// all. Unlike the `on_full` warn-and-default path, an unusable `format` is a
-/// startup config error, so a daemon never silently emits a format the
-/// operator did not ask for.
 /// Resolved findings sink wire format and OCSF options.
 struct ResolvedSinkFormat {
     format: SinkFormat,
     ocsf: rsigma_runtime::ocsf::OcsfOptions,
 }
 
+/// Resolve the wire format and OCSF options from query params, exiting on any
+/// spec that cannot honor them.
+///
+/// `format` is accepted only on a findings sink: the DLQ and audit channels do
+/// not carry findings at all. `ocsf_incident_class` is rejected on OTLP sinks,
+/// which carry no incidents. Unlike the `on_full` warn-and-default path, an
+/// unusable parameter is a startup config error, so a daemon never silently
+/// emits a format the operator did not ask for.
 fn resolve_sink_format(params: &[(&str, &str)], base: &str, role: SinkRole) -> ResolvedSinkFormat {
     let format = format_from_params(params, base, role);
     let ocsf = ocsf_options_from_params(params, base, role, format);
+    if base.starts_with("otlp") && params.iter().any(|(k, _)| *k == "ocsf_incident_class") {
+        tracing::error!(
+            spec = base,
+            "ocsf_incident_class= is not supported on OTLP sinks (they carry no incidents)"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
     ResolvedSinkFormat { format, ocsf }
 }
 
@@ -2785,14 +2792,6 @@ fn format_from_params(params: &[(&str, &str)], base: &str, role: SinkRole) -> Si
             spec = base,
             channel = role.label(),
             "format= is only supported on findings sinks"
-        );
-        std::process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-
-    if base.starts_with("otlp") {
-        tracing::error!(
-            spec = base,
-            "format= is not supported on OTLP sinks (they emit OTLP log records)"
         );
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
@@ -2971,6 +2970,7 @@ async fn build_sink(
             });
             return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip, tls) {
                 Ok(sink) => {
+                    let sink = sink.with_format(format).with_ocsf_options(ocsf);
                     let sink = match timeout {
                         Some(t) => sink.with_timeout(t),
                         None => sink,
@@ -2981,6 +2981,7 @@ async fn build_sink(
                         gzip,
                         tls = tls_enabled,
                         timeout = %humantime::format_duration(sink.timeout()),
+                        format = format.as_str(),
                         "OTLP sink started"
                     );
                     (Sink::Otlp(Box::new(sink)), on_full)

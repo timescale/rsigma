@@ -9,7 +9,9 @@ mod common;
 
 use std::time::Duration;
 
-use common::{DaemonProcess, SIMPLE_RULE, http_post, poll_until, rsigma, temp_file};
+use common::{
+    DaemonProcess, SIMPLE_RULE, http_post, poll_until, rsigma, temp_file, validate_ocsf_finding,
+};
 use predicates::str::contains;
 use serde_json::Value;
 
@@ -206,10 +208,34 @@ fn duplicate_ocsf_incident_class_parameter_is_a_startup_error() {
 
 #[cfg(feature = "daemon-otlp")]
 #[test]
-fn format_on_an_otlp_sink_is_a_startup_error() {
-    daemon_startup_failure(&["--output", "otlphttp://127.0.0.1:1?format=ndjson"])
+fn unknown_format_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&["--output", "otlphttp://127.0.0.1:1?format=cef"])
         .failure()
-        .stderr(contains("not supported on OTLP sinks"));
+        .stderr(contains("Unknown sink format"));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_incident_class_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ocsf&ocsf_incident_class=2005",
+    ])
+    .failure()
+    .stderr(contains(
+        "ocsf_incident_class= is not supported on OTLP sinks",
+    ));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_version_on_an_ndjson_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ndjson&ocsf_version=1.3.0",
+    ])
+    .failure()
+    .stderr(contains("ocsf_version= is only valid with format=ocsf"));
 }
 
 #[test]
@@ -245,12 +271,93 @@ fn format_on_the_audit_sink_spec_is_a_startup_error() {
     .stderr(contains("only supported on findings sinks"));
 }
 
+/// Lower an OTLP `AnyValue` back to JSON, the inverse of the sink's encoding.
+#[cfg(feature = "daemon-otlp")]
+fn any_value_json(value: &opentelemetry_proto::tonic::common::v1::AnyValue) -> Value {
+    use opentelemetry_proto::tonic::common::v1::any_value::Value as V;
+    match &value.value {
+        Some(V::StringValue(s)) => Value::from(s.clone()),
+        Some(V::BoolValue(b)) => Value::from(*b),
+        Some(V::IntValue(i)) => Value::from(*i),
+        Some(V::DoubleValue(d)) => Value::from(*d),
+        Some(V::ArrayValue(a)) => Value::Array(a.values.iter().map(any_value_json).collect()),
+        Some(V::KvlistValue(kv)) => Value::Object(
+            kv.values
+                .iter()
+                .filter_map(|kv| Some((kv.key.clone(), any_value_json(kv.value.as_ref()?))))
+                .collect(),
+        ),
+        _ => Value::Null,
+    }
+}
+
+/// An OTLP sink with `format=ocsf` exports the OCSF finding as the log-record
+/// body, with the same identity an OCSF line sink gets for the same detection.
 #[cfg(feature = "daemon-otlp")]
 #[test]
-fn ocsf_on_an_otlp_sink_is_a_startup_error() {
-    daemon_with(&["--output", "otlphttp://127.0.0.1:1?format=ocsf"], "")
-        .failure()
-        .stderr(contains("not supported on OTLP sinks"));
+fn ocsf_otlp_sink_exports_the_finding_as_the_log_body() {
+    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+    use prost::Message;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let collector = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        server
+    });
+
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
+    let otlp_spec = format!(
+        "otlphttp://{}?format=ocsf&ocsf_version=1.3.0",
+        collector.address()
+    );
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &["--output", &ocsf_spec, "--output", &otlp_spec],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let line = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the OCSF line sink never received the finding");
+    let request = poll_until(Duration::from_secs(10), || {
+        let received = rt.block_on(collector.received_requests())?;
+        let body = &received.first()?.body;
+        Some(ExportLogsServiceRequest::decode(body.as_slice()).unwrap())
+    })
+    .expect("the collector never received an export");
+
+    let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+    assert_eq!(
+        record.severity_text, "ERROR",
+        "severity still follows the level"
+    );
+    assert!(
+        record.attributes.is_empty(),
+        "the finding replaces the native attributes"
+    );
+    let finding = any_value_json(record.body.as_ref().expect("a log body"));
+    validate_ocsf_finding(&finding);
+    assert_eq!(finding["class_uid"], 2004);
+    assert_eq!(finding["metadata"]["version"], "1.3.0");
+    assert_eq!(finding["finding_info"]["analytic"]["uid"], SIMPLE_RULE_ID);
+    assert_eq!(
+        finding["finding_info"]["uid"], line["finding_info"]["uid"],
+        "OTLP and line sinks share the finding identity",
+    );
+    assert_eq!(finding["time"], line["time"]);
 }
 
 /// Two sinks on one daemon, one OCSF and one default: each gets its own

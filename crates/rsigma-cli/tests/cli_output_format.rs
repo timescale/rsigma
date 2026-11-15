@@ -7,26 +7,8 @@
 
 mod common;
 
-use std::path::Path;
-
-use common::{SIMPLE_RULE, rsigma, temp_file};
+use common::{SIMPLE_RULE, rsigma, temp_file, validate_ocsf_finding};
 use predicates::prelude::*;
-
-fn validate_class_2004(finding: &serde_json::Value) {
-    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../rsigma-runtime/tests/fixtures/ocsf/1.1.0/class_2004.schema.json");
-    let schema: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
-    let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
-    let errors: Vec<String> = validator
-        .iter_errors(finding)
-        .map(|e| e.to_string())
-        .collect();
-    assert!(
-        errors.is_empty(),
-        "finding is not conformant class-2004: {errors:#?}"
-    );
-}
 
 /// JSON detection format is the explicit baseline -- one line, the
 /// detection envelope on stdout.
@@ -94,7 +76,7 @@ fn eval_output_format_ocsf_emits_detection_finding() {
     assert_eq!(finding["class_uid"], 2004);
     assert_eq!(finding["metadata"]["version"], "1.1.0");
     assert!(finding["finding_info"]["title"].is_string());
-    validate_class_2004(&finding);
+    validate_ocsf_finding(&finding);
 }
 
 /// Unsupported commands warn and fall back when `--output-format ocsf` is set.
