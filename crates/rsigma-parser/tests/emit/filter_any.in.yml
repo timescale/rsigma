@@ -1,0 +1,8 @@
+title: Drop system accounts
+logsource:
+    product: windows
+    category: process_creation
+filter:
+    selection:
+        User|endswith: '$'
+    condition: selection

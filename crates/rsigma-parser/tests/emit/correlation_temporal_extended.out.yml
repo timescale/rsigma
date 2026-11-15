@@ -1,0 +1,10 @@
+title: Login then process
+correlation:
+    type: temporal
+    rules:
+        - login
+        - process_start
+    group-by:
+        - User
+    timespan: 10m
+    condition: login and process_start

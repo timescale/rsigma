@@ -88,7 +88,7 @@ pub use ast::{
 };
 pub use condition::parse_condition;
 pub use diagnostic::{CollectionDiagnostic, DiagnosticKind, DiagnosticSeverity};
-pub use emit::{emit_collection_yaml, emit_rule_yaml};
+pub use emit::{emit_collection_yaml, emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml};
 pub use error::{Result, SigmaParserError, SigmaParserErrorKind, SourceLocation};
 pub use exemplar::{
     EXEMPLARS_KEY, Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind,
