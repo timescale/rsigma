@@ -89,11 +89,13 @@ impl FsOverlayLoader {
         out: &mut Vec<(OverlayOrigin, OverlayEntry)>,
     ) -> Result<(), RulesetError> {
         let canonical = path.canonicalize().map_err(|e| RulesetError::Io {
+            ruleset: None,
             path: path.to_path_buf(),
             source: e,
         })?;
         confine(&canonical, opts)?;
         let bytes = std::fs::read(path).map_err(|e| RulesetError::Io {
+            ruleset: None,
             path: path.to_path_buf(),
             source: e,
         })?;
@@ -128,6 +130,7 @@ impl FsOverlayLoader {
     ) -> Result<(), RulesetError> {
         if !dir.exists() {
             return Err(RulesetError::Io {
+                ruleset: None,
                 path: dir.to_path_buf(),
                 source: std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -136,6 +139,7 @@ impl FsOverlayLoader {
             });
         }
         let canonical = dir.canonicalize().map_err(|e| RulesetError::Io {
+            ruleset: None,
             path: dir.to_path_buf(),
             source: e,
         })?;
@@ -144,6 +148,7 @@ impl FsOverlayLoader {
         let mut visited = HashSet::new();
         crate::walk::collect_yaml_files(dir, dir, None, &mut paths, &mut visited).map_err(|e| {
             RulesetError::Io {
+                ruleset: None,
                 path: dir.to_path_buf(),
                 source: std::io::Error::other(e.to_string()),
             }

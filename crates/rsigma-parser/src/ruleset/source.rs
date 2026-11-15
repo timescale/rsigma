@@ -178,7 +178,10 @@ pub fn load_sources(
 
     for (source_index, source) in spec.sources.iter().enumerate() {
         if !source.exists() {
-            return Err(RulesetError::MissingSource(source.clone()));
+            return Err(RulesetError::MissingSource {
+                ruleset: None,
+                path: source.clone(),
+            });
         }
         let root = if source.is_dir() {
             source.clone()
@@ -193,6 +196,7 @@ pub fn load_sources(
         if source.is_dir() {
             crate::walk::collect_yaml_files(&root, &root, None, &mut paths, &mut visited).map_err(
                 |e| RulesetError::Io {
+                    ruleset: None,
                     path: root.clone(),
                     source: std::io::Error::other(e.to_string()),
                 },
@@ -203,12 +207,14 @@ pub fn load_sources(
 
         for path in paths {
             let canonical = path.canonicalize().map_err(|e| RulesetError::Io {
+                ruleset: None,
                 path: path.clone(),
                 source: e,
             })?;
             confine(&canonical, opts)?;
 
             let bytes = std::fs::read(&path).map_err(|e| RulesetError::Io {
+                ruleset: None,
                 path: path.clone(),
                 source: e,
             })?;
@@ -280,13 +286,17 @@ pub(crate) fn confine(path: &Path, opts: &ResolveOptions) -> Result<(), RulesetE
         return Ok(());
     };
     let root = root.canonicalize().map_err(|e| RulesetError::Io {
+        ruleset: None,
         path: root.clone(),
         source: e,
     })?;
     if path.starts_with(&root) {
         Ok(())
     } else {
-        Err(RulesetError::Confinement(path.to_path_buf()))
+        Err(RulesetError::Confinement {
+            ruleset: None,
+            path: path.to_path_buf(),
+        })
     }
 }
 
@@ -395,7 +405,10 @@ mod tests {
             ..Default::default()
         };
         let error = load_sources(&spec, &ResolveOptions::default()).unwrap_err();
-        assert!(matches!(error, RulesetError::MissingSource(_)), "{error}");
+        assert!(
+            matches!(error, RulesetError::MissingSource { .. }),
+            "{error}"
+        );
     }
 
     #[test]
@@ -453,7 +466,7 @@ mod tests {
             ..Default::default()
         };
         let error = load_sources(&spec, &opts).unwrap_err();
-        assert!(matches!(error, RulesetError::Confinement(_)), "{error}");
+        assert!(matches!(error, RulesetError::Confinement { .. }), "{error}");
 
         #[cfg(unix)]
         {
@@ -463,7 +476,7 @@ mod tests {
                 ..Default::default()
             };
             let error = load_sources(&spec, &opts).unwrap_err();
-            assert!(matches!(error, RulesetError::Confinement(_)), "{error}");
+            assert!(matches!(error, RulesetError::Confinement { .. }), "{error}");
         }
     }
 }

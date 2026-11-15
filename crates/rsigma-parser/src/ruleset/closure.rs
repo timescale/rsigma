@@ -34,7 +34,7 @@ pub(crate) fn close(
             .map_err(|e| RulesetError::InvalidSpec(vec![format!("ruleset '{name}': {e}")]))?,
         None => DependencyPolicy::Error,
     };
-    let mut decisions = decide(candidates, spec)?;
+    let mut decisions = decide(candidates, spec).map_err(|e| e.named(name))?;
     let refs = RefIndex::build(candidates);
     let mut warnings = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -68,10 +68,10 @@ pub(crate) fn close(
                 let reason = dependency_reason(name, candidate, &reference, &resolved, &decisions);
 
                 match policy {
-                    DependencyPolicy::Error => errors.push(reason),
+                    DependencyPolicy::Error => push_unique(&mut errors, reason),
                     DependencyPolicy::Include => {
                         if resolved.is_empty() || excluded.is_some() {
-                            errors.push(reason);
+                            push_unique(&mut errors, reason);
                         } else {
                             for target in resolved {
                                 if decisions[target] == Decision::NotSelected {
@@ -141,6 +141,14 @@ pub(crate) fn close(
         decisions,
         warnings,
     })
+}
+
+/// The fixed-point loop revisits every kept correlation on each pass, so the
+/// same unresolvable reference would otherwise be reported once per pass.
+fn push_unique(errors: &mut Vec<String>, reason: String) {
+    if !errors.contains(&reason) {
+        errors.push(reason);
+    }
 }
 
 fn correlation_label(candidate: &Candidate) -> String {
@@ -340,6 +348,27 @@ mod tests {
         }];
         let error = close("test", &spec("include", include, exclude), &candidates).unwrap_err();
         assert!(error.to_string().contains("excluded"), "{error}");
+    }
+
+    #[test]
+    fn include_reports_each_unresolvable_reference_once() {
+        // `pulls` changes a decision on the first pass, which forces a second
+        // pass over `broken`.
+        let candidates = vec![
+            detection("base", "base.yml"),
+            correlation("pulls", &["base"], "pulls.yml"),
+            correlation("broken", &["missing"], "broken.yml"),
+        ];
+        let include = vec![RuleSelector {
+            id: vec!["pulls".into(), "broken".into()],
+            ..Default::default()
+        }];
+        let error = close("test", &spec("include", include, vec![]), &candidates).unwrap_err();
+        let RulesetError::Dependency(reasons) = error else {
+            panic!("expected a dependency error, got {error}");
+        };
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].contains("'missing'"), "{reasons:?}");
     }
 
     #[test]
