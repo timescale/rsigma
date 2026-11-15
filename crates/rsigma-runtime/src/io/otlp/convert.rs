@@ -192,7 +192,30 @@ fn nanos_to_iso8601(nanos: u64) -> String {
 pub fn evaluation_results_to_logs_request(
     results: &[EvaluationResult],
 ) -> ExportLogsServiceRequest {
-    let log_records = results.iter().map(result_to_log_record).collect();
+    logs_request(results.iter().map(result_to_log_record).collect())
+}
+
+/// Convert evaluation results into an `ExportLogsServiceRequest` whose log
+/// bodies are OCSF findings.
+///
+/// `finding` returns the finding for the result at an index. Each record's
+/// body is that finding lowered to a `kvlist`, and its severity follows the
+/// Sigma level as in [`evaluation_results_to_logs_request`]. The record carries
+/// no attributes, because the finding already holds every native field.
+pub(crate) fn ocsf_findings_to_logs_request(
+    results: &[EvaluationResult],
+    finding: impl Fn(usize, &EvaluationResult) -> Value,
+) -> ExportLogsServiceRequest {
+    logs_request(
+        results
+            .iter()
+            .enumerate()
+            .map(|(index, result)| ocsf_log_record(result, &finding(index, result)))
+            .collect(),
+    )
+}
+
+fn logs_request(log_records: Vec<LogRecord>) -> ExportLogsServiceRequest {
     ExportLogsServiceRequest {
         resource_logs: vec![ResourceLogs {
             resource: Some(Resource {
@@ -236,6 +259,20 @@ fn result_to_log_record(result: &EvaluationResult) -> LogRecord {
         severity_text: severity_text.to_string(),
         body: Some(string_any_value(&result.header.rule_title)),
         attributes,
+        ..Default::default()
+    }
+}
+
+fn ocsf_log_record(result: &EvaluationResult, finding: &Value) -> LogRecord {
+    let now = now_unix_nanos();
+    let (severity_number, severity_text) =
+        severity_from_level(result.header.level.as_ref().map(|l| l.as_str()));
+    LogRecord {
+        time_unix_nano: now,
+        observed_time_unix_nano: now,
+        severity_number,
+        severity_text: severity_text.to_string(),
+        body: Some(json_to_any_value(finding)),
         ..Default::default()
     }
 }
@@ -736,6 +773,54 @@ mod tests {
         assert!(
             !keys.contains(&"matched_fields"),
             "a correlation must not carry matched_fields",
+        );
+    }
+
+    #[test]
+    fn ocsf_body_is_the_finding_as_a_kvlist() {
+        use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let golden: Value = serde_json::from_str(include_str!(
+            "../../../tests/golden/ocsf/1.1.0/detection.json"
+        ))
+        .unwrap();
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Suspicious PowerShell".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                level: Some(rsigma_parser::Level::Medium),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec![],
+                matched_fields: vec![],
+                event: None,
+            }),
+        };
+
+        let request =
+            ocsf_findings_to_logs_request(std::slice::from_ref(&result), |_, _| golden.clone());
+        let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(
+            record.severity_number, 13,
+            "severity still follows the level"
+        );
+        assert_eq!(record.severity_text, "WARN");
+        assert!(
+            record.attributes.is_empty(),
+            "the finding replaces the native attributes: {:?}",
+            record.attributes,
+        );
+        let body = record.body.as_ref().unwrap();
+        assert!(matches!(body.value, Some(any_value::Value::KvlistValue(_))));
+        assert_eq!(
+            any_value_to_json(body),
+            golden,
+            "the kvlist body round-trips to the finding",
         );
     }
 }
