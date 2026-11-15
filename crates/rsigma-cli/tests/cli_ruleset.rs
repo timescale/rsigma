@@ -274,6 +274,51 @@ fn show_id_yaml_emits_the_overlaid_document() {
 }
 
 #[test]
+fn show_id_reports_the_kept_copy_of_a_forked_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_tree(&fixtures(), dir.path());
+    fs::write(
+        dir.path().join("fork.yaml"),
+        "rulesets:
+  fork:
+    sources: [vendor, local]
+    exclude:
+      - path: [windows/proc_creation.yml]
+    dependencies: drop
+",
+    )
+    .unwrap();
+    let output = rsigma()
+        .current_dir(dir.path())
+        .args([
+            "ruleset",
+            "show",
+            "fork",
+            "--config",
+            "fork.yaml",
+            "--id",
+            W1,
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let document = &envelope["document"];
+    assert!(
+        document["decision"]
+            .as_str()
+            .unwrap()
+            .starts_with("included"),
+        "{document}"
+    );
+    assert_eq!(document["origin"], serde_json::json!("s1:fork.yml#0"));
+}
+
+#[test]
 fn show_id_detail_lists_applied_overlays() {
     let output = rsigma()
         .current_dir(fixtures())

@@ -716,6 +716,64 @@ fn backend_convert_uses_the_resolved_ruleset() {
     assert!(!stderr(&output).contains("sysmon"), "{}", stderr(&output));
 }
 
+/// A stand-in sigma-cli that records the rules directory it was given and the
+/// documents in it, prints one query, and exits with `code`.
+#[cfg(unix)]
+fn fake_sigma_cli(dir: &Path, code: i32) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("fake-sigma");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nfor last; do :; done\nprintf '%s' \"$last\" > \"{record}.dir\"\nfind \"$last\" -name '*.yml' -exec cat {{}} + > \"{record}.rules\"\necho 'fake query'\nexit {code}\n",
+            record = dir.join("record").display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[cfg(unix)]
+#[test]
+fn delegated_convert_passes_the_materialized_ruleset_and_cleans_up() {
+    for code in [0, 1] {
+        let dir = fixture_copy();
+        let script = fake_sigma_cli(dir.path(), code);
+        let output = rsigma()
+            .current_dir(dir.path())
+            .env("RSIGMA_SIGMA_CLI", &script)
+            .args([
+                "backend",
+                "convert",
+                "--ruleset",
+                "vendor",
+                "--config",
+                "vendor-only.yaml",
+                "-t",
+                "not_a_native_target",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), code == 0, "{}", stderr(&output));
+        if code == 0 {
+            assert!(
+                stdout(&output).contains("fake query"),
+                "{}",
+                stdout(&output)
+            );
+        }
+        let rules = fs::read_to_string(dir.path().join("record.rules")).unwrap();
+        assert!(rules.contains(W1), "{rules}");
+        assert!(rules.contains("level: critical"), "{rules}");
+        let materialized = fs::read_to_string(dir.path().join("record.dir")).unwrap();
+        assert!(
+            !Path::new(&materialized).exists(),
+            "exit {code}: {materialized} was left behind"
+        );
+    }
+}
+
 #[test]
 fn pipeline_diff_uses_only_the_explicit_pipeline() {
     let dir = fixture_copy();

@@ -355,6 +355,7 @@ pub(crate) fn materialize_temp(
     resolved: &ResolvedRuleset,
     spec: &RulesetSpec,
 ) -> Result<tempfile::TempDir, String> {
+    ensure_unique(resolved).map_err(|error| error.to_string())?;
     let dir = tempfile::tempdir()
         .map_err(|error| format!("cannot create a temporary directory: {error}"))?;
     let (plan, lock) = plan_output(resolved, spec);

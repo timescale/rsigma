@@ -99,14 +99,25 @@ fn is_kept(decision: &Decision) -> bool {
     )
 }
 
+/// The entry with `id` (or name), preferring a kept one: a forked rule shares
+/// its id with the excluded vendor copy.
 fn find_entry<'a>(resolved: &'a ResolvedRuleset, id: &str) -> Option<&'a RuleEntry> {
-    resolved.entries.iter().find(|entry| {
+    let mut matching = resolved.entries.iter().filter(|entry| {
         entry
             .id
             .as_deref()
             .is_some_and(|candidate| candidate.eq_ignore_ascii_case(id))
             || entry.name.as_deref() == Some(id)
-    })
+    });
+    let first = matching.next()?;
+    if is_kept(&first.decision) {
+        return Some(first);
+    }
+    Some(
+        matching
+            .find(|entry| is_kept(&entry.decision))
+            .unwrap_or(first),
+    )
 }
 
 fn document_yaml(resolved: &ResolvedRuleset, entry: &RuleEntry) -> Option<String> {

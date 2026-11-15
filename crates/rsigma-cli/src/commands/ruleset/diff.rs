@@ -180,6 +180,7 @@ pub(crate) fn cmd_diff(args: super::DiffArgs, ctx: OutputCtx) {
         "sources_changed": sources_changed,
         "overlays_changed": overlays_changed,
         "spec_changed": spec_changed,
+        "documents": &rows,
     });
     render_report(&ctx, &envelope, &rows);
 

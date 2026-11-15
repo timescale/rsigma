@@ -112,7 +112,7 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
             Some(dir) => vec![dir.path().to_path_buf()],
             None => args.rules.clone(),
         };
-        run_delegated(&args, &ctx, &rules);
+        run_delegated(&args, &ctx, &rules, tempdir);
         return;
     };
 
@@ -297,7 +297,15 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
 /// for. The original rule files and a near 1:1 flag mapping are passed straight
 /// through, and sigma-cli's stdout is relayed through rsigma's output handling,
 /// so the result is identical to running sigma-cli directly.
-fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx, rules: &[PathBuf]) {
+///
+/// `materialized` holds a resolved ruleset written for sigma-cli. It is
+/// dropped as soon as sigma-cli exits, since `process::exit` skips destructors.
+fn run_delegated(
+    args: &ConvertArgs,
+    ctx: &OutputCtx,
+    rules: &[PathBuf],
+    materialized: Option<tempfile::TempDir>,
+) {
     use rsigma_convert::sigma_cli::{self, DelegateError, SigmaCli};
 
     let target = args.target.as_str();
@@ -313,6 +321,7 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx, rules: &[PathBuf]) {
              the delegated target '{target}' produces a single stream. Use a file path or stdout.",
             dir.display()
         );
+        drop(materialized);
         process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
@@ -327,7 +336,9 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx, rules: &[PathBuf]) {
         rules,
     );
 
-    let result = match cli.run(&argv) {
+    let run = cli.run(&argv);
+    drop(materialized);
+    let result = match run {
         Ok(out) => out,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!(
