@@ -111,7 +111,9 @@ fn schema_emits_json_schema() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"$schema\""))
-        .stdout(predicate::str::contains("RsigmaConfigPartial"));
+        .stdout(predicate::str::contains("RsigmaConfigPartial"))
+        .stdout(predicate::str::contains("\"rulesets\""))
+        .stdout(predicate::str::contains("RulesetSpec"));
 }
 
 #[test]
@@ -330,4 +332,148 @@ fn valid_global_output_in_config_emits_no_warning() {
                 .not()
                 .and(predicate::str::contains("invalid global.color").not()),
         );
+}
+
+#[test]
+fn rulesets_merge_by_name_across_layers() {
+    let project = tempfile::tempdir().unwrap();
+    let xdg = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(xdg.path().join("rsigma")).unwrap();
+    std::fs::write(
+        xdg.path().join("rsigma/config.yaml"),
+        "rulesets:\n  shared:\n    description: from the user config\n    sources: [user-rules]\n  user_only:\n    sources: [user-only]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("rsigma.yaml"),
+        "rulesets:\n  shared:\n    sources: [project-rules]\n  project_only:\n    sources: [project-only]\n",
+    )
+    .unwrap();
+
+    let output = rsigma()
+        .current_dir(project.path())
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args(["config", "show", "--for", "rulesets", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rulesets = &envelope["config"]["rulesets"];
+    assert_eq!(
+        rulesets["shared"]["sources"],
+        serde_json::json!(["project-rules"])
+    );
+    assert!(
+        rulesets["shared"].get("description").is_none(),
+        "the project entry replaces the user entry whole: {rulesets}"
+    );
+    assert_eq!(
+        rulesets["user_only"]["sources"],
+        serde_json::json!(["user-only"])
+    );
+    assert_eq!(
+        rulesets["project_only"]["sources"],
+        serde_json::json!(["project-only"])
+    );
+    assert_eq!(
+        envelope["sources"]["rulesets.shared.sources"],
+        serde_json::json!("file")
+    );
+}
+
+#[test]
+fn validate_rejects_an_unknown_selector_key() {
+    let cfg = temp_file(
+        ".yaml",
+        "rulesets:\n  local:\n    sources: [./rules]\n    include:\n      - tagz: [attack.t1059]\n",
+    );
+    let path = cfg.path().to_str().unwrap();
+
+    rsigma()
+        .args(["config", "validate", "-c", path])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("unknown key 'tagz'"))
+        .stderr(predicate::str::contains("did you mean 'tags'"));
+
+    let output = rsigma()
+        .args(["config", "validate", "-c", path, "--format", "json"])
+        .assert()
+        .failure()
+        .code(3)
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], serde_json::json!(false));
+    let errors = envelope["ruleset_errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| error["ruleset"] == serde_json::json!("local"))
+    );
+    assert!(errors.iter().any(|error| {
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown key 'tagz'")
+    }));
+}
+
+#[test]
+fn validate_rejects_a_bad_ruleset_name() {
+    let cfg = temp_file(".yaml", "rulesets:\n  Bad-Name:\n    sources: [./rules]\n");
+    rsigma()
+        .args(["config", "validate", "-c", cfg.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("invalid ruleset name 'Bad-Name'"));
+}
+
+#[test]
+fn show_rulesets_section() {
+    let cfg = temp_file(
+        ".yaml",
+        "rulesets:\n  local:\n    sources: [./rules]\n    include:\n      - tags: [attack.t1059*]\n",
+    );
+    let output = rsigma()
+        .args([
+            "config",
+            "show",
+            "-c",
+            cfg.path().to_str().unwrap(),
+            "--for",
+            "rulesets",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(
+        envelope["config"]["rulesets"]["local"]["sources"],
+        serde_json::json!(["./rules"])
+    );
+    assert_eq!(
+        envelope["config"]["rulesets"]["local"]["include"][0]["tags"],
+        serde_json::json!(["attack.t1059*"])
+    );
+    assert_eq!(
+        envelope["sources"]["rulesets.local.sources"],
+        serde_json::json!("file")
+    );
+    assert!(
+        envelope["sources"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| key.starts_with("rulesets.")),
+        "only the rulesets section should be shown"
+    );
 }

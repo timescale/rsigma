@@ -22,6 +22,7 @@ use crate::output::{
 use super::defaults::defaults_partial;
 use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
 use super::{discover, ignored_key_warning, inactive_sections, load_layered};
+use rsigma_parser::ruleset::validate_spec;
 
 /// Render protected keys dropped from project files as `[{file, key}]`.
 fn ignored_keys_json(ignored: &[(PathBuf, &'static str)]) -> Value {
@@ -89,7 +90,7 @@ pub(crate) struct ShowArgs {
     pub config: Option<PathBuf>,
 
     /// Restrict output to one section
-    #[arg(long = "for", value_parser = ["global", "daemon", "eval"])]
+    #[arg(long = "for", value_parser = ["global", "daemon", "eval", "rulesets"])]
     pub section: Option<String>,
 
     /// Output format: text (default), json, or yaml. When unset, the global
@@ -208,7 +209,21 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
         Ok(loaded) => {
             let inactive = inactive_sections(&loaded.config);
             let unknown_count = loaded.unknown_keys.len();
-            let failed = args.strict && unknown_count > 0;
+            let ruleset_errors: Vec<(String, String)> = loaded
+                .config
+                .rulesets
+                .as_ref()
+                .map(|rulesets| {
+                    let mut errors = Vec::new();
+                    for (name, spec) in rulesets {
+                        for message in validate_spec(name, spec) {
+                            errors.push((name.clone(), message));
+                        }
+                    }
+                    errors
+                })
+                .unwrap_or_default();
+            let failed = (args.strict && unknown_count > 0) || !ruleset_errors.is_empty();
 
             let envelope = serde_json::json!({
                 "ok": !failed,
@@ -223,6 +238,13 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     .collect::<Vec<_>>(),
                 "ignored_keys": ignored_keys_json(&loaded.ignored_keys),
                 "inactive_sections": inactive,
+                "ruleset_errors": ruleset_errors
+                    .iter()
+                    .map(|(ruleset, message)| serde_json::json!({
+                        "ruleset": ruleset,
+                        "message": message,
+                    }))
+                    .collect::<Vec<_>>(),
             });
 
             let mut rows = Vec::new();
@@ -245,6 +267,13 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     kind: "inactive_section".into(),
                     file: String::new(),
                     detail: section.to_string(),
+                });
+            }
+            for (ruleset, message) in &ruleset_errors {
+                rows.push(ValidateIssueRow {
+                    kind: "ruleset_error".into(),
+                    file: ruleset.clone(),
+                    detail: message.clone(),
                 });
             }
             if rows.is_empty() {
@@ -289,8 +318,16 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                             "warning: section '{section}' is set but inert in this build (feature disabled)"
                         );
                     }
+                    for (_, message) in &ruleset_errors {
+                        eprintln!("error: {message}");
+                    }
                     if failed {
-                        eprintln!("{unknown_count} unknown key(s) found (--strict)");
+                        if unknown_count > 0 {
+                            eprintln!("{unknown_count} unknown key(s) found (--strict)");
+                        }
+                        if !ruleset_errors.is_empty() {
+                            eprintln!("{} ruleset error(s) found", ruleset_errors.len());
+                        }
                     } else {
                         eprintln!("Config is valid.");
                     }

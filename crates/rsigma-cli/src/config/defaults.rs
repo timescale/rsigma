@@ -269,6 +269,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 event_logsource: None,
                 strict: Some(LOGSOURCE_STRICT),
             }),
+            ruleset: None,
         }),
         backtest: Some(BacktestPartial {
             // rules, corpus, and expectations are required at runtime and have
@@ -283,6 +284,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             input_format: Some(INPUT_FORMAT.to_string()),
             syslog_tz: Some(SYSLOG_TZ.to_string()),
             syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
+            ruleset: None,
         }),
         // The `coverage` section has no compiled defaults: the cross-reference
         // inputs are opt-in and `fail_on_gaps` defaults to off via clap.
@@ -326,9 +328,12 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             stale_threshold: Some(HYGIENE_STALE_THRESHOLD.to_string()),
             noisy_threshold: None,
             fail_on: None,
+            ruleset: None,
         }),
         // The `mcp` section has no compiled defaults: stdio is the default
         // transport, and the lint-config / rules-dir roots have no default.
         mcp: None,
+        // Rulesets are declared in config files only; no compiled default.
+        rulesets: None,
     }
 }

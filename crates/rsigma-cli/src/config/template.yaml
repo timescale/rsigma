@@ -314,6 +314,8 @@ daemon:
 eval:
   # Default rules path for `rsigma engine eval`.
   # rules: ./rules
+  # Named ruleset from the `rulesets` section to evaluate instead of `rules`.
+  # ruleset: vendor-windows
   # pipelines: [sysmon]
   input_format: auto
   syslog_tz: "+00:00"
@@ -460,3 +462,24 @@ mcp:
   # Register create_silence and post_disposition (`--allow-operate-writes`).
   # Off by default; requires daemon_url.
   # allow_operate_writes: false
+
+# Named rule sets: curated sources, selectors, dependency policy, overlays,
+# and pipelines. Use `--ruleset <name>` with engine eval, rule backtest, rule
+# coverage, and rule hygiene, or build a deployable tree with
+# `rsigma ruleset build`. Sources and overlay paths resolve against the
+# working directory. Rulesets are file-only: the environment layer cannot set
+# them.
+# rulesets:
+#   vendor-windows:
+#     description: Vendored Windows process-creation detections.
+#     sources:
+#       - ./vendor/sigma/rules/windows
+#     include:
+#       - tags: ["attack.t1059*"]
+#     exclude:
+#       - status: [deprecated]
+#     overlays:
+#       - id: aaaaaaaa-0000-4000-8000-000000000001
+#         set:
+#           level: high
+#     pipelines: [sysmon]

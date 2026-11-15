@@ -40,7 +40,7 @@ CONFIG_COMMANDS = {
     "eval": (["engine", "eval"], CONTENT / "cli" / "engine" / "eval.md"),
     "backtest": (["rule", "backtest"], CONTENT / "cli" / "rule" / "backtest.md"),
 }
-CONFIG_SECTIONS = {"version", "global", "daemon", "eval", "backtest", "coverage", "scorecard", "visibility", "hygiene", "doc", "mcp"}
+CONFIG_SECTIONS = {"version", "global", "daemon", "eval", "backtest", "coverage", "scorecard", "visibility", "hygiene", "doc", "mcp", "rulesets"}
 TRIVIAL_RULE = """title: t
 id: 00000000-0000-0000-0000-000000000000
 logsource: {product: windows, category: process_creation}
