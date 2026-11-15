@@ -1,5 +1,5 @@
 ---
-description: "Emit Sigma detections as OCSF Detection Finding (class 2004) and Incident Finding (class 2005) JSON from the RSigma daemon, ready for Splunk, Elastic, Amazon Security Lake, and Datadog."
+description: "Emit Sigma detections and incidents as OCSF Detection Finding (2004) and Incident Finding (2005) JSON for Splunk, Elastic, Security Lake, and Datadog."
 ---
 
 # OCSF Findings
@@ -195,7 +195,7 @@ An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF de
 
 ## Schema versions
 
-RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema per class (2004 and 2005) live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal — adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
+RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema per class (2004 and 2005) live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal: adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
 
 ## An output dialect, not an input vocabulary
 
