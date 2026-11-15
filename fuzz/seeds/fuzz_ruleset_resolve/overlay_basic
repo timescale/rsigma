@@ -1,0 +1,8 @@
+1
+- id: aaaaaaaa-0000-4000-8000-000000000001
+  set:
+    level: high
+- id: aaaaaaaa-0000-4000-8000-000000000002
+  append:
+    tags:
+      - attack.t1059.005

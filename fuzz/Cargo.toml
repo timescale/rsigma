@@ -177,3 +177,8 @@ doc = false
 name = "fuzz_dns_answer"
 path = "fuzz_targets/fuzz_dns_answer.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_ruleset_resolve"
+path = "fuzz_targets/fuzz_ruleset_resolve.rs"
+doc = false
