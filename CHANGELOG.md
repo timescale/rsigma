@@ -12,7 +12,7 @@ Class 2004 findings always set `metadata.profiles` to `security_control`, and ap
 
 Line sinks accept `?format=ocsf` with optional `?ocsf_version=1.1.0|1.3.0` (default `1.1.0`), optional `?ocsf_incident_class=2004|2005` (default `2004`), and `?ocsf_assignee_group=<name>`, which is required when the class is 2005 and rejected otherwise. Class 2005 incidents list contributing Detection Finding uids minted before the alert pipeline runs. OTLP sinks accept `format=ocsf`, keep the native log attributes (`rule_title`, `rule_id`, `level`, `tags`), and put the finding JSON string in the log-record body. Webhook bodies may use `${detection.ocsf}` and `${correlation.ocsf}` as whole JSON values, and an optional `ocsf_version` field selects `1.1.0` or `1.3.0`.
 
-**Breaking:** `TickOutput` and `RiskOutput` gain `finding_links`, index-aligned with `incidents`. Existing struct literals must include the field. Those uids are not part of the incident JSON.
+**Breaking:** `TickOutput` and `RiskOutput` gain `finding_links`, index-aligned with `incidents`. A struct literal must add the field: use `Vec::new()` when the caller does not track finding uids, or the links returned with the tick or risk result when it does. Those uids are not part of the incident JSON.
 
 See [OCSF Findings](https://rsigma.io/guide/ocsf-findings/) and [Output formats](https://rsigma.io/reference/output/).
 
