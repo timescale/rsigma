@@ -35,7 +35,10 @@ use rsigma_runtime::ocsf::{
     risk_event_finding_with_opts, risk_incident_finding_2005_with_opts,
     risk_incident_finding_with_opts,
 };
-use rsigma_runtime::{IncidentRef, IncidentResult, RiskIncidentResult, RiskRef};
+use rsigma_runtime::{
+    AlertPipelineState, IncidentRef, IncidentResult, NoopMetrics, RiskIncidentResult, RiskRef,
+    parse_alert_pipeline_config,
+};
 use serde_json::{Value, json};
 
 /// A fixed clock and a counted uid source, so a golden is the same bytes on
@@ -292,7 +295,11 @@ fn incident_open_2005_references_its_detection_findings() {
         },
     ]);
     check_both_versions("incident_open_2005", |opts| {
-        incident_finding_2005_with_opts(&open, &FixedSource::new(), opts.with_incident_finding("soc").unwrap())
+        incident_finding_2005_with_opts(
+            &open,
+            &FixedSource::new(),
+            opts.with_incident_finding("soc").unwrap(),
+        )
     });
 }
 
@@ -405,6 +412,89 @@ fn dedup_resolved_summary_is_a_close_finding() {
     check_both_versions("dedup_resolved", |opts| {
         dedup_summary_finding_with_opts(&wire, &FixedSource::new(), opts)
     });
+}
+
+/// A repeat summary is the pipeline's stored sample plus `dedup_*` keys.
+/// Enrichments the sample already carried (geo, incident id, risk) survive;
+/// only the three keys lifted to `count` / `start_time` / `end_time` leave the map.
+#[test]
+fn dedup_repeat_from_a_pipeline_tick_keeps_sample_enrichments() {
+    let pipeline = parse_alert_pipeline_config(
+        "dedup:\n  fingerprint: [rule, match.CommandLine]\n  repeat_interval: 10s\n  resolve_timeout: 30s\n",
+    )
+    .unwrap();
+    let mut state = AlertPipelineState::default();
+    let metrics = NoopMetrics;
+    let _ = pipeline.process(vec![enriched_detection()], &mut state, 1000, &metrics);
+    let _ = pipeline.process(vec![enriched_detection()], &mut state, 1005, &metrics);
+    let lines = pipeline.tick(&mut state, 1011, &metrics).dedup_lines;
+    assert_eq!(lines.len(), 1, "one repeat summary is due");
+    let wire = &lines[0];
+    assert_eq!(wire["enrichments"]["geo"]["country"], "DE");
+    assert_eq!(wire["enrichments"]["incident_id"], "inc-1");
+    assert_eq!(wire["enrichments"]["risk.score"], 40);
+
+    check_both_versions("dedup_repeat_enriched", |opts| {
+        let finding = dedup_summary_finding_with_opts(wire, &FixedSource::new(), opts);
+        let enrichments = &finding["unmapped"]["enrichments"];
+        assert_eq!(enrichments["geo"]["country"], "DE");
+        assert_eq!(enrichments["geo"]["city"], "Berlin");
+        assert_eq!(enrichments["incident_id"], "inc-1");
+        assert!(enrichments.get("risk.score").is_none());
+        assert!(enrichments.get("risk.objects").is_none());
+        assert!(enrichments.get("dedup_fire_count").is_none());
+        assert!(enrichments.get("dedup_first_seen").is_none());
+        assert!(enrichments.get("dedup_last_seen").is_none());
+        assert_eq!(enrichments["dedup_state"], "repeat");
+        assert_eq!(finding["risk_score"], 40);
+        assert_eq!(finding["actor"]["user"]["name"], "alice");
+        assert_eq!(finding["metadata"]["correlation_uid"], "inc-1");
+        assert_eq!(finding["count"], 2);
+        assert_eq!(finding["start_time"], 1_000_000);
+        assert_eq!(finding["end_time"], 1_005_000);
+        let profiles = finding["metadata"]["profiles"]
+            .as_array()
+            .expect("profiles");
+        assert!(
+            profiles
+                .iter()
+                .any(|p| p.as_str() == Some("security_control"))
+        );
+        assert!(profiles.iter().any(|p| p.as_str() == Some("host")));
+        finding
+    });
+}
+
+fn enriched_detection() -> EvaluationResult {
+    let mut enrichments = serde_json::Map::new();
+    enrichments.insert(
+        "geo".to_string(),
+        json!({"country": "DE", "city": "Berlin"}),
+    );
+    enrichments.insert("incident_id".to_string(), json!("inc-1"));
+    enrichments.insert("risk.score".to_string(), json!(40));
+    enrichments.insert(
+        "risk.objects".to_string(),
+        json!([
+            {"type": "user", "value": "alice"},
+            {"type": "src_ip", "value": "203.0.113.5"}
+        ]),
+    );
+    EvaluationResult {
+        header: RuleHeader {
+            rule_title: "Malware execution".to_string(),
+            rule_id: Some("rule-1".to_string()),
+            level: Some(Level::High),
+            tags: vec!["attack.t1059".to_string()],
+            custom_attributes: Arc::new(HashMap::new()),
+            enrichments: Some(enrichments),
+        },
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection".to_string()],
+            matched_fields: vec![FieldMatch::new("CommandLine", json!("malware.exe"))],
+            event: Some(json!({"CommandLine": "malware.exe"})),
+        }),
+    }
 }
 
 #[test]

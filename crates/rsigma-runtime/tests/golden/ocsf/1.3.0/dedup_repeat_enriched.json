@@ -1,0 +1,105 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 2,
+  "activity_name": "Update",
+  "actor": {
+    "user": {
+      "name": "alice"
+    }
+  },
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "count": 2,
+  "end_time": 1005000,
+  "evidences": [
+    {
+      "data": {
+        "matched_fields": {
+          "CommandLine": "malware.exe"
+        }
+      }
+    }
+  ],
+  "finding_info": {
+    "analytic": {
+      "name": "Malware execution",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "rule-1"
+    },
+    "attacks": [
+      {
+        "technique": {
+          "uid": "T1059"
+        }
+      }
+    ],
+    "title": "Malware execution",
+    "uid": "dedup-13bf5ab591909123-1000"
+  },
+  "message": "Malware execution",
+  "metadata": {
+    "correlation_uid": "inc-1",
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control",
+      "host"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.3.0"
+  },
+  "resources": [
+    {
+      "name": "alice",
+      "type": "user"
+    },
+    {
+      "name": "203.0.113.5",
+      "type": "src_ip"
+    }
+  ],
+  "risk_score": 40,
+  "severity": "High",
+  "severity_id": 4,
+  "start_time": 1000000,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Update",
+  "type_uid": 200402,
+  "unmapped": {
+    "enrichments": {
+      "dedup_fields": {
+        "match.CommandLine": "malware.exe",
+        "rule": "rule-1"
+      },
+      "dedup_fingerprint": "13bf5ab591909123",
+      "dedup_state": "repeat",
+      "geo": {
+        "city": "Berlin",
+        "country": "DE"
+      },
+      "incident_id": "inc-1"
+    },
+    "matched_fields": [
+      {
+        "field": "CommandLine",
+        "value": "malware.exe"
+      }
+    ],
+    "matched_selections": [
+      "selection"
+    ],
+    "tags": [
+      "attack.t1059"
+    ]
+  }
+}

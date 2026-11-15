@@ -815,7 +815,7 @@ pub fn dedup_summary_finding_with_opts(
     let result = dedup_wire_to_evaluation_result(wire);
     let mut finding = dedup_summary_finding_from_result_with(&result, state, src, opts);
     apply_dedup_window(&mut finding, wire);
-    nest_dedup_enrichments_from_wire(&mut finding, wire);
+    drop_lifted_dedup_keys(&mut finding);
     finding
 }
 
@@ -926,30 +926,32 @@ fn patch_lifecycle(finding: &mut Value, activity: Activity, status: Status) {
     obj.insert("status".to_string(), json!(status.name()));
 }
 
-/// Move `dedup_*` keys that stay enrichment-only under `unmapped.enrichments`.
+/// Drop the three dedup keys that [`apply_dedup_window`] lifted onto the finding.
 ///
-/// `dedup_fire_count`, `dedup_first_seen`, and `dedup_last_seen` are lifted to
-/// `count`, `start_time`, and `end_time`.
-fn nest_dedup_enrichments_from_wire(finding: &mut Value, wire: &Value) {
-    let Some(enrichments) = wire.get("enrichments").and_then(Value::as_object) else {
+/// [`detection_finding_with_inner`] already copied the sample enrichments, so
+/// geo, `incident_id`, and any other non-risk key stay. `dedup_fire_count`,
+/// `dedup_first_seen`, and `dedup_last_seen` now live on `count`, `start_time`,
+/// and `end_time`.
+fn drop_lifted_dedup_keys(finding: &mut Value) {
+    const LIFTED: &[&str] = &["dedup_fire_count", "dedup_first_seen", "dedup_last_seen"];
+    let Some(unmapped) = finding.get_mut("unmapped").and_then(Value::as_object_mut) else {
         return;
     };
-    const LIFTED: &[&str] = &["dedup_fire_count", "dedup_first_seen", "dedup_last_seen"];
-    let dedup: Map<String, Value> = enrichments
-        .iter()
-        .filter(|(key, _)| key.starts_with("dedup_") && !LIFTED.contains(&key.as_str()))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    if dedup.is_empty() {
-        return;
+    let empty = match unmapped
+        .get_mut("enrichments")
+        .and_then(Value::as_object_mut)
+    {
+        Some(enrichments) => {
+            for key in LIFTED {
+                enrichments.remove(*key);
+            }
+            enrichments.is_empty()
+        }
+        None => return,
+    };
+    if empty {
+        unmapped.remove("enrichments");
     }
-    let unmapped = finding
-        .as_object_mut()
-        .expect("finding object")
-        .entry("unmapped".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    let map = unmapped.as_object_mut().expect("unmapped object");
-    map.insert("enrichments".to_string(), Value::Object(dedup));
 }
 
 fn apply_dedup_window(finding: &mut Value, wire: &Value) {
