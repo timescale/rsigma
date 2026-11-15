@@ -54,7 +54,7 @@ The output feeds `rule draft -e @file`, `rule tune --tp @file`, and `rule backte
 When rules are vendored rather than authored in the repository, declare a ruleset in `rsigma.yaml` instead of editing the vendor files:
 
 1. **Inspect.** `ruleset list` shows every declared ruleset and whether it resolves. `ruleset show <NAME> --all` shows the decisions, origins, reasons, and applied overlays.
-2. **Resolve.** Use `--ruleset <NAME>` with `engine eval`, `rule validate`, `rule test`, `rule backtest`, `rule coverage`, `rule hygiene`, `engine explain`, `rule fields`, `rule tune`, `rule doc`, `backend convert`, `pipeline diff`, or `hunt run`. On MCP, the `ruleset` input is accepted by `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars`.
+2. **Resolve.** Use `--ruleset <NAME>` with `engine eval`, `rule validate`, `rule test`, `rule backtest`, `rule coverage`, `rule visibility`, `rule hygiene`, `engine explain`, `rule fields`, `rule tune`, `rule doc`, `backend convert`, `pipeline diff`, or `hunt run`. On MCP, the `ruleset` input is accepted by `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars`.
 3. **Build.** `ruleset build <NAME> -o <DIR>` writes canonical YAML and a lockfile. Load the output with `engine daemon --rules <DIR>`. `ruleset diff <NAME> --lock <DIR>/ruleset.lock.json --fail-on-change` gates CI.
 
 Overlays can add exemplars, ADS prose, and metadata without editing the vendor rule. `rule test --ruleset` replays the overlaid exemplars. Guide: [Rulesets](https://rsigma.io/guide/rulesets/).

@@ -102,7 +102,7 @@ An overlay entry is exactly one of:
 
 An overlay file is a YAML sequence of `{ id, set?, append? }` entries. Empty files contribute nothing. Unknown keys are errors everywhere.
 
-`set` accepts `level`, `status`, `description`, `author`, `tags`, `references`, `falsepositives`, `fields`, and `custom_attributes`. Scalars and lists replace the existing value. `custom_attributes` merges per key; each listed key replaces that attribute, and a `null` value removes it. `append` accepts `tags`, `references`, `falsepositives`, `fields`, and `custom_attributes`. Lists are concatenated; `tags` skips duplicates. A `custom_attributes` value must be a sequence, and an absent attribute is created.
+`set` accepts `level`, `status`, `description`, `author`, `tags`, `references`, `falsepositives`, `fields`, and `custom_attributes`. Scalars and lists replace the existing value. `custom_attributes` merges per key; each listed key replaces that attribute, and a `null` value removes it. `append` accepts `tags`, `references`, `falsepositives`, `fields`, and `custom_attributes`. Lists are concatenated; `tags` skips duplicates. A `custom_attributes` value must be a sequence, and an absent attribute is created. `custom_attributes` cannot name a standard Sigma key such as `level` or `tags`, or an engine key such as `rsigma.window`, and an empty `set` or `append` is an error.
 
 Overlays apply after selection and dependency closure, in declaration order. A `file` or `dir` entry expands at its own position. Within one entry, `set` applies before `append`. `stale_overlays` defaults to `error`; an overlay whose id matches no kept rule fails unless you set `stale_overlays: warn`.
 

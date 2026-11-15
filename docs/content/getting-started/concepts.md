@@ -110,7 +110,7 @@ The CLI is noun-led: every group is a noun, every leaf is a verb.
 | `rule` | Operate on rule files (parse, lint, draft, backtest, coverage, and more) |
 | `backend` | Generate backend-native queries |
 | `pipeline` | Diff pipeline rewrites and resolve dynamic sources |
-| `ruleset` | Curate named rule sets, materialize them with a lockfile, and compare them with the lockfile |
+| `ruleset` | Curate named rule sets, materialize them with a lockfile, and compare them with the lockfile {{ added "unreleased" }} |
 | `hunt` | Hunt a PostgreSQL/TimescaleDB archive with converted rules (`hunt-postgres` feature for `--emit events`) |
 | `taxii` | Sync TAXII collections and import STIX bundles into a local store (`taxii-sync` feature) |
 | `mcp` | Run the Model Context Protocol server (`mcp` feature) |

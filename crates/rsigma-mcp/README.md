@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
 | `create_silence` | Create a TTL-bounded silence (`--allow-operate-writes`). |
 | `post_disposition` | Record an analyst verdict (`--allow-operate-writes`). |
 
-Engineer-cycle tools always register. Operate-cycle tools appear in `tools/list` only when a daemon URL is configured; the two mutating tools also require `--allow-operate-writes`. Every Engineer tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path`, and the five rule-loading tools also accept a named `ruleset`, and return structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
+Engineer-cycle tools always register. Operate-cycle tools appear in `tools/list` only when a daemon URL is configured; the two mutating tools also require `--allow-operate-writes`. Every Engineer tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path` (the five rule-loading tools also accept a named `ruleset`) and returns structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
 
 ## Resources
 

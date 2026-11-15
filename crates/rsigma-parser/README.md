@@ -51,7 +51,7 @@ The emitter is a deterministic canonical form: named detections, logsource custo
 | `ruleset::load_sources(spec, opts)` | Walk and parse the spec's sources into candidates |
 | `ruleset::validate_spec(name, spec)` | Static validation of a spec: names, paths, selectors, policies, and overlay shapes |
 
-`ResolveOptions { confine_to }` rejects any source, overlay, or pipeline file outside a root. The spec types derive `serde::Serialize`/`Deserialize`; with the `schema` feature they also derive `schemars::JsonSchema`.
+`ResolveOptions { confine_to }` rejects any source or overlay file outside a root. Pipelines are not resolved here, so callers confine pipeline paths themselves. The spec types derive `serde::Serialize`/`Deserialize`; with the `schema` feature they also derive `schemars::JsonSchema`.
 
 ### Formatting
 

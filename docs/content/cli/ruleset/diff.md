@@ -22,7 +22,7 @@ The lockfile path defaults to the ruleset's `output` directory plus `ruleset.loc
 
 A lockfile whose `lock_version` is not 1 is a configuration error. With `--fail-on-change`, any difference exits 1, which makes the command a CI gate.
 
-Output uses the global `--output-format` layer. The JSON envelope carries the counts and change flags; the table output carries the per-document detail.
+Output uses the global `--output-format` layer. The JSON envelope carries the counts, the change flags, and a `documents` array with one `{ change, kind, id, title, detail }` row per added, removed, or changed document, where `detail` lists the changed fields. The table output carries the same rows.
 
 ## Flags
 

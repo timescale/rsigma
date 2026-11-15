@@ -32,14 +32,15 @@ description: "RSigma exit codes: the four structured codes every subcommand uses
 | `backend targets` | Always. | (not used) | (not used) | (not used) |
 | `backend formats` | Formats listed for a native target, or a successful sigma-cli listing. | (not used) | (not used) | Unknown non-native target with no usable sigma-cli result. |
 | `pipeline resolve` | Every source returned `"status": "ok"` (or a successful `--dry-run`). | At least one source returned `"status": "error"`. | Pipeline unreadable, no sources loaded, or no sources matched `-s/--source`. | Bad `--source-file` load or other configuration error. |
-| `ruleset list` | Every declared ruleset resolved. | (not used) | (not used) | A ruleset failed to resolve; other rows are still printed. |
-| `ruleset show` | The requested ruleset and document resolved. | (not used) | (not used) | Unknown ruleset or id, resolution error, or unreadable configuration. |
-| `ruleset build` | The output was written, or `--check` found no drift. | `--check` found drift. | A source had parse errors. | Resolution error, missing output, non-empty directory without `--force`, or unreadable configuration. |
-| `ruleset diff` | No change, or changes without `--fail-on-change`. | Changes were found with `--fail-on-change`. | (not used) | Resolution error, missing or unreadable lockfile, unknown lock version, or unreadable configuration. |
+| `ruleset list` | Every declared ruleset resolved. | (not used) | (not used) | A ruleset failed to resolve; other rows are still printed. {{ added "unreleased" }} |
+| `ruleset show` | The requested ruleset and document resolved. | (not used) | (not used) | Unknown ruleset or id, resolution error, or unreadable configuration. {{ added "unreleased" }} |
+| `ruleset build` | The output was written, or `--check` found no drift. | `--check` found drift. | A source had parse errors. | Resolution error, missing output, non-empty directory without `--force`, or unreadable configuration. {{ added "unreleased" }} |
+| `ruleset diff` | No change, or changes without `--fail-on-change`. | Changes were found with `--fail-on-change`. | (not used) | Resolution error, missing or unreadable lockfile, unknown lock version, or unreadable configuration. {{ added "unreleased" }} |
 
 ## Non-obvious behaviors
 
 - `engine eval`, `rule parse`, and `rule fields` log per-rule parse errors as warnings on stderr and still exit `0`. Use `rule validate` for a strict per-rule gate that fails on parse or compile errors.
+- Every command that accepts `--ruleset` exits `3` for an unknown ruleset name or a ruleset that fails to resolve. {{ added "unreleased" }}
 - `rule stdin` is equally lenient, including for YAML syntax errors. Only a failed stdin read or an over-deep `action: global`/`action: repeat` merge exits `2`.
 - `engine eval` exits `0` by default even when matches fire. Pass `--fail-on-detection` to make matches fail the build.
 - `rule lint` exits `0` for findings below `--fail-level`. The default threshold is `error`, so a clean lint with only info or warning findings still returns `0`.

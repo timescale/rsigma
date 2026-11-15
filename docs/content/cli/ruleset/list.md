@@ -16,7 +16,7 @@ rsigma ruleset list [--config <PATH>]
 
 ## Description
 
-`ruleset list` reads the merged `rulesets:` section, resolves each named ruleset, and prints one row per ruleset. The row reports source paths, kept document counts by kind, overlay and pipeline counts, and a status. A ruleset that fails to resolve prints its error without hiding the other rows.
+`ruleset list` reads the merged `rulesets:` section, resolves each named ruleset, and prints one row per ruleset. The row reports source paths, kept document counts by kind, overlay and pipeline counts, and a status. A ruleset that fails to resolve prints its error without hiding the other rows. A ruleset that resolves while some source files fail to parse keeps the `ok` status, and its error column reports how many source parse errors were skipped.
 
 An unknown ruleset name is not an input here; the command lists every declared name. When no rulesets are defined, it prints a hint that no rulesets were found in the configuration.
 
