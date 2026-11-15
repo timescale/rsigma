@@ -13,10 +13,11 @@ use super::shared::json_result;
 /// Input for `list_fields`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FieldsInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
@@ -24,6 +25,7 @@ pub struct FieldsInput {
     #[serde(default)]
     pub ruleset: Option<String>,
     /// Processing pipelines to apply before extracting fields.
+    /// When set, these replace the pipelines of a `ruleset`.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Include fields referenced by filter rules. Defaults to true.
@@ -127,5 +129,19 @@ mod tests {
             .unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["field_count"], 1);
+    }
+
+    #[test]
+    fn list_fields_rejects_ruleset_and_path() {
+        let error = handler()
+            .run_list_fields(FieldsInput {
+                yaml: None,
+                path: Some("rule.yml".to_string()),
+                ruleset: Some("base".to_string()),
+                pipelines: vec![],
+                include_filters: true,
+            })
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"), "{error:?}");
     }
 }

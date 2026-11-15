@@ -36,10 +36,11 @@ pub(crate) const DELEGATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Input for `convert_rules`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConvertInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
@@ -54,6 +55,7 @@ pub struct ConvertInput {
     #[serde(default)]
     pub format: Option<String>,
     /// Processing pipelines (builtin names or file paths).
+    /// A ruleset's own pipelines are not applied; pass them here.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Backend options as key=value pairs (e.g. `table` -> `events`).
@@ -755,5 +757,60 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v["ok"], true, "envelope: {v}");
+    }
+
+    #[test]
+    fn convert_rules_rejects_ruleset_and_path() {
+        let error = handler()
+            .run_convert_rules(ConvertInput {
+                path: Some("rule.yml".to_string()),
+                ruleset: Some("base".to_string()),
+                yaml: None,
+                ..convert_input("postgres")
+            })
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"), "{error:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegation_stages_the_resolved_ruleset() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let program = dir.path().join("sigma");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nfor arg; do last=$arg; done\ncat \"$last\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut spec = ruleset_spec(dir.path(), &["rule.yml"], &[]);
+        spec.overlays = vec![rsigma_parser::ruleset::OverlayEntry {
+            id: Some("8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a".to_string()),
+            set: Some(rsigma_parser::ruleset::OverlayPatch {
+                level: Some("critical".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }];
+        let server = delegating_handler(Some(dir.path().to_path_buf()))
+            .with_rulesets(BTreeMap::from([("base".to_string(), spec)]));
+        let cli = SigmaCli::from_program(&program, true);
+        let v = block_on(server.delegate_convert(
+            &cli,
+            ConvertInput {
+                yaml: None,
+                ruleset: Some("base".to_string()),
+                ..convert_input("splunk")
+            },
+            TEST_TIMEOUT,
+        ))
+        .unwrap();
+        assert_eq!(v["ok"], true, "envelope: {v}");
+        let raw = v["raw"].as_str().unwrap();
+        assert!(raw.contains("title: Whoami Execution"), "{raw}");
+        assert!(raw.contains("level: critical"), "{raw}");
     }
 }

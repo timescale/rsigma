@@ -23,10 +23,11 @@ const MCP_ENRICHER_TYPES: &[&str] = &["template"];
 /// Input for `evaluate_events`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EvaluateInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
@@ -40,6 +41,7 @@ pub struct EvaluateInput {
     #[serde(default)]
     pub events_path: Option<String>,
     /// Processing pipelines (builtin names or file paths).
+    /// When set, these replace the pipelines of a `ruleset`.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Match-detail verbosity: `off` (default), `summary`, or `full`.
@@ -642,5 +644,38 @@ enrichers:
         insta::with_settings!({sort_maps => true}, {
             insta::assert_json_snapshot!("evaluate_events", v);
         });
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_explicit_pipelines_replace_the_ruleset_pipelines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        std::fs::write(
+            dir.path().join("noop.yml"),
+            "name: noop\ntransformations: []\n",
+        )
+        .unwrap();
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &["ecs_windows"]),
+        )]);
+        let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: None,
+                ruleset: Some("base".to_string()),
+                events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
+                events_path: None,
+                pipelines: vec![dir.path().join("noop.yml").display().to_string()],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(value["ok"], true, "{value}");
+        assert_eq!(value["summary"]["detection_matches"], 1, "{value}");
     }
 }

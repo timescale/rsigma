@@ -14,10 +14,11 @@ use super::shared::{diagnostic_messages, json_result};
 /// Input for `validate_rules`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ValidateInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
@@ -25,6 +26,7 @@ pub struct ValidateInput {
     #[serde(default)]
     pub ruleset: Option<String>,
     /// Processing pipelines (builtin names like `ecs_windows` or file paths).
+    /// When set, these replace the pipelines of a `ruleset`.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Resolve dynamic pipeline sources (file/command/HTTP) during validation.
