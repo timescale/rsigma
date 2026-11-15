@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Documentation home page redesign, flat anchor aliases, and fragment validation (#710)
+
+The `rsigma.io` home page opens with a split hero, a tabbed quick-run snippet (`Evaluate`, `Daemon`, `Convert`, `Rust`), a tabbed install bar, a four-card benchmark strip, the detection-loop diagram paired with workflow cards, grouped downstream integrations, and a minimal footer, with focus mode (`Alt+F`) enabled site-wide. The version-tag legend moves to [Release Notes](https://rsigma.io/release-notes/#version-tags).
+
+Because `docmd` prefixes nested heading IDs with ancestor slugs, `docmd-plugin-rsigma` now injects flat `<span id="..." class="docmd-anchor-alias">` anchors on unique H2-H4 headings so existing cross-links, changelog entries, and SVG diagram fragments resolve directly without breaking TOC highlighting, and `onPostBuild` validates every internal HTML and SVG `#fragment` link at build time. The Sigma v2.1.0 specification links across the docs and READMEs are pinned to the exact `v2.1.0` commit, `assets/architecture.svg` updates three mismatched fragments, and the getting-started, Neovim, privacy, and WASM ABI pages add missing feature flags, CLI groups, and cross-links.
+
 ### DNS enricher (#708)
 
 `rsigma-runtime` adds a `type: dns` enricher that resolves forward and reverse DNS queries for an event-supplied value and injects the answers under `enrichments.<field>`. The `record_type` value selects the query: the pseudo-type `IP` runs an A and an AAAA query and merges them, and the data types `A`, `AAAA`, `ANAME`, `CAA`, `CERT`, `CNAME`, `CSYNC`, `HINFO`, `HTTPS`, `MX`, `NAPTR`, `NS`, `OPENPGPKEY`, `PTR`, `SMIMEA`, `SOA`, `SRV`, `SSHFP`, `SVCB`, `TLSA`, and `TXT` are supported. `PTR` requires an IP address in `key`, and every other type rejects one. The injected value is a JSON array of presentation-format strings filtered to the queried type, with the trailing root dot stripped from the record types whose text ends in a domain name, TXT character-strings joined the way SPF and DKIM consumers expect, and duplicates removed. `extract` and `extract_type` apply to the array.
