@@ -27,12 +27,15 @@
 //!
 //! [`SigmaCollection`]: crate::ast::SigmaCollection
 
+mod closure;
 mod error;
+mod overlay;
 mod select;
 mod source;
 mod spec;
 
 pub use error::RulesetError;
+pub use overlay::{AppliedOverlay, OverlayOrigin};
 pub use select::Decision;
 pub use source::{
     Candidate, CandidateDoc, DocumentKind, LoadedSources, ResolveOptions, RuleOrigin, SourceFile,
@@ -64,30 +67,50 @@ pub fn resolve_ruleset(
 pub struct ResolvedRuleset {
     pub name: String,
     pub collection: SigmaCollection,
+    pub entries: Vec<RuleEntry>,
     pub files: Vec<SourceFile>,
     pub overlay_files: Vec<SourceFile>,
     pub warnings: Vec<String>,
 }
 
-/// Resolve already-loaded sources into a collection. This is pure: it performs
-/// no I/O beyond overlay files, which are loaded by the overlay phase.
+/// Why one candidate is in or out of the resolved collection.
+#[derive(Debug, Clone)]
+pub struct RuleEntry {
+    pub kind: DocumentKind,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub title: String,
+    pub origin: RuleOrigin,
+    pub decision: Decision,
+    pub overlays: Vec<AppliedOverlay>,
+}
+
+/// Resolve already-loaded sources into a collection.
 pub fn resolve_loaded(
     name: &str,
     spec: &RulesetSpec,
     loaded: LoadedSources,
 ) -> Result<ResolvedRuleset, RulesetError> {
-    let decisions = select::decide(&loaded.candidates, spec)?;
+    let closure = closure::close(name, spec, &loaded.candidates)?;
+    let entries: Vec<RuleEntry> = loaded
+        .candidates
+        .iter()
+        .zip(&closure.decisions)
+        .map(|(candidate, decision)| RuleEntry {
+            kind: candidate.kind(),
+            id: candidate.id().map(str::to_string),
+            name: candidate.name().map(str::to_string),
+            title: candidate.title().to_string(),
+            origin: candidate.origin.clone(),
+            decision: decision.clone(),
+            overlays: Vec::new(),
+        })
+        .collect();
+
     let mut collection = SigmaCollection::new();
     collection.diagnostics = loaded.diagnostics;
-    for (candidate, decision) in loaded.candidates.into_iter().zip(decisions) {
-        let keep = match decision {
-            Decision::Included { .. } | Decision::PulledIn { .. } | Decision::FilterKept => true,
-            // Filters are retained until dependency closure decides whether
-            // their targets survived.
-            Decision::NotSelected if candidate.kind() == DocumentKind::Filter => true,
-            _ => false,
-        };
-        if !keep {
+    for (candidate, decision) in loaded.candidates.into_iter().zip(closure.decisions) {
+        if !closure::is_kept(&decision) {
             continue;
         }
         match candidate.doc {
@@ -99,9 +122,10 @@ pub fn resolve_loaded(
     Ok(ResolvedRuleset {
         name: name.to_string(),
         collection,
+        entries,
         files: loaded.files,
         overlay_files: Vec::new(),
-        warnings: Vec::new(),
+        warnings: closure.warnings,
     })
 }
 

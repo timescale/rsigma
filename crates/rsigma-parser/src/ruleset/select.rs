@@ -34,35 +34,49 @@ struct CompiledLogsource {
 pub(crate) struct RefIndex {
     by_id: HashMap<String, Vec<usize>>,
     by_name: HashMap<String, Vec<usize>>,
+    by_title: HashMap<String, Vec<usize>>,
 }
 
 impl RefIndex {
     pub(crate) fn build(candidates: &[Candidate]) -> Self {
         let mut by_id: HashMap<String, Vec<usize>> = HashMap::new();
         let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
         for (index, candidate) in candidates.iter().enumerate() {
             if let Some(id) = candidate.id() {
-                by_id
-                    .entry(id.to_ascii_lowercase())
-                    .or_default()
-                    .push(index);
+                by_id.entry(id.to_string()).or_default().push(index);
             }
             if let Some(name) = candidate.name() {
                 by_name.entry(name.to_string()).or_default().push(index);
             }
+            by_title
+                .entry(candidate.title().to_string())
+                .or_default()
+                .push(index);
         }
-        Self { by_id, by_name }
+        Self {
+            by_id,
+            by_name,
+            by_title,
+        }
     }
 
-    /// Resolve a correlation reference by id (case-insensitive) or name.
+    /// Resolve a correlation reference by exact id or name.
     pub(crate) fn resolve(&self, key: &str) -> Vec<usize> {
-        let mut found = self
-            .by_id
-            .get(&key.to_ascii_lowercase())
-            .cloned()
-            .unwrap_or_default();
+        let mut found = self.by_id.get(key).cloned().unwrap_or_default();
         if let Some(by_name) = self.by_name.get(key) {
             found.extend(by_name);
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// Resolve a filter target by id, name, or (deprecated) title.
+    pub(crate) fn resolve_filter_target(&self, key: &str) -> Vec<usize> {
+        let mut found = self.resolve(key);
+        if let Some(by_title) = self.by_title.get(key) {
+            found.extend(by_title);
         }
         found.sort_unstable();
         found.dedup();
