@@ -27,5 +27,5 @@ pub const CONFIG_ERROR: i32 = 3;
 /// The run started but did not complete cleanly.
 /// For `engine daemon --input stdin`: a signal stopped it before end of
 /// input, reading stdin failed, output reached neither its sink nor the
-/// DLQ, or the final state save failed.
+/// DLQ, the final state save failed, or a pipeline task panicked.
 pub const RUNTIME_ERROR: i32 = 4;

@@ -486,7 +486,7 @@ Callers whose input can be redelivered should store the input position next to t
 | `0` | Normal shutdown (including `--dry-run`). |
 | `2` | Initial rules could not be loaded or compiled. |
 | `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. In a stdin run, also stored state that cannot be restored. {{ added "unreleased" }} |
-| `4` | `RUNTIME_ERROR`: a stdin run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, or the final state save failed. {{ added "unreleased" }} |
+| `4` | `RUNTIME_ERROR`: a stdin run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "unreleased" }} |
 
 ## See also
 

@@ -22,6 +22,21 @@ pub(crate) fn exit_unrestorable(store: &'static str, reason: &str) -> ! {
     std::process::exit(exit_code::CONFIG_ERROR);
 }
 
+/// Log a pipeline task that did not finish normally, and report whether it
+/// failed.
+pub(crate) fn task_failed<T>(
+    task: &'static str,
+    joined: Result<T, tokio::task::JoinError>,
+) -> bool {
+    match joined {
+        Ok(_) => false,
+        Err(e) => {
+            tracing::error!(task, error = %e, "Daemon task failed");
+            true
+        }
+    }
+}
+
 /// Why a stdin batch run did not complete cleanly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BatchFailures {
@@ -33,6 +48,9 @@ pub(crate) struct BatchFailures {
     pub undelivered: u64,
     /// The final state save returned an error.
     pub state_save_failed: bool,
+    /// A pipeline task panicked, so events or delivery failures it held were
+    /// neither processed nor counted.
+    pub task_failed: bool,
 }
 
 impl BatchFailures {
@@ -41,6 +59,7 @@ impl BatchFailures {
             && !self.input_read_error
             && self.undelivered == 0
             && !self.state_save_failed
+            && !self.task_failed
     }
 
     pub(crate) fn exit_code(&self) -> i32 {
@@ -78,6 +97,10 @@ mod tests {
             },
             BatchFailures {
                 state_save_failed: true,
+                ..BatchFailures::default()
+            },
+            BatchFailures {
+                task_failed: true,
                 ..BatchFailures::default()
             },
         ];

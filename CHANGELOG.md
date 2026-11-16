@@ -8,7 +8,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 `rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.
 
-A stdin run whose stored state cannot be restored now exits `3` instead of starting fresh. A stdin run that did not complete cleanly exits `4` (`RUNTIME_ERROR`) after logging one summary line: a signal stopped it before end of input, reading stdin failed, output reached neither a sink nor the DLQ, or the final state save failed. Parse errors without a `--dlq` and `on_full=drop` queue drops do not fail a run.
+A stdin run whose stored state cannot be restored now exits `3` instead of starting fresh. A stdin run that did not complete cleanly exits `4` (`RUNTIME_ERROR`) after logging one summary line: a signal stopped it before end of input, reading stdin failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. Parse errors without a `--dlq` and `on_full=drop` queue drops do not fail a run.
 
 The library surface adds `StdinReadStatus` and `StdinSource::read_status`, which report whether the stdin reader stopped on a read error rather than at end of input.
 

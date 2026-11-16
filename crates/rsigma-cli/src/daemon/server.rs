@@ -2551,14 +2551,17 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         }
     };
 
+    let mut task_failed = false;
     let shutdown_triggered = tokio::select! {
         _ = &mut serve_handle => true,
-        _ = async {
-            let _ = engine_handle.await;
-            let _ = dispatch_handle.await;
+        failed = async {
+            let engine = batch::task_failed("engine", engine_handle.await);
+            let dispatch = batch::task_failed("dispatch", dispatch_handle.await);
+            engine | dispatch
         } => {
             tracing::info!("Streaming pipeline complete");
             serve_handle.abort();
+            task_failed |= failed;
             false
         }
     };
@@ -2582,29 +2585,31 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         source_done_notify.notify_one();
 
         let drain = async {
-            let _ = sink_handle.await;
+            let mut failed = batch::task_failed("sink", sink_handle.await);
             tracing::debug!("Sink task finished");
-            let _ = df_handle.await;
+            failed |= batch::task_failed("dlq_bridge", df_handle.await);
             tracing::debug!("DLQ bridge finished");
-            let _ = dlq_handle.await;
+            failed |= batch::task_failed("dlq", dlq_handle.await);
             tracing::debug!("DLQ task finished");
-            let _ = ack_handle.await;
+            failed |= batch::task_failed("ack", ack_handle.await);
             tracing::debug!("Ack task finished");
+            failed
         };
-        if tokio::time::timeout(drain_duration, drain).await.is_err() {
-            tracing::warn!(
+        match tokio::time::timeout(drain_duration, drain).await {
+            Ok(failed) => task_failed |= failed,
+            Err(_) => tracing::warn!(
                 timeout_secs = config.drain_timeout,
                 "Drain timeout exceeded, some events may be lost"
-            );
+            ),
         }
     } else {
-        let _ = sink_handle.await;
+        task_failed |= batch::task_failed("sink", sink_handle.await);
         tracing::debug!("Sink task finished");
-        let _ = df_handle.await;
+        task_failed |= batch::task_failed("dlq_bridge", df_handle.await);
         tracing::debug!("DLQ bridge finished");
-        let _ = dlq_handle.await;
+        task_failed |= batch::task_failed("dlq", dlq_handle.await);
         tracing::debug!("DLQ task finished");
-        let _ = ack_handle.await;
+        task_failed |= batch::task_failed("ack", ack_handle.await);
         tracing::debug!("Ack task finished");
     }
 
@@ -2643,6 +2648,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         input_read_error: stdin_status.as_ref().is_some_and(StdinReadStatus::failed),
         undelivered: undelivered.load(Ordering::Relaxed),
         state_save_failed,
+        task_failed,
     };
     if !failures.is_clean() {
         tracing::error!(
@@ -2650,6 +2656,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             input_read_error = failures.input_read_error,
             undelivered = failures.undelivered,
             state_save_failed = failures.state_save_failed,
+            task_failed = failures.task_failed,
             "Batch run did not complete cleanly"
         );
     }
