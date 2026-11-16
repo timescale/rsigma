@@ -8,7 +8,7 @@ mod common;
 use std::path::Path;
 
 use assert_cmd::Command;
-use common::{rsigma, temp_file};
+use common::{DaemonProcess, http_get, rsigma, temp_file};
 use rusqlite::params;
 use tempfile::TempDir;
 
@@ -36,6 +36,17 @@ correlation:
 level: high
 "#;
 
+const RISK_YAML: &str = r#"
+score:
+  default_score: 60
+objects:
+  - type: rule
+    selector: rule
+incident:
+  score_threshold: 100000
+  window: 1h
+"#;
+
 /// A one-shot batch run over stdin that persists correlation state.
 fn batch(rules: &Path, db: &Path) -> Command {
     let mut cmd = rsigma();
@@ -55,9 +66,22 @@ fn batch(rules: &Path, db: &Path) -> Command {
     cmd
 }
 
+/// Read the stored snapshot version for `table`.
+fn snapshot_version(db: &Path, table: &str) -> u64 {
+    let conn = rusqlite::Connection::open(db).unwrap();
+    let snapshot: String = conn
+        .query_row(
+            &format!("SELECT snapshot FROM {table} WHERE id = 1"),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    value["version"].as_u64().unwrap()
+}
+
 /// Load the single-row snapshot in `table`, let `f` change it, and write it
 /// back.
-#[allow(dead_code)]
 fn patch_snapshot(db: &Path, table: &str, f: impl FnOnce(&mut serde_json::Value)) {
     let conn = rusqlite::Connection::open(db).unwrap();
     let snapshot: String = conn
@@ -77,7 +101,6 @@ fn patch_snapshot(db: &Path, table: &str, f: impl FnOnce(&mut serde_json::Value)
 }
 
 /// Replace the single-row snapshot in `table` with raw text.
-#[allow(dead_code)]
 fn set_raw_snapshot(db: &Path, table: &str, text: &str) {
     let conn = rusqlite::Connection::open(db).unwrap();
     conn.execute(
@@ -183,5 +206,212 @@ fn batch_run_flushes_a_file_sink_before_exit() {
     assert!(
         written.contains("\"rule_title\":\"Many Logins\""),
         "the file sink should hold the correlation line once the process exits, got: {written}"
+    );
+}
+
+#[test]
+fn batch_run_refuses_an_incompatible_correlation_snapshot() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    patch_snapshot(&db, "rsigma_correlation_state", |snapshot| {
+        snapshot["version"] = serde_json::json!(99);
+    });
+
+    let output = batch(rules.path(), &db)
+        .write_stdin(event)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an incompatible snapshot should be a configuration error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"store\":\"correlation\""),
+        "stderr should name the correlation store, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--clear-state"),
+        "stderr should point at --clear-state, got: {stderr}"
+    );
+    assert_eq!(
+        snapshot_version(&db, "rsigma_correlation_state"),
+        99,
+        "nothing should be written to the database before the refusal"
+    );
+}
+
+#[test]
+fn batch_run_refuses_an_unreadable_correlation_snapshot() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    set_raw_snapshot(&db, "rsigma_correlation_state", "not json");
+
+    let output = batch(rules.path(), &db)
+        .write_stdin(event)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an unreadable snapshot should be a configuration error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"store\":\"correlation\""),
+        "stderr should name the correlation store, got: {stderr}"
+    );
+}
+
+#[test]
+fn batch_run_with_clear_state_replaces_an_incompatible_snapshot() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    patch_snapshot(&db, "rsigma_correlation_state", |snapshot| {
+        snapshot["version"] = serde_json::json!(99);
+    });
+
+    batch(rules.path(), &db)
+        .args(["--clear-state"])
+        .write_stdin(event)
+        .assert()
+        .success();
+    assert_eq!(
+        snapshot_version(&db, "rsigma_correlation_state"),
+        1,
+        "--clear-state should replace the incompatible snapshot with a current one"
+    );
+}
+
+#[test]
+fn batch_run_with_clear_state_starts_fresh_from_an_unreadable_snapshot() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    set_raw_snapshot(&db, "rsigma_correlation_state", "not json");
+
+    batch(rules.path(), &db)
+        .args(["--clear-state"])
+        .write_stdin(event)
+        .assert()
+        .success();
+    assert_eq!(
+        snapshot_version(&db, "rsigma_correlation_state"),
+        1,
+        "--clear-state should replace an unreadable snapshot with a current one"
+    );
+}
+
+#[test]
+fn batch_run_refuses_an_incompatible_risk_snapshot() {
+    let rules = temp_file(".yml", common::SIMPLE_RULE);
+    let risk = temp_file(".yml", RISK_YAML);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(r#"{"CommandLine":"malware a"}"#, "\n");
+
+    batch(rules.path(), &db)
+        .args(["--risk", risk.path().to_str().unwrap()])
+        .write_stdin(event)
+        .assert()
+        .success();
+    patch_snapshot(&db, "rsigma_risk_state", |snapshot| {
+        snapshot["version"] = serde_json::json!(99);
+    });
+
+    let output = batch(rules.path(), &db)
+        .args(["--risk", risk.path().to_str().unwrap()])
+        .write_stdin(event)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an incompatible risk snapshot should be a configuration error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"store\":\"risk\""),
+        "stderr should name the risk store, got: {stderr}"
+    );
+}
+
+#[test]
+fn http_daemon_still_starts_fresh_on_an_incompatible_snapshot() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    patch_snapshot(&db, "rsigma_correlation_state", |snapshot| {
+        snapshot["version"] = serde_json::json!(99);
+    });
+
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rules.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--state-db",
+        db.to_str().unwrap(),
+    ]);
+    let (status, _) = http_get(&daemon.url("/healthz"));
+    assert_eq!(
+        status, 200,
+        "an HTTP daemon should keep starting fresh on an incompatible snapshot"
     );
 }

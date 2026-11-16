@@ -25,6 +25,7 @@ use rsigma_runtime::{
     strip_event_payloads,
 };
 
+use super::batch;
 use super::bundle::BundleFormat;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -386,6 +387,7 @@ fn default_detect_inflight(workers: usize) -> usize {
 }
 
 pub async fn run_daemon(config: DaemonConfig) {
+    let batch = config.reads_stdin();
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
 
@@ -655,6 +657,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                             "Correlation state restored from database"
                         );
                     } else {
+                        if batch {
+                            batch::exit_unrestorable(
+                                "correlation",
+                                &format!("snapshot version {} is not supported", snapshot.version),
+                            );
+                        }
                         tracing::warn!(
                             snapshot_version = snapshot.version,
                             "Incompatible snapshot version, starting with fresh state"
@@ -668,6 +676,11 @@ pub async fn run_daemon(config: DaemonConfig) {
                 tracing::info!("No previous correlation state found in database");
             }
             Err(e) => {
+                // A --clear-state run never attempts a restore, so an
+                // unreadable snapshot is not a failure there.
+                if batch && restore_state {
+                    batch::exit_unrestorable("correlation", &e);
+                }
                 tracing::warn!(error = %e, "Failed to load state from database, starting fresh");
             }
         }
@@ -742,6 +755,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_alert_pipeline().await {
                         Ok(Some(snap)) => {
+                            let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
                             let restored = alert_state
                                 .write()
@@ -750,6 +764,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                             if restored {
                                 tracing::info!("Alert-pipeline state restored from database");
                             } else {
+                                if batch {
+                                    batch::exit_unrestorable(
+                                        "alert_pipeline",
+                                        &format!("snapshot version {version} is not supported"),
+                                    );
+                                }
                                 tracing::warn!(
                                     "Incompatible alert-pipeline snapshot version, starting fresh"
                                 );
@@ -757,6 +777,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                         Ok(None) => {}
                         Err(e) => {
+                            if batch {
+                                batch::exit_unrestorable("alert_pipeline", &e);
+                            }
                             tracing::warn!(error = %e, "Failed to load alert-pipeline state");
                         }
                     }
@@ -818,6 +841,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_risk().await {
                         Ok(Some(snap)) => {
+                            let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
                             let restored = risk_state
                                 .write()
@@ -826,6 +850,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                             if restored {
                                 tracing::info!("Risk state restored from database");
                             } else {
+                                if batch {
+                                    batch::exit_unrestorable(
+                                        "risk",
+                                        &format!("snapshot version {version} is not supported"),
+                                    );
+                                }
                                 tracing::warn!(
                                     "Incompatible risk snapshot version, starting fresh"
                                 );
@@ -833,6 +863,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                         Ok(None) => {}
                         Err(e) => {
+                            if batch {
+                                batch::exit_unrestorable("risk", &e);
+                            }
                             tracing::warn!(error = %e, "Failed to load risk state");
                         }
                     }
@@ -978,15 +1011,27 @@ pub async fn run_daemon(config: DaemonConfig) {
         if restore_state && let Some(ref store) = state_store {
             match store.load_dispositions().await {
                 Ok(Some(snap)) => {
+                    let version = snap.version;
                     let now = chrono::Utc::now().timestamp();
                     if state.restore(snap, now) {
                         tracing::info!("Disposition state restored from database");
                     } else {
+                        if batch {
+                            batch::exit_unrestorable(
+                                "dispositions",
+                                &format!("snapshot version {version} is not supported"),
+                            );
+                        }
                         tracing::warn!("Incompatible disposition snapshot version, starting fresh");
                     }
                 }
                 Ok(None) => {}
-                Err(e) => tracing::warn!(error = %e, "Failed to load disposition state"),
+                Err(e) => {
+                    if batch {
+                        batch::exit_unrestorable("dispositions", &e);
+                    }
+                    tracing::warn!(error = %e, "Failed to load disposition state");
+                }
             }
         }
         // Optional pull source: load the declared dynamic source(s) and ingest
