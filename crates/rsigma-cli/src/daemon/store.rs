@@ -448,6 +448,7 @@ mod tests {
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
+            rulesets: HashMap::new(),
         }
     }
 

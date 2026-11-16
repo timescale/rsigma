@@ -161,6 +161,7 @@ mod tests {
                 tags: tags.into_iter().map(str::to_string).collect(),
                 custom_attributes: Arc::new(custom),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec![],

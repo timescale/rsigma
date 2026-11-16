@@ -227,6 +227,10 @@ pub struct CorrelationSnapshot {
     pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
     /// Per-correlation, per-group event reference buffers.
     pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// Per-ruleset snapshots, keyed by ruleset name. Empty for a single
+    /// collection.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rulesets: HashMap<String, CorrelationSnapshot>,
 }
 
 fn default_snapshot_version() -> u32 {

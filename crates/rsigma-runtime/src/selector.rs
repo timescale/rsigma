@@ -210,6 +210,7 @@ mod tests {
                         .unwrap()
                         .clone(),
                 ),
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec!["sel".to_string()],
@@ -228,6 +229,7 @@ mod tests {
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Correlation(CorrelationBody {
                 correlation_type: CorrelationType::EventCount,

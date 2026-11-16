@@ -29,6 +29,7 @@
 //! #         tags: vec!["attack.t1059.001".to_string()],
 //! #         custom_attributes: Arc::new(HashMap::new()),
 //! #         enrichments: None,
+//! #         ruleset: None,
 //! #     },
 //! #     body: ResultBody::Detection(DetectionBody {
 //! #         matched_selections: vec!["selection".to_string()],

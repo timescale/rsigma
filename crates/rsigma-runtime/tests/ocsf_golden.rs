@@ -180,6 +180,7 @@ fn header(enrichments: Option<serde_json::Map<String, Value>>) -> RuleHeader {
             json!("detection-eng"),
         )])),
         enrichments,
+        ruleset: None,
     }
 }
 
@@ -223,6 +224,7 @@ fn correlation_with_group_key() {
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Correlation(CorrelationBody {
             correlation_type: CorrelationType::EventCount,
@@ -581,6 +583,7 @@ fn correlation_detection() -> EvaluationResult {
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(attributes),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Correlation(CorrelationBody {
             correlation_type: CorrelationType::EventCount,
@@ -616,6 +619,7 @@ fn enriched_detection() -> EvaluationResult {
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: Some(enrichments),
+            ruleset: None,
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],

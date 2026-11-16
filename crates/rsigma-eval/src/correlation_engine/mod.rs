@@ -1043,6 +1043,7 @@ impl<L> CorrelationEngine<L> {
                         tags: corr.tags.clone(),
                         custom_attributes: corr.custom_attributes.clone(),
                         enrichments: None,
+                        ruleset: None,
                     },
                     body: ResultBody::Correlation(CorrelationBody {
                         correlation_type: corr_type,
@@ -1210,6 +1211,7 @@ impl<L> CorrelationEngine<L> {
                             tags: corr.tags.clone(),
                             custom_attributes: corr.custom_attributes.clone(),
                             enrichments: None,
+                            ruleset: None,
                         },
                         body: ResultBody::Correlation(CorrelationBody {
                             correlation_type: corr_type,
@@ -1513,6 +1515,7 @@ impl<L> CorrelationEngine<L> {
             last_alert,
             event_buffers,
             event_ref_buffers,
+            rulesets: HashMap::new(),
         }
     }
 

@@ -418,9 +418,19 @@ detection:
         last_alert: Default::default(),
         event_buffers: Default::default(),
         event_ref_buffers: Default::default(),
+        rulesets: Default::default(),
     };
     assert!(engine.import_state(snapshot));
     assert_eq!(engine.state_count(), 0);
+}
+
+#[test]
+fn snapshot_without_rulesets_deserializes() {
+    let snapshot: CorrelationSnapshot = serde_json::from_str(
+        r#"{"version":1,"windows":{},"last_alert":{},"event_buffers":{},"event_ref_buffers":{}}"#,
+    )
+    .unwrap();
+    assert!(snapshot.rulesets.is_empty());
 }
 
 #[test]
