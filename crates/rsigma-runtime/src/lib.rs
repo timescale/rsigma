@@ -50,6 +50,7 @@ pub mod egress;
 pub mod engine;
 pub mod enrichment;
 pub mod error;
+pub mod finding_links;
 pub mod input;
 pub mod io;
 pub mod metrics;
@@ -99,7 +100,7 @@ pub use enrichment::{
     EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
     TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
-    validate_template_namespace,
+    render_webhook_body, validate_template_namespace,
 };
 #[cfg(feature = "dns-enrich")]
 pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
@@ -108,6 +109,7 @@ pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
 pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;
+pub use finding_links::FindingLinks;
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::webhook::{
     BuiltWebhook, WebhookConfig, WebhookConfigError, WebhookKind, WebhookSink, WebhooksFile,
@@ -125,9 +127,10 @@ pub use io::{
 pub use metrics::{MetricsHook, NoopMetrics};
 pub use processor::{BatchProcessOutcome, EventFilter, LogProcessor};
 pub use risk::{
-    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskFile,
-    RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState, RiskStateSnapshot,
-    SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file, parse_risk_config,
+    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskEvent,
+    RiskFile, RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState,
+    RiskStateSnapshot, SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file,
+    parse_risk_config,
 };
 pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};

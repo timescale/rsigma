@@ -1,8 +1,8 @@
 {
   "action": "Unknown",
   "action_id": 0,
-  "activity_id": 1,
-  "activity_name": "Create",
+  "activity_id": 3,
+  "activity_name": "Close",
   "category_name": "Findings",
   "category_uid": 2,
   "class_name": "Detection Finding",
@@ -32,13 +32,17 @@
   },
   "message": "rule-1 and 1 other rule",
   "metadata": {
+    "correlation_uid": "f8bcd62a829b1126",
     "product": {
       "name": "rsigma",
       "vendor_name": "rsigma",
       "version": "0.27.0"
     },
+    "profiles": [
+      "security_control"
+    ],
     "uid": "00000000-0000-4000-8000-000000000001",
-    "version": "1.1.0"
+    "version": "1.3.0"
   },
   "resources": [
     {
@@ -49,12 +53,12 @@
   "severity": "High",
   "severity_id": 4,
   "start_time": 1767225000000,
-  "status": "New",
-  "status_id": 1,
+  "status": "Resolved",
+  "status_id": 4,
   "time": 1767225600000,
   "timezone_offset": 0,
-  "type_name": "Detection Finding: Create",
-  "type_uid": 200401,
+  "type_name": "Detection Finding: Close",
+  "type_uid": 200403,
   "unmapped": {
     "refs": [
       {
@@ -66,7 +70,7 @@
       "rule-1": 3,
       "rule-2": 1
     },
-    "state": "open",
-    "trigger": "group_wait"
+    "state": "resolved",
+    "trigger": "resolved"
   }
 }

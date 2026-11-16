@@ -279,7 +279,8 @@ fn render_disposition_reports(reports: &[(rsigma_parser::SigmaRule, TuneReport)]
             report,
         })
         .collect();
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => render_json(&named, true),
         OutputFormat::Ndjson => {
             for item in &named {
@@ -355,7 +356,8 @@ fn select_rule<'a>(
 }
 
 fn render_report(report: &TuneReport, ctx: &OutputCtx) {
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => render_json(report, true),
         OutputFormat::Ndjson => render_json(report, false),
         OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {

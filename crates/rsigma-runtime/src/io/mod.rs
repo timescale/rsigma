@@ -51,8 +51,8 @@ use crate::metrics::MetricsHook;
 ///
 /// Selected per sink with the `format` query parameter on an output spec
 /// (`file:///findings.ndjson?format=ocsf`). Transport-independent: every
-/// line sink (stdout, file, NATS, unix socket) accepts every format, while
-/// OTLP has its own log-record mapping and webhooks render from templates.
+/// line sink (stdout, file, NATS, unix socket) accepts every format. An OTLP
+/// sink uses it to choose its log-record body, and webhooks render from templates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SinkFormat {
@@ -81,6 +81,7 @@ pub(crate) fn serialize_result(
     format: SinkFormat,
     pretty: bool,
     delivery: Option<(&DeliveryContext, usize)>,
+    ocsf: &crate::ocsf::OcsfOptions,
 ) -> Result<String, RuntimeError> {
     match format {
         SinkFormat::Ndjson => Ok(if pretty {
@@ -89,19 +90,29 @@ pub(crate) fn serialize_result(
             serde_json::to_string(result)?
         }),
         SinkFormat::Ocsf => {
-            let finding = match delivery {
-                Some((ctx, index)) => {
-                    let source = DeliveryFindingSource::new(ctx, index);
-                    crate::ocsf::detection_finding_with(result, &source)
-                }
-                None => crate::ocsf::detection_finding(result),
-            };
+            let finding = ocsf_finding(result, delivery, ocsf);
             Ok(if pretty {
                 serde_json::to_string_pretty(&finding)?
             } else {
                 serde_json::to_string(&finding)?
             })
         }
+    }
+}
+
+/// The OCSF finding for one result, with identity and time drawn from its
+/// delivery context when there is one.
+pub(crate) fn ocsf_finding(
+    result: &EvaluationResult,
+    delivery: Option<(&DeliveryContext, usize)>,
+    ocsf: &crate::ocsf::OcsfOptions,
+) -> serde_json::Value {
+    match delivery {
+        Some((ctx, index)) => {
+            let source = DeliveryFindingSource::new(ctx, index);
+            crate::ocsf::detection_finding_with_opts(result, &source, ocsf.clone())
+        }
+        None => crate::ocsf::detection_finding_opts(result, ocsf.clone()),
     }
 }
 
@@ -141,6 +152,10 @@ impl crate::ocsf::FindingSource for DeliveryFindingSource<'_> {
     fn uid(&self) -> String {
         let sequence = self.minted.get();
         self.minted.set(sequence.saturating_add(1));
+        // The first uid a serializer asks for is `finding_info.uid`.
+        if sequence == 0 {
+            return self.ctx.finding_uid(self.index);
+        }
         format!("{}_{:04}_{sequence}", self.ctx.id_base(), self.index)
     }
 }
@@ -214,6 +229,33 @@ impl IncidentEnvelope {
 pub struct FormattedIncidentEnvelope {
     native: IncidentEnvelope,
     lines: Vec<(SinkFormat, String)>,
+    ocsf_lines: Vec<(crate::ocsf::OcsfOptions, String)>,
+}
+
+/// Resolve the wire line for an incident envelope and one sink's format/options.
+///
+/// An OCSF sink receives only a line the producer attached for those exact
+/// options. A missing line is a permanent error: the native NDJSON is not a
+/// finding, and it is not re-parsed here.
+pub(crate) fn formatted_incident_line(
+    env: &FormattedIncidentEnvelope,
+    format: SinkFormat,
+    ocsf: &crate::ocsf::OcsfOptions,
+) -> Result<String, RuntimeError> {
+    match format {
+        SinkFormat::Ndjson => Ok(env.native().json.clone()),
+        SinkFormat::Ocsf => env.ocsf_line(ocsf).map(str::to_string).ok_or_else(|| {
+            let group = ocsf
+                .assignee_group()
+                .map(|name| format!(" assignee_group={name}"))
+                .unwrap_or_default();
+            RuntimeError::Permanent(format!(
+                "no pre-serialized OCSF incident line for version {} class {}{group}",
+                ocsf.version(),
+                ocsf.incident_class(),
+            ))
+        }),
+    }
 }
 
 impl FormattedIncidentEnvelope {
@@ -221,8 +263,40 @@ impl FormattedIncidentEnvelope {
     pub fn new(native: IncidentEnvelope) -> Self {
         Self {
             lines: vec![(SinkFormat::Ndjson, native.json.clone())],
+            ocsf_lines: Vec::new(),
             native,
         }
+    }
+
+    /// Add the OCSF line serialized with `options`, replacing any line already
+    /// held for them. Sinks whose options match get this line verbatim.
+    #[must_use]
+    pub fn with_ocsf_line(mut self, options: crate::ocsf::OcsfOptions, json: String) -> Self {
+        match self.ocsf_lines.iter_mut().find(|(o, _)| *o == options) {
+            Some((_, existing)) => *existing = json,
+            None => self.ocsf_lines.push((options, json)),
+        }
+        self
+    }
+
+    /// The OCSF line serialized with `options`, if one was added. The
+    /// default options also match a line added with
+    /// [`with_line`](Self::with_line)`(SinkFormat::Ocsf, ..)`.
+    pub fn ocsf_line(&self, options: &crate::ocsf::OcsfOptions) -> Option<&str> {
+        self.ocsf_lines
+            .iter()
+            .find(|(o, _)| o == options)
+            .map(|(_, json)| json.as_str())
+            .or_else(|| {
+                (options == &crate::ocsf::OcsfOptions::default())
+                    .then(|| {
+                        self.lines
+                            .iter()
+                            .find(|(f, _)| *f == SinkFormat::Ocsf)
+                            .map(|(_, json)| json.as_str())
+                    })
+                    .flatten()
+            })
     }
 
     /// Add the line for another format, replacing any line already held for it.
@@ -380,7 +454,7 @@ impl Sink {
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send_with_context(result, ctx).await,
                 #[cfg(feature = "otlp")]
-                Sink::Otlp(s) => s.send(result).await,
+                Sink::Otlp(s) => s.send_with_context(result, ctx).await,
                 Sink::Webhook(s) => s.send(result, ctx).await,
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => s.send_with_context(result, ctx).await,
@@ -492,18 +566,28 @@ impl Sink {
     {
         Box::pin(async move {
             match self {
-                Sink::Stdout(s) => blocking_write(|| s.send_raw(env.line(s.format()))),
-                Sink::File(s) => blocking_write(|| s.send_raw(env.line(s.format()))),
+                Sink::Stdout(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    blocking_write(|| s.send_raw(&line))
+                }
+                Sink::File(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    blocking_write(|| s.send_raw(&line))
+                }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
-                    s.send_incident(env.line(s.format()), env.native().nats_subject.as_deref())
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    s.send_incident(&line, env.native().nats_subject.as_deref())
                         .await
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
                 Sink::Webhook(_) => Ok(()),
                 #[cfg(all(unix, feature = "uds"))]
-                Sink::Unix(s) => s.send_raw(env.line(s.format())).await,
+                Sink::Unix(s) => {
+                    let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
+                    s.send_raw(&line).await
+                }
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_formatted_incident(env).await {
@@ -522,10 +606,11 @@ impl Sink {
         })
     }
 
-    /// The wire format this sink serializes into, for line-oriented sinks.
+    /// The wire format this sink serializes results into: the line format of a
+    /// line-oriented sink, or the log-record body encoding of an OTLP sink.
     ///
-    /// `None` for sinks that own their encoding (OTLP log records, templated
-    /// webhook bodies) and for a `FanOut`, whose leaves each carry their own.
+    /// `None` for webhooks, which render templated bodies, and for a `FanOut`,
+    /// whose leaves each carry their own.
     pub fn format(&self) -> Option<SinkFormat> {
         match self {
             Sink::Stdout(s) => Some(s.format()),
@@ -533,12 +618,30 @@ impl Sink {
             #[cfg(feature = "nats")]
             Sink::Nats(s) => Some(s.format()),
             #[cfg(feature = "otlp")]
-            Sink::Otlp(_) => None,
+            Sink::Otlp(s) => Some(s.format()),
             Sink::Webhook(_) => None,
             #[cfg(all(unix, feature = "uds"))]
             Sink::Unix(s) => Some(s.format()),
             Sink::FanOut(_) => None,
         }
+    }
+
+    /// The OCSF serializer options of a line-oriented sink in OCSF format, which
+    /// is what incident lines are serialized against.
+    ///
+    /// `None` for NDJSON line sinks, for OTLP and webhook sinks (which carry no
+    /// incidents), and for a `FanOut`.
+    pub fn ocsf_options(&self) -> Option<crate::ocsf::OcsfOptions> {
+        let options = match self {
+            Sink::Stdout(s) => s.ocsf_options(),
+            Sink::File(s) => s.ocsf_options(),
+            #[cfg(feature = "nats")]
+            Sink::Nats(s) => s.ocsf_options(),
+            #[cfg(all(unix, feature = "uds"))]
+            Sink::Unix(s) => s.ocsf_options(),
+            _ => return None,
+        };
+        (self.format() == Some(SinkFormat::Ocsf)).then(|| options.clone())
     }
 
     /// Short label for the sink variant, used in structured logs and per-sink
@@ -659,6 +762,65 @@ mod tests {
     }
 
     #[test]
+    fn envelope_serves_each_ocsf_option_set_its_own_line() {
+        use crate::ocsf::{OcsfOptions, OcsfVersion};
+
+        let incident_2005 = OcsfOptions::default().with_incident_finding("soc").unwrap();
+        let v13 = OcsfOptions::new(OcsfVersion::V1_3_0);
+        let env = FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
+            .with_ocsf_line(OcsfOptions::default(), "2004".to_string())
+            .with_ocsf_line(incident_2005.clone(), "first".to_string())
+            .with_ocsf_line(incident_2005.clone(), "2005".to_string());
+
+        assert_eq!(env.ocsf_line(&OcsfOptions::default()), Some("2004"));
+        assert_eq!(env.ocsf_line(&incident_2005), Some("2005"));
+        assert_eq!(env.ocsf_line(&v13), None);
+        assert_eq!(
+            formatted_incident_line(&env, SinkFormat::Ocsf, &incident_2005).unwrap(),
+            "2005",
+        );
+        assert_eq!(
+            formatted_incident_line(&env, SinkFormat::Ndjson, &incident_2005).unwrap(),
+            "native",
+        );
+
+        let legacy =
+            FormattedIncidentEnvelope::new(IncidentEnvelope::new("native".to_string(), None))
+                .with_line(SinkFormat::Ocsf, "finding".to_string());
+        assert_eq!(
+            legacy.ocsf_line(&OcsfOptions::default()),
+            Some("finding"),
+            "a line added by format still serves the default options",
+        );
+        assert_eq!(legacy.ocsf_line(&incident_2005), None);
+        let missing = formatted_incident_line(&env, SinkFormat::Ocsf, &v13).unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .contains("no pre-serialized OCSF incident line"),
+            "{missing}",
+        );
+    }
+
+    #[test]
+    fn an_ocsf_sink_does_not_receive_the_native_incident_line() {
+        use crate::ocsf::OcsfOptions;
+
+        let env = FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+            "{\"incident_id\":\"i-1\"}".to_string(),
+            None,
+        ));
+        let err = formatted_incident_line(&env, SinkFormat::Ocsf, &OcsfOptions::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no pre-serialized OCSF incident line"),
+            "{err}"
+        );
+        assert!(!err.contains("incident_id"), "{err}");
+    }
+
+    #[test]
     fn native_envelope_keeps_its_public_struct_literal() {
         let env = IncidentEnvelope {
             json: "native".to_string(),
@@ -676,6 +838,29 @@ mod tests {
         assert_eq!(first.now_ms(), second.now_ms());
         assert_eq!(first.uid(), second.uid());
         assert_eq!(first.uid(), second.uid());
+    }
+
+    #[test]
+    fn the_first_minted_uid_is_the_contexts_finding_uid() {
+        let ctx = DeliveryContext::new();
+        assert_eq!(
+            DeliveryFindingSource::new(&ctx, 3).uid(),
+            ctx.finding_uid(3),
+            "an unpinned context derives the uid from its base and the index",
+        );
+
+        let mut pinned = DeliveryContext::new();
+        let minted = pinned.finding_uid(2);
+        pinned.set_finding_uids(vec![minted.clone(), String::new()]);
+        let source = DeliveryFindingSource::new(&pinned, 0);
+        assert_eq!(source.uid(), minted, "a pinned uid survives a reindex");
+        assert_ne!(source.uid(), minted, "later uids stay distinct");
+        assert_eq!(
+            DeliveryFindingSource::new(&pinned, 1).uid(),
+            pinned.finding_uid(1),
+            "an empty pin falls back to the derived uid",
+        );
+        assert!(pinned.finding_uid(1).ends_with("_0001_0"));
     }
 
     #[tokio::test(flavor = "current_thread")]

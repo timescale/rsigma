@@ -36,6 +36,7 @@ pub use score::DEFAULT_SCORE_ATTRIBUTE;
 pub use snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{MetricsHook, Scope};
@@ -49,6 +50,19 @@ pub(crate) const RISK_SCORE_KEY: &str = "risk.score";
 /// Reserved enrichment key carrying the extracted risk objects.
 pub(crate) const RISK_OBJECTS_KEY: &str = "risk.objects";
 
+/// Compact wire shape for one per-entity risk event (additive incident-channel line).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RiskEvent {
+    pub risk_event: bool,
+    pub timestamp: i64,
+    pub rule: String,
+    pub rule_title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    pub risk_score: i64,
+    pub risk_object: RiskObject,
+}
+
 /// Output of [`RiskLayer::process`]: the annotated pass-through results and the
 /// additive risk events (opt-in).
 #[derive(Debug, Default)]
@@ -57,11 +71,15 @@ pub struct RiskOutput {
     pub kept: ProcessResult,
     /// Compact risk events, one per `(detection, risk object)` pair, dispatched
     /// as additive NDJSON (optionally to a dedicated subject). Empty unless
-    /// `emit_risk_events` is set.
+    /// `emit_risk_events` is set. Values are the serialized [`RiskEvent`]
+    /// shape, so this field stays a JSON array for callers that already
+    /// forward it as NDJSON.
     pub risk_events: Vec<Value>,
     /// High-fidelity risk incidents emitted when an entity crossed a threshold,
     /// dispatched via the incident path (optionally to a dedicated subject).
     pub incidents: Vec<RiskIncidentResult>,
+    /// Detection Finding uids index-aligned with [`Self::incidents`].
+    pub finding_links: Vec<crate::FindingLinks>,
 }
 
 /// A validated, runnable risk layer.
@@ -131,14 +149,37 @@ impl RiskLayer {
         now: i64,
         metrics: &dyn MetricsHook,
     ) -> RiskOutput {
+        self.process_with_finding_uids(results, &[], state, now, metrics)
+    }
+
+    /// [`Self::process`] carrying each result's OCSF finding uid.
+    ///
+    /// `finding_uids` is index-aligned with `results`; a missing or empty uid
+    /// records nothing. Each contribution keeps the uid of the firing that
+    /// produced it, so a risk incident can reference the Detection Findings it
+    /// accumulated. `kept` preserves the input order, so the caller's uids stay
+    /// aligned with it.
+    pub fn process_with_finding_uids(
+        &self,
+        results: ProcessResult,
+        finding_uids: &[String],
+        state: &mut RiskState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+    ) -> RiskOutput {
         let start = std::time::Instant::now();
         let mut out = RiskOutput {
             kept: Vec::with_capacity(results.len()),
             risk_events: Vec::new(),
             incidents: Vec::new(),
+            finding_links: Vec::new(),
         };
 
-        for mut result in results {
+        for (index, mut result) in results.into_iter().enumerate() {
+            let finding_uid = finding_uids
+                .get(index)
+                .map(String::as_str)
+                .filter(|uid| !uid.is_empty());
             if !self.scope.matches(&result) {
                 metrics.on_risk_annotation("skipped");
                 out.kept.push(result);
@@ -159,15 +200,27 @@ impl RiskLayer {
 
             if self.emit_risk_events {
                 for object in &objects {
-                    out.risk_events
-                        .push(risk_event(&result, score, object, now));
+                    out.risk_events.push(
+                        serde_json::to_value(risk_event(&result, score, object, now))
+                            .unwrap_or(Value::Null),
+                    );
                 }
             }
 
             if let Some(cfg) = self.incident.as_ref()
                 && !objects.is_empty()
             {
-                self.accumulate(cfg, &result, score, &objects, state, now, metrics, &mut out);
+                self.accumulate(
+                    cfg,
+                    &result,
+                    finding_uid,
+                    score,
+                    &objects,
+                    state,
+                    now,
+                    metrics,
+                    &mut out,
+                );
             }
 
             if self.strip_event {
@@ -190,6 +243,7 @@ impl RiskLayer {
         &self,
         cfg: &IncidentConfig,
         result: &EvaluationResult,
+        finding_uid: Option<&str>,
         score: i64,
         objects: &[RiskObject],
         state: &mut RiskState,
@@ -220,6 +274,7 @@ impl RiskLayer {
                 rule: rule.clone(),
                 level: level.clone(),
                 result: stored_result.clone(),
+                finding_uid: finding_uid.map(str::to_string),
             };
             let outcome = state.record(cfg, &object.object_type, &object.value, contribution, now);
             if outcome.evicted {
@@ -228,6 +283,7 @@ impl RiskLayer {
             if let Some(incident) = outcome.incident {
                 metrics.on_risk_incident_emitted(incident.trigger);
                 out.incidents.push(incident);
+                out.finding_links.push(outcome.links);
             }
         }
     }
@@ -300,36 +356,20 @@ fn strip_event_payloads(result: &mut EvaluationResult) {
 
 /// Build one compact risk event for a `(detection, risk object)` pair. The
 /// `risk_event` marker key disambiguates it on the wire.
-fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i64) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("risk_event".to_string(), Value::Bool(true));
-    map.insert("timestamp".to_string(), Value::from(now));
-    map.insert(
-        "rule".to_string(),
-        Value::String(
-            result
-                .header
-                .rule_id
-                .clone()
-                .unwrap_or_else(|| result.header.rule_title.clone()),
-        ),
-    );
-    map.insert(
-        "rule_title".to_string(),
-        Value::String(result.header.rule_title.clone()),
-    );
-    if let Some(level) = result.header.level {
-        map.insert(
-            "level".to_string(),
-            Value::String(level.as_str().to_string()),
-        );
+fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i64) -> RiskEvent {
+    RiskEvent {
+        risk_event: true,
+        timestamp: now,
+        rule: result
+            .header
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| result.header.rule_title.clone()),
+        rule_title: result.header.rule_title.clone(),
+        level: result.header.level.map(|l| l.as_str().to_string()),
+        risk_score: score,
+        risk_object: object.clone(),
     }
-    map.insert("risk_score".to_string(), Value::from(score));
-    map.insert(
-        "risk_object".to_string(),
-        serde_json::to_value(object).unwrap_or(Value::Null),
-    );
-    Value::Object(map)
 }
 
 #[cfg(test)]
@@ -384,6 +424,47 @@ mod tests {
     }
 
     #[test]
+    fn risk_incidents_carry_contributing_finding_uids() {
+        let refs = layer(
+            "score:\n  default_score: 60\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\nincident:\n  score_threshold: 100\n",
+        );
+        let mut st = RiskState::default();
+        let out = refs.process_with_finding_uids(
+            vec![
+                detection("10.0.0.1", Level::High, vec![]),
+                detection("10.0.0.1", Level::High, vec![]),
+            ],
+            &["uid-0".to_string(), String::new()],
+            &mut st,
+            0,
+            &NoopMetrics,
+        );
+        assert_eq!(out.kept.len(), 2);
+        assert_eq!(out.finding_links[0].refs, [Some("uid-0".to_string()), None]);
+
+        let results = layer(
+            "score:\n  default_score: 60\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\nincident:\n  score_threshold: 100\n  include: results\n",
+        );
+        let mut st = RiskState::default();
+        let out = results.process_with_finding_uids(
+            vec![
+                detection("10.0.0.1", Level::High, vec![]),
+                detection("10.0.0.1", Level::High, vec![]),
+            ],
+            &["uid-0".to_string(), "uid-1".to_string()],
+            &mut st,
+            0,
+            &NoopMetrics,
+        );
+        let incident = &out.incidents[0];
+        assert_eq!(incident.results.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            out.finding_links[0].results,
+            [Some("uid-0".to_string()), Some("uid-1".to_string())]
+        );
+    }
+
+    #[test]
     fn out_of_scope_passes_through_unannotated() {
         let p = layer(
             "scope:\n  levels: [critical]\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\n",
@@ -428,9 +509,9 @@ mod tests {
         assert_eq!(out.risk_events.len(), 1);
         let ev = &out.risk_events[0];
         assert_eq!(ev["risk_event"], serde_json::json!(true));
-        assert_eq!(ev["risk_score"], serde_json::json!(5));
-        assert_eq!(ev["timestamp"], serde_json::json!(1234));
-        assert_eq!(ev["risk_object"]["value"], serde_json::json!("10.0.0.1"));
+        assert_eq!(ev["risk_score"], 5);
+        assert_eq!(ev["timestamp"], 1234);
+        assert_eq!(ev["risk_object"]["value"], "10.0.0.1");
     }
 
     #[test]

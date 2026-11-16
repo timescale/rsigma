@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://timescale.github.io/rsigma/fixtures/ocsf/class_2004.schema.json",
+  "title": "OCSF 1.1.0 Detection Finding (class 2004), required fields only",
+  "description": "A minimal, hand-maintained conformance schema for the OCSF Detection Finding class as rsigma emits it: required attributes, the closed enums rsigma uses, and the class/category/type_uid arithmetic. Profiles are deliberately off and optional attributes are unconstrained, so this validates conformance without pulling the full OCSF package (which would mean a network fetch in CI).",
+  "type": "object",
+  "required": [
+    "action_id",
+    "activity_id",
+    "category_uid",
+    "class_uid",
+    "finding_info",
+    "metadata",
+    "severity_id",
+    "time",
+    "type_uid"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "integer",
+      "enum": [0, 1, 2]
+    },
+    "action": {
+      "type": "string",
+      "enum": ["Unknown", "Allowed", "Denied"]
+    },
+    "activity_id": {
+      "description": "Create, Update, or Close. rsigma never emits Other (99) or Unknown (0).",
+      "type": "integer",
+      "enum": [1, 2, 3]
+    },
+    "activity_name": { "type": "string" },
+    "category_uid": { "const": 2 },
+    "category_name": { "const": "Findings" },
+    "class_uid": { "const": 2004 },
+    "class_name": { "const": "Detection Finding" },
+    "type_uid": {
+      "type": "integer",
+      "enum": [200401, 200402, 200403]
+    },
+    "type_name": { "type": "string" },
+    "severity_id": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4, 5]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["Unknown", "Informational", "Low", "Medium", "High", "Critical"]
+    },
+    "status_id": {
+      "description": "1 New, 2 In Progress, 3 Suppressed, 4 Resolved, 5 Archived.",
+      "type": "integer",
+      "enum": [1, 2, 3, 4, 5]
+    },
+    "status": { "type": "string" },
+    "time": { "type": "integer" },
+    "start_time": { "type": "integer" },
+    "end_time": { "type": "integer" },
+    "timezone_offset": { "type": "integer" },
+    "count": { "type": "integer", "minimum": 0 },
+    "message": { "type": "string" },
+    "risk_score": { "type": "integer" },
+    "metadata": {
+      "type": "object",
+      "required": ["product", "version", "profiles"],
+      "properties": {
+        "product": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string" },
+            "vendor_name": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "version": { "const": "1.1.0" },
+        "uid": { "type": "string", "minLength": 1 },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "contains": { "const": "security_control" }
+        },
+        "correlation_uid": { "type": "string" }
+      }
+    },
+    "finding_info": {
+      "type": "object",
+      "required": ["title", "uid"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "uid": { "type": "string", "minLength": 1 },
+        "analytic": {
+          "type": "object",
+          "required": ["type_id"],
+          "properties": {
+            "type_id": { "type": "integer", "enum": [1, 2, 3, 4, 5, 6, 99] },
+            "type": { "type": "string" },
+            "name": { "type": "string" },
+            "uid": { "type": "string" }
+          }
+        },
+        "related_analytics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type_id"],
+            "properties": {
+              "type_id": { "type": "integer" },
+              "name": { "type": "string" }
+            }
+          }
+        },
+        "attacks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "minProperties": 1,
+            "properties": {
+              "tactic": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "uid": { "type": "string", "pattern": "^TA[0-9]{4}$" }
+                }
+              },
+              "technique": {
+                "type": "object",
+                "required": ["uid"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "uid": { "type": "string", "pattern": "^T[0-9]{4}$" }
+                }
+              },
+              "sub_technique": {
+                "type": "object",
+                "required": ["uid"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "uid": { "type": "string", "pattern": "^T[0-9]{4}\\.[0-9]{3}$" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidences": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "object", "minProperties": 1 }
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "type": "object",
+          "properties": { "name": { "type": "string" } }
+        }
+      }
+    },
+    "unmapped": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["actor"] },
+      "then": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "profiles": { "contains": { "const": "host" } }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

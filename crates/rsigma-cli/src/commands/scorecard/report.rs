@@ -138,7 +138,8 @@ impl Scorecard {
     /// Render to stdout in the selected format, then write the optional
     /// `--report` program artifact.
     pub(crate) fn render(&self, ctx: &OutputCtx, report: Option<(&Path, ReportFormat)>) {
-        match ctx.format {
+        let format = ctx.format;
+        match format {
             OutputFormat::Json => render_json(self, ctx.pretty_json()),
             OutputFormat::Ndjson => {
                 for r in &self.records {

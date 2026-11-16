@@ -1,0 +1,74 @@
+{
+  "activity_id": 1,
+  "activity_name": "Create",
+  "assignee_group": {
+    "name": "soc"
+  },
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Incident Finding",
+  "class_uid": 2005,
+  "count": 4,
+  "end_time": 1767225600000,
+  "finding_info_list": [
+    {
+      "analytic": {
+        "name": "rule-1",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "title": "rule-1",
+      "uid": "msg_0123_0000_0"
+    },
+    {
+      "analytic": {
+        "name": "rule-2",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "title": "rule-2",
+      "uid": "msg_4567_0001_0"
+    }
+  ],
+  "message": "rule-1 and 1 other rule",
+  "metadata": {
+    "correlation_uid": "f8bcd62a829b1126",
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "uid": "00000000-0000-4000-8000-000000000001",
+    "version": "1.3.0"
+  },
+  "severity": "High",
+  "severity_id": 4,
+  "start_time": 1767225000000,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Incident Finding: Create",
+  "type_uid": 200501,
+  "unmapped": {
+    "group_by": {
+      "match.User": "alice"
+    },
+    "refs": [
+      {
+        "level": "high",
+        "rule": "rule-1"
+      },
+      {
+        "level": "medium",
+        "rule": "rule-2"
+      }
+    ],
+    "rule_counts": {
+      "rule-1": 3,
+      "rule-2": 1
+    },
+    "state": "open",
+    "trigger": "group_wait"
+  }
+}

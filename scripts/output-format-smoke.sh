@@ -203,6 +203,26 @@ check "eval ndjson" '"rule_title"' engine eval -r "$RULE" -e @"$EVENTS" --output
 check "eval table" 'LEVEL' engine eval -r "$RULE" -e @"$EVENTS" --output-format table --quiet
 check "eval csv" 'LEVEL,RULE' engine eval -r "$RULE" -e @"$EVENTS" --output-format csv --quiet
 check "eval tsv" $'LEVEL\tRULE' engine eval -r "$RULE" -e @"$EVENTS" --output-format tsv --quiet
+check "eval ocsf" '"class_uid":2004' engine eval -r "$RULE" -e @"$EVENTS" --finding-format ocsf --output-format ndjson --quiet
+check_failure "eval output-format ocsf rejected" "invalid value 'ocsf'" engine eval -r "$RULE" -e @"$EVENTS" --output-format ocsf --quiet
+
+mkdir -p "$TMP/corpus"
+cp "$EVENTS" "$TMP/corpus/events.ndjson"
+FINDINGS="$TMP/findings.ndjson"
+set +e
+backtest_out=$("$RSIGMA" rule backtest -r "$RULEDIR" --corpus "$TMP/corpus" --output-format json --finding-format ocsf --findings "$FINDINGS" --quiet 2>"$TMP/err.txt")
+backtest_ec=$?
+set -e
+if [[ "$backtest_ec" -eq 0 ]] && grep -q '"class_uid":2004' "$FINDINGS" && ! printf '%s' "$backtest_out" | grep -q 'class_uid'; then
+  echo "OK  backtest ocsf"
+  pass=$((pass + 1))
+else
+  echo "FAIL backtest ocsf (findings file must hold class 2004; stdout stays the report) exit=$backtest_ec"
+  echo "  stdout: ${backtest_out:0:220}"
+  echo "  stderr: $(head -c 220 "$TMP/err.txt")"
+  fail=$((fail + 1))
+fi
+check_failure "backtest output-format ocsf rejected" "invalid value 'ocsf'" rule backtest -r "$RULEDIR" --corpus "$TMP/corpus" --output-format ocsf --quiet
 
 note "engine explain / classify / discover"
 check "explain table" 'Test Rule' engine explain -r "$RULE" -e '{"CommandLine":"malware"}' --output-format table --color never

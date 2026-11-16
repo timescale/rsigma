@@ -763,6 +763,12 @@ pub(crate) struct EvalPartial {
     pub output: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on_detection: Option<bool>,
+    /// Finding wire shape: `native` or `ocsf` (`--finding-format`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_format: Option<String>,
+    /// OCSF schema version when `finding_format` is `ocsf` (`--ocsf-version`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocsf_version: Option<String>,
     /// Schema classification and routing settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<SchemaPartial>,
@@ -781,6 +787,8 @@ impl Merge for EvalPartial {
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
             output: over.output.or(self.output),
             fail_on_detection: over.fail_on_detection.or(self.fail_on_detection),
+            finding_format: over.finding_format.or(self.finding_format),
+            ocsf_version: over.ocsf_version.or(self.ocsf_version),
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
         }
@@ -910,6 +918,15 @@ pub(crate) struct BacktestPartial {
     /// Strip a leading UTF-8 BOM from RFC 5424 syslog messages (default true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syslog_strip_bom: Option<bool>,
+    /// Path for one finding per fire (`--findings`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<PathBuf>,
+    /// Finding wire shape: `native` or `ocsf` (`--finding-format`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_format: Option<String>,
+    /// OCSF schema version when `finding_format` is `ocsf` (`--ocsf-version`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocsf_version: Option<String>,
 }
 
 impl Merge for BacktestPartial {
@@ -923,6 +940,9 @@ impl Merge for BacktestPartial {
             input_format: over.input_format.or(self.input_format),
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
+            findings: over.findings.or(self.findings),
+            finding_format: over.finding_format.or(self.finding_format),
+            ocsf_version: over.ocsf_version.or(self.ocsf_version),
         }
     }
 }

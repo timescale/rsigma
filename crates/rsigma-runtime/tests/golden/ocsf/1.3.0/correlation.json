@@ -1,0 +1,63 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "finding_info": {
+    "analytic": {
+      "name": "SSH brute force",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "corr-1"
+    },
+    "attacks": [
+      {
+        "tactic": {
+          "name": "Credential Access",
+          "uid": "TA0006"
+        }
+      }
+    ],
+    "title": "SSH brute force",
+    "uid": "00000000-0000-4000-8000-000000000001"
+  },
+  "message": "SSH brute force",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.3.0"
+  },
+  "severity": "Critical",
+  "severity_id": 5,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Create",
+  "type_uid": 200401,
+  "unmapped": {
+    "aggregated_value": 73.0,
+    "correlation_type": "event_count",
+    "group_key": [
+      [
+        "SourceIP",
+        "203.0.113.4"
+      ]
+    ],
+    "tags": [
+      "attack.credential_access"
+    ],
+    "timespan_secs": 300
+  }
+}

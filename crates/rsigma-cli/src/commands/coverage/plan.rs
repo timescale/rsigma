@@ -108,7 +108,8 @@ impl AtomicsPlan {
     }
 
     pub(crate) fn render(&self, ctx: &OutputCtx) {
-        match ctx.format {
+        let format = ctx.format;
+        match format {
             OutputFormat::Json => render_json(self, ctx.pretty_json()),
             OutputFormat::Ndjson => {
                 for row in self.rows() {

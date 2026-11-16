@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://timescale.github.io/rsigma/fixtures/ocsf/1.3.0/class_2005.schema.json",
+  "title": "OCSF 1.3.0 Incident Finding (class 2005), required fields only",
+  "description": "A minimal, hand-maintained conformance schema for the OCSF Incident Finding class as rsigma emits it: required attributes, the closed enums rsigma uses, and the class/category/type_uid arithmetic. Profiles are deliberately off and optional attributes are unconstrained, so this validates conformance without pulling the full OCSF package (which would mean a network fetch in CI).",
+  "type": "object",
+  "required": [
+    "activity_id",
+    "category_uid",
+    "class_uid",
+    "finding_info_list",
+    "metadata",
+    "severity_id",
+    "status_id",
+    "time",
+    "type_uid"
+  ],
+  "anyOf": [
+    { "required": ["assignee"] },
+    { "required": ["assignee_group"] }
+  ],
+  "not": {
+    "anyOf": [
+      { "required": ["action_id"] },
+      { "required": ["finding_info"] },
+      { "required": ["actor"] },
+      { "required": ["resources"] },
+      { "required": ["risk_score"] }
+    ]
+  },
+  "properties": {
+    "activity_id": {
+      "description": "Create, Update, or Close. rsigma never emits Other (99) or Unknown (0).",
+      "type": "integer",
+      "enum": [1, 2, 3]
+    },
+    "activity_name": { "type": "string" },
+    "category_uid": { "const": 2 },
+    "category_name": { "const": "Findings" },
+    "class_uid": { "const": 2005 },
+    "class_name": { "const": "Incident Finding" },
+    "type_uid": {
+      "type": "integer",
+      "enum": [200501, 200502, 200503]
+    },
+    "type_name": { "type": "string" },
+    "severity_id": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4, 5]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["Unknown", "Informational", "Low", "Medium", "High", "Critical"]
+    },
+    "status_id": {
+      "description": "1 New, 2 In Progress, 3 On Hold, 4 Resolved, 5 Closed.",
+      "type": "integer",
+      "enum": [1, 2, 3, 4, 5]
+    },
+    "status": { "type": "string" },
+    "time": { "type": "integer" },
+    "start_time": { "type": "integer" },
+    "end_time": { "type": "integer" },
+    "timezone_offset": { "type": "integer" },
+    "count": { "type": "integer", "minimum": 0 },
+    "message": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "required": ["product", "version"],
+      "properties": {
+        "product": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string" },
+            "vendor_name": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "version": { "const": "1.3.0" },
+        "uid": { "type": "string", "minLength": 1 },
+        "correlation_uid": { "type": "string", "minLength": 1 }
+      }
+    },
+    "finding_info_list": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["title", "uid"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "uid": { "type": "string", "minLength": 1 },
+          "analytic": {
+            "type": "object",
+            "required": ["type_id"],
+            "properties": {
+              "type_id": { "type": "integer", "enum": [1, 2, 3, 4, 5, 6, 99] },
+              "type": { "type": "string" },
+              "name": { "type": "string" },
+              "uid": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "attacks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "tactic": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "uid": { "type": "string", "pattern": "^TA[0-9]{4}$" }
+            }
+          },
+          "technique": {
+            "type": "object",
+            "required": ["uid"],
+            "properties": {
+              "name": { "type": "string" },
+              "uid": { "type": "string", "pattern": "^T[0-9]{4}$" }
+            }
+          }
+        }
+      }
+    },
+    "unmapped": { "type": "object" }
+  }
+}

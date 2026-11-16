@@ -24,6 +24,7 @@ pub struct UnixSocketSink {
     path: PathBuf,
     stream: Option<UnixStream>,
     format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
     resume: ResumePoint,
 }
 
@@ -35,6 +36,7 @@ impl UnixSocketSink {
             path: path.to_path_buf(),
             stream: Some(stream),
             format: SinkFormat::default(),
+            ocsf: crate::ocsf::OcsfOptions::default(),
             resume: ResumePoint::default(),
         })
     }
@@ -46,9 +48,19 @@ impl UnixSocketSink {
         self
     }
 
+    #[must_use]
+    pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
+    }
+
     /// The wire format this sink serializes results into.
     pub fn format(&self) -> SinkFormat {
         self.format
+    }
+
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and deliver each entry of a `ProcessResult` as one line.
@@ -80,6 +92,7 @@ impl UnixSocketSink {
                 self.format,
                 false,
                 ctx.map(|ctx| (ctx, index)),
+                &self.ocsf,
             )?);
         }
         match self.write_batch(&batch).await {

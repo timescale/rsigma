@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### OCSF finding output depth (#711)
+
+`engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). On eval, OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are a config error. Backtest writes OCSF findings only to `--findings` and keeps the report on stdout in the selected `--output-format`.
+
+Class 2004 findings always set `metadata.profiles` to `security_control`, and append `host` when an `actor` is present. Dedup summaries use `finding_info.uid` `dedup-<fingerprint>-<first_seen>` and lift the window onto `count`, `start_time`, and `end_time`. Risk events set `finding_info.types` to `Risk Event`. A detection whose enrichments carry `incident_id` sets `metadata.correlation_uid` to that id.
+
+Line sinks accept `?format=ocsf` with optional `?ocsf_version=1.1.0|1.3.0` (default `1.1.0`), optional `?ocsf_incident_class=2004|2005` (default `2004`), and `?ocsf_assignee_group=<name>`, which is required when the class is 2005 and rejected otherwise. Class 2005 incidents list contributing Detection Finding uids minted before the alert pipeline runs. `incident_finding_2005`, `risk_incident_finding_2005`, their `*_opts` and `*_with_opts` variants, and the `*_in_class` functions return `Result` and refuse to emit a class-2005 finding that has no assignee group. OTLP sinks accept `format=ocsf`, keep the native log attributes (`rule_title`, `rule_id`, `level`, `tags`), and put the finding JSON string in the log-record body. Webhook bodies may use `${detection.ocsf}` and `${correlation.ocsf}` as whole JSON values, and an optional `ocsf_version` field selects `1.1.0` or `1.3.0`.
+
+**Breaking:** `TickOutput` and `RiskOutput` gain `finding_links`, index-aligned with `incidents`. A struct literal must add the field: use `Vec::new()` when the caller does not track finding uids, or the links returned with the tick or risk result when it does. Those uids are not part of the incident JSON.
+
+See [OCSF Findings](https://rsigma.io/guide/ocsf-findings/) and [Output formats](https://rsigma.io/reference/output/).
+
 ### Documentation home page redesign, flat anchor aliases, and fragment validation (#710)
 
 The `rsigma.io` home page opens with a split hero, a tabbed quick-run snippet (`Evaluate`, `Daemon`, `Convert`, `Rust`), a tabbed install bar, a four-card benchmark strip, the detection-loop diagram paired with workflow cards, grouped downstream integrations, and a minimal footer, with focus mode (`Alt+F`) enabled site-wide. The version-tag legend moves to [Release Notes](https://rsigma.io/release-notes/#version-tags).

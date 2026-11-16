@@ -24,6 +24,31 @@ pub fn rsigma_bin() -> String {
         .to_string()
 }
 
+/// Assert that `finding` conforms to the committed OCSF conformance schema for
+/// its `class_uid` and `metadata.version`.
+pub fn validate_ocsf_finding(finding: &serde_json::Value) {
+    let class_uid = finding["class_uid"]
+        .as_i64()
+        .expect("finding has a class_uid");
+    let version = finding["metadata"]["version"]
+        .as_str()
+        .expect("finding has a metadata.version");
+    let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../rsigma-runtime/tests/fixtures/ocsf/{version}/class_{class_uid}.schema.json"
+    ));
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+    let validator = jsonschema::validator_for(&schema).expect("conformance schema must compile");
+    let errors: Vec<String> = validator
+        .iter_errors(finding)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "finding is not a conformant class-{class_uid} finding: {errors:#?}"
+    );
+}
+
 /// Write `contents` to a temporary file with the given suffix and return it.
 pub fn temp_file(suffix: &str, contents: &str) -> NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();

@@ -9,7 +9,7 @@ Structured rsigma commands can emit results in one of five formats. Artifact pro
 ## Selector
 
 ```text
---output-format <FORMAT>   # json | ndjson | table | csv | tsv
+--output-format <FORMAT>   # json | ndjson | table | csv | tsv | ocsf
 ```
 
 | Format | When to use it |
@@ -68,7 +68,7 @@ This is what lets `rsigma engine eval … | jq '.rule_title'` work cleanly: `jq`
 
 ## Not the same as a daemon sink format
 
-`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a sink spec, which chooses between rsigma's native NDJSON and [OCSF Detection Finding](../guide/ocsf-findings.md) JSON per sink. `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
+`--output-format` selects how a **command** renders its product. The streaming daemon's sinks have their own, separate wire-format selector: `?format=ndjson|ocsf` on a line or OTLP sink spec (optional `?ocsf_version=<v>`, `?ocsf_incident_class=2004|2005`, and `?ocsf_assignee_group=<name>` with `format=ocsf`), which chooses between rsigma's native NDJSON and [OCSF finding](../guide/ocsf-findings.md) JSON per sink. {{ added "unreleased" }} `--output-format` does not apply to daemon sinks, and `?format=` does not apply to batch commands.
 
 ## Unsupported formats
 
@@ -86,7 +86,7 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 
 | Command | Implicit default | Notes |
 |---------|------------------|-------|
-| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--pretty` still forces pretty JSON for backwards compatibility. |
+| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--finding-format ocsf` emits one OCSF class-2004 finding per match. {{ added "unreleased" }} `--pretty` still forces pretty JSON for backwards compatibility. |
 | `engine explain` | Human table/tree | Explicit selector overrides. |
 | `engine classify` | TTY-aware json/ndjson | Full five-format support. |
 | `engine discover-schemas` | TTY-aware json/ndjson | Full five-format support. |
@@ -94,7 +94,8 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 | `engine tail` | TTY-aware json/ndjson | Streaming detections. |
 | `rule lint` | Coloured human view | Explicit `json` emits `{summary, findings}`; `ndjson` one finding per line; `csv`/`tsv` use `PATH,SEVERITY,RULE,LINE,MESSAGE`. |
 | `rule fields` | Table (even when piped) | Hidden `--json` aliases `--output-format json`. |
-| `rule backtest`/`coverage`/`scorecard`/`visibility`/`hygiene` | TTY-aware or table | Full five-format support. |
+| `rule backtest` | TTY-aware or table | Full five-format support for the report. `--finding-format ocsf` writes one class-2004 finding per corpus fire to `--findings`; the report stays on stdout, the summary stays on stderr, and `--report` stays native JSON. {{ added "unreleased" }} |
+| `rule coverage`/`scorecard`/`visibility`/`hygiene` | TTY-aware or table | Full five-format support. |
 | `rule draft --emit report` | TTY-aware | Full five-format support. |
 | `rule validate` | Human summary | Explicit selector emits `{summary, …}` for `json` and `PATH,STATUS,ERRORS` rows for table/csv/tsv/ndjson. |
 | `backend targets`/`backend formats` | Human listing | Explicit selector emits `PROVIDER,NAME,DESCRIPTION` or `TARGET,KIND,NAME,DESCRIPTION` rows. |

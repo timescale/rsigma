@@ -70,7 +70,7 @@ struct Cli {
     /// Output format for structured CLI data (matches, fields, lint findings).
     ///
     /// Values: `json` (default on a TTY), `ndjson` (default when piped),
-    /// `table`, `csv`, `tsv`. Resolution: flag > `RSIGMA_GLOBAL__OUTPUT_FORMAT`
+    /// `table`, `csv`, `tsv`, `ocsf`. Resolution: flag > `RSIGMA_GLOBAL__OUTPUT_FORMAT`
     /// > `global.output_format` in the config file > TTY-aware default.
     ///
     /// `convert` keeps its own `-f/--format` for the backend query format and

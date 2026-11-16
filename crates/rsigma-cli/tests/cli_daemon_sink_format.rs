@@ -9,7 +9,9 @@ mod common;
 
 use std::time::Duration;
 
-use common::{DaemonProcess, SIMPLE_RULE, http_post, poll_until, rsigma, temp_file};
+use common::{
+    DaemonProcess, SIMPLE_RULE, http_post, poll_until, rsigma, temp_file, validate_ocsf_finding,
+};
 use predicates::str::contains;
 use serde_json::Value;
 
@@ -133,12 +135,160 @@ fn duplicate_format_parameter_is_a_startup_error() {
         .stderr(contains("may be specified only once"));
 }
 
+#[test]
+fn unknown_ocsf_version_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_version=9.9.9",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("Invalid ocsf_version"));
+}
+
+#[test]
+fn ocsf_version_without_ocsf_format_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ndjson&ocsf_version=1.3.0",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("only valid with format=ocsf"));
+}
+
+#[test]
+fn duplicate_ocsf_version_parameter_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_version=1.1.0&ocsf_version=1.3.0",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_version= may be specified only once"));
+}
+
+#[test]
+fn unknown_ocsf_incident_class_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2003",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("Invalid ocsf_incident_class"));
+}
+
+#[test]
+fn ocsf_incident_class_without_ocsf_format_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!("file://{}?ocsf_incident_class=2005", out.path().display());
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_incident_class= is only valid with format=ocsf",
+        ));
+}
+
+#[test]
+fn duplicate_ocsf_incident_class_parameter_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2004&ocsf_incident_class=2005",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_incident_class= may be specified only once"));
+}
+
+#[test]
+fn class_2005_without_assignee_group_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>",
+        ));
+}
+
+#[test]
+fn assignee_group_without_class_2005_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_assignee_group=soc",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains(
+            "ocsf_assignee_group= is only valid with ocsf_incident_class=2005",
+        ));
+}
+
+#[test]
+fn empty_assignee_group_is_a_startup_error() {
+    let out = temp_file(".ndjson", "");
+    let spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005&ocsf_assignee_group=   ",
+        out.path().display()
+    );
+    daemon_startup_failure(&["--output", &spec])
+        .failure()
+        .stderr(contains("ocsf_assignee_group= must not be empty"));
+}
+
 #[cfg(feature = "daemon-otlp")]
 #[test]
-fn format_on_an_otlp_sink_is_a_startup_error() {
-    daemon_startup_failure(&["--output", "otlphttp://127.0.0.1:1?format=ndjson"])
+fn unknown_format_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&["--output", "otlphttp://127.0.0.1:1?format=cef"])
         .failure()
-        .stderr(contains("not supported on OTLP sinks"));
+        .stderr(contains("Unknown sink format"));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_incident_class_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ocsf&ocsf_incident_class=2005",
+    ])
+    .failure()
+    .stderr(contains(
+        "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks",
+    ));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_assignee_group_on_an_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ocsf&ocsf_assignee_group=soc",
+    ])
+    .failure()
+    .stderr(contains(
+        "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks",
+    ));
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn ocsf_version_on_an_ndjson_otlp_sink_is_a_startup_error() {
+    daemon_startup_failure(&[
+        "--output",
+        "otlphttp://127.0.0.1:1?format=ndjson&ocsf_version=1.3.0",
+    ])
+    .failure()
+    .stderr(contains("ocsf_version= is only valid with format=ocsf"));
 }
 
 #[test]
@@ -174,12 +324,99 @@ fn format_on_the_audit_sink_spec_is_a_startup_error() {
     .stderr(contains("only supported on findings sinks"));
 }
 
+/// Lower an OTLP `AnyValue` back to JSON, the inverse of the sink's encoding.
+#[cfg(feature = "daemon-otlp")]
+fn any_value_json(value: &opentelemetry_proto::tonic::common::v1::AnyValue) -> Value {
+    use opentelemetry_proto::tonic::common::v1::any_value::Value as V;
+    match &value.value {
+        Some(V::StringValue(s)) => Value::from(s.clone()),
+        Some(V::BoolValue(b)) => Value::from(*b),
+        Some(V::IntValue(i)) => Value::from(*i),
+        Some(V::DoubleValue(d)) => Value::from(*d),
+        Some(V::ArrayValue(a)) => Value::Array(a.values.iter().map(any_value_json).collect()),
+        Some(V::KvlistValue(kv)) => Value::Object(
+            kv.values
+                .iter()
+                .filter_map(|kv| Some((kv.key.clone(), any_value_json(kv.value.as_ref()?))))
+                .collect(),
+        ),
+        _ => Value::Null,
+    }
+}
+
+/// An OTLP sink with `format=ocsf` exports the OCSF finding as a JSON string
+/// in the log-record body, with the same identity an OCSF line sink gets for
+/// the same detection.
 #[cfg(feature = "daemon-otlp")]
 #[test]
-fn ocsf_on_an_otlp_sink_is_a_startup_error() {
-    daemon_with(&["--output", "otlphttp://127.0.0.1:1?format=ocsf"], "")
-        .failure()
-        .stderr(contains("not supported on OTLP sinks"));
+fn ocsf_otlp_sink_exports_the_finding_as_the_log_body() {
+    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+    use prost::Message;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let collector = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        server
+    });
+
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
+    let otlp_spec = format!(
+        "otlphttp://{}?format=ocsf&ocsf_version=1.3.0",
+        collector.address()
+    );
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &["--output", &ocsf_spec, "--output", &otlp_spec],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let line = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the OCSF line sink never received the finding");
+    let request = poll_until(Duration::from_secs(10), || {
+        let received = rt.block_on(collector.received_requests())?;
+        let body = &received.first()?.body;
+        Some(ExportLogsServiceRequest::decode(body.as_slice()).unwrap())
+    })
+    .expect("the collector never received an export");
+
+    let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+    assert_eq!(
+        record.severity_text, "ERROR",
+        "severity still follows the level"
+    );
+    assert!(
+        record.attributes.iter().any(|kv| kv.key == "rule_title"),
+        "native attributes stay on the OCSF record: {:?}",
+        record.attributes,
+    );
+    let encoded = any_value_json(record.body.as_ref().expect("a log body"));
+    let raw = encoded
+        .as_str()
+        .expect("the OCSF body is a JSON string, not a kvlist");
+    let finding: Value = serde_json::from_str(raw).expect("the OCSF body parses");
+    validate_ocsf_finding(&finding);
+    assert_eq!(finding["class_uid"], 2004);
+    assert_eq!(finding["metadata"]["version"], "1.3.0");
+    assert_eq!(finding["finding_info"]["analytic"]["uid"], SIMPLE_RULE_ID);
+    assert_eq!(
+        finding["finding_info"]["uid"], line["finding_info"]["uid"],
+        "OTLP and line sinks share the finding identity",
+    );
+    assert_eq!(finding["time"], line["time"]);
 }
 
 /// Two sinks on one daemon, one OCSF and one default: each gets its own
@@ -259,13 +496,13 @@ group:
   resolve_timeout: 2s
 "#;
 
-/// Incidents reach an OCSF sink as findings (a `Create` on the first emission,
-/// a `Close` once the incident resolves), while the alert pipeline's dedup
-/// sidecar lines stay native NDJSON on that same sink.
+/// Incidents and dedup sidecar lines reach an OCSF sink as class-2004 findings.
 #[test]
-fn incidents_are_findings_and_dedup_lines_stay_native() {
+fn incidents_and_dedup_lines_are_ocsf_findings_on_ocsf_sink() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let pipeline = temp_file(".yml", GROUP_AND_DEDUP_PIPELINE);
+    let native = temp_file(".ndjson", "");
+    let native_spec = format!("file://{}", native.path().display());
     let ocsf = temp_file(".ndjson", "");
     let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
     let daemon = DaemonProcess::spawn_http_with_args(
@@ -273,6 +510,8 @@ fn incidents_are_findings_and_dedup_lines_stay_native() {
         &[
             "--alert-pipeline",
             pipeline.path().to_str().unwrap(),
+            "--output",
+            &native_spec,
             "--output",
             &ocsf_spec,
         ],
@@ -297,15 +536,21 @@ fn incidents_are_findings_and_dedup_lines_stay_native() {
         SIMPLE_RULE_ID
     );
 
-    // A dedup repeat record is an opaque native payload on the incident
-    // channel, so it stays NDJSON even on an OCSF sink.
-    let dedup = wait_for_line(ocsf.path(), |line| {
+    let dedup_ocsf = wait_for_line(ocsf.path(), |line| line["activity_name"] == "Update")
+        .expect("a dedup repeat finding never reached the OCSF sink");
+    assert_eq!(dedup_ocsf["class_uid"], 2004);
+    assert_eq!(
+        dedup_ocsf["unmapped"]["enrichments"]["dedup_state"],
+        "repeat",
+    );
+
+    let dedup_native = wait_for_line(native.path(), |line| {
         line.pointer("/enrichments/dedup_state").is_some()
     })
-    .expect("a dedup sidecar line never reached the sink");
+    .expect("a dedup sidecar line never reached the native sink");
     assert!(
-        dedup.get("class_uid").is_none(),
-        "dedup sidecar lines are documented as native NDJSON: {dedup}",
+        dedup_native.get("class_uid").is_none(),
+        "native sink keeps the flat summary wire: {dedup_native}",
     );
 
     // Once `resolve_timeout` elapses with no further results, the incident
@@ -323,4 +568,133 @@ fn incidents_are_findings_and_dedup_lines_stay_native() {
         closed["finding_info"]["uid"], created["finding_info"]["uid"],
         "both emissions describe the same incident",
     );
+}
+
+/// With `ocsf_incident_class=2005` an incident is an Incident Finding whose
+/// `finding_info_list` points at the Detection Finding the same sink emitted
+/// for its contributor, while the native sibling keeps the flat incident wire.
+#[test]
+fn incident_finding_references_the_emitted_detection_finding() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let pipeline = temp_file(".yml", GROUP_AND_DEDUP_PIPELINE);
+    let native = temp_file(".ndjson", "");
+    let native_spec = format!("file://{}", native.path().display());
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!(
+        "file://{}?format=ocsf&ocsf_incident_class=2005&ocsf_assignee_group=soc",
+        ocsf.path().display()
+    );
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--alert-pipeline",
+            pipeline.path().to_str().unwrap(),
+            "--output",
+            &native_spec,
+            "--output",
+            &ocsf_spec,
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let detection = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the detection never reached the OCSF sink as a Detection Finding");
+    let incident = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2005)
+        .expect("the incident never reached the OCSF sink as an Incident Finding");
+    assert_eq!(incident["activity_name"], "Create");
+    assert_eq!(incident["type_uid"], 200501);
+    assert_eq!(incident["status"], "New");
+    assert!(incident.get("action_id").is_none(), "{incident}");
+    assert!(incident.get("finding_info").is_none(), "{incident}");
+    assert_eq!(incident["assignee_group"]["name"], "soc");
+    assert_eq!(
+        incident["finding_info_list"][0]["uid"], detection["finding_info"]["uid"],
+        "the incident references the Detection Finding of its contributor",
+    );
+    assert_eq!(incident["finding_info_list"][0]["title"], SIMPLE_RULE_ID);
+
+    let native_incident = wait_for_line(native.path(), |line| line["state"] == "open")
+        .expect("the incident never reached the native sink");
+    assert!(
+        native_incident.get("class_uid").is_none(),
+        "the native sink keeps the flat incident wire: {native_incident}",
+    );
+    assert_eq!(
+        incident["metadata"]["correlation_uid"],
+        native_incident["incident_id"],
+    );
+    assert!(
+        !native_incident.to_string().contains("finding_uid"),
+        "finding uids never reach the native wire: {native_incident}",
+    );
+}
+
+/// A webhook body with `${detection.ocsf}` posts the same finding an OCSF line
+/// sink writes for the detection.
+#[test]
+fn webhook_ocsf_body_carries_the_dispatched_finding() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        server
+    });
+    let webhook = temp_file(
+        ".yml",
+        &format!(
+            "webhooks:\n  - id: siem\n    kind: detection\n    url: {}/hook\n    body: '{{\"source\": \"rsigma\", \"finding\": ${{detection.ocsf}}}}'\n",
+            server.uri()
+        ),
+    );
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let ocsf = temp_file(".ndjson", "");
+    let ocsf_spec = format!("file://{}?format=ocsf", ocsf.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--webhook",
+            webhook.path().to_str().unwrap(),
+            "--output",
+            &ocsf_spec,
+        ],
+    );
+
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), EVENT_BODY);
+    assert_eq!(status, 200);
+
+    let line = wait_for_line(ocsf.path(), |line| line["class_uid"] == 2004)
+        .expect("the OCSF line sink never received the finding");
+    let request = poll_until(Duration::from_secs(10), || {
+        rt.block_on(server.received_requests())?.into_iter().next()
+    })
+    .expect("the webhook never made a request");
+    let body: Value = serde_json::from_slice(&request.body).expect("the body is JSON");
+    assert_eq!(body["source"], "rsigma");
+    validate_ocsf_finding(&body["finding"]);
+    assert_eq!(
+        body["finding"], line,
+        "the webhook finding is the finding the line sink wrote",
+    );
+}
+
+#[test]
+fn webhook_ocsf_reference_inside_a_string_is_a_startup_error() {
+    let webhook = temp_file(
+        ".yml",
+        "webhooks:\n  - id: siem\n    kind: detection\n    url: http://127.0.0.1:1/hook\n    body: '{\"finding\": \"${detection.ocsf}\"}'\n",
+    );
+    daemon_startup_failure(&["--webhook", webhook.path().to_str().unwrap()])
+        .failure()
+        .stderr(contains("only valid in body, as a whole JSON value"));
 }

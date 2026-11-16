@@ -192,7 +192,31 @@ fn nanos_to_iso8601(nanos: u64) -> String {
 pub fn evaluation_results_to_logs_request(
     results: &[EvaluationResult],
 ) -> ExportLogsServiceRequest {
-    let log_records = results.iter().map(result_to_log_record).collect();
+    logs_request(results.iter().map(result_to_log_record).collect())
+}
+
+/// Convert evaluation results into an `ExportLogsServiceRequest` whose log
+/// bodies are OCSF findings.
+///
+/// `finding` returns the finding for the result at an index. Each record's
+/// body is that finding as a JSON string, and its severity follows the
+/// Sigma level as in [`evaluation_results_to_logs_request`]. The attribute
+/// set is the same one a native record carries, so a collector can still
+/// route on `rule_title`, `rule_id`, `level`, and `tags`.
+pub(crate) fn ocsf_findings_to_logs_request(
+    results: &[EvaluationResult],
+    finding: impl Fn(usize, &EvaluationResult) -> Value,
+) -> ExportLogsServiceRequest {
+    logs_request(
+        results
+            .iter()
+            .enumerate()
+            .map(|(index, result)| ocsf_log_record(result, &finding(index, result)))
+            .collect(),
+    )
+}
+
+fn logs_request(log_records: Vec<LogRecord>) -> ExportLogsServiceRequest {
     ExportLogsServiceRequest {
         resource_logs: vec![ResourceLogs {
             resource: Some(Resource {
@@ -238,6 +262,14 @@ fn result_to_log_record(result: &EvaluationResult) -> LogRecord {
         attributes,
         ..Default::default()
     }
+}
+
+fn ocsf_log_record(result: &EvaluationResult, finding: &Value) -> LogRecord {
+    let mut record = result_to_log_record(result);
+    record.body = Some(string_any_value(
+        &serde_json::to_string(finding).unwrap_or_else(|_| "{}".to_string()),
+    ));
+    record
 }
 
 /// Map a Sigma level to an OTLP severity `(number, text)`. Unknown or absent
@@ -737,5 +769,52 @@ mod tests {
             !keys.contains(&"matched_fields"),
             "a correlation must not carry matched_fields",
         );
+    }
+
+    #[test]
+    fn ocsf_body_is_the_finding_as_json() {
+        use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let golden: Value = serde_json::from_str(include_str!(
+            "../../../tests/golden/ocsf/1.1.0/detection.json"
+        ))
+        .unwrap();
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Suspicious PowerShell".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                level: Some(rsigma_parser::Level::Medium),
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec![],
+                matched_fields: vec![],
+                event: None,
+            }),
+        };
+
+        let request =
+            ocsf_findings_to_logs_request(std::slice::from_ref(&result), |_, _| golden.clone());
+        let record = &request.resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(
+            record.severity_number, 13,
+            "severity still follows the level"
+        );
+        assert_eq!(record.severity_text, "WARN");
+        assert!(
+            record.attributes.iter().any(|kv| kv.key == "rule_title"),
+            "native attributes stay on the record: {:?}",
+            record.attributes,
+        );
+        let body = record.body.as_ref().unwrap();
+        let serde_json::Value::String(raw) = any_value_to_json(body) else {
+            panic!("the body must be a JSON string: {body:?}");
+        };
+        let parsed: Value = serde_json::from_str(&raw).expect("finding JSON");
+        assert_eq!(parsed, golden, "the string body is the finding");
     }
 }

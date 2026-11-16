@@ -1,0 +1,1 @@
+{"risk_event":true,"timestamp":1000,"rule":"r","rule_title":"t","level":"low","risk_score":40,"risk_object":{"type":"user","value":"alice"}}
