@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Daemon batch runs over stdin
+### Daemon batch runs over stdin (#714)
 
 `rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.
 
