@@ -21,7 +21,7 @@ pub use introspect::{CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, Gr
 pub use types::*;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::Utc;
 
@@ -1515,7 +1515,7 @@ impl<L> CorrelationEngine<L> {
             last_alert,
             event_buffers,
             event_ref_buffers,
-            rulesets: HashMap::new(),
+            rulesets: BTreeMap::new(),
         }
     }
 
