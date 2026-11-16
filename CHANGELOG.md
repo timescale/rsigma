@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Daemon batch runs over stdin
+
+`rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.
+
+A stdin run whose stored state cannot be restored now exits `3` instead of starting fresh. A stdin run that did not complete cleanly exits `4` (`RUNTIME_ERROR`) after logging one summary line: a signal stopped it before end of input, reading stdin failed, output reached neither a sink nor the DLQ, or the final state save failed. Parse errors without a `--dlq` and `on_full=drop` queue drops do not fail a run.
+
+The library surface adds `StdinReadStatus` and `StdinSource::read_status`, which report whether the stdin reader stopped on a read error rather than at end of input.
+
+Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exits `3` instead of starting fresh, and an interrupted run, a stdin read error, lost output, or a failed final save now exits `4` instead of `0`. HTTP, NATS, and unix-socket inputs keep their warn-and-start-fresh restore and exit `0` at shutdown.
+
+See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs).
+
 ### OCSF finding output depth (#711)
 
 `engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). On eval, OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are a config error. Backtest writes OCSF findings only to `--findings` and keeps the report on stdout in the selected `--output-format`.

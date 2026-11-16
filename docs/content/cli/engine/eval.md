@@ -18,6 +18,8 @@ rsigma engine eval [OPTIONS] --rules <RULES>
 
 Loads rules from a file or directory, optionally applies one or more processing pipelines, reads events from `--event` (or stdin), and writes matched `EvaluationResult` JSON to stdout. Exits when the event source is exhausted.
 
+Each run starts with empty correlation state. To carry correlation windows between runs, use [daemon batch runs](daemon.md#batch-runs).
+
 This is the right tool for ad-hoc threat hunting, forensic replay over `.evtx` and NDJSON files, and any "run rules against this data, then exit" workflow. For a long-running daemon with hot-reload and metrics, use [`engine daemon`](daemon.md). For per-rule assertions over a corpus (a CI fixture harness with expected-vs-actual fire counts and a JUnit report), use [`rule backtest`](../rule/backtest.md).
 
 For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md).

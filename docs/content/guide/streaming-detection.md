@@ -61,7 +61,7 @@ rsigma engine daemon \
     --api-addr 127.0.0.1:9090
 ```
 
-For one-shot pipes and batch replay, use [`engine eval`](evaluating-rules.md#stdin) instead. The daemon's default `--input stdin` is for a long-lived writer that keeps the pipe open (a collector process). If that writer closes stdin, the daemon treats the source as exhausted and shuts down after draining in-flight events; it does not stay up waiting for another pipe.
+For one-shot evaluation without state, use [`engine eval`](evaluating-rules.md#stdin). A one-shot batch that must carry correlation state between runs uses [`engine daemon --input stdin`](../cli/engine/daemon.md#batch-runs) per batch. The daemon's default `--input stdin` is for a long-lived writer that keeps the pipe open (a collector process). If that writer closes stdin, the daemon treats the source as exhausted and shuts down after draining in-flight events; it does not stay up waiting for another pipe.
 
 ## Input sources
 
@@ -69,7 +69,7 @@ The `--input` flag selects the primary event source:
 
 | Source | Flag | What it does |
 |--------|------|--------------|
-| stdin | `--input stdin` (default) | Read NDJSON from standard input. Intended for a long-lived writer; when stdin closes, the daemon drains and exits. Prefer `--input http` for interactive testing, and [`engine eval`](evaluating-rules.md#stdin) for one-shot pipes. |
+| stdin | `--input stdin` (default) | Read NDJSON from standard input. Intended for a long-lived writer; when stdin closes, the daemon drains and exits. Prefer `--input http` for interactive testing, [`engine eval`](evaluating-rules.md#stdin) for one-shot evaluation without state, and [`engine daemon --input stdin`](../cli/engine/daemon.md#batch-runs) for a batch that carries state between runs. |
 | HTTP | `--input http` | Accept NDJSON `POST` requests on `/api/v1/events`. |
 | NATS JetStream | `--input nats://host:port/subject` | Subscribe to a JetStream subject with at-least-once delivery. Requires the `daemon-nats` feature. |
 | Unix socket | `--input unix:///path/to.sock` | Accept newline-delimited events over a Unix domain socket (Unix only). Co-located log shippers (rsyslog `omuxsock`, syslog-ng `unix-stream`, Vector, Fluent Bit) write to it directly without a TCP port. |
