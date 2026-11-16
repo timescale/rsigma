@@ -259,6 +259,7 @@ FROM docker/library/alpine:3.21
 
 - [Kubernetes](kubernetes.md) for running the image in a cluster with probes, a state volume, and a restricted security context.
 - [systemd](systemd.md) for running the binary as a hardened host service.
+- [Serverless](serverless.md) for one batch run per invocation in AWS Lambda or a scheduled container job.
 - [Streaming Detection](../guide/streaming-detection.md) for daemon configuration that the container runs.
 - [Observability](../guide/observability.md) for the metrics endpoint exposed by the running container.
 - [Security Hardening](../reference/security.md) for the supply-chain controls (cosign, SLSA, SBOM, Grype scan gate).

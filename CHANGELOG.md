@@ -16,7 +16,7 @@ The library surface adds `StdinReadStatus` and `StdinSource::read_status`, which
 
 Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exits `3` instead of starting fresh, and an interrupted run, a stdin read error, lost output, or a failed final save now exits `4` instead of `0`. HTTP, NATS, and unix-socket inputs keep their warn-and-start-fresh restore and exit `0` at shutdown. Pass `--stdin-mode stream` to keep that behavior for stdin, with the daemon now staying up after end of input.
 
-See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs).
+See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs). A new [Serverless](https://rsigma.io/deployment/serverless/) deployment page covers an AWS Lambda handler over Kinesis and a wrapper for scheduled container jobs.
 
 ### Rulesets (#712)
 

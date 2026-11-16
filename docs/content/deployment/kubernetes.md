@@ -259,6 +259,7 @@ Each replica keeps its own correlation state, and it is not partitioned by the c
 
 - [Docker](docker.md) for the image, its hardening flags, and signature verification.
 - [systemd](systemd.md) for running the binary directly on a host.
+- [Serverless](serverless.md) for one batch run per invocation in AWS Lambda or a scheduled container job.
 - [`engine daemon`](../cli/engine/daemon.md) for every flag and its config key.
 - [Security Hardening](../reference/security.md) for TLS, authentication, and the supply-chain controls.
 - [NATS Streaming](../guide/nats-streaming.md) for JetStream input, replay, consumer groups, and the dead-letter queue.

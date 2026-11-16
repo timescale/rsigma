@@ -199,6 +199,7 @@ sudo systemctl restart rsigma
 
 - [Docker](docker.md) for the container image and its hardening flags.
 - [Kubernetes](kubernetes.md) for running the image in a cluster.
+- [Serverless](serverless.md) for one batch run per invocation in AWS Lambda or a scheduled container job.
 - [`engine daemon`](../cli/engine/daemon.md) for every flag and its config key.
 - [Streaming Detection](../guide/streaming-detection.md) for the daemon walkthrough.
 - [Observability](../guide/observability.md) for metrics, logs, and alerting recipes.

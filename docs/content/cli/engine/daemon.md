@@ -482,6 +482,8 @@ A run exits `3` when the stored state cannot be restored, either because the sna
 
 Callers whose input can be redelivered should store the input position next to the state file, so a replay starts where the previous batch ended. Lines that fail to parse are counted on the parse metrics and do not fail the run when no `--dlq` is set, and `on_full=drop` queue drops are the configured lossy policy, not a failure.
 
+See [Serverless](../../deployment/serverless.md) for an AWS Lambda handler and a wrapper for scheduled container jobs.
+
 ### Long-running stdin
 
 `--stdin-mode stream` turns the batch contract off for a writer that is not a batch, such as `tail -F app.log | rsigma engine daemon --stdin-mode stream`. The daemon keeps running after stdin ends, so the API, metrics, hot reload, and periodic state saves stay up until `SIGTERM` or `SIGINT`. A stored snapshot that cannot be restored logs a warning and starts fresh, and a signal exits `0`, the same as the HTTP, NATS, and unix-socket inputs.
