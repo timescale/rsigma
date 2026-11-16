@@ -146,6 +146,13 @@ impl OcsfOptions {
         self.assignee_group.as_deref()
     }
 
+    /// The group name class 2005 requires, or an error when these options have none.
+    pub(crate) fn require_assignee_group(&self) -> Result<&str, OcsfOptionsError> {
+        self.assignee_group.as_deref().ok_or(OcsfOptionsError {
+            message: "class 2005 requires an assignee group",
+        })
+    }
+
     /// Keep class 2004. Passing class 2005 is rejected: use [`Self::with_incident_finding`].
     pub fn with_incident_class(
         self,
@@ -216,14 +223,8 @@ mod tests {
             .with_incident_class(OcsfIncidentClass::IncidentFinding)
             .unwrap_err();
         assert!(err.to_string().contains("with_incident_finding"));
-        assert!(
-            OcsfOptions::default()
-                .with_incident_finding("   ")
-                .is_err()
-        );
-        let opts = OcsfOptions::default()
-            .with_incident_finding("soc")
-            .unwrap();
+        assert!(OcsfOptions::default().with_incident_finding("   ").is_err());
+        let opts = OcsfOptions::default().with_incident_finding("soc").unwrap();
         assert_eq!(opts.incident_class(), OcsfIncidentClass::IncidentFinding);
         assert_eq!(opts.assignee_group(), Some("soc"));
     }

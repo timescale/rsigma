@@ -2188,10 +2188,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     ocsf,
                                     "risk event",
                                     |opts| {
-                                        rsigma_runtime::ocsf::risk_event_finding_opts(
+                                        Ok(rsigma_runtime::ocsf::risk_event_finding_opts(
                                             typed.as_ref().expect("risk event"),
                                             opts,
-                                        )
+                                        ))
                                     },
                                 );
                                 dispatcher.dispatch_formatted_incident(env).await;
@@ -2337,7 +2337,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None)),
                                 &ocsf_options,
                                 "dedup summary",
-                                |opts| rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts),
+                                |opts| Ok(rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts)),
                             );
                             dispatcher.dispatch_formatted_incident(env).await;
                         }
@@ -2660,13 +2660,20 @@ fn with_ocsf_lines(
     mut env: FormattedIncidentEnvelope,
     ocsf_options: &[rsigma_runtime::ocsf::OcsfOptions],
     what: &str,
-    build: impl Fn(rsigma_runtime::ocsf::OcsfOptions) -> serde_json::Value,
+    build: impl Fn(
+        rsigma_runtime::ocsf::OcsfOptions,
+    ) -> Result<serde_json::Value, rsigma_runtime::ocsf::OcsfOptionsError>,
 ) -> FormattedIncidentEnvelope {
     for opts in ocsf_options {
         let opts = opts.clone();
-        match serde_json::to_string(&build(opts.clone())) {
-            Ok(line) => env = env.with_ocsf_line(opts, line),
-            Err(e) => tracing::warn!(error = %e, what, "Failed to serialize OCSF line"),
+        match build(opts.clone()) {
+            Ok(finding) => match serde_json::to_string(&finding) {
+                Ok(line) => env = env.with_ocsf_line(opts, line),
+                Err(e) => tracing::warn!(error = %e, what, "Failed to serialize OCSF line"),
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, what, "OCSF options cannot build this finding")
+            }
         }
     }
     env

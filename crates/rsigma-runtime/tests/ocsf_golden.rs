@@ -31,9 +31,9 @@ use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::RiskEvent;
 use rsigma_runtime::ocsf::{
     self, FindingSource, OcsfOptions, OcsfVersion, dedup_summary_finding_with_opts,
-    detection_finding_with_opts, incident_finding_2005_with_opts, incident_finding_with_opts,
-    risk_event_finding_with_opts, risk_incident_finding_2005_with_opts,
-    risk_incident_finding_with_opts,
+    detection_finding_with_opts, incident_finding_2005, incident_finding_2005_with_opts,
+    incident_finding_with_opts, risk_event_finding_with_opts, risk_incident_finding_2005,
+    risk_incident_finding_2005_with_opts, risk_incident_finding_with_opts,
 };
 use rsigma_runtime::{
     AlertPipelineState, IncidentRef, IncidentResult, NoopMetrics, RiskIncidentResult, RiskRef,
@@ -304,6 +304,7 @@ fn incident_open_2005_references_its_detection_findings() {
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
+        .expect("assignee group")
     });
 }
 
@@ -317,6 +318,7 @@ fn incident_resolved_2005_falls_back_to_one_entry_per_rule() {
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
+        .expect("assignee group")
     });
 }
 
@@ -334,7 +336,40 @@ fn risk_incident_2005_references_its_detection_findings() {
             &FixedSource::new(),
             opts.with_incident_finding("soc").unwrap(),
         )
+        .expect("assignee group")
     });
+}
+
+#[test]
+fn class_2005_injected_builders_match_the_fixture_and_reject_a_missing_group() {
+    let open = incident("open", "group_wait");
+    let links = rsigma_runtime::FindingLinks::default();
+    let src = FixedSource::new();
+    assert!(incident_finding_2005(&open, " ").is_err());
+    assert!(incident_finding_2005(&open, "").is_err());
+    assert!(incident_finding_2005_with_opts(&open, &links, &src, OcsfOptions::default()).is_err());
+    let finding = incident_finding_2005_with_opts(
+        &open,
+        &links,
+        &src,
+        OcsfOptions::default().with_incident_finding("soc").unwrap(),
+    )
+    .unwrap();
+    validate_class("incident_2005_injected", &finding, OcsfVersion::V1_1_0);
+
+    let risk = risk_incident();
+    assert!(risk_incident_finding_2005(&risk, " ").is_err());
+    assert!(
+        risk_incident_finding_2005_with_opts(&risk, &links, &src, OcsfOptions::default()).is_err()
+    );
+    let finding = risk_incident_finding_2005_with_opts(
+        &risk,
+        &links,
+        &src,
+        OcsfOptions::default().with_incident_finding("soc").unwrap(),
+    )
+    .unwrap();
+    validate_class("risk_2005_injected", &finding, OcsfVersion::V1_1_0);
 }
 
 fn risk_incident() -> RiskIncidentResult {

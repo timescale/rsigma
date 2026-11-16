@@ -616,44 +616,40 @@ pub fn risk_incident_finding_with_opts(
 /// samples retained, or the incident was restored from a snapshot), it falls
 /// back to one entry per contributing rule, whose uid is synthesized as
 /// `<incident id>:<rule>`.
-pub fn incident_finding_2005(incident: &IncidentResult, assignee_group: &str) -> Value {
-    incident_finding_2005_opts(
-        incident,
-        &crate::FindingLinks::default(),
-        OcsfOptions::default()
-            .with_incident_finding(assignee_group)
-            .expect("assignee group"),
-    )
+///
+/// An empty or whitespace `assignee_group` is an error. A class-2005 finding
+/// is not returned without a group.
+pub fn incident_finding_2005(
+    incident: &IncidentResult,
+    assignee_group: &str,
+) -> Result<Value, OcsfOptionsError> {
+    let opts = OcsfOptions::default().with_incident_finding(assignee_group)?;
+    incident_finding_2005_opts(incident, &crate::FindingLinks::default(), opts)
 }
 
 /// [`incident_finding_2005`] with explicit [`OcsfOptions`].
+///
+/// Options with no assignee group are rejected.
 pub fn incident_finding_2005_opts(
     incident: &IncidentResult,
     links: &crate::FindingLinks,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
     incident_finding_2005_with_opts(incident, links, &SystemSource, opts)
-}
-
-/// [`incident_finding_2005`] against an injected time and identity source.
-pub fn incident_finding_2005_with(
-    incident: &IncidentResult,
-    links: &crate::FindingLinks,
-    src: &dyn FindingSource,
-) -> Value {
-    incident_finding_2005_with_opts(incident, links, src, OcsfOptions::default())
 }
 
 /// [`incident_finding_2005`] against an injected source and schema version.
 ///
 /// `links` carries the Detection Finding uids aligned with `incident.refs`
-/// and `incident.results`. It is not part of the incident wire.
+/// and `incident.results`. It is not part of the incident wire. Options with
+/// no assignee group are rejected.
 pub fn incident_finding_2005_with_opts(
     incident: &IncidentResult,
     links: &crate::FindingLinks,
     src: &dyn FindingSource,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
+    let group = opts.require_assignee_group()?.to_string();
     let title = incident_title(incident);
     let resolved = incident.state == "resolved";
 
@@ -726,12 +722,12 @@ pub fn incident_finding_2005_with_opts(
     // is what OCSF's correlation uid is for.
     set_correlation_uid(&mut finding, &incident.incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
-    insert_assignee_group(&mut finding, &opts);
+    insert_assignee_group(&mut finding, &group);
     finding.insert("start_time".to_string(), json!(incident.first_seen * 1000));
     finding.insert("end_time".to_string(), json!(incident.last_seen * 1000));
     finding.insert("count".to_string(), json!(incident.result_count));
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
-    Value::Object(finding)
+    Ok(Value::Object(finding))
 }
 
 /// Serialize a risk incident as an OCSF Incident Finding (class 2005).
@@ -740,32 +736,25 @@ pub fn incident_finding_2005_with_opts(
 /// contributing detections, falling back to one entry per contributing source
 /// (uid `<risk incident id>:<source>`) when none is known, as in
 /// [`incident_finding_2005`].
-pub fn risk_incident_finding_2005(incident: &RiskIncidentResult, assignee_group: &str) -> Value {
-    risk_incident_finding_2005_opts(
-        incident,
-        &crate::FindingLinks::default(),
-        OcsfOptions::default()
-            .with_incident_finding(assignee_group)
-            .expect("assignee group"),
-    )
+///
+/// An empty or whitespace `assignee_group` is an error.
+pub fn risk_incident_finding_2005(
+    incident: &RiskIncidentResult,
+    assignee_group: &str,
+) -> Result<Value, OcsfOptionsError> {
+    let opts = OcsfOptions::default().with_incident_finding(assignee_group)?;
+    risk_incident_finding_2005_opts(incident, &crate::FindingLinks::default(), opts)
 }
 
 /// [`risk_incident_finding_2005`] with explicit [`OcsfOptions`].
+///
+/// Options with no assignee group are rejected.
 pub fn risk_incident_finding_2005_opts(
     incident: &RiskIncidentResult,
     links: &crate::FindingLinks,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
     risk_incident_finding_2005_with_opts(incident, links, &SystemSource, opts)
-}
-
-/// [`risk_incident_finding_2005`] against an injected time and identity source.
-pub fn risk_incident_finding_2005_with(
-    incident: &RiskIncidentResult,
-    links: &crate::FindingLinks,
-    src: &dyn FindingSource,
-) -> Value {
-    risk_incident_finding_2005_with_opts(incident, links, src, OcsfOptions::default())
 }
 
 /// [`risk_incident_finding_2005`] against an injected source and schema version.
@@ -774,7 +763,8 @@ pub fn risk_incident_finding_2005_with_opts(
     links: &crate::FindingLinks,
     src: &dyn FindingSource,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
+    let group = opts.require_assignee_group()?.to_string();
     let title = risk_incident_title(incident);
 
     let mut linked = Vec::new();
@@ -851,7 +841,7 @@ pub fn risk_incident_finding_2005_with_opts(
     );
     set_correlation_uid(&mut finding, &incident.risk_incident_id);
     finding.insert("finding_info_list".to_string(), json!(finding_info_list));
-    insert_assignee_group(&mut finding, &opts);
+    insert_assignee_group(&mut finding, &group);
     insert_if(
         &mut finding,
         "attacks",
@@ -864,7 +854,7 @@ pub fn risk_incident_finding_2005_with_opts(
     finding.insert("end_time".to_string(), json!(incident.window_end * 1000));
     finding.insert("count".to_string(), json!(incident.result_count));
     finding.insert("unmapped".to_string(), Value::Object(unmapped));
-    Value::Object(finding)
+    Ok(Value::Object(finding))
 }
 
 /// Serialize an alert-pipeline incident in the class `opts.incident_class`
@@ -873,9 +863,9 @@ pub fn incident_finding_in_class(
     incident: &IncidentResult,
     links: &crate::FindingLinks,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
     match opts.incident_class() {
-        OcsfIncidentClass::DetectionFinding => incident_finding_opts(incident, opts),
+        OcsfIncidentClass::DetectionFinding => Ok(incident_finding_opts(incident, opts)),
         OcsfIncidentClass::IncidentFinding => incident_finding_2005_opts(incident, links, opts),
     }
 }
@@ -886,9 +876,9 @@ pub fn risk_incident_finding_in_class(
     incident: &RiskIncidentResult,
     links: &crate::FindingLinks,
     opts: OcsfOptions,
-) -> Value {
+) -> Result<Value, OcsfOptionsError> {
     match opts.incident_class() {
-        OcsfIncidentClass::DetectionFinding => risk_incident_finding_opts(incident, opts),
+        OcsfIncidentClass::DetectionFinding => Ok(risk_incident_finding_opts(incident, opts)),
         OcsfIncidentClass::IncidentFinding => {
             risk_incident_finding_2005_opts(incident, links, opts)
         }
@@ -932,10 +922,8 @@ fn set_correlation_uid(finding: &mut Map<String, Value>, uid: &str) {
     }
 }
 
-fn insert_assignee_group(finding: &mut Map<String, Value>, opts: &OcsfOptions) {
-    if let Some(name) = opts.assignee_group() {
-        finding.insert("assignee_group".to_string(), json!({ "name": name }));
-    }
+fn insert_assignee_group(finding: &mut Map<String, Value>, name: &str) {
+    finding.insert("assignee_group".to_string(), json!({ "name": name }));
 }
 
 /// Serialize a dedup `repeat` / `resolved` summary line as a Detection Finding.
@@ -1587,12 +1575,15 @@ mod tests {
             results: vec![Some("u-1".to_string()), None],
         };
 
-        let finding = incident_finding_2005_with(&linked, &links, &FixedSource);
+        let opts = OcsfOptions::default().with_incident_finding("soc").unwrap();
+        let finding =
+            incident_finding_2005_with_opts(&linked, &links, &FixedSource, opts.clone()).unwrap();
         assert_eq!(finding["class_uid"], 2005);
         assert_eq!(finding["type_uid"], 200501);
         assert!(finding.get("action_id").is_none());
         assert!(finding.get("finding_info").is_none());
         assert_eq!(finding["metadata"]["correlation_uid"], "i-1");
+        assert_eq!(finding["assignee_group"]["name"], "soc");
         assert_eq!(
             finding["finding_info_list"],
             json!([{
@@ -1603,9 +1594,33 @@ mod tests {
             "only the result with a known uid is referenced",
         );
 
-        let fallback =
-            incident_finding_2005_with(&linked, &crate::FindingLinks::default(), &FixedSource);
+        let fallback = incident_finding_2005_with_opts(
+            &linked,
+            &crate::FindingLinks::default(),
+            &FixedSource,
+            opts,
+        )
+        .unwrap();
         assert_eq!(fallback["finding_info_list"][0]["uid"], "i-1:rule-a");
+    }
+
+    #[test]
+    fn class_2005_builders_reject_a_missing_or_blank_group() {
+        let inc = incident(BTreeMap::from([("rule-a".to_string(), 1)]), Map::new());
+        assert!(incident_finding_2005(&inc, " ").is_err());
+        assert!(incident_finding_2005(&inc, "").is_err());
+        assert!(
+            incident_finding_2005_with_opts(
+                &inc,
+                &crate::FindingLinks::default(),
+                &FixedSource,
+                OcsfOptions::default(),
+            )
+            .is_err()
+        );
+        let finding = incident_finding_2005(&inc, "soc").unwrap();
+        assert_eq!(finding["class_uid"], 2005);
+        assert_eq!(finding["assignee_group"]["name"], "soc");
     }
 
     #[test]
