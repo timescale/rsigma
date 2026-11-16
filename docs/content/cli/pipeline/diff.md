@@ -11,7 +11,7 @@ Show how processing pipelines rewrite a rule before evaluation.
 ## Synopsis
 
 ```text
-rsigma pipeline diff --rules <PATH>... -p <PIPELINE>... [OPTIONS]
+rsigma pipeline diff [--rules <PATH>... | --ruleset <NAME>] -p <PIPELINE>... [OPTIONS]
 ```
 
 ## Description
@@ -24,7 +24,9 @@ This is the rule-side companion to [`pipeline resolve`](resolve.md) (which inspe
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>...` | required | Sigma rule file(s) or director(ies) to diff. Repeatable. |
+| `-r, --rules <PATH>...` | required unless `--ruleset` | Sigma rule file(s) or director(ies) to diff. Repeatable. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to diff instead of `--rules`. A ruleset's pipelines are not applied; `-p` is the subject of this command. {{ added "unreleased" }} |
+| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
 | `-p, --pipeline <PATH\|NAME>...` | required | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable, applied in priority order. |
 | `--rule-id <ID>` | unset | Only diff the rule with this id (falling back to an exact title). |
 

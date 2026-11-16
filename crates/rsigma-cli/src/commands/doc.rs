@@ -24,8 +24,17 @@ use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular, render_js
 #[derive(Args, Debug)]
 pub(crate) struct DocArgs {
     /// One or more Sigma rule files or directories of rules.
-    #[arg(value_name = "RULES", required = true)]
-    pub rules: Vec<PathBuf>,
+    #[arg(
+        value_name = "RULES",
+        required_unless_present = "ruleset",
+        conflicts_with = "ruleset"
+    )]
+    pub rules: Option<Vec<PathBuf>>,
+
+    /// Named ruleset from the configuration to document instead of rule paths.
+    /// Conflicts with `--scaffold`, which targets one rule file.
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["scaffold", "in_place"])]
+    pub ruleset: Option<String>,
 
     /// Emit a scaffolded ADS template for a single rule instead of a report.
     #[arg(long, conflicts_with_all = ["missing_only", "fail_on_missing"])]
@@ -115,10 +124,35 @@ pub(crate) fn cmd_doc(args: DocArgs, ctx: OutputCtx) -> i32 {
     }
 
     let mut rules = Vec::new();
-    for path in &args.rules {
-        let collection = crate::load_collection(path);
-        for rule in collection.rules {
-            rules.push(RuleDoc::build(rule, path, &bar));
+    let rule_paths: Vec<PathBuf> = args.rules.clone().unwrap_or_default();
+    let input = crate::ruleset::RuleInput {
+        rules: &rule_paths,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    if let Some(resolved) = input.resolved(&ctx) {
+        let detection_entries: Vec<_> = resolved
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == rsigma_parser::ruleset::DocumentKind::Detection
+                    && matches!(
+                        entry.decision,
+                        rsigma_parser::ruleset::Decision::Included { .. }
+                            | rsigma_parser::ruleset::Decision::PulledIn { .. }
+                    )
+            })
+            .collect();
+        for (rule, entry) in resolved.collection.rules.into_iter().zip(detection_entries) {
+            let path = entry.origin.root.join(&entry.origin.file);
+            rules.push(RuleDoc::build(rule, &path, &bar));
+        }
+    } else {
+        for path in &rule_paths {
+            let collection = crate::load_collection(path);
+            for rule in collection.rules {
+                rules.push(RuleDoc::build(rule, path, &bar));
+            }
         }
     }
 
@@ -192,7 +226,7 @@ fn load_ads_bar(args: &DocArgs) -> AdsBar {
                 process::exit(exit_code::CONFIG_ERROR);
             }
         }
-    } else if let Some(first) = args.rules.first() {
+    } else if let Some(first) = args.rules.as_ref().and_then(|paths| paths.first()) {
         // Auto-discovery stays best-effort: a malformed discovered file falls
         // back to defaults rather than failing an unrelated invocation.
         LintConfig::find_in_ancestors(first).and_then(|p| LintConfig::load(&p).ok())
@@ -494,11 +528,15 @@ fn render_content_md(content: &AdsContent) -> String {
 // ---------------------------------------------------------------------------
 
 fn run_scaffold(args: &DocArgs, ctx: &OutputCtx) -> i32 {
-    if args.rules.len() != 1 {
+    let Some(rules) = args.rules.as_ref() else {
+        eprintln!("error: --scaffold takes exactly one rule file");
+        return exit_code::CONFIG_ERROR;
+    };
+    if rules.len() != 1 {
         eprintln!("error: --scaffold takes exactly one rule file");
         return exit_code::CONFIG_ERROR;
     }
-    let path = &args.rules[0];
+    let path = &rules[0];
     if !path.is_file() {
         eprintln!("error: --scaffold takes a single rule file, not a directory");
         return exit_code::CONFIG_ERROR;

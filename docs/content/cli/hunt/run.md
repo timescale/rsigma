@@ -11,7 +11,7 @@ Convert detection rules with the PostgreSQL backend, execute the query read-only
 ## Synopsis
 
 ```text
-rsigma hunt run [OPTIONS] --target postgres --rules <PATH>...
+rsigma hunt run [OPTIONS] --target postgres [--rules <PATH>... | --ruleset <NAME>]
 ```
 
 ## Description
@@ -48,7 +48,9 @@ Hunts run detection rules only. Correlation rules are rejected with an error, be
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <PATH>...` | Sigma rule file(s) or director(ies) to hunt with. Repeatable. |
+| `-r, --rules <PATH>...` | Sigma rule file(s) or director(ies) to hunt with. Repeatable. Required unless `--ruleset` is set. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | Named ruleset from the configuration to hunt with instead of `--rules`. A ruleset's pipelines are not applied; pass `-p` explicitly. {{ added "unreleased" }} |
+| `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
 | `-t, --target <TARGET>` | Hunt target. Only `postgres` (aliases `postgresql`, `pg`) is executable. |
 
 ### Connection

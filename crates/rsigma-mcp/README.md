@@ -15,13 +15,18 @@ rsigma mcp serve --rules-dir /path/to/rules
 To embed the handler in your own binary:
 
 ```rust,no_run
+use std::collections::BTreeMap;
+
 use rsigma_mcp::{DaemonConnect, RsigmaMcp};
 use rsigma_parser::LintConfig;
+use rsigma_parser::ruleset::RulesetSpec;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // root, lint config, allow sigma-cli delegation in convert_rules
-    let handler = RsigmaMcp::new(None, LintConfig::default(), false);
+    let rulesets: BTreeMap<String, RulesetSpec> = BTreeMap::new();
+    let handler = RsigmaMcp::new(None, LintConfig::default(), false)
+        .with_rulesets(rulesets);
     // Or attach a daemon so operate tools register:
     let _operate = RsigmaMcp::with_daemon(
         None,
@@ -45,11 +50,11 @@ async fn main() -> anyhow::Result<()> {
 | `parse_rule` | Parse Sigma YAML (rules, correlations, filters) to AST JSON. |
 | `parse_condition` | Parse a Sigma condition expression to a parse-tree. |
 | `lint_rules` | Lint rules; findings carry lint rule id, severity, line, and fix availability. |
-| `validate_rules` | Parse + compile + correlation checks, optional pipelines, source resolution, and `fail_level`. |
-| `evaluate_events` | Evaluate JSON events against rules (detections and correlations). Matches of rules referenced by a correlation, detections and correlations alike, are suppressed unless `emit_detections` is true. |
-| `convert_rules` | Convert rules to backend queries (`postgres`/`lynxdb`/`fibratus` natively; any other target via an installed sigma-cli when the server runs with `--allow-sigma-cli`). |
+| `validate_rules` | Parse + compile + correlation checks, optional pipelines, source resolution, and `fail_level`. Accepts `yaml`, `path`, or a named `ruleset`. |
+| `evaluate_events` | Evaluate JSON events against rules (detections and correlations). Matches of rules referenced by a correlation, detections and correlations alike, are suppressed unless `emit_detections` is true. Accepts `yaml`, `path`, or a named `ruleset`. |
+| `convert_rules` | Convert rules to backend queries (`postgres`/`lynxdb`/`fibratus` natively; any other target via an installed sigma-cli when the server runs with `--allow-sigma-cli`). Accepts `yaml`, `path`, or a named `ruleset`; a ruleset's pipelines are not applied. |
 | `list_backends` | List conversion targets and their formats (plus installed sigma-cli targets when delegation is enabled). |
-| `list_fields` | List the event fields rules reference, with provenance. |
+| `list_fields` | List the event fields rules reference, with provenance. Accepts `yaml`, `path`, or a named `ruleset`. |
 | `resolve_pipeline` | Inspect a builtin or file pipeline; optionally resolve dynamic sources. |
 | `list_builtin_pipelines` | List the builtin pipelines. |
 | `fix_rules` | Apply safe auto-fixes to Sigma YAML; `write: true` (path only, and only with a rules root) persists to disk. |
@@ -57,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 | `author_ads` | Report each rule's ADS sections, the required sections missing under the active config, and a `rsigma.ads.*` scaffold to complete. |
 | `reverse_convert` | Reverse-convert a SIEM query (`dialect: lucene` today) into a draft Sigma rule (YAML); takes the metadata and logsource a query cannot carry as parameters. |
 | `tune_rules` | Propose a verified Sigma filter from inline false-positive and true-positive event arrays; path inputs and pipeline files are confined to `--rules-dir`. |
-| `test_exemplars` | Replay embedded `rsigma.exemplars` and return the shared pass/fail report; `path` is confined to `--rules-dir`. |
+| `test_exemplars` | Replay embedded `rsigma.exemplars` and return the shared pass/fail report; `path` is confined to `--rules-dir`. Accepts a named `ruleset`, which replays exemplars added by overlays. |
 | `list_incidents` | List open incidents from a configured daemon (`--daemon-url`). |
 | `get_incident` | Fetch one open incident by id. |
 | `get_incident_bundle` | Fetch the evidence bundle for one incident. |
@@ -67,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
 | `create_silence` | Create a TTL-bounded silence (`--allow-operate-writes`). |
 | `post_disposition` | Record an analyst verdict (`--allow-operate-writes`). |
 
-Engineer-cycle tools always register. Operate-cycle tools appear in `tools/list` only when a daemon URL is configured; the two mutating tools also require `--allow-operate-writes`. Every Engineer tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path`, and returns structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
+Engineer-cycle tools always register. Operate-cycle tools appear in `tools/list` only when a daemon URL is configured; the two mutating tools also require `--allow-operate-writes`. Every Engineer tool accepts inline content (`yaml`/`condition`/`events`) xor a file `path` (the five rule-loading tools also accept a named `ruleset`) and returns structured JSON. Stdout is reserved for the MCP transport; diagnostics go to stderr.
 
 ## Resources
 
@@ -79,7 +84,7 @@ Four read-only resources expose reference data: `rsigma://lint/catalogue` (92 en
 - `RsigmaMcp` is the cloneable handler; the tool methods are thin wrappers over the underlying rsigma crates.
 - The CLI owns the tokio runtime entry point (`serve_stdio`), mirroring how the daemon is wired.
 - With the `http` feature, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token and `AllowedHosts` for `Host` and `Origin` validation). `http_router` and `serve_http` keep the loopback host list. The CLI refuses a non-loopback bind without a token unless `--allow-unauthenticated` is set.
-- `--rules-dir` confines every path argument (`path`, `events_path`, `enrichers_path`, file-based `pipelines`): paths that leave it through an absolute path, `../`, or a symlink are refused, as are directory inputs containing symlinks. `evaluate_events` only builds `template` enrichers, and refuses templates that reference `${ENV_VAR}` so a caller cannot read the server's environment; `command`, `http`, `lookup`, and `stix` are refused.
+- `--rules-dir` confines every path argument (`path`, `events_path`, `enrichers_path`, file-based `pipelines`): paths that leave it through an absolute path, `../`, or a symlink are refused, as are directory inputs containing symlinks. A `ruleset` input resolves its sources, overlay files and directories, and pipeline files through the same root; builtin pipeline names are allowed. `evaluate_events` only builds `template` enrichers, and refuses templates that reference `${ENV_VAR}` so a caller cannot read the server's environment; `command`, `http`, `lookup`, and `stix` are refused.
 - sigma-cli delegation is opt-in (`--allow-sigma-cli`) and hardened: `path` and file-based pipeline inputs are confined to `--rules-dir` when set, inline YAML is staged to a temp file, the subprocess is killed after 60s, and at most two delegations run concurrently.
 - Operate-cycle tools are opt-in (`--daemon-url`, plus `--allow-operate-writes` for mutations). The daemon token is flag/env-only (`--daemon-token` / `RSIGMA_MCP_DAEMON_TOKEN`).
 

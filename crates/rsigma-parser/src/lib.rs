@@ -69,11 +69,13 @@ pub mod fmt;
 pub mod lint;
 pub mod parser;
 pub mod reference;
+pub mod ruleset;
 pub mod selector;
 mod style;
 pub mod validate;
 pub mod value;
 pub mod version;
+mod walk;
 
 // Re-export the most commonly used types and functions at crate root
 pub use ads::{
@@ -88,7 +90,7 @@ pub use ast::{
 };
 pub use condition::parse_condition;
 pub use diagnostic::{CollectionDiagnostic, DiagnosticKind, DiagnosticSeverity};
-pub use emit::{emit_collection_yaml, emit_rule_yaml};
+pub use emit::{emit_collection_yaml, emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml};
 pub use error::{Result, SigmaParserError, SigmaParserErrorKind, SourceLocation};
 pub use exemplar::{
     EXEMPLARS_KEY, Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind,

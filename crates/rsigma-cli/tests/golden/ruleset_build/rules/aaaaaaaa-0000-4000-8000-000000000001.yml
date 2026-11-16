@@ -1,0 +1,23 @@
+title: Windows whoami execution
+id: aaaaaaaa-0000-4000-8000-000000000001
+name: windows_whoami
+status: stable
+description: whoami runs to discover the current user.
+author: Test Author
+tags:
+    - attack.discovery
+    - attack.execution
+    - attack.t1059.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\whoami.exe'
+    condition: selection
+level: critical
+rsigma.exemplars:
+    - event:
+          Image: 'C:\Windows\System32\whoami.exe'
+      expect: match
+      name: 'whoami fires'

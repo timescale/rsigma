@@ -6,6 +6,7 @@
 //! on [`RsigmaMcp`].
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use rmcp::{
     ErrorData as McpError,
@@ -13,6 +14,7 @@ use rmcp::{
 };
 use rsigma_convert::Backend;
 use rsigma_eval::{MatchDetailLevel, Pipeline, parse_pipeline_file, resolve_builtin_pipeline};
+use rsigma_parser::ruleset::{ResolveOptions, RulesetError, RulesetSpec, resolve_ruleset};
 use rsigma_parser::{
     CollectionDiagnostic, LintWarning, SigmaCollection, parse_sigma_directory, parse_sigma_file,
     parse_sigma_yaml,
@@ -20,6 +22,15 @@ use rsigma_parser::{
 use serde_json::{Value, json};
 
 use crate::input::{ensure_no_symlinks, resolve_confined_path};
+
+/// Why a named ruleset could not be resolved.
+pub(crate) enum RulesetFailure {
+    /// The name, a path, or the spec is wrong.
+    Request(McpError),
+    /// The rules themselves do not resolve: an unresolved correlation
+    /// reference, a duplicate id, or an overlay that fails or matches nothing.
+    Content(String),
+}
 
 use super::RsigmaMcp;
 
@@ -142,19 +153,27 @@ impl RsigmaMcp {
         crate::input::load_source(yaml, path, self.root())
     }
 
-    /// Load a `SigmaCollection` from inline YAML, a file, or a directory.
+    /// Load a `SigmaCollection` from inline YAML, a file, a directory, or a
+    /// named ruleset, together with any pipelines the ruleset declares.
     pub(crate) fn load_collection(
         &self,
         yaml: Option<&str>,
         path: Option<&str>,
-    ) -> Result<SigmaCollection, McpError> {
-        match (yaml, path) {
-            (Some(_), Some(_)) => Err(invalid("provide either `yaml` or `path`, not both")),
-            (None, None) => Err(invalid("one of `yaml` or `path` is required")),
-            (Some(text), None) => {
-                parse_sigma_yaml(text).map_err(|e| invalid(format!("parse error: {e}")))
-            }
-            (None, Some(p)) => {
+        ruleset: Option<&str>,
+    ) -> Result<(SigmaCollection, Vec<String>), McpError> {
+        let selected = usize::from(yaml.is_some())
+            + usize::from(path.is_some())
+            + usize::from(ruleset.is_some());
+        if selected != 1 {
+            return Err(invalid(
+                "provide exactly one of `yaml`, `path`, or `ruleset`",
+            ));
+        }
+        match (yaml, path, ruleset) {
+            (Some(text), None, None) => parse_sigma_yaml(text)
+                .map(|collection| (collection, Vec::new()))
+                .map_err(|e| invalid(format!("parse error: {e}"))),
+            (None, Some(p), None) => {
                 let resolved = resolve_confined_path(p, self.root())?;
                 let result = if resolved.is_dir() {
                     ensure_no_symlinks(&resolved, self.root())?;
@@ -162,9 +181,131 @@ impl RsigmaMcp {
                 } else {
                     parse_sigma_file(&resolved)
                 };
-                result.map_err(|e| invalid(format!("cannot load '{}': {e}", resolved.display())))
+                result
+                    .map(|collection| (collection, Vec::new()))
+                    .map_err(|e| invalid(format!("cannot load '{}': {e}", resolved.display())))
+            }
+            (None, None, Some(name)) => self.resolve_ruleset(name),
+            _ => unreachable!("exactly one input was selected"),
+        }
+    }
+
+    /// Load a collection from inline YAML xor a path, for tools that do not
+    /// accept a ruleset.
+    pub(crate) fn load_collection_only(
+        &self,
+        yaml: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<SigmaCollection, McpError> {
+        match (yaml, path) {
+            (Some(_), Some(_)) => Err(invalid("provide either `yaml` or `path`, not both")),
+            (None, None) => Err(invalid("one of `yaml` or `path` is required")),
+            _ => self
+                .load_collection(yaml, path, None)
+                .map(|(collection, _)| collection),
+        }
+    }
+
+    /// Resolve a named ruleset from the server's configuration, confined to
+    /// `--rules-dir` when one is set.
+    pub(crate) fn resolve_ruleset(
+        &self,
+        name: &str,
+    ) -> Result<(SigmaCollection, Vec<String>), McpError> {
+        self.resolve_ruleset_classified(name)
+            .map_err(|failure| match failure {
+                RulesetFailure::Request(error) => error,
+                RulesetFailure::Content(message) => invalid(message),
+            })
+    }
+
+    /// [`Self::resolve_ruleset`], keeping failures in the rules apart from
+    /// failures in the request or the server configuration.
+    pub(crate) fn resolve_ruleset_classified(
+        &self,
+        name: &str,
+    ) -> Result<(SigmaCollection, Vec<String>), RulesetFailure> {
+        let Some(spec) = self.rulesets.get(name) else {
+            let defined: Vec<&str> = self.rulesets.keys().map(String::as_str).collect();
+            let message = if defined.is_empty() {
+                format!("unknown ruleset '{name}'; no rulesets are defined")
+            } else {
+                format!(
+                    "unknown ruleset '{name}'; defined rulesets: {}",
+                    defined.join(", ")
+                )
+            };
+            return Err(RulesetFailure::Request(invalid(message)));
+        };
+        let confined = self.confine_spec(spec).map_err(RulesetFailure::Request)?;
+        let options = ResolveOptions {
+            confine_to: self.root().map(Path::to_path_buf),
+        };
+        let pipelines = confined.pipelines.clone();
+        resolve_ruleset(name, &confined, &options)
+            .map(|resolved| (resolved.collection, pipelines))
+            .map_err(|error| {
+                let content = matches!(
+                    error,
+                    RulesetError::Dependency(_)
+                        | RulesetError::Duplicate(_)
+                        | RulesetError::Overlay(_)
+                        | RulesetError::StaleOverlay(_)
+                );
+                let message = error.to_string();
+                let message = if message.starts_with(&format!("ruleset '{name}'")) {
+                    message
+                } else {
+                    format!("ruleset '{name}': {message}")
+                };
+                if content {
+                    RulesetFailure::Content(message)
+                } else {
+                    RulesetFailure::Request(invalid(message))
+                }
+            })
+    }
+
+    /// Check every source, overlay, and pipeline file path against the
+    /// configured root before the resolver walks it. Relative paths in
+    /// `rsigma.yaml` resolve against the working directory, as they do on the
+    /// CLI, not against `--rules-dir`.
+    fn confine_spec(&self, spec: &RulesetSpec) -> Result<RulesetSpec, McpError> {
+        let Some(root) = self.root() else {
+            return Ok(spec.clone());
+        };
+        let confine = |path: &Path| -> Result<PathBuf, McpError> {
+            let absolute = std::path::absolute(path).map_err(|error| {
+                invalid(format!("cannot resolve '{}': {error}", path.display()))
+            })?;
+            resolve_confined_path(&absolute.to_string_lossy(), Some(root))
+        };
+        let mut confined = spec.clone();
+        for source in &mut confined.sources {
+            let resolved = confine(source)?;
+            if resolved.is_dir() {
+                ensure_no_symlinks(&resolved, Some(root))?;
+            }
+            *source = resolved;
+        }
+        for overlay in &mut confined.overlays {
+            if let Some(file) = &overlay.file {
+                overlay.file = Some(confine(file)?);
+            }
+            if let Some(dir) = &overlay.dir {
+                let resolved = confine(dir)?;
+                ensure_no_symlinks(&resolved, Some(root))?;
+                overlay.dir = Some(resolved);
             }
         }
+        for pipeline in &mut confined.pipelines {
+            if resolve_builtin_pipeline(pipeline).is_none() {
+                *pipeline = confine(Path::new(pipeline.as_str()))?
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+        Ok(confined)
     }
 
     /// Load and sort a list of pipelines (builtin names or file paths).

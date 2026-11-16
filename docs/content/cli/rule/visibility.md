@@ -11,7 +11,7 @@ Score telemetry visibility: turn the field-observability signal into a [DeTT&CT]
 ## Synopsis
 
 ```text
-rsigma rule visibility [OPTIONS] --rules <PATH>
+rsigma rule visibility [OPTIONS] [--rules <PATH> | --ruleset <NAME>]
 ```
 
 ## Description
@@ -34,7 +34,8 @@ Scores ride DeTT&CT's 0-to-4 scale (none, minimal, medium, good, excellent), der
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>` | required | Sigma rule file or directory of rules. Repeatable. |
+| `-r, --rules <PATH>` | required unless `--ruleset` | Sigma rule file or directory of rules. Repeatable. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to analyze instead of `--rules`. There is no config-file ruleset key for this command. {{ added "unreleased" }} |
 | `--observed <FILE>` | unset | Observed field report: the `engine eval --observe-fields` JSON, a saved `GET /api/v1/fields` snapshot, or `-` for stdin. Omit for the rule-expected baseline. Conflicts with `--addr`. |
 | `--addr <DAEMON_ADDR>` | unset | Fetch the observed snapshot from a live daemon (`GET /api/v1/fields`) as `host:port` or a full URL. |
 | `--mapping [<PATH_OR_URL>]` | bundled | Override the logsource/field to ATT&CK data-source mapping table. A path or URL reads that table; a bare `--mapping` fetches the curated default URL. May also be supplied via `visibility.mapping`. |

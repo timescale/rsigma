@@ -11,8 +11,21 @@ use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular, render_js
 #[derive(Args, Debug)]
 pub(crate) struct FieldsArgs {
     /// Path to a Sigma rule file or directory of rules
-    #[arg(short, long)]
-    pub rules: PathBuf,
+    #[arg(
+        short,
+        long,
+        required_unless_present = "ruleset",
+        conflicts_with = "ruleset"
+    )]
+    pub rules: Option<PathBuf>,
+
+    /// Named ruleset from the configuration to inspect instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Processing pipeline(s) to apply (repeatable). Accepts builtin names (ecs_windows, sysmon) or YAML file paths.
     /// When provided, fields are shown after pipeline transformations.
@@ -31,12 +44,20 @@ pub(crate) struct FieldsArgs {
 pub(crate) fn cmd_fields(args: FieldsArgs, ctx: OutputCtx) {
     let FieldsArgs {
         rules: path,
+        ruleset,
+        config,
         pipelines: pipeline_paths,
         no_filters,
         json,
     } = args;
-    let collection = crate::load_collection(&path);
-    let pipelines = crate::load_pipelines(&pipeline_paths);
+    let rules: Vec<PathBuf> = path.into_iter().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: ruleset.as_deref(),
+        config: config.as_deref(),
+    };
+    let collection = input.single_path_collection(&ctx);
+    let pipelines = crate::load_pipelines(&input.pipelines(&pipeline_paths));
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
         eprintln!(

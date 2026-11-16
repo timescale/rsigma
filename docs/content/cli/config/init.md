@@ -16,7 +16,7 @@ rsigma config init [--output <PATH>] [--force]
 
 ## Description
 
-Scaffolds a `rsigma.yaml` populated with every supported section, sensible defaults, and inline comments documenting each key. The first line is a `# yaml-language-server: $schema=` header that lets editors with the yaml-language-server extension auto-complete and validate the file against the [JSON Schema](schema.md) generated from the same source as the config loader.
+Scaffolds a `rsigma.yaml` populated with every supported section, sensible defaults, and inline comments documenting each key, including a commented `rulesets:` example. {{ added "unreleased" }} The first line is a `# yaml-language-server: $schema=` header that lets editors with the yaml-language-server extension auto-complete and validate the file against the [JSON Schema](schema.md) generated from the same source as the config loader.
 
 By default the template is written to `./rsigma.yaml`. Running `init` against an existing file is refused unless `--force` is passed; this is deliberate so an accidental re-run never clobbers operator edits.
 

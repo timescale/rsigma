@@ -94,6 +94,19 @@ global:
   output_format: json      # json | ndjson | table | csv | tsv (maps to --output-format)
   color: auto              # auto | always | never (maps to --color)
 
+rulesets:
+  linux_edge:
+    sources: [./rules/local, ./vendor/sigma/rules/linux]
+    include:
+      - tags: ["attack.t1059*"]
+    exclude:
+      - status: [deprecated, unsupported]
+    dependencies: include
+    overlays:
+      - dir: ./overlays/linux_edge
+    pipelines: [sysmon]
+    output: ./build/linux_edge
+
 daemon:
   rules: /etc/rsigma/rules
   pipelines: [ecs_windows]
@@ -159,6 +172,7 @@ daemon:
 
 eval:
   rules: ./rules
+  # ruleset: linux_edge     # one named ruleset instead of rules
   pipelines: [sysmon]
   input_format: auto
   fail_on_detection: false
@@ -192,6 +206,7 @@ mcp:
 
 backtest:
   rules: ./rules
+  # ruleset: linux_edge     # one named ruleset instead of rules
   corpus: [./ci/corpus]
   expectations: ./ci/expectations.yml
   # unexpected: warn   # fail | warn | ignore; unset lets the expectations-file default apply
@@ -202,6 +217,7 @@ backtest:
 
 coverage:
   # rules: [./rules]
+  # ruleset: linux_edge     # one named ruleset instead of rules
   # atomics: https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/Indexes/index.yaml
   # baseline: https://raw.githubusercontent.com/SigmaHQ/sigma/master/other/sigma_attack_nav_coverage.json
   # targets: ./threat-model-techniques.txt
@@ -226,6 +242,7 @@ visibility:
 
 hygiene:
   # rules: [./rules]
+  # ruleset: linux_edge     # one named ruleset instead of rules
   # metrics: http://localhost:9090/metrics
   # fields: ./fields.json
   silent_threshold: 365d
@@ -241,6 +258,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | Section | Used by | Notes |
 |---------|---------|-------|
 | `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
+| `rulesets` | `ruleset`, `--ruleset` commands, MCP tools | Named curation of Sigma rules: sources, selectors, dependency policy, overlays, pipelines, and build output. File-only; environment variables are ignored. See [Rulesets](../guide/rulesets.md). {{ added "unreleased" }} |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.api.auth` | `engine daemon` | Bearer-token authentication with `resource:action` permissions (`anonymous_permissions`, `roles`, `tokens`). Absent = no authentication. Token secrets stay env-only via each token's `token_env`. Mutually exclusive with `--api-token-env`. See [HTTP API: Authentication](http-api.md#authentication). |
@@ -291,10 +309,13 @@ Two parallel schemes are honored:
     | `RSIGMA_MCP__DAEMON_URL=http://127.0.0.1:9090` | `mcp.daemon_url` |
     | `RSIGMA_MCP__DAEMON_CA=/etc/rsigma/tls/ca.pem` | `mcp.daemon_ca` |
     | `RSIGMA_MCP__ALLOW_OPERATE_WRITES=true` | `mcp.allow_operate_writes` |
+    | `RSIGMA_EVAL__RULESET=linux_edge` | `eval.ruleset` |
 
 2. **Legacy clap-bound names** with a single underscore (`NATS_CREDS`, `RSIGMA_CONSUMER_GROUP`, `RSIGMA_TLS_KEY_PASSWORD`). These continue to work at the flag layer and are listed in [Environment Variables](environment-variables.md). Secrets are *only* readable this way.
 
 The uniform scheme is detected by the `__` separator, so it never collides with the legacy single-underscore names.
+
+`rulesets` is a file-only section. `RSIGMA_RULESETS__...` variables are ignored with `warning: ignoring environment variable <KEY>: rulesets are configured in files only`. Per-command keys such as `RSIGMA_EVAL__RULESET` work normally.
 
 ## `--dry-run` and `config show`
 

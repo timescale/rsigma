@@ -1,0 +1,18 @@
+rulesets:
+  vendor:
+    description: Vendored Windows and Linux detections.
+    sources:
+      - vendor
+    include:
+      - tags: [attack.t1059*]
+      - id: [bbbbbbbb-0000-4000-8000-000000000001]
+    exclude:
+      - status: [deprecated]
+    dependencies: include
+    overlays:
+      - file: overlays/levels.yml
+      - id: aaaaaaaa-0000-4000-8000-000000000001
+        set:
+          level: critical
+      - file: overlays/exemplars.yml
+    pipelines: [sysmon]

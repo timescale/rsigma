@@ -56,6 +56,10 @@ pub(crate) struct VisibilityArgs {
     #[arg(short = 'r', long = "rules", value_name = "PATH")]
     pub rules: Vec<PathBuf>,
 
+    /// Named ruleset from the configuration to analyse instead of `--rules`.
+    #[arg(long, value_name = "NAME", conflicts_with = "rules")]
+    pub ruleset: Option<String>,
+
     /// Observed field report: the `engine eval --observe-fields` JSON, a saved
     /// `GET /api/v1/fields` snapshot, or `-` for stdin. Omit for the
     /// rule-expected baseline (every source unobserved).
@@ -141,12 +145,17 @@ fn overlay_visibility_config(
 /// spots under `--fail-on-blind-spots`, 2 rule error, 3 config error). Rule
 /// errors exit directly via [`crate::load_collection_multi`].
 pub(crate) fn cmd_visibility(args: VisibilityArgs, ctx: OutputCtx) -> i32 {
-    if args.rules.is_empty() {
-        eprintln!("error: no rules path; pass --rules <PATH> (repeatable)");
+    if args.rules.is_empty() && args.ruleset.is_none() {
+        eprintln!("error: no rules path; pass --rules <PATH> (repeatable) or --ruleset <NAME>");
         return exit_code::CONFIG_ERROR;
     }
 
-    let collection = crate::load_collection_multi(&args.rules);
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
     let rule_field_set = RuleFieldSet::collect(&collection, &[], true);
 
     let observed = match resolve_observed(&args) {

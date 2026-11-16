@@ -1,0 +1,107 @@
+{
+  "documents": [
+    {
+      "decision": "included",
+      "file": "correlations/cccccccc-0000-4000-8000-000000000001.yml",
+      "id": "cccccccc-0000-4000-8000-000000000001",
+      "kind": "correlation",
+      "origin": "vendor/correlation.yml",
+      "overlays": [
+        "overlays/exemplars.yml:1"
+      ],
+      "sha256": "e699d4b85cd55912d1abfa7ed10f65f95cd8639e5b15caec0d32fbedd46ac179",
+      "title": "Windows discovery burst"
+    },
+    {
+      "decision": "included",
+      "file": "correlations/cccccccc-0000-4000-8000-000000000002.yml",
+      "id": "cccccccc-0000-4000-8000-000000000002",
+      "kind": "correlation",
+      "origin": "vendor/correlation.yml",
+      "overlays": [],
+      "sha256": "a10b3790e3f7c297e5333ef58fca3979982d431d0954469fd6f816a5d0635b4a",
+      "title": "Discovery burst escalation"
+    },
+    {
+      "decision": "included",
+      "file": "rules/aaaaaaaa-0000-4000-8000-000000000001.yml",
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "kind": "detection",
+      "origin": "vendor/windows/proc_creation.yml",
+      "overlays": [
+        "overlays/levels.yml:0",
+        "inline:1",
+        "overlays/exemplars.yml:0"
+      ],
+      "sha256": "948999635974920ec321940533934bbf32fcf3d404572b88a6d6e6c07e4aed37",
+      "title": "Windows whoami execution"
+    },
+    {
+      "decision": "included",
+      "file": "rules/aaaaaaaa-0000-4000-8000-000000000002.yml",
+      "id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "kind": "detection",
+      "origin": "vendor/windows/proc_creation.yml",
+      "overlays": [],
+      "sha256": "cf908b07acf293ec7b897da662b081ed32ad8c597cbc6f52db4a51bd0ba2ffdc",
+      "title": "Windows powershell encoded command"
+    },
+    {
+      "decision": "pulled_in",
+      "file": "rules/aaaaaaaa-0000-4000-8000-000000000003.yml",
+      "id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "kind": "detection",
+      "origin": "vendor/windows/proc_creation.yml",
+      "overlays": [],
+      "sha256": "93b215f0f9f378dc0fb628ea9c831c2a0e950ada87ade0003a4778c6eb49649a",
+      "title": "Windows local user enumeration"
+    },
+    {
+      "decision": "included",
+      "file": "rules/bbbbbbbb-0000-4000-8000-000000000001.yml",
+      "id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "kind": "detection",
+      "origin": "vendor/linux/auth.yml",
+      "overlays": [
+        "overlays/levels.yml:1",
+        "overlays/exemplars.yml:2"
+      ],
+      "sha256": "eeca31eccce05e09b6fa9d4815a59bc584cd86de9593c781239ec2751c7981e0",
+      "title": "Linux SSH login"
+    },
+    {
+      "decision": "filter_kept",
+      "file": "filters/dddddddd-0000-4000-8000-000000000001.yml",
+      "id": "dddddddd-0000-4000-8000-000000000001",
+      "kind": "filter",
+      "origin": "vendor/filter.yml",
+      "overlays": [],
+      "sha256": "f6e14c21aa71a5a463ec2c297cfe60f552c7dd99a7f1fe4082f5dbdb56bac2c1",
+      "title": "Windows whoami noise"
+    }
+  ],
+  "generator": "rsigma <version>",
+  "lock_version": 1,
+  "overlay_files": [
+    {
+      "path": "overlays/exemplars.yml",
+      "sha256": "857db80e7dc84a02da9170c46b911fe1eefdb0c4962f6f5159ea9c8193f0382d"
+    },
+    {
+      "path": "overlays/levels.yml",
+      "sha256": "9e5b06f510f3ce46bc760e2f2c1bf75721ab883a828fe9be160e30f060eebf31"
+    }
+  ],
+  "pipelines": [
+    "sysmon"
+  ],
+  "ruleset": "vendor",
+  "sources": [
+    {
+      "files": 4,
+      "path": "vendor",
+      "sha256": "8eee243e5ddc3925061cd731e0f6ab8990f2107e1aa5bce9a2079fa94a04fc5e"
+    }
+  ],
+  "spec_sha256": "3f0af0b3db23ad9d0dea17606503c2f19448e73f5ebbfe2d47ca2fcde31e17a8"
+}

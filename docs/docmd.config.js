@@ -115,6 +115,7 @@ export default {
           title: "Deploy and Detect",
           collapsible: true,
           children: [
+            { title: "Rulesets", path: "/guide/rulesets" },
             { title: "Streaming Detection", path: "/guide/streaming-detection" },
             { title: "Processing Pipelines", path: "/guide/processing-pipelines" },
             { title: "Schema Routing", path: "/guide/schema-routing" },
@@ -240,6 +241,16 @@ export default {
           children: [
             { title: "diff", path: "/cli/pipeline/diff" },
             { title: "resolve", path: "/cli/pipeline/resolve" },
+          ],
+        },
+        {
+          title: "ruleset",
+          collapsible: true,
+          children: [
+            { title: "list", path: "/cli/ruleset/list" },
+            { title: "show", path: "/cli/ruleset/show" },
+            { title: "build", path: "/cli/ruleset/build" },
+            { title: "diff", path: "/cli/ruleset/diff" },
           ],
         },
         {

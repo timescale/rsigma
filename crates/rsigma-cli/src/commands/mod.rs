@@ -32,6 +32,7 @@ pub(crate) mod reports;
 #[cfg(feature = "daemon")]
 mod resolve;
 mod reverse;
+pub(crate) mod ruleset;
 mod scorecard;
 // Delegation to an external sigma-cli for non-native conversion targets.
 mod status;
@@ -71,6 +72,7 @@ pub(crate) use pipeline_diff::{PipelineDiffArgs, cmd_pipeline_diff};
 #[cfg(feature = "daemon")]
 pub(crate) use resolve::{ResolveArgs, cmd_resolve};
 pub(crate) use reverse::{ReverseArgs, cmd_reverse};
+pub(crate) use ruleset::RulesetCommands;
 pub(crate) use scorecard::{ScorecardArgs, apply_scorecard_config, cmd_scorecard};
 pub(crate) use status::{StatusArgs, cmd_status};
 pub(crate) use tail::{TailArgs, cmd_tail};

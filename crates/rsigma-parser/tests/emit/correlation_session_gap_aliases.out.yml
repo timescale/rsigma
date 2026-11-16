@@ -1,0 +1,18 @@
+title: Session burst with aliases
+correlation:
+    type: event_count
+    rules:
+        - failed_login
+        - failed_ssh
+    group-by:
+        - User
+    timespan: 1h
+    window: session
+    gap: 5m
+    condition:
+        gte: 10
+    aliases:
+        user:
+            failed_login: User
+            failed_ssh: Username
+    generate: true

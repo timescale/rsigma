@@ -17,6 +17,10 @@ mod filter;
 mod tests;
 
 pub use detection::parse_field_spec;
+pub(crate) use {
+    correlation::STANDARD_CORRELATION_KEYS, detection::STANDARD_RULE_KEYS,
+    filter::STANDARD_FILTER_KEYS,
+};
 
 use std::collections::HashMap;
 use std::path::Path;

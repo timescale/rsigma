@@ -49,6 +49,10 @@ pub(crate) struct HygieneArgs {
     #[arg(short = 'r', long = "rules", value_name = "PATH")]
     pub rules: Vec<PathBuf>,
 
+    /// Named ruleset from the configuration to report on instead of `--rules`.
+    #[arg(long, value_name = "NAME", conflicts_with = "rules")]
+    pub ruleset: Option<String>,
+
     /// Prometheus exposition snapshot file or a `/metrics` URL for per-rule fire
     /// volume (`rsigma_*_matches_by_rule_total`, joined by rule_title). Drives
     /// the silence and noisy signals.
@@ -135,13 +139,30 @@ fn overlay_hygiene_config(
     };
 
     if let Some(h) = base.hygiene {
+        let cli_rules = explicit("rules");
+        let cli_ruleset = explicit("ruleset");
+        if !cli_rules
+            && !cli_ruleset
+            && h.rules.as_ref().is_some_and(|rules| !rules.is_empty())
+            && h.ruleset.is_some()
+        {
+            eprintln!("error: set either hygiene.rules or hygiene.ruleset, not both");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
         // Repeatable inputs with no clap default: an empty vec means the
         // operator left them off, so the config layer fills them.
-        if !explicit("rules")
+        if !cli_rules
+            && !cli_ruleset
             && args.rules.is_empty()
             && let Some(v) = h.rules
         {
             args.rules = v;
+        }
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = h.ruleset
+        {
+            args.ruleset = Some(v);
         }
         if args.fail_on.is_empty()
             && let Some(v) = h.fail_on
@@ -338,8 +359,8 @@ struct WorkingRule {
 /// 1 when a selected `--fail-on` condition matches, 2 on rule load failure (via
 /// the loader), 3 on bad flags or an unreadable metrics/fields input.
 pub(crate) fn cmd_hygiene(args: HygieneArgs, ctx: OutputCtx) -> i32 {
-    if args.rules.is_empty() {
-        eprintln!("error: no rules path; pass --rules <PATH> (repeatable)");
+    if args.rules.is_empty() && args.ruleset.is_none() {
+        eprintln!("error: no rules path; pass --rules <PATH> (repeatable) or --ruleset <NAME>");
         return exit_code::CONFIG_ERROR;
     }
 
@@ -369,7 +390,12 @@ pub(crate) fn cmd_hygiene(args: HygieneArgs, ctx: OutputCtx) -> i32 {
         }
     };
 
-    let collection = crate::load_collection_multi(&args.rules);
+    let collection = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    }
+    .collection(&ctx);
 
     let mut metrics = match &args.metrics {
         Some(spec) => match metrics_source::load_metrics(spec, args.metrics_window.as_deref()) {

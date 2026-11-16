@@ -57,6 +57,7 @@ Full documentation, including guides, CLI reference, and library API docs, lives
 ### Deploy
 
 * **[CI integration](https://rsigma.io/guide/ci-cd/):** Gates a rule repository in one pull-request check with the [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action) GitHub Action, wrapping lint, validate, fields-drift diff, backtest, and coverage
+* **[Rulesets](https://rsigma.io/guide/rulesets/):** Curates vendored rules into named rulesets with selectors, dependency policies, and metadata overlays, then materializes a reproducible build with a lockfile for the daemon or CI
 * **[Configuration](https://rsigma.io/reference/configuration/):** Layers settings from YAML config files, environment variables, and CLI flags, managed with the `rsigma config` command group
 * **[Signed artifacts](https://rsigma.io/deployment/docker/):** Ships multi-arch Docker images with cosign signatures, SBOM, and SLSA Build L3 provenance, plus prebuilt binaries for Linux, macOS, and Windows
 

@@ -141,7 +141,7 @@ rsigma --features
 rsigma --help
 ```
 
-You should see `rsigma {{ rsigma.version }}`, the Cargo features compiled into that binary, and a list of the top-level command groups (`engine`, `rule`, `backend`, `pipeline`, `hunt`, and `config`, plus `mcp` with the `mcp` feature and `taxii` with the `taxii-sync` feature).
+You should see `rsigma {{ rsigma.version }}`, the Cargo features compiled into that binary, and a list of the top-level command groups (`engine`, `rule`, `backend`, `pipeline`, `ruleset`, `hunt`, and `config`, plus `mcp` with the `mcp` feature and `taxii` with the `taxii-sync` feature).
 
 ## Agent skill
 

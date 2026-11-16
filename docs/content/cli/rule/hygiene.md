@@ -11,7 +11,7 @@ Flag rule hygiene and retirement candidates in one report.
 ## Synopsis
 
 ```text
-rsigma rule hygiene --rules <PATH>... [OPTIONS]
+rsigma rule hygiene [--rules <PATH>... | --ruleset <NAME>] [OPTIONS]
 ```
 
 ## Description
@@ -20,7 +20,7 @@ rsigma rule hygiene --rules <PATH>... [OPTIONS]
 
 It runs no event evaluation unless `--corpus` is set. The static signals read straight off the parsed rules; with `--corpus`, the command replays the corpus through the engine for per-rule fire counts; the silence and noisy signals also join a Prometheus snapshot or endpoint; the broken-coverage signal joins a field-observability snapshot. It is an offline `rule`-group command with no daemon hot-path involvement.
 
-Only `-r/--rules` is required. The static signals (untagged, no-owner, incomplete-ads, deprecated/stale) report from the rules alone; the silence and noisy signals need `--metrics` or `--corpus`; the broken-coverage signal needs `--fields`.
+Only `-r/--rules` or `--ruleset` is required. The static signals (untagged, no-owner, incomplete-ads, deprecated/stale) report from the rules alone; the silence and noisy signals need `--metrics` or `--corpus`; the broken-coverage signal needs `--fields`.
 
 ## Signals
 
@@ -38,7 +38,7 @@ Only `-r/--rules` is required. The static signals (untagged, no-owner, incomplet
 
 | Input | Flag | Required | What it supplies |
 |-------|------|----------|------------------|
-| Rules | `-r, --rules <PATH>` | yes | The rule set to report on (repeatable; file or directory). |
+| Rules | `-r, --rules <PATH>` or `--ruleset <NAME>` | yes | The rule set to report on (repeatable paths, or one named ruleset). |
 | Prometheus snapshot or endpoint | `--metrics <FILE\|URL>` | no | Per-rule fire volume from `rsigma_detection_matches_by_rule_total` and `rsigma_correlation_matches_by_rule_total`, joined by `rule_title`. Drives `silent` and `noisy`. |
 | Prometheus query API | `--metrics-window <DURATION>` | no | When `--metrics` is a Prometheus query-API base, switches to a `query_range` over the window to derive a true last-fired timestamp. |
 | Event corpus | `--corpus <PATH>` | no | The offline alternative to `--metrics` (no daemon, no Prometheus): a file or directory replayed through the engine for per-rule fire counts. Combined with `--metrics`, the counts are summed. Also drives `silent` and `noisy`. A `--corpus` path that contains no readable files exits `3` rather than marking every rule silent. |
@@ -54,7 +54,8 @@ The broken-coverage rollup needs each rule's full referenced-field set, so it jo
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>` | required | Sigma rule file or directory (repeatable). May also be supplied via `hygiene.rules`. |
+| `-r, --rules <PATH>` | required unless `--ruleset` | Sigma rule file or directory (repeatable). May also be supplied via `hygiene.rules`. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to report on instead of `--rules`. May also be supplied via `hygiene.ruleset`. {{ added "unreleased" }} |
 | `--metrics <FILE\|URL>` | unset | A Prometheus exposition snapshot file or a `/metrics` URL. May also be supplied via `hygiene.metrics`. |
 | `--metrics-window <DURATION>` | unset | Range-query window (e.g. `7d`, `24h`) when `--metrics` is a query-API base. May also be supplied via `hygiene.metrics_window`. |
 | `--corpus <PATH>` | unset | Event corpus file or directory replayed for offline fire counts (repeatable). |

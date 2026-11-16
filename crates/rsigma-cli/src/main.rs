@@ -12,10 +12,12 @@ mod daemon;
 pub(crate) mod exit_code;
 mod features;
 mod fix;
+pub(crate) mod fsutil;
 pub(crate) mod logsource_opts;
 pub(crate) mod metrics_source;
 pub(crate) mod output;
 pub(crate) mod rule_meta;
+mod ruleset;
 
 use std::path::PathBuf;
 use std::process;
@@ -25,8 +27,8 @@ use commands::{
     BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
     DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, FmtArgs, HuntCommands, HygieneArgs, LintArgs,
     LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ReverseArgs,
-    ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs, ValidateArgs,
-    VisibilityArgs, dispatch_hunt,
+    RulesetCommands, ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs,
+    ValidateArgs, VisibilityArgs, dispatch_hunt,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -146,6 +148,12 @@ enum Commands {
     Pipeline {
         #[command(subcommand)]
         cmd: PipelineCommands,
+    },
+
+    /// Curate named rule sets declared in rsigma.yaml (list, show, build, diff)
+    Ruleset {
+        #[command(subcommand)]
+        cmd: RulesetCommands,
     },
 
     /// Hunt an archive with converted rules, streaming matches back as events
@@ -395,6 +403,7 @@ fn dispatch(command: Commands, matches: &ArgMatches, ctx: output::OutputCtx) {
         Commands::Rule { cmd } => dispatch_rule(cmd, matches, ctx),
         Commands::Backend { cmd } => dispatch_backend(cmd, ctx),
         Commands::Pipeline { cmd } => dispatch_pipeline(cmd, ctx),
+        Commands::Ruleset { cmd } => commands::ruleset::dispatch(cmd, ctx),
         Commands::Hunt { cmd } => dispatch_hunt(cmd, ctx),
         #[cfg(feature = "mcp")]
         Commands::Mcp { cmd } => dispatch_mcp(cmd, ctx),
@@ -751,7 +760,7 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
 
 /// Print the per-rule parse error and warning counts of a loaded collection
 /// to stderr. Loading continues with the documents that parsed.
-fn report_load_diagnostics(collection: &SigmaCollection) {
+pub(crate) fn report_load_diagnostics(collection: &SigmaCollection) {
     let errors = collection.error_count();
     if errors > 0 {
         eprintln!("Warning: {errors} parse errors while loading rules");

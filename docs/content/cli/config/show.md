@@ -11,7 +11,7 @@ Print the effective configuration after all layers have been merged, annotated w
 ## Synopsis
 
 ```text
-rsigma config show [--config <PATH>] [--for <global|daemon|eval>] [--format <text|json|yaml>]
+rsigma config show [--config <PATH>] [--for <global|daemon|eval|rulesets>] [--format <text|json|yaml>]
 ```
 
 ## Description
@@ -29,7 +29,7 @@ into a single tree, and reports the winning layer for every leaf. Security-sensi
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <PATH>` | discovery chain | Load only this file. |
-| `--for <SECTION>` | all sections | Restrict output to `global`, `daemon`, or `eval`. Other top-level sections (`backtest`, `mcp`, …) appear only when `--for` is omitted. |
+| `--for <SECTION>` | all sections | Restrict output to `global`, `daemon`, `eval`, or `rulesets`. Other top-level sections (`backtest`, `mcp`, …) appear only when `--for` is omitted. {{ added "unreleased" }} |
 | `--format <text\|json\|yaml>` | `text` when unset | Output shape. When unset, the global `--output-format` is used (`json`/`ndjson`/`table`/`csv`/`tsv`). Local `--format` wins over the global selector and prints a precedence warning. See [Output Formats](../../reference/output.md). |
 
 ## Output

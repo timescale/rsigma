@@ -11,7 +11,7 @@ Replay embedded `rsigma.exemplars` against their host detection and correlation 
 ## Synopsis
 
 ```text
-rsigma rule test --rules <PATH> [--rules <PATH> ...] [-p <PIPELINE>] [--fail-on-missing]
+rsigma rule test [--rules <PATH> ... | --ruleset <NAME>] [-p <PIPELINE>] [--fail-on-missing]
 ```
 
 ## Description
@@ -28,7 +28,9 @@ Output uses the global `--output-format` layer. Without an explicit format the c
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--rules` / `-r` | required, repeatable | Sigma rule file or directory. |
+| `--rules` / `-r` | required unless `--ruleset`, repeatable | Sigma rule file or directory. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to test instead of `--rules`. Exemplars added by overlays are replayed. {{ added "unreleased" }} |
+| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
 | `--pipeline` / `-p` | none | Builtin pipeline name or YAML file (repeatable). |
 | `--fail-on-missing` | off | Exit 1 when a detection or correlation rule has no exemplars. |
 

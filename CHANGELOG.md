@@ -4,6 +4,22 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Rulesets (#712)
+
+A `rulesets:` section in `rsigma.yaml` declares named curations of Sigma rules. Each ruleset lists source files or directories, selectors that include or exclude candidates by id, name, title, tags, level, status, kind, logsource, or path, and a dependency policy for correlation references. `dependencies: include` pulls a referenced rule back in, while `drop` removes a correlation whose references are not kept and warns. Metadata overlays can set or append level, status, description, author, tags, references, false positives, fields, and custom attributes without editing the vendor files. Overlays validate exemplars and ADS attributes after application, so an overlay can add `rsigma.exemplars` for a vendored rule and `rule test` replays them. An overlay cannot set a standard Sigma or engine key through `custom_attributes`, and an empty `set` or `append` is rejected.
+
+The `rsigma ruleset` command group lists and shows declared rulesets, materializes one into canonical YAML with a deterministic `ruleset.lock.json` whose digests do not depend on line endings, and compares a resolved ruleset with that lockfile. `ruleset build --check` gates committed build output, and `ruleset diff --fail-on-change` gates selector and overlay changes. The build output loads directly with `engine eval --rules` or `engine daemon --rules`.
+
+`engine eval`, `engine explain`, `rule validate`, `rule fields`, `rule tune`, `rule doc`, `rule test`, `rule backtest`, `rule coverage`, `rule visibility`, `rule hygiene`, `backend convert`, `pipeline diff`, and `hunt run` accept `--ruleset <NAME>`, with a new `--config` flag where one was missing. `eval.ruleset`, `backtest.ruleset`, `coverage.ruleset`, and `hygiene.ruleset` supply the same selection from the configuration. Commands that take pipelines use an explicit `-p` first, then the ruleset's pipelines, then the section's configured pipelines; `pipeline diff`, `backend convert`, and `hunt run` never use a ruleset's pipelines. `rule lint` and `rule fmt` stay on raw files.
+
+The MCP tools `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars` accept a `ruleset` input alongside `yaml` and `path`, resolving it from the server's configuration and confining every source, overlay, and pipeline file to `--rules-dir` when one is set.
+
+`rsigma-parser` gains a public `ruleset` module with `resolve_ruleset`, `resolve_loaded`, `load_sources`, `validate_spec`, and the spec, selector, overlay, and decision types, plus `emit_correlation_yaml` and `emit_filter_yaml`. `RulesetError` and `Decision` are `#[non_exhaustive]`. The `schema` feature derives `schemars::JsonSchema` for the ruleset types. `RsigmaMcp::with_rulesets` hands the MCP server its rulesets. `emit_rule_yaml` now writes a detection's `timeframe`, which it previously dropped.
+
+`rsigma-cli` now depends on `sha2` unconditionally, so a `--no-default-features` build includes it.
+
+The detection-loop, architecture, and crate dependency diagrams show `ruleset build` and the `ruleset` command group.
+
 ### OCSF finding output depth (#711)
 
 `engine eval` accepts `--finding-format native|ocsf` and `--ocsf-version`, and `rule backtest` accepts `--findings`, `--finding-format`, and `--ocsf-version` (CLI `ocsf` feature, implied by `daemon`). On eval, OCSF composes with JSON or NDJSON output; `table`, `csv`, and `tsv` are a config error. Backtest writes OCSF findings only to `--findings` and keeps the report on stdout in the selected `--output-format`.

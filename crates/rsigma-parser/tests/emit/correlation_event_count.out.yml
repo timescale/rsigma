@@ -1,0 +1,18 @@
+title: Burst of failed logins
+id: 11111111-2222-3333-4444-555555555555
+status: stable
+description: Too many failed logins from one user.
+references:
+    - https://example.com/login-burst
+tags:
+    - attack.credential_access
+correlation:
+    type: event_count
+    rules:
+        - failed_login
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 10
+level: high
