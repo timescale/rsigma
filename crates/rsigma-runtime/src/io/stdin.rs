@@ -11,6 +11,8 @@ use super::{AckToken, EventSource, RawEvent};
 pub struct StdinReadStatus(Arc<AtomicBool>);
 
 impl StdinReadStatus {
+    /// True once the reader has stopped on an I/O error or a line that is
+    /// not valid UTF-8. Final once the source has reported end of input.
     pub fn failed(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
@@ -65,6 +67,9 @@ impl StdinSource {
 fn read_lines(reader: impl BufRead, tx: &mpsc::Sender<String>, status: &StdinReadStatus) {
     for line in reader.lines() {
         match line {
+            // `blocking_send` only errors when the receiver is dropped, i.e.
+            // the daemon is shutting down; stop reading so the thread can
+            // exit.
             Ok(line) => {
                 if tx.blocking_send(line).is_err() {
                     break;
