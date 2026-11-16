@@ -10,7 +10,7 @@ use rsigma_runtime::{EnricherKind, RiskEvent, render_webhook_body};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Exercise the OCSF sidecar mappers and the webhook JSON body renderer.
+// Exercise the OCSF sidecar mappers and the webhook JSON body renderer.
 fuzz_target!(|data: &[u8]| {
     let opts = if data.first().copied().unwrap_or(0) % 2 == 0 {
         OcsfOptions::new(OcsfVersion::V1_1_0)
