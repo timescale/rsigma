@@ -10,9 +10,11 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 A stdin run whose stored state cannot be restored now exits `3` instead of starting fresh. A stdin run that did not complete cleanly exits `4` (`RUNTIME_ERROR`) after logging one summary line: a signal stopped it before end of input, reading stdin failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. Parse errors without a `--dlq` and `on_full=drop` queue drops do not fail a run.
 
+`--stdin-mode stream` (config `daemon.input.stdin_mode`) opts a stdin daemon out of the batch contract for a long-running pipe. It keeps running after end of input until a shutdown signal, restores state with a warning and a fresh start when the stored snapshot cannot be restored, and exits `0`. The default is `batch`.
+
 The library surface adds `StdinReadStatus` and `StdinSource::read_status`, which report whether the stdin reader stopped on a read error rather than at end of input.
 
-Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exits `3` instead of starting fresh, and an interrupted run, a stdin read error, lost output, or a failed final save now exits `4` instead of `0`. HTTP, NATS, and unix-socket inputs keep their warn-and-start-fresh restore and exit `0` at shutdown.
+Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exits `3` instead of starting fresh, and an interrupted run, a stdin read error, lost output, or a failed final save now exits `4` instead of `0`. HTTP, NATS, and unix-socket inputs keep their warn-and-start-fresh restore and exit `0` at shutdown. Pass `--stdin-mode stream` to keep that behavior for stdin, with the daemon now staying up after end of input.
 
 See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs).
 

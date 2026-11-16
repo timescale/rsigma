@@ -186,6 +186,16 @@ pub enum StateRestoreMode {
     ForceKeep,
 }
 
+/// How a daemon reading stdin treats the end of its input (`--stdin-mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdinMode {
+    /// Exit at end of input and report the batch result in the exit code.
+    Batch,
+    /// Keep running after end of input until a shutdown signal, with the
+    /// same restore and exit behavior as the other inputs.
+    Stream,
+}
+
 #[derive(Clone)]
 struct AppState {
     processor: Arc<LogProcessor>,
@@ -253,6 +263,7 @@ pub struct DaemonConfig {
     pub state_db: Option<PathBuf>,
     pub state_save_interval: u64,
     pub input: String,
+    pub stdin_mode: StdinMode,
     pub output: Vec<String>,
     pub buffer_size: usize,
     pub batch_size: usize,
@@ -387,7 +398,7 @@ fn default_detect_inflight(workers: usize) -> usize {
 }
 
 pub async fn run_daemon(config: DaemonConfig) -> i32 {
-    let batch = config.reads_stdin();
+    let batch = config.runs_batch();
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
 
@@ -1582,12 +1593,12 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         "stdin" | "stdin://" => {
             let source = StdinSource::new();
             stdin_status = Some(source.read_status());
-            let h = spawn_source(
-                source,
-                event_tx,
-                Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-            );
-            tracing::info!(input = "stdin", "Event source started");
+            let hook = Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>);
+            let h = match config.stdin_mode {
+                StdinMode::Batch => spawn_source(source, event_tx, hook),
+                StdinMode::Stream => spawn_source(batch::HoldOpen::new(source), event_tx, hook),
+            };
+            tracing::info!(input = "stdin", mode = ?config.stdin_mode, "Event source started");
             Some(h)
         }
         "http" => {

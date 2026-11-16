@@ -21,7 +21,7 @@ description: "RSigma exit codes: the five structured codes every subcommand uses
 | Command | `0` | `1` | `2` | `3` | `4` |
 |---------|-----|-----|-----|-----|-----|
 | `engine eval` | Default; or no match with `--fail-on-detection`. | Detection/correlation fired (with `--fail-on-detection`). | Rules path unreadable. | Bad `-p`, `--jq`, `--jsonpath`, `--suppress`, unknown or broken `--ruleset`, etc. | (not used) |
-| `engine daemon` | Normal shutdown (including `--dry-run`). | (not used) | Initial rules could not be loaded or compiled. | Bad `--input`, `--output`, pipeline file, TLS/auth/audit misconfiguration, etc. In a stdin run, also unrestorable stored state. {{ added "unreleased" }} | A stdin run that did not complete cleanly. {{ added "unreleased" }} |
+| `engine daemon` | Normal shutdown (including `--dry-run`). | (not used) | Initial rules could not be loaded or compiled. | Bad `--input`, `--output`, pipeline file, TLS/auth/audit misconfiguration, etc. In a stdin batch run, also unrestorable stored state. {{ added "unreleased" }} | A stdin batch run that did not complete cleanly. {{ added "unreleased" }} |
 | `rule parse` | File readable; YAML errors and missing-field issues are warnings on stderr and the partial AST still prints. | (not used) | File could not be opened (IO error). | (not used) | (not used) |
 | `rule validate` | Every rule parsed and compiled. | (not used) | At least one parse or compile error. | Pipeline/`--source` load failure, `--resolve-sources` failure, unknown or broken `--ruleset`. | (not used) |
 | `rule lint` | No findings at or above `--fail-level`. | Findings at or above `--fail-level` (including schema violations when `--schema` is set). | Rules path unreadable. | Schema argument/load/fetch/parse/compile failure, or other CLI configuration error. | (not used) |
@@ -44,7 +44,7 @@ description: "RSigma exit codes: the five structured codes every subcommand uses
 - Every command that accepts `--ruleset` exits `3` for an unknown ruleset name or a ruleset that fails to resolve. {{ added "unreleased" }}
 - `rule stdin` is equally lenient, including for YAML syntax errors. Only a failed stdin read or an over-deep `action: global`/`action: repeat` merge exits `2`.
 - `engine eval` exits `0` by default even when matches fire. Pass `--fail-on-detection` to make matches fail the build.
-- Daemon exit codes `3` for unrestorable state and `4` for an incomplete run apply only to `--input stdin`. HTTP, NATS, and unix-socket daemons keep starting fresh on an incompatible snapshot and exit `0` at shutdown. {{ added "unreleased" }}
+- Daemon exit codes `3` for unrestorable state and `4` for an incomplete run apply only to `--input stdin` with the default `--stdin-mode batch`. With `--stdin-mode stream`, and with HTTP, NATS, and unix-socket input, the daemon keeps starting fresh on an incompatible snapshot and exit `0` at shutdown. {{ added "unreleased" }}
 - `rule lint` exits `0` for findings below `--fail-level`. The default threshold is `error`, so a clean lint with only info or warning findings still returns `0`.
 - The `hint` lint severity never triggers exit `1`, even with `--fail-level info`.
 - `pipeline resolve` exits `1` when any source fails after printing per-source status. For a gate that also validates rules, use `rule validate --resolve-sources` (exit `3` on source failure).

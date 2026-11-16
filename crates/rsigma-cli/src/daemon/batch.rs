@@ -1,12 +1,37 @@
+use rsigma_runtime::{EventSource, RawEvent};
+
 use crate::exit_code;
 
-use super::server::DaemonConfig;
+use super::server::{DaemonConfig, StdinMode};
 
 impl DaemonConfig {
-    /// Whether this run reads events from stdin, the only input that ends on
-    /// its own and can therefore run as a batch.
-    pub(crate) fn reads_stdin(&self) -> bool {
-        matches!(self.input.as_str(), "stdin" | "stdin://")
+    /// Whether this run reads stdin to end of input and exits with the batch
+    /// result. Stdin is the only input that ends on its own.
+    pub(crate) fn runs_batch(&self) -> bool {
+        matches!(self.input.as_str(), "stdin" | "stdin://") && self.stdin_mode == StdinMode::Batch
+    }
+}
+
+/// Keeps a source open after it reports end of input, so the daemon keeps
+/// running until a shutdown signal instead of exiting.
+pub(crate) struct HoldOpen<S>(Option<S>);
+
+impl<S> HoldOpen<S> {
+    pub(crate) fn new(source: S) -> Self {
+        Self(Some(source))
+    }
+}
+
+impl<S: EventSource> EventSource for HoldOpen<S> {
+    async fn recv(&mut self) -> Option<RawEvent> {
+        if let Some(source) = &mut self.0 {
+            if let Some(event) = source.recv().await {
+                return Some(event);
+            }
+            self.0 = None;
+            tracing::info!("Stdin input ended; waiting for a shutdown signal");
+        }
+        std::future::pending().await
     }
 }
 
@@ -73,7 +98,30 @@ impl BatchFailures {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use rsigma_runtime::AckToken;
+
     use super::*;
+
+    struct OneEvent(Option<RawEvent>);
+
+    impl EventSource for OneEvent {
+        async fn recv(&mut self) -> Option<RawEvent> {
+            self.0.take()
+        }
+    }
+
+    #[tokio::test]
+    async fn hold_open_stays_pending_after_end_of_input() {
+        let mut source = HoldOpen::new(OneEvent(Some(RawEvent {
+            payload: "{}".to_string(),
+            ack_token: AckToken::Noop,
+        })));
+        assert_eq!(source.recv().await.unwrap().payload, "{}");
+        let next = tokio::time::timeout(Duration::from_millis(50), source.recv()).await;
+        assert!(next.is_err(), "a held source must not report end of input");
+    }
 
     #[test]
     fn clean_batch_exits_zero() {

@@ -1064,6 +1064,10 @@ mod config_default_drift {
             Some(defaults::API_ADDR)
         );
         assert_eq!(
+            daemon_default("stdin_mode").as_deref(),
+            Some(defaults::STDIN_MODE)
+        );
+        assert_eq!(
             daemon_default("input_format").as_deref(),
             Some(defaults::INPUT_FORMAT)
         );

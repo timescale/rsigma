@@ -550,3 +550,172 @@ fn batch_run_exits_4_when_the_state_save_fails() {
         "the shutdown save error should still be logged, got: {stderr}"
     );
 }
+
+#[test]
+fn stream_mode_starts_fresh_on_an_incompatible_snapshot_and_outlives_end_of_input() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+    patch_snapshot(&db, "rsigma_correlation_state", |snapshot| {
+        snapshot["version"] = serde_json::json!(99);
+    });
+
+    // `DaemonProcess` gives the daemon an empty stdin, so input ends at once.
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rules.path().to_str().unwrap(),
+        "--stdin-mode",
+        "stream",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--state-db",
+        db.to_str().unwrap(),
+    ]);
+    let ended = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !daemon
+        .stderr_lines()
+        .iter()
+        .any(|line| line.contains("waiting for a shutdown signal"))
+    {
+        assert!(
+            std::time::Instant::now() < ended,
+            "stream mode never reported end of input; stderr: {:#?}",
+            daemon.stderr_lines()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let (status, _) = http_get(&daemon.url("/healthz"));
+    assert_eq!(
+        status, 200,
+        "a stream-mode daemon should start fresh and keep serving after end of input"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stream_mode_exits_0_on_a_signal_and_saves_state() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command as StdCommand, Stdio};
+    use std::time::{Duration, Instant};
+
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+
+    let mut child = StdCommand::new(common::rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--stdin-mode",
+            "stream",
+            "--api-addr",
+            "127.0.0.1:0",
+            "--state-db",
+            db.to_str().unwrap(),
+            "--timestamp-fallback",
+            "skip",
+            "--no-detections",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn daemon");
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    stdin
+        .write_all(
+            concat!(
+                r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+                "\n",
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    drop(stdin);
+
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { return };
+            if tx.send(line).is_err() {
+                return;
+            }
+        }
+    });
+
+    // The signal handler is installed once the API listens, and the source
+    // reports end of input after the event above was read.
+    let mut listening = false;
+    let mut ended = false;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !(listening && ended) {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::ZERO);
+        match rx.recv_timeout(remaining) {
+            Ok(line) => {
+                listening |= line.contains("API server listening");
+                ended |= line.contains("waiting for a shutdown signal");
+            }
+            Err(_) => {
+                common::terminate_child(&mut child, Duration::from_secs(2));
+                panic!("daemon never listened and reached end of input within 10s");
+            }
+        }
+    }
+
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "a stream-mode daemon must keep running after end of input"
+    );
+
+    let signaled = StdCommand::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(signaled.success(), "kill -INT did not succeed");
+
+    let exit_deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= exit_deadline {
+            common::terminate_child(&mut child, Duration::from_secs(2));
+            panic!("daemon did not exit within 10s of SIGINT");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a stream-mode daemon stopped by a signal should exit 0, got {status:?}"
+    );
+    let tail: Vec<String> =
+        std::iter::from_fn(|| rx.recv_timeout(Duration::from_secs(1)).ok()).collect();
+    assert!(
+        !tail
+            .iter()
+            .any(|line| line.contains("Batch run did not complete cleanly")),
+        "stream mode should not report a batch result; stderr: {tail:#?}"
+    );
+    assert!(
+        snapshot_version(&db, "rsigma_correlation_state") > 0,
+        "the shutdown save should persist the correlation state"
+    );
+}

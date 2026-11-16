@@ -368,6 +368,10 @@ pub(crate) struct InputPartial {
     /// `unix:///path/to.sock` (newline-delimited events over a Unix socket).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// How a stdin source ends: `batch` exits at end of input with the batch
+    /// result, `stream` keeps running until a shutdown signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin_mode: Option<String>,
     /// Log format: `auto`, `json`, `syslog`, `plain`, `logfmt`, `cef`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -393,6 +397,7 @@ impl Merge for InputPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             source: over.source.or(self.source),
+            stdin_mode: over.stdin_mode.or(self.stdin_mode),
             format: over.format.or(self.format),
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
