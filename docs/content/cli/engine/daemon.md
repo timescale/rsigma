@@ -458,20 +458,26 @@ rsigma engine daemon -r rules/ --input stdin --state-db state.db --api-addr 127.
 
 `--api-addr 127.0.0.1:0` binds an ephemeral loopback port so concurrent runs never clash. `--timestamp-fallback skip` leaves events without a timestamp out of correlation windows instead of stamping them with the run time, which would collapse every event in a batch into the same window. Use `--output` for the findings; stdout is the default sink.
 
-After exit, `state.db` is a single file with no `-wal` or `-shm` sidecar, so copy it as one unit. Treat the exit code as the batch result: on `0`, keep the new state file and checkpoint the input position; on any non-zero code, discard the new state and replay the batch.
+After a clean exit, `state.db` is a single file with no `-wal` or `-shm` sidecar, so copy it as one unit. Treat the exit code as the batch result. On `0`, keep the new state file and checkpoint the input position. On `4`, discard the new state and replay the batch from the previous position. On `2` or `3`, the run did not start and the stored state is unchanged, so a replay fails the same way until the rules, the configuration, or the stored state are fixed.
 
-A generic caller that restores the file, runs, and stores it only on success:
+A generic caller that restores the last good state, runs, and keeps the new state only on success:
 
 ```sh
-[ -f next-state.db ] && cp next-state.db state.db
+rm -f state.db state.db-wal state.db-shm
+if [ -f last-good.db ]; then
+  cp last-good.db state.db
+fi
 rsigma engine daemon -r rules/ --input stdin --state-db state.db --api-addr 127.0.0.1:0 --timestamp-fallback skip < batch.ndjson
 code=$?
 if [ "$code" -eq 0 ]; then
-  cp state.db next-state.db
+  cp state.db last-good.db
 fi
+exit "$code"
 ```
 
-A run exits `3` when the stored state cannot be restored, either because the snapshot version is not supported or because the stored JSON cannot be read. Pass `--clear-state` to start fresh on purpose; the next save overwrites the stored snapshots. A run exits `4` (`RUNTIME_ERROR`) when it did not complete cleanly: a signal stopped it before end of input, reading stdin failed, output reached neither its sink nor the DLQ, or the final state save failed. The shutdown save still runs on an incomplete run, so the caller decides whether to keep it.
+Removing the old files first keeps a failed run's state, or a sidecar left by a killed process, from leaking into the next run.
+
+A run exits `3` when the stored state cannot be restored, either because the snapshot version is not supported or because the stored JSON cannot be read. Nothing is written in that case, so the stored snapshot is left for inspection. Pass `--clear-state` to start fresh on purpose; the next save overwrites the stored snapshots. A run exits `4` (`RUNTIME_ERROR`) when it did not complete cleanly: a signal stopped it before end of input, reading stdin failed, output reached neither its sink nor the DLQ, the final state save failed, or a pipeline task panicked. The shutdown save still runs on an incomplete run, so the caller decides whether to keep it.
 
 Callers whose input can be redelivered should store the input position next to the state file, so a replay starts where the previous batch ended. Lines that fail to parse are counted on the parse metrics and do not fail the run when no `--dlq` is set, and `on_full=drop` queue drops are the configured lossy policy, not a failure.
 
