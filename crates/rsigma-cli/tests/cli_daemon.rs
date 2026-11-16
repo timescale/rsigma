@@ -901,7 +901,8 @@ fn daemon_state_db_migration_from_old_schema() {
 }
 
 /// Regression test: a daemon reading from stdin must shut down promptly on
-/// SIGINT even when stdin is idle (open but no pending line, no EOF).
+/// SIGINT even when stdin is idle (open but no pending line, no EOF), and it
+/// must exit with `RUNTIME_ERROR` because the run stopped before end of input.
 ///
 /// `tokio::io::stdin()` reads via an uncancellable blocking thread that the
 /// runtime waits for at shutdown, so the daemon used to hang on Ctrl+C until
@@ -1012,8 +1013,19 @@ fn daemon_stdin_exits_promptly_on_sigint() {
         }
     };
 
+    assert_eq!(
+        status.code(),
+        Some(4),
+        "a stdin run interrupted before end of input is a runtime error, got {status:?}"
+    );
+    let stderr_tail: Vec<String> =
+        std::iter::from_fn(|| rx.recv_timeout(Duration::from_secs(1)).ok()).collect();
+    let summary = stderr_tail
+        .iter()
+        .find(|line| line.contains("Batch run did not complete cleanly"))
+        .unwrap_or_else(|| panic!("missing batch summary line; stderr: {stderr_tail:#?}"));
     assert!(
-        status.success(),
-        "daemon should exit cleanly on SIGINT, got {status:?}"
+        summary.contains("\"interrupted\":true"),
+        "the summary should report the interruption, got: {summary}"
     );
 }

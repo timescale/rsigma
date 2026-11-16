@@ -20,9 +20,9 @@ use rsigma_runtime::{
     FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
     IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
     RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
-    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
-    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
-    strip_event_payloads,
+    SilenceSpec, Sink, SinkFormat, StdinReadStatus, StdinSource, StdoutSink, build_alert_pipeline,
+    build_risk_layer, load_alert_pipeline_file, load_risk_file, load_schema_signatures,
+    spawn_source, strip_event_payloads,
 };
 
 use super::batch;
@@ -386,7 +386,7 @@ fn default_detect_inflight(workers: usize) -> usize {
     }
 }
 
-pub async fn run_daemon(config: DaemonConfig) {
+pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let batch = config.reads_stdin();
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
@@ -1576,11 +1576,14 @@ pub async fn run_daemon(config: DaemonConfig) {
     let (ack_tx, mut ack_rx) = mpsc::unbounded_channel::<AckToken>();
 
     // Select source based on --input flag
+    let mut stdin_status: Option<StdinReadStatus> = None;
     #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
     let mut source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
+            let source = StdinSource::new();
+            stdin_status = Some(source.read_status());
             let h = spawn_source(
-                StdinSource::new(),
+                source,
                 event_tx,
                 Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
             );
@@ -2433,7 +2436,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     // DLQ writer task: writes DLQ entries to the configured DLQ sink. Without
     // one, only delivery failures arrive here (parse errors are not routed),
     // and they are dropped with a rate-limited warning.
+    let undelivered = Arc::new(AtomicU64::new(0));
     let dlq_metrics = metrics.clone();
+    let undelivered_for_dlq = undelivered.clone();
     let dlq_handle = tokio::spawn(async move {
         tracing::debug!("DLQ task started");
         let mut dlq_sink = dlq_sink;
@@ -2444,9 +2449,11 @@ pub async fn run_daemon(config: DaemonConfig) {
                 let json = serde_json::to_string(&entry).unwrap_or_default();
                 if let Err(e) = sink.send_raw(&json).await {
                     dlq_metrics.dlq_write_failures.inc();
+                    undelivered_for_dlq.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(error = %e, "Failed to write to DLQ sink, entry dropped");
                 }
             } else {
+                undelivered_for_dlq.fetch_add(1, Ordering::Relaxed);
                 dropped.record(&entry.error, Instant::now());
             }
         }
@@ -2604,19 +2611,49 @@ pub async fn run_daemon(config: DaemonConfig) {
     // Save state on shutdown. After a drain timeout the ack task may still be
     // advancing the position; `capture` reads it before exporting, so the
     // saved position never runs ahead of the snapshots.
-    if let Some(ref store) = state_store {
-        let cut = state_sources.capture();
-        match store.save_all(&cut).await {
-            Ok(_) => match cut.position {
-                Some(pos) => tracing::info!(
-                    source_sequence = pos.sequence,
-                    "State saved to database on shutdown"
-                ),
-                None => tracing::info!("State saved to database on shutdown"),
-            },
-            Err(e) => tracing::error!(error = %e, "Failed to save state on shutdown"),
+    let state_save_failed = match &state_store {
+        Some(store) => {
+            let cut = state_sources.capture();
+            match store.save_all(&cut).await {
+                Ok(_) => {
+                    match cut.position {
+                        Some(pos) => tracing::info!(
+                            source_sequence = pos.sequence,
+                            "State saved to database on shutdown"
+                        ),
+                        None => tracing::info!("State saved to database on shutdown"),
+                    }
+                    false
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to save state on shutdown");
+                    true
+                }
+            }
         }
+        None => false,
+    };
+
+    if !batch {
+        return crate::exit_code::SUCCESS;
     }
+
+    let failures = batch::BatchFailures {
+        interrupted: shutdown_triggered,
+        input_read_error: stdin_status.as_ref().is_some_and(StdinReadStatus::failed),
+        undelivered: undelivered.load(Ordering::Relaxed),
+        state_save_failed,
+    };
+    if !failures.is_clean() {
+        tracing::error!(
+            interrupted = failures.interrupted,
+            input_read_error = failures.input_read_error,
+            undelivered = failures.undelivered,
+            state_save_failed = failures.state_save_failed,
+            "Batch run did not complete cleanly"
+        );
+    }
+    failures.exit_code()
 }
 
 /// The live state the periodic and shutdown savers persist.

@@ -415,3 +415,138 @@ fn http_daemon_still_starts_fresh_on_an_incompatible_snapshot() {
         "an HTTP daemon should keep starting fresh on an incompatible snapshot"
     );
 }
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn batch_run_exits_4_when_a_delivery_is_lost() {
+    let rules = temp_file(".yml", common::SIMPLE_RULE);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+
+    let output = batch(rules.path(), &db)
+        .args([
+            "--output",
+            "otlphttp://127.0.0.1:1",
+            "--sink-retry-max",
+            "0",
+        ])
+        .write_stdin(concat!(r#"{"CommandLine":"malware a"}"#, "\n"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "a lost delivery should be a runtime error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Batch run did not complete cleanly"),
+        "stderr should carry the batch summary, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"undelivered\":1"),
+        "the summary should count the lost delivery, got: {stderr}"
+    );
+    assert!(
+        !dir.path().join("state.db-wal").exists(),
+        "the state database should still be folded into a single file"
+    );
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn batch_run_exits_0_when_a_failed_delivery_reaches_the_dlq() {
+    let rules = temp_file(".yml", common::SIMPLE_RULE);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let dlq = dir.path().join("dlq.ndjson");
+    let dlq_spec = format!("file://{}", dlq.display());
+
+    batch(rules.path(), &db)
+        .args([
+            "--output",
+            "otlphttp://127.0.0.1:1",
+            "--sink-retry-max",
+            "0",
+            "--dlq",
+            &dlq_spec,
+        ])
+        .write_stdin(concat!(r#"{"CommandLine":"malware a"}"#, "\n"))
+        .assert()
+        .success();
+
+    let dlqd = std::fs::read_to_string(&dlq).unwrap_or_default();
+    assert!(
+        dlqd.contains("sink delivery failure"),
+        "the DLQ file should hold the failed delivery, got: {dlqd}"
+    );
+}
+
+#[test]
+fn batch_run_exits_4_on_a_stdin_read_error() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+
+    let output = batch(rules.path(), &db)
+        .write_stdin(b"{\"EventType\":\"login\",\"User\":\"a\"}\n\xff\xfe\n".to_vec())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "a stdin read error should be a runtime error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"input_read_error\":true"),
+        "the summary should report the read error, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_run_exits_4_when_the_state_save_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let event = concat!(
+        r#"{"EventType":"login","User":"admin","@timestamp":"2026-01-01T10:00:00Z"}"#,
+        "\n",
+    );
+
+    batch(rules.path(), &db)
+        .write_stdin(event)
+        .assert()
+        .success();
+
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o444)).unwrap();
+    if std::fs::OpenOptions::new().write(true).open(&db).is_ok() {
+        eprintln!("skipping: the database still opens for writing (running as root)");
+        return;
+    }
+
+    let output = batch(rules.path(), &db)
+        .write_stdin(event)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "a failed final save should be a runtime error, got {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\"state_save_failed\":true"),
+        "the summary should report the failed save, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to save state on shutdown"),
+        "the shutdown save error should still be logged, got: {stderr}"
+    );
+}

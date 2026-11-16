@@ -1956,7 +1956,13 @@ fn run_daemon(
             process::exit(exit_code::CONFIG_ERROR);
         });
 
-    rt.block_on(daemon::run_daemon(config));
+    let code = rt.block_on(daemon::run_daemon(config));
+    // Dropping the runtime closes the state database, which folds its
+    // write-ahead log back into the file.
+    drop(rt);
+    if code != exit_code::SUCCESS {
+        process::exit(code);
+    }
 }
 
 // ---------------------------------------------------------------------------
