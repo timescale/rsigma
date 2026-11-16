@@ -690,6 +690,16 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         return had_matches;
     }
 
+    let engine_options = EngineOptions {
+        include_event,
+        match_detail,
+        bloom_prefilter,
+        bloom_max_bytes,
+        #[cfg(feature = "daachorse-index")]
+        cross_rule_ac,
+        logsource_extractor,
+    };
+
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
@@ -699,16 +709,10 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &pipelines,
             &event_filter,
             corr_config,
-            include_event,
-            match_detail,
+            &engine_options,
             &input_format,
             &syslog_tz,
             syslog_strip_bom,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-            logsource_extractor,
             observe_ref,
             dump_correlation_state,
         )
@@ -720,16 +724,10 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &mut renderer,
             &pipelines,
             &event_filter,
-            include_event,
-            match_detail,
+            &engine_options,
             &input_format,
             &syslog_tz,
             syslog_strip_bom,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-            logsource_extractor,
             observe_ref,
         )
     };
@@ -966,6 +964,44 @@ fn cmd_eval_routed(
     det_count > 0 || corr_count > 0
 }
 
+/// Engine tuning shared by every evaluation path.
+#[derive(Clone)]
+struct EngineOptions {
+    include_event: bool,
+    match_detail: MatchDetailLevel,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
+    #[cfg(feature = "daachorse-index")]
+    cross_rule_ac: bool,
+    logsource_extractor: Option<LogSourceExtractor>,
+}
+
+impl EngineOptions {
+    fn apply_to_engine(&self, engine: &mut Engine) {
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+        engine.set_logsource_extractor(self.logsource_extractor.clone());
+    }
+
+    fn apply_to_correlation(&self, engine: &mut CorrelationEngine) {
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+        engine.set_logsource_extractor(self.logsource_extractor.clone());
+    }
+}
+
 /// Evaluation with correlations (stateful). Returns `true` if any match fired.
 #[allow(clippy::too_many_arguments)]
 fn cmd_eval_with_correlations(
@@ -976,28 +1012,15 @@ fn cmd_eval_with_correlations(
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     config: rsigma_eval::CorrelationConfig,
-    include_event: bool,
-    match_detail: MatchDetailLevel,
+    options: &EngineOptions,
     input_format_str: &str,
     syslog_tz_str: &str,
     syslog_strip_bom: bool,
-    bloom_prefilter: bool,
-    bloom_max_bytes: Option<usize>,
-    #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
-    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
     dump_correlation_state: bool,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
-    engine.set_include_event(include_event);
-    engine.set_match_detail(match_detail);
-    if let Some(budget) = bloom_max_bytes {
-        engine.set_bloom_max_bytes(budget);
-    }
-    engine.set_bloom_prefilter(bloom_prefilter);
-    #[cfg(feature = "daachorse-index")]
-    engine.set_cross_rule_ac(cross_rule_ac);
-    engine.set_logsource_extractor(logsource_extractor);
+    options.apply_to_correlation(&mut engine);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -1177,27 +1200,14 @@ fn cmd_eval_detection_only(
     renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
-    include_event: bool,
-    match_detail: MatchDetailLevel,
+    options: &EngineOptions,
     input_format_str: &str,
     syslog_tz_str: &str,
     syslog_strip_bom: bool,
-    bloom_prefilter: bool,
-    bloom_max_bytes: Option<usize>,
-    #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
-    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = Engine::new();
-    engine.set_include_event(include_event);
-    engine.set_match_detail(match_detail);
-    if let Some(budget) = bloom_max_bytes {
-        engine.set_bloom_max_bytes(budget);
-    }
-    engine.set_bloom_prefilter(bloom_prefilter);
-    #[cfg(feature = "daachorse-index")]
-    engine.set_cross_rule_ac(cross_rule_ac);
-    engine.set_logsource_extractor(logsource_extractor);
+    options.apply_to_engine(&mut engine);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
