@@ -409,9 +409,36 @@ impl RuntimeEngine {
         let collection = load_collection(&self.rules_path)?;
         check_parse_errors(&collection, self.strict_rules)?;
         let parse_errors = collection.error_count();
-        let has_correlations = !collection.correlations.is_empty();
 
-        if let Some(mut spec) = self.routing.clone() {
+        let variant = self.build_variant(
+            &collection,
+            &self.pipelines,
+            self.routing.clone(),
+            previous_state.as_ref(),
+        )?;
+        let stats = variant_stats(&variant, parse_errors);
+        self.engine = variant;
+        self.parse_errors = parse_errors;
+        self.refresh_rule_field_set(&collection);
+        tracing::debug!(
+            detection_rules = stats.detection_rules,
+            correlation_rules = stats.correlation_rules,
+            duration_ms = load_start.elapsed().as_millis() as u64,
+            "Rule load complete",
+        );
+        Ok(stats)
+    }
+
+    /// Build one engine variant from a parsed collection. Shared by the
+    /// path-based loader and the named-ruleset loader.
+    fn build_variant(
+        &self,
+        collection: &SigmaCollection,
+        pipelines: &[Pipeline],
+        routing: Option<RoutingSpec>,
+        previous_state: Option<&CorrelationSnapshot>,
+    ) -> Result<EngineVariant, String> {
+        if let Some(mut spec) = routing {
             // Resolve dynamic `${source.*}` sources in the routed pipeline-sets,
             // with the same fail-closed policy as the single-engine path above.
             if let Some(resolver) = self.source_resolver.clone() {
@@ -447,7 +474,7 @@ impl RuntimeEngine {
 
             let partition_rules = spec.partition_rules;
             let mut router = SchemaRouter::build(
-                &collection,
+                collection,
                 spec.classifier,
                 spec.plan,
                 spec.pipeline_sets,
@@ -460,28 +487,12 @@ impl RuntimeEngine {
             .map_err(|e| format!("Error building schema router: {e}"))?;
 
             if let Some(snapshot) = previous_state {
-                router.import_state(snapshot);
+                router.import_state(snapshot.clone());
             }
-
-            let stats = EngineStats {
-                detection_rules: router.detection_rule_count(),
-                correlation_rules: router.correlation_rule_count(),
-                state_entries: router.state_count(),
-                parse_errors,
-            };
-            self.engine = EngineVariant::Routed(Box::new(router));
-            self.parse_errors = parse_errors;
-            self.refresh_rule_field_set(&collection);
-            tracing::debug!(
-                detection_rules = stats.detection_rules,
-                correlation_rules = stats.correlation_rules,
-                duration_ms = load_start.elapsed().as_millis() as u64,
-                "Rule load complete (schema routing)",
-            );
-            return Ok(stats);
+            return Ok(EngineVariant::Routed(Box::new(router)));
         }
 
-        if has_correlations {
+        if !collection.correlations.is_empty() {
             let mut engine = CorrelationEngine::new(self.corr_config.clone());
             engine.set_include_event(self.include_event);
             engine.set_match_detail(self.match_detail);
@@ -492,68 +503,36 @@ impl RuntimeEngine {
             #[cfg(feature = "daachorse-index")]
             engine.set_cross_rule_ac(self.cross_rule_ac);
             engine.set_logsource_extractor(self.logsource_extractor.clone());
-            for p in &self.pipelines {
+            for p in pipelines {
                 engine.add_pipeline(p.clone());
             }
             engine
-                .add_collection(&collection)
+                .add_collection(collection)
                 .map_err(|e| format!("Error compiling rules: {e}"))?;
 
             if let Some(snapshot) = previous_state {
-                engine.import_state(snapshot);
+                engine.import_state(snapshot.clone());
             }
-
-            let stats = EngineStats {
-                detection_rules: engine.detection_rule_count(),
-                correlation_rules: engine.correlation_rule_count(),
-                state_entries: engine.state_count(),
-                parse_errors,
-            };
-            self.engine = EngineVariant::WithCorrelations(Box::new(engine));
-            self.parse_errors = parse_errors;
-            self.refresh_rule_field_set(&collection);
-            tracing::debug!(
-                detection_rules = stats.detection_rules,
-                correlation_rules = stats.correlation_rules,
-                duration_ms = load_start.elapsed().as_millis() as u64,
-                "Rule load complete",
-            );
-            Ok(stats)
-        } else {
-            let mut engine = Engine::new();
-            engine.set_include_event(self.include_event);
-            engine.set_match_detail(self.match_detail);
-            if let Some(budget) = self.bloom_max_bytes {
-                engine.set_bloom_max_bytes(budget);
-            }
-            engine.set_bloom_prefilter(self.bloom_prefilter);
-            #[cfg(feature = "daachorse-index")]
-            engine.set_cross_rule_ac(self.cross_rule_ac);
-            engine.set_logsource_extractor(self.logsource_extractor.clone());
-            for p in &self.pipelines {
-                engine.add_pipeline(p.clone());
-            }
-            engine
-                .add_collection(&collection)
-                .map_err(|e| format!("Error compiling rules: {e}"))?;
-
-            let stats = EngineStats {
-                detection_rules: engine.rule_count(),
-                correlation_rules: 0,
-                state_entries: 0,
-                parse_errors,
-            };
-            self.engine = EngineVariant::DetectionOnly(Box::new(engine));
-            self.parse_errors = parse_errors;
-            self.refresh_rule_field_set(&collection);
-            tracing::debug!(
-                detection_rules = stats.detection_rules,
-                correlation_rules = stats.correlation_rules,
-                duration_ms = load_start.elapsed().as_millis() as u64,
-                "Rule load complete",
-            );
-            Ok(stats)
+            return Ok(EngineVariant::WithCorrelations(Box::new(engine)));
         }
+
+        let mut engine = Engine::new();
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+        engine.set_logsource_extractor(self.logsource_extractor.clone());
+        for p in pipelines {
+            engine.add_pipeline(p.clone());
+        }
+        engine
+            .add_collection(collection)
+            .map_err(|e| format!("Error compiling rules: {e}"))?;
+        Ok(EngineVariant::DetectionOnly(Box::new(engine)))
     }
 
     /// Recompute the post-pipeline rule field set and publish it. Called at
@@ -694,6 +673,29 @@ impl RuntimeEngine {
             EngineVariant::Routed(router) => router.import_state(snapshot.clone()),
             EngineVariant::DetectionOnly(_) => true,
         }
+    }
+}
+
+fn variant_stats(variant: &EngineVariant, parse_errors: usize) -> EngineStats {
+    match variant {
+        EngineVariant::DetectionOnly(engine) => EngineStats {
+            detection_rules: engine.rule_count(),
+            correlation_rules: 0,
+            state_entries: 0,
+            parse_errors,
+        },
+        EngineVariant::WithCorrelations(engine) => EngineStats {
+            detection_rules: engine.detection_rule_count(),
+            correlation_rules: engine.correlation_rule_count(),
+            state_entries: engine.state_count(),
+            parse_errors,
+        },
+        EngineVariant::Routed(router) => EngineStats {
+            detection_rules: router.detection_rule_count(),
+            correlation_rules: router.correlation_rule_count(),
+            state_entries: router.state_count(),
+            parse_errors,
+        },
     }
 }
 
