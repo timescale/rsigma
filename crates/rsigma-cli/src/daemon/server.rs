@@ -16,12 +16,13 @@ use rsigma_eval::{
 };
 use rsigma_runtime::{
     AckToken, AlertPipeline, AlertPipelineState, BatchProcessOutcome, CaptureRing, CaptureRingSink,
-    DeliveryConfig, DeliveryFailure, Dispatcher, EnrichmentPipeline, FieldObserver, FileSink,
-    FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult, IncludeMode, InputFormat,
-    LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState, RoutingSpec, RuntimeEngine,
-    SchemaClassifier, SchemaObserver, Silence, SilenceError, SilenceSpec, Sink, SinkFormat,
-    StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file,
-    load_risk_file, load_schema_signatures, spawn_source, strip_event_payloads,
+    DeliveryConfig, DeliveryContext, DeliveryFailure, Dispatcher, EnrichmentPipeline,
+    FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
+    IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
+    RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
+    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
+    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
+    strip_event_payloads,
 };
 
 use super::bundle::BundleFormat;
@@ -2042,11 +2043,18 @@ pub async fn run_daemon(config: DaemonConfig) {
             }
         }
     }
-    // Incidents are serialized centrally, once per format the leaf sinks
-    // actually ask for, so an all-NDJSON daemon never pays for an OCSF line.
-    let ocsf_incidents = leaves
-        .iter()
-        .any(|(sink, _, _)| sink.format() == Some(SinkFormat::Ocsf));
+    // Incidents are serialized centrally, once per distinct set of OCSF options
+    // the leaf sinks ask for, so an all-NDJSON daemon never pays for an OCSF
+    // line.
+    let mut ocsf_options: Vec<rsigma_runtime::ocsf::OcsfOptions> = Vec::new();
+    for options in leaves.iter().filter_map(|(sink, _, _)| sink.ocsf_options()) {
+        if !ocsf_options.contains(&options) {
+            ocsf_options.push(options);
+        }
+    }
+    // Finding uids are minted before the risk layer and alert pipeline so an
+    // incident can reference the Detection Finding each contributor emitted.
+    let link_findings = !ocsf_options.is_empty();
     tracing::info!(output = ?output_specs, sinks = leaves.len(), "Sink started");
 
     // Bridge the delivery layer's terminal failures into the existing DLQ
@@ -2128,6 +2136,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                     }
 
+                    let mut delivery = DeliveryContext::new();
+                    let mut finding_uids: Option<Vec<String>> = link_findings
+                        .then(|| (0..result.len()).map(|i| delivery.finding_uid(i)).collect());
+
                     // Risk layer: annotate each in-scope firing with a risk
                     // score and risk objects, then (opt-in) emit a compact risk
                     // event per (detection, risk object) pair. Runs before the
@@ -2140,51 +2152,71 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let mut st = risk_state_for_sink
                                 .write()
                                 .unwrap_or_else(|e| e.into_inner());
-                            risk_layer.process(result, &mut st, now, risk_metrics.as_ref())
+                            risk_layer.process_with_finding_uids(
+                                result,
+                                finding_uids.as_deref().unwrap_or_default(),
+                                &mut st,
+                                now,
+                                risk_metrics.as_ref(),
+                            )
                         };
                         result = out.kept;
                         if !out.risk_events.is_empty() {
                             let subject =
                                 risk_layer.risk_event_nats_subject().map(|s| s.to_string());
                             for event in out.risk_events {
-                                match serde_json::to_string(&event) {
-                                    Ok(json) => {
-                                        dispatcher
-                                            .dispatch_incident(IncidentEnvelope::new(
-                                                json,
-                                                subject.clone(),
-                                            ))
-                                            .await;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "Failed to serialize risk event");
-                                    }
+                                let Ok(json) = serde_json::to_string(&event) else {
+                                    tracing::warn!("Failed to serialize risk event");
+                                    continue;
+                                };
+                                let typed = serde_json::from_value::<rsigma_runtime::RiskEvent>(
+                                    event.clone(),
+                                );
+                                if typed.is_err() && !ocsf_options.is_empty() {
+                                    tracing::warn!("risk event JSON is not a risk event");
                                 }
+                                let ocsf = if typed.is_ok() {
+                                    ocsf_options.as_slice()
+                                } else {
+                                    &[]
+                                };
+                                let env = with_ocsf_lines(
+                                    FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+                                        json,
+                                        subject.clone(),
+                                    )),
+                                    ocsf,
+                                    "risk event",
+                                    |opts| {
+                                        Ok(rsigma_runtime::ocsf::risk_event_finding_opts(
+                                            typed.as_ref().expect("risk event"),
+                                            opts,
+                                        ))
+                                    },
+                                );
+                                dispatcher.dispatch_formatted_incident(env).await;
                             }
                         }
                         if !out.incidents.is_empty() {
                             let subject =
                                 risk_layer.incident_nats_subject().map(|s| s.to_string());
-                            for incident in out.incidents {
+                            for (incident, links) in
+                                out.incidents.into_iter().zip(out.finding_links)
+                            {
                                 match serde_json::to_string(&incident) {
                                     Ok(json) => {
-                                        let mut env = FormattedIncidentEnvelope::new(
-                                            IncidentEnvelope::new(json, subject.clone()),
+                                        let env = with_ocsf_lines(
+                                            FormattedIncidentEnvelope::new(
+                                                IncidentEnvelope::new(json, subject.clone()),
+                                            ),
+                                            &ocsf_options,
+                                            "risk incident",
+                                            |opts| {
+                                                rsigma_runtime::ocsf::risk_incident_finding_in_class(
+                                                    &incident, &links, opts,
+                                                )
+                                            },
                                         );
-                                        if ocsf_incidents {
-                                            let finding =
-                                                rsigma_runtime::ocsf::risk_incident_finding(
-                                                    &incident,
-                                                );
-                                            match serde_json::to_string(&finding) {
-                                                Ok(line) => {
-                                                    env = env.with_line(SinkFormat::Ocsf, line);
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(error = %e, "Failed to serialize OCSF risk incident");
-                                                }
-                                            }
-                                        }
                                         dispatcher.dispatch_formatted_incident(env).await;
                                     }
                                     Err(e) => {
@@ -2212,34 +2244,44 @@ pub async fn run_daemon(config: DaemonConfig) {
                             // refill them under the retired pipeline's caps.
                             let current = alert_pipeline_swap_for_sink.load_full();
                             let alert_pipeline = current.as_ref().as_ref().unwrap_or(alert_pipeline);
-                            match capture_ring_for_sink.as_ref() {
-                                Some(ring) => {
-                                    let mut ring = ring.lock().unwrap_or_else(|e| e.into_inner());
-                                    let mut sink = CaptureRingSink {
-                                        ring: &mut ring,
-                                        metrics: capture_metrics.as_ref(),
-                                    };
-                                    let mut kept = alert_pipeline.process_with_capture(
-                                        result,
-                                        &mut st,
-                                        now,
-                                        alert_pipeline_metrics.as_ref(),
-                                        Some(&mut sink),
-                                    );
-                                    if !operator_include_event {
-                                        for result in &mut kept {
-                                            strip_event_payloads(result);
-                                        }
-                                    }
+                            let mut ring = capture_ring_for_sink
+                                .as_ref()
+                                .map(|ring| ring.lock().unwrap_or_else(|e| e.into_inner()));
+                            let mut capture_sink = ring.as_mut().map(|ring| CaptureRingSink {
+                                ring,
+                                metrics: capture_metrics.as_ref(),
+                            });
+                            let capture = capture_sink
+                                .as_mut()
+                                .map(|sink| sink as &mut dyn rsigma_runtime::CaptureSink);
+                            let mut kept = match finding_uids.take() {
+                                Some(uids) => {
+                                    let (kept, kept_uids) = alert_pipeline
+                                        .process_with_finding_uids(
+                                            result,
+                                            uids,
+                                            &mut st,
+                                            now,
+                                            alert_pipeline_metrics.as_ref(),
+                                            capture,
+                                        );
+                                    finding_uids = Some(kept_uids);
                                     kept
                                 }
-                                None => alert_pipeline.process(
+                                None => alert_pipeline.process_with_capture(
                                     result,
                                     &mut st,
                                     now,
                                     alert_pipeline_metrics.as_ref(),
+                                    capture,
                                 ),
+                            };
+                            if ring.is_some() && !operator_include_event {
+                                for result in &mut kept {
+                                    strip_event_payloads(result);
+                                }
                             }
+                            kept
                         };
                         if kept.is_empty() {
                             for token in ack_tokens {
@@ -2258,7 +2300,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                         tail.capture(&result);
                     }
 
-                    dispatcher.dispatch(result, ack_tokens).await;
+                    if let Some(uids) = finding_uids {
+                        delivery.set_finding_uids(uids);
+                    }
+                    dispatcher
+                        .dispatch_with_context(result, ack_tokens, delivery)
+                        .await;
                 }
                 _ = alert_tick.tick() => {
                     // Emit any due dedup repeat/resolved records and incident
@@ -2278,31 +2325,40 @@ pub async fn run_daemon(config: DaemonConfig) {
                             }
                             alert_pipeline.tick(&mut st, now, alert_pipeline_metrics.as_ref())
                         };
-                        for line in out.dedup_lines {
-                            dispatcher
-                                .dispatch_incident(IncidentEnvelope::new(line.to_string(), None))
-                                .await;
+                        for line in &out.dedup_lines {
+                            let json = match serde_json::to_string(line) {
+                                Ok(json) => json,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to serialize dedup summary");
+                                    continue;
+                                }
+                            };
+                            let env = with_ocsf_lines(
+                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None)),
+                                &ocsf_options,
+                                "dedup summary",
+                                |opts| Ok(rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts)),
+                            );
+                            dispatcher.dispatch_formatted_incident(env).await;
                         }
                         let subject =
                             alert_pipeline.incident_nats_subject().map(|s| s.to_string());
-                        for incident in out.incidents {
+                        for (incident, links) in out.incidents.into_iter().zip(out.finding_links) {
                             match serde_json::to_string(&incident) {
                                 Ok(json) => {
-                                    let mut env = FormattedIncidentEnvelope::new(
-                                        IncidentEnvelope::new(json, subject.clone()),
+                                    let env = with_ocsf_lines(
+                                        FormattedIncidentEnvelope::new(IncidentEnvelope::new(
+                                            json,
+                                            subject.clone(),
+                                        )),
+                                        &ocsf_options,
+                                        "incident",
+                                        |opts| {
+                                            rsigma_runtime::ocsf::incident_finding_in_class(
+                                                &incident, &links, opts,
+                                            )
+                                        },
                                     );
-                                    if ocsf_incidents {
-                                        let finding =
-                                            rsigma_runtime::ocsf::incident_finding(&incident);
-                                        match serde_json::to_string(&finding) {
-                                            Ok(line) => {
-                                                env = env.with_line(SinkFormat::Ocsf, line);
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(error = %e, "Failed to serialize OCSF incident finding");
-                                            }
-                                        }
-                                    }
                                     dispatcher.dispatch_formatted_incident(env).await;
                                 }
                                 Err(e) => {
@@ -2596,6 +2652,33 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received");
 }
 
+/// Attach one OCSF line per distinct sink option set to an incident-path
+/// envelope. A serialization failure is logged and that option set is left
+/// unset; delivery then rejects the incident instead of rebuilding it from
+/// the native line.
+fn with_ocsf_lines(
+    mut env: FormattedIncidentEnvelope,
+    ocsf_options: &[rsigma_runtime::ocsf::OcsfOptions],
+    what: &str,
+    build: impl Fn(
+        rsigma_runtime::ocsf::OcsfOptions,
+    ) -> Result<serde_json::Value, rsigma_runtime::ocsf::OcsfOptionsError>,
+) -> FormattedIncidentEnvelope {
+    for opts in ocsf_options {
+        let opts = opts.clone();
+        match build(opts.clone()) {
+            Ok(finding) => match serde_json::to_string(&finding) {
+                Ok(line) => env = env.with_ocsf_line(opts, line),
+                Err(e) => tracing::warn!(error = %e, what, "Failed to serialize OCSF line"),
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, what, "OCSF options cannot build this finding")
+            }
+        }
+    }
+    env
+}
+
 /// Split an output spec into its base (scheme + target) and `key=value` query
 /// parameters: `file:///p?on_full=drop`, `otlp://host:4317?compression=gzip`.
 pub(super) fn split_query(spec: &str) -> (&str, Vec<(&str, &str)>) {
@@ -2639,14 +2722,144 @@ impl SinkRole {
     }
 }
 
-/// Resolve the wire format from query params, exiting on any spec that cannot
-/// honor it.
+/// Resolved findings sink wire format and OCSF options.
+struct ResolvedSinkFormat {
+    format: SinkFormat,
+    ocsf: rsigma_runtime::ocsf::OcsfOptions,
+}
+
+/// Resolve the wire format and OCSF options from query params, exiting on any
+/// spec that cannot honor them.
 ///
-/// `format` is accepted only on a line-oriented findings sink: OTLP owns its
-/// log-record mapping, and the DLQ and audit channels do not carry findings at
-/// all. Unlike the `on_full` warn-and-default path, an unusable `format` is a
-/// startup config error, so a daemon never silently emits a format the
-/// operator did not ask for.
+/// `format` is accepted only on a findings sink: the DLQ and audit channels do
+/// not carry findings at all. `ocsf_incident_class` is rejected on OTLP sinks,
+/// which carry no incidents. Unlike the `on_full` warn-and-default path, an
+/// unusable parameter is a startup config error, so a daemon never silently
+/// emits a format the operator did not ask for.
+fn resolve_sink_format(params: &[(&str, &str)], base: &str, role: SinkRole) -> ResolvedSinkFormat {
+    let format = format_from_params(params, base, role);
+    if base.starts_with("otlp")
+        && params
+            .iter()
+            .any(|(k, _)| *k == "ocsf_incident_class" || *k == "ocsf_assignee_group")
+    {
+        tracing::error!(
+            spec = base,
+            "ocsf_incident_class= and ocsf_assignee_group= are not supported on OTLP sinks"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    let ocsf = ocsf_options_from_params(params, base, role, format);
+    ResolvedSinkFormat { format, ocsf }
+}
+
+fn ocsf_options_from_params(
+    params: &[(&str, &str)],
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> rsigma_runtime::ocsf::OcsfOptions {
+    use rsigma_runtime::ocsf::{OcsfIncidentClass, OcsfOptions, OcsfVersion};
+    let version: Option<OcsfVersion> = ocsf_param(params, "ocsf_version", base, role, format);
+    let incident_class: Option<OcsfIncidentClass> =
+        ocsf_param(params, "ocsf_incident_class", base, role, format);
+    let version = version.unwrap_or_default();
+    let class = incident_class.unwrap_or_default();
+    let group = ocsf_raw_param(params, "ocsf_assignee_group", base, role, format);
+    match class {
+        OcsfIncidentClass::IncidentFinding => {
+            let Some(group) = group else {
+                tracing::error!(
+                    spec = base,
+                    "ocsf_incident_class=2005 requires ocsf_assignee_group=<name>"
+                );
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            };
+            match OcsfOptions::new(version).with_incident_finding(group) {
+                Ok(opts) => opts,
+                Err(_) => {
+                    tracing::error!(spec = base, "ocsf_assignee_group= must not be empty");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        OcsfIncidentClass::DetectionFinding => {
+            if group.is_some() {
+                tracing::error!(
+                    spec = base,
+                    "ocsf_assignee_group= is only valid with ocsf_incident_class=2005"
+                );
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+            OcsfOptions::new(version)
+        }
+        _ => {
+            tracing::error!(spec = base, "unsupported OCSF incident class");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Parse one optional free-form OCSF sink parameter.
+fn ocsf_raw_param<'a>(
+    params: &'a [(&str, &str)],
+    key: &str,
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> Option<&'a str> {
+    let mut values = params
+        .iter()
+        .filter(|(k, _)| *k == key)
+        .map(|(_, value)| *value);
+    let value = values.next()?;
+    if values.next().is_some() {
+        tracing::error!(spec = base, "{key}= may be specified only once");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    if format != SinkFormat::Ocsf {
+        tracing::error!(
+            spec = base,
+            channel = role.label(),
+            "{key}= is only valid with format=ocsf"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    Some(value)
+}
+
+/// Parse one optional OCSF sink parameter, exiting when it repeats, appears
+/// without `format=ocsf`, or names a value outside its closed set.
+fn ocsf_param<T: std::str::FromStr<Err = String>>(
+    params: &[(&str, &str)],
+    key: &str,
+    base: &str,
+    role: SinkRole,
+    format: SinkFormat,
+) -> Option<T> {
+    let mut values = params
+        .iter()
+        .filter(|(k, _)| *k == key)
+        .map(|(_, value)| *value);
+    let value = values.next()?;
+    if values.next().is_some() {
+        tracing::error!(spec = base, "{key}= may be specified only once");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    if format != SinkFormat::Ocsf {
+        tracing::error!(
+            spec = base,
+            channel = role.label(),
+            "{key}= is only valid with format=ocsf"
+        );
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    Some(value.parse().unwrap_or_else(|e: String| {
+        tracing::error!(spec = base, value, error = %e, "Invalid {key}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }))
+}
+
 fn format_from_params(params: &[(&str, &str)], base: &str, role: SinkRole) -> SinkFormat {
     let mut formats = params
         .iter()
@@ -2665,14 +2878,6 @@ fn format_from_params(params: &[(&str, &str)], base: &str, role: SinkRole) -> Si
             spec = base,
             channel = role.label(),
             "format= is only supported on findings sinks"
-        );
-        std::process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-
-    if base.starts_with("otlp") {
-        tracing::error!(
-            spec = base,
-            "format= is not supported on OTLP sinks (they emit OTLP log records)"
         );
         std::process::exit(crate::exit_code::CONFIG_ERROR);
     }
@@ -2765,11 +2970,17 @@ async fn build_sink(
 ) -> (Sink, OnFull) {
     let (base, params) = split_query(spec);
     let on_full = on_full_from_params(&params);
-    let format = format_from_params(&params, base, role);
+    let resolved = resolve_sink_format(&params, base, role);
+    let format = resolved.format;
+    let ocsf = resolved.ocsf;
 
     if base == "stdout" || base == "stdout://" {
         return (
-            Sink::Stdout(StdoutSink::new(pretty).with_format(format)),
+            Sink::Stdout(
+                StdoutSink::new(pretty)
+                    .with_format(format)
+                    .with_ocsf_options(ocsf),
+            ),
             on_full,
         );
     }
@@ -2779,7 +2990,10 @@ async fn build_sink(
         return match FileSink::open(path) {
             Ok(file_sink) => {
                 tracing::info!(path = %path.display(), "File sink opened");
-                (Sink::File(file_sink.with_format(format)), on_full)
+                (
+                    Sink::File(file_sink.with_format(format).with_ocsf_options(ocsf)),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(path = %path.display(), error = %e, "Failed to open file sink");
@@ -2796,7 +3010,12 @@ async fn build_sink(
         return match rsigma_runtime::NatsSink::connect(&nats_cfg, &subject).await {
             Ok(nats_sink) => {
                 tracing::info!(url = url, subject = subject, "NATS sink started");
-                (Sink::Nats(Box::new(nats_sink.with_format(format))), on_full)
+                (
+                    Sink::Nats(Box::new(
+                        nats_sink.with_format(format).with_ocsf_options(ocsf),
+                    )),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(error = %e, url = url, "Failed to connect NATS sink");
@@ -2837,6 +3056,7 @@ async fn build_sink(
             });
             return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip, tls) {
                 Ok(sink) => {
+                    let sink = sink.with_format(format).with_ocsf_options(ocsf);
                     let sink = match timeout {
                         Some(t) => sink.with_timeout(t),
                         None => sink,
@@ -2847,6 +3067,7 @@ async fn build_sink(
                         gzip,
                         tls = tls_enabled,
                         timeout = %humantime::format_duration(sink.timeout()),
+                        format = format.as_str(),
                         "OTLP sink started"
                     );
                     (Sink::Otlp(Box::new(sink)), on_full)
@@ -2864,7 +3085,12 @@ async fn build_sink(
         return match rsigma_runtime::UnixSocketSink::connect(std::path::Path::new(path)).await {
             Ok(unix_sink) => {
                 tracing::info!(path, "Unix socket sink started");
-                (Sink::Unix(Box::new(unix_sink.with_format(format))), on_full)
+                (
+                    Sink::Unix(Box::new(
+                        unix_sink.with_format(format).with_ocsf_options(ocsf),
+                    )),
+                    on_full,
+                )
             }
             Err(e) => {
                 tracing::error!(path, error = %e, "Failed to connect unix socket sink");

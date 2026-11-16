@@ -18,6 +18,9 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+mod file;
+pub(crate) use file::{OutputFile, output_path_is_inside, same_output_path};
+
 /// Selector for the wire format of structured CLI output.
 ///
 /// `Json` and `Ndjson` mean what they say; `Table` is a width-aligned text
@@ -267,6 +270,24 @@ impl OutputCtx {
         }
     }
 
+    /// Reject `--finding-format ocsf` when this build has no OCSF serializer.
+    pub(crate) fn ensure_finding_ocsf_available(&self, command: &str, finding_ocsf: bool) {
+        if !finding_ocsf {
+            return;
+        }
+        #[cfg(feature = "ocsf")]
+        let _ = (self, command);
+        #[cfg(not(feature = "ocsf"))]
+        {
+            let _ = self;
+            eprintln!(
+                "error: `--finding-format ocsf` is not available for `{command}` \
+                 in this build (enable default features or the `ocsf` feature)"
+            );
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+
     /// Emit a single stderr warning when an explicit `--output-format` is not
     /// supported by `command`. Suppressed by `--quiet`.
     pub(crate) fn warn_unsupported(&self, command: &str, fallback: &str) {
@@ -300,6 +321,41 @@ impl OutputCtx {
 pub(crate) trait Tabular {
     fn headers() -> &'static [&'static str];
     fn row(&self) -> Vec<String>;
+}
+
+/// Serialize one [`EvaluationResult`](rsigma_eval::EvaluationResult) as an
+/// OCSF class-2004 finding.
+#[cfg(feature = "ocsf")]
+pub(crate) fn write_ocsf_finding<W: Write>(
+    writer: &mut W,
+    result: &rsigma_eval::EvaluationResult,
+    pretty: bool,
+    version: rsigma_runtime::ocsf::OcsfVersion,
+) -> io::Result<()> {
+    let finding = rsigma_runtime::ocsf::detection_finding_opts(
+        result,
+        rsigma_runtime::ocsf::OcsfOptions::new(version),
+    );
+    let line = if pretty {
+        serde_json::to_string_pretty(&finding)?
+    } else {
+        serde_json::to_string(&finding)?
+    };
+    writeln!(writer, "{line}")
+}
+
+/// Write one OCSF finding to stdout (compact NDJSON unless `pretty`).
+#[cfg(feature = "ocsf")]
+pub(crate) fn render_ocsf_finding(
+    result: &rsigma_eval::EvaluationResult,
+    pretty: bool,
+    version: rsigma_runtime::ocsf::OcsfVersion,
+) {
+    let mut out = io::stdout().lock();
+    if let Err(e) = write_ocsf_finding(&mut out, result, pretty, version) {
+        eprintln!("OCSF serialization error: {e}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
 }
 
 /// Render `value` as JSON to stdout (pretty when `pretty` is `true`). Exits
@@ -627,6 +683,7 @@ mod tests {
         assert_eq!(OutputFormat::parse("Table"), Some(OutputFormat::Table));
         assert_eq!(OutputFormat::parse("csv"), Some(OutputFormat::Csv));
         assert_eq!(OutputFormat::parse("tsv"), Some(OutputFormat::Tsv));
+        assert_eq!(OutputFormat::parse("ocsf"), None);
         assert_eq!(OutputFormat::parse("xml"), None);
     }
 

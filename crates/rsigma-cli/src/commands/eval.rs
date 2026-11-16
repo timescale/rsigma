@@ -21,7 +21,9 @@ use super::eval_stream::{
 use crate::EventFilter;
 use crate::config;
 use crate::exit_code;
-use crate::output::{DelimitedWriter, OutputCtx, OutputFormat, Tabular};
+use crate::output::{
+    DelimitedWriter, OutputCtx, OutputFile, OutputFormat, Tabular, same_output_path,
+};
 
 /// Arguments for `rsigma engine eval` (and the deprecated `rsigma eval`).
 #[derive(Args, Debug)]
@@ -59,6 +61,16 @@ pub(crate) struct EvalArgs {
     /// --output-format is set; the summary and diagnostics stay on stderr.
     #[arg(short = 'o', long = "output", value_name = "PATH")]
     pub output: Option<PathBuf>,
+
+    /// Finding wire shape for each fire: `native` (default) or `ocsf`.
+    /// OCSF composes with `--output-format json` or `ndjson`. `table`, `csv`,
+    /// and `tsv` are rejected.
+    #[arg(long = "finding-format", value_parser = ["native", "ocsf"])]
+    pub finding_format: Option<String>,
+
+    /// OCSF schema version (`1.1.0` or `1.3.0`). Requires `--finding-format ocsf`.
+    #[arg(long = "ocsf-version")]
+    pub ocsf_version: Option<String>,
 
     /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
     #[arg(short = 'p', long = "pipeline")]
@@ -395,6 +407,16 @@ fn overlay_eval_config(
         {
             args.output = Some(v);
         }
+        if !explicit("finding_format")
+            && let Some(v) = eval.finding_format
+        {
+            args.finding_format = Some(v);
+        }
+        if !explicit("ocsf_version")
+            && let Some(v) = eval.ocsf_version
+        {
+            args.ocsf_version = Some(v);
+        }
         if !explicit("fail_on_detection")
             && let Some(v) = eval.fail_on_detection
         {
@@ -464,6 +486,8 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         event: event_json,
         pretty,
         output,
+        finding_format,
+        ocsf_version,
         pipelines: pipeline_paths,
         jq,
         jsonpath,
@@ -604,11 +628,39 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     // The match renderer encapsulates the selected output format. `--pretty`
     // is honoured for backwards compatibility: it implies the JSON branch and
     // turns pretty-printing on even when stdout is not a TTY.
+    let finding_ocsf = finding_format.as_deref() == Some("ocsf");
+    if finding_ocsf
+        && matches!(
+            ctx.format,
+            OutputFormat::Csv | OutputFormat::Tsv | OutputFormat::Table
+        )
+    {
+        eprintln!("error: --finding-format ocsf requires --output-format json or ndjson");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    ctx.ensure_finding_ocsf_available("engine eval", finding_ocsf);
+    if let Some(version) = &ocsf_version {
+        if !finding_ocsf {
+            eprintln!("error: --ocsf-version requires --finding-format ocsf");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        #[cfg(feature = "ocsf")]
+        if version
+            .parse::<rsigma_runtime::ocsf::OcsfVersion>()
+            .is_err()
+        {
+            eprintln!("error: --ocsf-version must be 1.1.0 or 1.3.0");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        #[cfg(not(feature = "ocsf"))]
+        let _ = version;
+    }
     let output = output.map(|path| {
         ensure_output_is_not_input(&path, &event_source);
         OutputFile::create(path)
     });
-    let mut renderer = MatchRenderer::new(ctx, pretty, output);
+    let mut renderer =
+        MatchRenderer::new(ctx, pretty, output, finding_ocsf, ocsf_version.as_deref());
 
     if schema_routing {
         let mut router = build_schema_router(
@@ -1404,41 +1456,9 @@ struct MatchRenderer {
     file: Option<OutputFile>,
 }
 
-/// Buffered `--output` destination. Write failures exit with
-/// [`exit_code::CONFIG_ERROR`] so a truncated results file never looks like
-/// a successful run.
-struct OutputFile {
-    path: PathBuf,
-    writer: io::BufWriter<File>,
-}
-
-impl OutputFile {
-    fn create(path: PathBuf) -> Self {
-        match File::create(&path) {
-            Ok(file) => Self {
-                path,
-                writer: io::BufWriter::new(file),
-            },
-            Err(e) => {
-                eprintln!("error: cannot create output file '{}': {e}", path.display());
-                process::exit(exit_code::CONFIG_ERROR);
-            }
-        }
-    }
-
-    fn check(&self, result: io::Result<()>) {
-        if let Err(e) = result {
-            eprintln!(
-                "error: failed to write output file '{}': {e}",
-                self.path.display()
-            );
-            process::exit(exit_code::CONFIG_ERROR);
-        }
-    }
-}
-
 /// Refuse an `--output` path that names the `--event` input file, which
-/// would otherwise be truncated before it is read.
+/// would otherwise be truncated before it is read. `./x` and `x` are the
+/// same file.
 fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
     let input = match source {
         EventSource::NdjsonFile(p) => p,
@@ -1446,9 +1466,7 @@ fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
         EventSource::EvtxFile(p) => p,
         EventSource::SingleJson(_) | EventSource::Stdin => return,
     };
-    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(output), std::fs::canonicalize(input))
-        && a == b
-    {
+    if same_output_path(output, input) {
         eprintln!(
             "error: --output '{}' is the --event input file",
             output.display()
@@ -1460,6 +1478,12 @@ fn ensure_output_is_not_input(output: &Path, source: &EventSource) {
 enum RenderState {
     /// Plain JSON (one object per line, pretty if requested).
     Json { pretty: bool },
+    /// OCSF Detection Finding (class 2004), one object per line.
+    #[cfg(feature = "ocsf")]
+    Ocsf {
+        pretty: bool,
+        version: rsigma_runtime::ocsf::OcsfVersion,
+    },
     /// Streaming delimited writer (`csv` or `tsv`).
     Delimited(Box<DelimitedWriter>),
     /// Buffer of rows for the width-aligning table renderer.
@@ -1467,7 +1491,13 @@ enum RenderState {
 }
 
 impl MatchRenderer {
-    fn new(mut ctx: OutputCtx, pretty_flag: bool, mut file: Option<OutputFile>) -> Self {
+    fn new(
+        mut ctx: OutputCtx,
+        pretty_flag: bool,
+        mut file: Option<OutputFile>,
+        finding_ocsf: bool,
+        ocsf_version: Option<&str>,
+    ) -> Self {
         // A file is never a terminal, and without an explicit format it gets
         // NDJSON so it can be consumed line by line.
         if file.is_some() {
@@ -1480,7 +1510,23 @@ impl MatchRenderer {
         // The operator explicitly asked for that, so honour it regardless of
         // the resolved format (it would be confusing if `--pretty` silently
         // turned into compact NDJSON when piped).
-        let state = if pretty_flag && !ctx.explicit_format {
+        #[cfg(not(feature = "ocsf"))]
+        let _ = ocsf_version;
+        let state = if finding_ocsf {
+            #[cfg(feature = "ocsf")]
+            {
+                RenderState::Ocsf {
+                    pretty: pretty_flag || ctx.pretty_json(),
+                    version: ocsf_version
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or_default(),
+                }
+            }
+            #[cfg(not(feature = "ocsf"))]
+            {
+                unreachable!("--finding-format ocsf exits before the renderer is built");
+            }
+        } else if pretty_flag && !ctx.explicit_format {
             RenderState::Json { pretty: true }
         } else {
             match ctx.format {
@@ -1510,6 +1556,15 @@ impl MatchRenderer {
                 }
                 None => crate::output::render_json(m, *pretty),
             },
+            #[cfg(feature = "ocsf")]
+            RenderState::Ocsf { pretty, version } => match &mut self.file {
+                Some(file) => {
+                    let result =
+                        crate::output::write_ocsf_finding(&mut file.writer, m, *pretty, *version);
+                    file.check(result);
+                }
+                None => crate::output::render_ocsf_finding(m, *pretty, *version),
+            },
             RenderState::Delimited(writer) => {
                 let row = EvalRow::from_result(m).row();
                 writer.push(&row);
@@ -1530,6 +1585,8 @@ impl MatchRenderer {
             },
             RenderState::Delimited(writer) => writer.finish(),
             RenderState::Json { .. } => {}
+            #[cfg(feature = "ocsf")]
+            RenderState::Ocsf { .. } => {}
         }
         if let Some(file) = &mut self.file {
             let result = file.writer.flush();

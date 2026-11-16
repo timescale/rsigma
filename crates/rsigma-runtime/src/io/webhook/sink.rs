@@ -10,7 +10,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rsigma_eval::{EvaluationResult, ProcessResult};
 
 use crate::enrichment::{
-    HttpEnricherClient, render_template, render_template_json, render_template_url,
+    HttpEnricherClient, render_template, render_template_json_with_ocsf, render_template_url,
 };
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
@@ -104,6 +104,7 @@ pub struct WebhookSink {
     /// Optional HMAC request signer. When set, every delivery carries
     /// signature headers over the rendered body bytes.
     signer: Option<WebhookSigner>,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl WebhookSink {
@@ -137,7 +138,14 @@ impl WebhookSink {
             client,
             metrics,
             signer,
+            ocsf: crate::ocsf::OcsfOptions::default(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
     }
 
     /// The webhook id, used as the webhook-specific metric label.
@@ -209,7 +217,15 @@ impl WebhookSink {
             })?;
             header_map.insert(header_name, header_value);
         }
-        let body = self.body.as_ref().map(|b| render_template_json(b, eval));
+        // The finding uses the delivery context, so its identity matches the
+        // OCSF line and OTLP sinks of the same dispatch.
+        let body = self.body.as_ref().map(|b| {
+            render_template_json_with_ocsf(b, eval, || {
+                let options = crate::ocsf::OcsfOptions::new(self.ocsf.version());
+                let finding = crate::io::ocsf_finding(eval, Some((ctx, idx)), &options);
+                serde_json::to_string(&finding).unwrap_or_else(|_| "null".to_string())
+            })
+        });
 
         // Sign the exact body bytes that go on the wire. The id and timestamp
         // come from the per-delivery context, so a retry reproduces the same
@@ -414,6 +430,59 @@ mod tests {
         let mut sink = sink_to(format!("{}/hook", server.uri()));
         let result: ProcessResult = vec![detection("hi")];
         assert!(sink.send(&result, &ctx()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ocsf_body_reference_posts_a_conformant_finding() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let mut sink = WebhookSink::new(
+            "siem".to_string(),
+            WebhookKind::Detection,
+            reqwest::Method::POST,
+            format!("{}/hook", server.uri()),
+            vec![("Content-Type".to_string(), "application/json".to_string())],
+            Some(
+                r#"{"title": "${detection.rule.title}", "finding": ${detection.ocsf}}"#.to_string(),
+            ),
+            Duration::from_secs(5),
+            crate::enrichment::Scope::default(),
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            None,
+        );
+        let ctx = ctx();
+        let result: ProcessResult = vec![detection("first \"quoted\""), detection("second")];
+        sink.send(&result, &ctx).await.unwrap();
+
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/ocsf/1.1.0/class_2004.schema.json"
+        ))
+        .unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let received = server.received_requests().await.unwrap();
+        for (index, request) in received.iter().enumerate() {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let finding = &body["finding"];
+            let errors: Vec<String> = validator
+                .iter_errors(finding)
+                .map(|e| e.to_string())
+                .collect();
+            assert!(errors.is_empty(), "non-conformant finding: {errors:#?}");
+            assert_eq!(
+                finding["finding_info"]["uid"],
+                ctx.finding_uid(index).as_str(),
+                "the finding identity matches the other sinks of the dispatch",
+            );
+            assert_eq!(body["title"], finding["finding_info"]["title"]);
+        }
+        assert_eq!(received.len(), 2);
     }
 
     #[tokio::test]

@@ -185,7 +185,8 @@ enum RenderState {
 
 impl TailRenderer {
     fn new(ctx: OutputCtx) -> Self {
-        let state = match ctx.format {
+        let format = ctx.format;
+        let state = match format {
             OutputFormat::Json => RenderState::Json {
                 pretty: ctx.pretty_json(),
             },

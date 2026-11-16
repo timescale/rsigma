@@ -291,7 +291,8 @@ fn emit_resolve(
         return;
     }
 
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => {
             let pretty = pretty || ctx.pretty_json();
             crate::output::render_json(&envelope, pretty);

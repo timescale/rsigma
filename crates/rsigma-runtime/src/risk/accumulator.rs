@@ -94,6 +94,10 @@ pub struct Contribution {
     /// The event-stripped serialized result, retained only for `include: results`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub result: Option<Value>,
+    /// OCSF `finding_info.uid` of the Detection Finding minted for this
+    /// firing, when known. In memory only: never persisted.
+    #[serde(skip)]
+    pub finding_uid: Option<String>,
 }
 
 /// Per-entity sliding-window state.
@@ -188,6 +192,8 @@ pub struct RiskState {
 pub struct RecordOutcome {
     /// An incident, when the entity crossed a threshold and was not cooling down.
     pub incident: Option<RiskIncidentResult>,
+    /// Detection Finding uids for `incident`, when one was emitted.
+    pub links: crate::FindingLinks,
     /// True when a new entity could not be tracked because the store was full.
     pub evicted: bool,
 }
@@ -227,6 +233,7 @@ impl RiskState {
             // up as an eviction and the entities gauge plateauing at the cap.
             return RecordOutcome {
                 incident: None,
+                links: crate::FindingLinks::default(),
                 evicted: true,
             };
         }
@@ -253,7 +260,7 @@ impl RiskState {
             None
         };
 
-        let incident = trigger.and_then(|trigger| {
+        let built = trigger.and_then(|trigger| {
             let cooling = entity
                 .last_fired
                 .is_some_and(|lf| now - lf < cfg.cooldown.as_secs() as i64);
@@ -271,9 +278,14 @@ impl RiskState {
                 entity.contributions.iter(),
             ))
         });
+        let (incident, links) = match built {
+            Some((incident, links)) => (Some(incident), links),
+            None => (None, crate::FindingLinks::default()),
+        };
 
         RecordOutcome {
             incident,
+            links,
             evicted: false,
         }
     }
@@ -383,16 +395,16 @@ fn build_incident<'a>(
     tactic_count: u64,
     stats: &WindowStats,
     contributions: impl Iterator<Item = &'a Contribution>,
-) -> RiskIncidentResult {
+) -> (RiskIncidentResult, crate::FindingLinks) {
     let recent: Vec<&Contribution> = {
         let all: Vec<&Contribution> = contributions.collect();
         let take = cfg.caps.max_results_per_incident.min(all.len());
         all[all.len() - take..].to_vec()
     };
 
-    let (refs, results) = match cfg.include {
+    let (refs, results, links) = match cfg.include {
         IncludeMode::Refs => {
-            let refs = recent
+            let refs: Vec<RiskRef> = recent
                 .iter()
                 .map(|c| RiskRef {
                     rule: c.rule.clone(),
@@ -401,32 +413,49 @@ fn build_incident<'a>(
                     timestamp: c.ts,
                 })
                 .collect();
-            (Some(refs), None)
+            let links = crate::FindingLinks {
+                refs: recent.iter().map(|c| c.finding_uid.clone()).collect(),
+                results: Vec::new(),
+            };
+            (Some(refs), None, links)
         }
         IncludeMode::Results => {
-            let results = recent.iter().filter_map(|c| c.result.clone()).collect();
-            (None, Some(results))
+            let (results, uids): (Vec<Value>, Vec<Option<String>>) = recent
+                .iter()
+                .filter_map(|c| Some((c.result.clone()?, c.finding_uid.clone())))
+                .unzip();
+            (
+                None,
+                Some(results),
+                crate::FindingLinks {
+                    refs: Vec::new(),
+                    results: uids,
+                },
+            )
         }
     };
 
-    RiskIncidentResult {
-        risk_incident_id: Uuid::new_v4().to_string(),
-        entity_type: entity_type.to_string(),
-        entity_value: entity_value.to_string(),
-        trigger,
-        score: stats.score,
-        score_threshold: cfg.score_threshold,
-        tactic_count,
-        tactic_count_threshold: cfg.tactic_count_threshold,
-        tactics: stats.tactics.clone(),
-        sources: stats.sources.clone(),
-        source_count: stats.source_count,
-        window_start: stats.window_start,
-        window_end: stats.window_end,
-        result_count: stats.result_count,
-        refs,
-        results,
-    }
+    (
+        RiskIncidentResult {
+            risk_incident_id: Uuid::new_v4().to_string(),
+            entity_type: entity_type.to_string(),
+            entity_value: entity_value.to_string(),
+            trigger,
+            score: stats.score,
+            score_threshold: cfg.score_threshold,
+            tactic_count,
+            tactic_count_threshold: cfg.tactic_count_threshold,
+            tactics: stats.tactics.clone(),
+            sources: stats.sources.clone(),
+            source_count: stats.source_count,
+            window_start: stats.window_start,
+            window_end: stats.window_end,
+            result_count: stats.result_count,
+            refs,
+            results,
+        },
+        links,
+    )
 }
 
 #[cfg(test)]
@@ -453,6 +482,7 @@ mod tests {
             rule: rule.to_string(),
             level: Some("high".to_string()),
             result: None,
+            finding_uid: None,
         }
     }
 

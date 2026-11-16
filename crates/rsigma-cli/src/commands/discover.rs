@@ -136,7 +136,8 @@ pub(crate) fn cmd_discover(args: DiscoverArgs, ctx: OutputCtx) {
 
     let dto = DiscoverReport::build(&report, corpus.parse_errors, dry_run);
 
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => render_json(&dto, true),
         OutputFormat::Ndjson => {
             for c in &dto.candidates {

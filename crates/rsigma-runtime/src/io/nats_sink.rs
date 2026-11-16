@@ -25,6 +25,7 @@ pub struct NatsSink {
     /// override only triggers stream creation once.
     ensured: Mutex<HashSet<String>>,
     format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl NatsSink {
@@ -54,6 +55,7 @@ impl NatsSink {
             subject: Subject::from(subject),
             ensured,
             format: SinkFormat::default(),
+            ocsf: crate::ocsf::OcsfOptions::default(),
         })
     }
 
@@ -64,9 +66,19 @@ impl NatsSink {
         self
     }
 
+    #[must_use]
+    pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
+    }
+
     /// The wire format this sink serializes results into.
     pub fn format(&self) -> SinkFormat {
         self.format
+    }
+
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Serialize and publish a ProcessResult to the configured JetStream subject.
@@ -96,7 +108,13 @@ impl NatsSink {
 
         let mut published = 0_usize;
         for (index, m) in result.iter().enumerate() {
-            let json = serialize_result(m, self.format, false, ctx.map(|ctx| (ctx, index)))?;
+            let json = serialize_result(
+                m,
+                self.format,
+                false,
+                ctx.map(|ctx| (ctx, index)),
+                &self.ocsf,
+            )?;
             self.publish_one(&self.subject, &json).await?;
             published += 1;
         }

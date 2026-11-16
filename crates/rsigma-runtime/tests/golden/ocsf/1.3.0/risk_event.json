@@ -1,0 +1,55 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "finding_info": {
+    "analytic": {
+      "name": "Brute force",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "rule-1"
+    },
+    "title": "Brute force",
+    "types": [
+      "Risk Event"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000001"
+  },
+  "message": "Brute force",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.3.0"
+  },
+  "resources": [
+    {
+      "name": "203.0.113.4",
+      "type": "src_ip"
+    }
+  ],
+  "risk_score": 25,
+  "severity": "High",
+  "severity_id": 4,
+  "status": "New",
+  "status_id": 1,
+  "time": 1234000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Create",
+  "type_uid": 200401,
+  "unmapped": {
+    "risk_event": true,
+    "timestamp": 1234
+  }
+}

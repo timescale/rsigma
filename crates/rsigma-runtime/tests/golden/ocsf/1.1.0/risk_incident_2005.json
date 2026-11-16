@@ -1,0 +1,79 @@
+{
+  "activity_id": 1,
+  "activity_name": "Create",
+  "assignee_group": {
+    "name": "soc"
+  },
+  "attacks": [
+    {
+      "tactic": {
+        "name": "Execution",
+        "uid": "TA0002"
+      }
+    },
+    {
+      "tactic": {
+        "name": "Credential Access",
+        "uid": "TA0006"
+      }
+    }
+  ],
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Incident Finding",
+  "class_uid": 2005,
+  "count": 5,
+  "end_time": 1767225600000,
+  "finding_info_list": [
+    {
+      "analytic": {
+        "name": "rule-1",
+        "type": "Rule",
+        "type_id": 1
+      },
+      "title": "rule-1",
+      "uid": "msg_89ab_0000_0"
+    }
+  ],
+  "message": "risk threshold crossed for user alice",
+  "metadata": {
+    "correlation_uid": "11111111-1111-4111-8111-111111111111",
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "uid": "00000000-0000-4000-8000-000000000001",
+    "version": "1.1.0"
+  },
+  "severity": "Unknown",
+  "severity_id": 0,
+  "start_time": 1767222000000,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Incident Finding: Create",
+  "type_uid": 200501,
+  "unmapped": {
+    "entity_type": "user",
+    "entity_value": "alice",
+    "refs": [
+      {
+        "level": "high",
+        "rule": "rule-1",
+        "score": 75,
+        "timestamp": 1767225600
+      }
+    ],
+    "score": 120,
+    "score_threshold": 100,
+    "source_count": 2,
+    "sources": [
+      "rule-1",
+      "rule-2"
+    ],
+    "tactic_count": 2,
+    "trigger": "score"
+  }
+}

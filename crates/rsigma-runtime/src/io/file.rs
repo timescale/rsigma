@@ -17,6 +17,7 @@ use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 pub struct FileSink {
     out: LineWriter<File>,
     format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl FileSink {
@@ -26,6 +27,7 @@ impl FileSink {
         Ok(FileSink {
             out: LineWriter::new(file),
             format: SinkFormat::default(),
+            ocsf: crate::ocsf::OcsfOptions::default(),
         })
     }
 
@@ -36,14 +38,26 @@ impl FileSink {
         self
     }
 
+    /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
+    #[must_use]
+    pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
+    }
+
     /// The wire format this sink serializes results into.
     pub fn format(&self) -> SinkFormat {
         self.format
     }
 
+    /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
+    }
+
     /// Serialize and append a ProcessResult to the file.
     pub fn send(&mut self, result: &ProcessResult) -> Result<(), RuntimeError> {
-        self.out.write_result(result, self.format, None)
+        self.out.write_result(result, self.format, None, &self.ocsf)
     }
 
     pub(crate) fn send_with_context(
@@ -51,7 +65,8 @@ impl FileSink {
         result: &ProcessResult,
         ctx: &DeliveryContext,
     ) -> Result<(), RuntimeError> {
-        self.out.write_result(result, self.format, Some(ctx))
+        self.out
+            .write_result(result, self.format, Some(ctx), &self.ocsf)
     }
 
     /// Write a pre-serialized JSON string directly to the file.
@@ -82,6 +97,7 @@ impl<W: Write> LineWriter<W> {
         result: &ProcessResult,
         format: SinkFormat,
         ctx: Option<&DeliveryContext>,
+        ocsf: &crate::ocsf::OcsfOptions,
     ) -> Result<(), RuntimeError> {
         if result.is_empty() {
             return Ok(());
@@ -94,6 +110,7 @@ impl<W: Write> LineWriter<W> {
                 format,
                 false,
                 ctx.map(|ctx| (ctx, index)),
+                ocsf,
             )?);
         }
         match self.write_batch(&batch) {
@@ -203,7 +220,16 @@ mod tests {
         let result = three_results();
         let lines: Vec<String> = result
             .iter()
-            .map(|m| serialize_result(m, SinkFormat::default(), false, None).unwrap())
+            .map(|m| {
+                serialize_result(
+                    m,
+                    SinkFormat::default(),
+                    false,
+                    None,
+                    &crate::ocsf::OcsfOptions::default(),
+                )
+                .unwrap()
+            })
             .collect();
         let mut out = LineWriter::new(FlakyWriter {
             out: Vec::new(),
@@ -213,12 +239,22 @@ mod tests {
         let ctx = DeliveryContext::new();
 
         assert!(
-            out.write_result(&result, SinkFormat::default(), Some(&ctx))
-                .is_err()
+            out.write_result(
+                &result,
+                SinkFormat::default(),
+                Some(&ctx),
+                &crate::ocsf::OcsfOptions::default(),
+            )
+            .is_err()
         );
         out.inner.budget = usize::MAX;
-        out.write_result(&result, SinkFormat::default(), Some(&ctx))
-            .unwrap();
+        out.write_result(
+            &result,
+            SinkFormat::default(),
+            Some(&ctx),
+            &crate::ocsf::OcsfOptions::default(),
+        )
+        .unwrap();
         out.write_line("{\"next\":true}").unwrap();
 
         let written = String::from_utf8(out.inner.out).unwrap();
@@ -245,13 +281,23 @@ mod tests {
         });
         let failed = DeliveryContext::new();
         assert!(
-            out.write_result(&result, SinkFormat::default(), Some(&failed))
-                .is_err()
+            out.write_result(
+                &result,
+                SinkFormat::default(),
+                Some(&failed),
+                &crate::ocsf::OcsfOptions::default(),
+            )
+            .is_err()
         );
         out.inner.budget = usize::MAX;
         let next = DeliveryContext::new();
-        out.write_result(&result, SinkFormat::default(), Some(&next))
-            .unwrap();
+        out.write_result(
+            &result,
+            SinkFormat::default(),
+            Some(&next),
+            &crate::ocsf::OcsfOptions::default(),
+        )
+        .unwrap();
         let written = String::from_utf8(out.inner.out).unwrap();
         assert_eq!(written.lines().count(), 4, "{written}");
     }

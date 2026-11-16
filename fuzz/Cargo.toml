@@ -182,3 +182,8 @@ doc = false
 name = "fuzz_ruleset_resolve"
 path = "fuzz_targets/fuzz_ruleset_resolve.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_ocsf_sidecar"
+path = "fuzz_targets/fuzz_ocsf_sidecar.rs"
+doc = false

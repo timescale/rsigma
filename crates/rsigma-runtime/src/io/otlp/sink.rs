@@ -12,8 +12,9 @@ use tonic::transport::Channel;
 
 use rsigma_eval::ProcessResult;
 
-use super::convert::evaluation_results_to_logs_request;
+use super::convert::{evaluation_results_to_logs_request, ocsf_findings_to_logs_request};
 use crate::error::RuntimeError;
+use crate::io::{DeliveryContext, SinkFormat, ocsf_finding};
 
 /// OTLP transport, selected by the sink URL scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,11 @@ const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Exports detection and correlation results to an OTLP collector.
 ///
+/// In the default format each result becomes a log record whose body is the
+/// rule title and whose attributes are the native result fields. With
+/// [`SinkFormat::Ocsf`] the body is the OCSF Detection Finding as a JSON string.
+/// The record keeps the native attribute set.
+///
 /// The gRPC channel connects lazily, so a collector that is not yet reachable
 /// does not fail daemon startup; delivery failures are surfaced to the
 /// delivery layer, which retries and ultimately routes to the DLQ. Each export
@@ -73,6 +79,8 @@ const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct OtlpSink {
     transport: Transport,
     timeout: Duration,
+    format: SinkFormat,
+    ocsf: crate::ocsf::OcsfOptions,
 }
 
 impl OtlpSink {
@@ -118,7 +126,35 @@ impl OtlpSink {
         Ok(OtlpSink {
             transport,
             timeout: DEFAULT_OTLP_TIMEOUT,
+            format: SinkFormat::default(),
+            ocsf: crate::ocsf::OcsfOptions::default(),
         })
+    }
+
+    /// Select the log-record body: the rule title ([`SinkFormat::Ndjson`], the
+    /// default) or the OCSF finding ([`SinkFormat::Ocsf`]). Both keep the
+    /// native attributes.
+    #[must_use]
+    pub fn with_format(mut self, format: SinkFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
+    #[must_use]
+    pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
+        self.ocsf = ocsf;
+        self
+    }
+
+    /// The log-record encoding this sink exports.
+    pub fn format(&self) -> SinkFormat {
+        self.format
+    }
+
+    /// OCSF serializer options when [`Self::format`] is [`SinkFormat::Ocsf`].
+    pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
+        &self.ocsf
     }
 
     /// Set the deadline for one export attempt. An attempt that exceeds it
@@ -135,11 +171,37 @@ impl OtlpSink {
 
     /// Serialize and export a batch of results to the collector.
     pub async fn send(&mut self, result: &ProcessResult) -> Result<(), RuntimeError> {
+        self.send_inner(result, None).await
+    }
+
+    /// Export a batch whose OCSF identity and time come from `ctx`, so they
+    /// match every other sink the same dispatch reaches.
+    pub(crate) async fn send_with_context(
+        &mut self,
+        result: &ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Result<(), RuntimeError> {
+        self.send_inner(result, Some(ctx)).await
+    }
+
+    async fn send_inner(
+        &mut self,
+        result: &ProcessResult,
+        ctx: Option<&DeliveryContext>,
+    ) -> Result<(), RuntimeError> {
         if result.is_empty() {
             return Ok(());
         }
-        self.export(evaluation_results_to_logs_request(result))
-            .await
+        let request = match self.format {
+            SinkFormat::Ndjson => evaluation_results_to_logs_request(result),
+            SinkFormat::Ocsf => {
+                let ocsf = &self.ocsf;
+                ocsf_findings_to_logs_request(result, |index, r| {
+                    ocsf_finding(r, ctx.map(|c| (c, index)), ocsf)
+                })
+            }
+        };
+        self.export(request).await
     }
 
     /// Export a pre-serialized line as a single OTLP log-record body. Used when
@@ -487,6 +549,58 @@ mod tests {
         assert_eq!(got.len(), 1, "collector should receive exactly one export");
         let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
         assert_eq!(record.severity_text, "ERROR");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ocsf_export_carries_the_delivery_finding_as_body() {
+        use opentelemetry_proto::tonic::common::v1::any_value;
+
+        let addr = free_port();
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let service = Recording {
+            received: received.clone(),
+        };
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(LogsServiceServer::new(service))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+        wait_reachable(addr).await;
+
+        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, None)
+            .unwrap()
+            .with_format(SinkFormat::Ocsf)
+            .with_ocsf_options(crate::ocsf::OcsfOptions::new(
+                crate::ocsf::OcsfVersion::V1_3_0,
+            ));
+        let ctx = DeliveryContext::new();
+        sink.send_with_context(&one_detection(), &ctx)
+            .await
+            .unwrap();
+
+        let got = received.lock().await;
+        let record = &got[0].resource_logs[0].scope_logs[0].log_records[0];
+        assert_eq!(record.severity_text, "ERROR");
+        assert!(
+            record.attributes.iter().any(|kv| kv.key == "rule_title"),
+            "native attributes stay on the record: {:?}",
+            record.attributes,
+        );
+        let Some(any_value::Value::StringValue(raw)) =
+            record.body.as_ref().and_then(|b| b.value.as_ref())
+        else {
+            panic!(
+                "the body must be the finding JSON string: {:?}",
+                record.body
+            );
+        };
+        let finding: serde_json::Value = serde_json::from_str(raw).expect("finding JSON");
+        assert_eq!(finding["class_uid"], 2004);
+        assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(0));
+        assert_eq!(finding["metadata"]["version"], "1.3.0");
         server.abort();
     }
 

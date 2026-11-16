@@ -14,7 +14,7 @@ pub(crate) mod expectations;
 mod report;
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
@@ -30,7 +30,7 @@ use super::eval_stream::{CorrelationProcessor, DetectionProcessor, EventProcesso
 use crate::commands::reports::BacktestReport;
 use crate::config;
 use crate::exit_code;
-use crate::output::OutputCtx;
+use crate::output::{OutputCtx, output_path_is_inside, same_output_path};
 use expectations::{ResolvedExpectations, UnexpectedPolicy};
 use report::{Accumulator, result_key};
 
@@ -106,6 +106,18 @@ pub(crate) struct BacktestArgs {
     /// Write the full JSON report to a file regardless of the stdout format.
     #[arg(long = "report", value_name = "PATH")]
     pub report: Option<PathBuf>,
+
+    /// Write one finding per fire (native JSON or OCSF) to this file.
+    #[arg(long = "findings", value_name = "PATH")]
+    pub findings: Option<PathBuf>,
+
+    /// Finding wire shape written to `--findings`: `native` (default) or `ocsf`.
+    #[arg(long = "finding-format", value_parser = ["native", "ocsf"])]
+    pub finding_format: Option<String>,
+
+    /// OCSF schema version for `--finding-format ocsf` (`1.1.0` or `1.3.0`).
+    #[arg(long = "ocsf-version")]
+    pub ocsf_version: Option<String>,
 }
 
 /// Overlay the `backtest` config section (defaults < file < env) onto `args`
@@ -203,12 +215,57 @@ fn overlay_backtest_config(
         {
             args.syslog_strip_bom = v;
         }
+        if !explicit("findings")
+            && let Some(v) = bt.findings
+        {
+            args.findings = Some(v);
+        }
+        if !explicit("finding_format")
+            && let Some(v) = bt.finding_format
+        {
+            args.finding_format = Some(v);
+        }
+        if !explicit("ocsf_version")
+            && let Some(v) = bt.ocsf_version
+        {
+            args.ocsf_version = Some(v);
+        }
     }
 }
 
 /// Run the backtest. Returns the process exit code (0 pass, 1 findings,
 /// 2 rule error, 3 config error). Rule and config errors exit directly.
 pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
+    let finding_ocsf = args.finding_format.as_deref() == Some("ocsf");
+    ctx.ensure_finding_ocsf_available("rule backtest", finding_ocsf);
+    if args.ocsf_version.is_some() && !finding_ocsf {
+        eprintln!("error: --ocsf-version requires --finding-format ocsf");
+        return exit_code::CONFIG_ERROR;
+    }
+    if (finding_ocsf || args.ocsf_version.is_some()) && args.findings.is_none() {
+        eprintln!("error: --finding-format ocsf requires --findings (the report stays on stdout)");
+        return exit_code::CONFIG_ERROR;
+    }
+    if let Some(version) = &args.ocsf_version {
+        #[cfg(feature = "ocsf")]
+        if version
+            .parse::<rsigma_runtime::ocsf::OcsfVersion>()
+            .is_err()
+        {
+            eprintln!("error: --ocsf-version must be 1.1.0 or 1.3.0");
+            return exit_code::CONFIG_ERROR;
+        }
+        #[cfg(not(feature = "ocsf"))]
+        let _ = version;
+    }
+    let mut findings_file = if let Some(findings) = &args.findings {
+        if let Some(code) = findings_path_collision(findings, &args) {
+            return code;
+        }
+        Some(crate::output::OutputFile::create(findings.clone()))
+    } else {
+        None
+    };
     if args.rules.is_none() && args.ruleset.is_none() {
         eprintln!(
             "error: no rules path; set --rules, --ruleset, backtest.rules, or backtest.ruleset in the config file"
@@ -257,6 +314,7 @@ pub(crate) fn cmd_backtest(args: BacktestArgs, ctx: OutputCtx) -> i32 {
         &event_filter,
         resolved,
         policy,
+        &mut findings_file,
     ) {
         Ok(report) => report,
         Err(e) => {
@@ -295,6 +353,7 @@ fn run(
     event_filter: &crate::EventFilter,
     resolved: Option<ResolvedExpectations>,
     policy: UnexpectedPolicy,
+    findings: &mut Option<crate::output::OutputFile>,
 ) -> Result<BacktestReport, String> {
     let corpus_files = collect_corpus_files(&args.corpus)?;
     if corpus_files.is_empty() {
@@ -318,16 +377,20 @@ fn run(
             let mut processor = CorrelationProcessor {
                 engine: &mut engine,
             };
-            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc, findings)
         } else {
             let engine = detection_engine.as_ref().expect("detection engine built");
             let mut processor = DetectionProcessor { engine };
-            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc)
+            stream_corpus_file(cf, &mut processor, event_filter, args, &mut acc, findings)
         };
         acc.add_events(events);
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
+    if let Some(file) = findings {
+        let flushed = file.writer.flush();
+        file.check(flushed);
+    }
     Ok(BacktestReport::build(
         acc,
         &collection,
@@ -345,11 +408,39 @@ fn stream_corpus_file<P: EventProcessor>(
     event_filter: &crate::EventFilter,
     args: &BacktestArgs,
     acc: &mut Accumulator,
+    findings: &mut Option<crate::output::OutputFile>,
 ) -> u64 {
     let file_key = cf.key.clone();
+    let emit_ocsf = args.finding_format.as_deref() == Some("ocsf");
+    #[cfg(not(feature = "ocsf"))]
+    let _ = emit_ocsf;
     let mut on_result = |m: &EvaluationResult| {
         let key = result_key(m).to_string();
         acc.record(&key, &file_key);
+        let Some(file) = findings.as_mut() else {
+            return;
+        };
+        #[cfg(feature = "ocsf")]
+        if emit_ocsf {
+            let version = args
+                .ocsf_version
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_default();
+            let result = crate::output::write_ocsf_finding(&mut file.writer, m, false, version);
+            file.check(result);
+            return;
+        }
+        match serde_json::to_string(m) {
+            Ok(line) => {
+                let result = writeln!(file.writer, "{line}");
+                file.check(result);
+            }
+            Err(e) => {
+                eprintln!("error: failed to serialize finding: {e}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+        }
     };
 
     match cf.kind {
@@ -459,6 +550,38 @@ fn classify(path: &Path) -> CorpusKind {
         Some("evtx") => CorpusKind::Evtx,
         _ => CorpusKind::Other,
     }
+}
+
+/// `--findings` must not name a corpus input, a report output, or a file
+/// inside a corpus directory. Path spelling (`./x` and `x`) does not matter.
+/// Returns a process exit code when the path is refused.
+fn findings_path_collision(findings: &Path, args: &BacktestArgs) -> Option<i32> {
+    for other in args
+        .corpus
+        .iter()
+        .chain(args.report.iter())
+        .chain(args.junit.iter())
+    {
+        if same_output_path(findings, other) {
+            eprintln!(
+                "error: --findings '{}' is the same path as '{}'",
+                findings.display(),
+                other.display()
+            );
+            return Some(exit_code::CONFIG_ERROR);
+        }
+    }
+    for root in &args.corpus {
+        if output_path_is_inside(findings, root) {
+            eprintln!(
+                "error: --findings '{}' is inside the corpus directory '{}'",
+                findings.display(),
+                root.display()
+            );
+            return Some(exit_code::CONFIG_ERROR);
+        }
+    }
+    None
 }
 
 /// Resolve the `--corpus` roots into a sorted list of files. A root may be a

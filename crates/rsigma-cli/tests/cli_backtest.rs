@@ -206,6 +206,167 @@ fn backtest_missing_rules_is_config_error() {
 }
 
 #[test]
+fn backtest_finding_format_ocsf_writes_findings_and_keeps_the_report() {
+    let findings = temp_file(".ndjson", "");
+    let out = rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--output-format",
+            "json",
+            "--finding-format",
+            "ocsf",
+            "--findings",
+            findings.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = std::fs::read_to_string(findings.path()).unwrap();
+    let mut fires = 0;
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+        let finding: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+        assert_eq!(finding["class_uid"], 2004);
+        fires += 1;
+    }
+    assert!(fires > 0, "expected one finding per fire, got: {body}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"duration_ms\""),
+        "stdout must stay the JSON report, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("class_uid"),
+        "findings must not replace the report"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Backtest:"),
+        "expected summary on stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn backtest_finding_format_ocsf_requires_findings() {
+    rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--finding-format",
+            "ocsf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("--findings"));
+}
+
+#[test]
+fn backtest_findings_dot_slash_does_not_truncate_the_corpus() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("ev2.ndjson");
+    let original = "{\"CommandLine\":\"malware\"}\n";
+    std::fs::write(&corpus, original).unwrap();
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            "ev2.ndjson",
+            "--findings",
+            "./ev2.ndjson",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("same path"));
+    let after = std::fs::read_to_string(&corpus).unwrap();
+    assert_eq!(
+        after, original,
+        "refusing the path must not truncate the corpus"
+    );
+}
+
+#[test]
+fn backtest_findings_inside_the_corpus_directory_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("c");
+    std::fs::create_dir(&corpus).unwrap();
+    std::fs::write(corpus.join("events.ndjson"), "{}\n").unwrap();
+    rsigma()
+        .current_dir(dir.path())
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            "c",
+            "--findings",
+            "c/out.ndjson",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("inside the corpus"));
+    assert!(
+        !corpus.join("out.ndjson").exists(),
+        "the findings file must not be created inside the corpus"
+    );
+}
+
+#[test]
+fn backtest_native_findings_line_count_matches_report_fires() {
+    let findings = temp_file(".ndjson", "");
+    let out = rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            &fixture("rules.yml"),
+            "--corpus",
+            &fixture("corpus"),
+            "--output-format",
+            "json",
+            "--findings",
+            findings.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    let fires: u64 = report["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .map(|rule| rule["fires"].as_u64().unwrap_or(0))
+        .sum();
+    let lines = std::fs::read_to_string(findings.path())
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count() as u64;
+    assert!(fires > 0);
+    assert_eq!(lines, fires);
+}
+
+#[test]
 fn backtest_without_expectations_reports_stats_and_exits_zero() {
     // No expectations file: stats-only mode. Every rule fired, but nothing is
     // diffed and nothing is unexpected, so the run succeeds.

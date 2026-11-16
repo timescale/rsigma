@@ -65,6 +65,9 @@ pub struct TickOutput {
     pub dedup_lines: Vec<Value>,
     /// Incident emissions, dispatched via the incident path.
     pub incidents: Vec<IncidentResult>,
+    /// Detection Finding uids index-aligned with [`Self::incidents`].
+    /// Absent from the incident NDJSON.
+    pub finding_links: Vec<crate::FindingLinks>,
 }
 
 /// A validated, runnable alert-processing pipeline.
@@ -209,17 +212,61 @@ impl AlertPipeline {
         state: &mut AlertPipelineState,
         now: i64,
         metrics: &dyn MetricsHook,
-        mut capture: Option<&mut dyn crate::capture::CaptureSink>,
+        capture: Option<&mut dyn crate::capture::CaptureSink>,
     ) -> ProcessResult {
+        self.process_inner(results, None, state, now, metrics, capture)
+            .0
+    }
+
+    /// [`Self::process_with_capture`] carrying each result's OCSF finding uid.
+    ///
+    /// `finding_uids` is index-aligned with `results`. The uid of every result
+    /// that joins an incident is recorded on its retained sample, so an
+    /// Incident Finding can reference the Detection Finding emitted for it.
+    /// Returns the kept results and their uids, still index-aligned.
+    pub fn process_with_finding_uids(
+        &self,
+        results: ProcessResult,
+        finding_uids: Vec<String>,
+        state: &mut AlertPipelineState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+        capture: Option<&mut dyn crate::capture::CaptureSink>,
+    ) -> (ProcessResult, Vec<String>) {
+        let (kept, uids) =
+            self.process_inner(results, Some(finding_uids), state, now, metrics, capture);
+        (kept, uids.unwrap_or_default())
+    }
+
+    fn process_inner(
+        &self,
+        results: ProcessResult,
+        finding_uids: Option<Vec<String>>,
+        state: &mut AlertPipelineState,
+        now: i64,
+        metrics: &dyn MetricsHook,
+        mut capture: Option<&mut dyn crate::capture::CaptureSink>,
+    ) -> (ProcessResult, Option<Vec<String>>) {
         let start = std::time::Instant::now();
         let mut kept = Vec::with_capacity(results.len());
+        let mut kept_uids = finding_uids
+            .as_ref()
+            .map(|_| Vec::with_capacity(results.len()));
+        let mut uids = finding_uids.map(Vec::into_iter);
         let mut pending = Vec::new();
         let capturing = capture.is_some();
         let capture_ok = capturing && self.capture_incompatibility().is_none();
 
         for mut result in results {
-            if !self.scope.matches(&result) {
+            let finding_uid = uids.as_mut().and_then(Iterator::next);
+            let mut keep = |result: EvaluationResult, finding_uid: Option<String>| {
                 kept.push(result);
+                if let Some(kept_uids) = kept_uids.as_mut() {
+                    kept_uids.push(finding_uid.unwrap_or_default());
+                }
+            };
+            if !self.scope.matches(&result) {
+                keep(result, finding_uid);
                 continue;
             }
 
@@ -270,22 +317,28 @@ impl AlertPipeline {
             // group-by selectors off the result while the event is still
             // present, then annotate it with the incident id.
             if let Some(gcfg) = self.group.as_ref()
-                && let Some(id) = state.incidents.assign(gcfg, &result, now, |guard| {
-                    metrics.on_alert_pipeline_overmerge(guard_label(guard));
-                })
+                && let Some(id) = state.incidents.assign_with_finding_uid(
+                    gcfg,
+                    &result,
+                    finding_uid.as_deref().filter(|uid| !uid.is_empty()),
+                    now,
+                    |guard| {
+                        metrics.on_alert_pipeline_overmerge(guard_label(guard));
+                    },
+                )
             {
                 if self.strip_event {
                     strip_event_payloads(&mut result);
                 }
                 annotate_incident(&mut result, id);
-                kept.push(result);
+                keep(result, finding_uid);
                 continue;
             }
 
             if self.strip_event {
                 strip_event_payloads(&mut result);
             }
-            kept.push(result);
+            keep(result, finding_uid);
         }
 
         if let Some(sink) = capture.as_mut() {
@@ -299,7 +352,7 @@ impl AlertPipeline {
             metrics.set_incidents_open(state.incidents.len() as i64);
         }
         metrics.observe_alert_pipeline_duration(start.elapsed().as_secs_f64());
-        kept
+        (kept, kept_uids)
     }
 
     fn offer_capture(
@@ -378,6 +431,7 @@ impl AlertPipeline {
             for emission in state.incidents.tick(gcfg, now) {
                 metrics.on_incident_emitted(emission.trigger);
                 out.incidents.push(emission.result);
+                out.finding_links.push(emission.links);
             }
             metrics.set_incidents_open(state.incidents.len() as i64);
         }
@@ -599,6 +653,39 @@ mod tests {
         assert_eq!(first.len(), 1);
         let dup = run(&p, "10.0.0.1", Level::High, &mut st, 5);
         assert!(dup.is_empty());
+    }
+
+    #[test]
+    fn kept_finding_uids_stay_aligned_when_results_fold_away() {
+        let p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 0s\n",
+        );
+        let mut st = AlertPipelineState::default();
+        let (kept, uids) = p.process_with_finding_uids(
+            vec![
+                detection("10.0.0.1", Level::High),
+                detection("10.0.0.1", Level::High),
+                detection("10.0.0.2", Level::High),
+            ],
+            vec!["uid-0".into(), "uid-1".into(), "uid-2".into()],
+            &mut st,
+            0,
+            &NoopMetrics,
+            None,
+        );
+        assert_eq!(kept.len(), 2, "the duplicate folds");
+        assert_eq!(uids, ["uid-0", "uid-2"]);
+
+        let out = p.tick(&mut st, 0, &NoopMetrics);
+        let mut linked: Vec<String> = out
+            .finding_links
+            .iter()
+            .flat_map(|links| links.refs.iter().filter_map(|uid| uid.clone()))
+            .collect();
+        linked.sort();
+        assert_eq!(linked, ["uid-0", "uid-2"]);
+        let wire = serde_json::to_string(&out.incidents).unwrap();
+        assert!(!wire.contains("uid-"), "{wire}");
     }
 
     #[test]

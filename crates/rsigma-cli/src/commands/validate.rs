@@ -232,7 +232,8 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     "compile_errors": compile_errors,
                 });
                 // NDJSON: one row per finding (or a single ok row). JSON: envelope.
-                match ctx.format {
+                let format = ctx.format;
+                match format {
                     OutputFormat::Ndjson
                     | OutputFormat::Table
                     | OutputFormat::Csv

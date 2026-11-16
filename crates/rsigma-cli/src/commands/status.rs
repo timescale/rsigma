@@ -114,7 +114,8 @@ pub(crate) fn cmd_status(args: StatusArgs, ctx: OutputCtx) {
         }
     };
 
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => output::render_json(&value, ctx.pretty_json()),
         OutputFormat::Ndjson => output::render_ndjson(&value),
         OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {

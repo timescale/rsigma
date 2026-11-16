@@ -77,7 +77,8 @@ pub(crate) fn cmd_classify(args: ClassifyArgs, ctx: OutputCtx) {
         }
     };
 
-    match ctx.format {
+    let format = ctx.format;
+    match format {
         OutputFormat::Json => render_json(&report, true),
         OutputFormat::Ndjson => {
             for rec in &report.events {

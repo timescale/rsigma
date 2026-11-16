@@ -1,0 +1,76 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 2,
+  "activity_name": "Update",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "count": 2,
+  "end_time": 1005000,
+  "finding_info": {
+    "analytic": {
+      "name": "SSH brute force",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "corr-1"
+    },
+    "attacks": [
+      {
+        "tactic": {
+          "name": "Credential Access",
+          "uid": "TA0006"
+        }
+      }
+    ],
+    "title": "SSH brute force",
+    "uid": "dedup-29457ad1668add34-1000"
+  },
+  "message": "SSH brute force",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.1.0"
+  },
+  "severity": "Critical",
+  "severity_id": 5,
+  "start_time": 1000000,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Update",
+  "type_uid": 200402,
+  "unmapped": {
+    "aggregated_value": 73.0,
+    "correlation_type": "event_count",
+    "custom_attributes": {
+      "ticket": "SOC-9"
+    },
+    "enrichments": {
+      "dedup_fields": {
+        "rule": "corr-1"
+      },
+      "dedup_fingerprint": "29457ad1668add34",
+      "dedup_state": "repeat"
+    },
+    "group_key": [
+      [
+        "SourceIP",
+        "203.0.113.4"
+      ]
+    ],
+    "tags": [
+      "attack.credential_access"
+    ],
+    "timespan_secs": 300
+  }
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://timescale.github.io/rsigma/fixtures/ocsf/class_2004.schema.json",
-  "title": "OCSF 1.1.0 Detection Finding (class 2004), required fields only",
+  "title": "OCSF 1.3.0 Detection Finding (class 2004), required fields only",
   "description": "A minimal, hand-maintained conformance schema for the OCSF Detection Finding class as rsigma emits it: required attributes, the closed enums rsigma uses, and the class/category/type_uid arithmetic. Profiles are deliberately off and optional attributes are unconstrained, so this validates conformance without pulling the full OCSF package (which would mean a network fetch in CI).",
   "type": "object",
   "required": [
@@ -62,7 +62,7 @@
     "risk_score": { "type": "integer" },
     "metadata": {
       "type": "object",
-      "required": ["product", "version"],
+      "required": ["product", "version", "profiles"],
       "properties": {
         "product": {
           "type": "object",
@@ -73,8 +73,16 @@
             "version": { "type": "string" }
           }
         },
-        "version": { "const": "1.1.0" },
-        "uid": { "type": "string", "minLength": 1 }
+        "version": { "const": "1.3.0" },
+        "uid": { "type": "string", "minLength": 1 },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "contains": { "const": "security_control" }
+        },
+        "correlation_uid": { "type": "string" }
       }
     },
     "finding_info": {
@@ -165,5 +173,19 @@
       }
     },
     "unmapped": { "type": "object" }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["actor"] },
+      "then": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "profiles": { "contains": { "const": "host" } }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
