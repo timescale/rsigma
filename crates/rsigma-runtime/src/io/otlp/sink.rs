@@ -131,9 +131,9 @@ impl OtlpSink {
         })
     }
 
-    /// Select what each log record carries: native attributes with the rule
-    /// title as body ([`SinkFormat::Ndjson`], the default), or the OCSF finding
-    /// as body ([`SinkFormat::Ocsf`]).
+    /// Select the log-record body: the rule title ([`SinkFormat::Ndjson`], the
+    /// default) or the OCSF finding ([`SinkFormat::Ocsf`]). Both keep the
+    /// native attributes.
     #[must_use]
     pub fn with_format(mut self, format: SinkFormat) -> Self {
         self.format = format;
