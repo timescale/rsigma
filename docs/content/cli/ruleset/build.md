@@ -18,7 +18,7 @@ rsigma ruleset build <NAME> [--config <PATH>] [-o <DIR>] [--force] [--check]
 
 `ruleset build` resolves the named ruleset, emits every kept document as canonical YAML, and writes a deterministic lockfile. The output directory contains `rules/<stem>.yml`, `correlations/<stem>.yml`, `filters/<stem>.yml`, and `ruleset.lock.json`. `<stem>` is the lowercased id when it is filesystem-safe, otherwise a content hash.
 
-Writes are atomic and minimal. The build computes the full desired file set first, writes only files whose bytes differ, removes stale `.yml` files under the three subdirectories, and writes the lockfile last. The lockfile records the spec digest, source digests, overlay files, pipelines, and every document with its hash and applied overlays. It has no timestamps, so an unchanged rebuild is byte-identical.
+Writes are atomic and minimal. The build computes the full desired file set first, writes only files whose bytes differ, removes stale `.yml` files under the three subdirectories, and writes the lockfile last. The lockfile records the spec digest, source digests, overlay files, pipelines, and every document with its hash and applied overlays. It has no timestamps, so an unchanged rebuild is byte-identical. Source and overlay digests read CRLF line endings as LF, so a checkout that converts line endings produces the same lockfile. {{ added "unreleased" }}
 
 The build refuses to write into an existing non-empty directory that has no `ruleset.lock.json` unless `--force` is given. It never deletes anything outside the three subdirectories.
 

@@ -9,8 +9,8 @@ use rsigma_parser::{emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml};
 use serde::Serialize;
 
 use super::lock::{
-    LOCK_VERSION, LockedDocument, LockedOverlayFile, LockedSource, Lockfile, lock_path, sha256_hex,
-    source_digest, spec_digest,
+    LOCK_VERSION, LockedDocument, LockedOverlayFile, LockedSource, Lockfile, content_sha256,
+    lock_path, sha256_hex, source_digest, spec_digest,
 };
 use crate::fsutil::atomic_write;
 
@@ -146,7 +146,8 @@ fn subdir(kind: DocumentKind) -> &'static str {
     }
 }
 
-fn portable_path(path: &Path) -> String {
+/// A path with `/` separators, for lockfiles and reports.
+pub(crate) fn portable_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
@@ -207,7 +208,7 @@ pub(crate) fn plan_output(
         .iter()
         .map(|file| LockedOverlayFile {
             path: portable_path(&file.path),
-            sha256: sha256_hex(&file.sha256_input),
+            sha256: content_sha256(&file.sha256_input),
         })
         .collect();
     overlay_files.sort_by(|a, b| a.path.cmp(&b.path));

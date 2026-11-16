@@ -7,7 +7,9 @@ use serde_json::json;
 
 use crate::exit_code::{CONFIG_ERROR, FINDINGS, RULE_ERROR};
 use crate::output::{OutputCtx, Tabular, render_report};
-use crate::ruleset::build::{check_output, ensure_unique, plan_output, write_output};
+use crate::ruleset::build::{
+    check_output, ensure_unique, plan_output, portable_path, write_output,
+};
 use crate::ruleset::{load_named, resolve_or_exit};
 
 #[derive(Debug, Serialize)]
@@ -84,7 +86,7 @@ pub(crate) fn cmd_build(args: super::BuildArgs, ctx: OutputCtx) {
         let rows: Vec<DriftRow> = drifted
             .iter()
             .map(|path| DriftRow {
-                path: path.display().to_string(),
+                path: portable_path(path),
             })
             .collect();
         let envelope = json!({

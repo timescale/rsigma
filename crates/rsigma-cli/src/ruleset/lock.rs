@@ -6,6 +6,8 @@ use rsigma_parser::ruleset::{RulesetSpec, SourceFile};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::build::portable_path;
+
 /// The lockfile schema version understood by this build.
 pub(crate) const LOCK_VERSION: u32 = 1;
 
@@ -59,13 +61,22 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Normalize a path for hashing and lockfile output.
-fn portable_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+/// SHA-256 of a source or overlay file with CRLF line endings read as LF, so
+/// a checkout that converts line endings does not change the lockfile.
+pub(crate) fn content_sha256(bytes: &[u8]) -> String {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().peekable();
+    while let Some(&byte) = iter.next() {
+        if byte == b'\r' && iter.peek() == Some(&&b'\n') {
+            continue;
+        }
+        normalized.push(byte);
+    }
+    sha256_hex(&normalized)
 }
 
 /// Digest over every file the walk read for `source`, as sorted
-/// `<relative path>\0<sha256 of file bytes>\n` lines.
+/// `<relative path>\0<content_sha256 of the file>\n` lines.
 pub(crate) fn source_digest(files: &[SourceFile], source: usize) -> String {
     let mut lines: Vec<String> = files
         .iter()
@@ -74,7 +85,7 @@ pub(crate) fn source_digest(files: &[SourceFile], source: usize) -> String {
             format!(
                 "{}\0{}\n",
                 portable_path(&file.relative),
-                sha256_hex(&file.sha256_input)
+                content_sha256(&file.sha256_input)
             )
         })
         .collect();
@@ -111,6 +122,18 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn content_digests_ignore_crlf_line_endings() {
+        assert_eq!(
+            content_sha256(b"a: 1\r\nb: 2\r\n"),
+            content_sha256(b"a: 1\nb: 2\n")
+        );
+        assert_ne!(content_sha256(b"a: 1\r"), content_sha256(b"a: 1"));
+        let lf = [source_file(0, "r.yml", b"title: x\n")];
+        let crlf = [source_file(0, "r.yml", b"title: x\r\n")];
+        assert_eq!(source_digest(&lf, 0), source_digest(&crlf, 0));
     }
 
     #[test]
