@@ -359,7 +359,7 @@ fn a_ruleset_overlay_outside_the_root_is_rejected() {
         fail_level: Default::default(),
     }))
     .unwrap_err();
-    let text = format!("{error:?}");
+    let text = error.message.to_string();
     assert!(
         text.contains("escapes the configured --rules-dir")
             && text.contains(&outside.display().to_string()),
@@ -394,7 +394,7 @@ fn a_ruleset_overlay_dir_outside_the_root_is_rejected() {
     let fx = Fixture::new();
     let dir = fx.outside.path().display().to_string();
     let error = validate_rooted_ruleset(&fx, &format!("overlays:\n  - dir: {dir}\n")).unwrap_err();
-    let text = format!("{error:?}");
+    let text = error.message.to_string();
     assert!(
         text.contains("escapes the configured --rules-dir") && text.contains(&dir),
         "{text}"
@@ -406,7 +406,7 @@ fn a_ruleset_pipeline_outside_the_root_is_rejected() {
     let fx = Fixture::new();
     let pipeline = fx.outside.path().join("pipeline.yml").display().to_string();
     let error = validate_rooted_ruleset(&fx, &format!("pipelines: [{pipeline}]\n")).unwrap_err();
-    let text = format!("{error:?}");
+    let text = error.message.to_string();
     assert!(
         text.contains("escapes the configured --rules-dir") && text.contains(&pipeline),
         "{text}"
