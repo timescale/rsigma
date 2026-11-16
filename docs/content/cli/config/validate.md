@@ -21,8 +21,9 @@ Walks the same [discovery chain](../../reference/configuration.md#discovery) the
 - **Unknown keys** that don't match the schema (typo guard).
 - **Inactive sections** that are set but inert in this build because the gating Cargo feature is disabled (`daemon` without the `daemon` feature, `daemon.nats` without `daemon-nats`, `daemon.api.tls` without `daemon-tls`).
 - **Errors** that prevent a file from loading at all.
+- **Ruleset errors** from statically checking every declared ruleset: unknown keys, an empty `sources` list, invalid globs, unknown levels, statuses, kinds, and policies, and malformed overlays. Sources are not read, so a missing source, an unresolved correlation reference, or an overlay that matches nothing surfaces when the ruleset is resolved, for example by [`ruleset show`](../ruleset/show.md) or [`ruleset build`](../ruleset/build.md). {{ added "unreleased" }}
 
-By default unknown keys are warnings; `--strict` upgrades them to hard errors so CI can gate on configuration cleanliness.
+By default unknown keys are warnings; `--strict` upgrades them to hard errors so CI can gate on configuration cleanliness. Ruleset errors always fail validation with exit 3, regardless of `--strict`.
 
 ## Flags
 
@@ -63,11 +64,14 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
   "ignored_keys": [
     { "file": "./rsigma.yaml", "key": "mcp.daemon_url" }
   ],
-  "inactive_sections": []
+  "inactive_sections": [],
+  "ruleset_errors": [
+    { "ruleset": "linux_edge", "message": "ruleset 'linux_edge': unknown key 'exlude' (did you mean 'exclude'?)" }
+  ]
 }
 ```
 
-`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `ruleset_errors` {{ added "unreleased" }} reports each problem found in a ruleset spec, keyed by ruleset name.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 
@@ -76,7 +80,7 @@ A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 | Code | Meaning |
 |------|---------|
 | `0` | Config loaded successfully. `--strict` exits 0 only when there are no unknown keys. |
-| `3` | A file could not be read or parsed, or `--strict` saw unknown keys. |
+| `3` | A file could not be read or parsed, `--strict` saw unknown keys, or a ruleset spec is invalid. |
 
 ## Examples
 

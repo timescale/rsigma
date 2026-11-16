@@ -14,6 +14,7 @@
 //! [`ToolRouter`] implements `Add`, so the combined router exposes every tool
 //! exactly as a single `#[tool_router]` block would.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ use rmcp::{
     tool_handler,
 };
 use rsigma_parser::reference::{MITRE_TACTICS, MODIFIERS};
+use rsigma_parser::ruleset::RulesetSpec;
 use rsigma_parser::{LintConfig, ads_catalogue, catalogue};
 use serde_json::{Value, json};
 
@@ -92,6 +94,8 @@ struct State {
 pub struct RsigmaMcp {
     tool_router: ToolRouter<Self>,
     state: Arc<State>,
+    /// Named rulesets declared in the server's configuration.
+    rulesets: Arc<BTreeMap<String, RulesetSpec>>,
 }
 
 impl RsigmaMcp {
@@ -142,7 +146,14 @@ impl RsigmaMcp {
                 daemon,
                 allow_operate_writes: has_daemon && allow_operate_writes,
             }),
+            rulesets: Arc::new(BTreeMap::new()),
         })
+    }
+
+    /// Attach the named rulesets declared in the server's configuration.
+    pub fn with_rulesets(mut self, rulesets: BTreeMap<String, RulesetSpec>) -> Self {
+        self.rulesets = Arc::new(rulesets);
+        self
     }
 
     fn root(&self) -> Option<&Path> {
@@ -351,6 +362,27 @@ pub(crate) fn handler() -> RsigmaMcp {
 #[cfg(test)]
 pub(crate) fn delegating_handler(root: Option<PathBuf>) -> RsigmaMcp {
     RsigmaMcp::new(root, LintConfig::default(), true)
+}
+
+/// A handler carrying the named rulesets under test.
+#[cfg(test)]
+pub(crate) fn ruleset_handler(
+    root: Option<PathBuf>,
+    rulesets: BTreeMap<String, RulesetSpec>,
+) -> RsigmaMcp {
+    RsigmaMcp::new(root, LintConfig::default(), false).with_rulesets(rulesets)
+}
+
+/// A ruleset spec with the given sources, relative ones joined onto `root`
+/// (config paths resolve against the working directory, not `--rules-dir`),
+/// and pipelines.
+#[cfg(test)]
+pub(crate) fn ruleset_spec(root: &Path, sources: &[&str], pipelines: &[&str]) -> RulesetSpec {
+    RulesetSpec {
+        sources: sources.iter().map(|source| root.join(source)).collect(),
+        pipelines: pipelines.iter().map(|name| (*name).to_string()).collect(),
+        ..Default::default()
+    }
 }
 
 /// A handler pointed at `daemon_url`, with write tools gated by `allow_writes`.

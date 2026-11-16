@@ -1,0 +1,38 @@
+title: Windows discovery burst
+id: cccccccc-0000-4000-8000-000000000001
+status: experimental
+description: Several discovery commands run close together.
+author: Test Author
+level: medium
+correlation:
+    type: event_count
+    rules:
+        - aaaaaaaa-0000-4000-8000-000000000001
+        - aaaaaaaa-0000-4000-8000-000000000003
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 3
+tags:
+    - attack.discovery
+    - attack.t1059
+---
+title: Discovery burst escalation
+id: cccccccc-0000-4000-8000-000000000002
+status: experimental
+description: A discovery burst repeats.
+author: Test Author
+level: high
+correlation:
+    type: event_count
+    rules:
+        - cccccccc-0000-4000-8000-000000000001
+    group-by:
+        - User
+    timespan: 15m
+    condition:
+        gte: 2
+tags:
+    - attack.discovery
+    - attack.t1059

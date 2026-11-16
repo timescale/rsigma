@@ -7,9 +7,8 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process;
 
 use clap::Args;
 use similar::TextDiff;
@@ -17,6 +16,7 @@ use similar::TextDiff;
 use rsigma_parser::{FormatError, format_yaml};
 
 use crate::exit_code::{CONFIG_ERROR, FINDINGS, RULE_ERROR, SUCCESS};
+use crate::fsutil::atomic_write;
 use crate::output::{OutputCtx, Painter};
 
 /// Arguments for `rsigma rule fmt`.
@@ -477,37 +477,4 @@ fn print_diff(path: &str, before: &str, after: &str, painter: &Painter) {
         };
         println!("{rendered}");
     }
-}
-
-/// Replace `path` atomically: write a sibling temporary file, sync it, copy the
-/// target's permissions, then rename over the target.
-fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
-    let target = fs::canonicalize(path)?;
-    let permissions = fs::metadata(&target)?.permissions();
-    let dir = target.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
-    })?;
-    let file_name = target
-        .file_name()
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
-        })?
-        .to_string_lossy();
-    let temporary = dir.join(format!(".{file_name}.rsigma-fmt-{}.tmp", process::id()));
-
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-        file.set_permissions(permissions)?;
-        fs::rename(&temporary, &target)
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
 }

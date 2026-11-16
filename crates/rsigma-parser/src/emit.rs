@@ -17,12 +17,13 @@
 //! `*`, `?`, and `\` are escaped so a re-parse reproduces the same
 //! [`SigmaString`] wildcard structure.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use crate::ast::{
-    ArrayQuantifier, ConditionExpr, Detection, DetectionItem, Detections, LogSource, Modifier,
-    Related, RelationType, SigmaCollection, SigmaRule, Status,
+    ArrayQuantifier, ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule,
+    Detection, DetectionItem, Detections, FieldAlias, FilterRule, FilterRuleTarget, LogSource,
+    Modifier, Related, RelationType, SigmaCollection, SigmaRule, Status, WindowMode,
 };
 use crate::style::{KeyCtx, Lead, RSIGMA_ORDER, STEP, ScalarCtx, encode_key, push_scalar};
 use crate::value::{SigmaString, SigmaValue, SpecialChar, StringPart};
@@ -111,7 +112,260 @@ pub fn emit_rule_yaml(rule: &SigmaRule) -> String {
             ScalarCtx::Value,
         );
     }
-    emit_custom_attributes(&mut out, rule);
+    emit_custom_attributes(&mut out, &rule.custom_attributes);
+
+    out
+}
+
+/// Emit a single [`CorrelationRule`] as canonical Sigma YAML.
+///
+/// The output always ends with a trailing newline and re-parses to an equal
+/// [`CorrelationRule`]. Correlation bodies are emitted in the key order the
+/// parser accepts, `window` only when it is not the default sliding mode, and
+/// `generate` only when true.
+///
+/// ```rust
+/// use rsigma_parser::{emit_correlation_yaml, parse_sigma_yaml};
+///
+/// let yaml = r#"
+/// title: Burst of failed logins
+/// correlation:
+///     type: event_count
+///     rules:
+///         - failed_login
+///     group-by:
+///         - User
+///     timespan: 5m
+///     condition:
+///         gte: 10
+/// "#;
+/// let collection = parse_sigma_yaml(yaml).unwrap();
+/// let emitted = emit_correlation_yaml(&collection.correlations[0]);
+/// assert!(emitted.contains("type: event_count"));
+/// assert!(emitted.contains("gte: 10"));
+/// ```
+pub fn emit_correlation_yaml(rule: &CorrelationRule) -> String {
+    let mut out = String::new();
+
+    push_scalar(
+        &mut out,
+        "",
+        Lead::Key("title"),
+        &rule.title,
+        ScalarCtx::Prose,
+    );
+    if let Some(id) = &rule.id {
+        push_scalar(&mut out, "", Lead::Key("id"), id, ScalarCtx::Value);
+    }
+    if let Some(name) = &rule.name {
+        push_scalar(&mut out, "", Lead::Key("name"), name, ScalarCtx::Value);
+    }
+    if let Some(status) = &rule.status {
+        push_line(&mut out, "status", status_str(*status));
+    }
+    if let Some(description) = &rule.description {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("description"),
+            description,
+            ScalarCtx::Prose,
+        );
+    }
+    emit_string_list(&mut out, "references", &rule.references, ScalarCtx::Prose);
+    if let Some(author) = &rule.author {
+        push_scalar(&mut out, "", Lead::Key("author"), author, ScalarCtx::Prose);
+    }
+    if let Some(date) = &rule.date {
+        push_scalar(&mut out, "", Lead::Key("date"), date, ScalarCtx::Value);
+    }
+    if let Some(modified) = &rule.modified {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("modified"),
+            modified,
+            ScalarCtx::Value,
+        );
+    }
+    emit_related(&mut out, &rule.related);
+    emit_string_list(&mut out, "tags", &rule.tags, ScalarCtx::Prose);
+    if let Some(version) = rule.sigma_version {
+        push_line(&mut out, "sigma-version", &version.to_string());
+    }
+
+    let _ = writeln!(out, "correlation:");
+    push_line(&mut out, "    type", rule.correlation_type.as_str());
+    emit_string_list_at(&mut out, "    rules", &rule.rules, ScalarCtx::Value);
+    emit_string_list_at(&mut out, "    group-by", &rule.group_by, ScalarCtx::Value);
+    push_line(&mut out, "    timespan", &rule.timespan.to_string());
+    if rule.window != WindowMode::Sliding {
+        push_line(&mut out, "    window", rule.window.as_str());
+    }
+    if let Some(gap) = &rule.gap {
+        push_line(&mut out, "    gap", &gap.to_string());
+    }
+    emit_correlation_condition(&mut out, "    ", &rule.condition);
+    emit_correlation_aliases(&mut out, &rule.aliases);
+    if rule.generate {
+        push_line(&mut out, "    generate", "true");
+    }
+
+    emit_string_list(&mut out, "fields", &rule.fields, ScalarCtx::Prose);
+    emit_string_list(
+        &mut out,
+        "falsepositives",
+        &rule.falsepositives,
+        ScalarCtx::Prose,
+    );
+    if let Some(level) = &rule.level {
+        push_line(&mut out, "level", level.as_str());
+    }
+    emit_string_list(&mut out, "scope", &rule.scope, ScalarCtx::Prose);
+    if let Some(license) = &rule.license {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("license"),
+            license,
+            ScalarCtx::Prose,
+        );
+    }
+    if let Some(taxonomy) = &rule.taxonomy {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("taxonomy"),
+            taxonomy,
+            ScalarCtx::Value,
+        );
+    }
+    emit_custom_attributes(&mut out, &rule.custom_attributes);
+
+    out
+}
+
+/// Emit a single [`FilterRule`] as canonical Sigma YAML.
+///
+/// The output always ends with a trailing newline and re-parses to an equal
+/// [`FilterRule`]. The `filter:` block carries the detection items and
+/// condition; `rules` is omitted when the filter applies to every rule.
+///
+/// ```rust
+/// use rsigma_parser::{emit_filter_yaml, parse_sigma_yaml};
+///
+/// let yaml = r#"
+/// title: Drop system accounts
+/// logsource:
+///     product: windows
+/// filter:
+///     rules:
+///         - failed_login
+///     selection:
+///         User|endswith: '$'
+///     condition: selection
+/// "#;
+/// let collection = parse_sigma_yaml(yaml).unwrap();
+/// let emitted = emit_filter_yaml(&collection.filters[0]);
+/// assert!(emitted.contains("filter:"));
+/// assert!(emitted.contains("User|endswith"));
+/// ```
+pub fn emit_filter_yaml(rule: &FilterRule) -> String {
+    let mut out = String::new();
+
+    push_scalar(
+        &mut out,
+        "",
+        Lead::Key("title"),
+        &rule.title,
+        ScalarCtx::Prose,
+    );
+    if let Some(id) = &rule.id {
+        push_scalar(&mut out, "", Lead::Key("id"), id, ScalarCtx::Value);
+    }
+    if let Some(name) = &rule.name {
+        push_scalar(&mut out, "", Lead::Key("name"), name, ScalarCtx::Value);
+    }
+    if let Some(status) = &rule.status {
+        push_line(&mut out, "status", status_str(*status));
+    }
+    if let Some(description) = &rule.description {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("description"),
+            description,
+            ScalarCtx::Prose,
+        );
+    }
+    emit_string_list(&mut out, "references", &rule.references, ScalarCtx::Prose);
+    if let Some(author) = &rule.author {
+        push_scalar(&mut out, "", Lead::Key("author"), author, ScalarCtx::Prose);
+    }
+    if let Some(date) = &rule.date {
+        push_scalar(&mut out, "", Lead::Key("date"), date, ScalarCtx::Value);
+    }
+    if let Some(modified) = &rule.modified {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("modified"),
+            modified,
+            ScalarCtx::Value,
+        );
+    }
+    emit_related(&mut out, &rule.related);
+    emit_string_list(&mut out, "tags", &rule.tags, ScalarCtx::Prose);
+    if let Some(version) = rule.sigma_version {
+        push_line(&mut out, "sigma-version", &version.to_string());
+    }
+    match &rule.logsource {
+        Some(logsource) => emit_logsource(&mut out, logsource),
+        None => {
+            let _ = writeln!(out, "logsource: {{}}");
+        }
+    }
+
+    let _ = writeln!(out, "filter:");
+    if let FilterRuleTarget::Specific(targets) = &rule.rules {
+        emit_string_list_at(&mut out, "    rules", targets, ScalarCtx::Value);
+    }
+    for (name, det) in sorted_named(&rule.detection.named) {
+        emit_named_detection(&mut out, name, det, "    ");
+    }
+    emit_timeframe(&mut out, "    ", &rule.detection);
+    emit_condition_at(&mut out, "    ", &rule.detection.conditions);
+
+    emit_string_list(&mut out, "fields", &rule.fields, ScalarCtx::Prose);
+    emit_string_list(
+        &mut out,
+        "falsepositives",
+        &rule.falsepositives,
+        ScalarCtx::Prose,
+    );
+    if let Some(level) = &rule.level {
+        push_line(&mut out, "level", level.as_str());
+    }
+    emit_string_list(&mut out, "scope", &rule.scope, ScalarCtx::Prose);
+    if let Some(license) = &rule.license {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("license"),
+            license,
+            ScalarCtx::Prose,
+        );
+    }
+    if let Some(taxonomy) = &rule.taxonomy {
+        push_scalar(
+            &mut out,
+            "",
+            Lead::Key("taxonomy"),
+            taxonomy,
+            ScalarCtx::Value,
+        );
+    }
+    emit_custom_attributes(&mut out, &rule.custom_attributes);
 
     out
 }
@@ -138,13 +392,23 @@ fn push_line(out: &mut String, key: &str, value: &str) {
 }
 
 fn emit_string_list(out: &mut String, key: &str, items: &[String], ctx: ScalarCtx) {
+    emit_string_list_at(out, key, items, ctx);
+}
+
+/// Emit a list whose key may carry leading indentation (for nested blocks).
+fn emit_string_list_at(out: &mut String, key: &str, items: &[String], ctx: ScalarCtx) {
     if items.is_empty() {
         return;
     }
     let _ = writeln!(out, "{key}:");
+    let indent = format!("{}{STEP}", leading_whitespace(key));
     for item in items {
-        push_scalar(out, STEP, Lead::Dash, item, ctx);
+        push_scalar(out, &indent, Lead::Dash, item, ctx);
     }
+}
+
+fn leading_whitespace(s: &str) -> &str {
+    &s[..s.len() - s.trim_start().len()]
 }
 
 fn emit_related(out: &mut String, related: &[Related]) {
@@ -207,17 +471,17 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
     }
 }
 
-fn emit_custom_attributes(out: &mut String, rule: &SigmaRule) {
-    let mut keys: Vec<&str> = rule.custom_attributes.keys().map(String::as_str).collect();
+fn emit_custom_attributes(out: &mut String, attrs: &HashMap<String, yaml_serde::Value>) {
+    let mut keys: Vec<&str> = attrs.keys().map(String::as_str).collect();
     let mut ordered: Vec<&str> = RSIGMA_ORDER
         .iter()
         .copied()
-        .filter(|key| rule.custom_attributes.contains_key(*key))
+        .filter(|key| attrs.contains_key(*key))
         .collect();
     keys.sort_unstable();
     ordered.extend(keys.into_iter().filter(|key| !RSIGMA_ORDER.contains(key)));
     for key in ordered {
-        let value = &rule.custom_attributes[key];
+        let value = &attrs[key];
         emit_yaml_value(out, &encode_key(key, KeyCtx::Key), value, "");
     }
 }
@@ -231,27 +495,45 @@ fn emit_detection(out: &mut String, detection: &Detections) {
     for (name, det) in sorted_named(&detection.named) {
         emit_named_detection(out, name, det, STEP);
     }
+    emit_timeframe(out, STEP, detection);
     emit_condition(out, &detection.conditions);
 }
 
+fn emit_timeframe(out: &mut String, indent: &str, detection: &Detections) {
+    if let Some(timeframe) = &detection.timeframe {
+        push_scalar(
+            out,
+            indent,
+            Lead::Key("timeframe"),
+            timeframe,
+            ScalarCtx::Value,
+        );
+    }
+}
+
 fn emit_condition(out: &mut String, conditions: &[ConditionExpr]) {
+    emit_condition_at(out, STEP, conditions);
+}
+
+fn emit_condition_at(out: &mut String, indent: &str, conditions: &[ConditionExpr]) {
     match conditions {
         [] => {}
         [single] => {
             push_scalar(
                 out,
-                STEP,
+                indent,
                 Lead::Key("condition"),
                 &condition_source(single),
                 ScalarCtx::Condition,
             );
         }
         many => {
-            let _ = writeln!(out, "{STEP}condition:");
+            let _ = writeln!(out, "{indent}condition:");
+            let nested = deeper(indent);
             for cond in many {
                 push_scalar(
                     out,
-                    &format!("{STEP}{STEP}"),
+                    &nested,
                     Lead::Dash,
                     &condition_source(cond),
                     ScalarCtx::Condition,
@@ -277,6 +559,77 @@ fn condition_source(expr: &ConditionExpr) -> String {
             .collect::<Vec<_>>()
             .join(" or "),
         other => other.to_string(),
+    }
+}
+
+/// Emit a correlation `condition:` block at `indent` (including the key).
+fn emit_correlation_condition(out: &mut String, indent: &str, condition: &CorrelationCondition) {
+    match condition {
+        CorrelationCondition::Threshold {
+            predicates,
+            field,
+            percentile,
+        } => {
+            let _ = writeln!(out, "{indent}condition:");
+            let nested = deeper(indent);
+            let mut ordered: Vec<&(ConditionOperator, u64)> = predicates.iter().collect();
+            ordered.sort_by_key(|(op, _)| operator_rank(*op));
+            for (op, value) in ordered {
+                push_line(
+                    out,
+                    &format!("{nested}{}", operator_str(*op)),
+                    &value.to_string(),
+                );
+            }
+            if let Some(field) = field {
+                match field.as_slice() {
+                    [single] => {
+                        push_scalar(out, &nested, Lead::Key("field"), single, ScalarCtx::Value)
+                    }
+                    many => {
+                        emit_string_list_at(out, &format!("{nested}field"), many, ScalarCtx::Value)
+                    }
+                }
+            }
+            if let Some(percentile) = percentile {
+                push_line(out, &format!("{nested}percentile"), &percentile.to_string());
+            }
+        }
+        CorrelationCondition::Extended(expr) => {
+            push_scalar(
+                out,
+                indent,
+                Lead::Key("condition"),
+                &condition_source(expr),
+                ScalarCtx::Condition,
+            );
+        }
+    }
+}
+
+/// Emit the `aliases:` mapping of a correlation, with sorted per-rule keys.
+fn emit_correlation_aliases(out: &mut String, aliases: &[FieldAlias]) {
+    if aliases.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "{STEP}aliases:");
+    for alias in aliases {
+        let _ = writeln!(
+            out,
+            "{STEP}{STEP}{}:",
+            encode_key(&alias.alias, KeyCtx::Key)
+        );
+        let mut mapping: Vec<(&String, &String)> = alias.mapping.iter().collect();
+        mapping.sort_by(|a, b| a.0.cmp(b.0));
+        for (rule, field) in mapping {
+            push_scalar(
+                out,
+                &format!("{STEP}{STEP}{STEP}"),
+                Lead::Key(&encode_key(rule, KeyCtx::Key)),
+                field,
+                ScalarCtx::Value,
+            );
+        }
     }
 }
 
@@ -638,6 +991,28 @@ fn status_str(status: Status) -> &'static str {
     }
 }
 
+fn operator_str(op: ConditionOperator) -> &'static str {
+    match op {
+        ConditionOperator::Lt => "lt",
+        ConditionOperator::Lte => "lte",
+        ConditionOperator::Gt => "gt",
+        ConditionOperator::Gte => "gte",
+        ConditionOperator::Eq => "eq",
+        ConditionOperator::Neq => "neq",
+    }
+}
+
+fn operator_rank(op: ConditionOperator) -> u8 {
+    match op {
+        ConditionOperator::Lt => 0,
+        ConditionOperator::Lte => 1,
+        ConditionOperator::Gt => 2,
+        ConditionOperator::Gte => 3,
+        ConditionOperator::Eq => 4,
+        ConditionOperator::Neq => 5,
+    }
+}
+
 fn relation_str(relation: RelationType) -> &'static str {
     match relation {
         RelationType::Correlation => "correlation",
@@ -943,5 +1318,121 @@ rsigma.suppress:
             "zzz",
         ];
         assert_eq!(root_keys, expected, "{emitted}");
+    }
+
+    fn assert_correlation_round_trips(yaml: &str) -> String {
+        let first = parse_sigma_yaml(yaml).expect("input parses");
+        assert_eq!(first.correlations.len(), 1, "expected one correlation");
+        let emitted = emit_correlation_yaml(&first.correlations[0]);
+        let reparsed = parse_sigma_yaml(&emitted)
+            .unwrap_or_else(|e| panic!("emitted YAML must re-parse: {e}\n---\n{emitted}"));
+        assert_eq!(reparsed.correlations.len(), 1, "{emitted}");
+        assert_eq!(first.correlations[0], reparsed.correlations[0]);
+        assert_eq!(emitted, emit_correlation_yaml(&reparsed.correlations[0]));
+        emitted
+    }
+
+    fn assert_filter_round_trips(yaml: &str) -> String {
+        let first = parse_sigma_yaml(yaml).expect("input parses");
+        assert_eq!(first.filters.len(), 1, "expected one filter");
+        let emitted = emit_filter_yaml(&first.filters[0]);
+        let reparsed = parse_sigma_yaml(&emitted)
+            .unwrap_or_else(|e| panic!("emitted YAML must re-parse: {e}\n---\n{emitted}"));
+        assert_eq!(reparsed.filters.len(), 1, "{emitted}");
+        assert_eq!(first.filters[0], reparsed.filters[0]);
+        assert_eq!(emitted, emit_filter_yaml(&reparsed.filters[0]));
+        emitted
+    }
+
+    #[test]
+    fn round_trips_event_count_session_gap_aliases() {
+        let emitted = assert_correlation_round_trips(
+            "title: Session burst\nid: 11111111-2222-3333-4444-555555555555\ndescription: Too many logins.\ntags:\n    - attack.credential_access\ncorrelation:\n    type: event_count\n    rules:\n        - failed_login\n        - failed_ssh\n    group-by:\n        - User\n    timespan: 1h\n    window: session\n    gap: 5m\n    condition:\n        gte: 10\n    aliases:\n        user:\n            failed_login: User\n            failed_ssh: Username\n    generate: true\nlevel: high\n",
+        );
+        assert!(emitted.contains("window: session"), "{emitted}");
+        assert!(emitted.contains("gap: 5m"), "{emitted}");
+        assert!(emitted.contains("generate: true"), "{emitted}");
+        assert!(emitted.contains("failed_login: User"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_value_count_range_and_field() {
+        let emitted = assert_correlation_round_trips(
+            "title: Port scan\ncorrelation:\n    type: value_count\n    rules:\n        - connection\n    group-by:\n        - SourceIp\n    timespan: 5m\n    condition:\n        gt: 100\n        lte: 200\n        field:\n            - DestPort\n",
+        );
+        assert!(emitted.contains("gt: 100"), "{emitted}");
+        assert!(emitted.contains("lte: 200"), "{emitted}");
+        assert!(emitted.contains("DestPort"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_value_percentile() {
+        assert_correlation_round_trips(
+            "title: Slow tail\ncorrelation:\n    type: value_percentile\n    rules:\n        - latency\n    group-by:\n        - Service\n    timespan: 10m\n    condition:\n        gte: 95\n        field: LatencyMs\n        percentile: 99\n",
+        );
+    }
+
+    #[test]
+    fn round_trips_value_sum_avg_median() {
+        assert_correlation_round_trips(
+            "title: Sum\ncorrelation:\n    type: value_sum\n    rules:\n        - transfer\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 1000\n        field: Bytes\n",
+        );
+        assert_correlation_round_trips(
+            "title: Avg\ncorrelation:\n    type: value_avg\n    rules:\n        - transfer\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 1000\n        field: Bytes\n",
+        );
+        assert_correlation_round_trips(
+            "title: Median\ncorrelation:\n    type: value_median\n    rules:\n        - transfer\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 1000\n        field: Bytes\n",
+        );
+    }
+
+    #[test]
+    fn round_trips_temporal_extended_and_ordered() {
+        assert_correlation_round_trips(
+            "title: Login then process\ncorrelation:\n    type: temporal\n    rules:\n        - login\n        - process_start\n    group-by:\n        - User\n    timespan: 10m\n    condition: login and process_start\n",
+        );
+        assert_correlation_round_trips(
+            "title: Ordered\ncorrelation:\n    type: temporal_ordered\n    rules:\n        - login\n        - process_start\n    group-by:\n        - User\n    timespan: 10m\n    condition: login and process_start\n",
+        );
+    }
+
+    #[test]
+    fn round_trips_tumbling_window() {
+        assert_correlation_round_trips(
+            "title: Tumbling\ncorrelation:\n    type: event_count\n    rules:\n        - login\n    group-by:\n        - User\n    timespan: 1h\n    window: tumbling\n    condition:\n        gte: 5\n",
+        );
+    }
+
+    #[test]
+    fn round_trips_filter_any() {
+        let emitted = assert_filter_round_trips(
+            "title: Drop system accounts\nlogsource:\n    product: windows\n    category: process_creation\nfilter:\n    selection:\n        User|endswith: '$'\n    condition: selection\n",
+        );
+        assert!(!emitted.contains("rules:"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_filter_specific_logsource() {
+        let emitted = assert_filter_round_trips(
+            "title: Drop admin whoami\nid: 22222222-3333-4444-5555-666666666666\nlogsource:\n    product: windows\n    service: security\nfilter:\n    rules:\n        - 11111111-2222-3333-4444-555555555555\n        - whoami_rule\n    selection:\n        Image|endswith: '\\whoami.exe'\n    filter_main_system:\n        User: SYSTEM\n    condition: selection and not filter_main_system\n",
+        );
+        assert!(emitted.contains("rules:"), "{emitted}");
+        assert!(emitted.contains("whoami_rule"), "{emitted}");
+        assert!(emitted.contains("filter_main_system"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_a_detection_timeframe() {
+        let emitted = assert_round_trips(
+            "title: Burst\nlogsource:\n    product: windows\ndetection:\n    selection:\n        EventID: 4625\n    condition: selection\n    timeframe: 5m\n",
+        );
+        assert!(emitted.contains("    timeframe: 5m\n"), "{emitted}");
+    }
+
+    #[test]
+    fn round_trips_a_filter_timeframe() {
+        let emitted = assert_filter_round_trips(
+            "title: Drop bursts\nlogsource:\n    product: windows\nfilter:\n    selection:\n        User: SYSTEM\n    condition: selection\n    timeframe: 5m\n",
+        );
+        assert!(emitted.contains("    timeframe: 5m\n"), "{emitted}");
     }
 }

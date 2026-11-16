@@ -1,0 +1,13 @@
+title: Port scan range
+correlation:
+    type: value_count
+    rules:
+        - connection
+    group-by:
+        - SourceIp
+    timespan: 5m
+    condition:
+        gt: 100
+        lte: 200
+        field:
+            - DestPort

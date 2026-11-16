@@ -11,7 +11,16 @@ use crate::output::{OutputCtx, OutputFormat, Tabular, render_json, render_report
 #[derive(Args, Debug)]
 pub(crate) struct ConvertArgs {
     /// Path(s) to Sigma rule file(s) or directory
+    #[arg(required_unless_present = "ruleset", conflicts_with = "ruleset")]
     pub rules: Vec<PathBuf>,
+
+    /// Named ruleset from the configuration to convert instead of rule paths.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Target backend (e.g. postgres, lynxdb, fibratus, test)
     #[arg(short, long)]
@@ -91,12 +100,26 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
     // exists, otherwise delegate the whole conversion to a discovered
     // sigma-cli (or fail with install guidance when neither is available).
     let Some(backend) = try_native_backend(&args.target, &options) else {
-        run_delegated(&args, &ctx);
+        let tempdir = args.ruleset.as_deref().map(|name| {
+            let (name, spec) = crate::ruleset::load_named(name, args.config.as_deref());
+            let resolved = crate::ruleset::resolve_or_exit(&name, &spec, &ctx);
+            crate::ruleset::build::materialize_temp(&resolved, &spec).unwrap_or_else(|error| {
+                eprintln!("error: {error}");
+                process::exit(crate::exit_code::CONFIG_ERROR);
+            })
+        });
+        let rules = match &tempdir {
+            Some(dir) => vec![dir.path().to_path_buf()],
+            None => args.rules.clone(),
+        };
+        run_delegated(&args, &ctx, &rules, tempdir);
         return;
     };
 
     let ConvertArgs {
         rules,
+        ruleset,
+        config,
         target,
         format,
         pipeline: pipeline_paths,
@@ -106,7 +129,12 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         backend_options: _,
     } = args;
 
-    let collection = crate::load_collection_multi(&rules);
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: ruleset.as_deref(),
+        config: config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) {
@@ -270,7 +298,15 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
 /// for. The original rule files and a near 1:1 flag mapping are passed straight
 /// through, and sigma-cli's stdout is relayed through rsigma's output handling,
 /// so the result is identical to running sigma-cli directly.
-fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
+///
+/// `materialized` holds a resolved ruleset written for sigma-cli. It is
+/// dropped as soon as sigma-cli exits, since `process::exit` skips destructors.
+fn run_delegated(
+    args: &ConvertArgs,
+    ctx: &OutputCtx,
+    rules: &[PathBuf],
+    materialized: Option<tempfile::TempDir>,
+) {
     use rsigma_convert::sigma_cli::{self, DelegateError, SigmaCli};
 
     let target = args.target.as_str();
@@ -286,6 +322,7 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
              the delegated target '{target}' produces a single stream. Use a file path or stdout.",
             dir.display()
         );
+        drop(materialized);
         process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
@@ -297,10 +334,12 @@ fn run_delegated(args: &ConvertArgs, ctx: &OutputCtx) {
         args.without_pipeline,
         args.skip_unsupported,
         &args.backend_options,
-        &args.rules,
+        rules,
     );
 
-    let result = match cli.run(&argv) {
+    let run = cli.run(&argv);
+    drop(materialized);
+    let result = match run {
         Ok(out) => out,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!(

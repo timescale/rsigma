@@ -1,0 +1,14 @@
+title: Drop admin whoami
+id: 22222222-3333-4444-5555-666666666666
+logsource:
+    product: windows
+    service: security
+filter:
+    rules:
+        - 11111111-2222-3333-4444-555555555555
+        - whoami_rule
+    selection:
+        Image|endswith: '\whoami.exe'
+    filter_main_system:
+        User: SYSTEM
+    condition: selection and not filter_main_system

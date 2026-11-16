@@ -4708,6 +4708,7 @@ dependencies = [
  "pest_derive",
  "rand 0.10.3",
  "regex-syntax",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "stacker",

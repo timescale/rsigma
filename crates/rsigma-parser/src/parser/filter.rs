@@ -10,6 +10,32 @@ use super::{
     parse_related, parse_sigma_version, val_key,
 };
 
+/// Top-level keys the parser reads; any other top-level key becomes a
+/// custom attribute.
+pub(crate) const STANDARD_FILTER_KEYS: &[&str] = &[
+    "author",
+    "custom_attributes",
+    "sigma-version",
+    "date",
+    "description",
+    "falsepositives",
+    "fields",
+    "filter",
+    "id",
+    "level",
+    "license",
+    "logsource",
+    "modified",
+    "name",
+    "references",
+    "related",
+    "scope",
+    "status",
+    "tags",
+    "taxonomy",
+    "title",
+];
+
 // =============================================================================
 // Filter Rule Parsing
 // =============================================================================
@@ -80,30 +106,7 @@ pub(super) fn parse_filter_rule(
             .ok_or_else(|| SigmaParserError::MissingField("logsource".into()))?,
     )?);
 
-    let standard_filter_keys: &[&str] = &[
-        "author",
-        "custom_attributes",
-        "sigma-version",
-        "date",
-        "description",
-        "falsepositives",
-        "fields",
-        "filter",
-        "id",
-        "level",
-        "license",
-        "logsource",
-        "modified",
-        "name",
-        "references",
-        "related",
-        "scope",
-        "status",
-        "tags",
-        "taxonomy",
-        "title",
-    ];
-    let custom_attributes = collect_custom_attributes(m, standard_filter_keys);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_FILTER_KEYS);
 
     Ok(FilterRule {
         title,

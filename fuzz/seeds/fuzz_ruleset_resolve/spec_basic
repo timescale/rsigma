@@ -1,0 +1,8 @@
+0sources:
+  - embedded
+include:
+  - tags:
+      - attack.t1059*
+    level:
+      - high
+dependencies: include

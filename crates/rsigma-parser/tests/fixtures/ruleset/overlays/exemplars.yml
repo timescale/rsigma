@@ -1,0 +1,26 @@
+- id: aaaaaaaa-0000-4000-8000-000000000001
+  append:
+    custom_attributes:
+      rsigma.exemplars:
+        - name: whoami fires
+          expect: match
+          event:
+            Image: C:\Windows\System32\whoami.exe
+- id: cccccccc-0000-4000-8000-000000000001
+  set:
+    custom_attributes:
+      rsigma.exemplars:
+        - name: discovery burst
+          expect: match
+          events:
+            - offset: 0s
+              event:
+                User: alice
+            - offset: 1m
+              event:
+                User: alice
+- id: bbbbbbbb-0000-4000-8000-000000000001
+  set:
+    custom_attributes:
+      rsigma.ads.blind_spots:
+        - Login from a known jump host

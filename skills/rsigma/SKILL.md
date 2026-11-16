@@ -28,6 +28,7 @@ Groups:
 | `rule` | Check and build rules (`parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`) and review a rule set (`coverage`, `scorecard`, `visibility`, `hygiene`) |
 | `backend` | Convert rules to a query (`convert`, `targets`, `formats`) |
 | `pipeline` | See how a pipeline rewrites a rule (`diff`) and dry-run dynamic sources (`resolve`) |
+| `ruleset` | Curate named rule sets declared in `rsigma.yaml` (`list`, `show`, `build`, `diff`) and materialize a deployable tree with a lockfile |
 | `hunt` | Run converted rules read-only against a PostgreSQL archive and stream the matching rows back as events (`run`) |
 | `mcp` | Serve the toolchain to an agent (`serve`) |
 | `config` | Scaffold and inspect `rsigma.yaml`, and ask a running daemon to reload (`reload`) |
@@ -60,6 +61,7 @@ Point `--daemon-url` at a running daemon when the task is live triage (incidents
 - Why a rule missed: `engine explain`. How a pipeline rewrote fields: `pipeline diff`.
 - Events in an ECS, Splunk CIM, OCSF, CrowdStrike Falcon, or Google SecOps UDM shape: pass the matching pipeline with `-p`. See [Match the event schema](#match-the-event-schema).
 - Real events from a PostgreSQL archive to feed draft, tune, test, or backtest: `hunt run`.
+- The project defines rulesets in `rsigma.yaml`: pass `--ruleset <NAME>` to the rule-loading commands instead of assembling paths. Use `ruleset build` for a daemon tree with a lockfile, and `ruleset diff --fail-on-change` in CI.
 - A review of the rule set: `rule coverage` for ATT&CK gaps, `rule scorecard` for keep, tune, or retire verdicts, `rule hygiene` for silent, noisy, or ownerless rules, and `rule visibility` for telemetry coverage. The detection-strategy (ADS) document on a rule: `rule doc`, or `author_ads` on MCP.
 
 The write-lint-evaluate-convert loop, with the MCP tool beside each CLI command, is in [workflows.md](references/workflows.md), along with hunting and rule set review.

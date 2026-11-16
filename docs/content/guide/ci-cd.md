@@ -178,6 +178,43 @@ rsigma rule validate rules/ -p pipelines/dynamic.yml --resolve-sources
 
 See [Linting Rules](linting-rules.md) and [Processing Pipelines](processing-pipelines.md) for the deeper context on each gate.
 
+## Rulesets in CI
+
+{{ added "unreleased" }}
+
+A ruleset is a reproducible gate because it resolves to an explicit document set. Commit the build output and the lockfile, then verify both on every change:
+
+```bash
+rsigma ruleset build linux_edge -o build/linux_edge --check
+rsigma ruleset diff linux_edge --lock build/linux_edge/ruleset.lock.json --fail-on-change
+rsigma rule test --ruleset linux_edge --fail-on-missing
+```
+
+`--check` exits `1` when the committed tree differs from a fresh build. `--fail-on-change` exits `1` when the lockfile differs from the resolved ruleset, covering selector and overlay edits that leave the emitted files unchanged. `rule test` replays the exemplars, including exemplars added by overlays.
+
+GitHub Actions:
+
+```yaml
+- name: Verify the ruleset build
+  run: rsigma ruleset build linux_edge -o build/linux_edge --check
+- name: Verify the ruleset lockfile
+  run: rsigma ruleset diff linux_edge --lock build/linux_edge/ruleset.lock.json --fail-on-change
+- name: Replay the ruleset exemplars
+  run: rsigma rule test --ruleset linux_edge --fail-on-missing
+```
+
+GitLab CI:
+
+```yaml
+ruleset-gate:
+  script:
+    - rsigma ruleset build linux_edge -o build/linux_edge --check
+    - rsigma ruleset diff linux_edge --lock build/linux_edge/ruleset.lock.json --fail-on-change
+    - rsigma rule test --ruleset linux_edge --fail-on-missing
+```
+
+Point the daemon at the committed build output with `engine daemon --rules build/linux_edge`. The daemon does not need the ruleset configuration at runtime.
+
 ## GitHub Actions
 
 The fastest path on GitHub is the [`timescale/rsigma-action`](https://github.com/timescale/rsigma-action) composite action, which runs the whole gate in one step. The manual multi-job workflow further down is the equivalent without a third-party action, and the pattern to copy for the other CI systems on this page.

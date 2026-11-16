@@ -98,6 +98,85 @@ fn stdio_without_rules_dir_warns() {
 }
 
 #[test]
+fn stdio_resolves_a_ruleset_from_the_config() {
+    let cwd = tempfile::tempdir().unwrap();
+    let rules = cwd.path().join("rules");
+    std::fs::create_dir(&rules).unwrap();
+    std::fs::write(
+        rules.join("rule.yml"),
+        r#"title: Whoami Execution
+id: 8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a
+status: test
+description: Detects whoami
+author: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+level: medium
+tags:
+    - attack.execution
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("rsigma.yaml"),
+        r#"rulesets:
+  overlay:
+    sources:
+      - rules/rule.yml
+    overlays:
+      - id: 8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a
+        set:
+          custom_attributes:
+            rsigma.exemplars:
+              - name: overlaid
+                expect: match
+                event:
+                  CommandLine: cmd /c whoami
+"#,
+    )
+    .unwrap();
+
+    let stdin = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_exemplars","arguments":{"ruleset":"overlay"}}}"#,
+        "\n",
+    );
+
+    let output = rsigma()
+        .current_dir(cwd.path())
+        .args(["mcp", "serve", "--config", "rsigma.yaml", "--rules-dir"])
+        .arg(&rules)
+        .write_stdin(stdin)
+        .timeout(Duration::from_secs(10))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: serde_json::Value = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["id"] == serde_json::json!(2))
+        .unwrap_or_else(|| panic!("no tool response in {stdout}"));
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text content");
+    let report: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(report["ok"], serde_json::json!(true));
+    assert_eq!(report["report"]["results"][0]["name"], "overlaid");
+    assert_eq!(
+        report["report"]["results"][0]["passed"],
+        serde_json::json!(true)
+    );
+}
+
+#[test]
 fn stdio_with_rules_dir_does_not_warn() {
     let cwd = tempfile::tempdir().unwrap();
     let rules = tempfile::tempdir().unwrap();

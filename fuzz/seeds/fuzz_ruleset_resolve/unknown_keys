@@ -1,0 +1,16 @@
+0sources:
+  - embedded
+unknown_top: 1
+include:
+  - tags:
+      - attack.t1059*
+    unknown_selector: 2
+    logsource:
+      product: windows
+      unknown_logsource: 3
+overlays:
+  - id: aaaaaaaa-0000-4000-8000-000000000001
+    set:
+      level: high
+      unknown_patch: 4
+    unknown_entry: 5

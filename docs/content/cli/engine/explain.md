@@ -11,7 +11,7 @@ Explain why a detection rule did or did not match a single event.
 ## Synopsis
 
 ```text
-rsigma engine explain --rules <PATH>... [OPTIONS]
+rsigma engine explain [--rules <PATH>... | --ruleset <NAME>] [OPTIONS]
 ```
 
 ## Description
@@ -26,7 +26,9 @@ It consumes event data, so it lives under `engine` (the `rule` group stays stati
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>...` | required | Sigma rule file(s) or director(ies) to explain. Repeatable. |
+| `-r, --rules <PATH>...` | required unless `--ruleset` | Sigma rule file(s) or director(ies) to explain. Repeatable. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to explain instead of `--rules`. Conflicts with `--rules`. {{ added "unreleased" }} |
+| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
 | `-e, --event <JSON\|@FILE\|->` | stdin | The event to explain against: inline JSON, `@path` to a JSON file, or `-` (or omitted) to read a single JSON object from stdin. |
 | `-p, --pipeline <PATH\|NAME>` | none | Processing pipeline(s) to apply before evaluation. Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable, applied in priority order. |
 | `--rule-id <ID>` | unset | Only explain the rule with this id (falling back to an exact title). |

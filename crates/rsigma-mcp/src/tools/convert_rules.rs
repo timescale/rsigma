@@ -21,6 +21,7 @@ use rsigma_convert::convert_collection;
 use rsigma_convert::sigma_cli::{
     DelegateError, SigmaCli, build_convert_args, classify_output, install_hint,
 };
+use rsigma_parser::{SigmaCollection, emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml};
 use serde_json::{Value, json};
 
 use super::RsigmaMcp;
@@ -35,12 +36,17 @@ pub(crate) const DELEGATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Input for `convert_rules`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConvertInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
+    /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
+    /// `yaml` and `path`.
+    #[serde(default)]
+    pub ruleset: Option<String>,
     /// Backend target: `postgres` (aliases `postgresql`, `pg`), `lynxdb`, or
     /// `fibratus` convert natively; any other target is delegated to an
     /// installed sigma-cli when the server runs with `--allow-sigma-cli`.
@@ -49,6 +55,7 @@ pub struct ConvertInput {
     #[serde(default)]
     pub format: Option<String>,
     /// Processing pipelines (builtin names or file paths).
+    /// A ruleset's own pipelines are not applied; pass them here.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Backend options as key=value pairs (e.g. `table` -> `events`).
@@ -63,7 +70,7 @@ pub struct ConvertInput {
 impl RsigmaMcp {
     /// Convert Sigma rules to backend-native queries.
     #[tool(
-        description = "Convert Sigma rules to backend-native queries. `target` is one of postgres/lynxdb/fibratus (native); when the server runs with --allow-sigma-cli, any other target is delegated to an installed sigma-cli, reaching the full pySigma backend set. Accepts inline `yaml` or a file/directory `path`, optional `pipelines`, `format`, backend `options`, and `skip_unsupported`."
+        description = "Convert Sigma rules to backend-native queries. `target` is one of postgres/lynxdb/fibratus (native); when the server runs with --allow-sigma-cli, any other target is delegated to an installed sigma-cli, reaching the full pySigma backend set. Provide exactly one of inline `yaml`, a file/directory `path`, or a named `ruleset` from the server's configuration; optional `pipelines`, `format`, backend `options`, and `skip_unsupported`."
     )]
     async fn convert_rules(
         &self,
@@ -85,7 +92,13 @@ impl RsigmaMcp {
     }
 
     pub(crate) fn run_convert_rules(&self, input: ConvertInput) -> Result<Value, McpError> {
-        let collection = self.load_collection(input.yaml.as_deref(), input.path.as_deref())?;
+        let (collection, _) = self.load_collection(
+            input.yaml.as_deref(),
+            input.path.as_deref(),
+            input.ruleset.as_deref(),
+        )?;
+        // Ruleset pipelines map rules to rsigma's event shape; the backend's
+        // pipelines are the subject of this tool, so they are never implied.
         let pipelines = self.load_pipelines(&input.pipelines)?;
         let backend = get_backend(&input.target, &input.options)?;
         let format = input.format.as_deref().unwrap_or("default");
@@ -169,12 +182,22 @@ impl RsigmaMcp {
         // Stage the rule input: inline YAML goes to a temp file owned for the
         // duration of the call; a path is confined to --rules-dir when set.
         let mut _tempdir: Option<tempfile::TempDir> = None;
-        let rule_path = match (input.yaml.as_deref(), input.path.as_deref()) {
-            (Some(_), Some(_)) => {
-                return Err(invalid("provide either `yaml` or `path`, not both"));
+        let rule_path = match (
+            input.yaml.as_deref(),
+            input.path.as_deref(),
+            input.ruleset.as_deref(),
+        ) {
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => {
+                return Err(invalid(
+                    "provide exactly one of `yaml`, `path`, or `ruleset`",
+                ));
             }
-            (None, None) => return Err(invalid("one of `yaml` or `path` is required")),
-            (Some(yaml), None) => {
+            (None, None, None) => {
+                return Err(invalid(
+                    "provide exactly one of `yaml`, `path`, or `ruleset`",
+                ));
+            }
+            (Some(yaml), None, None) => {
                 let dir = tempfile::TempDir::new()
                     .map_err(|e| invalid(format!("cannot create temp dir: {e}")))?;
                 let path = dir.path().join("rules.yml");
@@ -183,7 +206,17 @@ impl RsigmaMcp {
                 _tempdir = Some(dir);
                 path
             }
-            (None, Some(p)) => self.delegated_input_path(p)?,
+            (None, Some(p), None) => self.delegated_input_path(p)?,
+            (None, None, Some(name)) => {
+                let (collection, _) = self.resolve_ruleset(name)?;
+                let dir = tempfile::TempDir::new()
+                    .map_err(|e| invalid(format!("cannot create temp dir: {e}")))?;
+                let path = dir.path().join("rules.yml");
+                std::fs::write(&path, emit_collection(&collection))
+                    .map_err(|e| invalid(format!("cannot stage ruleset '{name}': {e}")))?;
+                _tempdir = Some(dir);
+                path
+            }
         };
 
         // Pipelines: a bare identifier with no matching file under the root is
@@ -337,6 +370,21 @@ impl RsigmaMcp {
     }
 }
 
+/// Emit a resolved collection as one multi-document YAML stream.
+fn emit_collection(collection: &SigmaCollection) -> String {
+    let mut documents = Vec::new();
+    for rule in &collection.rules {
+        documents.push(emit_rule_yaml(rule));
+    }
+    for correlation in &collection.correlations {
+        documents.push(emit_correlation_yaml(correlation));
+    }
+    for filter in &collection.filters {
+        documents.push(emit_filter_yaml(filter));
+    }
+    documents.join("---\n")
+}
+
 /// Whether a pipeline spec is a bare sigma-cli pipeline name rather than a
 /// path. Names cannot contain separators or dots, so they cannot escape the
 /// rules root.
@@ -349,15 +397,19 @@ fn is_pipeline_name(spec: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::tools::{
         GOLDEN_RULE, VALID_RULE, block_on, delegating_handler, fake_sigma, handler,
+        ruleset_handler, ruleset_spec,
     };
 
     fn convert_input(target: &str) -> ConvertInput {
         ConvertInput {
             yaml: Some(VALID_RULE.to_string()),
             path: None,
+            ruleset: None,
             target: target.to_string(),
             format: None,
             pipelines: vec![],
@@ -372,6 +424,7 @@ mod tests {
             .run_convert_rules(ConvertInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 target: "postgres".to_string(),
                 format: None,
                 pipelines: vec![],
@@ -386,6 +439,7 @@ mod tests {
             .run_convert_rules(ConvertInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 target: "nope".to_string(),
                 format: None,
                 pipelines: vec![],
@@ -397,11 +451,63 @@ mod tests {
     }
 
     #[test]
+    fn convert_rules_accepts_a_ruleset_and_ignores_its_pipelines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &["ecs_windows"]),
+        )]);
+        let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_convert_rules(ConvertInput {
+                yaml: None,
+                path: None,
+                ruleset: Some("base".to_string()),
+                target: "postgres".to_string(),
+                format: None,
+                pipelines: vec![],
+                options: HashMap::new(),
+                skip_unsupported: false,
+            })
+            .unwrap();
+        assert_eq!(value["ok"], true);
+        let query = value["queries"][0]["query"].as_str().unwrap();
+        assert!(query.contains("\"CommandLine\""), "{query}");
+        assert!(!query.contains("process.command_line"), "{query}");
+    }
+
+    #[test]
+    fn convert_rules_unknown_ruleset_lists_names() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
+        let error = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_convert_rules(ConvertInput {
+                yaml: None,
+                path: None,
+                ruleset: Some("nope".to_string()),
+                target: "postgres".to_string(),
+                format: None,
+                pipelines: vec![],
+                options: HashMap::new(),
+                skip_unsupported: false,
+            })
+            .unwrap_err();
+        let text = format!("{error:?}");
+        assert!(text.contains("unknown ruleset 'nope'"), "{text}");
+        assert!(text.contains("base"), "{text}");
+    }
+
+    #[test]
     fn golden_convert_rules_postgres() {
         let v = handler()
             .run_convert_rules(ConvertInput {
                 yaml: Some(GOLDEN_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 target: "postgres".to_string(),
                 format: None,
                 pipelines: vec![],
@@ -651,5 +757,60 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v["ok"], true, "envelope: {v}");
+    }
+
+    #[test]
+    fn convert_rules_rejects_ruleset_and_path() {
+        let error = handler()
+            .run_convert_rules(ConvertInput {
+                path: Some("rule.yml".to_string()),
+                ruleset: Some("base".to_string()),
+                yaml: None,
+                ..convert_input("postgres")
+            })
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"), "{error:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegation_stages_the_resolved_ruleset() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let program = dir.path().join("sigma");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nfor arg; do last=$arg; done\ncat \"$last\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut spec = ruleset_spec(dir.path(), &["rule.yml"], &[]);
+        spec.overlays = vec![rsigma_parser::ruleset::OverlayEntry {
+            id: Some("8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a".to_string()),
+            set: Some(rsigma_parser::ruleset::OverlayPatch {
+                level: Some("critical".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }];
+        let server = delegating_handler(Some(dir.path().to_path_buf()))
+            .with_rulesets(BTreeMap::from([("base".to_string(), spec)]));
+        let cli = SigmaCli::from_program(&program, true);
+        let v = block_on(server.delegate_convert(
+            &cli,
+            ConvertInput {
+                yaml: None,
+                ruleset: Some("base".to_string()),
+                ..convert_input("splunk")
+            },
+            TEST_TIMEOUT,
+        ))
+        .unwrap();
+        assert_eq!(v["ok"], true, "envelope: {v}");
+        let raw = v["raw"].as_str().unwrap();
+        assert!(raw.contains("title: Whoami Execution"), "{raw}");
+        assert!(raw.contains("level: critical"), "{raw}");
     }
 }

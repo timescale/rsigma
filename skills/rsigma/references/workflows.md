@@ -49,6 +49,16 @@ Guide: [Rule drafting](https://rsigma.io/guide/rule-drafting/).
 
 The output feeds `rule draft -e @file`, `rule tune --tp @file`, and `rule backtest --corpus file`. Its events carry the archive's native field names, so do not apply the mapping pipeline to them again. Correlation rules and other targets are refused; use `backend convert` for those. The per-rule `--limit` truncates output, and stderr says when it did. Guide: [Hunting in the Archive](https://rsigma.io/guide/hunting/).
 
+## Curate a vendored rule set
+
+When rules are vendored rather than authored in the repository, declare a ruleset in `rsigma.yaml` instead of editing the vendor files:
+
+1. **Inspect.** `ruleset list` shows every declared ruleset and whether it resolves. `ruleset show <NAME> --all` shows the decisions, origins, reasons, and applied overlays.
+2. **Resolve.** Use `--ruleset <NAME>` with `engine eval`, `rule validate`, `rule test`, `rule backtest`, `rule coverage`, `rule visibility`, `rule hygiene`, `engine explain`, `rule fields`, `rule tune`, `rule doc`, `backend convert`, `pipeline diff`, or `hunt run`. On MCP, the `ruleset` input is accepted by `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars`.
+3. **Build.** `ruleset build <NAME> -o <DIR>` writes canonical YAML and a lockfile. Load the output with `engine daemon --rules <DIR>`. `ruleset diff <NAME> --lock <DIR>/ruleset.lock.json --fail-on-change` gates CI.
+
+Overlays can add exemplars, ADS prose, and metadata without editing the vendor rule. `rule test --ruleset` replays the overlaid exemplars. Guide: [Rulesets](https://rsigma.io/guide/rulesets/).
+
 ## Review a rule set
 
 - `rule coverage` maps rules onto ATT&CK, exports a Navigator layer, and reports gaps against Atomic Red Team, the SigmaHQ baseline, or a target technique list.

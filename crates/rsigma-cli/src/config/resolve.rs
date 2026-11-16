@@ -72,13 +72,21 @@ where
             continue;
         }
         let path: Vec<String> = rest.split("__").map(|s| s.to_ascii_lowercase()).collect();
+        if path.first().is_some_and(|segment| segment == "rulesets") {
+            super::warn_once(format!(
+                "warning: ignoring environment variable {key}: rulesets are configured in files only"
+            ));
+            continue;
+        }
         // Parse the value as a YAML scalar so ints/bools/lists coerce.
         let scalar: Value = yaml_serde::from_str(&raw).unwrap_or(Value::String(raw));
         let mut obj = Map::new();
         insert_nested(&mut obj, &path, scalar);
         match serde_json::from_value::<RsigmaConfigPartial>(Value::Object(obj)) {
             Ok(partial) => acc = acc.merge(partial),
-            Err(e) => eprintln!("warning: ignoring environment variable {key}: {e}"),
+            Err(e) => {
+                super::warn_once(format!("warning: ignoring environment variable {key}: {e}"))
+            }
         }
     }
     acc
@@ -106,16 +114,48 @@ pub(crate) fn to_value(partial: &RsigmaConfigPartial) -> Value {
     serde_json::to_value(partial).unwrap_or(Value::Null)
 }
 
+/// Paths whose value is replaced wholesale by a higher layer. Named maps such
+/// as `rulesets.<name>` must not inherit fields from a lower layer's entry.
+const REPLACE_AT: &[&str] = &["rulesets.*"];
+
+/// Whether `path` matches one of [`REPLACE_AT`], where `*` matches one
+/// segment.
+fn replaced_at(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('.').collect();
+    REPLACE_AT.iter().any(|pattern| {
+        let pattern: Vec<&str> = pattern.split('.').collect();
+        pattern.len() == segments.len()
+            && pattern
+                .iter()
+                .zip(&segments)
+                .all(|(want, got)| *want == "*" || want == got)
+    })
+}
+
 /// Deep-merge `over` onto `base`: objects merge key-by-key, everything else
-/// (scalars, arrays) is replaced wholesale by `over`.
+/// (scalars, arrays) is replaced wholesale by `over`. A path listed in
+/// [`REPLACE_AT`] is replaced at its parent key.
 pub(crate) fn deep_merge(base: Value, over: Value) -> Value {
+    deep_merge_at(base, over, "")
+}
+
+fn deep_merge_at(base: Value, over: Value, path: &str) -> Value {
     match (base, over) {
         // An absent layer (Null) is a no-op rather than wiping the base.
         (base, Value::Null) => base,
         (Value::Object(mut b), Value::Object(o)) => {
             for (k, v) in o {
+                let child = if path.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{path}.{k}")
+                };
+                if replaced_at(&child) {
+                    b.insert(k, v);
+                    continue;
+                }
                 let merged = match b.remove(&k) {
-                    Some(existing) => deep_merge(existing, v),
+                    Some(existing) => deep_merge_at(existing, v, &child),
                     None => v,
                 };
                 b.insert(k, merged);
@@ -286,5 +326,42 @@ mod tests {
         let file_v = serde_json::json!({"global": {"log_format": "json"}});
         let resolved = resolve_layers(default_v, file_v, Value::Null, Value::Null);
         assert_eq!(resolved.sources["global.log_format"], Source::File);
+    }
+
+    #[test]
+    fn env_skips_rulesets_but_keeps_per_command_keys() {
+        let vars = vec![
+            (
+                "RSIGMA_RULESETS__LOCAL__SOURCES".to_string(),
+                "[./rules]".to_string(),
+            ),
+            ("RSIGMA_EVAL__RULESET".to_string(), "local".to_string()),
+        ];
+        let p = env_partial_from(vars);
+        assert!(p.rulesets.is_none());
+        assert_eq!(p.eval.expect("eval").ruleset, Some("local".to_string()));
+    }
+
+    #[test]
+    fn deep_merge_replaces_a_ruleset_wholesale() {
+        let base = serde_json::json!({
+            "rulesets": {
+                "local": {
+                    "description": "base",
+                    "sources": ["base-rules"],
+                }
+            }
+        });
+        let over = serde_json::json!({
+            "rulesets": {
+                "local": {
+                    "sources": ["over-rules"],
+                }
+            }
+        });
+        let merged = deep_merge(base, over);
+        let local = value_at(&merged, "rulesets.local").expect("local");
+        assert_eq!(local["sources"], serde_json::json!(["over-rules"]));
+        assert!(local.get("description").is_none());
     }
 }

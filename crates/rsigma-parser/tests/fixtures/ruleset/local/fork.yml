@@ -1,0 +1,17 @@
+title: Windows whoami execution (local fork)
+id: aaaaaaaa-0000-4000-8000-000000000001
+name: windows_whoami_local
+status: test
+description: Local fork that adds an extra match.
+author: Local Author
+level: critical
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'whoami'
+    condition: selection
+tags:
+    - attack.discovery
+    - attack.t1059.001

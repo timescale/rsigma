@@ -38,8 +38,16 @@ pub(crate) enum EmitMode {
 #[derive(Args, Debug)]
 pub(crate) struct HuntRunArgs {
     /// Sigma rule file(s) or director(ies) to hunt with. Repeatable.
-    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required = true)]
+    #[arg(short = 'r', long = "rules", value_name = "PATH", num_args = 1.., required_unless_present = "ruleset", conflicts_with = "ruleset")]
     pub rules: Vec<PathBuf>,
+
+    /// Named ruleset from the configuration to hunt with instead of `--rules`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Hunt target. Only `postgres` is executable; every other target stays
     /// convert-only.
@@ -172,7 +180,13 @@ fn cmd_hunt_run(args: HuntRunArgs, ctx: &OutputCtx) {
         })
         .collect();
 
-    let plan = query::build_hunt_plan(&args.rules, &args.pipeline, &options, &window, args.limit)
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(ctx);
+    let plan = query::build_hunt_plan(collection, &args.pipeline, &options, &window, args.limit)
         .unwrap_or_else(|e| {
             let code = query_error_exit_code(&e);
             eprintln!("{}", e.message());

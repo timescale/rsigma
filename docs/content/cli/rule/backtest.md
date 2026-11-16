@@ -11,7 +11,7 @@ Replay an event corpus against a ruleset, diff the per-rule fire counts against 
 ## Synopsis
 
 ```text
-rsigma rule backtest [OPTIONS] --rules <RULES> --corpus <PATH>
+rsigma rule backtest [OPTIONS] [--rules <RULES> | --ruleset <NAME>] --corpus <PATH>
 ```
 
 ## Description
@@ -28,7 +28,8 @@ Without an `--expectations` file, backtest still runs and prints per-rule statis
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-r, --rules <PATH>` | required | Sigma rule file or directory of rules. May also be supplied via `backtest.rules` in a config file. |
+| `-r, --rules <PATH>` | required unless `--ruleset` | Sigma rule file or directory of rules. May also be supplied via `backtest.rules` in a config file. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to backtest instead of `--rules`. May also be supplied via `backtest.ruleset`. {{ added "unreleased" }} |
 | `--corpus <PATH>` | required | Event corpus: a file or a directory walked recursively. Repeatable. Extension dispatch: `.ndjson`/`.jsonl` as NDJSON, `.evtx` via the feature-gated adapter, everything else through `--input-format`. May also be supplied via `backtest.corpus`. |
 | `--expectations <PATH>` | unset | Expectations YAML (per-rule fire-count assertions). |
 | `--unexpected <POLICY>` | `warn` | What a rule firing with no covering expectation means: `fail`, `warn`, or `ignore`. Overrides the expectations-file default. |

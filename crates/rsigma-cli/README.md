@@ -78,7 +78,7 @@ These flags work with every subcommand, mirroring how `--log-format` does, and t
 
 ## Subcommands
 
-Commands are grouped into noun-led groups: `engine` (eval/daemon), `rule` (parse/validate/lint/fields/draft/tune/doc/test/backtest/coverage/scorecard/visibility/hygiene/condition/stdin), `backend` (convert/targets/formats), `pipeline` (resolve), `hunt` (run), and `taxii` (sync, `taxii-sync` feature).
+Commands are grouped into noun-led groups: `engine` (eval/explain/classify/discover-schemas/status/incidents/tap/tail/daemon), `rule` (parse/validate/lint/fmt/fields/draft/tune/reverse/doc/test/backtest/coverage/scorecard/visibility/hygiene/condition/stdin/migrate-sources), `backend` (convert/targets/formats), `pipeline` (diff/resolve), `ruleset` (list/show/build/diff), `hunt` (run), `mcp` (serve, `mcp` feature), `config` (init/validate/show/schema/path/reload), and `taxii` (sync/store, `taxii-sync` feature).
 
 ### `hunt run`: Execute converted rules against a PostgreSQL archive
 

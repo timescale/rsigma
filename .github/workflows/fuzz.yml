@@ -84,6 +84,8 @@ jobs:
             max_len: 65536
           - target: fuzz_dns_answer
             max_len: 4096
+          - target: fuzz_ruleset_resolve
+            max_len: 4096
           - target: fuzz_ocsf_sidecar
             max_len: 8192
     steps:

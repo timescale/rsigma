@@ -14,13 +14,19 @@ use super::shared::{diagnostic_messages, json_result};
 /// Input for `validate_rules`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ValidateInput {
-    /// Inline Sigma YAML. Mutually exclusive with `path`.
+    /// Inline Sigma YAML. Mutually exclusive with `path` and `ruleset`.
     #[serde(default)]
     pub yaml: Option<String>,
-    /// Path to a Sigma file or directory. Mutually exclusive with `yaml`.
+    /// Path to a Sigma file or directory. Mutually exclusive with `yaml` and
+    /// `ruleset`.
     #[serde(default)]
     pub path: Option<String>,
+    /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
+    /// `yaml` and `path`.
+    #[serde(default)]
+    pub ruleset: Option<String>,
     /// Processing pipelines (builtin names like `ecs_windows` or file paths).
+    /// When set, these replace the pipelines of a `ruleset`.
     #[serde(default)]
     pub pipelines: Vec<String>,
     /// Resolve dynamic pipeline sources (file/command/HTTP) during validation.
@@ -47,7 +53,7 @@ pub enum FailLevel {
 impl RsigmaMcp {
     /// Validate that Sigma rules parse and compile (with optional pipelines and source resolution).
     #[tool(
-        description = "Validate that Sigma rules parse and compile cleanly: parse, build the detection engine, and check correlation references. Optional `pipelines`, `resolve_sources` (resolve dynamic sources), and `fail_level` (`error` by default; `warning` also fails on parse warnings such as an invalid `status`). Accepts inline `yaml` or a file/directory `path`."
+        description = "Validate that Sigma rules parse and compile cleanly: parse, build the detection engine, and check correlation references. Optional `pipelines`, `resolve_sources` (resolve dynamic sources), and `fail_level` (`error` by default; `warning` also fails on parse warnings such as an invalid `status`). Provide exactly one of inline `yaml`, a file/directory `path`, or a named `ruleset` from the server's configuration."
     )]
     async fn validate_rules(
         &self,
@@ -57,8 +63,17 @@ impl RsigmaMcp {
     }
 
     pub(crate) async fn run_validate_rules(&self, input: ValidateInput) -> Result<Value, McpError> {
-        let collection = self.load_collection(input.yaml.as_deref(), input.path.as_deref())?;
-        let mut pipelines = self.load_pipelines(&input.pipelines)?;
+        let (collection, ruleset_pipelines) = self.load_collection(
+            input.yaml.as_deref(),
+            input.path.as_deref(),
+            input.ruleset.as_deref(),
+        )?;
+        let pipeline_specs = if input.pipelines.is_empty() {
+            ruleset_pipelines
+        } else {
+            input.pipelines
+        };
+        let mut pipelines = self.load_pipelines(&pipeline_specs)?;
 
         let mut source_errors: Vec<String> = Vec::new();
         if input.resolve_sources {
@@ -140,14 +155,17 @@ fn resolve_pipeline_sources(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
-    use crate::tools::{VALID_RULE, handler};
+    use crate::tools::{VALID_RULE, block_on, handler, ruleset_handler, ruleset_spec};
 
     async fn validate(yaml: &str) -> Result<Value, McpError> {
         handler()
             .run_validate_rules(ValidateInput {
                 yaml: Some(yaml.to_string()),
                 path: None,
+                ruleset: None,
                 pipelines: vec![],
                 resolve_sources: false,
                 fail_level: FailLevel::Error,
@@ -161,6 +179,7 @@ mod tests {
             .run_validate_rules(ValidateInput {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
+                ruleset: None,
                 pipelines: vec![],
                 resolve_sources: false,
                 fail_level: FailLevel::Error,
@@ -185,6 +204,7 @@ mod tests {
             .run_validate_rules(ValidateInput {
                 yaml: Some(yaml.to_string()),
                 path: None,
+                ruleset: None,
                 pipelines: vec![],
                 resolve_sources: false,
                 fail_level,
@@ -212,6 +232,78 @@ mod tests {
 
         let clean = validate_at(VALID_RULE, FailLevel::Warning).await;
         assert_eq!(clean["ok"], true);
+    }
+
+    #[test]
+    fn validate_rules_accepts_a_ruleset() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "base".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
+        let value = block_on(
+            ruleset_handler(Some(dir.path().to_path_buf()), rulesets).run_validate_rules(
+                ValidateInput {
+                    yaml: None,
+                    path: None,
+                    ruleset: Some("base".to_string()),
+                    pipelines: vec![],
+                    resolve_sources: false,
+                    fail_level: FailLevel::Error,
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["summary"]["detection_rules"], 1);
+    }
+
+    #[test]
+    fn validate_rules_unknown_ruleset_lists_names() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([
+            (
+                "base".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
+            (
+                "other".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
+        ]);
+        let error = block_on(
+            ruleset_handler(Some(dir.path().to_path_buf()), rulesets).run_validate_rules(
+                ValidateInput {
+                    yaml: None,
+                    path: None,
+                    ruleset: Some("nope".to_string()),
+                    pipelines: vec![],
+                    resolve_sources: false,
+                    fail_level: FailLevel::Error,
+                },
+            ),
+        )
+        .unwrap_err();
+        let text = format!("{error:?}");
+        assert!(text.contains("unknown ruleset 'nope'"), "{text}");
+        assert!(text.contains("base"), "{text}");
+        assert!(text.contains("other"), "{text}");
+    }
+
+    #[test]
+    fn validate_rules_rejects_ruleset_and_path() {
+        let error = block_on(handler().run_validate_rules(ValidateInput {
+            yaml: None,
+            path: Some("rule.yml".to_string()),
+            ruleset: Some("base".to_string()),
+            pipelines: vec![],
+            resolve_sources: false,
+            fail_level: FailLevel::Error,
+        }))
+        .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"));
     }
 
     #[test]

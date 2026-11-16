@@ -9,9 +9,10 @@
 //! TLS key password) are deliberately absent: they stay env/flag-only so that
 //! a version-controlled config file never carries secrets.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
+use rsigma_parser::ruleset::RulesetSpec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,23 @@ pub(crate) trait Merge {
 fn merge_opt<T: Merge>(base: Option<T>, over: Option<T>) -> Option<T> {
     match (base, over) {
         (Some(base), Some(over)) => Some(base.merge(over)),
+        (base, over) => over.or(base),
+    }
+}
+
+/// Merge two named maps by replacing a whole entry, so a higher layer that
+/// redefines a name does not inherit fields from the lower definition.
+fn merge_named<T>(
+    base: Option<BTreeMap<String, T>>,
+    over: Option<BTreeMap<String, T>>,
+) -> Option<BTreeMap<String, T>> {
+    match (base, over) {
+        (Some(mut base), Some(over)) => {
+            for (name, value) in over {
+                base.insert(name, value);
+            }
+            Some(base)
+        }
         (base, over) => over.or(base),
     }
 }
@@ -65,6 +83,9 @@ pub(crate) struct RsigmaConfigPartial {
     /// `rsigma mcp serve` settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPartial>,
+    /// Named rule sets: sources, selectors, dependency policy, overlays, and pipelines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rulesets: Option<BTreeMap<String, RulesetSpec>>,
 }
 
 impl Merge for RsigmaConfigPartial {
@@ -81,6 +102,7 @@ impl Merge for RsigmaConfigPartial {
             doc: merge_opt(self.doc, over.doc),
             hygiene: merge_opt(self.hygiene, over.hygiene),
             mcp: merge_opt(self.mcp, over.mcp),
+            rulesets: merge_named(self.rulesets, over.rulesets),
         }
     }
 }
@@ -775,6 +797,9 @@ pub(crate) struct EvalPartial {
     /// Logsource-aware evaluation (conflict-based pruning) settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logsource_routing: Option<LogsourcePartial>,
+    /// Named ruleset to evaluate instead of `rules` (`--ruleset`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
 }
 
 impl Merge for EvalPartial {
@@ -791,6 +816,7 @@ impl Merge for EvalPartial {
             ocsf_version: over.ocsf_version.or(self.ocsf_version),
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
+            ruleset: over.ruleset.or(self.ruleset),
         }
     }
 }
@@ -918,6 +944,9 @@ pub(crate) struct BacktestPartial {
     /// Strip a leading UTF-8 BOM from RFC 5424 syslog messages (default true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syslog_strip_bom: Option<bool>,
+    /// Named ruleset to backtest instead of `rules` (`--ruleset`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
     /// Path for one finding per fire (`--findings`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub findings: Option<PathBuf>,
@@ -940,6 +969,7 @@ impl Merge for BacktestPartial {
             input_format: over.input_format.or(self.input_format),
             syslog_tz: over.syslog_tz.or(self.syslog_tz),
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
+            ruleset: over.ruleset.or(self.ruleset),
             findings: over.findings.or(self.findings),
             finding_format: over.finding_format.or(self.finding_format),
             ocsf_version: over.ocsf_version.or(self.ocsf_version),
@@ -966,6 +996,9 @@ pub(crate) struct CoveragePartial {
     /// techniques.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on_gaps: Option<bool>,
+    /// Named ruleset to map instead of `rules` (`--ruleset`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
 }
 
 impl Merge for CoveragePartial {
@@ -976,6 +1009,7 @@ impl Merge for CoveragePartial {
             baseline: over.baseline.or(self.baseline),
             targets: over.targets.or(self.targets),
             fail_on_gaps: over.fail_on_gaps.or(self.fail_on_gaps),
+            ruleset: over.ruleset.or(self.ruleset),
         }
     }
 }
@@ -1117,6 +1151,9 @@ pub(crate) struct HygienePartial {
     /// incomplete-ads, broken-fields, deprecated, any).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on: Option<Vec<String>>,
+    /// Named ruleset to report on instead of `rules` (`--ruleset`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
 }
 
 impl Merge for HygienePartial {
@@ -1130,6 +1167,7 @@ impl Merge for HygienePartial {
             stale_threshold: over.stale_threshold.or(self.stale_threshold),
             noisy_threshold: over.noisy_threshold.or(self.noisy_threshold),
             fail_on: over.fail_on.or(self.fail_on),
+            ruleset: over.ruleset.or(self.ruleset),
         }
     }
 }
@@ -1283,5 +1321,49 @@ mod tests {
             merged.global.expect("global").log_format,
             Some("json".into())
         );
+    }
+
+    #[test]
+    fn merge_named_replaces_a_whole_ruleset_entry() {
+        let base = RsigmaConfigPartial {
+            rulesets: Some(BTreeMap::from([
+                (
+                    "local".to_string(),
+                    RulesetSpec {
+                        description: Some("base".into()),
+                        sources: vec![PathBuf::from("base-rules")],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "vendor".to_string(),
+                    RulesetSpec {
+                        sources: vec![PathBuf::from("vendor-rules")],
+                        ..Default::default()
+                    },
+                ),
+            ])),
+            ..Default::default()
+        };
+        let over = RsigmaConfigPartial {
+            rulesets: Some(BTreeMap::from([(
+                "local".to_string(),
+                RulesetSpec {
+                    sources: vec![PathBuf::from("over-rules")],
+                    ..Default::default()
+                },
+            )])),
+            ..Default::default()
+        };
+
+        let merged = base.merge(over);
+        let rulesets = merged.rulesets.expect("rulesets");
+        assert_eq!(
+            rulesets["local"].sources,
+            [PathBuf::from("over-rules")],
+            "the higher layer must not inherit the lower entry's fields"
+        );
+        assert_eq!(rulesets["local"].description, None);
+        assert_eq!(rulesets["vendor"].sources, [PathBuf::from("vendor-rules")]);
     }
 }

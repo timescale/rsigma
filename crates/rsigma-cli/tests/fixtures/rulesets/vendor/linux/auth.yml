@@ -1,0 +1,67 @@
+title: Linux SSH login
+id: bbbbbbbb-0000-4000-8000-000000000001
+status: stable
+description: A user logs in over SSH.
+author: Test Author
+level: medium
+logsource:
+    product: linux
+    service: sshd
+detection:
+    selection:
+        EventType: login
+    condition: selection
+tags:
+    - attack.credential_access
+    - attack.t1110
+---
+title: Linux sudo elevation
+id: bbbbbbbb-0000-4000-8000-000000000002
+status: experimental
+description: sudo elevates privileges.
+author: Test Author
+level: high
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection:
+        Image|endswith: '/sudo'
+    condition: selection
+tags:
+    - attack.credential_access
+    - attack.t1110.001
+---
+title: Linux user created
+id: bbbbbbbb-0000-4000-8000-000000000003
+status: test
+description: useradd creates an account.
+author: Test Author
+level: informational
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection:
+        Image|endswith: '/useradd'
+    condition: selection
+tags:
+    - attack.persistence
+    - attack.t1078
+---
+title: Linux passwd file modified
+id: bbbbbbbb-0000-4000-8000-000000000004
+status: unsupported
+description: The passwd database changed.
+author: Test Author
+level: low
+logsource:
+    product: linux
+    category: file_event
+detection:
+    selection:
+        TargetFilename|endswith: '/etc/passwd'
+    condition: selection
+tags:
+    - attack.defense_evasion
+    - attack.t1548

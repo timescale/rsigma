@@ -63,6 +63,10 @@ pub(crate) struct CoverageArgs {
     #[arg(short = 'r', long = "rules", value_name = "PATH")]
     pub rules: Vec<PathBuf>,
 
+    /// Named ruleset from the configuration to map instead of `--rules`.
+    #[arg(long, value_name = "NAME", conflicts_with = "rules")]
+    pub ruleset: Option<String>,
+
     /// Write an ATT&CK Navigator layer (format 4.5) JSON to this file.
     #[arg(long = "navigator", value_name = "FILE")]
     pub navigator: Option<PathBuf>,
@@ -135,13 +139,30 @@ fn overlay_coverage_config(
     };
 
     if let Some(cov) = base.coverage {
+        let cli_rules = explicit("rules");
+        let cli_ruleset = explicit("ruleset");
+        if !cli_rules
+            && !cli_ruleset
+            && cov.rules.as_ref().is_some_and(|rules| !rules.is_empty())
+            && cov.ruleset.is_some()
+        {
+            eprintln!("error: set either coverage.rules or coverage.ruleset, not both");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
         // `--rules` is repeatable with no clap default, so an empty vec means
         // the operator left it off; let the config layer fill it.
-        if !explicit("rules")
+        if !cli_rules
+            && !cli_ruleset
             && args.rules.is_empty()
             && let Some(v) = cov.rules
         {
             args.rules = v;
+        }
+        if !cli_rules
+            && !cli_ruleset
+            && let Some(v) = cov.ruleset
+        {
+            args.ruleset = Some(v);
         }
         // `--atomics`/`--baseline` have no clap default, so `is_none` means the
         // operator left them off; let the config layer fill them.
@@ -172,8 +193,8 @@ fn overlay_coverage_config(
 /// `--fail-on-gaps`, 2 rule error, 3 config error). Rule errors exit directly
 /// via [`crate::load_collection_multi`].
 pub(crate) fn cmd_coverage(args: CoverageArgs, ctx: OutputCtx) -> i32 {
-    if args.rules.is_empty() {
-        eprintln!("error: no rules path; pass --rules <PATH> (repeatable)");
+    if args.rules.is_empty() && args.ruleset.is_none() {
+        eprintln!("error: no rules path; pass --rules <PATH> (repeatable) or --ruleset <NAME>");
         return exit_code::CONFIG_ERROR;
     }
 
@@ -189,7 +210,12 @@ pub(crate) fn cmd_coverage(args: CoverageArgs, ctx: OutputCtx) -> i32 {
         eprintln!("warning: --platforms only applies to --emit atomics-plan; ignored");
     }
 
-    let collection = crate::load_collection_multi(&args.rules);
+    let input = crate::ruleset::RuleInput {
+        rules: &args.rules,
+        ruleset: args.ruleset.as_deref(),
+        config: args.config.as_deref(),
+    };
+    let collection = input.collection(&ctx);
     let coverage = Coverage::from_collection(&collection);
 
     let atomics = match &args.atomics {

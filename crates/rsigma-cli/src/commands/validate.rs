@@ -16,7 +16,16 @@ use crate::output::{OutputCtx, OutputFormat, Tabular, render_report};
 #[derive(Args, Debug)]
 pub(crate) struct ValidateArgs {
     /// Sigma YAML file, or directory searched recursively for .yml and .yaml files
-    pub path: PathBuf,
+    #[arg(required_unless_present = "ruleset", conflicts_with = "ruleset")]
+    pub path: Option<PathBuf>,
+
+    /// Named ruleset from the configuration to validate instead of `PATH`.
+    #[arg(long, value_name = "NAME")]
+    pub ruleset: Option<String>,
+
+    /// Path to an rsigma config file. Overrides config-file discovery.
+    #[arg(long = "config", value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Show details for each file (not just summary)
     #[arg(short, long)]
@@ -76,12 +85,22 @@ impl Tabular for ValidateRow {
 pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
     let ValidateArgs {
         path,
+        ruleset,
+        config,
         verbose,
         pipelines: pipeline_paths,
         resolve_sources,
         source_files,
         fail_level,
     } = args;
+    let rules: Vec<PathBuf> = path.iter().cloned().collect();
+    let input = crate::ruleset::RuleInput {
+        rules: &rules,
+        ruleset: ruleset.as_deref(),
+        config: config.as_deref(),
+    };
+    let label = input.label();
+    let pipeline_paths = input.pipelines(&pipeline_paths);
     // Dynamic source resolution (`--resolve-sources` / `--source`) needs the
     // async runtime + source resolver, which ship with the `daemon` feature.
     #[cfg(feature = "daemon")]
@@ -104,20 +123,28 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
         loaded
     };
 
-    let parsed = if path.is_dir() {
-        parse_sigma_directory(&path)
+    let (parsed, origins) = if let Some(resolved) = input.resolved(&ctx) {
+        (Ok(resolved.collection), Some(resolved.entries))
     } else {
-        match parse_sigma_file(&path) {
-            Err(SigmaParserError::Io(e)) => Err(SigmaParserError::Io(e)),
-            Err(e) => {
-                let mut collection = SigmaCollection::new();
-                collection
-                    .diagnostics
-                    .push(CollectionDiagnostic::file(&path, &e));
-                Ok(collection)
+        let path = path
+            .as_ref()
+            .expect("clap requires a path when no ruleset is selected");
+        let parsed = if path.is_dir() {
+            parse_sigma_directory(path)
+        } else {
+            match parse_sigma_file(path) {
+                Err(SigmaParserError::Io(e)) => Err(SigmaParserError::Io(e)),
+                Err(e) => {
+                    let mut collection = SigmaCollection::new();
+                    collection
+                        .diagnostics
+                        .push(CollectionDiagnostic::file(path, &e));
+                    Ok(collection)
+                }
+                ok => ok,
             }
-            ok => ok,
-        }
+        };
+        (parsed, None)
     };
 
     match parsed {
@@ -156,7 +183,7 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                 collection.warnings().map(ToString::to_string).collect();
 
             let summary = ValidateSummary {
-                path: path.display().to_string(),
+                path: label.clone(),
                 total,
                 detection_rules: rules,
                 correlation_rules: correlations,
@@ -172,28 +199,28 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                 let mut rows = Vec::new();
                 for err in &parse_error_msgs {
                     rows.push(ValidateRow {
-                        path: path.display().to_string(),
+                        path: label.clone(),
                         status: "parse_error".into(),
                         errors: err.clone(),
                     });
                 }
                 for warning in &parse_warning_msgs {
                     rows.push(ValidateRow {
-                        path: path.display().to_string(),
+                        path: label.clone(),
                         status: "parse_warning".into(),
                         errors: warning.clone(),
                     });
                 }
                 for err in &compile_errors {
                     rows.push(ValidateRow {
-                        path: path.display().to_string(),
+                        path: label.clone(),
                         status: "compile_error".into(),
                         errors: err.clone(),
                     });
                 }
                 if rows.is_empty() {
                     rows.push(ValidateRow {
-                        path: path.display().to_string(),
+                        path: label.clone(),
                         status: "ok".into(),
                         errors: String::new(),
                     });
@@ -216,7 +243,7 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     }
                 }
             } else {
-                println!("Parsed {total} documents from {}", path.display());
+                println!("Parsed {total} documents from {label}");
                 println!("  Detection rules:   {rules}");
                 println!("  Correlation rules: {correlations}");
                 println!("  Filter rules:      {filters}");
@@ -229,7 +256,7 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     filter_rules = filters,
                     parse_errors,
                     parse_warnings,
-                    rules_path = %path.display(),
+                    rules_path = %label,
                     "Validation parsed",
                 );
 
@@ -256,6 +283,25 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                         println!("\nCompile errors:");
                         for err in &compile_errors {
                             println!("  - {err}");
+                        }
+                    }
+                    if let Some(entries) = &origins {
+                        println!("\nDocuments by origin:");
+                        for entry in entries.iter().filter(|entry| {
+                            matches!(
+                                entry.decision,
+                                rsigma_parser::ruleset::Decision::Included { .. }
+                                    | rsigma_parser::ruleset::Decision::PulledIn { .. }
+                                    | rsigma_parser::ruleset::Decision::FilterKept
+                            )
+                        }) {
+                            println!(
+                                "  {} ({}/{}#{})",
+                                entry.title,
+                                entry.origin.root.display(),
+                                entry.origin.file.display(),
+                                entry.origin.ordinal
+                            );
                         }
                     }
                 }

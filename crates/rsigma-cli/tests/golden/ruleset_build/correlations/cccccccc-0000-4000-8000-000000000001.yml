@@ -1,0 +1,29 @@
+title: Windows discovery burst
+id: cccccccc-0000-4000-8000-000000000001
+status: experimental
+description: Several discovery commands run close together.
+author: Test Author
+tags:
+    - attack.discovery
+    - attack.t1059
+correlation:
+    type: event_count
+    rules:
+        - aaaaaaaa-0000-4000-8000-000000000001
+        - aaaaaaaa-0000-4000-8000-000000000003
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 3
+level: medium
+rsigma.exemplars:
+    - events:
+          - event:
+                User: alice
+            offset: 0s
+          - event:
+                User: alice
+            offset: 1m
+      expect: match
+      name: 'discovery burst'
