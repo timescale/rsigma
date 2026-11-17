@@ -252,6 +252,7 @@ impl DispositionState {
                     SourceType::Http { .. } => "http",
                     SourceType::Nats { .. } => "nats",
                     SourceType::Command { .. } => "command",
+                    SourceType::Watchlist { .. } => "watchlist",
                 };
                 (s.id.clone(), label)
             })

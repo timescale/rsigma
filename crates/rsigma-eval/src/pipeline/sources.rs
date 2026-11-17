@@ -72,6 +72,16 @@ pub enum SourceType {
         format: DataFormat,
         extract: Option<ExtractExpr>,
     },
+    /// Indicators pushed over the HTTP API. Nothing is fetched.
+    ///
+    /// `max_indicators` and `max_value_length` bound the set. `default_ttl`
+    /// applies when a push names no expiry of its own; `None` means pushed
+    /// indicators stay until they are deleted.
+    Watchlist {
+        max_indicators: usize,
+        max_value_length: usize,
+        default_ttl: Option<Duration>,
+    },
 }
 
 /// An extraction expression applied to source data after parsing.

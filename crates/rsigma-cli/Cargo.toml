@@ -24,6 +24,7 @@ daemon = [
     "notify",
     "rusqlite",
     "tower-http",
+    "dep:tower",
     "tokio-stream",
     "dep:getrandom",
 ]
@@ -125,6 +126,7 @@ prometheus = { version = "0.14", default-features = false, optional = true }
 notify = { version = "8.2", optional = true }
 rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 tower-http = { version = "0.7", features = ["trace"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
 getrandom = { version = "0.4", optional = true }
 async-nats = { version = "0.51", optional = true }
 tokio-stream = { version = "0.1", optional = true }

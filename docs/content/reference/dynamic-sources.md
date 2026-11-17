@@ -207,7 +207,33 @@ Subscribes to a NATS subject and updates the source value with each message. Req
 | `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
 | `extract` | string or object | no | Filter applied after parsing. |
 
-`refresh: push` is only valid for NATS sources. Each subject message replaces the source value.
+`refresh: push` is only valid for NATS sources. Each subject message replaces the source value and is stored in the source cache, so a later cache-first rebuild and a lookup enricher see it.
+
+### `watchlist`
+
+{{ added "unreleased" }}
+
+Indicators pushed over the HTTP API. The source has nothing to fetch. Resolution returns the unexpired values as a JSON array of strings, sorted by bytes. Outside the daemon, where no registry is attached, it resolves to `[]`.
+
+```yaml
+- id: c2_ips
+  type: watchlist
+  max_indicators: 100000
+  max_value_length: 2048
+  default_ttl: 30d
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_indicators` | integer | no | Most unexpired values the set may hold. Default `100000`. `0` is a configuration error. When a pipeline references the source, the effective cap is the smaller of this value and 4096. |
+| `max_value_length` | integer | no | Longest accepted value, in bytes. Default `2048`. `0` is a configuration error. |
+| `default_ttl` | duration | no | Lifetime used when a push names no expiry. Absent means indicators stay until deleted. `30d` is 30 days. |
+
+`refresh`, `format`, `extract`, and `timeout` are rejected. The ids `resolve` and `cache` are reserved, because they would be ambiguous with `/api/v1/sources/resolve` and `/api/v1/sources/cache`. `required` and `on_error` are accepted and ignored.
+
+Push, replace, delete, and list go through `/api/v1/sources/{source_id}/indicators`. See [HTTP API](http-api.md#watchlist-indicators) and [Threat intel watchlists](../guide/threat-intel-watchlists.md).
+
+A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. A watchlist that a pipeline references is capped at 4096 indicators, and a push past that cap returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set. A successful reload computes the cap again: a pipeline edit that starts referencing the watchlist lowers it, and one that stops referencing it restores `max_indicators`.
 
 ## Data formats
 
@@ -306,18 +332,19 @@ The source is declared once in a standalone `--source` file. It does not need to
 
 ## Triggers and hot-reload
 
-| Trigger | Re-resolves |
-|---------|-------------|
-| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Rules + pipelines + all dynamic sources. |
-| `SIGHUP` | Same as above. |
-| `POST /api/v1/reload` | Same as above. |
-| `POST /api/v1/sources/resolve` (no body) | All dynamic sources only; rules are not reloaded. |
-| `POST /api/v1/sources/resolve` with `{"source_id":"..."}` | One source. |
+| Trigger | What runs |
+|---------|-----------|
+| A referenced source value changes (file watch, interval, NATS message, watchlist push, or a resolve that returns a new value) | Rules are rebuilt from cached source values. Sources that are already cached are not fetched again. A failed rebuild keeps the previous rules. |
+| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Full reload: rules, pipelines, and a fresh fetch of dynamic sources. |
+| `SIGHUP` | Same as a full reload. |
+| `POST /api/v1/reload` | Same as a full reload. |
+| `POST /api/v1/sources/resolve` | Re-resolves every dynamic source. The request body is ignored. Rules reload only if a referenced value changes. |
+| `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. No request body. |
 | `DELETE /api/v1/sources/cache/{source_id}` | Invalidates the cache. The next read fetches fresh. Always returns `200 OK`, even for nonexistent IDs. |
-| NATS message on `rsigma.control.resolve` | All dynamic sources only. |
-| Interval timer | The single source whose `refresh:` interval just elapsed. |
+| NATS message on `rsigma.control.resolve` | Re-resolves every dynamic source. |
+| Interval timer | Re-resolves the one source whose `refresh:` interval elapsed. |
 
-The `push` policy (NATS) updates the source value continuously on each incoming message, without going through the reload pipeline.
+A full reload and a pending rebuild collapse into the full reload. The rebuild itself does not fetch sources that already have a cached value, and it does not schedule another rebuild.
 
 ## Resource limits
 

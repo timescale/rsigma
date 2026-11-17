@@ -15,6 +15,7 @@ pub mod nats;
 pub mod refresh;
 pub mod registry;
 pub mod template;
+pub mod watchlist;
 
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,10 @@ pub const MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 pub use cache::SourceCache;
 pub use template::TemplateExpander;
+pub use watchlist::{
+    AddSummary, RemoveSummary, ReplaceSummary, WatchlistError, WatchlistItem, WatchlistRegistry,
+    WatchlistRestore, WatchlistRow,
+};
 
 /// The result of successfully resolving a dynamic source.
 #[derive(Debug, Clone)]
@@ -92,11 +97,29 @@ impl std::fmt::Display for SourceErrorKind {
 pub trait SourceResolver: Send + Sync {
     /// Resolve a single dynamic source, returning the fetched data.
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError>;
+
+    /// The value last stored for `source_id`, if any.
+    ///
+    /// A cache-first rebuild uses this so a refresh does not fetch every
+    /// source again. The default returns nothing.
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        let _ = source_id;
+        None
+    }
+
+    /// Remember `value` as the current data for `source_id`.
+    ///
+    /// Push updates call this so later cache-first rebuilds and lookup
+    /// enrichers see the payload. The default discards it.
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        let _ = (source_id, value);
+    }
 }
 
 /// Default source resolver that dispatches to file, command, and HTTP resolvers.
 pub struct DefaultSourceResolver {
     cache: std::sync::Arc<SourceCache>,
+    watchlists: Option<std::sync::Arc<WatchlistRegistry>>,
 }
 
 impl DefaultSourceResolver {
@@ -104,6 +127,7 @@ impl DefaultSourceResolver {
     pub fn new() -> Self {
         Self {
             cache: std::sync::Arc::new(SourceCache::new()),
+            watchlists: None,
         }
     }
 
@@ -111,6 +135,7 @@ impl DefaultSourceResolver {
     pub fn with_cache(cache: SourceCache) -> Self {
         Self {
             cache: std::sync::Arc::new(cache),
+            watchlists: None,
         }
     }
 
@@ -118,7 +143,23 @@ impl DefaultSourceResolver {
     /// with another consumer (e.g. the daemon's enrichment pipeline,
     /// which reads from the same cache for `lookup` enrichers).
     pub fn with_arc_cache(cache: std::sync::Arc<SourceCache>) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            watchlists: None,
+        }
+    }
+
+    /// Resolve `type: watchlist` sources from `registry`.
+    ///
+    /// Without a registry those sources resolve to an empty list.
+    pub fn with_watchlists(mut self, registry: std::sync::Arc<WatchlistRegistry>) -> Self {
+        self.set_watchlists(registry);
+        self
+    }
+
+    /// Attach a watchlist registry after the resolver already exists.
+    pub fn set_watchlists(&mut self, registry: std::sync::Arc<WatchlistRegistry>) {
+        self.watchlists = Some(registry);
     }
 
     /// Get a reference to the cache (for inspection/testing).
@@ -141,6 +182,14 @@ impl Default for DefaultSourceResolver {
 
 #[async_trait::async_trait]
 impl SourceResolver for DefaultSourceResolver {
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        self.cache.get(source_id)
+    }
+
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        self.cache.store(source_id, &value);
+    }
+
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
         let result = match &source.source_type {
             SourceType::File {
@@ -185,6 +234,23 @@ impl SourceResolver for DefaultSourceResolver {
                     source_id: source.id.clone(),
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
+            }
+            SourceType::Watchlist { .. } => {
+                let data = self
+                    .watchlists
+                    .as_ref()
+                    .and_then(|registry| registry.values(&source.id, watchlist::now_utc()).ok())
+                    .map(|values| {
+                        serde_json::Value::Array(
+                            values.into_iter().map(serde_json::Value::String).collect(),
+                        )
+                    })
+                    .unwrap_or_else(|| serde_json::json!([]));
+                Ok(ResolvedValue {
+                    data,
+                    resolved_at: Instant::now(),
+                    from_cache: false,
+                })
             }
         };
 
@@ -235,6 +301,40 @@ impl SourceResolver for DefaultSourceResolver {
             }
         }
     }
+}
+
+/// Resolve sources from the cache, fetching only the ones with no cached value.
+///
+/// A hit is returned as stored. A miss calls [`SourceResolver::resolve`],
+/// which stores the fetched value. Optional sources that fail become JSON null.
+pub async fn resolve_all_cache_first(
+    resolver: &dyn SourceResolver,
+    sources: &[DynamicSource],
+) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
+    let mut resolved = std::collections::HashMap::new();
+    for source in sources {
+        if let Some(cached) = resolver.cached(&source.id) {
+            resolved.insert(source.id.clone(), cached);
+            continue;
+        }
+        match resolver.resolve(source).await {
+            Ok(value) => {
+                resolved.insert(source.id.clone(), value.data);
+            }
+            Err(e) => {
+                if source.required {
+                    return Err(e);
+                }
+                tracing::warn!(
+                    source_id = %source.id,
+                    error = %e,
+                    "Optional source has no cached value and failed to resolve, using null"
+                );
+                resolved.insert(source.id.clone(), serde_json::Value::Null);
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 /// Resolve all sources in a pipeline, returning a map of source_id -> resolved data.

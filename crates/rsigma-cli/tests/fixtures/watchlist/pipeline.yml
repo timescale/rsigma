@@ -1,0 +1,7 @@
+name: watchlist-test
+priority: 10
+vars:
+  c2_ips:
+    - "${source.c2_ips}"
+transformations:
+  - type: value_placeholders

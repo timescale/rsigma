@@ -512,6 +512,18 @@ impl LogProcessor {
         Ok(stats)
     }
 
+    /// Rebuild rules from cached source values.
+    ///
+    /// Sources with a cached value are not fetched. A failure leaves the
+    /// current engine in place. The replacement engine stays on a fresh fetch
+    /// for the next full reload.
+    pub fn rebuild_from_sources(&self) -> Result<crate::engine::EngineStats, String> {
+        let (new_engine, stats) =
+            self.prepare_reload_with(crate::engine::SourceFetch::CacheFirst)?;
+        self.commit_reload(new_engine);
+        Ok(stats)
+    }
+
     fn record_ruleset_skipped(&self, skipped: Vec<(std::sync::Arc<str>, u64)>) {
         for (ruleset, count) in skipped {
             if count > 0 {
@@ -524,6 +536,13 @@ impl LogProcessor {
     /// lock, so rule parsing and dynamic-source resolution do not stall
     /// processing.
     fn prepare_reload(&self) -> Result<(RuntimeEngine, crate::engine::EngineStats), String> {
+        self.prepare_reload_with(crate::engine::SourceFetch::Fresh)
+    }
+
+    fn prepare_reload_with(
+        &self,
+        fetch: crate::engine::SourceFetch,
+    ) -> Result<(RuntimeEngine, crate::engine::EngineStats), String> {
         // Snapshot the old engine's configuration AND tuning so the
         // replacement reaches `load_rules()` with the same flags. Daemon
         // startup typically sets `set_bloom_prefilter`/`set_bloom_max_bytes`
@@ -575,6 +594,7 @@ impl LogProcessor {
         if let Some(resolver) = resolver {
             new_engine.set_source_resolver(resolver);
         }
+        new_engine.set_source_fetch(fetch);
         new_engine.set_external_sources(external_sources);
         // Carry the schema-routing spec so hot-reload rebuilds the router
         // instead of silently dropping back to a single engine.
@@ -582,6 +602,7 @@ impl LogProcessor {
         // Carry the logsource extractor so pruning survives hot-reload.
         new_engine.set_logsource_extractor(logsource_extractor);
         let stats = new_engine.load_rules()?;
+        new_engine.set_source_fetch(crate::engine::SourceFetch::Fresh);
         Ok((new_engine, stats))
     }
 
@@ -1697,6 +1718,99 @@ detection:
             results[0].detection_count() > 0,
             "CEF deviceVendor=Security should match"
         );
+    }
+
+    struct FailOnSecondFetch {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::sources::SourceResolver for FailOnSecondFetch {
+        async fn resolve(
+            &self,
+            source: &rsigma_eval::pipeline::sources::DynamicSource,
+        ) -> Result<crate::sources::ResolvedValue, crate::sources::SourceError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if call == 0 {
+                return Ok(crate::sources::ResolvedValue {
+                    data: serde_json::json!([]),
+                    resolved_at: std::time::Instant::now(),
+                    from_cache: false,
+                });
+            }
+            Err(crate::sources::SourceError {
+                source_id: source.id.clone(),
+                kind: crate::sources::SourceErrorKind::Fetch("down".into()),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_rebuild_keeps_the_loaded_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rule.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Rule A
+status: test
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+"#,
+        )
+        .unwrap();
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(
+            &pipeline_path,
+            r#"
+name: dynamic_pipeline
+priority: 10
+vars:
+  feed: "${source.feed}"
+transformations:
+  - type: value_placeholders
+"#,
+        )
+        .unwrap();
+        let pipeline = rsigma_eval::parse_pipeline_file(&pipeline_path).unwrap();
+        let mut engine = RuntimeEngine::new(
+            rule_path,
+            vec![pipeline],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_source_resolver(Arc::new(FailOnSecondFetch {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        engine.set_external_sources(vec![rsigma_eval::pipeline::sources::DynamicSource {
+            id: "feed".to_string(),
+            source_type: rsigma_eval::pipeline::sources::SourceType::File {
+                path: dir.path().join("unused.json"),
+                format: rsigma_eval::pipeline::sources::DataFormat::Json,
+                extract: None,
+            },
+            refresh: rsigma_eval::pipeline::sources::RefreshPolicy::Once,
+            timeout: None,
+            on_error: rsigma_eval::pipeline::sources::ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }]);
+        engine.load_rules().unwrap();
+        let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+
+        let err = proc
+            .rebuild_from_sources()
+            .expect_err("a cache miss that fails must not swap the engine");
+        assert!(err.contains("down"), "got: {err}");
+
+        let batch = vec![r#"{"EventID": 1}"#.to_string()];
+        let results = proc.process_batch_lines(&batch, &identity_filter);
+        assert!(results[0].detection_count() > 0);
+        std::mem::forget(dir);
     }
 
     #[test]

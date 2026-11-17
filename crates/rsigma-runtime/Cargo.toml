@@ -133,3 +133,7 @@ required-features = ["logfmt", "cef", "evtx"]
 name = "otlp"
 harness = false
 required-features = ["otlp"]
+
+[[bench]]
+name = "watchlist"
+harness = false

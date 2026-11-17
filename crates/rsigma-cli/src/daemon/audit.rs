@@ -154,6 +154,9 @@ pub fn is_audited(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/sources/resolve")
             | (&Method::POST, "/api/v1/sources/resolve/{source_id}")
             | (&Method::DELETE, "/api/v1/sources/cache/{source_id}")
+            | (&Method::POST, "/api/v1/sources/{source_id}/indicators")
+            | (&Method::PUT, "/api/v1/sources/{source_id}/indicators")
+            | (&Method::DELETE, "/api/v1/sources/{source_id}/indicators")
             | (&Method::DELETE, "/api/v1/fields/observer")
             | (&Method::DELETE, "/api/v1/schemas")
     )
@@ -181,10 +184,9 @@ fn digest_hex(body: &[u8]) -> Option<String> {
     )
 }
 
-fn skip_body_buffer(method: &Method, headers: &HeaderMap) -> bool {
-    if *method == Method::DELETE {
-        return true;
-    }
+fn skip_body_buffer(headers: &HeaderMap) -> bool {
+    // A missing length means there is no body. Indicator deletion is a
+    // `DELETE` that carries one, so the method alone cannot decide.
     match headers.get(header::CONTENT_LENGTH) {
         Some(v) => v.as_bytes() == b"0",
         None => !headers.contains_key(header::TRANSFER_ENCODING),
@@ -250,7 +252,7 @@ pub async fn audit_middleware(
 
     let max = log.max_body_bytes();
     let (parts, body) = request.into_parts();
-    let body_bytes = if skip_body_buffer(&method, &parts.headers) {
+    let body_bytes = if skip_body_buffer(&parts.headers) {
         Bytes::new()
     } else {
         // A declared `Content-Length` over the cap is a definitive reject
@@ -297,6 +299,22 @@ mod tests {
         assert!(!is_audited(&Method::POST, "/api/v1/events"));
         assert!(!is_audited(&Method::POST, "/v1/logs"));
         assert!(!is_audited(&Method::GET, "/metrics"));
+        assert!(is_audited(
+            &Method::POST,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(is_audited(
+            &Method::PUT,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(is_audited(
+            &Method::DELETE,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(!is_audited(
+            &Method::GET,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
     }
 
     #[test]

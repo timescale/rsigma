@@ -237,6 +237,14 @@ struct AppState {
     /// Control-plane API audit trail. `Some` when `--state-db` is configured
     /// and audit is not disabled; the `/api/v1/audit` handler reads from it.
     audit: Option<Arc<super::audit::AuditLog>>,
+    /// Indicator push API for `type: watchlist` sources.
+    watchlists: super::watchlist_api::WatchlistApi,
+}
+
+impl axum::extract::FromRef<AppState> for super::watchlist_api::WatchlistApi {
+    fn from_ref(state: &AppState) -> Self {
+        state.watchlists.clone()
+    }
 }
 
 #[derive(Clone)]
@@ -378,6 +386,113 @@ pub struct DaemonConfig {
     pub tls_state: Option<super::tls::TlsState>,
 }
 
+struct AppliedSources {
+    last_applied: std::collections::HashMap<String, serde_json::Value>,
+    referenced: std::collections::HashSet<String>,
+}
+
+fn collect_source_ids(
+    pipelines: &[Pipeline],
+    rulesets: &[rsigma_runtime::RulesetBinding],
+) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for pipeline in pipelines {
+        for source_ref in &pipeline.source_refs {
+            ids.insert(source_ref.source_id.clone());
+        }
+    }
+    for binding in rulesets {
+        for pipeline in &binding.pipelines {
+            match pipeline {
+                rsigma_runtime::PipelineRef::Builtin(pipeline) => {
+                    for source_ref in &pipeline.source_refs {
+                        ids.insert(source_ref.source_id.clone());
+                    }
+                }
+                rsigma_runtime::PipelineRef::File(path) => {
+                    if let Ok(pipeline) = rsigma_eval::parse_pipeline_file(path) {
+                        for source_ref in &pipeline.source_refs {
+                            ids.insert(source_ref.source_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn referenced_source_ids(processor: &LogProcessor) -> std::collections::HashSet<String> {
+    let snapshot = processor.engine_snapshot();
+    let engine = snapshot.read();
+    let mut ids = collect_source_ids(engine.pipelines(), &[]);
+    if let rsigma_runtime::RuleSource::Rulesets(bindings) = engine.rule_source() {
+        ids.extend(collect_source_ids(&[], bindings));
+    }
+    ids
+}
+
+/// A referenced cache value differs from the value the running rules compiled.
+///
+/// The scheduler publishes on a watch channel, which keeps only the newest
+/// result, so this compares every referenced id rather than the ids in that
+/// one result.
+fn referenced_cache_differs(applied: &AppliedSources, cache: &rsigma_runtime::SourceCache) -> bool {
+    applied
+        .referenced
+        .iter()
+        .any(|id| applied.last_applied.get(id) != cache.get(id).as_ref())
+}
+
+fn seed_applied(
+    processor: &LogProcessor,
+    cache: Option<&rsigma_runtime::SourceCache>,
+) -> AppliedSources {
+    let referenced = referenced_source_ids(processor);
+    let mut last_applied = std::collections::HashMap::new();
+    if let Some(cache) = cache {
+        for id in &referenced {
+            if let Some(value) = cache.get(id) {
+                last_applied.insert(id.clone(), value);
+            }
+        }
+    }
+    AppliedSources {
+        last_applied,
+        referenced,
+    }
+}
+
+/// Referenced ids from the engine that just loaded, with values captured
+/// before that load. A value stored while the load was running is then not
+/// recorded as applied, so the next result rebuilds instead of being missed.
+fn applied_from_capture(processor: &LogProcessor, captured: &AppliedSources) -> AppliedSources {
+    let referenced = referenced_source_ids(processor);
+    let mut last_applied = std::collections::HashMap::new();
+    for id in &referenced {
+        if let Some(value) = captured.last_applied.get(id) {
+            last_applied.insert(id.clone(), value.clone());
+        }
+    }
+    AppliedSources {
+        last_applied,
+        referenced,
+    }
+}
+
+fn refresh_watchlist_caps(registry: &rsigma_runtime::WatchlistRegistry, processor: &LogProcessor) {
+    let over = registry.apply_reference_limits(
+        &referenced_source_ids(processor),
+        rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
+    );
+    if over > 0 {
+        tracing::warn!(
+            indicators = over,
+            "referenced watchlists hold more indicators than placeholder expansion allows"
+        );
+    }
+}
+
 fn default_detect_inflight(workers: usize) -> usize {
     match workers {
         0 | 1 => 1,
@@ -495,14 +610,53 @@ pub async fn run_daemon(config: DaemonConfig) {
     let mut sources_trigger_tx_val: Option<
         mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
     > = None;
+    let mut source_results: Option<
+        tokio::sync::watch::Receiver<Option<rsigma_runtime::RefreshResult>>,
+    > = None;
 
     let mut source_resolver_val: Option<Arc<super::instrumented_resolver::InstrumentedResolver>> =
         None;
 
+    let declared_sources: Vec<_> = config
+        .source_registry
+        .sources()
+        .into_iter()
+        .cloned()
+        .collect();
+    let watchlist_ids: Vec<String> = declared_sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.source_type,
+                rsigma_eval::pipeline::sources::SourceType::Watchlist { .. }
+            )
+        })
+        .map(|source| source.id.clone())
+        .collect();
+    let watchlist_registry = Arc::new(rsigma_runtime::WatchlistRegistry::from_sources(
+        &declared_sources,
+    ));
+    watchlist_registry.apply_reference_limits(
+        &collect_source_ids(&config.pipelines, &config.rulesets),
+        rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
+    );
+    super::watchlist_api::preregister_metrics(&metrics, &watchlist_ids);
+    if let Some(store) = state_store.as_ref() {
+        super::watchlist_api::restore_from_store(
+            store,
+            &watchlist_registry,
+            &watchlist_ids,
+            &metrics,
+            config.state_restore_mode == StateRestoreMode::ForceClear,
+        )
+        .await;
+    }
+
     if has_dynamic {
-        let instrumented = Arc::new(super::instrumented_resolver::InstrumentedResolver::new(
-            metrics.clone(),
-        ));
+        let mut instrumented =
+            super::instrumented_resolver::InstrumentedResolver::new(metrics.clone());
+        instrumented.set_watchlists(watchlist_registry.clone());
+        let instrumented = Arc::new(instrumented);
         source_resolver_val = Some(instrumented.clone());
         let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = instrumented;
         engine.set_source_resolver(resolver.clone());
@@ -563,7 +717,16 @@ pub async fn run_daemon(config: DaemonConfig) {
 
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
+            source_results = Some(scheduler.result_receiver());
             sources_trigger_tx_val = Some(scheduler.trigger_sender());
+            if !watchlist_ids.is_empty() {
+                super::watchlist_api::spawn_sweeper(
+                    watchlist_registry.clone(),
+                    sources_trigger_tx_val.clone(),
+                    metrics.clone(),
+                    state_store.clone(),
+                );
+            }
 
             // Spawn NATS control subject listener for remote re-resolution triggers
             #[cfg(feature = "daemon-nats")]
@@ -877,6 +1040,38 @@ pub async fn run_daemon(config: DaemonConfig) {
     // reloads without blocking, while the consumer debounces with a 500ms
     // sleep + try_recv drain, collapsing bursts into a single reload.
     let (reload_tx, mut reload_rx) = mpsc::channel::<()>(4);
+    // A source-value change asks for a cache-first rebuild. A full reload
+    // already pending supersedes it.
+    let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(4);
+    let applied_sources = Arc::new(std::sync::Mutex::new(seed_applied(
+        &processor,
+        initial_source_cache.as_deref(),
+    )));
+    if let Some(mut source_results) = source_results {
+        let applied = applied_sources.clone();
+        let rebuild_tx = rebuild_tx.clone();
+        let cache = initial_source_cache.clone();
+        tokio::spawn(async move {
+            loop {
+                if source_results.changed().await.is_err() {
+                    break;
+                }
+                if source_results.borrow().is_none() {
+                    continue;
+                }
+                let Some(cache) = cache.as_ref() else {
+                    continue;
+                };
+                let differs = {
+                    let guard = applied.lock().unwrap();
+                    referenced_cache_differs(&guard, cache)
+                };
+                if differs {
+                    let _ = rebuild_tx.try_send(());
+                }
+            }
+        });
+    }
 
     // File watcher for hot-reload (rules, overlays, and pipeline files)
     let rule_source = if config.rulesets.is_empty() {
@@ -1080,6 +1275,21 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
     let audit_for_save = audit_log.clone();
 
+    let source_registry = Arc::new(config.source_registry.clone());
+    let reload_watchlists = watchlist_registry.clone();
+    let mut watchlists = super::watchlist_api::WatchlistApi::new(
+        watchlist_registry,
+        source_registry.clone(),
+        sources_trigger_tx_val.clone(),
+        metrics.clone(),
+    );
+    if let Some(store) = state_store.clone() {
+        watchlists.set_persist(Arc::new(move |source_id, rows| {
+            let store = store.clone();
+            Box::pin(async move { store.replace_watchlist_rows(&source_id, &rows).await })
+        }));
+    }
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -1091,7 +1301,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
-        source_registry: Arc::new(config.source_registry.clone()),
+        source_registry,
         field_observer: field_observer.clone(),
         schema_observer: schema_observer.clone(),
         tap: tap.clone(),
@@ -1102,6 +1312,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         risk_state: risk_state.clone(),
         disposition_state,
         audit: audit_log,
+        watchlists: watchlists.clone(),
     };
 
     let app = Router::new()
@@ -1142,7 +1353,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/schemas/suggestions", get(schema_suggestions))
         .route("/api/v1/tap", get(tap_stream))
         .route("/api/v1/detections/stream", get(detections_stream))
-        .route("/api/v1/audit", get(list_audit));
+        .route("/api/v1/audit", get(list_audit))
+        .merge(super::watchlist_api::routes());
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));
@@ -1306,6 +1518,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_enrichers_path = config.enrichers_path.clone();
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
+    let reload_applied = applied_sources.clone();
     #[cfg(feature = "stix-enrich")]
     let reload_stix_fs_store = stix_fs_store.clone();
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
@@ -1319,13 +1532,69 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(feature = "daemon-tls")]
     let reload_tls_metrics = metrics.clone();
     tokio::spawn(async move {
-        while reload_rx.recv().await.is_some() {
-            // Debounce: batch rapid file changes
+        loop {
+            let mut full_reload = tokio::select! {
+                reload = reload_rx.recv() => match reload {
+                    Some(()) => true,
+                    None => break,
+                },
+                rebuild = rebuild_rx.recv() => match rebuild {
+                    Some(()) => false,
+                    None => break,
+                },
+            };
+            // Debounce: batch rapid file changes and source updates. A full
+            // reload supersedes a rebuild that landed in the same burst.
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if reload_rx.try_recv().is_ok() {
+                full_reload = true;
+            }
             while reload_rx.try_recv().is_ok() {}
+            while rebuild_rx.try_recv().is_ok() {}
+
+            if !full_reload {
+                let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
+                match reload_processor.rebuild_from_sources() {
+                    Ok(stats) => {
+                        tracing::info!(
+                            detection_rules = stats.detection_rules,
+                            correlation_rules = stats.correlation_rules,
+                            "Rules rebuilt from cached source values"
+                        );
+                        reload_metrics
+                            .source_rebuilds_total
+                            .with_label_values(&["success"])
+                            .inc();
+                        reload_metrics
+                            .detection_rules_loaded
+                            .set(stats.detection_rules as i64);
+                        reload_metrics
+                            .correlation_rules_loaded
+                            .set(stats.correlation_rules as i64);
+                        reload_metrics
+                            .rule_parse_errors
+                            .set(stats.parse_errors as i64);
+                        *reload_applied.lock().unwrap() =
+                            applied_from_capture(&reload_processor, &captured);
+                        refresh_watchlist_caps(&reload_watchlists, &reload_processor);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to rebuild rules from cached source values"
+                        );
+                        reload_metrics
+                            .source_rebuilds_total
+                            .with_label_values(&["error"])
+                            .inc();
+                    }
+                }
+                continue;
+            }
 
             reload_metrics.reloads_total.inc();
             tracing::info!("Reloading rules and pipelines...");
+            let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
 
             match reload_processor.reload_rules() {
                 Ok(stats) => {
@@ -1355,6 +1624,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                         .rule_parse_errors
                         .set(stats.parse_errors as i64);
                     reload_health.set_ready(true);
+                    *reload_applied.lock().unwrap() =
+                        applied_from_capture(&reload_processor, &captured);
+                    refresh_watchlist_caps(&reload_watchlists, &reload_processor);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to reload rules");

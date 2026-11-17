@@ -24,6 +24,11 @@ impl InstrumentedResolver {
         }
     }
 
+    /// Resolve `type: watchlist` sources from `registry`.
+    pub fn set_watchlists(&mut self, registry: std::sync::Arc<rsigma_runtime::WatchlistRegistry>) {
+        self.inner.set_watchlists(registry);
+    }
+
     /// Access the underlying cache for invalidation operations.
     pub fn cache(&self) -> &rsigma_runtime::sources::cache::SourceCache {
         self.inner.cache()
@@ -39,6 +44,14 @@ impl InstrumentedResolver {
 
 #[async_trait::async_trait]
 impl SourceResolver for InstrumentedResolver {
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        self.inner.cached(source_id)
+    }
+
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        self.inner.store_cached(source_id, value);
+    }
+
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
         let source_type_label = source_type_label(&source.source_type);
         self.metrics
@@ -118,5 +131,6 @@ fn source_type_label(st: &SourceType) -> &'static str {
         SourceType::Command { .. } => "command",
         SourceType::Http { .. } => "http",
         SourceType::Nats { .. } => "nats",
+        SourceType::Watchlist { .. } => "watchlist",
     }
 }
