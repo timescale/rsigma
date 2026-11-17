@@ -109,6 +109,10 @@ rulesets:
 
 daemon:
   rules: /etc/rsigma/rules
+  # rulesets:            # several named rulesets, optionally schema-bound
+  #   - linux_edge
+  #   - name: cloud_audit
+  #     when: { schemas: [aws_cloudtrail] }
   pipelines: [ecs_windows]
   sources: [/etc/rsigma/sources]
   # alert_pipeline: /etc/rsigma/alert-pipeline.yml   # dedup (see the Alert Pipeline guide)
@@ -173,6 +177,10 @@ daemon:
 eval:
   rules: ./rules
   # ruleset: linux_edge     # one named ruleset instead of rules
+  # rulesets:               # several named rulesets, optionally schema-bound
+  #   - linux_edge
+  #   - name: cloud_audit
+  #     when: { schemas: [aws_cloudtrail] }
   pipelines: [sysmon]
   input_format: auto
   fail_on_detection: false
@@ -260,6 +268,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
 | `rulesets` | `ruleset`, `--ruleset` commands, MCP tools | Named curation of Sigma rules: sources, selectors, dependency policy, overlays, pipelines, and build output. File-only; environment variables are ignored. See [Rulesets](../guide/rulesets.md). {{ added "unreleased" }} |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
+| `daemon.rulesets` | `engine daemon` | Several named rulesets evaluated side by side. Each entry is a name or `{name, when: {schemas: [...]}}`. Conflicts with `daemon.rules`. Read once at startup. See [Rulesets](../guide/rulesets.md#several-rulesets-side-by-side). {{ added "unreleased" }} |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.api.auth` | `engine daemon` | Bearer-token authentication with `resource:action` permissions (`anonymous_permissions`, `roles`, `tokens`). Absent = no authentication. Token secrets stay env-only via each token's `token_env`. Mutually exclusive with `--api-token-env`. See [HTTP API: Authentication](http-api.md#authentication). |
 | `daemon.api.audit` | `engine daemon` | Control-plane mutation audit trail (`enabled`, `max_entries`, `max_age`, `max_body_bytes`, `sink`). Requires `--state-db`; auto-enabled when a state database is configured. See [HTTP API: Audit trail](http-api-state.md#audit-trail). |
@@ -272,6 +281,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.schema` | `engine daemon` | Schema classification and routing (`observe`, `discover`, `routing`, `partition_rules`, `config`, `on_unknown`). All opt-in. See [Schema Routing](../guide/schema-routing.md). |
 | `daemon.logsource_routing` | `engine daemon` | Conflict-based logsource pruning (`enabled`, `field_map`, `event_logsource`). `strict` is accepted and ignored. Opt-in. See [Logsource-Aware Evaluation](../guide/logsource-routing.md). |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
+| `eval.ruleset`, `eval.rulesets` | `engine eval` | One named ruleset, or several evaluated side by side with optional `when` schema bindings. Set at most one of them, and neither with `eval.rules`. An empty `eval.rulesets` list counts as unset. {{ added "unreleased" }} |
 | `eval.output` | `engine eval` | Write results to this file instead of stdout (`-o, --output`). The CLI flag takes precedence. {{ added "0.25.0" }} |
 | `eval.schema` | `engine eval` | Schema routing for one-shot eval (`routing`, `config`, `on_unknown`). `observe`/`discover` have no effect here. |
 | `eval.logsource_routing` | `engine eval` | Conflict-based logsource pruning for one-shot eval (`enabled`, `field_map`, `event_logsource`). `strict` is accepted and ignored. |

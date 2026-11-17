@@ -16,7 +16,7 @@ use std::io::BufRead;
 
 use rsigma_eval::{
     CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, RouteOutcome,
-    SchemaRouter,
+    RulesetEngines, SchemaRouter,
 };
 
 use crate::EventFilter;
@@ -94,6 +94,20 @@ impl EventProcessor for RoutingProcessor<'_> {
             }
         }
         for m in &routed.results {
+            on_result(m);
+        }
+    }
+}
+
+/// [`EventProcessor`] backed by several named rulesets. Each unit stamps its
+/// name on the results it produces.
+pub(crate) struct RulesetsProcessor<'a> {
+    pub engines: &'a mut RulesetEngines,
+}
+
+impl EventProcessor for RulesetsProcessor<'_> {
+    fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult)) {
+        for m in &self.engines.process_event(event) {
             on_result(m);
         }
     }

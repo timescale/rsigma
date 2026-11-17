@@ -11,7 +11,7 @@ One-shot evaluation of Sigma rules against events from a file, stdin, or an inli
 ## Synopsis
 
 ```text
-rsigma engine eval [OPTIONS] [--rules <RULES> | --ruleset <NAME>]
+rsigma engine eval [OPTIONS] [--rules <RULES> | --ruleset <NAME> [--ruleset <NAME> ...]]
 ```
 
 ## Description
@@ -31,7 +31,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 | Flag | Description |
 |------|-------------|
 | `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | Named ruleset from the configuration to evaluate instead of `--rules`. May also be supplied via `eval.ruleset`. Conflicts with `--rules`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | Named ruleset from the configuration to evaluate. Repeatable: several rulesets are evaluated side by side and every result carries its ruleset name. May also be supplied via `eval.ruleset` (one name) or `eval.rulesets` (several names, with optional `when` schema bindings). Conflicts with `--rules`. {{ added "unreleased" }} |
 
 ### Configuration
 
@@ -85,7 +85,7 @@ The global `--output-format`, `--color`, `--quiet`, and `--no-stats` flags apply
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded. Equivalent to the `rsigma.max_group_entries` custom attribute. |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction priority list. Default list: `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`. Repeatable. |
-| `--dump-correlation-state` | off | After replaying all events, print the final correlation window state (per correlation and group: current aggregate vs threshold, window entries, last alert, seconds to eviction) to stderr as JSON, for offline "why didn't it fire?" diagnosis. Correlation mode only; ignored with `--schema-routing`. |
+| `--dump-correlation-state` | off | After replaying all events, print the final correlation window state (per correlation and group: current aggregate vs threshold, window entries, last alert, seconds to eviction) to stderr as JSON, for offline "why didn't it fire?" diagnosis. Correlation mode only; ignored with `--schema-routing`. In ruleset mode the output is keyed by ruleset name, even with one ruleset, and it is printed with `--schema-routing` too and for rulesets without correlations. {{ added "unreleased" }} |
 
 ### Performance (advanced)
 
@@ -148,6 +148,37 @@ These flags may also be supplied via the `eval.logsource_routing` block in a [co
 | Flag | Description |
 |------|-------------|
 | `--fail-on-detection` | Exit with code `1` when any detection or correlation fires. |
+
+## Several rulesets
+
+{{ added "unreleased" }}
+
+Repeat `--ruleset` to evaluate several named rulesets over the same events. Each ruleset is resolved independently and keeps its own pipelines and correlation state. Every result carries a `ruleset` field, and the table, CSV, and TSV views gain a leading `RULESET` column.
+
+```bash
+rsigma engine eval --ruleset win_a --ruleset win_b --event @events.ndjson
+```
+
+The configuration can supply the list, including schema bindings:
+
+```yaml
+rulesets:
+  win_a:
+    sources: [rules/windows]
+  cloud:
+    sources: [rules/cloud]
+
+eval:
+  rulesets:
+    - win_a
+    - name: cloud
+      when:
+        schemas: [aws_cloudtrail]
+```
+
+`when` binds a ruleset to schema names. A bound ruleset receives only events whose classified schema matches, and events with no classified schema reach only unbound rulesets. A CLI `--ruleset` list replaces the configured list and carries no `when`. Setting `eval.ruleset` and `eval.rulesets` together, or either with `eval.rules`, is a configuration error.
+
+`--schema-routing` is allowed with exactly one ruleset, and only when that ruleset declares no pipelines. `--stats` adds one line per ruleset with detection matches, correlation matches, and, for bound rulesets, skipped events.
 
 ## Examples
 
@@ -223,7 +254,7 @@ rsigma engine eval -r rules/ --suppress 5m --action reset \
 | `0` | Events processed cleanly. With `--fail-on-detection`, no rule fired. Per-rule parse errors are logged as warnings but do not change the exit code. |
 | `1` | With `--fail-on-detection`, at least one detection or correlation fired. |
 | `2` | The rules path or `--event @path` file could not be read. Use [`rule validate`](../rule/validate.md) for a strict per-rule gate that fails on parse or compile errors. |
-| `3` | Configuration error: missing `--rules`/`--ruleset`/`eval.rules`/`eval.ruleset`, an unknown or broken ruleset, bad `-p`, malformed `--suppress`, invalid `--jq` filter, bad logsource options, etc. |
+| `3` | Configuration error: missing `--rules`/`--ruleset`/`eval.rules`/`eval.ruleset`/`eval.rulesets`, an unknown or broken ruleset, a duplicate name, an unknown `when` schema, an invalid schema-routing combination, bad `-p`, malformed `--suppress`, invalid `--jq` filter, bad logsource options, etc. |
 
 ## See also
 

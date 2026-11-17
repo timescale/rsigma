@@ -3,8 +3,9 @@
 //! Hosts the `DaemonArgs` clap struct, the `cmd_daemon` entry point, and the
 //! input-format / timezone parsing helpers that used to live in `main.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
@@ -12,6 +13,8 @@ use clap::{ArgMatches, Args};
 use crate::config;
 use crate::daemon;
 use crate::exit_code;
+use rsigma_eval::{SchemaClassifier, load_schema_config, resolve_builtin_pipeline};
+use rsigma_runtime::{PipelineRef, RulesetBinding};
 
 /// Arguments for `rsigma engine daemon` (and the deprecated `rsigma daemon`).
 #[derive(Args, Debug)]
@@ -31,6 +34,19 @@ pub(crate) struct DaemonArgs {
     /// Required unless supplied via `daemon.rules` in the config file.
     #[arg(short, long)]
     pub rules: Option<PathBuf>,
+
+    /// Named rulesets from the configuration to evaluate side by side.
+    #[arg(
+        long = "ruleset",
+        value_name = "NAME",
+        conflicts_with = "rules",
+        action = clap::ArgAction::Append
+    )]
+    pub rulesets: Vec<String>,
+
+    /// Effective ruleset entries, including config-file schema bindings.
+    #[arg(skip)]
+    pub ruleset_entries: Vec<crate::config::RulesetEntryPartial>,
 
     /// Processing pipeline(s) to apply. Accepts builtin names (ecs_windows, sysmon) or YAML file paths
     #[arg(short = 'p', long = "pipeline")]
@@ -720,9 +736,11 @@ pub(crate) fn cmd_daemon(
     apply_daemon_config(&mut args, matches, base);
 
     let DaemonArgs {
-        config: _,
+        config,
         dry_run: _,
         rules: rules_opt,
+        rulesets: _,
+        ruleset_entries,
         pipelines: pipeline_paths,
         jq,
         jsonpath,
@@ -830,10 +848,25 @@ pub(crate) fn cmd_daemon(
         allow_unauthenticated,
     } = args;
 
-    let rules_path = rules_opt.unwrap_or_else(|| {
-        eprintln!("error: no rules path; set --rules or daemon.rules in the config file");
-        process::exit(exit_code::CONFIG_ERROR);
-    });
+    let (rulesets, ruleset_classifier) = if ruleset_entries.is_empty() {
+        (Vec::new(), None)
+    } else {
+        build_ruleset_bindings(
+            ruleset_entries,
+            config.as_deref(),
+            &pipeline_paths,
+            schema_config.as_deref(),
+            schema_routing,
+        )
+    };
+    let rules_path = if rulesets.is_empty() {
+        rules_opt.unwrap_or_else(|| {
+            eprintln!("error: no rules path; set --rules, --ruleset, daemon.rules, or daemon.rulesets in the config file");
+            process::exit(exit_code::CONFIG_ERROR);
+        })
+    } else {
+        rules_opt.unwrap_or_default()
+    };
 
     #[cfg(feature = "daemon-nats")]
     let nats_auth = NatsAuthArgs {
@@ -904,6 +937,8 @@ pub(crate) fn cmd_daemon(
 
     run_daemon(
         rules_path,
+        rulesets,
+        ruleset_classifier,
         pipeline_paths,
         jq,
         jsonpath,
@@ -1310,10 +1345,27 @@ fn apply_daemon_config(
         return;
     };
 
-    if !explicit("rules")
+    let cli_rules = explicit("rules");
+    let cli_rulesets = explicit("rulesets");
+    let config_list = daemon
+        .rulesets
+        .as_ref()
+        .is_some_and(|entries| !entries.is_empty());
+    if !cli_rules && !cli_rulesets && daemon.rules.is_some() && config_list {
+        eprintln!("error: set either daemon.rules or daemon.rulesets, not both");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    if !cli_rules
+        && !cli_rulesets
         && let Some(v) = daemon.rules
     {
         args.rules = Some(v);
+    }
+    if !cli_rules
+        && !cli_rulesets
+        && let Some(entries) = daemon.rulesets
+    {
+        args.ruleset_entries = entries;
     }
     if !explicit("pipelines")
         && let Some(v) = daemon.pipelines
@@ -1684,6 +1736,15 @@ fn apply_daemon_config(
     {
         args.consumer_group = Some(v);
     }
+
+    if !args.rulesets.is_empty() {
+        args.ruleset_entries = args
+            .rulesets
+            .iter()
+            .cloned()
+            .map(crate::config::RulesetEntryPartial::Name)
+            .collect();
+    }
 }
 
 /// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
@@ -1697,8 +1758,140 @@ pub(crate) struct TlsCliArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn build_ruleset_bindings(
+    entries: Vec<crate::config::RulesetEntryPartial>,
+    config_path: Option<&Path>,
+    pipeline_paths: &[PathBuf],
+    schema_config: Option<&Path>,
+    schema_routing: bool,
+) -> (Vec<RulesetBinding>, Option<Arc<SchemaClassifier>>) {
+    let specs = crate::ruleset::load_specs(config_path);
+    let mut seen = std::collections::HashSet::new();
+    let mut bindings = Vec::new();
+    let mut any_when = false;
+
+    for entry in entries {
+        let (name, when_schemas) = match entry {
+            crate::config::RulesetEntryPartial::Name(name) => (name, Vec::new()),
+            crate::config::RulesetEntryPartial::Bound {
+                name,
+                when,
+                unknown,
+            } => {
+                if !unknown.is_empty() {
+                    eprintln!(
+                        "error: ruleset '{name}' has unknown keys: {}",
+                        unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+                let when = when.unwrap_or(crate::config::WhenPartial {
+                    schemas: Vec::new(),
+                    unknown: Default::default(),
+                });
+                if !when.unknown.is_empty() {
+                    eprintln!(
+                        "error: ruleset '{name}' has unknown `when` keys: {}",
+                        when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+                (name, when.schemas)
+            }
+        };
+        if !seen.insert(name.clone()) {
+            eprintln!("error: duplicate ruleset name '{name}'");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        let Some(spec) = specs.get(&name) else {
+            eprintln!(
+                "error: unknown ruleset '{name}'; defined rulesets: {}",
+                specs.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+            process::exit(exit_code::CONFIG_ERROR);
+        };
+        any_when |= !when_schemas.is_empty();
+
+        let declared = if !pipeline_paths.is_empty() {
+            pipeline_paths.to_vec()
+        } else if !spec.pipelines.is_empty() {
+            crate::ruleset::ruleset_pipelines(spec)
+        } else {
+            Vec::new()
+        };
+        let mut pipelines = Vec::new();
+        for pipeline in declared {
+            let name = pipeline.to_string_lossy();
+            if let Some(result) = resolve_builtin_pipeline(&name) {
+                match result {
+                    Ok(pipeline) => pipelines.push(PipelineRef::Builtin(pipeline)),
+                    Err(error) => {
+                        eprintln!("error: builtin pipeline '{name}': {error}");
+                        process::exit(exit_code::CONFIG_ERROR);
+                    }
+                }
+            } else {
+                pipelines.push(PipelineRef::File(pipeline));
+            }
+        }
+
+        if schema_routing {
+            if when_schemas.is_empty() {
+                // allowed
+            } else {
+                eprintln!("error: ruleset '{name}' cannot use `when` with --schema-routing");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+            if !spec.pipelines.is_empty() {
+                eprintln!(
+                    "error: ruleset '{name}' has pipelines, which conflict with --schema-routing"
+                );
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+        }
+
+        bindings.push(RulesetBinding {
+            name,
+            spec: spec.clone(),
+            pipelines,
+            when_schemas,
+        });
+    }
+
+    if schema_routing && bindings.len() != 1 {
+        eprintln!("error: --schema-routing supports exactly one --ruleset");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+
+    let classifier = if any_when {
+        let (signatures, _) = match schema_config {
+            Some(path) => match load_schema_config(path) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("Error loading schema config: {error}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+            },
+            None => (Vec::new(), None),
+        };
+        let classifier = if signatures.is_empty() {
+            SchemaClassifier::builtin()
+        } else {
+            SchemaClassifier::with_user_signatures(signatures)
+        };
+        Some(Arc::new(classifier))
+    } else {
+        None
+    };
+
+    (bindings, classifier)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_daemon(
     rules_path: PathBuf,
+    rulesets: Vec<RulesetBinding>,
+    ruleset_classifier: Option<Arc<SchemaClassifier>>,
     pipeline_paths: Vec<PathBuf>,
     jq: Option<String>,
     jsonpath: Option<String>,
@@ -1912,6 +2105,8 @@ fn run_daemon(
 
     let config = daemon::server::DaemonConfig {
         rules_path,
+        rulesets,
+        ruleset_classifier,
         pipelines,
         pipeline_paths: file_pipeline_paths,
         corr_config,

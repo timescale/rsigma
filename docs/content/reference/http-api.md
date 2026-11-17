@@ -15,7 +15,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/healthz` | GET | always open | Liveness probe. Always 200 once the listener is up. |
 | `/readyz` | GET | always open | Readiness probe. 200 when rules and pipelines are loaded; 503 during startup or after a failed reload. |
 | `/metrics` | GET | `metrics:read` | Prometheus text format. See [Prometheus metrics](metrics.md). |
-| `/api/v1/status` | GET | `status:read` | Counters, state-entry counts, uptime, and (when configured) dynamic-source summary. |
+| `/api/v1/status` | GET | `status:read` | Counters, state-entry counts, uptime, per-ruleset rule counts, and (when configured) dynamic-source summary. {{ added "unreleased" }} |
 | `/api/v1/correlations` | GET | `correlations:read` | Compiled correlation list with per-group counts. Empty when the engine has no correlation rules. |
 | `/api/v1/correlations/state` | GET | `correlations:read` | Live per-group correlation window snapshot (current aggregate vs threshold, window entries, last alert, seconds to eviction). Filter with `?id=` and `?group=`. |
 | `/api/v1/incidents` | GET | `incidents:read` | Open incidents from the alert-pipeline grouping stage. |
@@ -25,7 +25,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/silences` | GET, POST | `silences:read`, `silences:write` | List silences, or create one (returns its id). |
 | `/api/v1/silences/{id}` | DELETE | `silences:write` | Remove a silence by id. |
 | `/api/v1/dispositions` | GET, POST | `dispositions:read`, `dispositions:write` | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. When capture is enabled, POST also requires `capture:write`. There is no read endpoint for the capture ring or spool. |
-| `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path. |
+| `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path, or per-ruleset counts in ruleset mode. {{ added "unreleased" }} |
 | `/api/v1/reload` | POST | `reload:execute` | Trigger an immediate rules + pipelines reload. |
 | `/api/v1/events` | POST | `events:ingest` | NDJSON event ingest. Only enabled with `--input http`. |
 | `/api/v1/sources` | GET | `sources:read` | Dynamic sources currently registered. |

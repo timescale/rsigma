@@ -173,6 +173,22 @@ The MCP tools `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules
 
 `convert_rules` ignores a ruleset's pipelines because the conversion target supplies its own pipeline semantics.
 
+## Several rulesets side by side
+
+{{ added "unreleased" }}
+
+`engine eval`, MCP `evaluate_events`, and `engine daemon` can evaluate several rulesets over the same events. Each ruleset keeps its own compiled engines, pipelines, and correlation state. Results carry a `ruleset` field naming the ruleset that produced them, and the results for one event are concatenated in declaration order.
+
+Fan-out is useful when the same event stream should be tested against several curations, for example a Windows subset and a cloud subset, or a stable set and an experimental set. Prefer one ruleset when the curations share correlation state: a rule that appears in two rulesets is evaluated and counted independently in each.
+
+`when` binds a ruleset to schema names. A bound ruleset receives only events whose `SchemaClassifier::classify` result names one of its schemas. Events with no classified schema reach only rulesets without `when`. The classifier comes from `--schema-config` when supplied, otherwise the builtin signatures. Classification runs once per event and only when at least one ruleset has `when`.
+
+A CLI `--ruleset` list replaces the configured list wholesale, and CLI entries carry no `when`. Use the configuration list for schema bindings. `--schema-routing` is allowed with exactly one ruleset and only when that ruleset declares no pipelines, because the routing bindings own pipelines. `when` is not allowed with schema routing.
+
+In the daemon, the ruleset list and definitions are read once at startup. Changing them in `rsigma.yaml` needs a restart. Rule, overlay, and pipeline files under the rulesets hot-reload. The daemon exposes per-ruleset rule counts and skipped events in `/api/v1/status`, `/api/v1/rules`, and `rsigma engine status`. `rsigma_ruleset_rules_loaded`, `rsigma_ruleset_matches_total`, and `rsigma_ruleset_events_skipped_total` carry the same numbers to Prometheus. Rule metadata lookups that resolve a rule overlaid differently in two rulesets report an ambiguous result.
+
+`engine eval --dump-correlation-state` prints a map keyed by ruleset name, even when only one ruleset is selected. `--stats` adds one line per ruleset with detection matches, correlation matches, and, for bound rulesets, skipped events.
+
 ## See also
 
 - [Configuration reference](../reference/configuration.md)

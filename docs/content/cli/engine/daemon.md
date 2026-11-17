@@ -11,7 +11,7 @@ Run as a long-running daemon with hot-reload, health checks, and Prometheus metr
 ## Synopsis
 
 ```text
-rsigma engine daemon [OPTIONS] --rules <RULES>
+rsigma engine daemon [OPTIONS] [--rules <RULES> | --ruleset <NAME> [--ruleset <NAME> ...]]
 ```
 
 ## Description
@@ -28,7 +28,33 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. |
+| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. Conflicts with `--ruleset`. |
+| `--ruleset <NAME>` | Named rulesets from the configuration, evaluated side by side. Repeatable. May also be supplied via `daemon.rulesets` (with optional `when` schema bindings). Conflicts with `--rules`. {{ added "unreleased" }} |
+
+### Several rulesets
+
+{{ added "unreleased" }}
+
+Repeat `--ruleset` to run several named rulesets side by side. Each ruleset keeps its own engines, pipelines, and correlation state, and every result carries a `ruleset` field. The configuration can supply the list with schema bindings:
+
+```yaml
+rulesets:
+  win_a:
+    sources: [rules/windows]
+  cloud:
+    sources: [rules/cloud]
+
+daemon:
+  rulesets:
+    - win_a
+    - name: cloud
+      when:
+        schemas: [aws_cloudtrail]
+```
+
+`when` binds a ruleset to classified schema names. Events with no classified schema reach only unbound rulesets. A CLI `--ruleset` list replaces the configured list and carries no `when`. The ruleset list and definitions are read once at startup; changing them needs a restart. Rule, overlay, and pipeline files hot-reload. `--schema-routing` is allowed with exactly one ruleset and only when it declares no pipelines.
+
+`GET /api/v1/status` and `GET /api/v1/rules` gain a `rulesets` array with per-ruleset rule counts and `when` bindings; `rules_path` is omitted in ruleset mode. `rsigma engine status` renders the same values. The daemon exports `rsigma_ruleset_rules_loaded`, `rsigma_ruleset_matches_total`, and `rsigma_ruleset_events_skipped_total`.
 
 ### Rule loading
 
@@ -36,7 +62,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 |------|---------|-------------|
 | `--strict-rules` | off | Refuse to load a rule set in which any rule fails to parse. Config-file equivalent: `daemon.engine.strict_rules`. {{ added "0.26.0" }} |
 
-Rules that fail to parse are logged, left out of the loaded rule set, and counted on `rsigma_rule_parse_errors`. A load in which every rule fails to parse is refused, and so is any load with a parse error under `--strict-rules`. A refused load at startup exits with code `2`, the same as a compile error. A refused reload keeps the current rules active and increments `rsigma_reloads_failed_total`. A rules path with no rules and no parse errors still loads, with a warning. {{ added "0.26.0" }}
+Rules that fail to parse are logged, left out of the loaded rule set, and counted on `rsigma_rule_parse_errors`. A load in which every rule fails to parse is refused, and so is any load with a parse error under `--strict-rules`. A refused path-mode load at startup exits with code `2`, the same as a compile error; a refused ruleset-mode load exits with code `3`. A refused reload keeps the current rules active and increments `rsigma_reloads_failed_total`. A rules path with no rules and no parse errors still loads, with a warning. {{ added "0.26.0" }}
 
 ### Configuration
 

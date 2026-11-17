@@ -1,0 +1,3 @@
+{"rule_title":"Whoami burst","rule_id":"33333333-3333-4333-8333-333333333333","level":"medium","tags":["attack.discovery"],"ruleset":"win_a","correlation_type":"event_count","group_key":[["process.executable","whoami"]],"aggregated_value":2.0,"timespan_secs":300}
+{"rule_title":"Whoami burst","rule_id":"33333333-3333-4333-8333-333333333333","level":"medium","tags":["attack.discovery"],"ruleset":"win_b","correlation_type":"event_count","group_key":[["Image","whoami"]],"aggregated_value":2.0,"timespan_secs":300}
+{"rule_title":"S3 bucket change","rule_id":"22222222-2222-4222-8222-222222222222","level":"medium","tags":["attack.exfiltration"],"ruleset":"cloud","matched_selections":["selection"],"matched_fields":[{"field":"eventSource","value":"s3.amazonaws.com"}]}

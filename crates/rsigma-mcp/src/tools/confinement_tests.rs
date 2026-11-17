@@ -78,6 +78,7 @@ fn evaluate() -> EvaluateInput {
         yaml: Some(VALID_RULE.to_string()),
         path: None,
         ruleset: None,
+        rulesets: None,
         events: None,
         events_path: Some("events.ndjson".to_string()),
         pipelines: vec![],
@@ -458,5 +459,26 @@ fn no_rules_dir_leaves_paths_unconfined() {
         server
             .run_parse_rule(source(&rule.display().to_string()))
             .is_ok()
+    );
+}
+
+#[test]
+fn a_multi_ruleset_source_outside_the_root_is_rejected() {
+    let fx = Fixture::new();
+    let outside = fx.outside.path().join("rule.yml");
+    let rulesets = BTreeMap::from([(
+        "base".to_string(),
+        ruleset_spec(fx.root.path(), &[outside.to_str().unwrap()], &[]),
+    )]);
+    let server = ruleset_handler(Some(fx.root.path().to_path_buf()), rulesets);
+    let mut input = evaluate();
+    input.yaml = None;
+    input.path = None;
+    input.ruleset = None;
+    input.rulesets = Some(vec!["base".to_string()]);
+    let error = block_on(server.run_evaluate_events(input)).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("escapes the configured --rules-dir"),
+        "{error:?}"
     );
 }

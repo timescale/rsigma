@@ -6,6 +6,8 @@ description: "Run real-time Sigma detection with the RSigma daemon: inputs, sink
 
 `rsigma engine daemon` runs RSigma as a long-running service: it keeps a compiled engine in memory, reads events from a continuous source, writes detections to one or more sinks, and exposes a small HTTP API for health checks, metrics, and management. Use it when you need state to survive restarts, hot-reload across rule changes, or a Prometheus-scrapeable detection engine.
 
+The daemon can also run several named rulesets side by side with `--ruleset` or `daemon.rulesets`, each with its own pipelines and correlation state. See [Rulesets](rulesets.md#several-rulesets-side-by-side). {{ added "unreleased" }}
+
 This page covers the daemon's lifecycle, input and output options, hot-reload, state persistence, and the HTTP API surface. For NATS-specific operations (auth, replay, consumer groups, DLQ) see [NATS Streaming](nats-streaming.md). For OTLP ingestion see [OTLP Integration](otlp-integration.md).
 
 ## What the daemon does

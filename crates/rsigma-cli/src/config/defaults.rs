@@ -137,6 +137,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         daemon: Some(DaemonPartial {
             rules: None,
             pipelines: Some(Vec::new()),
+            rulesets: None,
             sources: Some(Vec::new()),
             enrichers: None,
             #[cfg(feature = "stix-enrich")]
@@ -274,6 +275,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 strict: Some(LOGSOURCE_STRICT),
             }),
             ruleset: None,
+            rulesets: None,
         }),
         backtest: Some(BacktestPartial {
             // rules, corpus, and expectations are required at runtime and have

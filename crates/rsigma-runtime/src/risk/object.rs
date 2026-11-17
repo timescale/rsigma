@@ -89,6 +89,7 @@ mod tests {
                         .unwrap()
                         .clone(),
                 ),
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec![],

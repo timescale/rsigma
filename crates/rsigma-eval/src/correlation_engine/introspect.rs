@@ -45,6 +45,11 @@ pub struct CorrelationInfo {
     pub threshold: String,
     /// Number of live group windows for this correlation.
     pub active_groups: usize,
+    /// Ruleset that owns this correlation, set when rows from several rulesets
+    /// share one list. `RulesetEngines::introspect` keys its map by ruleset
+    /// and leaves this `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
 }
 
 /// One field of a resolved group key.
@@ -100,6 +105,11 @@ pub struct GroupStateInfo {
     pub suppression_remaining: Option<i64>,
     /// The raw window state (timestamps / values), serialized as-is.
     pub window: WindowState,
+    /// Ruleset that owns this window, set when rows from several rulesets
+    /// share one list. `RulesetEngines::introspect` keys its map by ruleset
+    /// and leaves this `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<String>,
 }
 
 impl<L> CorrelationEngine<L> {
@@ -137,6 +147,7 @@ impl<L> CorrelationEngine<L> {
                 rule_refs: c.rule_refs.clone(),
                 threshold: render_threshold(c),
                 active_groups: active_per_corr[i],
+                ruleset: None,
             })
             .collect();
 
@@ -200,6 +211,7 @@ impl<L> CorrelationEngine<L> {
                 suppress_secs,
                 suppression_remaining,
                 window: ws.clone(),
+                ruleset: None,
             });
         }
 

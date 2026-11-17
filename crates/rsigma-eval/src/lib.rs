@@ -110,6 +110,7 @@ pub mod router;
 pub mod rule_draft;
 pub mod rule_metadata;
 pub mod rule_tune;
+pub mod rulesets;
 pub mod schema;
 pub mod schema_discovery;
 mod timestamp;
@@ -165,6 +166,10 @@ pub use rule_metadata::{RuleBundleMetadata, RuleIdentity, RuleKind, RuleMetadata
 pub use rule_tune::{
     TuneConfig, TuneError, TuneExpectationDiff, TuneFieldDisposition, TuneFieldReport, TuneReport,
     TuneSelectionReport, TuneVerification, tune_rule,
+};
+pub use rulesets::{
+    CorrelationIntrospection, RouteCounts, RulesetEngines, RulesetEnginesError, RulesetStats,
+    RulesetUnit, UnitEngine,
 };
 pub use schema::{
     FieldValueConfig, OnUnknown, PredicateOutcome, RouteDecision, RoutingConfig, RoutingPlan,

@@ -54,6 +54,9 @@ pub struct Metrics {
     pub enrichment_dns_cache_hits_total: IntCounterVec,
     pub enrichment_dns_cache_misses_total: IntCounterVec,
     pub enrichment_dns_queries_total: IntCounterVec,
+    pub ruleset_rules_loaded: IntGaugeVec,
+    pub ruleset_matches_total: IntCounterVec,
+    pub ruleset_events_skipped_total: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_requests: IntCounterVec,
     #[cfg(feature = "daemon-otlp")]
@@ -563,6 +566,30 @@ impl Metrics {
             &["enricher_id", "result"],
         )
         .unwrap();
+        let ruleset_rules_loaded = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_ruleset_rules_loaded",
+                "Rules loaded per ruleset by kind",
+            ),
+            &["ruleset", "kind"],
+        )
+        .unwrap();
+        let ruleset_matches_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_ruleset_matches_total",
+                "Matches produced per ruleset by kind",
+            ),
+            &["ruleset", "kind"],
+        )
+        .unwrap();
+        let ruleset_events_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_ruleset_events_skipped_total",
+                "Events kept away from a ruleset by a when binding",
+            ),
+            &["ruleset"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(enrichment_total.clone()))
@@ -602,6 +629,15 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(enrichment_dns_queries_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(ruleset_rules_loaded.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(ruleset_matches_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(ruleset_events_skipped_total.clone()))
             .unwrap();
 
         #[cfg(feature = "daemon-otlp")]
@@ -1298,6 +1334,9 @@ impl Metrics {
             enrichment_dns_cache_hits_total,
             enrichment_dns_cache_misses_total,
             enrichment_dns_queries_total,
+            ruleset_rules_loaded,
+            ruleset_matches_total,
+            ruleset_events_skipped_total,
             #[cfg(feature = "daemon-otlp")]
             otlp_requests,
             #[cfg(feature = "daemon-otlp")]
@@ -1472,6 +1511,38 @@ impl Metrics {
 
 /// Bridge from rsigma-runtime's MetricsHook trait to the Prometheus-backed Metrics struct.
 impl MetricsHook for Metrics {
+    fn register_ruleset(&self, ruleset: &str) {
+        for kind in ["detection", "correlation"] {
+            self.ruleset_rules_loaded
+                .with_label_values(&[ruleset, kind]);
+            self.ruleset_matches_total
+                .with_label_values(&[ruleset, kind]);
+        }
+        self.ruleset_events_skipped_total
+            .with_label_values(&[ruleset]);
+    }
+
+    fn on_ruleset_match(&self, ruleset: &str, kind: &'static str) {
+        self.ruleset_matches_total
+            .with_label_values(&[ruleset, kind])
+            .inc();
+    }
+
+    fn on_ruleset_events_skipped(&self, ruleset: &str, count: u64) {
+        self.ruleset_events_skipped_total
+            .with_label_values(&[ruleset])
+            .inc_by(count);
+    }
+
+    fn on_ruleset_rules_loaded(&self, ruleset: &str, detection: usize, correlation: usize) {
+        self.ruleset_rules_loaded
+            .with_label_values(&[ruleset, "detection"])
+            .set(detection as i64);
+        self.ruleset_rules_loaded
+            .with_label_values(&[ruleset, "correlation"])
+            .set(correlation as i64);
+    }
+
     fn on_parse_error(&self) {
         self.events_parse_errors.inc();
     }

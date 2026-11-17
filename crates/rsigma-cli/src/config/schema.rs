@@ -141,6 +141,9 @@ pub(crate) struct DaemonPartial {
     /// Builtin pipeline names or YAML file paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipelines: Option<Vec<PathBuf>>,
+    /// Several named rulesets evaluated side by side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rulesets: Option<Vec<RulesetEntryPartial>>,
     /// External dynamic-source files or directories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<PathBuf>>,
@@ -201,6 +204,7 @@ impl Merge for DaemonPartial {
         Self {
             rules: over.rules.or(self.rules),
             pipelines: over.pipelines.or(self.pipelines),
+            rulesets: over.rulesets.or(self.rulesets),
             sources: over.sources.or(self.sources),
             enrichers: over.enrichers.or(self.enrichers),
             #[cfg(feature = "stix-enrich")]
@@ -769,6 +773,36 @@ impl Merge for CapturePartial {
     }
 }
 
+/// One entry in a multi-ruleset list: a bare name or a schema-bound name.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum RulesetEntryPartial {
+    /// A bare ruleset name.
+    Name(String),
+    /// A ruleset name with an optional schema binding.
+    Bound {
+        /// Ruleset name.
+        name: String,
+        /// Schemas that admit an event to this ruleset.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<WhenPartial>,
+        /// Unknown keys, rejected at validation time.
+        #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+        unknown: BTreeMap<String, serde_json::Value>,
+    },
+}
+
+/// A ruleset's schema binding.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct WhenPartial {
+    /// Schema names that admit an event to this ruleset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schemas: Vec<String>,
+    /// Unknown keys, rejected at validation time.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unknown: BTreeMap<String, serde_json::Value>,
+}
+
 /// `eval` settings.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct EvalPartial {
@@ -805,6 +839,9 @@ pub(crate) struct EvalPartial {
     /// Named ruleset to evaluate instead of `rules` (`--ruleset`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ruleset: Option<String>,
+    /// Several named rulesets evaluated side by side (`--ruleset` repeated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rulesets: Option<Vec<RulesetEntryPartial>>,
 }
 
 impl Merge for EvalPartial {
@@ -822,6 +859,7 @@ impl Merge for EvalPartial {
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
             ruleset: over.ruleset.or(self.ruleset),
+            rulesets: over.rulesets.or(self.rulesets),
         }
     }
 }

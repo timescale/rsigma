@@ -1,0 +1,2 @@
+{"Image":"whoami","process.executable":"whoami","User":"alice"}
+{"eventVersion":"1.0","eventSource":"s3.amazonaws.com","eventID":"e1","userIdentity":{"name":"alice"},"Image":"whoami","process.executable":"whoami"}

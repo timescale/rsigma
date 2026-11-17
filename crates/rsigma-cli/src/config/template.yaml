@@ -26,6 +26,13 @@ global:
 daemon:
   # Path to a Sigma rule file or directory.
   rules: /etc/rsigma/rules
+  # Several named rulesets evaluated side by side, optionally schema-bound.
+  # Conflicts with `rules`; changing the list needs a restart.
+  # rulesets:
+  #   - vendor-windows
+  #   - name: cloud-audit
+  #     when:
+  #       schemas: [aws_cloudtrail]
   # Builtin pipeline names (ecs_windows, sysmon) or YAML file paths.
   pipelines: []
   # External dynamic-source files or directories (repeatable).
@@ -319,6 +326,13 @@ eval:
   # rules: ./rules
   # Named ruleset from the `rulesets` section to evaluate instead of `rules`.
   # ruleset: vendor-windows
+  # Several rulesets evaluated side by side, optionally bound to schemas.
+  # CLI `--ruleset` entries carry no `when`; use this list for bindings.
+  # rulesets:
+  #   - vendor-windows
+  #   - name: cloud-audit
+  #     when:
+  #       schemas: [aws_cloudtrail]
   # pipelines: [sysmon]
   input_format: auto
   syslog_tz: "+00:00"
