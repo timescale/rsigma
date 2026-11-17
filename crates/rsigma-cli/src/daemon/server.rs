@@ -558,6 +558,16 @@ pub async fn run_daemon(config: DaemonConfig) {
         &declared_sources,
     ));
     super::watchlist_api::preregister_metrics(&metrics, &watchlist_ids);
+    if let Some(store) = state_store.as_ref() {
+        super::watchlist_api::restore_from_store(
+            store,
+            &watchlist_registry,
+            &watchlist_ids,
+            &metrics,
+            config.state_restore_mode == StateRestoreMode::ForceClear,
+        )
+        .await;
+    }
 
     if has_dynamic {
         let mut instrumented =
@@ -631,6 +641,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                     watchlist_registry.clone(),
                     sources_trigger_tx_val.clone(),
                     metrics.clone(),
+                    state_store.clone(),
                 );
             }
 
@@ -1170,12 +1181,18 @@ pub async fn run_daemon(config: DaemonConfig) {
     let audit_for_save = audit_log.clone();
 
     let source_registry = Arc::new(config.source_registry.clone());
-    let watchlists = super::watchlist_api::WatchlistApi::new(
+    let mut watchlists = super::watchlist_api::WatchlistApi::new(
         watchlist_registry,
         source_registry.clone(),
         sources_trigger_tx_val.clone(),
         metrics.clone(),
     );
+    if let Some(store) = state_store.clone() {
+        watchlists.set_persist(Arc::new(move |source_id, rows| {
+            let store = store.clone();
+            Box::pin(async move { store.replace_watchlist_rows(&source_id, &rows).await })
+        }));
+    }
 
     let app_state = AppState {
         processor: processor.clone(),

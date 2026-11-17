@@ -5,6 +5,8 @@
 //! finishes. A full trigger channel is logged and still a success.
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +33,11 @@ pub(crate) const BODY_LIMIT: usize = 4 * 1024 * 1024;
 const LIST_DEFAULT_LIMIT: usize = 1000;
 const LIST_MAX_LIMIT: usize = 10_000;
 
-type PersistFn = Arc<dyn Fn(&str, &[WatchlistRow]) -> Result<(), String> + Send + Sync>;
+pub(crate) type PersistFn = Arc<
+    dyn Fn(String, Vec<WatchlistRow>) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Shared state for the indicator routes and the expiry sweeper.
 #[derive(Clone)]
@@ -59,7 +65,13 @@ impl WatchlistApi {
         }
     }
 
-    fn post(&self, source_id: &str, body: &[u8]) -> Response {
+    /// Write each accepted change through before the response. A failure
+    /// restores the previous in-memory set.
+    pub(crate) fn set_persist(&mut self, persist: PersistFn) {
+        self.persist = Some(persist);
+    }
+
+    async fn post(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
             return response;
@@ -76,7 +88,7 @@ impl WatchlistApi {
             Ok(summary) => summary,
             Err(error) => return watchlist_error(error),
         };
-        if let Err(response) = self.commit(source_id, &before, now) {
+        if let Err(response) = self.commit(source_id, &before, now).await {
             return response;
         }
         self.count(source_id, "add", summary.added);
@@ -95,7 +107,7 @@ impl WatchlistApi {
             .into_response()
     }
 
-    fn put(&self, source_id: &str, body: &[u8]) -> Response {
+    async fn put(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
             return response;
@@ -113,7 +125,7 @@ impl WatchlistApi {
             Ok(summary) => summary,
             Err(error) => return watchlist_error(error),
         };
-        if let Err(response) = self.commit(source_id, &before, now) {
+        if let Err(response) = self.commit(source_id, &before, now).await {
             return response;
         }
         let after: HashSet<String> = self.live_values(source_id, now);
@@ -141,7 +153,7 @@ impl WatchlistApi {
             .into_response()
     }
 
-    fn delete(&self, source_id: &str, body: &[u8]) -> Response {
+    async fn delete(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
             return response;
@@ -155,7 +167,7 @@ impl WatchlistApi {
             Ok(summary) => summary,
             Err(error) => return watchlist_error(error),
         };
-        if let Err(response) = self.commit(source_id, &before, now) {
+        if let Err(response) = self.commit(source_id, &before, now).await {
             return response;
         }
         self.count(source_id, "remove", summary.removed);
@@ -226,7 +238,7 @@ impl WatchlistApi {
         }
     }
 
-    fn commit(
+    async fn commit(
         &self,
         source_id: &str,
         before: &[WatchlistRow],
@@ -241,7 +253,7 @@ impl WatchlistApi {
             .into_iter()
             .filter(|row| row.source_id == source_id)
             .collect();
-        if let Err(message) = persist(source_id, &rows) {
+        if let Err(message) = persist(source_id.to_string(), rows).await {
             self.registry.restore(before, now);
             return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, message));
         }
@@ -376,6 +388,7 @@ pub(crate) fn spawn_sweeper(
     registry: Arc<WatchlistRegistry>,
     trigger: Option<mpsc::Sender<RefreshTrigger>>,
     metrics: Arc<Metrics>,
+    store: Option<Arc<super::store::SqliteStateStore>>,
 ) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(10));
@@ -391,8 +404,15 @@ pub(crate) fn spawn_sweeper(
                 metrics: metrics.clone(),
                 persist: None,
             };
-            for (id, removed) in registry.sweep(now) {
-                api.count(&id, "expire", removed);
+            let removed = registry.sweep(now);
+            if !removed.is_empty()
+                && let Some(store) = &store
+                && let Err(error) = store.delete_expired_watchlist_rows(now).await
+            {
+                tracing::warn!(error = %error, "failed to delete expired watchlist indicators");
+            }
+            for (id, count) in removed {
+                api.count(&id, "expire", count);
                 if let Ok(values) = registry.values(&id, now) {
                     api.gauge(&id, values.len());
                 }
@@ -400,6 +420,64 @@ pub(crate) fn spawn_sweeper(
             }
         }
     });
+}
+
+/// Load indicators saved for the declared watchlists. Rows for any other
+/// source id stay in the database and are not loaded. `--clear-state`
+/// deletes the table instead.
+pub(crate) async fn restore_from_store(
+    store: &super::store::SqliteStateStore,
+    registry: &WatchlistRegistry,
+    ids: &[String],
+    metrics: &Metrics,
+    clear: bool,
+) {
+    if clear {
+        match store.clear_watchlist_indicators().await {
+            Ok(()) => tracing::info!("Watchlist indicators cleared"),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to clear watchlist indicators")
+            }
+        }
+        return;
+    }
+    let rows = match store.load_watchlist_rows().await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load watchlist indicators, starting empty");
+            return;
+        }
+    };
+    let known: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let skipped = rows
+        .iter()
+        .filter(|row| !known.contains(row.source_id.as_str()))
+        .count();
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            "watchlist indicators for undeclared sources were left in the state database"
+        );
+    }
+    let now = Utc::now();
+    let dropped = registry.restore(&rows, now);
+    if dropped > 0
+        && let Err(error) = store.delete_expired_watchlist_rows(now).await
+    {
+        tracing::warn!(error = %error, "failed to delete expired watchlist indicators");
+    }
+    for id in ids {
+        if let Ok(values) = registry.values(id, now) {
+            metrics
+                .watchlist_indicators
+                .with_label_values(&[id.as_str()])
+                .set(values.len() as i64);
+        }
+    }
+    tracing::info!(
+        indicators = rows.len().saturating_sub(skipped + dropped),
+        "watchlist indicators restored"
+    );
 }
 
 /// Indicator routes with a 4 MiB body limit. Callers merge this into the
@@ -434,7 +512,7 @@ async fn post_indicators(
     Path(source_id): Path<String>,
     body: Bytes,
 ) -> Response {
-    api.post(&source_id, &body)
+    api.post(&source_id, &body).await
 }
 
 async fn put_indicators(
@@ -442,7 +520,7 @@ async fn put_indicators(
     Path(source_id): Path<String>,
     body: Bytes,
 ) -> Response {
-    api.put(&source_id, &body)
+    api.put(&source_id, &body).await
 }
 
 async fn delete_indicators(
@@ -450,7 +528,7 @@ async fn delete_indicators(
     Path(source_id): Path<String>,
     body: Bytes,
 ) -> Response {
-    api.delete(&source_id, &body)
+    api.delete(&source_id, &body).await
 }
 
 #[cfg(test)]
@@ -704,7 +782,9 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        api.persist = Some(Arc::new(|_, _| Err("state database write failed".into())));
+        api.persist = Some(Arc::new(|_, _| {
+            Box::pin(async { Err("state database write failed".into()) })
+        }));
         let (status, body) = call(
             api.clone(),
             "POST",
