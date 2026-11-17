@@ -109,8 +109,6 @@ pub(crate) struct RuleOutcome {
     pub title: String,
     pub status: RuleStatus,
     pub error: Option<String>,
-    #[allow(dead_code)]
-    pub queries: Vec<String>,
 }
 
 /// Rendered conversion output and per-rule outcomes.
@@ -213,7 +211,6 @@ pub(crate) fn convert_native(req: &ConvertRequest<'_>) -> Result<ConvertOutput, 
             title: result.rule_title.clone(),
             status: RuleStatus::Converted,
             error: None,
-            queries: result.queries.clone(),
         });
     }
     for (title, error) in &output_data.errors {
@@ -227,7 +224,6 @@ pub(crate) fn convert_native(req: &ConvertRequest<'_>) -> Result<ConvertOutput, 
             title: title.clone(),
             status,
             error: message,
-            queries: Vec::new(),
         });
     }
 

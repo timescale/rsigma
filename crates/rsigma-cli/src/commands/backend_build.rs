@@ -7,7 +7,7 @@
 //! conversion failed, 3 for configuration errors, and 1 for drift under
 //! `--check`.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -393,24 +393,18 @@ fn build_group(
             Err(ConvertFailure::Rule(message)) => return GroupResult::ConversionFailed(message),
         };
 
-        let statuses = conversion_statuses(&converted.rules);
-        let mut failed_rules = 0usize;
+        let statuses = ConversionStatuses::new(&converted.rules);
         let rules = manifest_rules
             .into_iter()
             .map(|document| {
-                let status = document
-                    .id
-                    .as_ref()
-                    .and_then(|id| statuses.get(id))
-                    .or_else(|| statuses.get(&document.title))
-                    .copied()
-                    .unwrap_or(RuleStatus::Converted);
-                if status == RuleStatus::Failed {
-                    failed_rules += 1;
-                }
+                let status = statuses.of(&document);
                 manifest_rule(document, Some(status))
             })
             .collect::<Vec<_>>();
+        let failed_rules = rules
+            .iter()
+            .filter(|rule| rule.status == Some("failed"))
+            .count();
         for (title, message) in &converted.warnings {
             eprintln!("  warning: group '{name}', rule '{title}': {message}");
         }
@@ -514,31 +508,62 @@ fn build_group(
     })
 }
 
-/// Map conversion outcomes by id or title.
-fn conversion_statuses(outcomes: &[super::convert::RuleOutcome]) -> HashMap<String, RuleStatus> {
-    let mut statuses = HashMap::new();
-    for outcome in outcomes {
-        if let Some(id) = &outcome.id {
-            statuses.insert(id.clone(), outcome.status);
-        }
-        // A failed rule has no id in the conversion report, so the title is
-        // the only key that links it back to the ruleset document.
-        statuses.insert(outcome.title.clone(), outcome.status);
-    }
-    statuses
+/// Conversion outcomes indexed for matching back to ruleset documents.
+struct ConversionStatuses<'a> {
+    converted_ids: HashSet<&'a str>,
+    converted_without_id: HashSet<&'a str>,
+    errors: HashMap<&'a str, RuleStatus>,
 }
 
-fn manifest_rule(document: ManifestDocument, status: Option<RuleStatus>) -> ManifestRule {
+impl<'a> ConversionStatuses<'a> {
+    fn new(outcomes: &'a [super::convert::RuleOutcome]) -> Self {
+        let mut statuses = Self {
+            converted_ids: HashSet::new(),
+            converted_without_id: HashSet::new(),
+            errors: HashMap::new(),
+        };
+        for outcome in outcomes {
+            match (outcome.status, &outcome.id) {
+                (RuleStatus::Converted, Some(id)) => {
+                    statuses.converted_ids.insert(id);
+                }
+                (RuleStatus::Converted, None) => {
+                    statuses.converted_without_id.insert(&outcome.title);
+                }
+                (status, _) => {
+                    statuses.errors.insert(&outcome.title, status);
+                }
+            }
+        }
+        statuses
+    }
+
+    /// A document is converted when the backend returned a result for its id
+    /// (or, without an id, its title). Failed and skipped rules carry only a
+    /// title. Anything else produced no query of its own.
+    fn of(&self, document: &ManifestDocument) -> &'static str {
+        let converted = match &document.id {
+            Some(id) => self.converted_ids.contains(id.as_str()),
+            None => self.converted_without_id.contains(document.title.as_str()),
+        };
+        if converted {
+            return "converted";
+        }
+        match self.errors.get(document.title.as_str()) {
+            Some(RuleStatus::Failed) => "failed",
+            Some(_) => "skipped",
+            None => "no_query",
+        }
+    }
+}
+
+fn manifest_rule(document: ManifestDocument, status: Option<&'static str>) -> ManifestRule {
     ManifestRule {
         kind: document.kind.to_string(),
         id: document.id,
         title: document.title,
         sha256: document.sha256,
-        status: status.map(|status| match status {
-            RuleStatus::Converted => "converted",
-            RuleStatus::Skipped => "skipped",
-            RuleStatus::Failed => "failed",
-        }),
+        status,
     }
 }
 
