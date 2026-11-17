@@ -10,7 +10,7 @@
 //! a version-controlled config file never carries secrets.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rsigma_parser::ruleset::RulesetSpec;
 use schemars::JsonSchema;
@@ -820,6 +820,55 @@ impl Merge for ConvertPartial {
             groups: merge_named(self.groups, over.groups),
         }
     }
+}
+
+impl ConvertPartial {
+    /// `group` with the defaults folded in.
+    pub(crate) fn effective(&self, group: &ConvertGroupPartial) -> ConvertGroupPartial {
+        match &self.defaults {
+            Some(defaults) => defaults.clone().merge(group.clone()),
+            None => group.clone(),
+        }
+    }
+
+    /// Groups whose query output or manifest lands on a path another group
+    /// already writes, as `(group, message)` in group name order.
+    pub(crate) fn output_collisions(&self) -> Vec<(String, String)> {
+        let mut claimed: BTreeMap<PathBuf, String> = BTreeMap::new();
+        let mut collisions = Vec::new();
+        for (name, group) in self.groups.iter().flatten() {
+            let Some(output) = self.effective(group).output else {
+                continue;
+            };
+            let output: PathBuf = output
+                .components()
+                .filter(|component| *component != std::path::Component::CurDir)
+                .collect();
+            let manifest = manifest_path(&output);
+            for path in [output, manifest] {
+                if let Some(owner) = claimed.get(&path) {
+                    collisions.push((
+                        name.clone(),
+                        format!(
+                            "convert groups '{owner}' and '{name}' both write {}",
+                            path.display()
+                        ),
+                    ));
+                    break;
+                } else {
+                    claimed.insert(path, name.clone());
+                }
+            }
+        }
+        collisions
+    }
+}
+
+/// The manifest written next to a group's query output.
+pub(crate) fn manifest_path(output: &Path) -> PathBuf {
+    let mut path = output.as_os_str().to_os_string();
+    path.push(".manifest.json");
+    PathBuf::from(path)
 }
 
 /// One conversion group: a ruleset plus the target, format, and options used

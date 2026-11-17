@@ -71,7 +71,6 @@ impl SemanticError {
 /// Validate the `convert` section: group names, ruleset references, and the
 /// fields a group needs after the defaults are folded in.
 fn convert_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
-    use super::Merge;
     use rsigma_parser::ruleset::validate_ruleset_name;
 
     let mut errors = Vec::new();
@@ -95,10 +94,7 @@ fn convert_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
                 message: message.replace("ruleset name", "group name"),
             });
         }
-        let effective = match &convert.defaults {
-            Some(defaults) => defaults.clone().merge(group.clone()),
-            None => group.clone(),
-        };
+        let effective = convert.effective(group);
         let Some(ruleset) = effective.ruleset.as_deref() else {
             errors.push(SemanticError {
                 path: path.clone(),
@@ -124,6 +120,12 @@ fn convert_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
                 message: format!("convert group '{name}' has no output"),
             });
         }
+    }
+    for (name, message) in convert.output_collisions() {
+        errors.push(SemanticError::new(
+            format!("convert.groups.{name}"),
+            message,
+        ));
     }
     errors
 }

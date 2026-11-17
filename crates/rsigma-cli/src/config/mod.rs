@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) use schema::{
     ConvertGroupPartial, Merge, RsigmaConfigPartial, RulesetEntryPartial, WhenPartial,
+    manifest_path,
 };
 
 /// Load the config files and fold them with the compiled defaults and the

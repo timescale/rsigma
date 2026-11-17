@@ -9,14 +9,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
 use clap::Args;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::config::{ConvertGroupPartial, Merge};
+use crate::config::{ConvertGroupPartial, manifest_path};
 use crate::exit_code::{CONFIG_ERROR, FINDINGS, RULE_ERROR};
 use crate::fsutil::atomic_write;
 use crate::output::{OutputCtx, Tabular, render_report};
@@ -150,6 +150,13 @@ pub(crate) fn cmd_build(args: BackendBuildArgs, ctx: OutputCtx) {
         eprintln!("error: no convert groups are configured; add `convert.groups` entries");
         process::exit(CONFIG_ERROR);
     };
+    let collisions = convert.output_collisions();
+    if !collisions.is_empty() {
+        for (_, message) in &collisions {
+            eprintln!("error: {message}");
+        }
+        process::exit(CONFIG_ERROR);
+    }
     let specs = config.rulesets.clone().unwrap_or_default();
 
     let selected: BTreeSet<String> = if args.groups.is_empty() {
@@ -176,10 +183,7 @@ pub(crate) fn cmd_build(args: BackendBuildArgs, ctx: OutputCtx) {
 
     for name in selected {
         let group = &groups[&name];
-        let effective = match &convert.defaults {
-            Some(defaults) => defaults.clone().merge(group.clone()),
-            None => group.clone(),
-        };
+        let effective = convert.effective(group);
         match build_group(&name, &effective, &specs, &ctx) {
             GroupResult::Converted(output) => {
                 let status = if args.check {
@@ -565,12 +569,6 @@ fn manifest_rule(document: ManifestDocument, status: Option<&'static str>) -> Ma
         sha256: document.sha256,
         status,
     }
-}
-
-fn manifest_path(output: &Path) -> PathBuf {
-    let mut path = output.as_os_str().to_os_string();
-    path.push(".manifest.json");
-    PathBuf::from(path)
 }
 
 fn generator() -> String {
