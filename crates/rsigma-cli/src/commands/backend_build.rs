@@ -224,38 +224,24 @@ pub(crate) fn cmd_build(args: BackendBuildArgs, ctx: OutputCtx) {
             GroupResult::RuleFailed(output, message) => {
                 eprintln!("error: group '{name}': {message}");
                 rule_failed = true;
-                let status = if args.check {
-                    let drifted = check_group(&output);
-                    for path in drifted {
+                if args.check {
+                    for path in check_group(&output) {
                         drift.push(DriftRow {
                             group: name.clone(),
                             path,
                         });
                     }
-                    "failed".to_string()
-                } else {
-                    match write_group(&output) {
-                        Ok(written) => {
-                            if written {
-                                "written".to_string()
-                            } else {
-                                "unchanged".to_string()
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("error: group '{name}': {error}");
-                            config_failed = true;
-                            "failed".to_string()
-                        }
-                    }
-                };
+                } else if let Err(error) = write_group(&output) {
+                    eprintln!("error: group '{name}': {error}");
+                    config_failed = true;
+                }
                 rows.push(BuildRow {
                     group: name,
                     ruleset: output.ruleset,
                     target: output.target,
                     rules: output.rules.len(),
                     queries: output.queries,
-                    status,
+                    status: "failed".to_string(),
                     output: output.manifest.output,
                 });
             }
@@ -409,13 +395,11 @@ fn build_group(
         let rules = manifest_rules
             .into_iter()
             .map(|document| {
-                let status = statuses
-                    .get(
-                        &document
-                            .id
-                            .clone()
-                            .unwrap_or_else(|| document.title.clone()),
-                    )
+                let status = document
+                    .id
+                    .as_ref()
+                    .and_then(|id| statuses.get(id))
+                    .or_else(|| statuses.get(&document.title))
                     .copied()
                     .unwrap_or(RuleStatus::Converted);
                 if status == RuleStatus::Failed {
@@ -531,8 +515,12 @@ fn build_group(
 fn conversion_statuses(outcomes: &[super::convert::RuleOutcome]) -> HashMap<String, RuleStatus> {
     let mut statuses = HashMap::new();
     for outcome in outcomes {
-        let key = outcome.id.clone().unwrap_or_else(|| outcome.title.clone());
-        statuses.insert(key, outcome.status);
+        if let Some(id) = &outcome.id {
+            statuses.insert(id.clone(), outcome.status);
+        }
+        // A failed rule has no id in the conversion report, so the title is
+        // the only key that links it back to the ruleset document.
+        statuses.insert(outcome.title.clone(), outcome.status);
     }
     statuses
 }
