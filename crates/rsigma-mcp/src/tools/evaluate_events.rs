@@ -38,7 +38,8 @@ pub struct EvaluateInput {
     #[serde(default)]
     pub ruleset: Option<String>,
     /// Several named rulesets evaluated side by side. Mutually exclusive with
-    /// `yaml`, `path`, and `ruleset`.
+    /// `yaml`, `path`, and `ruleset`. Names must be distinct and defined in the
+    /// server's rsigma.yaml.
     #[serde(default)]
     pub rulesets: Option<Vec<String>>,
     /// Inline events as a JSON array of objects. Mutually exclusive with `events_path`.
@@ -99,8 +100,21 @@ impl RsigmaMcp {
                 "provide exactly one of `yaml`, `path`, `ruleset`, or `rulesets`",
             ));
         }
-        if input.rulesets.as_ref().is_some_and(Vec::is_empty) {
-            return Err(invalid("`rulesets` must name at least one ruleset"));
+        if let Some(names) = &input.rulesets {
+            if names.is_empty() {
+                return Err(invalid("`rulesets` must name at least one ruleset"));
+            }
+            let mut seen = std::collections::HashSet::new();
+            if let Some(duplicate) = names.iter().find(|name| !seen.insert(name.as_str())) {
+                return Err(invalid(format!("duplicate ruleset name '{duplicate}'")));
+            }
+            if names.len() > self.rulesets.len() {
+                return Err(invalid(format!(
+                    "`rulesets` names {} rulesets, but the server defines {}",
+                    names.len(),
+                    self.rulesets.len()
+                )));
+            }
         }
 
         let events = self.load_events(input.events, input.events_path.as_deref())?;
@@ -834,25 +848,65 @@ enrichers:
     }
 
     #[tokio::test]
-    async fn evaluate_events_rejects_rulesets_with_path() {
-        let error = handler()
-            .run_evaluate_events(EvaluateInput {
-                yaml: None,
-                path: Some("rule.yml".to_string()),
-                ruleset: None,
-                rulesets: Some(vec!["a".to_string()]),
-                events: Some(vec![json!({})]),
-                events_path: None,
-                pipelines: vec![],
-                match_detail: None,
-                timestamp_fields: vec![],
-                emit_detections: false,
-                enrichers: None,
-                enrichers_path: None,
-            })
-            .await
-            .unwrap_err();
-        assert!(format!("{error:?}").contains("exactly one"));
+    async fn evaluate_events_rejects_invalid_ruleset_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "a".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
+        let server = ruleset_handler(Some(dir.path().to_path_buf()), rulesets);
+        let input = |names: Vec<&str>| EvaluateInput {
+            yaml: None,
+            path: None,
+            ruleset: None,
+            rulesets: Some(names.into_iter().map(str::to_string).collect()),
+            events: Some(vec![json!({})]),
+            events_path: None,
+            pipelines: vec![],
+            match_detail: None,
+            timestamp_fields: vec![],
+            emit_detections: false,
+            enrichers: None,
+            enrichers_path: None,
+        };
+        let cases = [
+            (
+                EvaluateInput {
+                    yaml: Some(VALID_RULE.to_string()),
+                    ..input(vec!["a"])
+                },
+                "exactly one",
+            ),
+            (
+                EvaluateInput {
+                    path: Some("rule.yml".to_string()),
+                    ..input(vec!["a"])
+                },
+                "exactly one",
+            ),
+            (
+                EvaluateInput {
+                    ruleset: Some("a".to_string()),
+                    ..input(vec!["a"])
+                },
+                "exactly one",
+            ),
+            (input(vec![]), "at least one ruleset"),
+            (input(vec!["a", "a"]), "duplicate ruleset name 'a'"),
+            (
+                input(vec!["a", "b"]),
+                "names 2 rulesets, but the server defines 1",
+            ),
+        ];
+        for (input, expected) in cases {
+            let error = server.run_evaluate_events(input).await.unwrap_err();
+            assert!(
+                error.message.contains(expected),
+                "expected {expected:?}, got {:?}",
+                error.message
+            );
+        }
     }
 
     #[tokio::test]
