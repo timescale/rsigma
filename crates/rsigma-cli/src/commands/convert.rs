@@ -54,11 +54,11 @@ pub(crate) struct ConvertArgs {
 /// Canonical names of the targets rsigma converts natively, for listings and
 /// error messages. Aliases (`postgresql`, `pg`) and the internal test backends
 /// are accepted by [`try_native_backend`] but intentionally not advertised.
-const NATIVE_TARGETS: &[&str] = &["postgres", "lynxdb", "fibratus"];
+pub(crate) const NATIVE_TARGETS: &[&str] = &["postgres", "lynxdb", "fibratus"];
 
 /// Return the native backend for `target`, or `None` when rsigma has no native
 /// backend for it, in which case `backend convert` delegates to sigma-cli.
-fn try_native_backend(
+pub(crate) fn try_native_backend(
     target: &str,
     options: &std::collections::HashMap<String, String>,
 ) -> Option<Box<dyn rsigma_convert::Backend>> {

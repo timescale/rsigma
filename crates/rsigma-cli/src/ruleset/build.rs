@@ -101,6 +101,41 @@ fn kept_documents(
     out
 }
 
+/// One kept document's manifest identity and canonical hash.
+#[derive(Debug, Clone)]
+pub(crate) struct ManifestDocument {
+    pub kind: &'static str,
+    pub id: Option<String>,
+    pub title: String,
+    pub sha256: String,
+}
+
+/// Every kept document with its kind, id, title, and canonical hash. The hash
+/// matches the one the build lockfile records.
+pub(crate) fn manifest_documents(resolved: &ResolvedRuleset) -> Vec<ManifestDocument> {
+    let mut documents: Vec<ManifestDocument> = kept_documents(resolved)
+        .into_iter()
+        .filter(|(_, document)| document.kind() != DocumentKind::Filter)
+        .map(|(entry, document)| {
+            let yaml = document.yaml();
+            ManifestDocument {
+                kind: document.kind().as_str(),
+                id: entry.id.clone(),
+                title: document.title().to_string(),
+                sha256: sha256_hex(yaml.as_bytes()),
+            }
+        })
+        .collect();
+    documents.sort_by(|a, b| {
+        (a.kind, a.id.as_deref().unwrap_or(""), &a.title).cmp(&(
+            b.kind,
+            b.id.as_deref().unwrap_or(""),
+            &b.title,
+        ))
+    });
+    documents
+}
+
 /// Reject two id-less documents whose canonical text is identical: they would
 /// map to the same hash-derived file name.
 pub(crate) fn ensure_unique(resolved: &ResolvedRuleset) -> Result<(), RulesetError> {

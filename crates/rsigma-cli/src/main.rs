@@ -24,11 +24,11 @@ use std::process;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs, DiscoverArgs, DocArgs,
-    DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, FmtArgs, HuntCommands, HygieneArgs, LintArgs,
-    LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs, PipelineDiffArgs, ReverseArgs,
-    RulesetCommands, ScorecardArgs, StatusArgs, StdinArgs, TailArgs, TapArgs, TestArgs, TuneArgs,
-    ValidateArgs, VisibilityArgs, dispatch_hunt,
+    BackendBuildArgs, BacktestArgs, ClassifyArgs, ConditionArgs, ConvertArgs, CoverageArgs,
+    DiscoverArgs, DocArgs, DraftArgs, EvalArgs, ExplainArgs, FieldsArgs, FmtArgs, HuntCommands,
+    HygieneArgs, LintArgs, LintCounts, ListFormatsArgs, MigrateSourcesArgs, ParseArgs,
+    PipelineDiffArgs, ReverseArgs, RulesetCommands, ScorecardArgs, StatusArgs, StdinArgs, TailArgs,
+    TapArgs, TestArgs, TuneArgs, ValidateArgs, VisibilityArgs, dispatch_hunt,
 };
 // `pipeline resolve` resolves dynamic sources, which needs the async runtime
 // (tokio) and the source resolver from rsigma-runtime. Both ship with the
@@ -282,6 +282,9 @@ enum BackendCommands {
     /// Convert Sigma rules to backend-native queries
     Convert(ConvertArgs),
 
+    /// Convert every configured group into query files and manifests
+    Build(BackendBuildArgs),
+
     /// List available conversion targets (backends)
     Targets,
 
@@ -508,6 +511,7 @@ fn dispatch_rule(cmd: RuleCommands, matches: &ArgMatches, ctx: output::OutputCtx
 fn dispatch_backend(cmd: BackendCommands, ctx: output::OutputCtx) {
     match cmd {
         BackendCommands::Convert(args) => commands::cmd_convert(args, ctx),
+        BackendCommands::Build(args) => commands::cmd_build(args, ctx),
         BackendCommands::Targets => commands::cmd_list_targets(ctx),
         BackendCommands::Formats(ListFormatsArgs { target }) => {
             commands::cmd_list_formats(target, ctx)
