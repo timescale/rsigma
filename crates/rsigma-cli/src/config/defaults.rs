@@ -342,5 +342,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         mcp: None,
         // Rulesets are declared in config files only; no compiled default.
         rulesets: None,
+        // Conversion groups are declared in config files only.
+        convert: None,
     }
 }

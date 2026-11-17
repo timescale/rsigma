@@ -26,7 +26,7 @@ Groups:
 |-------|------------|
 | `engine` | Evaluate events, explain a miss, classify schemas, and run or inspect the daemon (`eval`, `explain`, `classify`, `discover-schemas`, `status`, `incidents`, `tap`, `tail`, `daemon`) |
 | `rule` | Check and build rules (`parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`) and review a rule set (`coverage`, `scorecard`, `visibility`, `hygiene`) |
-| `backend` | Convert rules to a query (`convert`, `targets`, `formats`) |
+| `backend` | Convert rules to a query (`convert`, `targets`, `formats`), or build every configured group with manifests (`build`) |
 | `pipeline` | See how a pipeline rewrites a rule (`diff`) and dry-run dynamic sources (`resolve`) |
 | `ruleset` | Curate named rule sets declared in `rsigma.yaml` (`list`, `show`, `build`, `diff`) and materialize a deployable tree with a lockfile |
 | `hunt` | Run converted rules read-only against a PostgreSQL archive and stream the matching rows back as events (`run`) |
@@ -89,8 +89,11 @@ Native targets run inside rsigma. Anything else is delegated to an installed [si
 rsigma backend targets
 rsigma backend convert -t postgres rules/
 rsigma backend convert -t splunk rules/
+rsigma backend build --config rsigma.yaml
 ```
 
 Native targets are `postgres` (`postgresql`, `pg`), `lynxdb`, and `fibratus`, plus a backend-neutral `test` target that is not a deployment backend. `backend targets` is the live list. Delegated conversion needs `sigma` on `PATH` (override with `RSIGMA_SIGMA_CLI`). The Docker image has no Python, so delegation is a local-binary feature. On MCP, `convert_rules` delegates only when the server was started with `--allow-sigma-cli`. Builtin pipeline names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) are not translated for delegated targets. Pass a sigma-cli pipeline name or a YAML path.
 
-See [backend convert](https://rsigma.io/cli/backend/convert/) and [sigma-cli delegation](https://rsigma.io/reference/backends/sigma-cli/).
+`backend build` runs the `convert:` groups from the configuration and writes each group's queries plus `<output>.manifest.json`, with `metadata` copied verbatim. Use it when a ruleset feeds several targets or when CI regenerates the artifacts; `--check` reports drift.
+
+See [backend convert](https://rsigma.io/cli/backend/convert/), [backend build](https://rsigma.io/cli/backend/build/), and [sigma-cli delegation](https://rsigma.io/reference/backends/sigma-cli/).

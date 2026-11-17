@@ -39,8 +39,9 @@ CONFIG_COMMANDS = {
     "daemon": (["engine", "daemon"], CONTENT / "cli" / "engine" / "daemon.md"),
     "eval": (["engine", "eval"], CONTENT / "cli" / "engine" / "eval.md"),
     "backtest": (["rule", "backtest"], CONTENT / "cli" / "rule" / "backtest.md"),
+    "convert": (["backend", "convert"], CONTENT / "cli" / "backend" / "convert.md"),
 }
-CONFIG_SECTIONS = {"version", "global", "daemon", "eval", "backtest", "coverage", "scorecard", "visibility", "hygiene", "doc", "mcp", "rulesets"}
+CONFIG_SECTIONS = {"version", "global", "daemon", "eval", "backtest", "coverage", "scorecard", "visibility", "hygiene", "doc", "mcp", "rulesets", "convert"}
 TRIVIAL_RULE = """title: t
 id: 00000000-0000-0000-0000-000000000000
 logsource: {product: windows, category: process_creation}

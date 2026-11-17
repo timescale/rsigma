@@ -382,6 +382,66 @@ fn rulesets_merge_by_name_across_layers() {
 }
 
 #[test]
+fn validate_reports_semantic_errors_by_config_path() {
+    let cfg = temp_file(
+        ".yaml",
+        "rulesets:\n  local:\n    sources: [./rules]\neval:\n  rulesets: [local, nope]\nconvert:\n  defaults:\n    target: postgres\n  groups:\n    a:\n      ruleset: local\n      output: build/a.sql\n    b:\n      ruleset: local\n      output: ./build/a.sql\n    c:\n      ruleset: missing\n      output: build/a.sql.manifest.json\n",
+    );
+    let output = rsigma()
+        .args([
+            "config",
+            "validate",
+            "-c",
+            cfg.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let errors: Vec<(String, String)> = envelope["semantic_errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| {
+            (
+                error["path"].as_str().unwrap().to_string(),
+                error["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let expected = [
+        (
+            "eval.rulesets",
+            "eval.rulesets names unknown ruleset 'nope'",
+        ),
+        (
+            "convert.groups.c",
+            "convert group 'c' names unknown ruleset 'missing'",
+        ),
+        (
+            "convert.groups.b",
+            "convert groups 'a' and 'b' both write ./build/a.sql",
+        ),
+        (
+            "convert.groups.c",
+            "convert groups 'a' and 'c' both write build/a.sql.manifest.json",
+        ),
+    ];
+    assert_eq!(
+        errors,
+        expected
+            .iter()
+            .map(|(path, message)| (path.to_string(), message.to_string()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn validate_rejects_an_unknown_selector_key() {
     let cfg = temp_file(
         ".yaml",
@@ -407,12 +467,12 @@ fn validate_rejects_an_unknown_selector_key() {
         .clone();
     let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(envelope["ok"], serde_json::json!(false));
-    let errors = envelope["ruleset_errors"].as_array().unwrap();
+    let errors = envelope["semantic_errors"].as_array().unwrap();
     assert_eq!(errors.len(), 2, "{errors:?}");
     assert!(
         errors
             .iter()
-            .all(|error| error["ruleset"] == serde_json::json!("local"))
+            .all(|error| error["path"] == serde_json::json!("rulesets.local"))
     );
     assert!(errors.iter().any(|error| {
         error["message"]

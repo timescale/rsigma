@@ -232,6 +232,7 @@ export default {
           collapsible: true,
           children: [
             { title: "convert", path: "/cli/backend/convert" },
+            { title: "build", path: "/cli/backend/build" },
             { title: "targets", path: "/cli/backend/targets" },
             { title: "formats", path: "/cli/backend/formats" },
           ],

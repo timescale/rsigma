@@ -1,0 +1,61 @@
+{
+  "format": "default",
+  "generator": "rsigma test",
+  "group": "vendor_sysmon",
+  "manifest_version": 1,
+  "metadata": {
+    "rule_group": "windows",
+    "time_window": "5m"
+  },
+  "output": "build/vendor-sysmon.txt",
+  "pipelines": [
+    "sysmon"
+  ],
+  "queries": 4,
+  "rules": [
+    {
+      "id": "cccccccc-0000-4000-8000-000000000001",
+      "kind": "correlation",
+      "sha256": "e699d4b85cd55912d1abfa7ed10f65f95cd8639e5b15caec0d32fbedd46ac179",
+      "status": "skipped",
+      "title": "Windows discovery burst"
+    },
+    {
+      "id": "cccccccc-0000-4000-8000-000000000002",
+      "kind": "correlation",
+      "sha256": "a10b3790e3f7c297e5333ef58fca3979982d431d0954469fd6f816a5d0635b4a",
+      "status": "skipped",
+      "title": "Discovery burst escalation"
+    },
+    {
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "kind": "detection",
+      "sha256": "948999635974920ec321940533934bbf32fcf3d404572b88a6d6e6c07e4aed37",
+      "status": "converted",
+      "title": "Windows whoami execution"
+    },
+    {
+      "id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "kind": "detection",
+      "sha256": "cf908b07acf293ec7b897da662b081ed32ad8c597cbc6f52db4a51bd0ba2ffdc",
+      "status": "converted",
+      "title": "Windows powershell encoded command"
+    },
+    {
+      "id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "kind": "detection",
+      "sha256": "93b215f0f9f378dc0fb628ea9c831c2a0e950ada87ade0003a4778c6eb49649a",
+      "status": "converted",
+      "title": "Windows local user enumeration"
+    },
+    {
+      "id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "kind": "detection",
+      "sha256": "eeca31eccce05e09b6fa9d4815a59bc584cd86de9593c781239ec2751c7981e0",
+      "status": "converted",
+      "title": "Linux SSH login"
+    }
+  ],
+  "ruleset": "vendor",
+  "target": "test"
+}
