@@ -26,6 +26,7 @@ use crate::rule_metadata::RuleMetadataLookup;
 use crate::{CorrelationSnapshot, CorrelationStateSnapshot, Engine, ProcessResult};
 
 /// The compiled engine behind one ruleset unit.
+#[non_exhaustive]
 pub enum UnitEngine {
     /// A stateless detection engine.
     Detection(Box<Engine>),
@@ -73,11 +74,13 @@ pub struct RouteCounts {
     pub errored: u64,
 }
 
-/// Introspection of one ruleset's correlation state.
+/// Introspection of one ruleset's correlation state, as returned per ruleset
+/// by [`RulesetEngines::introspect`].
 pub type CorrelationIntrospection = CorrelationStateSnapshot;
 
 /// Construction errors for [`RulesetEngines`].
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RulesetEnginesError {
     /// No rulesets were supplied.
     #[error("at least one ruleset is required")]
@@ -214,7 +217,10 @@ impl RulesetEngines {
             .collect()
     }
 
-    /// Routing outcomes counted by `process_event` for a routed unit.
+    /// Routing outcomes counted by [`Self::process_event`] for a routed unit.
+    ///
+    /// The batch methods do not update these counts; a routed unit reports its
+    /// outcomes through its router on those paths.
     pub fn route_counts(&self) -> RouteCounts {
         self.route_counts
     }
@@ -352,18 +358,7 @@ impl RulesetEngines {
     /// Results are scattered back to their event positions in unit declaration
     /// order.
     pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
-        let mut accepted = Vec::with_capacity(self.units.len());
-        for (index, unit) in self.units.iter().enumerate() {
-            let mut per_event = Vec::with_capacity(events.len());
-            for event in events {
-                let accepts = self.accepts(unit, event);
-                if !accepts {
-                    self.skipped[index].fetch_add(1, Ordering::Relaxed);
-                }
-                per_event.push(accepts);
-            }
-            accepted.push(per_event);
-        }
+        let accepted = self.batch_acceptance(events);
 
         let mut output: Vec<ProcessResult> = vec![Vec::new(); events.len()];
         let units = &mut self.units;
@@ -402,18 +397,7 @@ impl RulesetEngines {
             return None;
         }
 
-        let mut accepted = Vec::with_capacity(self.units.len());
-        for (index, unit) in self.units.iter().enumerate() {
-            let mut per_event = Vec::with_capacity(events.len());
-            for event in events {
-                let accepts = self.accepts(unit, event);
-                if !accepts {
-                    self.skipped[index].fetch_add(1, Ordering::Relaxed);
-                }
-                per_event.push(accepts);
-            }
-            accepted.push(per_event);
-        }
+        let accepted = self.batch_acceptance(events);
 
         let mut output: Vec<ProcessResult> = vec![Vec::new(); events.len()];
         for (unit_index, unit) in self.units.iter().enumerate() {
@@ -463,8 +447,24 @@ impl RulesetEngines {
 
     /// Import per-ruleset correlation state by name. Names that no longer exist
     /// are dropped.
+    ///
+    /// A snapshot exported by a single engine imports into the only unit.
+    /// Returns `false` when the version is incompatible, when a single-engine
+    /// snapshot meets several units, or when any unit rejects its state.
     pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) -> bool {
         if snapshot.version != 1 {
+            return false;
+        }
+        if snapshot.rulesets.is_empty() {
+            if !snapshot.has_collection_state() {
+                return true;
+            }
+            let [unit] = self.units.as_mut_slice() else {
+                return false;
+            };
+            return import_unit_state(unit, snapshot);
+        }
+        if snapshot.has_collection_state() {
             return false;
         }
         let mut units: HashMap<String, &mut RulesetUnit> = self
@@ -472,21 +472,14 @@ impl RulesetEngines {
             .iter_mut()
             .map(|unit| (unit.name.to_string(), unit))
             .collect();
+        let mut imported = true;
         for (name, state) in &snapshot.rulesets {
             let Some(unit) = units.get_mut(name.as_str()) else {
                 continue;
             };
-            match &mut unit.engine {
-                UnitEngine::Detection(_) => {}
-                UnitEngine::Correlation(engine) => {
-                    engine.import_state(state.clone());
-                }
-                UnitEngine::Routed(router) => {
-                    router.import_state(state.clone());
-                }
-            }
+            imported &= import_unit_state(unit, state);
         }
-        true
+        imported
     }
 
     /// Introspect correlation state for every unit that has it.
@@ -514,19 +507,19 @@ impl RulesetEngines {
         out
     }
 
-    fn accepts<E: Event>(&self, unit: &RulesetUnit, event: &E) -> bool {
-        if unit.when_schemas.is_empty() {
-            return true;
+    /// Per-unit acceptance for a batch, classifying each event once and
+    /// counting skips.
+    fn batch_acceptance<E: Event>(&self, events: &[&E]) -> Vec<Vec<bool>> {
+        let mut accepted = vec![Vec::with_capacity(events.len()); self.units.len()];
+        for event in events {
+            for (index, accepts) in self.acceptance(*event).into_iter().enumerate() {
+                if !accepts {
+                    self.skipped[index].fetch_add(1, Ordering::Relaxed);
+                }
+                accepted[index].push(accepts);
+            }
         }
-        let Some(classifier) = &self.classifier else {
-            return false;
-        };
-        let Some(matched) = classifier.classify(event) else {
-            return false;
-        };
-        unit.when_schemas
-            .iter()
-            .any(|schema| schema == &matched.name)
+        accepted
     }
 
     fn acceptance<E: Event>(&self, event: &E) -> Vec<bool> {
@@ -551,6 +544,14 @@ impl RulesetEngines {
                 }
             })
             .collect()
+    }
+}
+
+fn import_unit_state(unit: &mut RulesetUnit, state: &CorrelationSnapshot) -> bool {
+    match &mut unit.engine {
+        UnitEngine::Detection(_) => true,
+        UnitEngine::Correlation(engine) => engine.import_state(state.clone()),
+        UnitEngine::Routed(router) => router.import_state(state.clone()),
     }
 }
 
@@ -758,55 +759,206 @@ correlation:
         assert_eq!(skipped[1].1, 1);
     }
 
+    /// Counts classifier probes of `schema_marker`; detection never reads it.
+    struct CountingEvent<'a> {
+        inner: JsonEvent<'a>,
+        probes: &'a std::sync::atomic::AtomicUsize,
+    }
+
+    impl Event for CountingEvent<'_> {
+        fn get_field(&self, path: &str) -> Option<crate::event::EventValue<'_>> {
+            if path == "schema_marker" {
+                self.probes.fetch_add(1, Ordering::Relaxed);
+            }
+            self.inner.get_field(path)
+        }
+
+        fn any_string_value(&self, pred: &dyn Fn(&str) -> bool) -> bool {
+            self.inner.any_string_value(pred)
+        }
+
+        fn all_string_values(&self) -> Vec<std::borrow::Cow<'_, str>> {
+            self.inner.all_string_values()
+        }
+
+        fn to_json(&self) -> serde_json::Value {
+            self.inner.to_json()
+        }
+    }
+
     #[test]
-    fn classifier_is_not_called_without_when() {
-        let mut engines = RulesetEngines::new(
-            vec![detection_unit("one", Vec::new())],
-            Some(Arc::new(SchemaClassifier::new(Vec::new()))),
-        )
-        .unwrap();
-        let value = serde_json::json!({"Image": "whoami"});
-        let event = JsonEvent::borrow(&value);
-        let results = engines.process_event(&event);
-        assert_eq!(results.len(), 1);
+    fn classification_runs_once_per_event_and_only_with_when() {
+        let classifier = classifier_with(&["aws_cloudtrail"]);
+        let value = serde_json::json!({"schema_marker": true, "Image": "whoami"});
+        let probes = std::sync::atomic::AtomicUsize::new(0);
+        let event = CountingEvent {
+            inner: JsonEvent::borrow(&value),
+            probes: &probes,
+        };
+        let probed = |run: &dyn Fn()| {
+            probes.store(0, Ordering::Relaxed);
+            run();
+            probes.load(Ordering::Relaxed)
+        };
+
+        let bound = || {
+            RulesetEngines::new(
+                vec![
+                    detection_unit("unbound", Vec::new()),
+                    bound_unit("cloud", &["aws_cloudtrail"]),
+                    bound_unit("cloud_too", &["aws_cloudtrail"]),
+                ],
+                Some(classifier.clone()),
+            )
+            .unwrap()
+        };
+        let single = std::cell::RefCell::new(bound());
+        assert_eq!(
+            probed(&|| assert_eq!(single.borrow_mut().process_event(&event).len(), 3)),
+            1
+        );
+        let batch = std::cell::RefCell::new(bound());
+        assert_eq!(
+            probed(&|| assert_eq!(batch.borrow_mut().process_batch(&[&event])[0].len(), 3)),
+            1
+        );
+        let detect = bound();
+        assert_eq!(
+            probed(&|| assert_eq!(detect.detect_batch(&[&event]).unwrap()[0].len(), 3)),
+            1
+        );
+
+        let unbound = std::cell::RefCell::new(
+            RulesetEngines::new(
+                vec![detection_unit("one", Vec::new())],
+                Some(classifier.clone()),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            probed(&|| assert_eq!(unbound.borrow_mut().process_event(&event).len(), 1)),
+            0
+        );
+        assert_eq!(
+            probed(&|| assert_eq!(unbound.borrow_mut().process_batch(&[&event])[0].len(), 1)),
+            0
+        );
+    }
+
+    fn correlation_rulesets(results: &[EvaluationResult]) -> Vec<&str> {
+        results
+            .iter()
+            .filter(|result| result.is_correlation())
+            .map(|result| result.header.ruleset.as_deref().unwrap_or_default())
+            .collect()
+    }
+
+    fn whoami_at(second: u32) -> serde_json::Value {
+        serde_json::json!({
+            "Image": "whoami",
+            "timestamp": format!("2026-01-01T00:00:0{second}Z"),
+        })
     }
 
     #[test]
     fn correlation_state_is_isolated_per_unit() {
         let mut engines =
             RulesetEngines::new(vec![correlation_unit("a"), correlation_unit("b")], None).unwrap();
-        let value = serde_json::json!({
-            "Image": "whoami",
-            "timestamp": "2026-01-01T00:00:00Z",
-        });
-        let event = JsonEvent::borrow(&value);
-        let results = engines.process_event(&event);
+        let first = whoami_at(0);
+        let results = engines.process_event(&JsonEvent::borrow(&first));
         assert!(
-            results.is_empty(),
+            correlation_rulesets(&results).is_empty(),
             "a shared store would count the event twice and fire the correlation"
         );
+        let second = whoami_at(1);
+        let results = engines.process_event(&JsonEvent::borrow(&second));
+        assert_eq!(correlation_rulesets(&results), ["a", "b"]);
     }
 
     #[test]
     fn export_and_import_round_trip_by_name() {
         let mut engines =
             RulesetEngines::new(vec![correlation_unit("a"), correlation_unit("b")], None).unwrap();
-        for offset in [0, 1] {
-            let value = serde_json::json!({
-                "Image": "whoami",
-                "timestamp": format!("2026-01-01T00:00:0{offset}Z"),
-            });
-            let event = JsonEvent::borrow(&value);
-            engines.process_event(&event);
-        }
+        let first = whoami_at(0);
+        engines.process_event(&JsonEvent::borrow(&first));
+        assert_eq!(engines.state_entries(), 2);
         let snapshot = engines.export_state();
         assert_eq!(snapshot.rulesets.len(), 2);
+        assert_eq!(snapshot.window_entries(), 2);
 
         let mut restored = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
         assert!(restored.import_state(&snapshot));
+        assert_eq!(restored.state_entries(), 1);
         let introspected = restored.introspect();
-        assert!(introspected.contains_key("a"));
+        assert_eq!(introspected["a"].groups.len(), 1);
         assert!(!introspected.contains_key("b"));
+
+        let second = whoami_at(1);
+        let results = restored.process_event(&JsonEvent::borrow(&second));
+        assert_eq!(correlation_rulesets(&results), ["a"]);
+    }
+
+    fn single_engine_snapshot() -> CorrelationSnapshot {
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine
+            .add_collection(&parse_sigma_yaml(CORRELATION).unwrap())
+            .unwrap();
+        let first = whoami_at(0);
+        engine.process_event(&JsonEvent::borrow(&first));
+        let snapshot = engine.export_state();
+        assert!(snapshot.has_collection_state());
+        snapshot
+    }
+
+    #[test]
+    fn a_single_engine_snapshot_imports_into_the_only_unit() {
+        let snapshot = single_engine_snapshot();
+        let mut one = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
+        assert!(one.import_state(&snapshot));
+        assert_eq!(one.state_entries(), 1);
+
+        let mut two =
+            RulesetEngines::new(vec![correlation_unit("a"), correlation_unit("b")], None).unwrap();
+        assert!(!two.import_state(&snapshot));
+        assert_eq!(two.state_entries(), 0);
+    }
+
+    #[test]
+    fn a_one_ruleset_snapshot_imports_into_a_single_engine() {
+        let mut engines = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
+        let first = whoami_at(0);
+        engines.process_event(&JsonEvent::borrow(&first));
+        let snapshot = engines.export_state();
+
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine
+            .add_collection(&parse_sigma_yaml(CORRELATION).unwrap())
+            .unwrap();
+        assert!(engine.import_state(snapshot));
+        assert_eq!(engine.state_count(), 1);
+
+        let mut both =
+            RulesetEngines::new(vec![correlation_unit("a"), correlation_unit("b")], None).unwrap();
+        both.process_event(&JsonEvent::borrow(&first));
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine
+            .add_collection(&parse_sigma_yaml(CORRELATION).unwrap())
+            .unwrap();
+        assert!(!engine.import_state(both.export_state()));
+        assert_eq!(engine.state_count(), 0);
+    }
+
+    #[test]
+    fn a_rejected_ruleset_snapshot_fails_the_import() {
+        let mut engines = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
+        let first = whoami_at(0);
+        engines.process_event(&JsonEvent::borrow(&first));
+        let mut snapshot = engines.export_state();
+        snapshot.rulesets.get_mut("a").unwrap().version = 2;
+
+        let mut restored = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
+        assert!(!restored.import_state(&snapshot));
+        assert_eq!(restored.state_entries(), 0);
     }
 
     #[test]

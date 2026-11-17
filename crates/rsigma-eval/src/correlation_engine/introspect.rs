@@ -45,7 +45,9 @@ pub struct CorrelationInfo {
     pub threshold: String,
     /// Number of live group windows for this correlation.
     pub active_groups: usize,
-    /// Ruleset that owns this correlation, when several are evaluated.
+    /// Ruleset that owns this correlation, set when rows from several rulesets
+    /// share one list. `RulesetEngines::introspect` keys its map by ruleset
+    /// and leaves this `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ruleset: Option<String>,
 }
@@ -103,7 +105,9 @@ pub struct GroupStateInfo {
     pub suppression_remaining: Option<i64>,
     /// The raw window state (timestamps / values), serialized as-is.
     pub window: WindowState,
-    /// Ruleset that owns this window, when several are evaluated.
+    /// Ruleset that owns this window, set when rows from several rulesets
+    /// share one list. `RulesetEngines::introspect` keys its map by ruleset
+    /// and leaves this `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ruleset: Option<String>,
 }

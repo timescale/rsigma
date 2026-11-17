@@ -381,7 +381,7 @@ filter:
         );
         let second = RuleFieldSet::collect(
             &build(
-                "title: Two\nid: two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Shared: c\n        Second: d\n    condition: selection\n",
+                "title: Two\nid: two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Second: d\n    condition: selection\nfields:\n    - Shared\n",
             ),
             &[],
             true,
@@ -394,6 +394,10 @@ filter:
         assert_eq!(
             shared.rule_titles,
             BTreeSet::from(["One".to_string(), "Two".to_string()])
+        );
+        assert_eq!(
+            shared.sources,
+            BTreeSet::from([FieldSource::Detection, FieldSource::Metadata])
         );
     }
 }
