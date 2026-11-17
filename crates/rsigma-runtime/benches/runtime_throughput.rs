@@ -14,8 +14,9 @@ use rand::{RngExt, SeedableRng};
 
 use rsigma_eval::{CorrelationConfig, Engine, JsonEvent};
 use rsigma_parser::parse_sigma_yaml;
+use rsigma_parser::ruleset::RulesetSpec;
 use rsigma_runtime::input::SyslogConfig;
-use rsigma_runtime::{InputFormat, LogProcessor, NoopMetrics, RuntimeEngine};
+use rsigma_runtime::{InputFormat, LogProcessor, NoopMetrics, RulesetBinding, RuntimeEngine};
 
 const SEED: u64 = 0xDEAD_BEEF_CAFE;
 
@@ -381,6 +382,50 @@ fn bench_runtime_rule_scaling(c: &mut Criterion) {
 // Criterion harness
 // ---------------------------------------------------------------------------
 
+fn make_ruleset_processor(ruleset_count: usize, n_rules: usize) -> (LogProcessor, String) {
+    let yaml = gen_n_rules(n_rules);
+    let dir = tempfile::tempdir().unwrap();
+    let mut bindings = Vec::new();
+    for index in 0..ruleset_count {
+        let root = dir.path().join(format!("ruleset_{index}"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("rules.yml"), &yaml).unwrap();
+        bindings.push(RulesetBinding {
+            name: format!("r{index}"),
+            spec: RulesetSpec {
+                sources: vec![root.join("rules.yml")],
+                ..Default::default()
+            },
+            pipelines: Vec::new(),
+            when_schemas: Vec::new(),
+        });
+    }
+    let mut engine = RuntimeEngine::with_rulesets(bindings, CorrelationConfig::default(), false);
+    engine.load_rules().unwrap();
+    std::mem::forget(dir);
+    (LogProcessor::new(engine, Arc::new(NoopMetrics)), yaml)
+}
+
+fn bench_runtime_rulesets(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime_rulesets");
+    group.sample_size(10);
+    let lines = gen_json_lines(1_000);
+    group.throughput(criterion::Throughput::Elements(1_000));
+
+    for count in [1, 3] {
+        let (processor, _) = make_ruleset_processor(count, 100);
+        group.bench_with_input(BenchmarkId::new("rulesets", count), &lines, |b, lines| {
+            b.iter(|| {
+                let results =
+                    processor.process_batch_with_format(black_box(lines), &InputFormat::Json, None);
+                black_box(results);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_runtime_json_throughput,
@@ -390,5 +435,6 @@ criterion_group!(
     bench_runtime_vs_raw_engine,
     bench_runtime_observe_fields,
     bench_runtime_rule_scaling,
+    bench_runtime_rulesets,
 );
 criterion_main!(benches);
