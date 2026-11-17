@@ -1,5 +1,0 @@
-rulesets:
-  win_a:
-    sources: [rules]
-eval:
-  rulesets: [win_a, win_a]
