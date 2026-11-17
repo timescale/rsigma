@@ -15,6 +15,7 @@ pub mod nats;
 pub mod refresh;
 pub mod registry;
 pub mod template;
+pub mod watchlist;
 
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,10 @@ pub const MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 pub use cache::SourceCache;
 pub use template::TemplateExpander;
+pub use watchlist::{
+    AddSummary, RemoveSummary, ReplaceSummary, WatchlistError, WatchlistItem, WatchlistRegistry,
+    WatchlistRow,
+};
 
 /// The result of successfully resolving a dynamic source.
 #[derive(Debug, Clone)]
@@ -114,6 +119,7 @@ pub trait SourceResolver: Send + Sync {
 /// Default source resolver that dispatches to file, command, and HTTP resolvers.
 pub struct DefaultSourceResolver {
     cache: std::sync::Arc<SourceCache>,
+    watchlists: Option<std::sync::Arc<WatchlistRegistry>>,
 }
 
 impl DefaultSourceResolver {
@@ -121,6 +127,7 @@ impl DefaultSourceResolver {
     pub fn new() -> Self {
         Self {
             cache: std::sync::Arc::new(SourceCache::new()),
+            watchlists: None,
         }
     }
 
@@ -128,6 +135,7 @@ impl DefaultSourceResolver {
     pub fn with_cache(cache: SourceCache) -> Self {
         Self {
             cache: std::sync::Arc::new(cache),
+            watchlists: None,
         }
     }
 
@@ -135,7 +143,18 @@ impl DefaultSourceResolver {
     /// with another consumer (e.g. the daemon's enrichment pipeline,
     /// which reads from the same cache for `lookup` enrichers).
     pub fn with_arc_cache(cache: std::sync::Arc<SourceCache>) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            watchlists: None,
+        }
+    }
+
+    /// Resolve `type: watchlist` sources from `registry`.
+    ///
+    /// Without a registry those sources resolve to an empty list.
+    pub fn with_watchlists(mut self, registry: std::sync::Arc<WatchlistRegistry>) -> Self {
+        self.watchlists = Some(registry);
+        self
     }
 
     /// Get a reference to the cache (for inspection/testing).
@@ -211,11 +230,23 @@ impl SourceResolver for DefaultSourceResolver {
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
             }
-            SourceType::Watchlist { .. } => Ok(ResolvedValue {
-                data: serde_json::json!([]),
-                resolved_at: Instant::now(),
-                from_cache: false,
-            }),
+            SourceType::Watchlist { .. } => {
+                let data = self
+                    .watchlists
+                    .as_ref()
+                    .and_then(|registry| registry.values(&source.id, watchlist::now_utc()).ok())
+                    .map(|values| {
+                        serde_json::Value::Array(
+                            values.into_iter().map(serde_json::Value::String).collect(),
+                        )
+                    })
+                    .unwrap_or_else(|| serde_json::json!([]));
+                Ok(ResolvedValue {
+                    data,
+                    resolved_at: Instant::now(),
+                    from_cache: false,
+                })
+            }
         };
 
         match result {

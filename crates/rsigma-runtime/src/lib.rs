@@ -142,8 +142,9 @@ pub use rsigma_eval::{
 };
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
-    DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,
-    SourceResolver, TemplateExpander,
+    AddSummary, DefaultSourceResolver, RemoveSummary, ReplaceSummary, ResolvedValue, SourceCache,
+    SourceError, SourceErrorKind, SourceResolver, TemplateExpander, WatchlistError, WatchlistItem,
+    WatchlistRegistry,
 };
 
 #[cfg(feature = "nats")]
