@@ -14,7 +14,7 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rsigma_eval::pipeline::sources::SourceType;
