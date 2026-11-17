@@ -48,11 +48,13 @@ fn bench_rulesets(c: &mut Criterion) {
         |b, events| b.iter(|| black_box(one.process_batch(events))),
     );
 
+    let docs: Vec<&str> = rules.split("---\n").collect();
+    assert_eq!(docs.len(), 1_000);
     let mut split = RulesetEngines::new(
         vec![
-            detection_unit("a", &datagen::gen_n_rules(334), Vec::new()),
-            detection_unit("b", &datagen::gen_n_rules(333), Vec::new()),
-            detection_unit("c", &datagen::gen_n_rules(333), Vec::new()),
+            detection_unit("a", &docs[..334].join("---\n"), Vec::new()),
+            detection_unit("b", &docs[334..667].join("---\n"), Vec::new()),
+            detection_unit("c", &docs[667..].join("---\n"), Vec::new()),
         ],
         None,
     )
@@ -78,6 +80,14 @@ fn bench_rulesets(c: &mut Criterion) {
         |b, events| b.iter(|| black_box(full.process_batch(events))),
     );
 
+    // Every fourth event carries the CloudTrail marker, so the bound unit
+    // evaluates a quarter of the stream and skips the rest.
+    let mut cloud_events = events.clone();
+    for event in cloud_events.iter_mut().step_by(4) {
+        event["eventVersion"] = serde_json::json!("1.08");
+    }
+    let cloud_refs: Vec<JsonEvent> = cloud_events.iter().map(JsonEvent::borrow).collect();
+    let cloud_event_refs: Vec<&JsonEvent> = cloud_refs.iter().collect();
     let classifier = Arc::new(SchemaClassifier::new(vec![SchemaSignature {
         name: "aws_cloudtrail".to_string(),
         predicates: vec![SchemaPredicate::FieldPresent("eventVersion".to_string())],
@@ -92,9 +102,11 @@ fn bench_rulesets(c: &mut Criterion) {
         Some(classifier),
     )
     .unwrap();
+    bound.process_batch(&cloud_event_refs);
+    assert_eq!(bound.skipped_totals()[2].1, 7_500);
     group.bench_with_input(
         BenchmarkId::new("three_units_when", 10_000),
-        &event_refs,
+        &cloud_event_refs,
         |b, events| b.iter(|| black_box(bound.process_batch(events))),
     );
 
