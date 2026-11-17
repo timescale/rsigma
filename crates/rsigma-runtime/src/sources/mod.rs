@@ -92,6 +92,23 @@ impl std::fmt::Display for SourceErrorKind {
 pub trait SourceResolver: Send + Sync {
     /// Resolve a single dynamic source, returning the fetched data.
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError>;
+
+    /// The value last stored for `source_id`, if any.
+    ///
+    /// A cache-first rebuild uses this so a refresh does not fetch every
+    /// source again. The default returns nothing.
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        let _ = source_id;
+        None
+    }
+
+    /// Remember `value` as the current data for `source_id`.
+    ///
+    /// Push updates call this so later cache-first rebuilds and lookup
+    /// enrichers see the payload. The default discards it.
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        let _ = (source_id, value);
+    }
 }
 
 /// Default source resolver that dispatches to file, command, and HTTP resolvers.
@@ -141,6 +158,14 @@ impl Default for DefaultSourceResolver {
 
 #[async_trait::async_trait]
 impl SourceResolver for DefaultSourceResolver {
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        self.cache.get(source_id)
+    }
+
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        self.cache.store(source_id, &value);
+    }
+
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
         let result = match &source.source_type {
             SourceType::File {
@@ -235,6 +260,40 @@ impl SourceResolver for DefaultSourceResolver {
             }
         }
     }
+}
+
+/// Resolve sources from the cache, fetching only the ones with no cached value.
+///
+/// A hit is returned as stored. A miss calls [`SourceResolver::resolve`],
+/// which stores the fetched value. Optional sources that fail become JSON null.
+pub async fn resolve_all_cache_first(
+    resolver: &dyn SourceResolver,
+    sources: &[DynamicSource],
+) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
+    let mut resolved = std::collections::HashMap::new();
+    for source in sources {
+        if let Some(cached) = resolver.cached(&source.id) {
+            resolved.insert(source.id.clone(), cached);
+            continue;
+        }
+        match resolver.resolve(source).await {
+            Ok(value) => {
+                resolved.insert(source.id.clone(), value.data);
+            }
+            Err(e) => {
+                if source.required {
+                    return Err(e);
+                }
+                tracing::warn!(
+                    source_id = %source.id,
+                    error = %e,
+                    "Optional source has no cached value and failed to resolve, using null"
+                );
+                resolved.insert(source.id.clone(), serde_json::Value::Null);
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 /// Resolve all sources in a pipeline, returning a map of source_id -> resolved data.

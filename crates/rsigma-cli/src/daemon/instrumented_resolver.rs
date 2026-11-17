@@ -39,6 +39,14 @@ impl InstrumentedResolver {
 
 #[async_trait::async_trait]
 impl SourceResolver for InstrumentedResolver {
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        self.inner.cached(source_id)
+    }
+
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        self.inner.store_cached(source_id, value);
+    }
+
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
         let source_type_label = source_type_label(&source.source_type);
         self.metrics

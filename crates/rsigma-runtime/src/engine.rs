@@ -13,6 +13,20 @@ use rsigma_parser::SigmaCollection;
 
 use crate::sources::{self, SourceResolver, TemplateExpander};
 
+/// How `load_rules` obtains dynamic source values.
+///
+/// A full reload fetches every source. A rebuild triggered by a source
+/// change reads the cache and fetches only sources that have no cached value,
+/// so the rebuild does not poll every source again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceFetch {
+    /// Fetch every source.
+    #[default]
+    Fresh,
+    /// Use cached values, fetching only cache misses.
+    CacheFirst,
+}
+
 /// Wraps a CorrelationEngine (or a plain Engine) and provides the interface
 /// the runtime needs: process events, reload rules, and query state.
 pub struct RuntimeEngine {
@@ -23,6 +37,10 @@ pub struct RuntimeEngine {
     corr_config: CorrelationConfig,
     include_event: bool,
     source_resolver: Option<Arc<dyn SourceResolver>>,
+    /// How the next `load_rules` resolves dynamic sources. Full reloads use
+    /// [`SourceFetch::Fresh`]. A cache-first rebuild sets
+    /// [`SourceFetch::CacheFirst`] for that load only.
+    source_fetch: SourceFetch,
     /// External dynamic source declarations (loaded via `--source`). Pipelines
     /// reference these with `${source.<id>}`; the declarations themselves no
     /// longer live inside pipeline files. Resolved and expanded into the
@@ -108,6 +126,7 @@ impl RuntimeEngine {
             corr_config,
             include_event,
             source_resolver: None,
+            source_fetch: SourceFetch::Fresh,
             external_sources: Vec::new(),
             allow_remote_include: false,
             strict_rules: false,
@@ -263,6 +282,16 @@ impl RuntimeEngine {
         self.source_resolver.as_ref()
     }
 
+    /// Choose how the next `load_rules` resolves dynamic sources.
+    pub fn set_source_fetch(&mut self, fetch: SourceFetch) {
+        self.source_fetch = fetch;
+    }
+
+    /// How the next `load_rules` resolves dynamic sources.
+    pub fn source_fetch(&self) -> SourceFetch {
+        self.source_fetch
+    }
+
     /// Set the external dynamic source declarations (loaded via `--source`).
     /// The next `load_rules()` resolves them and expands `${source.*}`
     /// references in the pipelines; hot-reload carries them forward.
@@ -326,9 +355,15 @@ impl RuntimeEngine {
 
         let pipelines = std::mem::take(&mut self.pipelines);
         let external = self.external_sources.clone();
-        let resolved =
-            resolve_pipelines_async(resolver, &pipelines, &external, self.allow_remote_include)
-                .await;
+        let fetch = self.source_fetch;
+        let resolved = resolve_pipelines_async(
+            resolver,
+            &pipelines,
+            &external,
+            self.allow_remote_include,
+            fetch,
+        )
+        .await;
         match resolved {
             Ok(p) => {
                 self.pipelines = p;
@@ -384,8 +419,9 @@ impl RuntimeEngine {
             let resolver = self.source_resolver.clone().unwrap();
             let allow_remote = self.allow_remote_include;
             let external = self.external_sources.clone();
+            let fetch = self.source_fetch;
             let resolved = match block_on_from_sync(&handle, async {
-                resolve_pipelines_async(&resolver, &pipelines, &external, allow_remote).await
+                resolve_pipelines_async(&resolver, &pipelines, &external, allow_remote, fetch).await
             }) {
                 Ok(resolved) => resolved,
                 Err(e) => {
@@ -427,10 +463,12 @@ impl RuntimeEngine {
                     })?;
                     let allow_remote = self.allow_remote_include;
                     let external = self.external_sources.clone();
+                    let fetch = self.source_fetch;
                     let mut resolved_sets = Vec::with_capacity(spec.pipeline_sets.len());
                     for set in spec.pipeline_sets {
                         let resolved = block_on_from_sync(&handle, async {
-                            resolve_pipelines_async(&resolver, &set, &external, allow_remote).await
+                            resolve_pipelines_async(&resolver, &set, &external, allow_remote, fetch)
+                                .await
                         })?;
                         match resolved {
                             Ok(p) => resolved_sets.push(p),
@@ -778,14 +816,19 @@ async fn resolve_pipelines_async(
     pipelines: &[Pipeline],
     external: &[DynamicSource],
     allow_remote_include: bool,
+    fetch: SourceFetch,
 ) -> Result<Vec<Pipeline>, String> {
     if !pipelines.iter().any(|p| p.is_dynamic()) {
         return Ok(pipelines.to_vec());
     }
 
-    let resolved_data = sources::resolve_all(resolver.as_ref(), external)
-        .await
-        .map_err(|e| format!("Failed to resolve dynamic sources: {e}"))?;
+    let resolved = match fetch {
+        SourceFetch::Fresh => sources::resolve_all(resolver.as_ref(), external).await,
+        SourceFetch::CacheFirst => {
+            sources::resolve_all_cache_first(resolver.as_ref(), external).await
+        }
+    };
+    let resolved_data = resolved.map_err(|e| format!("Failed to resolve dynamic sources: {e}"))?;
 
     let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
     for pipeline in pipelines {
@@ -988,5 +1031,98 @@ transformations:
             1,
             "the unresolved pipelines are kept for a retry"
         );
+    }
+
+    struct CountingResolver {
+        fetches: std::sync::atomic::AtomicUsize,
+        cached: std::sync::Mutex<Option<serde_json::Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SourceResolver for CountingResolver {
+        async fn resolve(
+            &self,
+            source: &DynamicSource,
+        ) -> Result<crate::sources::ResolvedValue, crate::sources::SourceError> {
+            self.fetches
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let Some(data) = self.cached.lock().unwrap().clone() else {
+                return Err(crate::sources::SourceError {
+                    source_id: source.id.clone(),
+                    kind: crate::sources::SourceErrorKind::Fetch("no value".into()),
+                });
+            };
+            Ok(crate::sources::ResolvedValue {
+                data,
+                resolved_at: std::time::Instant::now(),
+                from_cache: false,
+            })
+        }
+
+        fn cached(&self, _source_id: &str) -> Option<serde_json::Value> {
+            self.cached.lock().unwrap().clone()
+        }
+    }
+
+    fn feed_source() -> DynamicSource {
+        DynamicSource {
+            id: "feed".to_string(),
+            source_type: SourceType::File {
+                path: std::path::PathBuf::from("/unused"),
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::Once,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }
+    }
+
+    fn engine_with_feed(resolver: Arc<CountingResolver>) -> RuntimeEngine {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rule.yml");
+        std::fs::write(&rule_path, RULE_YAML).unwrap();
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(&pipeline_path, DYNAMIC_PIPELINE).unwrap();
+        let pipeline = parse_pipeline_file(&pipeline_path).unwrap();
+        let mut engine = RuntimeEngine::new(
+            rule_path,
+            vec![pipeline],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_source_resolver(resolver);
+        engine.set_external_sources(vec![feed_source()]);
+        std::mem::forget(dir);
+        engine
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cache_first_skips_a_hit_and_fetches_a_miss() {
+        let resolver = Arc::new(CountingResolver {
+            fetches: std::sync::atomic::AtomicUsize::new(0),
+            cached: std::sync::Mutex::new(Some(serde_json::json!(["198.51.100.7"]))),
+        });
+        let mut hit = engine_with_feed(Arc::clone(&resolver));
+        hit.set_source_fetch(SourceFetch::CacheFirst);
+        hit.load_rules().expect("a cached value needs no fetch");
+        assert_eq!(
+            resolver.fetches.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        *resolver.cached.lock().unwrap() = None;
+        resolver
+            .fetches
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut miss = engine_with_feed(resolver);
+        miss.set_source_fetch(SourceFetch::CacheFirst);
+        let err = miss
+            .load_rules()
+            .expect_err("a cache miss fetches, and this resolver has nothing");
+        assert!(err.contains("no value"), "got: {err}");
+        assert_eq!(miss.source_resolver().unwrap().cached("feed"), None);
     }
 }
