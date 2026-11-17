@@ -3,7 +3,13 @@
 # in the audit run without breaking CI; we cannot drop transitive
 # unmaintained deps unilaterally but we want to see them.
 unmaintained = "workspace"
-ignore = []
+# chrono was marked unmaintained on 2026-11-17 and has no replacement.
+# humantime is listed only because it wraps chrono.
+# https://github.com/chronotope/chrono/issues/1768
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono has no maintained replacement" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained because it wraps chrono" },
+]
 
 [licenses]
 allow = [
