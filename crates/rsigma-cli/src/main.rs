@@ -643,48 +643,44 @@ fn init_cli_log_subscriber(format: LogFormat) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
+    try_load_pipelines(paths).unwrap_or_else(|message| {
+        eprintln!("{message}");
+        process::exit(exit_code::CONFIG_ERROR);
+    })
+}
+
+/// Load pipelines like [`load_pipelines`], returning the first load error
+/// instead of exiting.
+pub(crate) fn try_load_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, String> {
     let mut pipelines = Vec::new();
     for path in paths {
         let name = path.to_str().unwrap_or("");
         if let Some(result) = resolve_builtin_pipeline(name) {
-            match result {
-                Ok(p) => {
-                    eprintln!(
-                        "Loaded builtin pipeline: {} (priority {})",
-                        p.name, p.priority
-                    );
-                    pipelines.push(p);
-                }
-                Err(e) => {
-                    eprintln!("Error parsing builtin pipeline '{name}': {e}");
-                    process::exit(exit_code::CONFIG_ERROR);
-                }
-            }
+            let p = result.map_err(|e| format!("Error parsing builtin pipeline '{name}': {e}"))?;
+            eprintln!(
+                "Loaded builtin pipeline: {} (priority {})",
+                p.name, p.priority
+            );
+            pipelines.push(p);
         } else {
-            match parse_pipeline_file(path) {
-                Ok(p) => {
-                    eprintln!("Loaded pipeline: {} (priority {})", p.name, p.priority);
-                    if p.is_dynamic() {
-                        let source_ids: Vec<&str> = p
-                            .dynamic_references()
-                            .iter()
-                            .map(|r| r.source_id.as_str())
-                            .collect::<std::collections::BTreeSet<&str>>()
-                            .into_iter()
-                            .collect();
-                        eprintln!("  dynamic source ref(s): {}", source_ids.join(", "));
-                    }
-                    pipelines.push(p);
-                }
-                Err(e) => {
-                    eprintln!("Error loading pipeline {}: {e}", path.display());
-                    process::exit(exit_code::CONFIG_ERROR);
-                }
+            let p = parse_pipeline_file(path)
+                .map_err(|e| format!("Error loading pipeline {}: {e}", path.display()))?;
+            eprintln!("Loaded pipeline: {} (priority {})", p.name, p.priority);
+            if p.is_dynamic() {
+                let source_ids: Vec<&str> = p
+                    .dynamic_references()
+                    .iter()
+                    .map(|r| r.source_id.as_str())
+                    .collect::<std::collections::BTreeSet<&str>>()
+                    .into_iter()
+                    .collect();
+                eprintln!("  dynamic source ref(s): {}", source_ids.join(", "));
             }
+            pipelines.push(p);
         }
     }
     pipelines.sort_by_key(|p| p.priority);
-    pipelines
+    Ok(pipelines)
 }
 
 pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {

@@ -365,7 +365,6 @@ fn build_group(
         }
     };
     let manifest_rules = manifest_documents(&resolved);
-    let pipelines = crate::load_pipelines(&pipeline_paths);
 
     let manifest_path = manifest_path(output);
     let output_text = output.to_string_lossy().to_string();
@@ -375,6 +374,10 @@ fn build_group(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if try_native_backend(target, &native_options).is_some() {
+        let pipelines = match crate::try_load_pipelines(&pipeline_paths) {
+            Ok(pipelines) => pipelines,
+            Err(message) => return GroupResult::ConfigFailed(message),
+        };
         let request = ConvertRequest {
             collection: &resolved.collection,
             target,
