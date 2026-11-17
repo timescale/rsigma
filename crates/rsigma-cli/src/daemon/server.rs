@@ -675,15 +675,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 restore_state = should_restore;
                 if should_restore {
                     if processor.import_state(&snapshot) {
-                        let entries = snapshot.windows.values().map(|g| g.len()).sum::<usize>();
                         tracing::info!(
-                            state_entries = entries,
+                            state_entries = snapshot.window_entries(),
                             "Correlation state restored from database"
                         );
                     } else {
                         tracing::warn!(
                             snapshot_version = snapshot.version,
-                            "Incompatible snapshot version, starting with fresh state"
+                            snapshot_rulesets = snapshot.rulesets.len(),
+                            "Snapshot version or ruleset layout does not match the loaded rules, starting with fresh state"
                         );
                     }
                 } else {

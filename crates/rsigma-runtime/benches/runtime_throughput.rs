@@ -402,7 +402,7 @@ fn make_ruleset_processor(ruleset_count: usize, n_rules: usize) -> (LogProcessor
     }
     let mut engine = RuntimeEngine::with_rulesets(bindings, CorrelationConfig::default(), false);
     engine.load_rules().unwrap();
-    std::mem::forget(dir);
+    drop(dir);
     (LogProcessor::new(engine, Arc::new(NoopMetrics)), yaml)
 }
 
