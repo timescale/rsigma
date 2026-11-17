@@ -696,7 +696,10 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                         if batch {
                             batch::exit_unrestorable(
                                 "correlation",
-                                &format!("snapshot version {} is not supported", snapshot.version),
+                                &format!(
+                                    "snapshot version {} is not supported, or its ruleset layout does not match the loaded rules",
+                                    snapshot.version
+                                ),
                             );
                         }
                         tracing::warn!(
