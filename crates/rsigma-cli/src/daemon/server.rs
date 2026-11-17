@@ -884,7 +884,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     } else {
         rsigma_runtime::RuleSource::Rulesets(config.rulesets.clone())
     };
-    let watched = rsigma_runtime::watch_paths(&rule_source);
+    let watched = rsigma_runtime::watch_paths(&rule_source, &config.pipeline_paths);
     let _watcher = reload::spawn_file_watcher(&watched, reload_tx.clone());
 
     let start_time = Instant::now();
