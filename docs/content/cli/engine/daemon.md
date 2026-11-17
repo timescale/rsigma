@@ -38,6 +38,12 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 Repeat `--ruleset` to run several named rulesets side by side. Each ruleset keeps its own engines, pipelines, and correlation state, and every result carries a `ruleset` field. The configuration can supply the list with schema bindings:
 
 ```yaml
+rulesets:
+  win_a:
+    sources: [rules/windows]
+  cloud:
+    sources: [rules/cloud]
+
 daemon:
   rulesets:
     - win_a

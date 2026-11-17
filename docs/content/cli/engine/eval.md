@@ -160,6 +160,12 @@ rsigma engine eval --ruleset win_a --ruleset win_b --event @events.ndjson
 The configuration can supply the list, including schema bindings:
 
 ```yaml
+rulesets:
+  win_a:
+    sources: [rules/windows]
+  cloud:
+    sources: [rules/cloud]
+
 eval:
   rulesets:
     - win_a

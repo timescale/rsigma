@@ -31,6 +31,15 @@ fn bench_rulesets(c: &mut Criterion) {
     let refs: Vec<JsonEvent> = events.iter().map(JsonEvent::borrow).collect();
     let event_refs: Vec<&JsonEvent> = refs.iter().collect();
 
+    let collection = parse_sigma_yaml(&rules).unwrap();
+    let mut plain = Engine::new();
+    plain.add_collection(&collection).unwrap();
+    group.bench_with_input(
+        BenchmarkId::new("plain_engine", 10_000),
+        &event_refs,
+        |b, events| b.iter(|| black_box(plain.evaluate_batch(events))),
+    );
+
     let mut one =
         RulesetEngines::new(vec![detection_unit("all", &rules, Vec::new())], None).unwrap();
     group.bench_with_input(
