@@ -1,0 +1,5 @@
+sources:
+  - id: c2_ips
+    type: watchlist
+    max_indicators: 1000
+    default_ttl: 30d

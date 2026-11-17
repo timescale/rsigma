@@ -1,0 +1,11 @@
+title: Any Command
+id: 00000000-0000-0000-0000-0000000000c3
+status: test
+logsource:
+    category: test
+    product: test
+detection:
+    selection:
+        CommandLine|contains: malware
+    condition: selection
+level: high

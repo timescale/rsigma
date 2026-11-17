@@ -1,0 +1,7 @@
+enrichers:
+  - id: c2_hit
+    kind: detection
+    type: lookup
+    inject_field: c2_indicator
+    source: c2_ips
+    default: absent

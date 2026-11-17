@@ -1,0 +1,11 @@
+title: C2 Destination
+id: 00000000-0000-0000-0000-0000000000c2
+status: test
+logsource:
+    category: test
+    product: test
+detection:
+    selection:
+        DestinationIp|expand: '%c2_ips%'
+    condition: selection
+level: high
