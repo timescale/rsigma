@@ -1,0 +1,15 @@
+sources:
+  - id: c2_ips
+    type: watchlist
+    max_indicators: 1000
+    max_value_length: 256
+    default_ttl: 30d
+  - id: resolve
+    type: watchlist
+  - id: c2_ips
+    type: watchlist
+    refresh: 5m
+    format: json
+    extract: .[]
+    timeout: 1s
+    max_indicators: 0

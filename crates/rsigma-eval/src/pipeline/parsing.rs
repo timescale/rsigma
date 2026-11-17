@@ -1392,6 +1392,67 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 extract,
             }
         }
+        "watchlist" => {
+            for key in ["refresh", "format", "extract", "timeout"] {
+                if obj.get(ykey(key)).is_some() {
+                    return Err(EvalError::Pipeline(format!(
+                        "source '{id}' of type 'watchlist' does not accept '{key}'"
+                    )));
+                }
+            }
+            if id == "resolve" || id == "cache" {
+                return Err(EvalError::Pipeline(format!(
+                    "source id '{id}' is reserved and cannot be a watchlist"
+                )));
+            }
+            let max_indicators = match obj.get(ykey("max_indicators")) {
+                None => 100_000,
+                Some(value) => match value.as_u64() {
+                    Some(0) => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' max_indicators must be greater than 0"
+                        )));
+                    }
+                    Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+                    None => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' max_indicators must be a positive integer"
+                        )));
+                    }
+                },
+            };
+            let max_value_length = match obj.get(ykey("max_value_length")) {
+                None => 2048,
+                Some(value) => match value.as_u64() {
+                    Some(0) => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' max_value_length must be greater than 0"
+                        )));
+                    }
+                    Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+                    None => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' max_value_length must be a positive integer"
+                        )));
+                    }
+                },
+            };
+            let default_ttl = match obj.get(ykey("default_ttl")) {
+                None => None,
+                Some(value) => {
+                    Some(value.as_str().and_then(parse_duration_str).ok_or_else(|| {
+                        EvalError::Pipeline(format!(
+                            "source '{id}' default_ttl must be a duration such as 30d"
+                        ))
+                    })?)
+                }
+            };
+            SourceType::Watchlist {
+                max_indicators,
+                max_value_length,
+                default_ttl,
+            }
+        }
         other => {
             return Err(EvalError::Pipeline(format!(
                 "source '{id}' has unknown type: '{other}'"
@@ -1576,6 +1637,10 @@ fn parse_duration_str(s: &str) -> Option<Duration> {
             .parse::<u64>()
             .ok()
             .map(|h| Duration::from_secs(h * 3600))
+    } else if let Some(days) = s.strip_suffix('d') {
+        days.parse::<u64>()
+            .ok()
+            .map(|d| Duration::from_secs(d.saturating_mul(86_400)))
     } else {
         s.parse::<u64>().ok().map(Duration::from_secs)
     }

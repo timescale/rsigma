@@ -126,5 +126,6 @@ fn source_type_label(st: &SourceType) -> &'static str {
         SourceType::Command { .. } => "command",
         SourceType::Http { .. } => "http",
         SourceType::Nats { .. } => "nats",
+        SourceType::Watchlist { .. } => "watchlist",
     }
 }

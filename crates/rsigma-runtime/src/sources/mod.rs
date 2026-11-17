@@ -211,6 +211,11 @@ impl SourceResolver for DefaultSourceResolver {
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
             }
+            SourceType::Watchlist { .. } => Ok(ResolvedValue {
+                data: serde_json::json!([]),
+                resolved_at: Instant::now(),
+                from_cache: false,
+            }),
         };
 
         match result {
