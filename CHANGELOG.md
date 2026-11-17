@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Several rulesets side by side
+### Several rulesets side by side (#715)
 
 `rsigma-eval` adds `RulesetEngines`, a fan-out over independent named rulesets. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; results carry the ruleset name, `when` bindings route by classified schema, and skipped events and routing outcomes are counted per unit. `CorrelationSnapshot` carries a per-ruleset map, `RuleFieldSet::extend` unions field sets, and `RuleHeader` gains an optional `ruleset` name.
 
