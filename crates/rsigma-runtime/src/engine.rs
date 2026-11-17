@@ -503,7 +503,12 @@ impl RuntimeEngine {
             let previous_state = previous
                 .as_ref()
                 .and_then(|snapshot| snapshot.rulesets.get(&binding.name));
-            let variant = self.build_variant(&collection, &pipelines, None, previous_state)?;
+            let routing = if bindings.len() == 1 {
+                self.routing.clone()
+            } else {
+                None
+            };
+            let variant = self.build_variant(&collection, &pipelines, routing, previous_state)?;
             let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
             units.push(RulesetUnit {
                 name: Arc::from(binding.name.as_str()),

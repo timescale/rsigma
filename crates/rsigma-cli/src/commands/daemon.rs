@@ -839,13 +839,17 @@ pub(crate) fn cmd_daemon(
         allow_unauthenticated,
     } = args;
 
-    let (rulesets, ruleset_classifier) = build_ruleset_bindings(
-        ruleset_entries,
-        config.as_deref(),
-        &pipeline_paths,
-        schema_config.as_deref(),
-        schema_routing,
-    );
+    let (rulesets, ruleset_classifier) = if ruleset_entries.is_empty() {
+        (Vec::new(), None)
+    } else {
+        build_ruleset_bindings(
+            ruleset_entries,
+            config.as_deref(),
+            &pipeline_paths,
+            schema_config.as_deref(),
+            schema_routing,
+        )
+    };
     let rules_path = if rulesets.is_empty() {
         rules_opt.unwrap_or_else(|| {
             eprintln!("error: no rules path; set --rules, --ruleset, daemon.rules, or daemon.rulesets in the config file");
@@ -1338,10 +1342,11 @@ fn apply_daemon_config(
     {
         args.rules = Some(v);
     }
-    if !cli_rules && !cli_rulesets {
-        if let Some(entries) = daemon.rulesets {
-            args.ruleset_entries = entries;
-        }
+    if !cli_rules
+        && !cli_rulesets
+        && let Some(entries) = daemon.rulesets
+    {
+        args.ruleset_entries = entries;
     }
     if !explicit("pipelines")
         && let Some(v) = daemon.pipelines
@@ -1707,6 +1712,15 @@ fn apply_daemon_config(
     {
         args.consumer_group = Some(v);
     }
+
+    if !args.rulesets.is_empty() {
+        args.ruleset_entries = args
+            .rulesets
+            .iter()
+            .cloned()
+            .map(crate::config::RulesetEntryPartial::Name)
+            .collect();
+    }
 }
 
 /// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
@@ -1849,6 +1863,7 @@ fn build_ruleset_bindings(
     (bindings, classifier)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_daemon(
     rules_path: PathBuf,
     rulesets: Vec<RulesetBinding>,

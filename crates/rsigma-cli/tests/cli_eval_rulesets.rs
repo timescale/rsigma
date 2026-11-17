@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use common::{assert_golden, rsigma};
-use predicates::prelude::*;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rulesets_eval")
@@ -42,8 +41,8 @@ fn dump_json(stderr: &str) -> String {
         .find("\nProcessed ")
         .map(|offset| start + offset)
         .unwrap_or(stderr.len());
-    let mut value: serde_json::Value = serde_json::from_str(&stderr[start..end]).unwrap();
-    let text = serde_json::to_string_pretty(&mut value).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stderr[start..end]).unwrap();
+    let text = serde_json::to_string_pretty(&value).unwrap();
     format!("{text}\n")
 }
 

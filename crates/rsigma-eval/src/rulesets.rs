@@ -675,8 +675,10 @@ correlation:
 
     fn routed_engine(on_unknown: OnUnknown) -> RulesetEngines {
         let collection = parse_sigma_yaml(DETECTION).unwrap();
-        let mut config = RoutingConfig::default();
-        config.on_unknown = on_unknown;
+        let config = RoutingConfig {
+            on_unknown,
+            ..Default::default()
+        };
         let plan = RoutingPlan::from_config(&config);
         let router = SchemaRouter::build(
             &collection,
@@ -863,16 +865,16 @@ correlation:
             ),
             Err(RulesetEnginesError::RoutedWithOthers(2))
         ));
-        assert!(matches!(
+        assert!(
             RulesetEngines::new(
                 vec![{
                     let mut routed = routed_engine(OnUnknown::Warn);
                     routed.units.remove(0)
                 }],
                 None
-            ),
-            Ok(_)
-        ));
+            )
+            .is_ok()
+        );
         assert!(matches!(
             RulesetEngines::new(
                 vec![{

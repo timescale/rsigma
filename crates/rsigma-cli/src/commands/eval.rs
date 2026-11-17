@@ -1117,13 +1117,13 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 }
                 for m in &results {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset {
-                        if let Some(index) = name_to_index.get(name) {
-                            if m.is_correlation() {
-                                counts[*index].1 += 1;
-                            } else {
-                                counts[*index].0 += 1;
-                            }
+                    if let Some(name) = &m.header.ruleset
+                        && let Some(index) = name_to_index.get(name)
+                    {
+                        if m.is_correlation() {
+                            counts[*index].1 += 1;
+                        } else {
+                            counts[*index].0 += 1;
                         }
                     }
                     renderer.emit(m);
@@ -1149,13 +1149,13 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 &mut processor,
                 &mut |m| {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset {
-                        if let Some(index) = name_to_index.get(name) {
-                            if m.is_correlation() {
-                                counts[*index].1 += 1;
-                            } else {
-                                counts[*index].0 += 1;
-                            }
+                    if let Some(name) = &m.header.ruleset
+                        && let Some(index) = name_to_index.get(name)
+                    {
+                        if m.is_correlation() {
+                            counts[*index].1 += 1;
+                        } else {
+                            counts[*index].0 += 1;
                         }
                     }
                     renderer.emit(m);
@@ -1170,13 +1170,13 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
             };
             events = stream_evtx_events(&path, &event_filter, observer, &mut processor, &mut |m| {
                 had_matches = true;
-                if let Some(name) = &m.header.ruleset {
-                    if let Some(index) = name_to_index.get(name) {
-                        if m.is_correlation() {
-                            counts[*index].1 += 1;
-                        } else {
-                            counts[*index].0 += 1;
-                        }
+                if let Some(name) = &m.header.ruleset
+                    && let Some(index) = name_to_index.get(name)
+                {
+                    if m.is_correlation() {
+                        counts[*index].1 += 1;
+                    } else {
+                        counts[*index].0 += 1;
                     }
                 }
                 renderer.emit(m);
@@ -1198,13 +1198,13 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 &mut processor,
                 &mut |m| {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset {
-                        if let Some(index) = name_to_index.get(name) {
-                            if m.is_correlation() {
-                                counts[*index].1 += 1;
-                            } else {
-                                counts[*index].0 += 1;
-                            }
+                    if let Some(name) = &m.header.ruleset
+                        && let Some(index) = name_to_index.get(name)
+                    {
+                        if m.is_correlation() {
+                            counts[*index].1 += 1;
+                        } else {
+                            counts[*index].0 += 1;
                         }
                     }
                     renderer.emit(m);
