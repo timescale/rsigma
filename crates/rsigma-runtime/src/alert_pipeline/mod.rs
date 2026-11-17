@@ -625,6 +625,7 @@ mod tests {
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec![],
@@ -1076,6 +1077,7 @@ mod tests {
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Correlation(rsigma_eval::CorrelationBody {
                 correlation_type: rsigma_parser::CorrelationType::EventCount,

@@ -1,0 +1,4 @@
+Processed 2 events, 1 detection matches, 2 correlation matches, 0 unknown schema, 0 dropped.
+ruleset win_a: 0 detection matches, 1 correlation matches
+ruleset win_b: 0 detection matches, 1 correlation matches
+ruleset cloud: 1 detection matches, 0 correlation matches, 1 events skipped by when

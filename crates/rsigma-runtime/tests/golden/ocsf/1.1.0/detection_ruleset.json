@@ -1,0 +1,83 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "evidences": [
+    {
+      "data": {
+        "matched_fields": {
+          "Image": "whoami"
+        }
+      }
+    }
+  ],
+  "finding_info": {
+    "analytic": {
+      "name": "Suspicious PowerShell",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "rule-1"
+    },
+    "attacks": [
+      {
+        "sub_technique": {
+          "uid": "T1059.001"
+        }
+      },
+      {
+        "tactic": {
+          "name": "Execution",
+          "uid": "TA0002"
+        }
+      }
+    ],
+    "title": "Suspicious PowerShell",
+    "uid": "00000000-0000-4000-8000-000000000001"
+  },
+  "message": "Suspicious PowerShell",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.1.0"
+  },
+  "severity": "High",
+  "severity_id": 4,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Create",
+  "type_uid": 200401,
+  "unmapped": {
+    "custom_attributes": {
+      "team": "detection-eng"
+    },
+    "matched_fields": [
+      {
+        "field": "Image",
+        "value": "whoami"
+      }
+    ],
+    "matched_selections": [
+      "selection"
+    ],
+    "ruleset": "win_a",
+    "tags": [
+      "attack.t1059.001",
+      "attack.execution",
+      "cve.2023.1"
+    ]
+  }
+}

@@ -221,6 +221,7 @@ mod tests {
                 tags: vec![],
                 custom_attributes: Arc::new(Map::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec![],

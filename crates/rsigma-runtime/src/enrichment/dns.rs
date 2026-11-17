@@ -432,6 +432,7 @@ enum QueryOutcome {
 ///         tags: Vec::new(),
 ///         custom_attributes: std::sync::Arc::new(std::collections::HashMap::new()),
 ///         enrichments: None,
+///         ruleset: None,
 ///     },
 ///     body: ResultBody::Detection(DetectionBody {
 ///         matched_selections: vec!["selection".to_string()],
@@ -700,6 +701,7 @@ mod tests {
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec!["sel".into()],

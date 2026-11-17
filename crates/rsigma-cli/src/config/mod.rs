@@ -19,7 +19,7 @@ mod schema;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub(crate) use schema::{Merge, RsigmaConfigPartial};
+pub(crate) use schema::{Merge, RsigmaConfigPartial, RulesetEntryPartial, WhenPartial};
 
 /// Load the config files and fold them with the compiled defaults and the
 /// `RSIGMA_*` environment layer into one typed partial (precedence:

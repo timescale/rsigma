@@ -201,6 +201,7 @@ where
                     tags: rule.tags.clone(),
                     custom_attributes: rule.custom_attributes.clone(),
                     enrichments: None,
+                    ruleset: None,
                 },
                 body: ResultBody::Detection(DetectionBody {
                     matched_selections,

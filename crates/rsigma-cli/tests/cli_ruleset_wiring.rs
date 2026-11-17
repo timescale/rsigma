@@ -560,7 +560,7 @@ fn the_ruleset_pipeline_applies_without_an_explicit_flag() {
     );
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stderr(&output).contains("Loaded builtin pipeline: sysmon"));
-    assert!(stderr(&output).trim_end().ends_with("No matches."));
+    assert!(stderr(&output).contains("No matches."));
 }
 
 #[test]
@@ -1044,5 +1044,10 @@ fn eval_on_the_build_output_matches_the_ruleset() {
         ],
     );
     assert!(from_build.status.success(), "{}", stderr(&from_build));
-    assert_eq!(stdout(&from_ruleset), stdout(&from_build));
+    let mut ruleset_value: serde_json::Value =
+        serde_json::from_str(stdout(&from_ruleset).trim()).unwrap();
+    assert_eq!(ruleset_value["ruleset"], serde_json::json!("vendor"));
+    ruleset_value.as_object_mut().unwrap().remove("ruleset");
+    let build_value: serde_json::Value = serde_json::from_str(stdout(&from_build).trim()).unwrap();
+    assert_eq!(ruleset_value, build_value);
 }

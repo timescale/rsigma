@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -9,14 +10,15 @@ use clap::{ArgMatches, Args};
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, FieldObserver, JsonEvent,
     LogSourceExtractor, MatchDetailLevel, OnUnknown, Pipeline, ResultBody, RouteOutcome,
-    RoutingPlan, RuleFieldSet, SchemaClassifier, SchemaRouter, load_schema_config,
+    RoutingPlan, RuleFieldSet, RulesetEngines, RulesetUnit, SchemaClassifier, SchemaRouter,
+    UnitEngine, load_schema_config,
 };
 use rsigma_parser::SigmaCollection;
 
 #[cfg(feature = "evtx")]
 use super::eval_stream::stream_evtx_events;
 use super::eval_stream::{
-    CorrelationProcessor, DetectionProcessor, RoutingProcessor, stream_events,
+    CorrelationProcessor, DetectionProcessor, RoutingProcessor, RulesetsProcessor, stream_events,
 };
 use crate::EventFilter;
 use crate::config;
@@ -42,9 +44,22 @@ pub(crate) struct EvalArgs {
     #[arg(short, long)]
     pub rules: Option<PathBuf>,
 
-    /// Named ruleset from the configuration to evaluate instead of `--rules`.
-    #[arg(long, value_name = "NAME", conflicts_with = "rules")]
-    pub ruleset: Option<String>,
+    /// Named rulesets from the configuration to evaluate side by side.
+    #[arg(
+        long = "ruleset",
+        value_name = "NAME",
+        conflicts_with = "rules",
+        action = clap::ArgAction::Append
+    )]
+    pub rulesets: Vec<String>,
+
+    /// Effective ruleset entries, including config-file schema bindings.
+    #[arg(skip)]
+    pub ruleset_entries: Vec<crate::config::RulesetEntryPartial>,
+
+    /// Pipeline fallback from `eval.pipelines`, used by multi-ruleset mode.
+    #[arg(skip)]
+    pub config_pipelines: Vec<PathBuf>,
 
     /// A single event as a JSON string, or @path to read from a file.
     /// Supports NDJSON files and .evtx (Windows Event Log) files.
@@ -351,41 +366,45 @@ fn overlay_eval_config(
 
     if let Some(eval) = base.eval {
         let cli_rules = explicit("rules");
-        let cli_ruleset = explicit("ruleset");
-        if !cli_rules && !cli_ruleset && eval.rules.is_some() && eval.ruleset.is_some() {
-            eprintln!("error: set either eval.rules or eval.ruleset, not both");
-            process::exit(exit_code::CONFIG_ERROR);
+        let cli_rulesets = explicit("rulesets");
+        let config_list = eval
+            .rulesets
+            .as_ref()
+            .is_some_and(|entries| !entries.is_empty());
+        let config_single = eval.ruleset.is_some();
+
+        if !cli_rules && !cli_rulesets {
+            if eval.rules.is_some() && (config_list || config_single) {
+                eprintln!("error: set either eval.rules or eval.ruleset/eval.rulesets, not both");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+            if config_single && config_list {
+                eprintln!("error: set either eval.ruleset or eval.rulesets, not both");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
         }
+
         if !cli_rules
-            && !cli_ruleset
+            && !cli_rulesets
             && let Some(v) = eval.rules
         {
             args.rules = Some(v);
         }
-        if !cli_rules
-            && !cli_ruleset
-            && let Some(v) = eval.ruleset
-        {
-            args.ruleset = Some(v);
-        }
-        if !explicit("pipelines") {
-            if let Some(name) = &args.ruleset {
-                let declared = base
-                    .rulesets
-                    .as_ref()
-                    .and_then(|rulesets| rulesets.get(name))
-                    .map(crate::ruleset::ruleset_pipelines)
-                    .unwrap_or_default();
-                if declared.is_empty() {
-                    if let Some(v) = eval.pipelines {
-                        args.pipelines = v;
-                    }
-                } else {
-                    args.pipelines = declared;
-                }
-            } else if let Some(v) = eval.pipelines {
-                args.pipelines = v;
+        if !cli_rules && !cli_rulesets {
+            if let Some(entries) = eval.rulesets.filter(|entries| !entries.is_empty()) {
+                args.ruleset_entries = entries;
+            } else if let Some(name) = eval.ruleset {
+                args.ruleset_entries = vec![crate::config::RulesetEntryPartial::Name(name)];
             }
+        }
+
+        if !explicit("pipelines") {
+            args.config_pipelines = eval.pipelines.unwrap_or_default();
+            args.pipelines = if args.ruleset_entries.is_empty() {
+                args.config_pipelines.clone()
+            } else {
+                Vec::new()
+            };
         }
         if !explicit("input_format")
             && let Some(v) = eval.input_format
@@ -474,15 +493,30 @@ fn overlay_eval_config(
             }
         }
     }
+
+    if !args.rulesets.is_empty() {
+        args.ruleset_entries = args
+            .rulesets
+            .iter()
+            .cloned()
+            .map(crate::config::RulesetEntryPartial::Name)
+            .collect();
+    }
 }
 
 /// Returns `true` if any detection or correlation matched.
 pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
+    if !args.ruleset_entries.is_empty() {
+        return cmd_eval_rulesets(args, ctx);
+    }
+
     let EvalArgs {
         config,
         dry_run: _,
         rules: rules_opt,
-        ruleset,
+        rulesets: _,
+        ruleset_entries: _,
+        config_pipelines: _,
         event: event_json,
         pretty,
         output,
@@ -526,12 +560,12 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let rules_path: Vec<PathBuf> = rules_opt.into_iter().collect();
     let input = crate::ruleset::RuleInput {
         rules: &rules_path,
-        ruleset: ruleset.as_deref(),
+        ruleset: None,
         config: config.as_deref(),
     };
-    if input.rules.is_empty() && input.ruleset.is_none() {
+    if input.rules.is_empty() {
         eprintln!(
-            "error: no rules path; set --rules, --ruleset, eval.rules, or eval.ruleset in the config file"
+            "error: no rules path; set --rules, --ruleset, eval.rules, eval.ruleset, or eval.rulesets in the config file"
         );
         process::exit(exit_code::CONFIG_ERROR);
     }
@@ -541,11 +575,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
-        eprintln!(
-            "  note: dynamic sources are not resolved by `rsigma engine eval`. \
-             Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
-             events with dynamic pipelines."
-        );
+        eprintln!("{DYNAMIC_SOURCES_NOTE}");
     }
 
     let has_correlations = !collection.correlations.is_empty();
@@ -659,8 +689,14 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         ensure_output_is_not_input(&path, &event_source);
         OutputFile::create(path)
     });
-    let mut renderer =
-        MatchRenderer::new(ctx, pretty, output, finding_ocsf, ocsf_version.as_deref());
+    let mut renderer = MatchRenderer::new(
+        ctx,
+        pretty,
+        output,
+        finding_ocsf,
+        ocsf_version.as_deref(),
+        false,
+    );
 
     if schema_routing {
         let mut router = build_schema_router(
@@ -690,6 +726,16 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         return had_matches;
     }
 
+    let engine_options = EngineOptions {
+        include_event,
+        match_detail,
+        bloom_prefilter,
+        bloom_max_bytes,
+        #[cfg(feature = "daachorse-index")]
+        cross_rule_ac,
+        logsource_extractor,
+    };
+
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
             collection,
@@ -699,16 +745,10 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &pipelines,
             &event_filter,
             corr_config,
-            include_event,
-            match_detail,
+            &engine_options,
             &input_format,
             &syslog_tz,
             syslog_strip_bom,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-            logsource_extractor,
             observe_ref,
             dump_correlation_state,
         )
@@ -720,16 +760,10 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             &mut renderer,
             &pipelines,
             &event_filter,
-            include_event,
-            match_detail,
+            &engine_options,
             &input_format,
             &syslog_tz,
             syslog_strip_bom,
-            bloom_prefilter,
-            bloom_max_bytes,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac,
-            logsource_extractor,
             observe_ref,
         )
     };
@@ -741,6 +775,470 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     }
 
     had_matches
+}
+
+/// Evaluate several named rulesets side by side.
+fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
+    let EvalArgs {
+        config,
+        dry_run: _,
+        rules: _,
+        rulesets: _,
+        ruleset_entries,
+        config_pipelines,
+        event: event_json,
+        pretty,
+        output,
+        finding_format,
+        ocsf_version,
+        pipelines: pipeline_paths,
+        jq,
+        jsonpath,
+        suppress,
+        action,
+        emit_detections,
+        no_detections,
+        include_event,
+        match_detail,
+        correlation_event_mode,
+        max_correlation_events,
+        max_state_entries,
+        max_group_entries,
+        timestamp_fields,
+        input_format,
+        syslog_tz,
+        syslog_strip_bom,
+        fail_on_detection: _,
+        bloom_prefilter,
+        bloom_max_bytes,
+        #[cfg(feature = "daachorse-index")]
+        cross_rule_ac,
+        observe_fields,
+        observe_fields_max_keys,
+        observe_fields_report,
+        schema_routing,
+        schema_partition_rules,
+        schema_config,
+        on_unknown,
+        logsource_routing,
+        logsource_field_map,
+        event_logsource,
+        dump_correlation_state,
+    } = args;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+    for entry in ruleset_entries {
+        let (name, when_schemas) = match entry {
+            crate::config::RulesetEntryPartial::Name(name) => (name, Vec::new()),
+            crate::config::RulesetEntryPartial::Bound {
+                name,
+                when,
+                unknown,
+            } => {
+                if !unknown.is_empty() {
+                    eprintln!(
+                        "error: ruleset '{name}' has unknown keys: {}",
+                        unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+                let when = when.unwrap_or(crate::config::WhenPartial {
+                    schemas: Vec::new(),
+                    unknown: Default::default(),
+                });
+                if !when.unknown.is_empty() {
+                    eprintln!(
+                        "error: ruleset '{name}' has unknown `when` keys: {}",
+                        when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+                (name, when.schemas)
+            }
+        };
+        if !seen.insert(name.clone()) {
+            eprintln!("error: duplicate ruleset name '{name}'");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        entries.push((name, when_schemas));
+    }
+
+    if no_detections {
+        eprintln!(
+            "warning: --no-detections is deprecated; correlation-only detections are suppressed by default"
+        );
+    }
+
+    // `value_parser` restricts this to off/summary/full, so parsing cannot fail.
+    let match_detail = match_detail
+        .parse::<MatchDetailLevel>()
+        .unwrap_or(MatchDetailLevel::Off);
+    let event_filter = crate::build_event_filter(jq, jsonpath);
+    let event_source = resolve_event_source(event_json);
+    let evtx_input = {
+        #[cfg(feature = "evtx")]
+        {
+            matches!(event_source, EventSource::EvtxFile(_))
+        }
+        #[cfg(not(feature = "evtx"))]
+        {
+            false
+        }
+    };
+    let logsource_extractor = match crate::logsource_opts::build_logsource_extractor(
+        logsource_routing,
+        logsource_field_map.as_deref(),
+        event_logsource.as_deref(),
+        evtx_input,
+    ) {
+        Ok(extractor) => extractor,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
+    let corr_config = crate::build_correlation_config(
+        suppress,
+        action,
+        emit_detections,
+        correlation_event_mode,
+        max_correlation_events,
+        max_state_entries,
+        max_group_entries,
+        timestamp_fields,
+        "wallclock",
+    );
+    let finding_ocsf = finding_format.as_deref() == Some("ocsf");
+    if finding_ocsf
+        && matches!(
+            ctx.format,
+            OutputFormat::Csv | OutputFormat::Tsv | OutputFormat::Table
+        )
+    {
+        eprintln!("error: --finding-format ocsf requires --output-format json or ndjson");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    ctx.ensure_finding_ocsf_available("engine eval", finding_ocsf);
+    if let Some(version) = &ocsf_version {
+        if !finding_ocsf {
+            eprintln!("error: --ocsf-version requires --finding-format ocsf");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        #[cfg(feature = "ocsf")]
+        if version
+            .parse::<rsigma_runtime::ocsf::OcsfVersion>()
+            .is_err()
+        {
+            eprintln!("error: --ocsf-version must be 1.1.0 or 1.3.0");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        #[cfg(not(feature = "ocsf"))]
+        let _ = version;
+    }
+    let output = output.map(|path| {
+        ensure_output_is_not_input(&path, &event_source);
+        OutputFile::create(path)
+    });
+    let mut renderer = MatchRenderer::new(
+        ctx,
+        pretty,
+        output,
+        finding_ocsf,
+        ocsf_version.as_deref(),
+        true,
+    );
+
+    let engine_options = EngineOptions {
+        include_event,
+        match_detail,
+        bloom_prefilter,
+        bloom_max_bytes,
+        #[cfg(feature = "daachorse-index")]
+        cross_rule_ac,
+        logsource_extractor,
+    };
+
+    let mut units = Vec::new();
+    let mut observe_field_set = RuleFieldSet::default();
+    let mut dynamic_pipelines = false;
+
+    if schema_routing {
+        if entries.len() != 1 {
+            eprintln!("error: --schema-routing supports exactly one --ruleset");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        let (name, when_schemas) = &entries[0];
+        if !when_schemas.is_empty() {
+            eprintln!("error: ruleset '{name}' cannot use `when` with --schema-routing");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        let (_, spec) = crate::ruleset::load_named(name, config.as_deref());
+        if !spec.pipelines.is_empty() {
+            eprintln!(
+                "error: ruleset '{name}' has pipelines, which conflict with --schema-routing"
+            );
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+        let resolved = crate::ruleset::resolve_or_exit(name, &spec, renderer.ctx());
+        let collection = resolved.collection;
+        let router = build_schema_router(
+            &collection,
+            schema_config.as_deref(),
+            on_unknown.as_deref(),
+            corr_config,
+            include_event,
+            match_detail,
+            engine_options.logsource_extractor.clone(),
+            schema_partition_rules,
+        );
+        let field_set = RuleFieldSet::collect(&collection, &[], true);
+        observe_field_set.extend(field_set.clone());
+        units.push(RulesetUnit {
+            name: Arc::from(name.as_str()),
+            when_schemas: Vec::new(),
+            engine: UnitEngine::Routed(Box::new(router)),
+            field_set,
+        });
+    } else {
+        for (name, when_schemas) in entries {
+            let (name, spec) = crate::ruleset::load_named(&name, config.as_deref());
+            let resolved = crate::ruleset::resolve_or_exit(&name, &spec, renderer.ctx());
+            let collection = resolved.collection;
+
+            let pipeline_paths = if !pipeline_paths.is_empty() {
+                pipeline_paths.clone()
+            } else if !spec.pipelines.is_empty() {
+                crate::ruleset::ruleset_pipelines(&spec)
+            } else {
+                config_pipelines.clone()
+            };
+            let pipelines = crate::load_pipelines(&pipeline_paths);
+            dynamic_pipelines |= pipelines.iter().any(|p| p.is_dynamic());
+            let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
+            observe_field_set.extend(field_set.clone());
+
+            let engine = if !collection.correlations.is_empty() || dump_correlation_state {
+                let mut engine = CorrelationEngine::new(corr_config.clone());
+                engine_options.apply_to_correlation(&mut engine);
+                for pipeline in &pipelines {
+                    engine.add_pipeline(pipeline.clone());
+                }
+                if let Err(e) = engine.add_collection(&collection) {
+                    eprintln!("Error compiling rules for ruleset '{name}': {e}");
+                    process::exit(exit_code::RULE_ERROR);
+                }
+                UnitEngine::Correlation(Box::new(engine))
+            } else {
+                let mut engine = Engine::new();
+                engine_options.apply_to_engine(&mut engine);
+                for pipeline in &pipelines {
+                    engine.add_pipeline(pipeline.clone());
+                }
+                if let Err(e) = engine.add_collection(&collection) {
+                    eprintln!("Error compiling rules for ruleset '{name}': {e}");
+                    process::exit(exit_code::RULE_ERROR);
+                }
+                UnitEngine::Detection(Box::new(engine))
+            };
+
+            units.push(RulesetUnit {
+                name: Arc::from(name.as_str()),
+                when_schemas,
+                engine,
+                field_set,
+            });
+        }
+    }
+
+    let classifier = if units.iter().any(|unit| !unit.when_schemas.is_empty()) {
+        Some(Arc::new(load_schema_classifier(schema_config.as_deref())))
+    } else {
+        None
+    };
+    let mut engines = match RulesetEngines::new(units, classifier) {
+        Ok(engines) => engines,
+        Err(error) => {
+            eprintln!("error: {error}");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
+
+    if dynamic_pipelines && renderer.ctx().show_progress() {
+        eprintln!("{DYNAMIC_SOURCES_NOTE}");
+    }
+    if renderer.ctx().show_progress() {
+        for stats in engines.ruleset_stats() {
+            eprintln!(
+                "Loaded {} detection rules + {} correlation rules from ruleset {}",
+                stats.detection_rules, stats.correlation_rules, stats.name
+            );
+        }
+    }
+
+    let observe_ctx: Option<ObserveContext> = if observe_fields {
+        Some(ObserveContext {
+            observer: Arc::new(FieldObserver::new(observe_fields_max_keys.get())),
+            rule_field_set: observe_field_set,
+            report_path: observe_fields_report,
+        })
+    } else {
+        None
+    };
+    let observe_ref = observe_ctx.as_ref();
+
+    let unit_names: Vec<Arc<str>> = engines.units().iter().map(|u| u.name.clone()).collect();
+    let name_to_index: HashMap<Arc<str>, usize> = unit_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.clone(), index))
+        .collect();
+    let mut counts: Vec<(u64, u64)> = vec![(0, 0); unit_names.len()];
+    let mut events = 0u64;
+    let mut had_matches = false;
+
+    match event_source {
+        EventSource::SingleJson(json_str) => {
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Invalid JSON event: {e}");
+                    process::exit(crate::exit_code::RULE_ERROR);
+                }
+            };
+            for payload in crate::apply_event_filter(value, &event_filter) {
+                events += 1;
+                let event = JsonEvent::borrow(&payload);
+                if let Some(octx) = observe_ref {
+                    octx.observer.observe(&event);
+                }
+                let results = engines.process_event(&event);
+                if results.is_empty() && renderer.ctx().show_progress() {
+                    eprintln!("No matches.");
+                }
+                for m in &results {
+                    had_matches = true;
+                    count_ruleset_match(&mut counts, &name_to_index, m);
+                    renderer.emit(m);
+                }
+            }
+        }
+        EventSource::NdjsonFile(path) => {
+            let file = File::open(&path).unwrap_or_else(|e| {
+                eprintln!("Error opening event file '{}': {e}", path.display());
+                process::exit(crate::exit_code::RULE_ERROR);
+            });
+            let observer = observe_ref.map(|c| c.observer.as_ref());
+            let mut processor = RulesetsProcessor {
+                engines: &mut engines,
+            };
+            events = stream_events(
+                BufReader::new(file),
+                &event_filter,
+                &input_format,
+                &syslog_tz,
+                syslog_strip_bom,
+                observer,
+                &mut processor,
+                &mut |m| {
+                    had_matches = true;
+                    count_ruleset_match(&mut counts, &name_to_index, m);
+                    renderer.emit(m);
+                },
+            );
+        }
+        #[cfg(feature = "evtx")]
+        EventSource::EvtxFile(path) => {
+            let observer = observe_ref.map(|c| c.observer.as_ref());
+            let mut processor = RulesetsProcessor {
+                engines: &mut engines,
+            };
+            events = stream_evtx_events(&path, &event_filter, observer, &mut processor, &mut |m| {
+                had_matches = true;
+                count_ruleset_match(&mut counts, &name_to_index, m);
+                renderer.emit(m);
+            });
+        }
+        EventSource::Stdin => {
+            let stdin = io::stdin();
+            let observer = observe_ref.map(|c| c.observer.as_ref());
+            let mut processor = RulesetsProcessor {
+                engines: &mut engines,
+            };
+            events = stream_events(
+                stdin.lock(),
+                &event_filter,
+                &input_format,
+                &syslog_tz,
+                syslog_strip_bom,
+                observer,
+                &mut processor,
+                &mut |m| {
+                    had_matches = true;
+                    count_ruleset_match(&mut counts, &name_to_index, m);
+                    renderer.emit(m);
+                },
+            );
+        }
+    }
+
+    if dump_correlation_state {
+        match serde_json::to_string_pretty(&engines.introspect()) {
+            Ok(json) => eprintln!("--- correlation state snapshot ---\n{json}"),
+            Err(e) => eprintln!("failed to serialize correlation state snapshot: {e}"),
+        }
+    }
+
+    let total_det: u64 = counts.iter().map(|(det, _)| det).sum();
+    let total_corr: u64 = counts.iter().map(|(_, corr)| corr).sum();
+    let route_counts = engines.route_counts();
+    if renderer.ctx().show_stats() {
+        eprintln!(
+            "Processed {events} events, {total_det} detection matches, {total_corr} correlation matches, {} unknown schema, {} dropped.",
+            route_counts.unknown,
+            route_counts.dropped + route_counts.errored
+        );
+        let skipped = engines.skipped_totals();
+        for (index, (name, (det, corr))) in unit_names.iter().zip(counts.iter()).enumerate() {
+            let skipped = skipped
+                .iter()
+                .find(|(unit, _)| unit == name)
+                .map(|(_, count)| *count)
+                .unwrap_or(0);
+            if engines.units()[index].when_schemas.is_empty() {
+                eprintln!("ruleset {name}: {det} detection matches, {corr} correlation matches");
+            } else {
+                eprintln!(
+                    "ruleset {name}: {det} detection matches, {corr} correlation matches, {skipped} events skipped by when"
+                );
+            }
+        }
+        print_schema_pruning(&engines.schema_pruning_summary());
+    }
+
+    renderer.flush();
+    if let Some(octx) = observe_ref {
+        render_field_report(octx);
+    }
+    had_matches
+}
+
+fn load_schema_classifier(schema_config: Option<&Path>) -> SchemaClassifier {
+    let (signatures, _) = match schema_config {
+        Some(path) => match load_schema_config(path) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("Error loading schema config: {error}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+        },
+        None => (Vec::new(), None),
+    };
+    if signatures.is_empty() {
+        SchemaClassifier::builtin()
+    } else {
+        SchemaClassifier::with_user_signatures(signatures)
+    }
 }
 
 /// Parse the `--on-unknown` policy string.
@@ -952,18 +1450,81 @@ fn cmd_eval_routed(
         eprintln!(
             "Processed {events} events, {det_count} detection matches, {corr_count} correlation matches, {unknown} unknown schema, {dropped} dropped."
         );
-        let pruning = router.schema_pruning_summary();
-        if !pruning.is_empty() {
-            eprintln!("Logsource pruning by schema (eligible/pruned rules):");
-            for entry in pruning {
-                eprintln!(
-                    "  {}: {} eligible, {} pruned",
-                    entry.schema, entry.eligible, entry.pruned
-                );
-            }
-        }
+        print_schema_pruning(&router.schema_pruning_summary());
     }
     det_count > 0 || corr_count > 0
+}
+
+const DYNAMIC_SOURCES_NOTE: &str = "  note: dynamic sources are not resolved by `rsigma engine eval`. \
+     Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
+     events with dynamic pipelines.";
+
+fn print_schema_pruning(pruning: &[rsigma_eval::SchemaPruning]) {
+    if pruning.is_empty() {
+        return;
+    }
+    eprintln!("Logsource pruning by schema (eligible/pruned rules):");
+    for entry in pruning {
+        eprintln!(
+            "  {}: {} eligible, {} pruned",
+            entry.schema, entry.eligible, entry.pruned
+        );
+    }
+}
+
+/// Count one match against its ruleset's detection or correlation total.
+fn count_ruleset_match(
+    counts: &mut [(u64, u64)],
+    name_to_index: &HashMap<Arc<str>, usize>,
+    result: &EvaluationResult,
+) {
+    if let Some(name) = &result.header.ruleset
+        && let Some(index) = name_to_index.get(name)
+    {
+        if result.is_correlation() {
+            counts[*index].1 += 1;
+        } else {
+            counts[*index].0 += 1;
+        }
+    }
+}
+
+/// Engine tuning shared by every evaluation path.
+#[derive(Clone)]
+struct EngineOptions {
+    include_event: bool,
+    match_detail: MatchDetailLevel,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
+    #[cfg(feature = "daachorse-index")]
+    cross_rule_ac: bool,
+    logsource_extractor: Option<LogSourceExtractor>,
+}
+
+impl EngineOptions {
+    fn apply_to_engine(&self, engine: &mut Engine) {
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+        engine.set_logsource_extractor(self.logsource_extractor.clone());
+    }
+
+    fn apply_to_correlation(&self, engine: &mut CorrelationEngine) {
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+        engine.set_logsource_extractor(self.logsource_extractor.clone());
+    }
 }
 
 /// Evaluation with correlations (stateful). Returns `true` if any match fired.
@@ -976,28 +1537,15 @@ fn cmd_eval_with_correlations(
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
     config: rsigma_eval::CorrelationConfig,
-    include_event: bool,
-    match_detail: MatchDetailLevel,
+    options: &EngineOptions,
     input_format_str: &str,
     syslog_tz_str: &str,
     syslog_strip_bom: bool,
-    bloom_prefilter: bool,
-    bloom_max_bytes: Option<usize>,
-    #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
-    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
     dump_correlation_state: bool,
 ) -> bool {
     let mut engine = CorrelationEngine::new(config);
-    engine.set_include_event(include_event);
-    engine.set_match_detail(match_detail);
-    if let Some(budget) = bloom_max_bytes {
-        engine.set_bloom_max_bytes(budget);
-    }
-    engine.set_bloom_prefilter(bloom_prefilter);
-    #[cfg(feature = "daachorse-index")]
-    engine.set_cross_rule_ac(cross_rule_ac);
-    engine.set_logsource_extractor(logsource_extractor);
+    options.apply_to_correlation(&mut engine);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -1177,27 +1725,14 @@ fn cmd_eval_detection_only(
     renderer: &mut MatchRenderer,
     pipelines: &[Pipeline],
     event_filter: &EventFilter,
-    include_event: bool,
-    match_detail: MatchDetailLevel,
+    options: &EngineOptions,
     input_format_str: &str,
     syslog_tz_str: &str,
     syslog_strip_bom: bool,
-    bloom_prefilter: bool,
-    bloom_max_bytes: Option<usize>,
-    #[cfg(feature = "daachorse-index")] cross_rule_ac: bool,
-    logsource_extractor: Option<LogSourceExtractor>,
     observe: Option<&ObserveContext>,
 ) -> bool {
     let mut engine = Engine::new();
-    engine.set_include_event(include_event);
-    engine.set_match_detail(match_detail);
-    if let Some(budget) = bloom_max_bytes {
-        engine.set_bloom_max_bytes(budget);
-    }
-    engine.set_bloom_prefilter(bloom_prefilter);
-    #[cfg(feature = "daachorse-index")]
-    engine.set_cross_rule_ac(cross_rule_ac);
-    engine.set_logsource_extractor(logsource_extractor);
+    options.apply_to_engine(&mut engine);
     for p in pipelines {
         engine.add_pipeline(p.clone());
     }
@@ -1454,6 +1989,8 @@ struct MatchRenderer {
     /// `--output` destination for the JSON and table formats. The delimited
     /// formats move the file into their [`DelimitedWriter`] instead.
     file: Option<OutputFile>,
+    /// Prefix tabular rows with the ruleset name.
+    ruleset_column: bool,
 }
 
 /// Refuse an `--output` path that names the `--event` input file, which
@@ -1487,7 +2024,12 @@ enum RenderState {
     /// Streaming delimited writer (`csv` or `tsv`).
     Delimited(Box<DelimitedWriter>),
     /// Buffer of rows for the width-aligning table renderer.
-    Table(Vec<EvalRow>),
+    Table(TableRows),
+}
+
+enum TableRows {
+    Path(Vec<EvalRow>),
+    Ruleset(Vec<RulesetEvalRow>),
 }
 
 impl MatchRenderer {
@@ -1497,6 +2039,7 @@ impl MatchRenderer {
         mut file: Option<OutputFile>,
         finding_ocsf: bool,
         ocsf_version: Option<&str>,
+        ruleset_column: bool,
     ) -> Self {
         // A file is never a terminal, and without an explicit format it gets
         // NDJSON so it can be consumed line by line.
@@ -1534,12 +2077,25 @@ impl MatchRenderer {
                     pretty: pretty_flag || ctx.pretty_json(),
                 },
                 OutputFormat::Ndjson => RenderState::Json { pretty: false },
-                OutputFormat::Csv => RenderState::Delimited(Box::new(delimited(',', &mut file))),
-                OutputFormat::Tsv => RenderState::Delimited(Box::new(delimited('\t', &mut file))),
-                OutputFormat::Table => RenderState::Table(Vec::new()),
+                OutputFormat::Csv => {
+                    RenderState::Delimited(Box::new(delimited(',', &mut file, ruleset_column)))
+                }
+                OutputFormat::Tsv => {
+                    RenderState::Delimited(Box::new(delimited('\t', &mut file, ruleset_column)))
+                }
+                OutputFormat::Table => RenderState::Table(if ruleset_column {
+                    TableRows::Ruleset(Vec::new())
+                } else {
+                    TableRows::Path(Vec::new())
+                }),
             }
         };
-        Self { ctx, state, file }
+        Self {
+            ctx,
+            state,
+            file,
+            ruleset_column,
+        }
     }
 
     fn ctx(&self) -> &OutputCtx {
@@ -1566,22 +2122,38 @@ impl MatchRenderer {
                 None => crate::output::render_ocsf_finding(m, *pretty, *version),
             },
             RenderState::Delimited(writer) => {
-                let row = EvalRow::from_result(m).row();
+                let row = if self.ruleset_column {
+                    RulesetEvalRow::from_result(m).row()
+                } else {
+                    EvalRow::from_result(m).row()
+                };
                 writer.push(&row);
             }
-            RenderState::Table(rows) => rows.push(EvalRow::from_result(m)),
+            RenderState::Table(rows) => match rows {
+                TableRows::Path(rows) => rows.push(EvalRow::from_result(m)),
+                TableRows::Ruleset(rows) => rows.push(RulesetEvalRow::from_result(m)),
+            },
         }
     }
 
     /// Render any buffered output and flush the `--output` file.
     fn flush(&mut self) {
         match &mut self.state {
-            RenderState::Table(rows) => match &mut self.file {
-                Some(file) => {
-                    let result = crate::output::write_table(&mut file.writer, rows);
-                    file.check(result);
-                }
-                None => crate::output::render_table(rows),
+            RenderState::Table(rows) => match rows {
+                TableRows::Path(rows) => match &mut self.file {
+                    Some(file) => {
+                        let result = crate::output::write_table(&mut file.writer, rows);
+                        file.check(result);
+                    }
+                    None => crate::output::render_table(rows),
+                },
+                TableRows::Ruleset(rows) => match &mut self.file {
+                    Some(file) => {
+                        let result = crate::output::write_table(&mut file.writer, rows);
+                        file.check(result);
+                    }
+                    None => crate::output::render_table(rows),
+                },
             },
             RenderState::Delimited(writer) => writer.finish(),
             RenderState::Json { .. } => {}
@@ -1596,10 +2168,15 @@ impl MatchRenderer {
 }
 
 /// Build the `csv`/`tsv` writer, moving the `--output` file into it when set.
-fn delimited(sep: char, file: &mut Option<OutputFile>) -> DelimitedWriter {
+fn delimited(sep: char, file: &mut Option<OutputFile>, ruleset_column: bool) -> DelimitedWriter {
+    let headers = if ruleset_column {
+        RulesetEvalRow::headers()
+    } else {
+        EvalRow::headers()
+    };
     match file.take() {
-        Some(file) => DelimitedWriter::with_writer(sep, EvalRow::headers(), Box::new(file.writer)),
-        None => DelimitedWriter::new(sep, EvalRow::headers()),
+        Some(file) => DelimitedWriter::with_writer(sep, headers, Box::new(file.writer)),
+        None => DelimitedWriter::new(sep, headers),
     }
 }
 
@@ -1677,6 +2254,45 @@ impl Tabular for EvalRow {
     }
     fn row(&self) -> Vec<String> {
         vec![
+            self.level.clone(),
+            self.rule.clone(),
+            self.kind.clone(),
+            self.detail.clone(),
+        ]
+    }
+}
+
+/// Tabular row projection with the ruleset name as a leading column.
+#[derive(Clone)]
+struct RulesetEvalRow {
+    ruleset: String,
+    level: String,
+    rule: String,
+    kind: String,
+    detail: String,
+}
+
+impl RulesetEvalRow {
+    fn from_result(m: &EvaluationResult) -> Self {
+        let base = EvalRow::from_result(m);
+        Self {
+            ruleset: m.header.ruleset.as_deref().unwrap_or("-").to_string(),
+            level: base.level,
+            rule: base.rule,
+            kind: base.kind,
+            detail: base.detail,
+        }
+    }
+}
+
+impl Tabular for RulesetEvalRow {
+    fn headers() -> &'static [&'static str] {
+        &["RULESET", "LEVEL", "RULE", "TYPE", "DETAIL"]
+    }
+
+    fn row(&self) -> Vec<String> {
+        vec![
+            self.ruleset.clone(),
             self.level.clone(),
             self.rule.clone(),
             self.kind.clone(),
@@ -1809,5 +2425,87 @@ mod tests {
         // Routing comes from the file; the explicit flag wins for on_unknown.
         assert!(args.schema_routing);
         assert_eq!(args.on_unknown.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn ruleset_flags_parse_repeatable() {
+        let (args, _) = parse(&["eval", "--ruleset", "a", "--ruleset", "b"]);
+        assert_eq!(args.rulesets, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn config_rulesets_fill_entries_with_when() {
+        let (mut args, matches) = parse(&["eval"]);
+        overlay_eval_config(
+            &mut args,
+            &matches,
+            partial(
+                "eval:\n  rulesets:\n    - a\n    - name: b\n      when:\n        schemas: [aws_cloudtrail]\n",
+            ),
+        );
+        assert_eq!(args.ruleset_entries.len(), 2);
+        match &args.ruleset_entries[1] {
+            crate::config::RulesetEntryPartial::Bound { name, when, .. } => {
+                assert_eq!(name, "b");
+                assert_eq!(when.as_ref().unwrap().schemas, vec!["aws_cloudtrail"]);
+            }
+            other => panic!("expected a bound entry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_rulesets_replace_the_config_list() {
+        let (mut args, matches) = parse(&["eval", "--ruleset", "cli"]);
+        overlay_eval_config(
+            &mut args,
+            &matches,
+            partial(
+                "eval:\n  rulesets:\n    - name: configured\n      when:\n        schemas: [aws_cloudtrail]\n",
+            ),
+        );
+        assert_eq!(args.ruleset_entries.len(), 1);
+        assert!(matches!(
+            &args.ruleset_entries[0],
+            crate::config::RulesetEntryPartial::Name(name) if name == "cli"
+        ));
+    }
+
+    #[test]
+    fn ruleset_entries_deserialize_both_shapes() {
+        let bare: crate::config::RulesetEntryPartial =
+            yaml_serde::from_str("a").expect("bare name");
+        assert!(matches!(bare, crate::config::RulesetEntryPartial::Name(name) if name == "a"));
+
+        let bound: crate::config::RulesetEntryPartial =
+            yaml_serde::from_str("name: a\nwhen:\n  schemas: [aws_cloudtrail]\n")
+                .expect("bound entry");
+        match bound {
+            crate::config::RulesetEntryPartial::Bound {
+                name,
+                when,
+                unknown,
+            } => {
+                assert_eq!(name, "a");
+                assert_eq!(when.unwrap().schemas, vec!["aws_cloudtrail"]);
+                assert!(unknown.is_empty());
+            }
+            other => panic!("expected a bound entry, got {other:?}"),
+        }
+
+        assert!(
+            yaml_serde::from_str::<crate::config::RulesetEntryPartial>(
+                "name: a\nwhen:\n  schemas: [x]\n  bogus: true\n"
+            )
+            .is_ok(),
+            "unknown when keys are captured, not rejected"
+        );
+        let entry: crate::config::RulesetEntryPartial =
+            yaml_serde::from_str("name: a\nwhen:\n  schemas: [x]\n  bogus: true\n").unwrap();
+        match entry {
+            crate::config::RulesetEntryPartial::Bound { when, .. } => {
+                assert!(when.unwrap().unknown.contains_key("bogus"));
+            }
+            _ => panic!("expected a bound entry"),
+        }
     }
 }

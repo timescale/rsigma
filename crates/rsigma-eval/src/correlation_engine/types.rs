@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 
@@ -227,6 +227,30 @@ pub struct CorrelationSnapshot {
     pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
     /// Per-correlation, per-group event reference buffers.
     pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// Per-ruleset snapshots, keyed by ruleset name. Empty for a single
+    /// collection.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rulesets: BTreeMap<String, CorrelationSnapshot>,
+}
+
+impl CorrelationSnapshot {
+    /// Whether the snapshot carries state outside the per-ruleset map.
+    pub fn has_collection_state(&self) -> bool {
+        !self.windows.is_empty()
+            || !self.last_alert.is_empty()
+            || !self.event_buffers.is_empty()
+            || !self.event_ref_buffers.is_empty()
+    }
+
+    /// Window entries in the snapshot and every per-ruleset snapshot.
+    pub fn window_entries(&self) -> usize {
+        self.windows.values().map(Vec::len).sum::<usize>()
+            + self
+                .rulesets
+                .values()
+                .map(CorrelationSnapshot::window_entries)
+                .sum::<usize>()
+    }
 }
 
 fn default_snapshot_version() -> u32 {

@@ -117,7 +117,7 @@ By default all four emitted shapes (detections, correlations, alert-pipeline inc
 | `actor.user.name` | The first `risk.objects` entry of type `user`, or a risk incident whose entity type is `user`. |
 | `risk_score` | The `risk.score` enrichment, or a risk incident's accumulated `score`. |
 | `count` | `result_count` on both incident shapes: OCSF's occurrence count for the group. |
-| `unmapped` | Everything without a faithful OCSF home, under its native key: `matched_selections`, `matched_fields` in full fidelity, `correlation_type`, `group_key`, `aggregated_value`, `timespan_secs`, `tags`, `custom_attributes`, the remaining enrichments (including the alert pipeline's `incident_id`), and the incident-only `state`, `trigger`, `rule_counts`, `refs`, `results`, `tactic_count`, `tactic_count_threshold`, `score_threshold`, and `source_count`. |
+| `unmapped` | Everything without a faithful OCSF home, under its native key: `matched_selections`, `matched_fields` in full fidelity, `correlation_type`, `group_key`, `aggregated_value`, `timespan_secs`, `tags`, `custom_attributes`, `ruleset` {{ added "unreleased" }} (the named ruleset that produced the match), the remaining enrichments (including the alert pipeline's `incident_id`), and the incident-only `state`, `trigger`, `rule_counts`, `refs`, `results`, `tactic_count`, `tactic_count_threshold`, `score_threshold`, and `source_count`. |
 
 ### Nothing is dropped
 

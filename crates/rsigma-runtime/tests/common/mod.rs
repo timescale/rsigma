@@ -34,6 +34,7 @@ fn header(rule_id: &str) -> RuleHeader {
         tags: vec![],
         custom_attributes: Arc::new(HashMap::new()),
         enrichments: None,
+        ruleset: None,
     }
 }
 

@@ -602,7 +602,7 @@ impl SqliteStateStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     fn empty_snapshot() -> CorrelationSnapshot {
         CorrelationSnapshot {
@@ -611,6 +611,7 @@ mod tests {
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
+            rulesets: BTreeMap::new(),
         }
     }
 

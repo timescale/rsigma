@@ -352,6 +352,7 @@ mod tests {
                 tags: Vec::new(),
                 custom_attributes: Arc::new(HashMap::new()),
                 enrichments: None,
+                ruleset: None,
             },
             body: ResultBody::Detection(DetectionBody {
                 matched_selections: vec!["selection".to_string()],

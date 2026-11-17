@@ -22,6 +22,7 @@ Walks the same [discovery chain](../../reference/configuration.md#discovery) the
 - **Inactive sections** that are set but inert in this build because the gating Cargo feature is disabled (`daemon` without the `daemon` feature, `daemon.nats` without `daemon-nats`, `daemon.api.tls` without `daemon-tls`).
 - **Errors** that prevent a file from loading at all.
 - **Ruleset errors** from statically checking every declared ruleset: unknown keys, an empty `sources` list, invalid globs, unknown levels, statuses, kinds, and policies, and malformed overlays. Sources are not read, so a missing source, an unresolved correlation reference, or an overlay that matches nothing surfaces when the ruleset is resolved, for example by [`ruleset show`](../ruleset/show.md) or [`ruleset build`](../ruleset/build.md). {{ added "unreleased" }}
+- **Ruleset list errors** in `eval.ruleset`, `eval.rulesets`, and `daemon.rulesets`: undefined or duplicate names, unknown entry or `when` keys, and a list combined with `rules` (or `eval.ruleset` with `eval.rulesets`). Schema names in `when` are checked when `engine eval` or `engine daemon` loads the classifier, because `--schema-config` can add schemas. {{ added "unreleased" }}
 
 By default unknown keys are warnings; `--strict` upgrades them to hard errors so CI can gate on configuration cleanliness. Ruleset errors always fail validation with exit 3, regardless of `--strict`.
 

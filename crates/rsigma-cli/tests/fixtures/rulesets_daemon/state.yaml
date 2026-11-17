@@ -1,0 +1,8 @@
+rulesets:
+  corr:
+    sources:
+      - corr
+
+daemon:
+  rulesets:
+    - corr
