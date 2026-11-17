@@ -2551,6 +2551,7 @@ name = "rsigma-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "chrono",
  "libfuzzer-sys",
  "prost",
  "regex",
