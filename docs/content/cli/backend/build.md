@@ -18,9 +18,9 @@ rsigma backend build [OPTIONS]
 
 Reads the `convert:` section of the configuration and runs each group in name order. A group names a ruleset, a target, and an output path. The command writes the converted queries to `output` and a manifest to `<output>.manifest.json`.
 
-`--group` restricts the run to named groups. A group that fails does not stop the others: the command continues, writes what it can, and exits `2` when any conversion failed. Configuration problems exit `3`. With `--check` nothing is written, and drift in either file exits `1`.
+`--group` restricts the run to named groups. A group that fails does not stop the others: the command continues, writes what it can, and exits `2` when any conversion failed. Configuration problems exit `3`, and a pipeline that fails to load fails only its group. Two groups whose output or manifest paths collide exit `3` before anything is written. With `--check` nothing is written, and drift in either file exits `1`.
 
-Pipelines come only from the group or from `convert.defaults`, never from the ruleset. Delegated targets without a native backend are resolved and materialized into a temporary directory before sigma-cli runs, the same way [`backend convert --ruleset`](convert.md) does it.
+Pipelines come only from the group or from `convert.defaults`, never from the ruleset. Delegated targets without a native backend are resolved and materialized into a temporary directory before sigma-cli runs, the same way [`backend convert --ruleset`](convert.md) does it, and their pipeline names go to sigma-cli untouched. Relative `output` and `pipelines` paths resolve against the working directory, like [ruleset sources](../../guide/rulesets.md).
 
 ## Flags
 
@@ -92,7 +92,7 @@ convert:
   "rules": [
     {
       "kind": "detection",
-      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "id": "bbbbbbbb-0000-4000-8000-000000000001",
       "title": "Linux SSH login",
       "sha256": "eeca31eccce05e09b6fa9d4815a59bc584cd86de9593c781239ec2751c7981e0",
       "status": "converted"
@@ -102,7 +102,7 @@ convert:
 }
 ```
 
-`rules[].sha256` is the canonical document hash the ruleset build lockfile records. Native targets report `converted`, `skipped`, or `failed` per rule. Delegated targets omit `status`, because sigma-cli reports no per-rule outcome; their manifest lists every detection and correlation document in the resolved ruleset.
+`rules[].sha256` is the canonical document hash the ruleset build lockfile records. Native targets report a status per rule: `converted` when the backend returned a query for it, `skipped` or `failed` when it could not convert the rule, and `no_query` when the backend returned nothing of its own for it, for example a detection that only feeds a correlation. Delegated targets omit `status`, because sigma-cli reports no per-rule outcome; their manifest lists every detection and correlation document in the resolved ruleset.
 
 Filter rules are applied during conversion and do not appear in `rules`.
 
@@ -160,7 +160,7 @@ linux_edge_lynxdb    build/lynxdb/linux_edge.txt
 | `0` | Every selected group converted and wrote its files, or `--check` found no drift. |
 | `1` | `--check` found drift in at least one output or manifest. |
 | `2` | At least one rule failed to convert without `skip_unsupported`. The other groups still ran and wrote their files. |
-| `3` | Configuration error: no `convert:` groups, an unknown group, an unknown ruleset, a missing `target` or `output`, an unknown target or format, an unwritable output, or a delegated target without sigma-cli. |
+| `3` | Configuration error: no `convert:` groups, an unknown group, an unknown ruleset, a missing `target` or `output`, two groups writing the same file, a pipeline that fails to load, an unknown target or format, an unwritable output, or a delegated target without sigma-cli. |
 
 ## See also
 
