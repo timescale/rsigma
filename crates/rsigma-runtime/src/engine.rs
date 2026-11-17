@@ -159,10 +159,11 @@ impl RuntimeEngine {
         self.ruleset_classifier.clone()
     }
 
-    /// Cumulative events refused by each ruleset's `when` binding.
-    pub fn ruleset_skipped_totals(&self) -> Vec<(Arc<str>, u64)> {
+    /// Events refused by each ruleset's `when` binding since the previous
+    /// call, draining the counters.
+    pub fn take_ruleset_skipped(&self) -> Vec<(Arc<str>, u64)> {
         match &self.engine {
-            EngineVariant::Rulesets(engines) => engines.skipped_totals(),
+            EngineVariant::Rulesets(engines) => engines.take_skipped(),
             _ => Vec::new(),
         }
     }

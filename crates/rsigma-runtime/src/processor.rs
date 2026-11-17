@@ -59,8 +59,6 @@ pub struct LogProcessor {
     /// session is active), the hot path performs one `ArcSwap` load and
     /// skips capture entirely.
     event_tap: ArcSwap<Option<Arc<TapRegistry>>>,
-    /// Baseline of per-ruleset skip counters for delta reporting.
-    last_skipped: Mutex<Vec<u64>>,
 }
 
 impl LogProcessor {
@@ -81,7 +79,6 @@ impl LogProcessor {
             field_observer: ArcSwap::new(Arc::new(None)),
             schema_observer: ArcSwap::new(Arc::new(None)),
             event_tap: ArcSwap::new(Arc::new(None)),
-            last_skipped: Mutex::new(Vec::new()),
         }
     }
 
@@ -213,7 +210,7 @@ impl LogProcessor {
 
         let start = Instant::now();
         let batch_results = engine.process_batch(&event_refs);
-        let skipped_totals = engine.ruleset_skipped_totals();
+        let skipped = engine.take_ruleset_skipped();
         let elapsed = start.elapsed().as_secs_f64();
         let per_event_latency = elapsed / event_refs.len() as f64;
 
@@ -260,7 +257,7 @@ impl LogProcessor {
 
             line_results[*line_idx].extend(result);
         }
-        self.record_ruleset_skipped(skipped_totals);
+        self.record_ruleset_skipped(skipped);
 
         line_results
     }
@@ -426,18 +423,18 @@ impl LogProcessor {
         let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();
 
         let start = Instant::now();
-        let (batch_results, state_entries, skipped_totals) = if concurrent {
+        let (batch_results, state_entries, skipped) = if concurrent {
             let engine = engine_guard.read();
             let results = engine
                 .process_batch_shared(&event_refs)
                 .expect("concurrent path requires shared detection");
             let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries, engine.ruleset_skipped_totals())
+            (results, state_entries, engine.take_ruleset_skipped())
         } else {
             let mut engine = engine_guard.write();
             let results = engine.process_batch(&event_refs);
             let state_entries = engine.stats().state_entries as u64;
-            let skipped = engine.ruleset_skipped_totals();
+            let skipped = engine.take_ruleset_skipped();
             (results, state_entries, skipped)
         };
         let elapsed = start.elapsed().as_secs_f64();
@@ -486,7 +483,7 @@ impl LogProcessor {
 
             line_results[*line_idx].extend(result);
         }
-        self.record_ruleset_skipped(skipped_totals);
+        self.record_ruleset_skipped(skipped);
         self.metrics.observe_batch_phase_duration(
             "result_merge",
             merge_results_start.elapsed().as_secs_f64(),
@@ -515,24 +512,17 @@ impl LogProcessor {
         Ok(stats)
     }
 
-    /// Build and load the replacement engine without holding the batch-order
-    /// lock, so rule parsing and dynamic-source resolution do not stall
-    /// processing.
-    fn record_ruleset_skipped(&self, totals: Vec<(std::sync::Arc<str>, u64)>) {
-        let mut baseline = self.last_skipped.lock();
-        for (index, (ruleset, total)) in totals.iter().enumerate() {
-            if index >= baseline.len() {
-                baseline.push(0);
-            }
-            let previous = baseline[index];
-            if *total > previous {
-                self.metrics
-                    .on_ruleset_events_skipped(ruleset, *total - previous);
-                baseline[index] = *total;
+    fn record_ruleset_skipped(&self, skipped: Vec<(std::sync::Arc<str>, u64)>) {
+        for (ruleset, count) in skipped {
+            if count > 0 {
+                self.metrics.on_ruleset_events_skipped(&ruleset, count);
             }
         }
     }
 
+    /// Build and load the replacement engine without holding the batch-order
+    /// lock, so rule parsing and dynamic-source resolution do not stall
+    /// processing.
     fn prepare_reload(&self) -> Result<(RuntimeEngine, crate::engine::EngineStats), String> {
         // Snapshot the old engine's configuration AND tuning so the
         // replacement reaches `load_rules()` with the same flags. Daemon
@@ -607,7 +597,6 @@ impl LogProcessor {
                 stats.correlation_rules,
             );
         }
-        self.last_skipped.lock().clear();
         let _order_guard = self.processing_order.lock();
         let live_state = self.engine.load().read().export_state();
         if let Some(state) = live_state

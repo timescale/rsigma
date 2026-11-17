@@ -117,6 +117,7 @@ pub struct RulesetEngines {
     units: Vec<RulesetUnit>,
     classifier: Option<Arc<SchemaClassifier>>,
     skipped: Vec<AtomicU64>,
+    unreported_skips: Vec<AtomicU64>,
     route_counts: RouteCounts,
 }
 
@@ -181,11 +182,13 @@ impl RulesetEngines {
         }
 
         let skipped = units.iter().map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
+        let unreported_skips = units.iter().map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
 
         Ok(Self {
             units,
             classifier,
             skipped,
+            unreported_skips,
             route_counts: RouteCounts::default(),
         })
     }
@@ -214,6 +217,18 @@ impl RulesetEngines {
             .iter()
             .zip(&self.skipped)
             .map(|(unit, skipped)| (unit.name.clone(), skipped.load(Ordering::Relaxed)))
+            .collect()
+    }
+
+    /// Events refused by each unit's `when` binding since the previous call.
+    ///
+    /// Each call drains the counters, so concurrent callers report every skip
+    /// exactly once. [`Self::skipped_totals`] keeps counting cumulatively.
+    pub fn take_skipped(&self) -> Vec<(Arc<str>, u64)> {
+        self.units
+            .iter()
+            .zip(&self.unreported_skips)
+            .map(|(unit, pending)| (unit.name.clone(), pending.swap(0, Ordering::Relaxed)))
             .collect()
     }
 
@@ -330,7 +345,7 @@ impl RulesetEngines {
         let units = &mut self.units;
         for (index, unit) in units.iter_mut().enumerate() {
             if !accepted[index] {
-                self.skipped[index].fetch_add(1, Ordering::Relaxed);
+                count_skip(&self.skipped, &self.unreported_skips, index);
                 continue;
             }
             let mut batch = match &mut unit.engine {
@@ -514,7 +529,7 @@ impl RulesetEngines {
         for event in events {
             for (index, accepts) in self.acceptance(*event).into_iter().enumerate() {
                 if !accepts {
-                    self.skipped[index].fetch_add(1, Ordering::Relaxed);
+                    count_skip(&self.skipped, &self.unreported_skips, index);
                 }
                 accepted[index].push(accepts);
             }
@@ -545,6 +560,11 @@ impl RulesetEngines {
             })
             .collect()
     }
+}
+
+fn count_skip(skipped: &[AtomicU64], unreported: &[AtomicU64], index: usize) {
+    skipped[index].fetch_add(1, Ordering::Relaxed);
+    unreported[index].fetch_add(1, Ordering::Relaxed);
 }
 
 fn import_unit_state(unit: &mut RulesetUnit, state: &CorrelationSnapshot) -> bool {
@@ -757,6 +777,11 @@ correlation:
         let skipped = engines.skipped_totals();
         assert_eq!(skipped[0].1, 0);
         assert_eq!(skipped[1].1, 1);
+
+        let taken = engines.take_skipped();
+        assert_eq!(taken[1].1, 1);
+        assert_eq!(engines.take_skipped()[1].1, 0);
+        assert_eq!(engines.skipped_totals()[1].1, 1);
     }
 
     /// Counts classifier probes of `schema_marker`; detection never reads it.
