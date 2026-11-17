@@ -641,7 +641,12 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to load initial rules");
-            std::process::exit(crate::exit_code::RULE_ERROR);
+            let code = if config.rulesets.is_empty() {
+                crate::exit_code::RULE_ERROR
+            } else {
+                crate::exit_code::CONFIG_ERROR
+            };
+            std::process::exit(code);
         }
     }
 
