@@ -42,7 +42,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 
 | Type | Purpose |
 |------|---------|
-| `RuntimeEngine` | Wraps an `Engine` or `CorrelationEngine` plus the on-disk rule path, pipelines, and the dynamic source resolver. Supports hot-reload via `load_rules`. |
+| `RuntimeEngine` | Wraps an `Engine` or `CorrelationEngine` plus the on-disk rule path, pipelines, and the dynamic source resolver. Supports hot-reload via `load_rules`, and `with_rulesets` loads several named rulesets with per-ruleset pipelines and state. {{ added "unreleased" }} |
+| `RuleSource`, `RulesetBinding`, `PipelineRef`, `watch_paths` | The rule source for path mode or named-ruleset mode, the per-ruleset spec and pipeline references, and the hot-reload watch paths. {{ added "unreleased" }} |
 | `LogProcessor` | An ordered batch processor that parses formatted inputs in parallel before locking its live `RuntimeEngine`. `process_batch_with_format_detailed` returns `BatchProcessOutcome`, including input indices that failed parsing for single-parse DLQ routing. The daemon glues this to its bounded mpsc plumbing. |
 | `EventSource` trait, `Sink` trait | The plug-in surfaces for inputs and outputs. Built-in: `StdinSource`, `StdoutSink`, `FileSink`, and `NatsSource`/`NatsSink` under the `nats` feature. |
 | `spawn_source(source) -> mpsc::Receiver<RawEvent>` | Convenience helper that runs an `EventSource` on its own task. |

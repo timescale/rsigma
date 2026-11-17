@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Several rulesets side by side
+
+`rsigma-eval` adds `RulesetEngines`, a fan-out over independent named rulesets. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; results carry the ruleset name, `when` bindings route by classified schema, and skipped events and routing outcomes are counted per unit. `CorrelationSnapshot` carries a per-ruleset map, `RuleFieldSet::extend` unions field sets, and `RuleHeader` gains an optional `ruleset` name.
+
+`engine eval` takes a repeatable `--ruleset`, and `eval.rulesets` configures several entries with optional `when` schema bindings. Results in ruleset mode carry `ruleset`, table, CSV, and TSV output gain a leading `RULESET` column, `--stats` reports per-ruleset matches and skipped events, and `--dump-correlation-state` prints a map keyed by ruleset name. A CLI `--ruleset` list replaces the configured list and carries no `when`; `--schema-routing` is allowed with exactly one ruleset and no ruleset pipelines.
+
+MCP `evaluate_events` accepts a `rulesets` list, stamps results with the ruleset name, and returns a per-ruleset matches summary. MCP has no `when` bindings.
+
+`engine daemon` accepts `--ruleset` and `daemon.rulesets`, loading several rulesets with per-ruleset pipelines and correlation state. Rule, overlay, and pipeline files hot-reload; the ruleset list itself is startup-only. `/api/v1/status` and `/api/v1/rules` gain per-ruleset rule counts, `rsigma engine status` renders them, and the daemon exports `rsigma_ruleset_rules_loaded`, `rsigma_ruleset_matches_total`, and `rsigma_ruleset_events_skipped_total`. `rsigma-runtime` exposes `RuntimeEngine::with_rulesets`, `RuleSource`, `RulesetBinding`, `PipelineRef`, and `watch_paths`.
+
+Breaking changes: `RuleHeader` gains a public `ruleset` field, so struct literals must add `ruleset: None`. `CorrelationSnapshot` gains a public `rulesets` map, `CorrelationInfo` and `GroupStateInfo` gain an optional `ruleset` field, and the MCP `EvaluateInput` gains a public `rulesets` field; struct literals must add the corresponding defaults. `MetricsHook` gains four methods with no-op defaults. Path-mode output and existing daemon behavior are unchanged.
+
 ### Rulesets (#712)
 
 A `rulesets:` section in `rsigma.yaml` declares named curations of Sigma rules. Each ruleset lists source files or directories, selectors that include or exclude candidates by id, name, title, tags, level, status, kind, logsource, or path, and a dependency policy for correlation references. `dependencies: include` pulls a referenced rule back in, while `drop` removes a correlation whose references are not kept and warns. Metadata overlays can set or append level, status, description, author, tags, references, false positives, fields, and custom attributes without editing the vendor files. Overlays validate exemplars and ADS attributes after application, so an overlay can add `rsigma.exemplars` for a vendored rule and `rule test` replays them. An overlay cannot set a standard Sigma or engine key through `custom_attributes`, and an empty `set` or `append` is rejected.

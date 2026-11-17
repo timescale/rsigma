@@ -49,6 +49,10 @@ let results = processor.process_batch_with_format(
 
 See the [examples](examples/) directory for complete working programs.
 
+## Named rulesets
+
+`RuntimeEngine::with_rulesets` loads several named rulesets with per-ruleset pipelines and state, using `RuleSource`, `RulesetBinding`, and `PipelineRef`. `watch_paths` returns the source, overlay, and pipeline paths the hot-reload watcher should follow. `LogProcessor` reports per-ruleset matches and skipped events through the metrics hook.
+
 ## Dynamic Source Resolution
 
 The `sources` module provides the infrastructure for resolving external data at pipeline load time. This allows pipeline values to be populated from live data rather than hardcoded.

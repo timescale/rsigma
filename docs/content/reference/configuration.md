@@ -109,6 +109,10 @@ rulesets:
 
 daemon:
   rules: /etc/rsigma/rules
+  # rulesets:            # several named rulesets, optionally schema-bound
+  #   - linux_edge
+  #   - name: cloud_audit
+  #     when: { schemas: [aws_cloudtrail] }
   pipelines: [ecs_windows]
   sources: [/etc/rsigma/sources]
   # alert_pipeline: /etc/rsigma/alert-pipeline.yml   # dedup (see the Alert Pipeline guide)
@@ -173,6 +177,10 @@ daemon:
 eval:
   rules: ./rules
   # ruleset: linux_edge     # one named ruleset instead of rules
+  # rulesets:               # several named rulesets, optionally schema-bound
+  #   - linux_edge
+  #   - name: cloud_audit
+  #     when: { schemas: [aws_cloudtrail] }
   pipelines: [sysmon]
   input_format: auto
   fail_on_detection: false

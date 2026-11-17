@@ -86,7 +86,7 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 
 | Command | Implicit default | Notes |
 |---------|------------------|-------|
-| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. `--finding-format ocsf` emits one OCSF class-2004 finding per match. {{ added "unreleased" }} `--pretty` still forces pretty JSON for backwards compatibility. |
+| `engine eval` | Pretty JSON on TTY; NDJSON when piped | `table`/`csv`/`tsv` project `LEVEL | RULE | TYPE | DETAIL`. In ruleset mode the projection gains a leading `RULESET` column and JSON/NDJSON results carry `ruleset`. {{ added "unreleased" }} `--finding-format ocsf` emits one OCSF class-2004 finding per match. `--pretty` still forces pretty JSON for backwards compatibility. |
 | `engine explain` | Human table/tree | Explicit selector overrides. |
 | `engine classify` | TTY-aware json/ndjson | Full five-format support. |
 | `engine discover-schemas` | TTY-aware json/ndjson | Full five-format support. |

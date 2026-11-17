@@ -23,7 +23,7 @@ Guide: [MCP server](https://rsigma.io/guide/mcp-server/).
 
 ## Eval versus daemon
 
-`engine eval` reads a fixed input and exits. Use it to test a rule.
+`engine eval` reads a fixed input and exits. Use it to test a rule. Repeat `--ruleset a --ruleset b` to compare two curations over one event file; each result carries its ruleset name, and `--stats` reports per-ruleset matches and skipped events. Use `daemon.rulesets` or `eval.rulesets` for schema-bound `when` entries.
 
 `engine daemon` stays up, reloads rules, and exposes health and metrics. Use it when events are a stream. It needs the `daemon` feature. NATS input also needs `daemon-nats`, and OTLP logs arrive on `/v1/logs` on the API address with `daemon-otlp`, not through `--input`. Release binaries include all three; a `cargo install rsigma` build has only `daemon`.
 

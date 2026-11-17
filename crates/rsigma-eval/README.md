@@ -44,6 +44,10 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 | `transform_rule(rule: &SigmaRule)` | Apply the engine's pipelines and return the rewritten rule as a `TransformedRule`, without compiling or loading (inspection only) |
 | `transform_collection(collection: &SigmaCollection)` | Per-rule `transform_rule` over a collection, in collection order |
 
+### Ruleset fan-out
+
+`RulesetEngines` evaluates several independent rulesets over the same events. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; `process_event` and `process_batch` stamp the ruleset name on every result, apply optional `when` schema bindings, and account for skipped events and routing outcomes. `export_state` and `import_state` carry per-ruleset correlation state, and `rule_field_set` unions the units' field sets.
+
 ### Correlation Engine
 
 | Method | Description |

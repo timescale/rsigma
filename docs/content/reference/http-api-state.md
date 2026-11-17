@@ -10,7 +10,7 @@ The daemon's read and control endpoints for detection state: counters, correlati
 
 ### `GET /api/v1/status`
 
-Snapshot of engine counters plus uptime. The `dynamic_sources` block is present only when a pipeline declares sources.
+Snapshot of engine counters plus uptime. The `rulesets` array is present only when the daemon runs named rulesets. The `dynamic_sources` block is present only when a pipeline declares sources. {{ added "unreleased" }}
 
 ```bash
 curl -sS http://127.0.0.1:9090/api/v1/status
@@ -26,6 +26,9 @@ curl -sS http://127.0.0.1:9090/api/v1/status
   "detection_matches": 1,
   "correlation_matches": 0,
   "uptime_seconds": 19.07,
+  "rulesets": [
+    { "name": "linux_edge", "detection_rules": 4, "correlation_rules": 1, "when_schemas": [] }
+  ],
   "dynamic_sources": {
     "total": 2,
     "resolves_total": 4,
@@ -365,6 +368,19 @@ curl -sS http://127.0.0.1:9090/api/v1/rules
   "rules_path": "/etc/rsigma/rules"
 }
 ```
+
+In ruleset mode the response carries a `rulesets` array and omits `rules_path`:
+
+```json
+{
+  "detection_rules": 4,
+  "correlation_rules": 1,
+  "rulesets": [
+    { "name": "linux_edge", "detection_rules": 4, "correlation_rules": 1, "when_schemas": [] }
+  ]
+}
+```
+{{ added "unreleased" }}
 
 ## See also
 
