@@ -143,11 +143,7 @@ fn push_then_delete_and_replace_change_what_matches() {
         r#"{"DestinationIp":"198.51.100.7"}"#,
     );
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(
-        detections(&daemon),
-        0,
-        "an empty watchlist must not match"
-    );
+    assert_eq!(detections(&daemon), 0, "an empty watchlist must not match");
 
     let (status, body) = push(&daemon, r#"{"indicators":["198.51.100.7"]}"#);
     assert_eq!(status, 200, "{body}");
@@ -396,9 +392,7 @@ sources:
         .filter_map(|entry| entry["endpoint"].as_str())
         .collect();
     assert!(
-        endpoints
-            .iter()
-            .any(|endpoint| *endpoint == "/api/v1/sources/{source_id}/indicators"),
+        endpoints.contains(&"/api/v1/sources/{source_id}/indicators"),
         "{body}"
     );
 }

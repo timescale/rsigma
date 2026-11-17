@@ -74,11 +74,11 @@ impl WatchlistApi {
     async fn post(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
-            return response;
+            return *response;
         }
         let request = match parse_push(body) {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
         let before = self.before_rows();
         let summary = match self
@@ -89,7 +89,7 @@ impl WatchlistApi {
             Err(error) => return watchlist_error(error),
         };
         if let Err(response) = self.commit(source_id, &before, now).await {
-            return response;
+            return *response;
         }
         self.count(source_id, "add", summary.added);
         self.count(source_id, "update", summary.updated);
@@ -110,11 +110,11 @@ impl WatchlistApi {
     async fn put(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
-            return response;
+            return *response;
         }
         let request = match parse_push(body) {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
         let before_values = self.live_values(source_id, now);
         let before = self.before_rows();
@@ -126,7 +126,7 @@ impl WatchlistApi {
             Err(error) => return watchlist_error(error),
         };
         if let Err(response) = self.commit(source_id, &before, now).await {
-            return response;
+            return *response;
         }
         let after: HashSet<String> = self.live_values(source_id, now);
         self.count(
@@ -156,11 +156,11 @@ impl WatchlistApi {
     async fn delete(&self, source_id: &str, body: &[u8]) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
-            return response;
+            return *response;
         }
         let request = match parse_delete(body) {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
         let before = self.before_rows();
         let summary = match self.registry.remove(source_id, &request.indicators, now) {
@@ -168,7 +168,7 @@ impl WatchlistApi {
             Err(error) => return watchlist_error(error),
         };
         if let Err(response) = self.commit(source_id, &before, now).await {
-            return response;
+            return *response;
         }
         self.count(source_id, "remove", summary.removed);
         self.gauge(source_id, summary.total);
@@ -188,7 +188,7 @@ impl WatchlistApi {
     fn get(&self, source_id: &str, limit: usize, offset: usize) -> Response {
         let now = Utc::now();
         if let Err(response) = self.require_watchlist(source_id) {
-            return response;
+            return *response;
         }
         let limit = limit.min(LIST_MAX_LIMIT);
         match self.registry.list(source_id, now, limit, offset) {
@@ -217,15 +217,12 @@ impl WatchlistApi {
         }
     }
 
-    fn require_watchlist(&self, source_id: &str) -> Result<(), Response> {
+    fn require_watchlist(&self, source_id: &str) -> Result<(), Box<Response>> {
         match self.sources.get(source_id) {
-            None => Err(error_response(StatusCode::NOT_FOUND, "unknown source")),
+            None => Err(api_error(StatusCode::NOT_FOUND, "unknown source")),
             Some(entry) => match entry.source.source_type {
                 SourceType::Watchlist { .. } => Ok(()),
-                _ => Err(error_response(
-                    StatusCode::CONFLICT,
-                    "source is not a watchlist",
-                )),
+                _ => Err(api_error(StatusCode::CONFLICT, "source is not a watchlist")),
             },
         }
     }
@@ -243,7 +240,7 @@ impl WatchlistApi {
         source_id: &str,
         before: &[WatchlistRow],
         now: DateTime<Utc>,
-    ) -> Result<(), Response> {
+    ) -> Result<(), Box<Response>> {
         let Some(persist) = &self.persist else {
             return Ok(());
         };
@@ -255,7 +252,7 @@ impl WatchlistApi {
             .collect();
         if let Err(message) = persist(source_id.to_string(), rows).await {
             self.registry.restore(before, now);
-            return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, message));
+            return Err(api_error(StatusCode::INTERNAL_SERVER_ERROR, message));
         }
         Ok(())
     }
@@ -327,14 +324,14 @@ fn default_limit() -> usize {
     LIST_DEFAULT_LIMIT
 }
 
-fn parse_push(body: &[u8]) -> Result<PushRequest, Response> {
+fn parse_push(body: &[u8]) -> Result<PushRequest, Box<Response>> {
     let parsed: PushBody = serde_json::from_slice(body)
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "malformed indicator request"))?;
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "malformed indicator request"))?;
     let ttl = match parsed.ttl.as_deref() {
         None => None,
         Some(text) => Some(
             humantime::parse_duration(text)
-                .map_err(|_| error_response(StatusCode::BAD_REQUEST, "ttl is not a duration"))?,
+                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "ttl is not a duration"))?,
         ),
     };
     Ok(PushRequest {
@@ -343,9 +340,9 @@ fn parse_push(body: &[u8]) -> Result<PushRequest, Response> {
     })
 }
 
-fn parse_delete(body: &[u8]) -> Result<DeleteBody, Response> {
+fn parse_delete(body: &[u8]) -> Result<DeleteBody, Box<Response>> {
     serde_json::from_slice(body)
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "malformed indicator request"))
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "malformed indicator request"))
 }
 
 fn watchlist_error(error: WatchlistError) -> Response {
@@ -361,6 +358,10 @@ fn watchlist_error(error: WatchlistError) -> Response {
 
 fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({ "error": message.into() }))).into_response()
+}
+
+fn api_error(status: StatusCode, message: impl Into<String>) -> Box<Response> {
+    Box::new(error_response(status, message))
 }
 
 fn stamp(time: DateTime<Utc>) -> String {
@@ -538,6 +539,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use axum::routing::post;
     use rsigma_eval::pipeline::sources::{
         DataFormat, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType,
     };

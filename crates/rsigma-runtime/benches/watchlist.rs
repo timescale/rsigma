@@ -13,8 +13,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use rsigma_eval::pipeline::sources::{DynamicSource, ErrorPolicy, RefreshPolicy, SourceType};
 use rsigma_eval::{CorrelationConfig, parse_pipeline};
 use rsigma_runtime::{
-    DefaultSourceResolver, LogProcessor, NoopMetrics, RuntimeEngine, SourceResolver,
-    WatchlistItem, WatchlistRegistry,
+    DefaultSourceResolver, LogProcessor, NoopMetrics, RuntimeEngine, SourceResolver, WatchlistItem,
+    WatchlistRegistry,
 };
 
 fn address(index: usize) -> String {

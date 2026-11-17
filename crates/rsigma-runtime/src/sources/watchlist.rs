@@ -3,6 +3,7 @@
 //! A watchlist has nothing to fetch. Callers push values, and resolution
 //! returns the unexpired values in byte order.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -171,18 +172,18 @@ impl Watchlist {
         let mut updated = 0;
         for (index, item) in items.iter().enumerate() {
             let (value, expires_at) = prepare_item(item, index, self, request_ttl, now)?;
-            if next.contains_key(&value) {
-                next.get_mut(&value).unwrap().expires_at = expires_at;
-                updated += 1;
-            } else {
-                next.insert(
-                    value,
-                    WatchlistEntry {
+            match next.entry(value) {
+                Entry::Occupied(mut occupied) => {
+                    occupied.get_mut().expires_at = expires_at;
+                    updated += 1;
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(WatchlistEntry {
                         added_at: now,
                         expires_at,
-                    },
-                );
-                added += 1;
+                    });
+                    added += 1;
+                }
             }
         }
         if next.len() > self.max_indicators {
@@ -468,7 +469,7 @@ pub(crate) fn now_utc() -> DateTime<Utc> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    DateTime::from_timestamp(secs, 0).unwrap_or_else(|| DateTime::UNIX_EPOCH)
+    DateTime::from_timestamp(secs, 0).unwrap_or(DateTime::UNIX_EPOCH)
 }
 
 fn check_batch(items: &[WatchlistItem]) -> Result<(), WatchlistError> {

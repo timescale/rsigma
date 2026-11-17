@@ -990,7 +990,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .replace_watchlist_rows("other", &[other.clone()])
+            .replace_watchlist_rows("other", std::slice::from_ref(&other))
             .await
             .unwrap();
 

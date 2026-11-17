@@ -1,3 +1,7 @@
+---
+description: "Push indicators into a running RSigma daemon and match them from Sigma rules without a rule reload."
+---
+
 # Threat intel watchlists
 
 {{ added "unreleased" }}
@@ -44,6 +48,8 @@ transformations:
 
 ```yaml
 title: C2 destination
+logsource:
+  category: network_connection
 detection:
   selection:
     DestinationIp|expand: '%c2_ips%'
