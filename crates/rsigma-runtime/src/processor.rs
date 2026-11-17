@@ -12,6 +12,7 @@ use rsigma_eval::{
 use crate::engine::RuntimeEngine;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
 use crate::metrics::MetricsHook;
+use crate::ruleset::RuleSource;
 use crate::tap::{TapPayload, TapRegistry, TapStage};
 
 /// Closure that extracts multiple payloads from a single JSON value.
@@ -509,12 +510,22 @@ impl LogProcessor {
         let match_detail = old.match_detail();
         let routing = old.routing();
         let logsource_extractor = old.logsource_extractor();
+        let rule_source = old.rule_source().clone();
+        let ruleset_classifier = old.ruleset_classifier();
         #[cfg(feature = "daachorse-index")]
         let cross_rule_ac = old.cross_rule_ac();
         drop(old);
         drop(snapshot);
 
-        let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
+        let mut new_engine = match &rule_source {
+            RuleSource::Path(_) => {
+                RuntimeEngine::new(rules_path, pipelines, corr_config, include_event)
+            }
+            RuleSource::Rulesets(bindings) => {
+                RuntimeEngine::with_rulesets(bindings.clone(), corr_config, include_event)
+            }
+        };
+        new_engine.set_ruleset_classifier(ruleset_classifier);
         new_engine.set_pipeline_paths(pipeline_paths);
         new_engine.set_allow_remote_include(allow_remote_include);
         new_engine.set_strict_rules(strict_rules);
@@ -559,6 +570,13 @@ impl LogProcessor {
         let snapshot = self.engine.load();
         let engine = snapshot.read();
         engine.rules_path().to_path_buf()
+    }
+
+    /// Per-ruleset loaded rule counts and schema bindings.
+    pub fn ruleset_stats(&self) -> Vec<rsigma_eval::RulesetStats> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.read();
+        engine.ruleset_stats()
     }
 
     /// Return a reference to the metrics hook.

@@ -7,10 +7,13 @@ use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
-    RuleMetadataLookup, SchemaClassifier, SchemaPruning, SchemaRouter, parse_pipeline_file,
+    RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier, SchemaPruning,
+    SchemaRouter, UnitEngine, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
+use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
 
+use crate::ruleset::{RuleSource, RulesetBinding, load_pipelines as load_ruleset_pipelines};
 use crate::sources::{self, SourceResolver, TemplateExpander};
 
 /// Wraps a CorrelationEngine (or a plain Engine) and provides the interface
@@ -61,6 +64,10 @@ pub struct RuntimeEngine {
     /// Opt-in conflict-based logsource extractor. Forwarded to the inner
     /// detection engine(s) on every rule reload and carried across hot-reload.
     logsource_extractor: Option<LogSourceExtractor>,
+    /// Where the engine loads rules from: one path or named rulesets.
+    rule_source: RuleSource,
+    /// Classifier for `when` schema bindings in ruleset mode.
+    ruleset_classifier: Option<Arc<SchemaClassifier>>,
 }
 
 /// Everything needed to (re)build a [`SchemaRouter`] on rule load. Pipeline
@@ -80,6 +87,7 @@ enum EngineVariant {
     DetectionOnly(Box<Engine>),
     WithCorrelations(Box<CorrelationEngine>),
     Routed(Box<SchemaRouter>),
+    Rulesets(Box<RulesetEngines>),
 }
 
 /// Summary statistics about the loaded engine state.
@@ -104,7 +112,7 @@ impl RuntimeEngine {
             engine: EngineVariant::DetectionOnly(Box::new(Engine::new())),
             pipelines,
             pipeline_paths: Vec::new(),
-            rules_path,
+            rules_path: rules_path.clone(),
             corr_config,
             include_event,
             source_resolver: None,
@@ -120,6 +128,42 @@ impl RuntimeEngine {
             rule_field_set: Arc::new(ArcSwap::from_pointee(RuleFieldSet::default())),
             routing: None,
             logsource_extractor: None,
+            rule_source: RuleSource::Path(rules_path.clone()),
+            ruleset_classifier: None,
+        }
+    }
+
+    /// Build an engine that loads several named rulesets.
+    pub fn with_rulesets(
+        bindings: Vec<RulesetBinding>,
+        corr_config: CorrelationConfig,
+        include_event: bool,
+    ) -> Self {
+        let mut engine = Self::new(PathBuf::new(), Vec::new(), corr_config, include_event);
+        engine.rule_source = RuleSource::Rulesets(bindings);
+        engine
+    }
+
+    /// Where this engine loads its rules from.
+    pub fn rule_source(&self) -> &RuleSource {
+        &self.rule_source
+    }
+
+    /// Set the schema classifier used by `when` bindings in ruleset mode.
+    pub fn set_ruleset_classifier(&mut self, classifier: Option<Arc<SchemaClassifier>>) {
+        self.ruleset_classifier = classifier;
+    }
+
+    /// The schema classifier used by `when` bindings, if one is configured.
+    pub fn ruleset_classifier(&self) -> Option<Arc<SchemaClassifier>> {
+        self.ruleset_classifier.clone()
+    }
+
+    /// Per-ruleset loaded rule counts and schema bindings.
+    pub fn ruleset_stats(&self) -> Vec<RulesetStats> {
+        match &self.engine {
+            EngineVariant::Rulesets(engines) => engines.ruleset_stats(),
+            _ => Vec::new(),
         }
     }
 
@@ -161,6 +205,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(engine) => engine.logsource_pruned_total(),
             EngineVariant::WithCorrelations(engine) => engine.logsource_pruned_total(),
             EngineVariant::Routed(router) => router.logsource_pruned_total(),
+            EngineVariant::Rulesets(engines) => engines.logsource_pruned_total(),
         }
     }
 
@@ -171,6 +216,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(engine) => engine.logsource_absent_total(),
             EngineVariant::WithCorrelations(engine) => engine.logsource_absent_total(),
             EngineVariant::Routed(router) => router.logsource_absent_total(),
+            EngineVariant::Rulesets(engines) => engines.logsource_absent_total(),
         }
     }
 
@@ -179,7 +225,8 @@ impl RuntimeEngine {
     pub fn schema_pruning_summary(&self) -> Vec<SchemaPruning> {
         match &self.engine {
             EngineVariant::Routed(router) => router.schema_pruning_summary(),
-            _ => Vec::new(),
+            EngineVariant::Rulesets(engines) => engines.schema_pruning_summary(),
+            EngineVariant::DetectionOnly(_) | EngineVariant::WithCorrelations(_) => Vec::new(),
         }
     }
 
@@ -362,6 +409,10 @@ impl RuntimeEngine {
         let _enter = load_span.enter();
         let load_start = std::time::Instant::now();
 
+        if let RuleSource::Rulesets(bindings) = &self.rule_source {
+            return self.load_rulesets(&bindings.clone());
+        }
+
         if !self.pipeline_paths.is_empty() {
             self.pipelines = reload_pipelines(&self.pipeline_paths)?;
         }
@@ -426,6 +477,46 @@ impl RuntimeEngine {
             duration_ms = load_start.elapsed().as_millis() as u64,
             "Rule load complete",
         );
+        Ok(stats)
+    }
+
+    fn load_rulesets(&mut self, bindings: &[RulesetBinding]) -> Result<EngineStats, String> {
+        let previous = self.export_state();
+        let mut units = Vec::new();
+        let mut parse_errors = 0usize;
+
+        for binding in bindings {
+            let resolved =
+                resolve_ruleset(&binding.name, &binding.spec, &ResolveOptions::default())
+                    .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
+            let collection = resolved.collection;
+            parse_errors += collection.error_count();
+            let pipelines = load_ruleset_pipelines(binding)?;
+            let previous_state = previous
+                .as_ref()
+                .and_then(|snapshot| snapshot.rulesets.get(&binding.name));
+            let variant = self.build_variant(&collection, &pipelines, None, previous_state)?;
+            let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
+            units.push(RulesetUnit {
+                name: Arc::from(binding.name.as_str()),
+                when_schemas: binding.when_schemas.clone(),
+                engine: into_unit(variant),
+                field_set,
+            });
+        }
+
+        let engines = RulesetEngines::new(units, self.ruleset_classifier.clone())
+            .map_err(|error| error.to_string())?;
+        let field_set = engines.rule_field_set();
+        let stats = EngineStats {
+            detection_rules: engines.detection_rule_count(),
+            correlation_rules: engines.correlation_rule_count(),
+            state_entries: engines.state_entries(),
+            parse_errors,
+        };
+        self.rule_field_set.store(Arc::new(field_set));
+        self.engine = EngineVariant::Rulesets(Box::new(engines));
+        self.parse_errors = parse_errors;
         Ok(stats)
     }
 
@@ -551,6 +642,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(_) => true,
             EngineVariant::WithCorrelations(_) => false,
             EngineVariant::Routed(router) => !router.has_correlations(),
+            EngineVariant::Rulesets(engines) => engines.allows_concurrent_detection(),
         }
     }
 
@@ -567,6 +659,7 @@ impl RuntimeEngine {
                 Some(router.detect_batch(events))
             }
             EngineVariant::WithCorrelations(_) | EngineVariant::Routed(_) => None,
+            EngineVariant::Rulesets(engines) => engines.detect_batch(events),
         }
     }
 
@@ -579,6 +672,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(engine) => engine.evaluate_batch(events),
             EngineVariant::WithCorrelations(engine) => engine.process_batch(events),
             EngineVariant::Routed(router) => router.process_batch(events),
+            EngineVariant::Rulesets(engines) => engines.process_batch(events),
         }
     }
 
@@ -603,6 +697,12 @@ impl RuntimeEngine {
                 state_entries: router.state_count(),
                 parse_errors: self.parse_errors,
             },
+            EngineVariant::Rulesets(engines) => EngineStats {
+                detection_rules: engines.detection_rule_count(),
+                correlation_rules: engines.correlation_rule_count(),
+                state_entries: engines.state_entries(),
+                parse_errors: self.parse_errors,
+            },
         }
     }
 
@@ -616,6 +716,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(engine) => engine.rule_metadata(key),
             EngineVariant::WithCorrelations(engine) => engine.rule_metadata(key),
             EngineVariant::Routed(router) => router.rule_metadata(key),
+            EngineVariant::Rulesets(engines) => engines.rule_metadata(key),
         }
     }
 
@@ -646,6 +747,7 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(_) => None,
             EngineVariant::WithCorrelations(engine) => Some(engine.export_state()),
             EngineVariant::Routed(router) => router.export_state(),
+            EngineVariant::Rulesets(engines) => Some(engines.export_state()),
         }
     }
 
@@ -661,6 +763,23 @@ impl RuntimeEngine {
             EngineVariant::DetectionOnly(_) => None,
             EngineVariant::WithCorrelations(engine) => Some(engine.introspect_filtered(id, group)),
             EngineVariant::Routed(router) => router.correlation_introspect(id, group),
+            EngineVariant::Rulesets(engines) => {
+                let mut snapshot = CorrelationStateSnapshot {
+                    correlations: Vec::new(),
+                    groups: Vec::new(),
+                };
+                for (ruleset, mut part) in engines.introspect_filtered(id, group) {
+                    for row in &mut part.correlations {
+                        row.ruleset = Some(ruleset.clone());
+                    }
+                    for row in &mut part.groups {
+                        row.ruleset = Some(ruleset.clone());
+                    }
+                    snapshot.correlations.extend(part.correlations);
+                    snapshot.groups.extend(part.groups);
+                }
+                Some(snapshot)
+            }
         }
     }
 
@@ -672,7 +791,17 @@ impl RuntimeEngine {
             EngineVariant::WithCorrelations(engine) => engine.import_state(snapshot.clone()),
             EngineVariant::Routed(router) => router.import_state(snapshot.clone()),
             EngineVariant::DetectionOnly(_) => true,
+            EngineVariant::Rulesets(engines) => engines.import_state(snapshot),
         }
+    }
+}
+
+fn into_unit(variant: EngineVariant) -> UnitEngine {
+    match variant {
+        EngineVariant::DetectionOnly(engine) => UnitEngine::Detection(engine),
+        EngineVariant::WithCorrelations(engine) => UnitEngine::Correlation(engine),
+        EngineVariant::Routed(router) => UnitEngine::Routed(router),
+        EngineVariant::Rulesets(_) => unreachable!("rulesets do not nest"),
     }
 }
 
@@ -694,6 +823,12 @@ fn variant_stats(variant: &EngineVariant, parse_errors: usize) -> EngineStats {
             detection_rules: router.detection_rule_count(),
             correlation_rules: router.correlation_rule_count(),
             state_entries: router.state_count(),
+            parse_errors,
+        },
+        EngineVariant::Rulesets(engines) => EngineStats {
+            detection_rules: engines.detection_rule_count(),
+            correlation_rules: engines.correlation_rule_count(),
+            state_entries: engines.state_entries(),
             parse_errors,
         },
     }
@@ -990,5 +1125,206 @@ transformations:
             1,
             "the unresolved pipelines are kept for a retry"
         );
+    }
+
+    fn ruleset_binding(
+        name: &str,
+        root: &Path,
+        pipelines: Vec<crate::ruleset::PipelineRef>,
+    ) -> RulesetBinding {
+        RulesetBinding {
+            name: name.to_string(),
+            spec: rsigma_parser::ruleset::RulesetSpec {
+                sources: vec![root.join("rules")],
+                ..Default::default()
+            },
+            pipelines,
+            when_schemas: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rulesets_load_and_stamp_results_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a", "b"] {
+            let root = dir.path().join(name);
+            std::fs::create_dir_all(root.join("rules")).unwrap();
+            std::fs::write(root.join("rules/rule.yml"), RULE_YAML).unwrap();
+        }
+        let bindings = vec![
+            ruleset_binding("a", &dir.path().join("a"), Vec::new()),
+            ruleset_binding("b", &dir.path().join("b"), Vec::new()),
+        ];
+        let mut engine =
+            RuntimeEngine::with_rulesets(bindings, CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        let value = serde_json::json!({"EventID": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        let results = engine.process_batch(&[&event]);
+        assert_eq!(results[0].len(), 2);
+        assert_eq!(results[0][0].header.ruleset.as_deref(), Some("a"));
+        assert_eq!(results[0][1].header.ruleset.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_broken_ruleset_on_reload_keeps_the_old_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(root.join("rules/rule.yml"), RULE_YAML).unwrap();
+        let mut engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding("a", &root, Vec::new())],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.load_rules().unwrap();
+        std::fs::remove_dir_all(root.join("rules")).unwrap();
+        assert!(engine.load_rules().is_err());
+        let value = serde_json::json!({"EventID": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        assert_eq!(engine.process_batch(&[&event])[0].len(), 1);
+    }
+
+    #[test]
+    fn file_pipelines_are_reparsed_on_reload_and_builtins_survive() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(
+            root.join("rules/rule.yml"),
+            "title: Windows rule\nid: windows-rule\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        EventID: 1\n    condition: selection\n",
+        )
+        .unwrap();
+        let pipeline_path = root.join("pipeline.yml");
+        std::fs::write(
+            &pipeline_path,
+            "name: rename\ntransformations:\n  - type: field_name_mapping\n    mapping:\n      EventID: process.path\n",
+        )
+        .unwrap();
+        let sysmon = rsigma_eval::resolve_builtin_pipeline("sysmon")
+            .unwrap()
+            .unwrap();
+        let binding = ruleset_binding(
+            "a",
+            &root,
+            vec![
+                crate::ruleset::PipelineRef::Builtin(sysmon),
+                crate::ruleset::PipelineRef::File(pipeline_path.clone()),
+            ],
+        );
+        let mut engine =
+            RuntimeEngine::with_rulesets(vec![binding], CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        let first = serde_json::json!({"EventID": 1, "process.path": 1});
+        assert_eq!(
+            engine.process_batch(&[&rsigma_eval::JsonEvent::borrow(&first)])[0].len(),
+            1
+        );
+
+        std::fs::write(
+            &pipeline_path,
+            "name: rename\ntransformations:\n  - type: field_name_mapping\n    mapping:\n      EventID: process.id\n",
+        )
+        .unwrap();
+        engine.load_rules().unwrap();
+
+        let value = serde_json::json!({"EventID": 1, "process.id": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        assert_eq!(engine.process_batch(&[&event])[0].len(), 1);
+
+        let without_event_id = serde_json::json!({"process.id": 1});
+        assert_eq!(
+            engine.process_batch(&[&rsigma_eval::JsonEvent::borrow(&without_event_id)])[0].len(),
+            0,
+            "the builtin sysmon pipeline must survive the reload"
+        );
+    }
+
+    #[test]
+    fn correlation_state_survives_reload_per_ruleset() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(
+            root.join("rules/rule.yml"),
+            r#"title: Whoami
+id: whoami
+logsource:
+    product: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Burst
+id: burst
+correlation:
+    type: event_count
+    rules: [whoami]
+    group-by: [EventID]
+    timespan: 5m
+    condition:
+        gte: 2
+"#,
+        )
+        .unwrap();
+        let mut engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding("a", &root, Vec::new())],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.load_rules().unwrap();
+        let first = serde_json::json!({"EventID": 1, "timestamp": "2026-01-01T00:00:00Z"});
+        engine.process_batch(&[&rsigma_eval::JsonEvent::borrow(&first)]);
+        engine.load_rules().unwrap();
+        let second = serde_json::json!({"EventID": 1, "timestamp": "2026-01-01T00:00:30Z"});
+        let results = engine.process_batch(&[&rsigma_eval::JsonEvent::borrow(&second)]);
+        assert!(
+            results[0].iter().any(|result| result.is_correlation()),
+            "correlation state did not survive the reload"
+        );
+    }
+
+    #[test]
+    fn mixing_detection_and_correlation_rulesets_disables_concurrent_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let detection_root = dir.path().join("detection");
+        std::fs::create_dir_all(detection_root.join("rules")).unwrap();
+        std::fs::write(detection_root.join("rules/rule.yml"), RULE_YAML).unwrap();
+        let correlation_root = dir.path().join("correlation");
+        std::fs::create_dir_all(correlation_root.join("rules")).unwrap();
+        std::fs::write(
+            correlation_root.join("rules/rule.yml"),
+            r#"title: Whoami
+id: whoami
+logsource:
+    product: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Burst
+id: burst
+correlation:
+    type: event_count
+    rules: [whoami]
+    group-by: [EventID]
+    timespan: 5m
+    condition:
+        gte: 2
+"#,
+        )
+        .unwrap();
+        let mut engine = RuntimeEngine::with_rulesets(
+            vec![
+                ruleset_binding("detection", &detection_root, Vec::new()),
+                ruleset_binding("correlation", &correlation_root, Vec::new()),
+            ],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.load_rules().unwrap();
+        assert!(!engine.allows_concurrent_detection());
     }
 }

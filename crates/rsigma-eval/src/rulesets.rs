@@ -229,6 +229,60 @@ impl RulesetEngines {
         self.units.iter().map(unit_correlation_rule_count).sum()
     }
 
+    /// Summed live correlation state entries across units.
+    pub fn state_entries(&self) -> usize {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Detection(_) => 0,
+                UnitEngine::Correlation(engine) => engine.state_count(),
+                UnitEngine::Routed(router) => router.state_count(),
+            })
+            .sum()
+    }
+
+    /// Whether concurrent stateless detection is available.
+    pub fn allows_concurrent_detection(&self) -> bool {
+        self.units
+            .iter()
+            .all(|unit| matches!(unit.engine, UnitEngine::Detection(_)))
+    }
+
+    /// Static per-schema logsource pruning summary, summed over routed units.
+    pub fn schema_pruning_summary(&self) -> Vec<crate::SchemaPruning> {
+        let mut out = Vec::new();
+        for unit in &self.units {
+            if let UnitEngine::Routed(router) = &unit.engine {
+                out.extend(router.schema_pruning_summary());
+            }
+        }
+        out
+    }
+
+    /// Total rule candidates pruned by logsource across units.
+    pub fn logsource_pruned_total(&self) -> u64 {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Detection(engine) => engine.logsource_pruned_total(),
+                UnitEngine::Correlation(engine) => engine.logsource_pruned_total(),
+                UnitEngine::Routed(router) => router.logsource_pruned_total(),
+            })
+            .sum()
+    }
+
+    /// Total evaluate calls with no extractable event logsource across units.
+    pub fn logsource_absent_total(&self) -> u64 {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Detection(engine) => engine.logsource_absent_total(),
+                UnitEngine::Correlation(engine) => engine.logsource_absent_total(),
+                UnitEngine::Routed(router) => router.logsource_absent_total(),
+            })
+            .sum()
+    }
+
     /// Whether any unit carries correlation state.
     pub fn has_correlations(&self) -> bool {
         self.units.iter().any(|unit| match &unit.engine {
