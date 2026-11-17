@@ -382,3 +382,206 @@ fn metadata_round_trips_verbatim() {
         .expect("a detection rule");
     assert_eq!(detection["sha256"].as_str().unwrap().len(), 64);
 }
+
+/// Replace the `convert:` section of a fixture copy.
+fn set_convert(dir: &Path, convert: &str) {
+    let config = dir.join("rsigma.yaml");
+    let body = fs::read_to_string(&config).unwrap();
+    let rulesets = &body[..body.find("\nconvert:\n").unwrap()];
+    fs::write(&config, format!("{rulesets}\n{convert}")).unwrap();
+}
+
+fn manifest_statuses(path: &Path) -> Vec<(String, Option<String>)> {
+    let manifest: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    manifest["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| {
+            (
+                rule["title"].as_str().unwrap().to_string(),
+                rule["status"].as_str().map(str::to_string),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_bad_pipeline_fails_only_its_group() {
+    let dir = fixture_copy();
+    set_convert(
+        dir.path(),
+        "convert:\n  groups:\n    a_broken:\n      ruleset: vendor\n      target: test\n      pipelines: [missing.yml]\n      output: build/broken.txt\n    b_fine:\n      ruleset: vendor\n      target: test\n      skip_unsupported: true\n      output: build/fine.txt\n",
+    );
+    let output = run(
+        dir.path(),
+        &[
+            "backend",
+            "build",
+            "--config",
+            "rsigma.yaml",
+            "--output-format",
+            "json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("group 'a_broken': Error loading pipeline missing.yml"),
+        "{}",
+        stderr(&output)
+    );
+    let groups = json_stdout(&output)["groups"].as_array().unwrap().clone();
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(groups[0]["status"], serde_json::json!("failed"));
+    assert_eq!(groups[1]["status"], serde_json::json!("written"));
+    assert!(dir.path().join("build/fine.txt").exists());
+    assert!(!dir.path().join("build/broken.txt").exists());
+}
+
+#[test]
+fn colliding_outputs_exit_three_before_writing() {
+    let dir = fixture_copy();
+    set_convert(
+        dir.path(),
+        "convert:\n  defaults:\n    target: test\n    skip_unsupported: true\n    output: build/shared.txt\n  groups:\n    a:\n      ruleset: vendor\n    b:\n      ruleset: vendor\n",
+    );
+    let output = run(dir.path(), &["backend", "build", "--config", "rsigma.yaml"]);
+    assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("convert groups 'a' and 'b' both write build/shared.txt"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!dir.path().join("build").exists());
+}
+
+#[test]
+fn rules_without_their_own_query_are_marked_no_query() {
+    let dir = fixture_copy();
+    set_convert(
+        dir.path(),
+        "convert:\n  groups:\n    pg:\n      ruleset: vendor\n      target: postgres\n      skip_unsupported: true\n      output: build/pg.sql\n",
+    );
+    let output = run(dir.path(), &["backend", "build", "--config", "rsigma.yaml"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let statuses = manifest_statuses(&dir.path().join("build/pg.sql.manifest.json"));
+    let status = |title: &str| {
+        statuses
+            .iter()
+            .find(|(t, _)| t == title)
+            .and_then(|(_, status)| status.clone())
+            .unwrap_or_else(|| panic!("no rule '{title}' in {statuses:?}"))
+    };
+    let queries = fs::read_to_string(dir.path().join("build/pg.sql")).unwrap();
+    assert_eq!(queries.lines().count(), 2, "{queries}");
+    assert_eq!(status("Linux SSH login"), "converted");
+    assert_eq!(status("Windows powershell encoded command"), "converted");
+    assert_eq!(status("Discovery burst escalation"), "skipped");
+    for title in [
+        "Windows discovery burst",
+        "Windows whoami execution",
+        "Windows local user enumeration",
+    ] {
+        assert_eq!(status(title), "no_query", "{title}");
+    }
+}
+
+#[test]
+fn a_rule_without_an_id_is_not_confused_with_a_failed_rule_of_the_same_title() {
+    let dir = fixture_copy();
+    fs::write(
+        dir.path().join("unsupported/plain.yml"),
+        "title: Cased field reference\nstatus: stable\nlevel: low\nlogsource:\n    product: windows\n    category: process_creation\ndetection:\n    selection:\n        Image: whoami\n    condition: selection\n",
+    )
+    .unwrap();
+    let output = run(
+        dir.path(),
+        &[
+            "backend",
+            "build",
+            "--config",
+            "rsigma.yaml",
+            "--group",
+            "unsupported_test",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(dir.path().join("build/unsupported.txt.manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let rules = manifest["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    for rule in rules {
+        let expected = if rule["id"].is_null() {
+            "converted"
+        } else {
+            "failed"
+        };
+        assert_eq!(rule["status"], serde_json::json!(expected), "{rule}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn delegated_groups_hand_pipelines_to_sigma_cli() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = fixture_copy();
+    let fake = dir.path().join("fake-sigma");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/argv.txt\"\necho 'query one'\necho 'query two'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    set_convert(
+        dir.path(),
+        "convert:\n  groups:\n    splunk:\n      ruleset: vendor\n      target: splunk\n      pipelines: [splunk_windows]\n      skip_unsupported: true\n      output: build/splunk.txt\n",
+    );
+
+    let mut command = rsigma();
+    command
+        .current_dir(dir.path())
+        .env("RSIGMA_SIGMA_CLI", &fake)
+        .args(["backend", "build", "--config", "rsigma.yaml"]);
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let argv = fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    let argv: Vec<&str> = argv.lines().collect();
+    assert_eq!(
+        &argv[..7],
+        [
+            "convert",
+            "-t",
+            "splunk",
+            "-f",
+            "default",
+            "-p",
+            "splunk_windows"
+        ]
+    );
+    assert!(argv.contains(&"-s"), "{argv:?}");
+    let rules_dir = Path::new(argv.last().unwrap());
+    assert!(
+        !rules_dir.starts_with(dir.path()),
+        "sigma-cli must read the materialized ruleset: {argv:?}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("build/splunk.txt")).unwrap(),
+        "query one\nquery two"
+    );
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(dir.path().join("build/splunk.txt.manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["queries"], serde_json::json!(2));
+    let rules = manifest["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 6, "{rules:?}");
+    assert!(
+        rules.iter().all(|rule| rule.get("status").is_none()),
+        "{rules:?}"
+    );
+}
