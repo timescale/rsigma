@@ -112,6 +112,20 @@ fn metrics(daemon: &DaemonProcess) -> String {
     body
 }
 
+fn wait_for_metric(daemon: &DaemonProcess, line: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let body = metrics(daemon);
+        if body.lines().any(|l| l == line) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for metric line {line:?}: {body}");
+        }
+        sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn http_events_fire_in_every_ruleset() {
     let dir = fixture_copy();
@@ -143,6 +157,21 @@ fn when_binds_cloud_events_and_reports_skips() {
     let dir = fixture_copy();
     let output = dir.path().join("out.ndjson");
     let daemon = spawn(dir.path(), &output, &[]);
+    let windows = r#"{"Image":"whoami","User":"alice"}"#;
+    assert_eq!(http_post(&daemon.url("/api/v1/events"), windows).0, 200);
+    let lines = wait_for_lines(&output, 2, Duration::from_secs(5));
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.contains("\"ruleset\":\"cloud\"")),
+        "{lines:?}"
+    );
+    wait_for_metric(
+        &daemon,
+        "rsigma_ruleset_events_skipped_total{ruleset=\"cloud\"} 1",
+        Duration::from_secs(5),
+    );
+
     assert_eq!(
         http_post(
             &daemon.url("/api/v1/events"),
@@ -151,12 +180,13 @@ fn when_binds_cloud_events_and_reports_skips() {
         .0,
         200
     );
-    let lines = wait_for_lines(&output, 1, Duration::from_secs(5));
-    assert!(lines[0].contains("\"ruleset\":\"cloud\""), "{lines:?}");
+    let lines = wait_for_lines(&output, 3, Duration::from_secs(5));
+    assert!(lines[2].contains("\"ruleset\":\"cloud\""), "{lines:?}");
     let m = metrics(&daemon);
     assert!(
-        m.contains("rsigma_ruleset_events_skipped_total{ruleset=\"cloud\"}"),
-        "{m}"
+        m.lines()
+            .any(|l| l == "rsigma_ruleset_events_skipped_total{ruleset=\"cloud\"} 1"),
+        "a CloudTrail event must not count as skipped: {m}"
     );
 }
 
@@ -195,8 +225,68 @@ fn reload_reflects_overlay_changes_and_keeps_the_old_engine_on_failure() {
             .any(|line| line.contains("\"level\":\"critical\"")),
         "the old engine must keep serving after a failed reload: {lines:?}"
     );
-    let m = metrics(&daemon);
-    assert!(m.contains("rsigma_reloads_failed_total"), "{m}");
+    wait_for_metric(
+        &daemon,
+        "rsigma_reloads_failed_total 1",
+        Duration::from_secs(5),
+    );
+}
+
+#[test]
+fn reload_follows_source_rule_edits() {
+    let dir = fixture_copy();
+    let output = dir.path().join("out.ndjson");
+    let daemon = spawn(dir.path(), &output, &[]);
+    let rule = dir.path().join("rules/win.yml");
+    fs::write(
+        &rule,
+        fs::read_to_string(&rule)
+            .unwrap()
+            .replace("level: low", "level: medium"),
+    )
+    .unwrap();
+    wait_for_reload(&daemon, true, Duration::from_secs(10));
+    http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"Image":"whoami","User":"alice"}"#,
+    );
+    let lines = wait_for_lines(&output, 2, Duration::from_secs(5));
+    let win_b = lines
+        .iter()
+        .find(|line| line.contains("\"ruleset\":\"win_b\""))
+        .expect("win_b match");
+    assert!(win_b.contains("\"level\":\"medium\""), "{win_b}");
+}
+
+#[test]
+fn reload_follows_ruleset_pipeline_edits() {
+    let dir = fixture_copy();
+    fs::create_dir_all(dir.path().join("pipelines")).unwrap();
+    let pipeline = dir.path().join("pipelines/map.yml");
+    let mapping = |field: &str| {
+        format!(
+            "name: map\ntransformations:\n  - type: field_name_mapping\n    mapping:\n      Image: {field}\n"
+        )
+    };
+    fs::write(&pipeline, mapping("process.executable")).unwrap();
+    fs::write(
+        dir.path().join("pipe.yaml"),
+        "rulesets:\n  mapped:\n    sources: [rules]\n    include:\n      - id: [11111111-1111-4111-8111-111111111111]\n    pipelines: [pipelines/map.yml]\ndaemon:\n  rulesets: [mapped]\n",
+    )
+    .unwrap();
+    let output = dir.path().join("out.ndjson");
+    let daemon = spawn_config(dir.path(), &output, "pipe.yaml", &[]);
+    http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"process.executable":"whoami"}"#,
+    );
+    wait_for_lines(&output, 1, Duration::from_secs(5));
+
+    fs::write(&pipeline, mapping("proc.exe")).unwrap();
+    wait_for_reload(&daemon, true, Duration::from_secs(10));
+    http_post(&daemon.url("/api/v1/events"), r#"{"proc.exe":"whoami"}"#);
+    let lines = wait_for_lines(&output, 2, Duration::from_secs(5));
+    assert!(lines[1].contains("\"ruleset\":\"mapped\""), "{lines:?}");
 }
 
 #[test]
@@ -227,7 +317,10 @@ fn status_and_rules_report_rulesets() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("rulesets.win_a.detection_rules"));
+        .stdout(predicate::str::contains("rulesets.win_a.detection_rules"))
+        .stdout(
+            predicate::str::is_match(r"rulesets\.cloud\.when_schemas\s+aws_cloudtrail").unwrap(),
+        );
 }
 
 #[test]
