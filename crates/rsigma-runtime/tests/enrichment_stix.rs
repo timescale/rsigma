@@ -28,6 +28,7 @@ fn detection_with_hash(hash: &str) -> EvaluationResult {
             tags: vec!["attack.t1059.001".into()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["sel".into()],
@@ -194,6 +195,7 @@ async fn stix_enricher_skips_correlation_results_for_detection_kind() {
             tags: vec![],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Correlation(CorrelationBody {
             correlation_type: CorrelationType::EventCount,

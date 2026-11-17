@@ -12,6 +12,7 @@ use rsigma_eval::{
 use crate::engine::RuntimeEngine;
 use crate::input::{EventInputDecoded, InputFormat, parse_line};
 use crate::metrics::MetricsHook;
+use crate::ruleset::RuleSource;
 use crate::tap::{TapPayload, TapRegistry, TapStage};
 
 /// Closure that extracts multiple payloads from a single JSON value.
@@ -63,6 +64,14 @@ pub struct LogProcessor {
 impl LogProcessor {
     /// Create a new processor wrapping the given engine and metrics hook.
     pub fn new(engine: RuntimeEngine, metrics: Arc<dyn MetricsHook>) -> Self {
+        for stats in engine.ruleset_stats() {
+            metrics.register_ruleset(&stats.name);
+            metrics.on_ruleset_rules_loaded(
+                &stats.name,
+                stats.detection_rules,
+                stats.correlation_rules,
+            );
+        }
         LogProcessor {
             engine: Arc::new(ArcSwap::from_pointee(RwLock::new(engine))),
             processing_order: Mutex::new(()),
@@ -201,6 +210,7 @@ impl LogProcessor {
 
         let start = Instant::now();
         let batch_results = engine.process_batch(&event_refs);
+        let skipped = engine.take_ruleset_skipped();
         let elapsed = start.elapsed().as_secs_f64();
         let per_event_latency = elapsed / event_refs.len() as f64;
 
@@ -235,10 +245,19 @@ impl LogProcessor {
                         );
                     }
                 }
+                if let Some(ruleset) = &r.header.ruleset {
+                    let kind = if r.is_correlation() {
+                        "correlation"
+                    } else {
+                        "detection"
+                    };
+                    self.metrics.on_ruleset_match(ruleset, kind);
+                }
             }
 
             line_results[*line_idx].extend(result);
         }
+        self.record_ruleset_skipped(skipped);
 
         line_results
     }
@@ -404,18 +423,19 @@ impl LogProcessor {
         let event_refs: Vec<&EventInputDecoded> = decoded_events.iter().map(|(_, e)| e).collect();
 
         let start = Instant::now();
-        let (batch_results, state_entries) = if concurrent {
+        let (batch_results, state_entries, skipped) = if concurrent {
             let engine = engine_guard.read();
             let results = engine
                 .process_batch_shared(&event_refs)
                 .expect("concurrent path requires shared detection");
             let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries)
+            (results, state_entries, engine.take_ruleset_skipped())
         } else {
             let mut engine = engine_guard.write();
             let results = engine.process_batch(&event_refs);
             let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries)
+            let skipped = engine.take_ruleset_skipped();
+            (results, state_entries, skipped)
         };
         let elapsed = start.elapsed().as_secs_f64();
         self.metrics
@@ -451,10 +471,19 @@ impl LogProcessor {
                         );
                     }
                 }
+                if let Some(ruleset) = &r.header.ruleset {
+                    let kind = if r.is_correlation() {
+                        "correlation"
+                    } else {
+                        "detection"
+                    };
+                    self.metrics.on_ruleset_match(ruleset, kind);
+                }
             }
 
             line_results[*line_idx].extend(result);
         }
+        self.record_ruleset_skipped(skipped);
         self.metrics.observe_batch_phase_duration(
             "result_merge",
             merge_results_start.elapsed().as_secs_f64(),
@@ -483,6 +512,14 @@ impl LogProcessor {
         Ok(stats)
     }
 
+    fn record_ruleset_skipped(&self, skipped: Vec<(std::sync::Arc<str>, u64)>) {
+        for (ruleset, count) in skipped {
+            if count > 0 {
+                self.metrics.on_ruleset_events_skipped(&ruleset, count);
+            }
+        }
+    }
+
     /// Build and load the replacement engine without holding the batch-order
     /// lock, so rule parsing and dynamic-source resolution do not stall
     /// processing.
@@ -509,12 +546,22 @@ impl LogProcessor {
         let match_detail = old.match_detail();
         let routing = old.routing();
         let logsource_extractor = old.logsource_extractor();
+        let rule_source = old.rule_source().clone();
+        let ruleset_classifier = old.ruleset_classifier();
         #[cfg(feature = "daachorse-index")]
         let cross_rule_ac = old.cross_rule_ac();
         drop(old);
         drop(snapshot);
 
-        let mut new_engine = RuntimeEngine::new(rules_path, pipelines, corr_config, include_event);
+        let mut new_engine = match &rule_source {
+            RuleSource::Path(_) => {
+                RuntimeEngine::new(rules_path, pipelines, corr_config, include_event)
+            }
+            RuleSource::Rulesets(bindings) => {
+                RuntimeEngine::with_rulesets(bindings.clone(), corr_config, include_event)
+            }
+        };
+        new_engine.set_ruleset_classifier(ruleset_classifier);
         new_engine.set_pipeline_paths(pipeline_paths);
         new_engine.set_allow_remote_include(allow_remote_include);
         new_engine.set_strict_rules(strict_rules);
@@ -542,6 +589,14 @@ impl LogProcessor {
     /// in, all under the batch-order lock so no batch advances the old
     /// windows between the export and the swap.
     fn commit_reload(&self, mut new_engine: RuntimeEngine) {
+        for stats in new_engine.ruleset_stats() {
+            self.metrics.register_ruleset(&stats.name);
+            self.metrics.on_ruleset_rules_loaded(
+                &stats.name,
+                stats.detection_rules,
+                stats.correlation_rules,
+            );
+        }
         let _order_guard = self.processing_order.lock();
         let live_state = self.engine.load().read().export_state();
         if let Some(state) = live_state
@@ -559,6 +614,13 @@ impl LogProcessor {
         let snapshot = self.engine.load();
         let engine = snapshot.read();
         engine.rules_path().to_path_buf()
+    }
+
+    /// Per-ruleset loaded rule counts and schema bindings.
+    pub fn ruleset_stats(&self) -> Vec<rsigma_eval::RulesetStats> {
+        let snapshot = self.engine.load();
+        let engine = snapshot.read();
+        engine.ruleset_stats()
     }
 
     /// Return a reference to the metrics hook.
@@ -1634,6 +1696,139 @@ detection:
         assert!(
             results[0].detection_count() > 0,
             "CEF deviceVendor=Security should match"
+        );
+    }
+
+    #[test]
+    fn ruleset_metrics_report_registration_matches_and_skips() {
+        use crate::ruleset::RulesetBinding;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct RulesetMetrics {
+            registered: Mutex<Vec<String>>,
+            loaded: Mutex<Vec<(String, usize, usize)>>,
+            matches: Mutex<Vec<(String, String)>>,
+            skipped: Mutex<Vec<(String, u64)>>,
+        }
+
+        impl MetricsHook for RulesetMetrics {
+            fn on_parse_error(&self) {}
+            fn on_events_processed(&self, _: u64) {}
+            fn on_detection_matches(&self, _: u64) {}
+            fn on_correlation_matches(&self, _: u64) {}
+            fn observe_processing_latency(&self, _: f64) {}
+            fn on_input_queue_depth_change(&self, _: i64) {}
+            fn on_back_pressure(&self) {}
+            fn observe_batch_size(&self, _: u64) {}
+            fn on_output_queue_depth_change(&self, _: i64) {}
+            fn observe_pipeline_latency(&self, _: f64) {}
+            fn set_correlation_state_entries(&self, _: u64) {}
+            fn register_ruleset(&self, ruleset: &str) {
+                self.registered.lock().unwrap().push(ruleset.to_string());
+            }
+            fn on_ruleset_match(&self, ruleset: &str, kind: &'static str) {
+                self.matches
+                    .lock()
+                    .unwrap()
+                    .push((ruleset.to_string(), kind.to_string()));
+            }
+            fn on_ruleset_events_skipped(&self, ruleset: &str, count: u64) {
+                self.skipped
+                    .lock()
+                    .unwrap()
+                    .push((ruleset.to_string(), count));
+            }
+            fn on_ruleset_rules_loaded(&self, ruleset: &str, detection: usize, correlation: usize) {
+                self.loaded
+                    .lock()
+                    .unwrap()
+                    .push((ruleset.to_string(), detection, correlation));
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["win", "cloud"] {
+            let root = dir.path().join(name);
+            std::fs::create_dir_all(root.join("rules")).unwrap();
+            std::fs::write(
+                root.join("rules/rule.yml"),
+                "title: TestRule\nid: 11111111-1111-1111-1111-111111111111\nlogsource:\n    category: test\ndetection:\n    selection:\n        EventID: 1\n    condition: selection\n",
+            )
+            .unwrap();
+        }
+        let bindings = vec![
+            RulesetBinding {
+                name: "win".to_string(),
+                spec: rsigma_parser::ruleset::RulesetSpec {
+                    sources: vec![dir.path().join("win/rules")],
+                    ..Default::default()
+                },
+                pipelines: Vec::new(),
+                when_schemas: Vec::new(),
+            },
+            RulesetBinding {
+                name: "cloud".to_string(),
+                spec: rsigma_parser::ruleset::RulesetSpec {
+                    sources: vec![dir.path().join("cloud/rules")],
+                    ..Default::default()
+                },
+                pipelines: Vec::new(),
+                when_schemas: vec!["aws_cloudtrail".to_string()],
+            },
+        ];
+        let mut engine =
+            RuntimeEngine::with_rulesets(bindings, CorrelationConfig::default(), false);
+        engine.set_ruleset_classifier(Some(std::sync::Arc::new(
+            rsigma_eval::SchemaClassifier::builtin(),
+        )));
+        engine.load_rules().unwrap();
+
+        let metrics = std::sync::Arc::new(RulesetMetrics::default());
+        let proc = LogProcessor::new(engine, metrics.clone());
+        assert_eq!(
+            metrics.registered.lock().unwrap().clone(),
+            vec!["win".to_string(), "cloud".to_string()]
+        );
+        assert!(
+            metrics
+                .loaded
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.0 == "win")
+        );
+
+        let batch = vec![r#"{"EventID": 1}"#.to_string()];
+        proc.process_batch_lines(&batch, &identity_filter);
+        assert!(
+            metrics
+                .matches
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == &("win".to_string(), "detection".to_string()))
+        );
+        assert_eq!(
+            metrics.skipped.lock().unwrap().clone(),
+            vec![("cloud".to_string(), 1)]
+        );
+
+        proc.process_batch_lines(&batch, &identity_filter);
+        assert_eq!(
+            metrics.skipped.lock().unwrap().clone(),
+            vec![("cloud".to_string(), 1), ("cloud".to_string(), 1)]
+        );
+
+        proc.reload_rules().unwrap();
+        proc.process_batch_lines(&batch, &identity_filter);
+        assert_eq!(
+            metrics.skipped.lock().unwrap().clone(),
+            vec![
+                ("cloud".to_string(), 1),
+                ("cloud".to_string(), 1),
+                ("cloud".to_string(), 1),
+            ]
         );
     }
 }

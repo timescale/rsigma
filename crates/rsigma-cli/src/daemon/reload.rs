@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
@@ -8,8 +8,7 @@ use tokio::sync::mpsc;
 /// In addition to the rules path, optionally watches pipeline file paths.
 /// Any YAML change in watched paths triggers a reload signal.
 pub fn spawn_file_watcher(
-    rules_path: &Path,
-    pipeline_paths: &[&Path],
+    paths: &[(PathBuf, bool)],
     reload_tx: mpsc::Sender<()>,
 ) -> Option<RecommendedWatcher> {
     let tx = reload_tx.clone();
@@ -51,22 +50,20 @@ pub fn spawn_file_watcher(
         }
     };
 
-    if let Err(e) = watcher.watch(rules_path, RecursiveMode::Recursive) {
-        tracing::warn!(error = %e, path = %rules_path.display(), "Could not watch rules path");
-        return None;
-    }
-
-    tracing::info!(path = %rules_path.display(), "Watching rules directory for changes");
-
-    for path in pipeline_paths {
-        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+    for (path, recursive) in paths {
+        let mode = if *recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
+        if let Err(e) = watcher.watch(path, mode) {
             tracing::warn!(
                 error = %e,
                 path = %path.display(),
-                "Could not watch pipeline file"
+                "Could not watch path for changes"
             );
         } else {
-            tracing::info!(path = %path.display(), "Watching pipeline file for changes");
+            tracing::info!(path = %path.display(), "Watching path for changes");
         }
     }
 

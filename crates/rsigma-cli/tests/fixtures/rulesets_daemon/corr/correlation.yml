@@ -1,0 +1,33 @@
+title: Whoami
+id: whoami
+status: stable
+description: whoami runs.
+author: Test Author
+level: low
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        Image: whoami
+    condition: selection
+tags:
+    - attack.discovery
+---
+title: Whoami burst
+id: burst
+status: experimental
+description: whoami runs several times.
+author: Test Author
+level: medium
+correlation:
+    type: event_count
+    rules:
+        - whoami
+    group-by:
+        - Image
+    timespan: 5m
+    condition:
+        gte: 2
+tags:
+    - attack.discovery

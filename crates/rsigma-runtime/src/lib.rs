@@ -58,6 +58,7 @@ pub mod ocsf;
 pub mod parse;
 pub mod processor;
 pub mod risk;
+pub mod ruleset;
 pub mod scope;
 pub mod selector;
 pub mod sources;
@@ -132,6 +133,7 @@ pub use risk::{
     RiskStateSnapshot, SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file,
     parse_risk_config,
 };
+pub use ruleset::{PipelineRef, RuleSource, RulesetBinding, load_pipelines, watch_paths};
 pub use selector::{Selector, SelectorParseError};
 pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 

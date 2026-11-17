@@ -96,6 +96,16 @@ pub trait MetricsHook: Send + Sync {
     /// startup.
     fn register_dns_enricher(&self, _enricher_id: &str) {}
 
+    /// Pre-register a ruleset's `kind`-labeled families and skipped counter.
+    fn register_ruleset(&self, _ruleset: &str) {}
+    /// A result was produced by `ruleset`; `kind` is `detection` or
+    /// `correlation`.
+    fn on_ruleset_match(&self, _ruleset: &str, _kind: &'static str) {}
+    /// `count` events were kept away from `ruleset` by a `when` binding.
+    fn on_ruleset_events_skipped(&self, _ruleset: &str, _count: u64) {}
+    /// Report the loaded rule counts for `ruleset`.
+    fn on_ruleset_rules_loaded(&self, _ruleset: &str, _detection: usize, _correlation: usize) {}
+
     /// Pre-register an enricher's `enricher_id` + `kind` label set so
     /// `rsigma_enrichment_total{...}` and
     /// `rsigma_enrichment_duration_seconds{...}` are emitted with their

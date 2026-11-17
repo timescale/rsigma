@@ -29,6 +29,7 @@
 //! #         tags: vec!["attack.t1059.001".to_string()],
 //! #         custom_attributes: Arc::new(HashMap::new()),
 //! #         enrichments: None,
+//! #         ruleset: None,
 //! #     },
 //! #     body: ResultBody::Detection(DetectionBody {
 //! #         matched_selections: vec!["selection".to_string()],
@@ -246,6 +247,11 @@ fn detection_finding_with_inner(
         subject.custom_attributes(),
     );
     insert_if(&mut unmapped, "enrichments", lifted.remaining.clone());
+    insert_if(
+        &mut unmapped,
+        "ruleset",
+        subject.ruleset().map(|name| json!(name)),
+    );
     let evidences = subject.write_body(&mut unmapped);
 
     let mut finding = base_finding(
@@ -289,6 +295,7 @@ trait FindingSubject {
     fn severity_id(&self) -> i64;
     fn custom_attributes(&self) -> Option<Value>;
     fn enrichments(&self) -> Option<&Map<String, Value>>;
+    fn ruleset(&self) -> Option<&str>;
     fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value>;
 }
 
@@ -316,6 +323,10 @@ impl FindingSubject for EvaluationResult {
 
     fn enrichments(&self) -> Option<&Map<String, Value>> {
         self.header.enrichments.as_ref()
+    }
+
+    fn ruleset(&self) -> Option<&str> {
+        self.header.ruleset.as_deref()
     }
 
     fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value> {
@@ -389,6 +400,10 @@ impl FindingSubject for DedupWire<'_> {
 
     fn enrichments(&self) -> Option<&Map<String, Value>> {
         self.0.get("enrichments").and_then(Value::as_object)
+    }
+
+    fn ruleset(&self) -> Option<&str> {
+        self.0.get("ruleset").and_then(Value::as_str)
     }
 
     fn write_body(&self, unmapped: &mut Map<String, Value>) -> Option<Value> {

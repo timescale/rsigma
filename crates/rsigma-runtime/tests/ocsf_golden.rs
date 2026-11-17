@@ -180,6 +180,7 @@ fn header(enrichments: Option<serde_json::Map<String, Value>>) -> RuleHeader {
             json!("detection-eng"),
         )])),
         enrichments,
+        ruleset: None,
     }
 }
 
@@ -214,6 +215,24 @@ fn detection_with_matched_fields_and_risk_enrichments() {
 }
 
 #[test]
+fn detection_from_a_named_ruleset_keeps_the_ruleset() {
+    let mut header = header(None);
+    header.ruleset = Some("win_a".into());
+    let result = EvaluationResult {
+        header,
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection".to_string()],
+            matched_fields: vec![FieldMatch::new("Image", json!("whoami"))],
+            event: None,
+        }),
+    };
+
+    check_both_versions("detection_ruleset", |opts| {
+        detection_finding_with_opts(&result, &FixedSource::new(), opts)
+    });
+}
+
+#[test]
 fn correlation_with_group_key() {
     let result = EvaluationResult {
         header: RuleHeader {
@@ -223,6 +242,7 @@ fn correlation_with_group_key() {
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Correlation(CorrelationBody {
             correlation_type: CorrelationType::EventCount,
@@ -432,6 +452,22 @@ fn dedup_repeat_summary_is_an_update_finding() {
 }
 
 #[test]
+fn dedup_summary_keeps_the_sample_ruleset() {
+    let wire = serde_json::json!({
+        "rule_title": "Malware execution",
+        "rule_id": "rule-1",
+        "level": "high",
+        "ruleset": "win_a",
+        "enrichments": {"dedup_state": "repeat", "dedup_fingerprint": "13bf5ab591909123"},
+        "matched_selections": ["selection"],
+        "matched_fields": []
+    });
+    let finding =
+        dedup_summary_finding_with_opts(&wire, &FixedSource::new(), OcsfOptions::default());
+    assert_eq!(finding["unmapped"]["ruleset"], "win_a");
+}
+
+#[test]
 fn dedup_resolved_summary_is_a_close_finding() {
     let wire = serde_json::json!({
         "rule_title": "Malware execution",
@@ -581,6 +617,7 @@ fn correlation_detection() -> EvaluationResult {
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(attributes),
             enrichments: None,
+            ruleset: None,
         },
         body: ResultBody::Correlation(CorrelationBody {
             correlation_type: CorrelationType::EventCount,
@@ -616,6 +653,7 @@ fn enriched_detection() -> EvaluationResult {
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: Some(enrichments),
+            ruleset: None,
         },
         body: ResultBody::Detection(DetectionBody {
             matched_selections: vec!["selection".to_string()],

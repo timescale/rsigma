@@ -34,6 +34,7 @@ fn header(title: &str) -> RuleHeader {
         ],
         custom_attributes: Arc::new(HashMap::new()),
         enrichments: None,
+        ruleset: None,
     }
 }
 
@@ -69,6 +70,24 @@ fn detection_golden_ndjson_line() {
     let parsed: serde_json::Value = serde_json::from_str(&actual).unwrap();
     assert!(parsed.get("matched_fields").is_some());
     assert!(parsed.get("correlation_type").is_none());
+}
+
+#[test]
+fn ruleset_is_optional_on_the_wire() {
+    let mut result = EvaluationResult {
+        header: header("Whoami"),
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection".to_string()],
+            matched_fields: vec![FieldMatch::new("Image", serde_json::json!("whoami.exe"))],
+            event: None,
+        }),
+    };
+    let without = serde_json::to_string(&result).unwrap();
+    assert!(!without.contains("\"ruleset\""), "{without}");
+
+    result.header.ruleset = Some(Arc::from("linux_edge"));
+    let with = serde_json::to_string(&result).unwrap();
+    assert!(with.contains("\"ruleset\":\"linux_edge\""), "{with}");
 }
 
 /// Wire-shape snapshot at `Summary`: enrichment fields appear after

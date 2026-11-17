@@ -21,7 +21,7 @@ pub use introspect::{CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, Gr
 pub use types::*;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::Utc;
 
@@ -1043,6 +1043,7 @@ impl<L> CorrelationEngine<L> {
                         tags: corr.tags.clone(),
                         custom_attributes: corr.custom_attributes.clone(),
                         enrichments: None,
+                        ruleset: None,
                     },
                     body: ResultBody::Correlation(CorrelationBody {
                         correlation_type: corr_type,
@@ -1210,6 +1211,7 @@ impl<L> CorrelationEngine<L> {
                             tags: corr.tags.clone(),
                             custom_attributes: corr.custom_attributes.clone(),
                             enrichments: None,
+                            ruleset: None,
                         },
                         body: ResultBody::Correlation(CorrelationBody {
                             correlation_type: corr_type,
@@ -1513,6 +1515,7 @@ impl<L> CorrelationEngine<L> {
             last_alert,
             event_buffers,
             event_ref_buffers,
+            rulesets: BTreeMap::new(),
         }
     }
 
@@ -1520,11 +1523,24 @@ impl<L> CorrelationEngine<L> {
     /// current correlation indices. Entries whose identifiers no longer match
     /// any loaded correlation are silently dropped.
     ///
+    /// A snapshot exported by a fan-out over exactly one ruleset imports that
+    /// ruleset's state.
+    ///
     /// Returns `false` (and imports nothing) if the snapshot version is
-    /// incompatible with the current schema.
-    pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {
+    /// incompatible with the current schema, or if the snapshot holds state
+    /// for several rulesets.
+    pub fn import_state(&mut self, mut snapshot: CorrelationSnapshot) -> bool {
         if snapshot.version != SNAPSHOT_VERSION {
             return false;
+        }
+        if !snapshot.rulesets.is_empty() {
+            if snapshot.has_collection_state() || snapshot.rulesets.len() != 1 {
+                return false;
+            }
+            let Some((_, inner)) = std::mem::take(&mut snapshot.rulesets).pop_first() else {
+                return false;
+            };
+            return self.import_state(inner);
         }
         let id_to_idx = self.build_id_to_index_map();
 

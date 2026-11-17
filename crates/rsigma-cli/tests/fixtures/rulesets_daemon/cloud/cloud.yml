@@ -1,0 +1,15 @@
+title: S3 bucket change
+id: 22222222-2222-4222-8222-222222222222
+status: stable
+description: An S3 bucket changed.
+author: Test Author
+level: medium
+logsource:
+    product: aws
+    service: cloudtrail
+detection:
+    selection:
+        eventSource: s3.amazonaws.com
+    condition: selection
+tags:
+    - attack.exfiltration

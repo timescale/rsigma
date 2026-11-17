@@ -148,6 +148,15 @@ impl RuleFieldSet {
     pub fn is_empty(&self) -> bool {
         self.fields.is_empty()
     }
+
+    /// Merge another field set into this one, unioning provenance.
+    pub fn extend(&mut self, other: RuleFieldSet) {
+        for (field, origin) in other.fields {
+            let entry = self.fields.entry(field).or_default();
+            entry.rule_titles.extend(origin.rule_titles);
+            entry.sources.extend(origin.sources);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -359,5 +368,36 @@ filter:
         let set = RuleFieldSet::collect(&collection, &[], true);
         assert!(set.is_empty());
         assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn extend_unions_fields_and_provenance() {
+        let first = RuleFieldSet::collect(
+            &build(
+                "title: One\nid: one\nlogsource:\n    category: test\ndetection:\n    selection:\n        Shared: a\n        First: b\n    condition: selection\n",
+            ),
+            &[],
+            true,
+        );
+        let second = RuleFieldSet::collect(
+            &build(
+                "title: Two\nid: two\nlogsource:\n    category: test\ndetection:\n    selection:\n        Second: d\n    condition: selection\nfields:\n    - Shared\n",
+            ),
+            &[],
+            true,
+        );
+        let mut merged = first;
+        merged.extend(second);
+        assert!(merged.contains("First"));
+        assert!(merged.contains("Second"));
+        let shared = merged.origin("Shared").unwrap();
+        assert_eq!(
+            shared.rule_titles,
+            BTreeSet::from(["One".to_string(), "Two".to_string()])
+        );
+        assert_eq!(
+            shared.sources,
+            BTreeSet::from([FieldSource::Detection, FieldSource::Metadata])
+        );
     }
 }

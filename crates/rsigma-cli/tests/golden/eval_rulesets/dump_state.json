@@ -1,0 +1,108 @@
+{
+  "cloud": {
+    "correlations": [],
+    "groups": []
+  },
+  "win_a": {
+    "correlations": [
+      {
+        "active_groups": 1,
+        "group_by": [
+          "process.executable"
+        ],
+        "id": "33333333-3333-4333-8333-333333333333",
+        "index": 0,
+        "rule_refs": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "threshold": ">= 2",
+        "timespan_secs": 300,
+        "title": "Whoami burst",
+        "type": "event_count"
+      }
+    ],
+    "groups": [
+      {
+        "correlation_id": "33333333-3333-4333-8333-333333333333",
+        "correlation_index": 0,
+        "correlation_title": "Whoami burst",
+        "earliest": 1767225600,
+        "entries": 2,
+        "got": 2.0,
+        "group_key": [
+          {
+            "field": "process.executable",
+            "value": "whoami"
+          }
+        ],
+        "group_key_display": "process.executable=whoami",
+        "last_alert": 1767225630,
+        "latest": 1767225630,
+        "met": true,
+        "seconds_to_eviction": 270,
+        "threshold": ">= 2",
+        "timespan_secs": 300,
+        "type": "event_count",
+        "window": {
+          "EventCount": {
+            "timestamps": [
+              1767225600,
+              1767225630
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "win_b": {
+    "correlations": [
+      {
+        "active_groups": 1,
+        "group_by": [
+          "Image"
+        ],
+        "id": "33333333-3333-4333-8333-333333333333",
+        "index": 0,
+        "rule_refs": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "threshold": ">= 2",
+        "timespan_secs": 300,
+        "title": "Whoami burst",
+        "type": "event_count"
+      }
+    ],
+    "groups": [
+      {
+        "correlation_id": "33333333-3333-4333-8333-333333333333",
+        "correlation_index": 0,
+        "correlation_title": "Whoami burst",
+        "earliest": 1767225600,
+        "entries": 2,
+        "got": 2.0,
+        "group_key": [
+          {
+            "field": "Image",
+            "value": "whoami"
+          }
+        ],
+        "group_key_display": "Image=whoami",
+        "last_alert": 1767225630,
+        "latest": 1767225630,
+        "met": true,
+        "seconds_to_eviction": 270,
+        "threshold": ">= 2",
+        "timespan_secs": 300,
+        "type": "event_count",
+        "window": {
+          "EventCount": {
+            "timestamps": [
+              1767225600,
+              1767225630
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

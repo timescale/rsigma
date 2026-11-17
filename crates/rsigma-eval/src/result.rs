@@ -108,6 +108,10 @@ pub struct RuleHeader {
     /// middleware. `None` for engine-emitted results; skipped on serialize.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enrichments: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Named ruleset that produced this result, when several rulesets are
+    /// evaluated side by side. `None` for a single collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ruleset: Option<Arc<str>>,
 }
 
 /// Kind-specific payload of an [`EvaluationResult`].
@@ -325,6 +329,7 @@ mod tests {
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
             enrichments: None,
+            ruleset: None,
         }
     }
 

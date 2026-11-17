@@ -5,7 +5,7 @@
 *.pending-snap
 
 # VSCode extension build artifacts
-editors/vscode/node_modules/
+editors/vscode/node_modules
 editors/vscode/out/
 editors/vscode/*.vsix
 
@@ -15,7 +15,7 @@ editors/vscode/*.vsix
 # docmd build output and Node toolchain (docs project lives under docs/)
 /docs/site/
 /docs/assets/images/
-/docs/node_modules/
+/docs/node_modules
 /docs/.venv/
 /docs/__pycache__/
 
