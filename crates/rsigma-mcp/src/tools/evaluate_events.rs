@@ -5,7 +5,10 @@ use rmcp::{
     ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult, tool,
     tool_router,
 };
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, JsonEvent};
+use rsigma_eval::{
+    CorrelationConfig, CorrelationEngine, Engine, EvaluationResult, JsonEvent, RuleFieldSet,
+    RulesetEngines, RulesetUnit, UnitEngine,
+};
 use rsigma_runtime::{
     EnricherConfig, EnrichersFile, EnrichmentPipeline, build_enrichers, env_references,
     load_enrichers_file,
@@ -31,9 +34,13 @@ pub struct EvaluateInput {
     #[serde(default)]
     pub path: Option<String>,
     /// Named ruleset from the server's rsigma.yaml. Mutually exclusive with
-    /// `yaml` and `path`.
+    /// `yaml`, `path`, and `rulesets`.
     #[serde(default)]
     pub ruleset: Option<String>,
+    /// Several named rulesets evaluated side by side. Mutually exclusive with
+    /// `yaml`, `path`, and `ruleset`.
+    #[serde(default)]
+    pub rulesets: Option<Vec<String>>,
     /// Inline events as a JSON array of objects. Mutually exclusive with `events_path`.
     #[serde(default)]
     pub events: Option<Vec<Value>>,
@@ -70,7 +77,7 @@ pub struct EvaluateInput {
 impl RsigmaMcp {
     /// Evaluate JSON events against Sigma rules (detections and correlations).
     #[tool(
-        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Provide exactly one of inline `yaml`, a file/directory `path`, or a named `ruleset` from the server's configuration; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full)."
+        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Provide exactly one of inline `yaml`, a file/directory `path`, a named `ruleset`, or several `rulesets` from the server's configuration; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full)."
     )]
     async fn evaluate_events(
         &self,
@@ -83,17 +90,19 @@ impl RsigmaMcp {
         &self,
         input: EvaluateInput,
     ) -> Result<Value, McpError> {
-        let (collection, ruleset_pipelines) = self.load_collection(
-            input.yaml.as_deref(),
-            input.path.as_deref(),
-            input.ruleset.as_deref(),
-        )?;
-        let pipeline_specs = if input.pipelines.is_empty() {
-            ruleset_pipelines
-        } else {
-            input.pipelines
-        };
-        let pipelines = self.load_pipelines(&pipeline_specs)?;
+        let selected = usize::from(input.yaml.is_some())
+            + usize::from(input.path.is_some())
+            + usize::from(input.ruleset.is_some())
+            + usize::from(input.rulesets.is_some());
+        if selected != 1 {
+            return Err(invalid(
+                "provide exactly one of `yaml`, `path`, `ruleset`, or `rulesets`",
+            ));
+        }
+        if input.rulesets.as_ref().is_some_and(Vec::is_empty) {
+            return Err(invalid("`rulesets` must name at least one ruleset"));
+        }
+
         let events = self.load_events(input.events, input.events_path.as_deref())?;
         let detail = parse_match_detail(input.match_detail.as_deref())?;
         let enrichment =
@@ -102,46 +111,128 @@ impl RsigmaMcp {
         let mut results: Vec<Value> = Vec::new();
         let mut detection_matches = 0usize;
         let mut correlation_matches = 0usize;
+        let mut ruleset_matches: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut ruleset_summary: Option<Vec<Value>> = None;
 
         let json_events: Vec<JsonEvent> = events.iter().map(JsonEvent::borrow).collect();
         let refs: Vec<&JsonEvent> = json_events.iter().collect();
 
-        // Per-event result batches as owned `Vec<EvaluationResult>` so the
-        // enrichment pipeline (which mutates and may drop results) can run
-        // against each event's results while preserving the event index.
-        let batches: Vec<Vec<EvaluationResult>> = if collection.correlations.is_empty() {
-            let mut engine = Engine::new();
-            engine.set_match_detail(detail);
-            for p in &pipelines {
-                engine.add_pipeline(p.clone());
+        let batches: Vec<Vec<EvaluationResult>> = if let Some(names) = &input.rulesets {
+            let mut units = Vec::new();
+            let mut stats = Vec::new();
+            for name in names {
+                let (collection, spec_pipelines) = self.resolve_ruleset(name)?;
+                let pipeline_specs = if input.pipelines.is_empty() {
+                    spec_pipelines
+                } else {
+                    input.pipelines.clone()
+                };
+                let pipelines = self.load_pipelines(&pipeline_specs)?;
+                let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
+                let detection_rules = collection.rules.len();
+                let correlation_rules = collection.correlations.len();
+                let engine = if collection.correlations.is_empty() {
+                    let mut engine = Engine::new();
+                    engine.set_match_detail(detail);
+                    for pipeline in &pipelines {
+                        engine.add_pipeline(pipeline.clone());
+                    }
+                    engine
+                        .add_collection(&collection)
+                        .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                    UnitEngine::Detection(Box::new(engine))
+                } else {
+                    let mut config = CorrelationConfig {
+                        emit_detections: input.emit_detections,
+                        ..Default::default()
+                    };
+                    if !input.timestamp_fields.is_empty() {
+                        let mut fields = input.timestamp_fields.clone();
+                        fields.extend(config.timestamp_fields);
+                        config.timestamp_fields = fields;
+                    }
+                    let mut engine = CorrelationEngine::new(config);
+                    engine.set_match_detail(detail);
+                    for pipeline in &pipelines {
+                        engine.add_pipeline(pipeline.clone());
+                    }
+                    engine
+                        .add_collection(&collection)
+                        .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                    UnitEngine::Correlation(Box::new(engine))
+                };
+                stats.push((name.clone(), detection_rules, correlation_rules));
+                units.push(RulesetUnit {
+                    name: std::sync::Arc::from(name.as_str()),
+                    when_schemas: Vec::new(),
+                    engine,
+                    field_set,
+                });
             }
-            engine
-                .add_collection(&collection)
-                .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-            engine.evaluate_batch(&refs)
+            let mut engines = RulesetEngines::new(units, None)
+                .map_err(|e| invalid(format!("ruleset setup error: {e}")))?;
+            let batches = engines.process_batch(&refs);
+            ruleset_summary = Some(
+                stats
+                    .into_iter()
+                    .map(|(name, detection_rules, correlation_rules)| {
+                        json!({
+                            "name": name,
+                            "detection_rules": detection_rules,
+                            "correlation_rules": correlation_rules,
+                            "matches": 0,
+                        })
+                    })
+                    .collect(),
+            );
+            batches
         } else {
-            let mut config = CorrelationConfig {
-                emit_detections: input.emit_detections,
-                ..Default::default()
+            let (collection, ruleset_pipelines) = self.load_collection(
+                input.yaml.as_deref(),
+                input.path.as_deref(),
+                input.ruleset.as_deref(),
+            )?;
+            let pipeline_specs = if input.pipelines.is_empty() {
+                ruleset_pipelines
+            } else {
+                input.pipelines
             };
-            if !input.timestamp_fields.is_empty() {
-                let mut fields = input.timestamp_fields.clone();
-                fields.extend(config.timestamp_fields);
-                config.timestamp_fields = fields;
+            let pipelines = self.load_pipelines(&pipeline_specs)?;
+            if collection.correlations.is_empty() {
+                let mut engine = Engine::new();
+                engine.set_match_detail(detail);
+                for p in &pipelines {
+                    engine.add_pipeline(p.clone());
+                }
+                engine
+                    .add_collection(&collection)
+                    .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                engine.evaluate_batch(&refs)
+            } else {
+                let mut config = CorrelationConfig {
+                    emit_detections: input.emit_detections,
+                    ..Default::default()
+                };
+                if !input.timestamp_fields.is_empty() {
+                    let mut fields = input.timestamp_fields.clone();
+                    fields.extend(config.timestamp_fields);
+                    config.timestamp_fields = fields;
+                }
+                let mut engine = CorrelationEngine::new(config);
+                engine.set_match_detail(detail);
+                for p in &pipelines {
+                    engine.add_pipeline(p.clone());
+                }
+                engine
+                    .add_collection(&collection)
+                    .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                engine
+                    .process_batch(&refs)
+                    .into_iter()
+                    .map(|pr| pr.to_vec())
+                    .collect()
             }
-            let mut engine = CorrelationEngine::new(config);
-            engine.set_match_detail(detail);
-            for p in &pipelines {
-                engine.add_pipeline(p.clone());
-            }
-            engine
-                .add_collection(&collection)
-                .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-            engine
-                .process_batch(&refs)
-                .into_iter()
-                .map(|pr| pr.to_vec())
-                .collect()
         };
 
         for (idx, mut per_event) in batches.into_iter().enumerate() {
@@ -154,11 +245,14 @@ impl RsigmaMcp {
                 } else {
                     detection_matches += 1;
                 }
+                if let Some(name) = &r.header.ruleset {
+                    *ruleset_matches.entry(name.to_string()).or_default() += 1;
+                }
                 results.push(json!({ "event_index": idx, "result": to_value(r) }));
             }
         }
 
-        Ok(json!({
+        let mut envelope = json!({
             "ok": true,
             "summary": {
                 "events_evaluated": events.len(),
@@ -167,7 +261,15 @@ impl RsigmaMcp {
                 "enriched": enrichment.is_some(),
             },
             "results": results,
-        }))
+        });
+        if let Some(mut summary) = ruleset_summary {
+            for entry in &mut summary {
+                let name = entry["name"].as_str().unwrap_or_default();
+                entry["matches"] = json!(ruleset_matches.get(name).copied().unwrap_or(0));
+            }
+            envelope["rulesets"] = json!(summary);
+        }
+        Ok(envelope)
     }
 
     /// Build an optional [`EnrichmentPipeline`] from an inline config xor a path.
@@ -278,6 +380,7 @@ mod tests {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
                 ruleset: None,
+                rulesets: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -301,6 +404,7 @@ mod tests {
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
                 ruleset: None,
+                rulesets: None,
                 events: None,
                 events_path: None,
                 pipelines: vec![],
@@ -340,6 +444,7 @@ correlation:
             yaml: Some(yaml.to_string()),
             path: None,
             ruleset: None,
+            rulesets: None,
             events: Some(vec![
                 json!({"EventID": 1, "Host": "h1", "timestamp": "2025-01-01T00:00:00Z"}),
                 json!({"EventID": 1, "Host": "h1", "timestamp": "2025-01-01T00:00:01Z"}),
@@ -377,6 +482,7 @@ enrichers:
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
                 ruleset: None,
+                rulesets: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -411,6 +517,7 @@ enrichers:
                 yaml: Some(VALID_RULE.to_string()),
                 path: None,
                 ruleset: None,
+                rulesets: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -430,6 +537,7 @@ enrichers:
             yaml: Some(VALID_RULE.to_string()),
             path: None,
             ruleset: None,
+            rulesets: None,
             events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
             events_path: None,
             pipelines: vec![],
@@ -584,6 +692,7 @@ enrichers:
                 yaml: None,
                 path: None,
                 ruleset: Some("base".to_string()),
+                rulesets: None,
                 events: Some(vec![json!({ "process.command_line": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![],
@@ -606,6 +715,7 @@ enrichers:
                 yaml: None,
                 path: Some("rule.yml".to_string()),
                 ruleset: Some("base".to_string()),
+                rulesets: None,
                 events: Some(vec![json!({})]),
                 events_path: None,
                 pipelines: vec![],
@@ -627,6 +737,7 @@ enrichers:
                 yaml: Some(GOLDEN_RULE.to_string()),
                 path: None,
                 ruleset: None,
+                rulesets: None,
                 events: Some(vec![
                     json!({ "CommandLine": "cmd /c whoami /priv" }),
                     json!({ "CommandLine": "ipconfig /all" }),
@@ -664,6 +775,7 @@ enrichers:
                 yaml: None,
                 path: None,
                 ruleset: Some("base".to_string()),
+                rulesets: None,
                 events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
                 events_path: None,
                 pipelines: vec![dir.path().join("noop.yml").display().to_string()],
@@ -677,5 +789,97 @@ enrichers:
             .unwrap();
         assert_eq!(value["ok"], true, "{value}");
         assert_eq!(value["summary"]["detection_matches"], 1, "{value}");
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_runs_several_rulesets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([
+            (
+                "a".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
+            (
+                "b".to_string(),
+                ruleset_spec(dir.path(), &["rule.yml"], &[]),
+            ),
+        ]);
+        let value = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: None,
+                ruleset: None,
+                rulesets: Some(vec!["a".to_string(), "b".to_string()]),
+                events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["summary"]["detection_matches"], 2);
+        let results = value["results"].as_array().unwrap();
+        assert_eq!(results[0]["result"]["ruleset"], "a");
+        assert_eq!(results[1]["result"]["ruleset"], "b");
+        let summary = value["rulesets"].as_array().unwrap();
+        assert_eq!(summary[0]["name"], "a");
+        assert_eq!(summary[0]["matches"], 1);
+        assert_eq!(summary[1]["matches"], 1);
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rejects_rulesets_with_path() {
+        let error = handler()
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: Some("rule.yml".to_string()),
+                ruleset: None,
+                rulesets: Some(vec!["a".to_string()]),
+                events: Some(vec![json!({})]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("exactly one"));
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rejects_an_unknown_ruleset_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), VALID_RULE).unwrap();
+        let rulesets = BTreeMap::from([(
+            "a".to_string(),
+            ruleset_spec(dir.path(), &["rule.yml"], &[]),
+        )]);
+        let error = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: None,
+                ruleset: None,
+                rulesets: Some(vec!["nope".to_string()]),
+                events: Some(vec![json!({})]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("unknown ruleset 'nope'"));
     }
 }
