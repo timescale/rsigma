@@ -376,6 +376,45 @@ pub struct DaemonConfig {
     pub tls_state: Option<super::tls::TlsState>,
 }
 
+struct AppliedSources {
+    last_applied: std::collections::HashMap<String, serde_json::Value>,
+    referenced: std::collections::HashSet<String>,
+}
+
+fn referenced_source_ids(processor: &LogProcessor) -> std::collections::HashSet<String> {
+    let snapshot = processor.engine_snapshot();
+    let engine = snapshot.read();
+    engine
+        .pipelines()
+        .iter()
+        .flat_map(|pipeline| {
+            pipeline
+                .source_refs
+                .iter()
+                .map(|source_ref| source_ref.source_id.clone())
+        })
+        .collect()
+}
+
+fn seed_applied(
+    processor: &LogProcessor,
+    cache: Option<&rsigma_runtime::SourceCache>,
+) -> AppliedSources {
+    let referenced = referenced_source_ids(processor);
+    let mut last_applied = std::collections::HashMap::new();
+    if let Some(cache) = cache {
+        for id in &referenced {
+            if let Some(value) = cache.get(id) {
+                last_applied.insert(id.clone(), value);
+            }
+        }
+    }
+    AppliedSources {
+        last_applied,
+        referenced,
+    }
+}
+
 fn default_detect_inflight(workers: usize) -> usize {
     match workers {
         0 | 1 => 1,
@@ -484,6 +523,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     let mut sources_trigger_tx_val: Option<
         mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
     > = None;
+    let mut source_results: Option<
+        tokio::sync::watch::Receiver<Option<rsigma_runtime::RefreshResult>>,
+    > = None;
 
     let mut source_resolver_val: Option<Arc<super::instrumented_resolver::InstrumentedResolver>> =
         None;
@@ -552,6 +594,7 @@ pub async fn run_daemon(config: DaemonConfig) {
 
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
+            source_results = Some(scheduler.result_receiver());
             sources_trigger_tx_val = Some(scheduler.trigger_sender());
 
             // Spawn NATS control subject listener for remote re-resolution triggers
@@ -851,6 +894,37 @@ pub async fn run_daemon(config: DaemonConfig) {
     // reloads without blocking, while the consumer debounces with a 500ms
     // sleep + try_recv drain, collapsing bursts into a single reload.
     let (reload_tx, mut reload_rx) = mpsc::channel::<()>(4);
+    // A source-value change asks for a cache-first rebuild. A full reload
+    // already pending supersedes it.
+    let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(4);
+    let applied_sources = Arc::new(std::sync::Mutex::new(seed_applied(
+        &processor,
+        initial_source_cache.as_deref(),
+    )));
+    if let Some(mut source_results) = source_results {
+        let applied = applied_sources.clone();
+        let rebuild_tx = rebuild_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                if source_results.changed().await.is_err() {
+                    break;
+                }
+                let update = source_results.borrow().clone();
+                let Some(update) = update else {
+                    continue;
+                };
+                let differs = {
+                    let guard = applied.lock().unwrap();
+                    update.resolved.iter().any(|(id, value)| {
+                        guard.referenced.contains(id) && guard.last_applied.get(id) != Some(value)
+                    })
+                };
+                if differs {
+                    let _ = rebuild_tx.try_send(());
+                }
+            }
+        });
+    }
 
     // File watcher for hot-reload (rules + pipeline files)
     let pipeline_watch_paths: Vec<&std::path::Path> =
@@ -1284,6 +1358,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_enrichers_path = config.enrichers_path.clone();
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
+    let reload_applied = applied_sources.clone();
     #[cfg(feature = "stix-enrich")]
     let reload_stix_fs_store = stix_fs_store.clone();
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
@@ -1297,10 +1372,63 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg(feature = "daemon-tls")]
     let reload_tls_metrics = metrics.clone();
     tokio::spawn(async move {
-        while reload_rx.recv().await.is_some() {
-            // Debounce: batch rapid file changes
+        loop {
+            let mut full_reload = tokio::select! {
+                reload = reload_rx.recv() => match reload {
+                    Some(()) => true,
+                    None => break,
+                },
+                rebuild = rebuild_rx.recv() => match rebuild {
+                    Some(()) => false,
+                    None => break,
+                },
+            };
+            // Debounce: batch rapid file changes and source updates. A full
+            // reload supersedes a rebuild that landed in the same burst.
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if reload_rx.try_recv().is_ok() {
+                full_reload = true;
+            }
             while reload_rx.try_recv().is_ok() {}
+            while rebuild_rx.try_recv().is_ok() {}
+
+            if !full_reload {
+                match reload_processor.rebuild_from_sources() {
+                    Ok(stats) => {
+                        tracing::info!(
+                            detection_rules = stats.detection_rules,
+                            correlation_rules = stats.correlation_rules,
+                            "Rules rebuilt from cached source values"
+                        );
+                        reload_metrics
+                            .source_rebuilds_total
+                            .with_label_values(&["success"])
+                            .inc();
+                        reload_metrics
+                            .detection_rules_loaded
+                            .set(stats.detection_rules as i64);
+                        reload_metrics
+                            .correlation_rules_loaded
+                            .set(stats.correlation_rules as i64);
+                        reload_metrics
+                            .rule_parse_errors
+                            .set(stats.parse_errors as i64);
+                        *reload_applied.lock().unwrap() =
+                            seed_applied(&reload_processor, reload_source_cache.as_deref());
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to rebuild rules from cached source values"
+                        );
+                        reload_metrics
+                            .source_rebuilds_total
+                            .with_label_values(&["error"])
+                            .inc();
+                    }
+                }
+                continue;
+            }
 
             reload_metrics.reloads_total.inc();
             tracing::info!("Reloading rules and pipelines...");
@@ -1323,6 +1451,8 @@ pub async fn run_daemon(config: DaemonConfig) {
                         .rule_parse_errors
                         .set(stats.parse_errors as i64);
                     reload_health.set_ready(true);
+                    *reload_applied.lock().unwrap() =
+                        seed_applied(&reload_processor, reload_source_cache.as_deref());
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to reload rules");

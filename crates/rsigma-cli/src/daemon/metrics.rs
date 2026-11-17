@@ -41,6 +41,7 @@ pub struct Metrics {
     pub source_resolve_latency: Histogram,
     pub source_cache_hits: IntCounter,
     pub source_last_resolved: GaugeVec,
+    pub source_rebuilds_total: IntCounterVec,
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
@@ -460,6 +461,19 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(source_last_resolved.clone()))
+            .unwrap();
+        let source_rebuilds_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_source_rebuilds_total",
+                "Rule rebuilds triggered by a changed pipeline source value",
+            ),
+            &["result"],
+        )
+        .unwrap();
+        let _ = source_rebuilds_total.with_label_values(&["success"]);
+        let _ = source_rebuilds_total.with_label_values(&["error"]);
+        registry
+            .register(Box::new(source_rebuilds_total.clone()))
             .unwrap();
 
         let enrichment_total = IntCounterVec::new(
@@ -1285,6 +1299,7 @@ impl Metrics {
             source_resolve_latency,
             source_cache_hits,
             source_last_resolved,
+            source_rebuilds_total,
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,
