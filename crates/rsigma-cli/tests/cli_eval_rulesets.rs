@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use common::{assert_golden, rsigma};
+use common::{assert_golden, assert_json_golden, rsigma};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rulesets_eval")
@@ -120,7 +120,7 @@ fn the_same_correlation_counts_separately_per_ruleset() {
     let dump = dump_json(&stderr(&output));
     assert!(dump.contains("\"win_a\""), "{dump}");
     assert!(dump.contains("\"win_b\""), "{dump}");
-    assert_golden("eval_rulesets/dump_state.json", &dump);
+    assert_json_golden("eval_rulesets/dump_state.json", &dump);
 }
 
 #[test]
