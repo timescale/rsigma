@@ -391,7 +391,7 @@ fn overlay_eval_config(
             args.rules = Some(v);
         }
         if !cli_rules && !cli_rulesets {
-            if let Some(entries) = eval.rulesets {
+            if let Some(entries) = eval.rulesets.filter(|entries| !entries.is_empty()) {
                 args.ruleset_entries = entries;
             } else if let Some(name) = eval.ruleset {
                 args.ruleset_entries = vec![crate::config::RulesetEntryPartial::Name(name)];
@@ -563,9 +563,9 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         ruleset: None,
         config: config.as_deref(),
     };
-    if input.rules.is_empty() && input.ruleset.is_none() {
+    if input.rules.is_empty() {
         eprintln!(
-            "error: no rules path; set --rules, --ruleset, eval.rules, or eval.ruleset in the config file"
+            "error: no rules path; set --rules, --ruleset, eval.rules, eval.ruleset, or eval.rulesets in the config file"
         );
         process::exit(exit_code::CONFIG_ERROR);
     }
@@ -575,11 +575,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
     let pipelines = crate::load_pipelines(&pipeline_paths);
 
     if pipelines.iter().any(|p| p.is_dynamic()) && ctx.show_progress() {
-        eprintln!(
-            "  note: dynamic sources are not resolved by `rsigma engine eval`. \
-             Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
-             events with dynamic pipelines."
-        );
+        eprintln!("{DYNAMIC_SOURCES_NOTE}");
     }
 
     let has_correlations = !collection.correlations.is_empty();
@@ -965,6 +961,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
 
     let mut units = Vec::new();
     let mut observe_field_set = RuleFieldSet::default();
+    let mut dynamic_pipelines = false;
 
     if schema_routing {
         if entries.len() != 1 {
@@ -1017,6 +1014,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 config_pipelines.clone()
             };
             let pipelines = crate::load_pipelines(&pipeline_paths);
+            dynamic_pipelines |= pipelines.iter().any(|p| p.is_dynamic());
             let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
             observe_field_set.extend(field_set.clone());
 
@@ -1066,6 +1064,9 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         }
     };
 
+    if dynamic_pipelines && renderer.ctx().show_progress() {
+        eprintln!("{DYNAMIC_SOURCES_NOTE}");
+    }
     if renderer.ctx().show_progress() {
         for stats in engines.ruleset_stats() {
             eprintln!(
@@ -1117,15 +1118,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 }
                 for m in &results {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset
-                        && let Some(index) = name_to_index.get(name)
-                    {
-                        if m.is_correlation() {
-                            counts[*index].1 += 1;
-                        } else {
-                            counts[*index].0 += 1;
-                        }
-                    }
+                    count_ruleset_match(&mut counts, &name_to_index, m);
                     renderer.emit(m);
                 }
             }
@@ -1149,15 +1142,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 &mut processor,
                 &mut |m| {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset
-                        && let Some(index) = name_to_index.get(name)
-                    {
-                        if m.is_correlation() {
-                            counts[*index].1 += 1;
-                        } else {
-                            counts[*index].0 += 1;
-                        }
-                    }
+                    count_ruleset_match(&mut counts, &name_to_index, m);
                     renderer.emit(m);
                 },
             );
@@ -1170,15 +1155,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
             };
             events = stream_evtx_events(&path, &event_filter, observer, &mut processor, &mut |m| {
                 had_matches = true;
-                if let Some(name) = &m.header.ruleset
-                    && let Some(index) = name_to_index.get(name)
-                {
-                    if m.is_correlation() {
-                        counts[*index].1 += 1;
-                    } else {
-                        counts[*index].0 += 1;
-                    }
-                }
+                count_ruleset_match(&mut counts, &name_to_index, m);
                 renderer.emit(m);
             });
         }
@@ -1198,15 +1175,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 &mut processor,
                 &mut |m| {
                     had_matches = true;
-                    if let Some(name) = &m.header.ruleset
-                        && let Some(index) = name_to_index.get(name)
-                    {
-                        if m.is_correlation() {
-                            counts[*index].1 += 1;
-                        } else {
-                            counts[*index].0 += 1;
-                        }
-                    }
+                    count_ruleset_match(&mut counts, &name_to_index, m);
                     renderer.emit(m);
                 },
             );
@@ -1244,6 +1213,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                 );
             }
         }
+        print_schema_pruning(&engines.schema_pruning_summary());
     }
 
     renderer.flush();
@@ -1480,18 +1450,43 @@ fn cmd_eval_routed(
         eprintln!(
             "Processed {events} events, {det_count} detection matches, {corr_count} correlation matches, {unknown} unknown schema, {dropped} dropped."
         );
-        let pruning = router.schema_pruning_summary();
-        if !pruning.is_empty() {
-            eprintln!("Logsource pruning by schema (eligible/pruned rules):");
-            for entry in pruning {
-                eprintln!(
-                    "  {}: {} eligible, {} pruned",
-                    entry.schema, entry.eligible, entry.pruned
-                );
-            }
-        }
+        print_schema_pruning(&router.schema_pruning_summary());
     }
     det_count > 0 || corr_count > 0
+}
+
+const DYNAMIC_SOURCES_NOTE: &str = "  note: dynamic sources are not resolved by `rsigma engine eval`. \
+     Use `rsigma pipeline resolve` to inspect sources or `rsigma engine daemon` to evaluate \
+     events with dynamic pipelines.";
+
+fn print_schema_pruning(pruning: &[rsigma_eval::SchemaPruning]) {
+    if pruning.is_empty() {
+        return;
+    }
+    eprintln!("Logsource pruning by schema (eligible/pruned rules):");
+    for entry in pruning {
+        eprintln!(
+            "  {}: {} eligible, {} pruned",
+            entry.schema, entry.eligible, entry.pruned
+        );
+    }
+}
+
+/// Count one match against its ruleset's detection or correlation total.
+fn count_ruleset_match(
+    counts: &mut [(u64, u64)],
+    name_to_index: &HashMap<Arc<str>, usize>,
+    result: &EvaluationResult,
+) {
+    if let Some(name) = &result.header.ruleset
+        && let Some(index) = name_to_index.get(name)
+    {
+        if result.is_correlation() {
+            counts[*index].1 += 1;
+        } else {
+            counts[*index].0 += 1;
+        }
+    }
 }
 
 /// Engine tuning shared by every evaluation path.
