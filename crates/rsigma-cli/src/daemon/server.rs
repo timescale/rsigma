@@ -391,19 +391,57 @@ struct AppliedSources {
     referenced: std::collections::HashSet<String>,
 }
 
+fn collect_source_ids(
+    pipelines: &[Pipeline],
+    rulesets: &[rsigma_runtime::RulesetBinding],
+) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for pipeline in pipelines {
+        for source_ref in &pipeline.source_refs {
+            ids.insert(source_ref.source_id.clone());
+        }
+    }
+    for binding in rulesets {
+        for pipeline in &binding.pipelines {
+            match pipeline {
+                rsigma_runtime::PipelineRef::Builtin(pipeline) => {
+                    for source_ref in &pipeline.source_refs {
+                        ids.insert(source_ref.source_id.clone());
+                    }
+                }
+                rsigma_runtime::PipelineRef::File(path) => {
+                    if let Ok(pipeline) = rsigma_eval::parse_pipeline_file(path) {
+                        for source_ref in &pipeline.source_refs {
+                            ids.insert(source_ref.source_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
 fn referenced_source_ids(processor: &LogProcessor) -> std::collections::HashSet<String> {
     let snapshot = processor.engine_snapshot();
     let engine = snapshot.read();
-    engine
-        .pipelines()
+    let mut ids = collect_source_ids(engine.pipelines(), &[]);
+    if let rsigma_runtime::RuleSource::Rulesets(bindings) = engine.rule_source() {
+        ids.extend(collect_source_ids(&[], bindings));
+    }
+    ids
+}
+
+/// A referenced cache value differs from the value the running rules compiled.
+///
+/// The scheduler publishes on a watch channel, which keeps only the newest
+/// result, so this compares every referenced id rather than the ids in that
+/// one result.
+fn referenced_cache_differs(applied: &AppliedSources, cache: &rsigma_runtime::SourceCache) -> bool {
+    applied
+        .referenced
         .iter()
-        .flat_map(|pipeline| {
-            pipeline
-                .source_refs
-                .iter()
-                .map(|source_ref| source_ref.source_id.clone())
-        })
-        .collect()
+        .any(|id| applied.last_applied.get(id) != cache.get(id).as_ref())
 }
 
 fn seed_applied(
@@ -417,6 +455,23 @@ fn seed_applied(
             if let Some(value) = cache.get(id) {
                 last_applied.insert(id.clone(), value);
             }
+        }
+    }
+    AppliedSources {
+        last_applied,
+        referenced,
+    }
+}
+
+/// Referenced ids from the engine that just loaded, with values captured
+/// before that load. A value stored while the load was running is then not
+/// recorded as applied, so the next result rebuilds instead of being missed.
+fn applied_from_capture(processor: &LogProcessor, captured: &AppliedSources) -> AppliedSources {
+    let referenced = referenced_source_ids(processor);
+    let mut last_applied = std::collections::HashMap::new();
+    for id in &referenced {
+        if let Some(value) = captured.last_applied.get(id) {
+            last_applied.insert(id.clone(), value.clone());
         }
     }
     AppliedSources {
@@ -568,6 +623,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     let watchlist_registry = Arc::new(rsigma_runtime::WatchlistRegistry::from_sources(
         &declared_sources,
     ));
+    watchlist_registry.limit_referenced(
+        &collect_source_ids(&config.pipelines, &config.rulesets),
+        rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
+    );
     super::watchlist_api::preregister_metrics(&metrics, &watchlist_ids);
     if let Some(store) = state_store.as_ref() {
         super::watchlist_api::restore_from_store(
@@ -978,20 +1037,21 @@ pub async fn run_daemon(config: DaemonConfig) {
     if let Some(mut source_results) = source_results {
         let applied = applied_sources.clone();
         let rebuild_tx = rebuild_tx.clone();
+        let cache = initial_source_cache.clone();
         tokio::spawn(async move {
             loop {
                 if source_results.changed().await.is_err() {
                     break;
                 }
-                let update = source_results.borrow().clone();
-                let Some(update) = update else {
+                if source_results.borrow().is_none() {
+                    continue;
+                }
+                let Some(cache) = cache.as_ref() else {
                     continue;
                 };
                 let differs = {
                     let guard = applied.lock().unwrap();
-                    update.resolved.iter().any(|(id, value)| {
-                        guard.referenced.contains(id) && guard.last_applied.get(id) != Some(value)
-                    })
+                    referenced_cache_differs(&guard, cache)
                 };
                 if differs {
                     let _ = rebuild_tx.try_send(());
@@ -1479,6 +1539,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             while rebuild_rx.try_recv().is_ok() {}
 
             if !full_reload {
+                let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
                 match reload_processor.rebuild_from_sources() {
                     Ok(stats) => {
                         tracing::info!(
@@ -1500,7 +1561,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             .rule_parse_errors
                             .set(stats.parse_errors as i64);
                         *reload_applied.lock().unwrap() =
-                            seed_applied(&reload_processor, reload_source_cache.as_deref());
+                            applied_from_capture(&reload_processor, &captured);
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -1518,6 +1579,7 @@ pub async fn run_daemon(config: DaemonConfig) {
 
             reload_metrics.reloads_total.inc();
             tracing::info!("Reloading rules and pipelines...");
+            let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
 
             match reload_processor.reload_rules() {
                 Ok(stats) => {
@@ -1548,7 +1610,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                         .set(stats.parse_errors as i64);
                     reload_health.set_ready(true);
                     *reload_applied.lock().unwrap() =
-                        seed_applied(&reload_processor, reload_source_cache.as_deref());
+                        applied_from_capture(&reload_processor, &captured);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to reload rules");

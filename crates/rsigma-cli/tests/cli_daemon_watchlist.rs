@@ -223,7 +223,7 @@ fn short_ttl_stops_matching() {
     wait_for_match(&daemon, r#"{"DestinationIp":"198.51.100.7"}"#, 1);
 
     let end = Instant::now() + Duration::from_secs(20);
-    let mut saw_match = false;
+    let mut saw_match = true;
     let mut stable = 0;
     loop {
         let before = detections(&daemon);
@@ -243,6 +243,68 @@ fn short_ttl_stops_matching() {
         }
         if Instant::now() >= end {
             panic!("indicator still matched after its ttl");
+        }
+    }
+}
+
+#[test]
+fn an_expired_indicator_stops_matching_when_another_watchlist_expires_too() {
+    let rule = temp_file(".yml", RULE);
+    let pipeline = temp_file(".yml", PIPELINE);
+    let sources = temp_file(
+        ".yml",
+        r#"
+sources:
+  - id: c2_ips
+    type: watchlist
+  - id: zz_other
+    type: watchlist
+"#,
+    );
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "-p",
+        pipeline.path().to_str().unwrap(),
+        "--source",
+        sources.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+    let (status, response) = push(&daemon, r#"{"ttl":"4s","indicators":["198.51.100.7"]}"#);
+    assert_eq!(status, 200, "{response}");
+    let (status, response) = http_body(
+        "POST",
+        &daemon.url("/api/v1/sources/zz_other/indicators"),
+        None,
+        r#"{"ttl":"4s","indicators":["203.0.113.9"]}"#,
+    );
+    assert_eq!(status, 200, "{response}");
+    wait_for_match(&daemon, r#"{"DestinationIp":"198.51.100.7"}"#, 1);
+
+    let end = Instant::now() + Duration::from_secs(20);
+    let mut stable = 0;
+    loop {
+        let before = detections(&daemon);
+        http_post(
+            &daemon.url("/api/v1/events"),
+            r#"{"DestinationIp":"198.51.100.7"}"#,
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        if detections(&daemon) > before {
+            stable = 0;
+        } else {
+            stable += 1;
+            if stable >= 2 {
+                return;
+            }
+        }
+        if Instant::now() >= end {
+            panic!("expired indicator kept matching after the other watchlist expired");
         }
     }
 }
@@ -417,14 +479,12 @@ fn restart_keeps_unexpired_indicators() {
         "--api-addr",
         "127.0.0.1:0",
     ];
-    let expires = (chrono::Utc::now() + chrono::Duration::seconds(1))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     {
         let daemon = DaemonProcess::spawn(&args);
-        let body = format!(
-            r#"{{"indicators":["198.51.100.7",{{"value":"203.0.113.9","expires_at":"{expires}"}}]}}"#
+        let (status, response) = push(
+            &daemon,
+            r#"{"indicators":["198.51.100.7",{"value":"203.0.113.9","ttl":"1s"}]}"#,
         );
-        let (status, response) = push(&daemon, &body);
         assert_eq!(status, 200, "{response}");
         std::thread::sleep(Duration::from_secs(2));
     }

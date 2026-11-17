@@ -8,7 +8,7 @@ description: "Push indicators into a running RSigma daemon and match them from S
 
 A watchlist is a dynamic source whose values are pushed over the daemon API instead of fetched from a file or a feed. Use it for indicators that change between rule reloads: a handful of C2 addresses, a short domain list, a hash an analyst just confirmed.
 
-A list that belongs in a rule as `%name%` has to stay under the placeholder expansion limit of 4096 combinations. A larger set should be a lookup enricher, which reads the cached values without copying them into the rule.
+A list that belongs in a rule as `%name%` has to stay under the placeholder expansion limit of 4096 combinations. A watchlist that a pipeline references is capped there: a push past 4096 indicators returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set.
 
 ## Declare the source
 
@@ -71,9 +71,9 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/sources/c2_ips/indicators \
 
 `PUT` replaces the unexpired set. `DELETE` takes `{"indicators":["198.51.100.7"]}`. `GET` lists values with `added_at` and `expires_at`.
 
-Expiry is chosen in this order: the item's `expires_at` (RFC 3339), the item's `ttl`, the request's `ttl`, the source `default_ttl`. If none is set, the indicator does not expire. Values are compared exactly. Whitespace around a value is removed. An empty value, a value over `max_value_length`, and a value with an ASCII control character are rejected with the item's index.
+Expiry is chosen in this order: the item's `expires_at` (RFC 3339), the item's `ttl`, the request's `ttl`, the source `default_ttl`. If none is set, the indicator does not expire. An `expires_at` that is not later than the current time is rejected. Values are compared exactly. Whitespace around a value is removed. An empty value, a value over `max_value_length`, and a value with an ASCII control character are rejected with the item's index.
 
-One request may carry 10,000 indicators and 4 MiB. Going past `max_indicators` returns 422 and changes nothing. A failed state-database write returns 500 and also changes nothing.
+One request may carry 10,000 indicators and 4 MiB. Going past `max_indicators`, or past 4096 on a pipeline-referenced watchlist, returns 422 and changes nothing. A failed state-database write returns 500 and also changes nothing. When `--state-db` is set, the audit trail is on and rejects a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) with 413 before this handler runs. Raise that key to push a larger batch.
 
 ## Look an indicator up
 

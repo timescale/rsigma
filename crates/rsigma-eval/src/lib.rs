@@ -145,8 +145,8 @@ pub use fields::{FieldOrigin, FieldSource, RuleFieldSet};
 pub use logsource::{ExtractLogSource, LogSourceExtractor};
 pub use matcher::{CompiledMatcher, MatchDescriptor};
 pub use pipeline::{
-    Pipeline, PipelineState, TransformationItem, TransformedRule, apply_pipelines,
-    apply_pipelines_with_state,
+    MAX_PLACEHOLDER_COMBINATIONS, Pipeline, PipelineState, TransformationItem, TransformedRule,
+    apply_pipelines, apply_pipelines_with_state,
     builtin::{
         builtin_names as builtin_pipeline_names, resolve_builtin as resolve_builtin_pipeline,
     },

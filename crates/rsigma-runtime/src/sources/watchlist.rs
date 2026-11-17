@@ -4,7 +4,7 @@
 //! returns the unexpired values in byte order.
 
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -307,6 +307,7 @@ impl Watchlist {
 #[derive(Clone)]
 pub struct WatchlistRegistry {
     lists: Arc<RwLock<HashMap<String, Watchlist>>>,
+    writes: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl WatchlistRegistry {
@@ -328,6 +329,28 @@ impl WatchlistRegistry {
         }
         Self {
             lists: Arc::new(RwLock::new(lists)),
+            writes: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    /// The lock that serializes a memory change with its state-database write.
+    ///
+    /// Hold it across the mutation, the persist, and any rollback. The guard
+    /// borrows this clone, so the registry can still be updated while it is held.
+    pub fn write_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(&self.writes)
+    }
+
+    /// Lower `max_indicators` to `cap` for each named watchlist.
+    ///
+    /// A pipeline placeholder cannot expand more than `cap` values. A later
+    /// push past the lowered cap is rejected and leaves the set unchanged.
+    pub fn limit_referenced(&self, source_ids: &HashSet<String>, cap: usize) {
+        let mut lists = self.lists.write();
+        for id in source_ids {
+            if let Some(list) = lists.get_mut(id) {
+                list.max_indicators = list.max_indicators.min(cap);
+            }
         }
     }
 
@@ -437,7 +460,9 @@ impl WatchlistRegistry {
     }
 
     /// Replace stored rows. Expired rows are dropped. Rows for an unknown
-    /// source id are skipped. Returns how many expired rows were dropped.
+    /// source id are skipped. A source keeps at most `max_indicators` rows, so
+    /// a stored set larger than the placeholder cap cannot be loaded into a
+    /// rule. Returns how many expired rows were dropped.
     pub fn restore(&self, rows: &[WatchlistRow], now: DateTime<Utc>) -> usize {
         let mut lists = self.lists.write();
         for list in lists.values_mut() {
@@ -452,6 +477,9 @@ impl WatchlistRegistry {
             let Some(list) = lists.get_mut(&row.source_id) else {
                 continue;
             };
+            if list.entries.len() >= list.max_indicators {
+                continue;
+            }
             list.entries.insert(
                 row.value.clone(),
                 WatchlistEntry {
@@ -461,6 +489,30 @@ impl WatchlistRegistry {
             );
         }
         dropped
+    }
+
+    /// Put one source back to `rows`. Other sources are left as they are.
+    pub fn restore_source(&self, source_id: &str, rows: &[WatchlistRow], now: DateTime<Utc>) {
+        let mut lists = self.lists.write();
+        let Some(list) = lists.get_mut(source_id) else {
+            return;
+        };
+        list.entries.clear();
+        for row in rows {
+            if row.source_id != source_id || row.expires_at.is_some_and(|exp| exp <= now) {
+                continue;
+            }
+            if list.entries.len() >= list.max_indicators {
+                break;
+            }
+            list.entries.insert(
+                row.value.clone(),
+                WatchlistEntry {
+                    added_at: row.added_at,
+                    expires_at: row.expires_at,
+                },
+            );
+        }
     }
 }
 
@@ -504,6 +556,12 @@ fn prepare_item(
         list.default_ttl,
         now,
     )?;
+    if expires_at.is_some_and(|exp| exp <= now) {
+        return Err(WatchlistError::InvalidValue {
+            index,
+            reason: "expires_at is in the past",
+        });
+    }
     Ok((value, expires_at))
 }
 
@@ -746,5 +804,60 @@ mod tests {
         let later = now() + chrono::Duration::seconds(1);
         assert_eq!(registry.restore(&rows, later), 1);
         assert_eq!(registry.values("c2", later).unwrap(), vec!["keep"]);
+    }
+
+    #[test]
+    fn an_already_expired_indicator_is_rejected() {
+        let registry = sample(10, None);
+        let err = registry
+            .add(
+                "c2",
+                &[WatchlistItem::Detailed(WatchlistItemFields {
+                    value: "old".into(),
+                    ttl: None,
+                    expires_at: Some("2020-01-01T00:00:00Z".into()),
+                })],
+                None,
+                now(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WatchlistError::InvalidValue {
+                index: 0,
+                reason: "expires_at is in the past"
+            }
+        ));
+        assert!(registry.values("c2", now()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_referenced_watchlist_rejects_past_the_placeholder_cap() {
+        let registry = sample(100_000, None);
+        let mut ids = HashSet::new();
+        ids.insert("c2".into());
+        registry.limit_referenced(&ids, 2);
+        registry
+            .add("c2", &[bare("a"), bare("b")], None, now())
+            .unwrap();
+        let err = registry.add("c2", &[bare("c")], None, now()).unwrap_err();
+        assert!(matches!(err, WatchlistError::LimitExceeded { max: 2 }));
+        assert_eq!(registry.values("c2", now()).unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn restore_keeps_at_most_the_referenced_cap() {
+        let registry = sample(100_000, None);
+        let mut ids = HashSet::new();
+        ids.insert("c2".into());
+        registry.limit_referenced(&ids, 2);
+        let rows = ["a", "b", "c"].map(|value| WatchlistRow {
+            source_id: "c2".into(),
+            value: value.into(),
+            added_at: now(),
+            expires_at: None,
+        });
+        assert_eq!(registry.restore(&rows, now()), 0);
+        assert_eq!(registry.values("c2", now()).unwrap(), vec!["a", "b"]);
     }
 }

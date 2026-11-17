@@ -917,7 +917,7 @@ fn escape_bare_percent(text: &str) -> String {
     out
 }
 
-const MAX_PLACEHOLDER_COMBINATIONS: usize = 4096;
+pub const MAX_PLACEHOLDER_COMBINATIONS: usize = 4096;
 
 /// Substitute the placeholders in the raw source text `s` that `expansion`
 /// handles, producing the Cartesian product of multi-value variables.

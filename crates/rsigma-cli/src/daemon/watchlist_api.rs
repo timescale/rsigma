@@ -80,7 +80,9 @@ impl WatchlistApi {
             Ok(request) => request,
             Err(response) => return *response,
         };
-        let before = self.before_rows();
+        let writes = self.registry.write_lock();
+        let _guard = writes.lock().await;
+        let before = self.before_rows(source_id);
         let summary = match self
             .registry
             .add(source_id, &request.items, request.ttl, now)
@@ -116,8 +118,10 @@ impl WatchlistApi {
             Ok(request) => request,
             Err(response) => return *response,
         };
+        let writes = self.registry.write_lock();
+        let _guard = writes.lock().await;
         let before_values = self.live_values(source_id, now);
-        let before = self.before_rows();
+        let before = self.before_rows(source_id);
         let summary = match self
             .registry
             .replace(source_id, &request.items, request.ttl, now)
@@ -162,7 +166,9 @@ impl WatchlistApi {
             Ok(request) => request,
             Err(response) => return *response,
         };
-        let before = self.before_rows();
+        let writes = self.registry.write_lock();
+        let _guard = writes.lock().await;
+        let before = self.before_rows(source_id);
         let summary = match self.registry.remove(source_id, &request.indicators, now) {
             Ok(summary) => summary,
             Err(error) => return watchlist_error(error),
@@ -227,9 +233,13 @@ impl WatchlistApi {
         }
     }
 
-    fn before_rows(&self) -> Vec<WatchlistRow> {
+    fn before_rows(&self, source_id: &str) -> Vec<WatchlistRow> {
         if self.persist.is_some() {
-            self.registry.snapshot()
+            self.registry
+                .snapshot()
+                .into_iter()
+                .filter(|row| row.source_id == source_id)
+                .collect()
         } else {
             Vec::new()
         }
@@ -251,7 +261,7 @@ impl WatchlistApi {
             .filter(|row| row.source_id == source_id)
             .collect();
         if let Err(message) = persist(source_id.to_string(), rows).await {
-            self.registry.restore(before, now);
+            self.registry.restore_source(source_id, before, now);
             return Err(api_error(StatusCode::INTERNAL_SERVER_ERROR, message));
         }
         Ok(())
@@ -398,6 +408,8 @@ pub(crate) fn spawn_sweeper(
         loop {
             tick.tick().await;
             let now = Utc::now();
+            let writes = registry.write_lock();
+            let _guard = writes.lock().await;
             let api = WatchlistApi {
                 registry: registry.clone(),
                 sources: Arc::new(DaemonSourceRegistry::empty()),
@@ -535,6 +547,7 @@ async fn delete_indicators(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use axum::body::Body;
@@ -866,5 +879,122 @@ mod tests {
             .unwrap();
         assert!(text.contains("rsigma_watchlist_indicators{source_id=\"c2_ips\"} 0"));
         assert!(text.contains("op=\"expire\""));
+    }
+
+    async fn wait_until(flag: &AtomicUsize, value: usize) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while flag.load(Ordering::SeqCst) != value {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {value} persist calls"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_does_not_roll_back_another_source() {
+        let mut api = api_for(vec![watch("a", 10), watch("b", 10)]);
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let entered = Arc::new(AtomicUsize::new(0));
+        let gate_persist = Arc::clone(&gate);
+        let entered_persist = Arc::clone(&entered);
+        api.set_persist(Arc::new(move |source_id, _| {
+            let gate = Arc::clone(&gate_persist);
+            let entered = Arc::clone(&entered_persist);
+            Box::pin(async move {
+                entered.fetch_add(1, Ordering::SeqCst);
+                if source_id == "a" {
+                    gate.notified().await;
+                    return Err("state database write failed".into());
+                }
+                Ok(())
+            })
+        }));
+
+        let first = tokio::spawn(call(
+            api.clone(),
+            "POST",
+            "/api/v1/sources/a/indicators",
+            r#"{"indicators":["1.1.1.1"]}"#,
+        ));
+        wait_until(&entered, 1).await;
+        let second = tokio::spawn(call(
+            api.clone(),
+            "POST",
+            "/api/v1/sources/b/indicators",
+            r#"{"indicators":["2.2.2.2"]}"#,
+        ));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            1,
+            "the second write overlapped the first"
+        );
+        gate.notify_one();
+
+        let (status_a, _) = first.await.unwrap();
+        let (status_b, _) = second.await.unwrap();
+        assert_eq!(status_a, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(status_b, StatusCode::OK);
+        let now = Utc::now();
+        assert!(api.registry.values("a", now).unwrap().is_empty());
+        assert_eq!(api.registry.values("b", now).unwrap(), vec!["2.2.2.2"]);
+    }
+
+    #[tokio::test]
+    async fn overlapping_writes_persist_the_set_memory_keeps() {
+        let mut api = api_for(vec![watch("c2_ips", 10)]);
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let entered = Arc::new(AtomicUsize::new(0));
+        let stored = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let gate_persist = Arc::clone(&gate);
+        let entered_persist = Arc::clone(&entered);
+        let stored_persist = Arc::clone(&stored);
+        api.set_persist(Arc::new(move |_source_id, rows| {
+            let gate = Arc::clone(&gate_persist);
+            let entered = Arc::clone(&entered_persist);
+            let stored = Arc::clone(&stored_persist);
+            Box::pin(async move {
+                let n = entered.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    gate.notified().await;
+                }
+                stored
+                    .lock()
+                    .unwrap()
+                    .push(rows.iter().map(|row| row.value.clone()).collect::<Vec<_>>());
+                Ok(())
+            })
+        }));
+
+        let first = tokio::spawn(call(
+            api.clone(),
+            "POST",
+            "/api/v1/sources/c2_ips/indicators",
+            r#"{"indicators":["1.1.1.1"]}"#,
+        ));
+        wait_until(&entered, 1).await;
+        let second = tokio::spawn(call(
+            api.clone(),
+            "POST",
+            "/api/v1/sources/c2_ips/indicators",
+            r#"{"indicators":["2.2.2.2"]}"#,
+        ));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            1,
+            "the second write overlapped the first"
+        );
+        gate.notify_one();
+
+        let (status_a, _) = first.await.unwrap();
+        let (status_b, _) = second.await.unwrap();
+        assert_eq!(status_a, StatusCode::OK);
+        assert_eq!(status_b, StatusCode::OK);
+        let memory = api.registry.values("c2_ips", Utc::now()).unwrap();
+        let stored = stored.lock().unwrap();
+        assert_eq!(stored.last().unwrap(), &memory);
     }
 }

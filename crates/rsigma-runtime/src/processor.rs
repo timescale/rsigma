@@ -522,6 +522,8 @@ impl LogProcessor {
             self.prepare_reload_with(crate::engine::SourceFetch::CacheFirst)?;
         self.commit_reload(new_engine);
         Ok(stats)
+    }
+
     fn record_ruleset_skipped(&self, skipped: Vec<(std::sync::Arc<str>, u64)>) {
         for (ruleset, count) in skipped {
             if count > 0 {
@@ -1809,6 +1811,8 @@ transformations:
         let results = proc.process_batch_lines(&batch, &identity_filter);
         assert!(results[0].detection_count() > 0);
         std::mem::forget(dir);
+    }
+
     #[test]
     fn ruleset_metrics_report_registration_matches_and_skips() {
         use crate::ruleset::RulesetBinding;

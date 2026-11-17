@@ -240,7 +240,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 {{ added "unreleased" }}
 
-`/api/v1/sources/{source_id}/indicators` reads and changes a `type: watchlist` source. The response is returned before rules finish rebuilding. A body over 4 MiB, or more than 10,000 indicators, is `413`.
+`/api/v1/sources/{source_id}/indicators` reads and changes a `type: watchlist` source. The response is returned before rules finish rebuilding. A body over 4 MiB, or more than 10,000 indicators, is `413`. When `--state-db` enables the audit trail, a body over `daemon.api.audit.max_body_bytes` (default 64 KiB) is also `413`, before this handler runs.
 
 `POST` and `PUT` take:
 
@@ -266,8 +266,8 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 | 404 | No source has that id. |
 | 409 | The source exists and is not a watchlist. |
 | 400 | The body is not the expected JSON, or an indicator value or expiry is invalid. The message names the item index. |
-| 413 | The body is over 4 MiB, or the request lists more than 10,000 indicators. |
-| 422 | The change would exceed the source's `max_indicators`. |
+| 413 | The body is over 4 MiB, the request lists more than 10,000 indicators, or, when the audit trail is enabled, the body exceeds `daemon.api.audit.max_body_bytes` (default 64 KiB). |
+| 422 | The change would exceed the source's `max_indicators`. A watchlist that a pipeline references is capped at 4096, even when `max_indicators` is higher. |
 | 500 | The state database rejected the write. Memory is unchanged. |
 
 ```bash

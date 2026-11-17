@@ -225,7 +225,7 @@ Indicators pushed over the HTTP API. The source has nothing to fetch. Resolution
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `max_indicators` | integer | no | Most unexpired values the set may hold. Default `100000`. `0` is a configuration error. |
+| `max_indicators` | integer | no | Most unexpired values the set may hold. Default `100000`. `0` is a configuration error. When a pipeline references the source, the effective cap is the smaller of this value and 4096. |
 | `max_value_length` | integer | no | Longest accepted value, in bytes. Default `2048`. `0` is a configuration error. |
 | `default_ttl` | duration | no | Lifetime used when a push names no expiry. Absent means indicators stay until deleted. `30d` is 30 days. |
 
@@ -233,7 +233,7 @@ Indicators pushed over the HTTP API. The source has nothing to fetch. Resolution
 
 Push, replace, delete, and list go through `/api/v1/sources/{source_id}/indicators`. See [HTTP API](http-api.md#watchlist-indicators) and [Threat intel watchlists](../guide/threat-intel-watchlists.md).
 
-A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. Placeholder expansion still refuses more than 4096 combinations, so a larger set should feed a lookup enricher instead of a value list.
+A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. A watchlist that a pipeline references is capped at 4096 indicators, and a push past that cap returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set.
 
 ## Data formats
 

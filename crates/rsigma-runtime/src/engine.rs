@@ -461,44 +461,6 @@ impl RuntimeEngine {
             self.pipelines = reload_pipelines(&self.pipeline_paths)?;
         }
 
-        // Resolve dynamic sources if a resolver is set.
-        //
-        // Both error cases must fail closed. Loading rules with unresolved
-        // `${source.*}` templates produces rules whose semantics differ
-        // from what the operator wrote; on a hot-reload, the previous
-        // engine is still serving traffic, so returning an error here
-        // keeps it active rather than silently replacing it with a broken
-        // one.
-        if self.source_resolver.is_some() && self.pipelines.iter().any(|p| p.is_dynamic()) {
-            let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-                "Dynamic pipelines require a tokio runtime; refusing to load rules with \
-                 unresolved sources"
-                    .to_string()
-            })?;
-            let pipelines = std::mem::take(&mut self.pipelines);
-            let resolver = self.source_resolver.clone().unwrap();
-            let allow_remote = self.allow_remote_include;
-            let external = self.external_sources.clone();
-            let fetch = self.source_fetch;
-            let resolved = match block_on_from_sync(&handle, async {
-                resolve_pipelines_async(&resolver, &pipelines, &external, allow_remote, fetch).await
-            }) {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    self.pipelines = pipelines;
-                    return Err(e);
-                }
-            };
-            match resolved {
-                Ok(p) => self.pipelines = p,
-                Err(e) => {
-                    // Restore the captured pipelines so a higher-level
-                    // retry can re-run the same load against the same
-                    // inputs.
-                    self.pipelines = pipelines;
-                    return Err(format!("Dynamic source resolution failed: {e}"));
-                }
-            }
         if let Some(resolved) = self.resolve_pipeline_sources(&self.pipelines)? {
             self.pipelines = resolved;
         }
@@ -603,8 +565,9 @@ impl RuntimeEngine {
         })?;
         let allow_remote = self.allow_remote_include;
         let external = self.external_sources.clone();
+        let fetch = self.source_fetch;
         let resolved = block_on_from_sync(&handle, async {
-            resolve_pipelines_async(&resolver, pipelines, &external, allow_remote).await
+            resolve_pipelines_async(&resolver, pipelines, &external, allow_remote, fetch).await
         })?;
         resolved
             .map(Some)
@@ -1256,11 +1219,22 @@ transformations:
         }
     }
 
-    fn feed_source() -> DynamicSource {
+    fn cached_feed_source() -> DynamicSource {
         DynamicSource {
             id: "feed".to_string(),
             source_type: SourceType::File {
                 path: std::path::PathBuf::from("/unused"),
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::Once,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }
+    }
+
     fn ruleset_binding(
         name: &str,
         root: &Path,
@@ -1382,7 +1356,7 @@ transformations:
             on_error: ErrorPolicy::Fail,
             required: true,
             default: None,
-        }
+        }]
     }
 
     fn engine_with_feed(resolver: Arc<CountingResolver>) -> RuntimeEngine {
@@ -1399,7 +1373,7 @@ transformations:
             false,
         );
         engine.set_source_resolver(resolver);
-        engine.set_external_sources(vec![feed_source()]);
+        engine.set_external_sources(vec![cached_feed_source()]);
         std::mem::forget(dir);
         engine
     }
@@ -1429,7 +1403,6 @@ transformations:
             .expect_err("a cache miss fetches, and this resolver has nothing");
         assert!(err.contains("no value"), "got: {err}");
         assert_eq!(miss.source_resolver().unwrap().cached("feed"), None);
-        }]
     }
 
     #[tokio::test(flavor = "multi_thread")]
